@@ -91,12 +91,31 @@ _API = {
     "Schemas": [{"name": "Order", "fields": [{"name": "total", "type": "integer"}]}],
 }
 _DEPLOYMENT = {
-    "Nodes": [
-        {"name": "Browser", "kind": "device"},
-        {"name": "AppServer", "kind": "executionEnvironment"},
+    "schemaVersion": "easydep-workload-graph",
+    "workloads": [
+        {
+            "id": "order-service",
+            "name": "Order Service",
+            "artifact": {"kind": "generatedApplication"},
+            "interfaces": [
+                {
+                    "id": "http",
+                    "protocol": "http",
+                    "exposure": "public",
+                    "sourceRefs": ["api:/orders"],
+                }
+            ],
+            "storage": [],
+            "configuration": [],
+            "resourceRequirements": {},
+            "replicationSafety": "singleton",
+            "sourceRefs": ["class:OrderControl"],
+        }
     ],
-    "Artifacts": [{"name": "order-service.jar", "deployed_on": "AppServer"}],
-    "Connections": [{"source": "Browser", "target": "AppServer", "protocol": "HTTPS"}],
+    "externalDependencies": [],
+    "connections": [],
+    "constraints": [],
+    "derivations": [],
 }
 
 
@@ -362,7 +381,7 @@ def test_rendering_is_deterministic_and_valid_by_construction(graph):
     assert first["api_spec"]["openapi"].startswith("3.1")
     assert "/orders" in first["api_spec"]["paths"]
     assert "Order" in first["erd_puml"]
-    assert "order-service.jar" in first["deployment_diagram_puml"]
+    assert "Order Service" in first["deployment_diagram_puml"]
 
 
 def test_no_session_is_distinguishable_from_a_paused_one(graph):

@@ -22,6 +22,9 @@ class ArchitectureState(TypedDict, total=False):
     usecase_diagram_syntax_valid: bool
     usecase_diagram_syntax_errors: list[str]
     resource_spec: dict[str, Any]
+    # Explicit deployment-only facts. These bypass application design artifacts
+    # and are consumed only while proposing/validating WorkloadGraph.
+    deployment_planning_facts: list[dict[str, Any]]
 
     # Every design artifact is stored twice: the structured model the LLM produces
     # and edits (*_model / *_bce_classes) and the rendered artifact derived from it
@@ -82,8 +85,12 @@ class ArchitectureState(TypedDict, total=False):
     # Design-owned bundle: editable logical model + selected provider topology +
     # deterministic ResourcePlan.  The two PlantUML views are projections of it.
     deployment_diagram_bundle: dict[str, Any]
+    # WorkloadGraph source and deterministic derivatives.
+    deployment_workload_graph: dict[str, Any]
+    deployment_plan: dict[str, Any]
     deployment_topology: dict[str, Any]
     deployment_resource_plan: dict[str, Any]
+    artifact_versions: dict[str, Any]
     deployment_diagram_feedback: str
     deployment_diagram_puml: str
     deployment_diagram_provisioning_puml: str

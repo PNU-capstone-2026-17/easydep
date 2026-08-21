@@ -60,6 +60,8 @@ class DesignAdapter:
             raise DesignContractError("Requirements analysis did not produce use_case_specs")
         return {
             "refined_requirements": requirements_result.get("requirements") or [],
+            "capability_contract": requirements_result.get("capability_contract") or {},
+            "resource_intake": requirements_result.get("resource_intake") or {},
             "usecase_spec": {
                 "actors": requirements_result.get("actors") or [],
                 "use_cases": requirements_result.get("use_cases") or [],
@@ -98,6 +100,8 @@ class DesignAdapter:
             "erd_bce_classes",
             "deployment_diagram_model",
             "deployment_diagram_bundle",
+            "deployment_workload_graph",
+            "deployment_plan",
             "deployment_topology",
             "deployment_resource_plan",
             "deployment_diagram_provisioning_puml",

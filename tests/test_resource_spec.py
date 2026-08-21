@@ -40,7 +40,7 @@ def test_explicit_required_constraints_produce_vm_resource_spec(monkeypatch):
     result = _run(monkeypatch, _extraction())
 
     assert result["resource_spec"] == {
-        "schemaVersion": "3",
+        "schemaVersion": "4",
         "workloads": ["vm"],
         "provider": "aws",
         "regionAsWritten": "Seoul",
@@ -71,7 +71,7 @@ def test_structured_intake_constraints_do_not_depend_on_llm(monkeypatch):
     )
 
     assert result["resource_spec"] == {
-        "schemaVersion": "3",
+        "schemaVersion": "4",
         "workloads": ["vm"],
         "provider": "aws",
         "regionAsWritten": "Seoul",
@@ -212,7 +212,7 @@ def test_disabled_llm_reports_degradation_without_fabricating_values(monkeypatch
         }
     )["resource_intake"]
 
-    assert intake["draft"] == {"schemaVersion": "3", "workloads": ["vm"]}
+    assert intake["draft"] == {"schemaVersion": "4", "workloads": ["vm"]}
     assert intake["degraded"].startswith("The resource constraint LLM is disabled")
 
 
@@ -232,7 +232,7 @@ def test_structured_user_answers_are_grounded_in_the_rendered_briefing():
     assert sr._ground("monthlyBudgetUSD: 100", seen)
 
 
-def test_structured_multi_zone_topology_is_recorded_without_availability_question(monkeypatch):
+def test_structured_topology_preferences_are_not_copied_into_resource_spec(monkeypatch):
     monkeypatch.setattr(sr.settings, "resource_agent_llm", False)
     state = {
         "classified": [],
@@ -255,9 +255,13 @@ def test_structured_multi_zone_topology_is_recorded_without_availability_questio
 
     result = sr.build_resource_spec(state)
 
-    assert result["resource_spec"]["computeProfile"] == "managedGroupManyMultiZone"
-    assert result["resource_spec"]["replicaCount"] == 2
-    assert result["resource_spec"]["publicIngress"] == "loadBalanced"
+    assert "computeProfile" not in result["resource_spec"]
+    assert "replicaCount" not in result["resource_spec"]
+    assert "publicIngress" not in result["resource_spec"]
+    assert result["resource_spec"]["deploymentTargets"][0]["zones"] == [
+        "ap-northeast-2a",
+        "ap-northeast-2c",
+    ]
     assert not any(
         item["field"] == "availabilityIntent"
         for item in result["resource_intake"]["questions"]

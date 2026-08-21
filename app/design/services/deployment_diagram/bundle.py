@@ -1,165 +1,114 @@
-"""Compose the design-owned deployment diagram source of truth.
-
-The LLM-produced logical deployment model remains editable.  This module combines
-that model with RESOURCE_SPEC and the provider dependency knowledge to produce a
-deterministic, provider-native ResourcePlan.  Renderers consume the resulting
-bundle; they never ask an LLM to draw cloud infrastructure.
-"""
+"""Compose the design-owned WorkloadGraph deployment bundle."""
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
-from app.core.infra_planning import plan_for_anchors
-from app.core.orchestration.provider_deployment import (
-    build_provider_deployment_model,
-    resource_plan_digest,
-)
-from app.design.services.deployment_diagram.topology import (
-    derive_deployment_topology,
-    logical_persistent_workload_present,
-    provider_projection_policy,
+from app.design.services.deployment_diagram.planner import (
+    BLOCKING_CLASSES,
+    build_deployment_plan,
+    build_provider_resource_plan,
+    extract_planning_facts,
+    normalize_workload_graph,
+    planning_context,
 )
 
-_BLOCKING_ISSUE_CLASSES = {"invalid", "unsupported", "needsInput", "unjustified"}
 
-
-def _target_specs(resource_spec: dict[str, Any]) -> list[dict[str, Any]]:
+def _target_contexts(resource_spec: dict[str, Any]) -> list[dict[str, Any]]:
     targets = [
         dict(item)
         for item in resource_spec.get("deploymentTargets") or []
         if isinstance(item, dict)
     ]
     if not targets:
-        return [dict(resource_spec)]
+        return [planning_context(resource_spec)]
     return [
-        {
-            **resource_spec,
-            "provider": target.get("provider"),
-            "region": target.get("region"),
-            "selectedZones": list(target.get("zones") or []),
-            "deploymentTargets": [target],
-        }
+        planning_context(
+            {
+                **resource_spec,
+                "provider": target.get("provider"),
+                "region": target.get("region"),
+                "selectedZones": list(target.get("zones") or []),
+                "deploymentTargets": [target],
+            }
+        )
         for target in targets
     ]
 
 
-def _projection(logical_model: dict[str, Any], resource_spec: dict[str, Any]) -> dict[str, Any]:
-    provider = str(resource_spec.get("provider") or "").strip().lower()
-    region = str(resource_spec.get("region") or "").strip()
-    if provider not in {"aws", "azure", "gcp"} or not region:
-        return {
-            "status": "needsInput",
-            "provider": provider or None,
-            "region": region or None,
-            "issues": [
-                {
-                    "field": "deploymentTarget",
-                    "classification": "needsInput",
-                    "reason": "A provider and region are required for a provider-native deployment diagram.",
-                }
-            ],
-        }
-
-    persistent_workload_present = logical_persistent_workload_present(logical_model)
-    topology = derive_deployment_topology(
-        provider=provider,
-        resource_spec=resource_spec,
-        logical_deployment_model=logical_model,
-        persistent_storage_required=persistent_workload_present,
-    )
-    blocking = [
-        issue
-        for issue in topology.get("issues") or []
-        if issue.get("classification") in _BLOCKING_ISSUE_CLASSES
-    ]
-    if blocking:
-        return {
-            "status": "needsInput",
-            "provider": provider,
-            "region": region,
-            "topology": topology,
-            "issues": blocking,
-        }
-
-    projection_policy = provider_projection_policy(topology)
-    anchors = ["vm"]
-    if persistent_workload_present:
-        anchors.append("disk")
-    load_balanced = topology.get("publicIngress") == "loadBalanced"
-    if load_balanced:
-        anchors.append("loadBalancer")
-    dependency_plan = plan_for_anchors(
-        anchors,
-        provider,
-        region,
-        capability_ids=("load-balanced-ingress",) if load_balanced else (),
-    ).design
-    resource_plan = build_provider_deployment_model(
-        provider=provider,
-        region=region,
-        dependency_plan=dependency_plan,
-        projection_policy=projection_policy,
-        topology_policy=topology,
-        logical_deployment_model=logical_model,
-        persistent_storage_required=persistent_workload_present,
-        runtime_hints={
-            "application": {},
-            "state": {
-                "image": "postgres:17-bookworm",
-                "basis": "project-policy:self-hosted-relational-state-postgresql/v1",
-            },
-        },
-    )
-    return {
-        "status": "needsInput" if resource_plan.get("unresolved") else "completed",
-        "provider": provider,
-        "region": region,
-        "topology": topology,
-        "providerProjectionPolicy": projection_policy,
-        "resourcePlan": resource_plan,
-        "resourcePlanDigest": resource_plan_digest(resource_plan),
-        "issues": list(topology.get("issues") or []),
-    }
-
-
 def build_deployment_diagram_bundle(
-    logical_model: dict[str, Any], resource_spec: dict[str, Any] | None
+    workload_graph_candidate: dict[str, Any],
+    resource_spec: dict[str, Any] | None,
+    *,
+    planning_facts: dict[str, Any] | None = None,
+    planning_inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return the persisted source for both deployment-diagram views."""
-    spec = dict(resource_spec or {})
-    projections = [_projection(logical_model, target) for target in _target_specs(spec)]
+    """Build WorkloadGraph, provider-neutral plan, and CSP projections.
+
+    ``planning_inputs`` is accepted at the design adapter boundary so structured
+    requirement/design models and their digests travel with the bundle.  Tests and
+    importers may supply an already-normalized ``planning_facts`` document.
+    """
+
+    spec = copy.deepcopy(resource_spec or {})
+    facts = copy.deepcopy(planning_facts) if planning_facts else extract_planning_facts(
+        resource_spec=spec, **(planning_inputs or {})
+    )
+    graph = normalize_workload_graph(workload_graph_candidate, planning_facts=facts)
+    projections: list[dict[str, Any]] = []
+    for context in _target_contexts(spec):
+        deployment_plan = build_deployment_plan(graph, context)
+        resource_plan = build_provider_resource_plan(
+            deployment_plan,
+            graph,
+            provider=str(context.get("provider") or ""),
+            region=str(context.get("region") or ""),
+        )
+        blocking = [
+            item
+            for item in resource_plan.get("issues") or []
+            if item.get("classification") in BLOCKING_CLASSES
+        ]
+        projections.append(
+            {
+                "status": "needsInput" if blocking else "completed",
+                "provider": context.get("provider"),
+                "region": context.get("region"),
+                "planningContext": context,
+                "deploymentPlan": deployment_plan,
+                "deploymentPlanStructureDigest": deployment_plan["structureDigest"],
+                "resourcePlan": resource_plan,
+                "resourcePlanStructureDigest": resource_plan["structureDigest"],
+                "issues": blocking,
+            }
+        )
     return {
-        "schemaVersion": "easydep-deployment-diagram/v1",
+        "schemaVersion": "easydep-deployment-diagram",
+        "status": (
+            "needsInput"
+            if any(item.get("status") == "needsInput" for item in projections)
+            else "completed"
+        ),
         "mode": "single" if len(projections) == 1 else "alternatives",
-        "logicalModel": logical_model,
+        "planningFacts": facts,
+        "workloadGraph": graph,
         "resourceSpec": spec,
         "projections": projections,
     }
 
 
 def hydrate_deployment_diagram_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
-    """Restore all state fields derived from a stored bundle.
+    """Hydrate the sole supported WorkloadGraph deployment bundle."""
 
-    Old artifact versions stored only the logical model.  Treat those as a legacy
-    logical-only bundle so existing projects continue to load.
-    """
-    if bundle.get("schemaVersion") != "easydep-deployment-diagram/v1":
-        return {
-            "deployment_diagram_model": bundle,
-            "deployment_diagram_bundle": {
-                "schemaVersion": "easydep-deployment-diagram/v1",
-                "mode": "legacyLogicalOnly",
-                "logicalModel": bundle,
-                "resourceSpec": {},
-                "projections": [],
-            },
-        }
+    if bundle.get("schemaVersion") != "easydep-deployment-diagram":
+        raise ValueError("unsupported deployment diagram schema")
     projections = list(bundle.get("projections") or [])
     primary = projections[0] if len(projections) == 1 else {}
     return {
         "deployment_diagram_bundle": bundle,
-        "deployment_diagram_model": dict(bundle.get("logicalModel") or {}),
-        "deployment_topology": dict(primary.get("topology") or {}),
+        "deployment_diagram_model": dict(bundle.get("workloadGraph") or {}),
+        "deployment_workload_graph": dict(bundle.get("workloadGraph") or {}),
+        "deployment_plan": dict(primary.get("deploymentPlan") or {}),
         "deployment_resource_plan": dict(primary.get("resourcePlan") or {}),
     }

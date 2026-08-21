@@ -28,6 +28,8 @@
 | `research-results-20260810.md` | 2026-08-10 시점 결과를 현재 평가 문서에 요약 |
 | `depkb-effect-evaluation-20260810.md` | 상세 원시 해석을 보관하고 핵심 결과만 평가 문서에 통합 |
 | `cloud-native-extension.md` | 과거 링크 호환 안내의 역할이 끝나 보관 |
+| `resource-plan-experiment-reflection.md` | 2026-08-15~17 E1~E3 반영 판단과 3사 IaC 실험 결과를 기록한 시점 보고서 |
+| `managed-l4-ingress-experiment-20260817.md` | 2026-08-17 AWS·Azure·GCP 관리형 L4 실험의 완료 결과 |
 
 현재 기준은 상위의 [문서 안내](../README.md), [현재 시스템 상태](../current-system-status.md),
 [논리 배포 토폴로지와 CSP 의존성](../logical-deployment-topology-decisions.md),

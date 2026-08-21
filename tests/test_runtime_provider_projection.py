@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-
 import pytest
 
 from app.core.cloudkb.depkb.provider_realizations import capability_realizations
 from app.core.infra_planning import plan_for_anchors
-from app.core.orchestration.adapters.vm_delivery import VmDeliveryAdapter
 
 
 @pytest.mark.parametrize("provider,count,composition", [
@@ -24,9 +21,6 @@ def test_load_balancer_plan_carries_provider_specific_realization(provider, coun
     assert plan.provision["capabilityRealizations"] == list(plan.intent.capabilityRealizations)
     assert plan.intent.officialDependencies
     assert plan.design["officialDependencies"] == list(plan.intent.officialDependencies)
-    agent_input = VmDeliveryAdapter._dependency_input({"infra_intent": asdict(plan.intent)})
-    assert len(agent_input["capabilityRealizations"][0]["components"]) == count
-    assert agent_input["knowledgeSnapshot"]
 
 
 @pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])

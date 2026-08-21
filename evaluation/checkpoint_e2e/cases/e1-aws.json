@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "easydep-checkpoint-case",
+  "caseId": "E1-course-registration-aws-complete-deployment",
+  "baseInput": "evaluation/baselines/course-registration-cases/e1-course-registration-aws.json",
+  "deploymentPlanningFacts": [
+    {
+      "id": "e1-generated-application",
+      "kind": "workloadContract",
+      "value": {
+        "workloadId": "course-registration-app",
+        "artifactKind": "generatedApplication",
+        "interface": {"protocol": "http", "exposure": "public"},
+        "replicaCount": 1
+      },
+      "sourceRefs": ["checkpointCase:e1-aws:generated-application"],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    },
+    {
+      "id": "e1-postgresql-runtime",
+      "kind": "workloadContract",
+      "value": {
+        "workloadId": "course-registration-db",
+        "artifactKind": "prebuiltImage",
+        "image": "postgres:16.4-bookworm",
+        "engine": "postgresql",
+        "deploymentMode": "container",
+        "runtimeCatalogRef": "docker-on-vm/prebuilt-image",
+        "interface": {"protocol": "tcp", "exposure": "internal", "port": 5432},
+        "replicaCount": 1,
+        "storage": {
+          "persistence": "persistent",
+          "capacityGiB": 20,
+          "mountPath": "/var/lib/postgresql/data",
+          "deletionPolicy": "retain",
+          "replicaSemantics": "singleAttachment"
+        }
+      },
+      "sourceRefs": ["checkpointCase:e1-aws:postgresql-runtime"],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    },
+    {
+      "id": "e1-private-database-connection",
+      "kind": "connectionContract",
+      "value": {
+        "sourceWorkloadRef": "course-registration-app",
+        "targetWorkloadRef": "course-registration-db",
+        "protocol": "tcp",
+        "targetPort": 5432,
+        "endpointBindingRequired": true,
+        "secretBindingRequired": true
+      },
+      "sourceRefs": ["checkpointCase:e1-aws:private-database-connection"],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    }
+  ]
+}

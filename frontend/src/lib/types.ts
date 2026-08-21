@@ -86,14 +86,6 @@ export interface DeploymentPreferences {
   targets: DeploymentTarget[];
   monthly_budget_amount?: number | null;
   monthly_budget_currency?: string;
-  compute_profile?:
-    | 'standaloneOne'
-    | 'managedGroupOne'
-    | 'managedGroupManySingleZone'
-    | 'managedGroupManyMultiZone';
-  replica_count?: number;
-  public_ingress?: 'direct' | 'loadBalanced';
-  persistent_workload_placement?: 'colocate' | 'separateCompute';
   resource_constraints_text?: string;
 }
 
@@ -101,6 +93,14 @@ export interface ArtifactDocument {
   artifacts: Record<string, unknown>;
   validation: Record<string, ArtifactSummary['validation']>;
   artifact_status: Record<string, string>;
+  artifact_metadata?: Record<
+    string,
+    {
+      schemaVersion?: string;
+      readOnly?: boolean;
+      regeneration?: { required?: boolean; targetSchemaVersion?: string; reason?: string };
+    }
+  >;
 }
 
 export interface FileArtifactSnapshot {

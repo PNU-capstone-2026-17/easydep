@@ -16,8 +16,9 @@
 - `app/core/orchestration/README.md`: 오케스트레이터 명령과 provider 계약
 - `evaluation/README.md`: 평가 실행 명령
 - `evaluation/experiment-contract.md`: 실패·검열 분류
-- [의존성 실험의 배포 계획 반영](resource-plan-experiment-reflection.md): E1~E3 반영 경계와 3사 IaC 정적 실험 결과
 - FastAPI `/docs`: 현재 HTTP API 계약
+
+완료된 E1~E3 및 관리형 L4 실험 결과는 [보관 문서](archive/README.md)에서 확인한다.
 
 ## 유지 원칙
 

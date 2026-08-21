@@ -431,10 +431,23 @@ def validate_resource_plan_binding(
     diagnostics: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
     provider = str(resource_plan.get("provider") or "")
-    for node in resource_plan.get("nodes") or []:
-        if node.get("handling") != "configureInsideOwner":
-            continue
-        provider_kind = str(node.get("providerKind") or "")
+    embedded_items = list(resource_plan.get("embeddedBlocks") or [])
+    if not embedded_items:
+        embedded_items = [
+            node
+            for node in resource_plan.get("nodes") or []
+            if node.get("handling") == "configureInsideOwner"
+        ]
+    for node in embedded_items:
+        provider_kind = str(
+            node.get("providerKind")
+            or {
+                "health_check": "health-check",
+                "block_device_mappings": "disk",
+                "data_disk": "disk",
+                "disk": "disk",
+            }.get(str(node.get("blockPath") or ""), "")
+        )
         required_keys = _EMBEDDED_REQUIRED_KEYS.get(provider, {}).get(provider_kind, set())
         if not required_keys:
             continue
@@ -535,9 +548,17 @@ def validate_resource_plan_binding(
             }
         )
 
-    requires_disk_attachment = any(
-        edge.get("label") == "attaches" and str(edge.get("to") or "").startswith("disk")
-        for edge in resource_plan.get("edges") or []
+    requires_disk_attachment = (
+        bool(resource_plan.get("storageBindings"))
+        or any(
+            node.get("providerPrimitiveKind") == "disk-attachment"
+            for node in resource_plan.get("nodes") or []
+        )
+        or any(
+            edge.get("label") == "attaches"
+            and str(edge.get("to") or "").startswith("disk")
+            for edge in resource_plan.get("edges") or []
+        )
     )
     if requires_disk_attachment:
         attachment_types = _DISK_ATTACHMENT_TYPES.get(provider, set())
@@ -567,9 +588,7 @@ def validate_resource_plan_binding(
     allowed_unplanned_types = (
         _DISK_ATTACHMENT_TYPES.get(provider, set()) if requires_disk_attachment else set()
     )
-    authoritative_plan = bool(
-        resource_plan.get("deploymentTopology") and resource_plan.get("providerProjectionPolicy")
-    )
+    authoritative_plan = resource_plan.get("schemaVersion") == "easydep-resource-plan"
     unexpected_types = (
         sorted(set(counts) - planned_types - allowed_unplanned_types) if authoritative_plan else []
     )
@@ -808,21 +827,6 @@ def validate_resource_plan_binding(
                         "details": {"bodyIndexes": unselected},
                     }
                 )
-        if (resource_plan.get("deploymentTopology") or {}).get("workloadLayout") != "primaryOnly":
-            public_database_rules = [
-                index
-                for index, body in enumerate(traffic_bodies)
-                if "5432" in _body_text(body) and "0.0.0.0/0" in _body_text(body)
-            ]
-            if public_database_rules:
-                diagnostics.append(
-                    {
-                        "code": "BIND-DATABASE-INGRESS-001",
-                        "message": "PostgreSQL port 5432 must not be publicly reachable.",
-                        "details": {"bodyIndexes": public_database_rules},
-                    }
-                )
-
         group_node = by_kind.get("compute-group")
         if group_node:
             expected_capacity = int(group_node.get("desiredCapacity") or 1)
@@ -1059,9 +1063,7 @@ def validate_resource_plan_against_plan(
     allowed_unplanned_types = (
         _DISK_ATTACHMENT_TYPES.get(provider, set()) if requires_disk_attachment else set()
     )
-    authoritative_plan = bool(
-        resource_plan.get("deploymentTopology") and resource_plan.get("providerProjectionPolicy")
-    )
+    authoritative_plan = resource_plan.get("schemaVersion") == "easydep-resource-plan"
     unexpected_types = (
         sorted(set(counts) - planned_types - allowed_unplanned_types) if authoritative_plan else []
     )

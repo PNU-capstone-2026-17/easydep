@@ -1,1124 +1,472 @@
-# Docker-on-VM 배포 토폴로지와 리소스 의존성
+# WorkloadGraph 기반 배포 다이어그램 생성 기준
 
-이 문서는 EasyDep의 Docker-on-VM 배포 다이어그램과 IaC 생성에 사용하는 현재 정본이다.
-논리 요구사항을 CSP 실제 리소스로 투영하며, 벤더 중립 가상 리소스를 저장하지 않는다.
+이 문서는 현재 코드가 배포 다이어그램을 만드는 방법과 그 산출물이 요구사항·설계·구현·IaC
+단계에 연결되는 방식을 설명한다. 목표 설계안이 아니라 현재 실행 경로를 기준으로 한다.
 
-## 1. 지원 범위
+배포 다이어그램의 구조화 원본은 PlantUML이나 고정 topology template이 아니다.
+원본은 `WorkloadGraph`이며, `DeploymentPlan`과 CSP별 `ResourcePlan`은 이를 입력으로
+결정론적으로 생성된다. runtime 다이어그램, provisioning 다이어그램과 OpenTofu는 같은
+구조화 계획을 서로 다르게 투영한 결과다.
 
-지원한다.
+```text
+요구사항 분석
+  ├─ refined requirements / CapabilityContract
+  ├─ resource intake / RESOURCE_SPEC
+  └─ use-case model and specifications
+                    │
+                    ▼
+class model → sequence model → API model → ERD model
+                    │
+                    ▼
+deployment_diagram 설계 스테이지
+  LLM: WorkloadGraph 후보만 제안
+  코드: PlanningFact 추출·명시 계약 overlay·graph 검증
+  코드: DeploymentPlan → provider ResourcePlan → 두 PlantUML view
+                    │
+             저장·사용자 피드백
+                    │
+                    ▼
+CloudDesignAdapter → 구현/테스트 → runtime contract 관찰
+  → 값 binding → ResourcePlan 재투영 → OpenTofu/bootstrap
+```
 
-- CSP 한 곳과 Region 한 곳
-- Spring Boot 애플리케이션 컨테이너
-- 선택적 PostgreSQL 컨테이너
-- 단일 VM 또는 CSP 관리형 VM 그룹
-- 단일 VM의 직접 공개 또는 관리형 VM 그룹의 L4 Load Balancer 공개
-- 선택적 독립 영속 block disk
-- 사용자가 EasyDep 배포 번들로 앱 이미지를 한 번 build·push하고 digest로 pull하는 배포
-- HTTP 애플리케이션과 HTTP readiness endpoint
+주요 구현 위치는 다음과 같다.
 
-지원하지 않는다.
-
-- Multi-Region
-- HTTPS/TLS, 인증서, 도메인 검증
-- managed database, shared filesystem, Kubernetes, ECS 같은 별도 실행 플랫폼
-- autoscaling, SLA 또는 고가용성 결과 보장
-- 여러 쓰기 replica가 하나의 block disk를 공유하는 구성
-
-현재 공개 Load Balancer는 HTTP 내용을 해석하는 L7 제품이 아니라 TCP를 전달하는 L4 제품이다.
-따라서 이 범위의 공개 endpoint는 개발·검증용 HTTP이며 production-secure endpoint가 아니다.
-
-## 2. 입력 결정과 유효한 조합
-
-`DeploymentTopology/v1`은 다음 두 결정을 조합한다. 공개 진입은 compute에서 파생한다.
-
-| 결정 | 값 |
+| 책임 | 코드 |
 |---|---|
-| App compute | `standaloneOne`, `managedGroupOne`, `managedGroupManySingleZone`, `managedGroupManyMultiZone` |
-| workload 배치 | `primaryOnly`, `colocatedPersistent`, `isolatedPersistent` |
-| 공개 진입(파생) | standalone이면 `direct`, managed group이면 `loadBalanced` |
+| 설계 스테이지 배선 | [`app/design/graphs/subgraphs.py`](../app/design/graphs/subgraphs.py), [`app/design/graphs/design_graph.py`](../app/design/graphs/design_graph.py) |
+| WorkloadGraph 구조화 출력 | [`app/design/services/deployment_diagram/extractor.py`](../app/design/services/deployment_diagram/extractor.py) |
+| facts·배치·runtime binding | [`app/design/services/deployment_diagram/planner.py`](../app/design/services/deployment_diagram/planner.py) |
+| bundle 조립 | [`app/design/services/deployment_diagram/bundle.py`](../app/design/services/deployment_diagram/bundle.py) |
+| CSP 리소스 폐쇄성 | [`app/design/services/deployment_diagram/provider_template.py`](../app/design/services/deployment_diagram/provider_template.py) |
+| PlantUML 두 view | [`app/design/services/deployment_diagram/provider_plantuml.py`](../app/design/services/deployment_diagram/provider_plantuml.py) |
+| 구현 단계 인계 | [`app/core/orchestration/adapters/cloud_design.py`](../app/core/orchestration/adapters/cloud_design.py), [`app/core/orchestration/adapters/vm_delivery.py`](../app/core/orchestration/adapters/vm_delivery.py) |
+| OpenTofu 생성 | [`app/core/orchestration/iac_renderer.py`](../app/core/orchestration/iac_renderer.py) |
 
-제약은 다음과 같다.
+## 1. 계약과 진실의 원천
 
-- `standaloneOne`은 `direct`만 사용한다. 단일 VM 앞의 Load Balancer는 지원하지 않는다.
-- 관리형 그룹은 `loadBalanced`만 사용한다.
-- 영속 workload의 같은 compute 배치는 `standaloneOne`에만 허용한다.
-- 여러 App VM을 선택하면 App은 무상태여야 한다.
-- `managedGroupManyMultiZone`은 최소 두 VM과 최소 두 Zone을 요구한다.
-- VM 그룹, Multi-Zone, Load Balancer는 배치·운영 선택이지 고가용성 보장이 아니다.
-
-CSP, Region, 예산만 초기 요구사항에서 받는다. workload 목록과 연결은 설계 산출물에서 파생하며
-사용자에게 다시 입력시키지 않는다. 구체 설계에서는 다음 최소 제약만 받는다.
-
-- Primary compute profile
-- many profile을 선택한 경우 replica 수
-- multi-zone profile을 선택한 경우 Zone 목록
-- 영속 workload가 있고 primary가 `standaloneOne`인 경우에만 `colocate` 또는 `separateCompute`
-
-영속 workload 배치에 사용자 지시가 없으면 데이터 격리를 우선해 `separateCompute`를 기본으로
-제안하고 검토 가능하게 표시한다. managed group에서는 별도 compute가 강제된다. Public ingress,
-Disk, NAT, Secret binding은 묻지 않고 선택된 compute와 workload 계약에서 파생한다.
-
-## 3. 정본과 생성 흐름
-
-```text
-요구사항과 논리 배포 모델
-  → DeploymentTopology/v1
-  → provider projection policy
-  → DepKB capability realization
-  → ResourcePlan/v1
-  ├─ provisioning dependency diagram
-  ├─ runtime deployment diagram
-  └─ IaC 생성·검증
-```
-
-`ResourcePlan/v1`이 다이어그램과 IaC 생성의 공통 입력이다. 별도의 수작업 HTML 모델은 두지
-않으며, 선택 배포에서 생성한 PUML과 SVG가 실제 ResourcePlan의 시각화 결과다.
-
-다이어그램은 둘로 나눈다.
-
-- provisioning: `선행 리소스 → 후행 리소스` 방향만 표시한다.
-- runtime: 실제 요청, health probe, 애플리케이션 간 통신과 disk attachment를 표시한다.
-
-ResourcePlan 내부 edge는 소비자에서 참조 대상으로 기록될 수 있으므로, provisioning 렌더러가
-화살표를 뒤집어 항상 `선행 → 후행`으로 보여 준다.
-
-## 4. 공통 배포 준비 과정
-
-EasyDep는 CSP 계정이나 credential을 받지 않는다. 사용자가 로컬 AWS·Azure·Google Cloud
-인증으로 생성 번들을 실행하며, 생성 IaC가 아래 리소스를 만든다.
-
-1. CSP, Region, topology 조합과 runtime port·readiness path를 확정한다.
-2. PostgreSQL을 선택하면 사용자가 provider Secret을 먼저 만들고 그 reference만 배포 변수로 준다.
-3. Network, Subnet, traffic filter와 필요한 공인 주소·outbound 경로를 만든다.
-4. CSP Registry와 App VM pull identity를 만든다.
-5. 앱 이미지를 한 번 build·push한 뒤 digest를 checkpoint에 고정한다.
-6. 고정 digest가 준비된 뒤 VM 또는 VM template의 user-data/cloud-init으로 Docker와 앱을 실행한다.
-7. PostgreSQL을 선택했다면 전용 Secret read identity, State VM과 disk를 만들고 attach, filesystem, mount, Docker bind를 수행한다.
-8. 앱의 datasource와 runtime 환경설정을 주입한다. State VM 교체 시 고정 사설 주소를 재사용하므로 앱 이미지는 다시 빌드하지 않는다.
-9. 외부 업무 요청, readiness와 데이터 보존을 검증한다.
-10. endpoint, resource ID, image digest, status·destroy 절차를 출력한다.
-
-Secret은 `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`를 가진 JSON 객체로 고정한다.
-EasyDep는 Secret 값이나 CSP credential을 수집·저장하지 않는다. App VM은 Registry pull과
-Secret read 권한을 가진 identity를 쓰고, 별도 State VM은 Registry 권한이 없는 전용 Secret
-read identity를 써서 최소 권한을 유지한다.
-
-사설 VM이 Registry나 package 저장소에 접근해야 하면 NAT 또는 private endpoint가 필요하다.
-사전 제작 이미지로 모든 실행물을 포함하는 경우에만 해당 outbound 의존성을 제거할 수 있다.
-현재 v1은 private endpoint 대신 NAT를 선택한다. 직접 공개 App VM은 자신의 공인 주소로
-송신하고, 별도 State VM만 사설이면 두 경로를 함께 사용한다.
-
-## 5. AWS
-
-### 5.1 기본 VM
-
-주요 생성 의존성은 다음과 같다.
-
-```text
-Region
-  → VPC
-  → Subnet
-  → Security Group
-AMI + Subnet + Security Group
-  → EC2 Instance
-```
-
-- VPC는 Regional 리소스다.
-- Subnet은 한 Availability Zone에 속하고 VPC ID를 참조한다.
-- Security Group은 VPC ID를 참조한다.
-- EC2는 AMI, Subnet, Security Group을 참조한다.
-- 기본 Primary ENI와 Root EBS Volume은 EC2 생성 결과로 생긴다. ResourcePlan/IaC 그래프에는 사용자가 작성해야 하는 리소스만 기본 표시한다.
-
-직접 공개 경로는 다음과 같다.
-
-```text
-VPC → Internet Gateway
-VPC → Route Table
-Internet Gateway + Route Table → default Route
-Subnet + Route Table → Route Table Association
-EC2 + Elastic IP → Elastic IP Association
-```
-
-기능 경로는 `Internet → EIP → ENI → EC2 guest port → container port`다.
-
-별도 State VM 또는 사설 LB backend의 outbound는 다음과 같다.
-
-```text
-Public Subnet + EIP → NAT Gateway
-Private Subnet + private Route Table → default Route → NAT Gateway
-Public Subnet + public Route Table → default Route → Internet Gateway
-```
-
-직접 공개 App VM과 별도 State VM을 함께 쓰면 App Subnet은 public, State Subnet은 private으로
-분리한다. 하나의 Subnet을 서로 다른 default Route Table에 동시에 연결하지 않는다.
-
-### 5.2 Network Load Balancer
-
-선택 리소스는 정확히 다음과 같다.
-
-- Network Load Balancer: `aws_lb`와 `load_balancer_type = "network"`
-- Network Load Balancer Listener: `aws_lb_listener`
-- Target Group: `aws_lb_target_group`
-- 단일 VM이면 Target Group Attachment, ASG이면 `target_group_arns`
-
-생성 참조는 다음과 같다.
-
-```text
-VPC → Target Group
-Subnet 1개 이상 + 선택적 NLB Security Group → Network Load Balancer
-Network Load Balancer + Target Group → TCP Listener :80
-Target Group + EC2 → Target Group Attachment        # standalone
-Launch Template + App Subnet들 + Target Group → Auto Scaling Group
-```
-
-NLB 자체는 Subnet 한 개 이상으로 생성할 수 있다. Multi-Zone topology를 선택했을 때만 선택
-Zone마다 Subnet을 연결한다. 이는 ALB의 서로 다른 AZ Subnet 최소 2개 규칙과 다르다.
-
-요청 경로는 `NLB → TCP Listener :80 → Target Group → healthy EC2 → 앱 host port`다.
-Target Group의 전달 protocol은 TCP이고, readiness 판정에는 HTTP health check와 앱 경로를 쓸 수 있다.
-ASG가 ELB health를 사용하려면 Target Group 연결과 ASG health check type 설정이 모두 필요하다.
-
-## 6. Azure
-
-### 6.1 기본 VM
-
-```text
-Resource Group + Region → Virtual Network
-Virtual Network → Subnet
-Subnet → Network Interface
-Network Interface + Network Security Group → NIC–NSG Association
-Image + Network Interface → Linux Virtual Machine
-Public IP + Network Interface → 직접 공개 IP configuration
-```
-
-Resource Group과 location은 대부분 Azure 리소스의 공통 생성 문맥이다. 다이어그램은 주요 ID
-참조를 우선 표시하고, 공통 문맥을 생략할 때에는 생략 정책을 명시한다.
-
-### 6.2 Load Balancer
-
-선택 리소스는 다음과 같다.
-
-- Load Balancer: `azurerm_lb`, Standard SKU
-- Load Balancer / Frontend IP Configuration: `azurerm_lb` 내부 구성
-- Backend Address Pool: `azurerm_lb_backend_address_pool`
-- Probe: `azurerm_lb_probe`
-- Load Balancing Rule: `azurerm_lb_rule`
-- 단일 VM: `azurerm_network_interface_backend_address_pool_association`
-- VMSS: NIC IP configuration의 `load_balancer_backend_address_pool_ids`
-
-생성 참조는 다음과 같다.
-
-```text
-Public IP → Load Balancer / Frontend IP Configuration
-Load Balancer → Backend Address Pool
-Load Balancer → Probe
-Load Balancer + Frontend config + Backend Pool + Probe → Load Balancing Rule
-NIC + Backend Pool → NIC Backend Address Pool Association   # standalone
-VMSS NIC configuration + Backend Pool → VMSS               # managed group
-```
-
-Load Balancing Rule은 TCP frontend port 80을 앱 backend port로 전달한다. Probe는 앱 readiness
-path를 HTTP로 확인한다. Application Gateway와 달리 전용 Subnet, HTTP Listener, Backend HTTP
-Settings, Request Routing Rule은 필요하지 않다.
-
-사설 VM outbound는 Standard Static Public IP와 NAT Gateway를 각각 만든 뒤
-`azurerm_nat_gateway_public_ip_association`과
-`azurerm_subnet_nat_gateway_association` 두 객체로 주소와 Subnet을 모두 연결한다.
-
-## 7. GCP
-
-### 7.1 기본 VM
-
-```text
-Project → VPC Network
-VPC Network + Region → Subnetwork
-VPC Network → Firewall Rule
-OS Image + Subnetwork → VM Instance
-Regional External IP → network_interface.access_config   # 직접 공개
-```
-
-VPC Network는 global, Subnetwork는 regional, VM과 일반 Persistent Disk는 zonal이다.
-
-### 7.2 Regional External Passthrough Network Load Balancer
-
-선택 리소스는 다음과 같다.
-
-- Regional Static External IP Address: `google_compute_address`
-- Forwarding Rule: `google_compute_forwarding_rule`
-- Region Backend Service: `google_compute_region_backend_service`
-- Region Health Check: `google_compute_region_health_check`
-- standalone이면 Unmanaged Instance Group, managed이면 MIG가 노출하는 Instance Group
-
-생성 참조는 다음과 같다.
-
-```text
-Regional Address + Region Backend Service → Forwarding Rule
-Region Health Check + Instance Group → Region Backend Service
-VM → Unmanaged Instance Group                            # standalone
-Instance Template → Managed Instance Group              # managed group
-```
-
-설정은 `load_balancing_scheme = "EXTERNAL"`, TCP, frontend port 80이다. 이 제품은 proxy가 아니라
-passthrough이므로 Target HTTP Proxy와 URL Map이 없다. 또한 destination port를 변환하지 않으므로
-VM host port 80을 열고 필요하면 Docker가 `host 80 → container HTTP port`로 게시해야 한다.
-Firewall Rule은 client traffic과 Google health-check source의 TCP/HTTP probe를 허용해야 한다.
-
-사설 VM outbound는 VPC Network의 기존 default internet route를 유지하고, 같은 Region의
-Cloud Router와 Cloud NAT를 만든다. Cloud NAT는 `AUTO_ONLY`, `LIST_OF_SUBNETWORKS`, 선택
-Subnetwork의 `ALL_IP_RANGES`로 고정한다.
-
-## 8. 영속 disk와 애플리케이션 의존성
-
-세 CSP 모두 독립 block disk는 연결할 VM과 호환되는 Region/Zone에 있어야 한다.
-
-| CSP | data disk | 연결 |
+| 계층 | `schemaVersion` | 역할 |
 |---|---|---|
-| AWS | EBS Volume | `aws_volume_attachment` |
-| Azure | Managed Disk | `azurerm_virtual_machine_data_disk_attachment` |
-| GCP | Persistent Disk | `google_compute_attached_disk` |
-
-IaC의 attachment는 guest filesystem을 자동으로 준비하지 않는다. user-data/cloud-init이 다음을
-멱등적으로 수행해야 한다.
+| PlanningFact 문서 | `easydep-planning-facts` | 상류 산출물의 값·근거·digest |
+| PlanningContext | `easydep-planning-context` | provider, Region, Zone 후보, 예산·용량·트래픽 |
+| WorkloadGraph | `easydep-workload-graph` | 배포할 실행 단위와 통신·구조 제약 |
+| DeploymentPlan | `easydep-deployment-plan` | provider-neutral compute·배치·storage·network·runtime binding |
+| ResourcePlan | `easydep-resource-plan` | 한 CSP의 실제 primitive와 HCL 참조 |
+| 배포 bundle | `easydep-deployment-diagram` | facts, graph, spec, provider projection의 저장 단위 |
+| runtime binding 결과 | `easydep-runtime-binding` | 구현 관찰의 값 binding 또는 설계 재생성 요구 |
 
 ```text
-disk attach
-  → 안정적인 device ID 확인
-  → filesystem이 없을 때만 format
-  → guest mount
-  → Docker bind mount
-  → PostgreSQL data directory 사용
+PlanningFact + LLM proposal
+  → WorkloadGraph
+  → DeploymentPlan
+  → ResourcePlan
+  ├─ runtime PlantUML
+  ├─ provisioning PlantUML
+  └─ OpenTofu + bootstrap
 ```
 
-앱과 리소스 사이의 필수 계약은 다음과 같다.
+PUML을 읽어 계획이나 IaC를 만드는 역변환은 없다. 사용자 피드백도 PUML을 직접 고치지
+않고 WorkloadGraph를 고친 뒤 모든 하위 산출물을 다시 만든다.
 
-- Registry digest와 VM pull identity
-- 앱 container port와 VM host port
-- 외부 요청을 허용하는 Security Group, NSG 또는 Firewall Rule
-- Load Balancer health check와 앱 readiness path
-- PostgreSQL endpoint와 datasource 설정
-- disk mount와 PostgreSQL data path
+## 2. 앞단에서 입력되는 산출물
 
-readiness는 Load Balancer가 트래픽 대상을 고르는 신호다. VM 그룹의 교체 판단 신호와 같게
-구성할 수 있지만 역할과 실패 영향이 다르므로 ResourcePlan에서는 별도 정책으로 취급한다.
+### 2.1 요구사항 분석
 
-data disk는 ResourcePlan에서 `retain`이며 Terraform에는 `lifecycle.prevent_destroy = true`를
-둔다. 일반 `destroy`는 disk를 detach하고 Terraform state에서 제외한 뒤 나머지 실행 소유
-리소스만 제거한다. 데이터 삭제는 확인 절차가 있는 별도 `purge`에서만 수행한다.
+`DesignAdapter`는 요구사항 결과를 설계 상태로 다음처럼 옮긴다.
 
-## 9. 근거와 검증 상태
-
-공식 문서 확인, Terraform plan, 실제 CSP 생성, runtime 기능 검증을 구분한다. 원장 구조 검사가
-통과했다는 사실을 의미 검증 또는 동적 검증으로 표현하지 않는다.
-
-과거 AWS ALB, Azure Application Gateway, GCP External Application Load Balancer 실험은 당시
-L7 구성의 역사적 artifact다. 현재 선택한 세 L4 경로의 근거로 재사용하지 않는다.
-2026-08-17에는 같은 도메인 중립 최소 앱으로 AWS Network Load Balancer, Azure Standard Load
-Balancer, GCP Regional External Passthrough Network Load Balancer를 각각 1회 동적 검증했다.
-따라서 `runtimeEvidence.managedL4Ingress`는 관찰된 항목과 미측정 항목을 분리해 기록한다.
-
-필수 동적 검증은 다음과 같다.
-
-- TCP port 80 외부 요청
-- HTTP readiness 실패 backend 제외와 운영자 복원
-- 여러 VM을 선택했을 때 각 backend 도달
-- 실행 소유 리소스 cleanup 뒤 잔여 0
-- State VM 재부팅·교체 뒤 disk reattach와 데이터 보존
-
-L4 실험은 SLA, 처리량·지연시간, 관리형 VM 자동교체를 측정하지 않았다. 세 항목은 L4 전달
-의존성의 성공으로 간주하지 않는다. 상세 결과는 `managed-l4-ingress-experiment-20260817.md`에 있다.
-
-## 10. 산출물과 재현성
-
-다이어그램 예시는 `scripts/generate_deployment_diagram_examples.py`가 모든 유효 topology 조합의
-PUML과 SVG를 결정적으로 생성한다. PNG는 만들지 않으며 `docs/examples/`는 생성 산출물이므로
-Git에서 제외한다.
-
-최종 사용자 배포 번들은 최소한 다음을 포함해야 한다.
-
-- 애플리케이션 소스와 Dockerfile
-- provider별 Terraform
-- `doctor`, `plan`, `deploy`, `status`, `destroy` 실행 진입점
-- 영속 disk가 있으면 명시적 데이터 삭제용 `purge` 진입점
-- 변수 예시와 비용·보안 경계 안내
-- 배포 checkpoint: provider, Region, deployment ID, resource IDs, image digest, 완료 단계
-
-체크포인트로 재개할 때에는 실행 ID, 앱 ID, 완료 단계와 산출물 대응이 일치하는지 확인한다.
-배포 순서는 `Registry 생성 → build·push → digest 기록 → compute 생성`으로 고정하며, 이미
-기록된 같은 digest는 재개 시 다시 build하지 않는다.
-
-## 11. 배포 다이어그램은 무엇을 근거로 만드는가
-
-배포 다이어그램은 LLM이 임의로 그리는 그림이 아니다. 다음 네 입력을 합쳐 결정적으로 만든다.
-
-| 입력 | 확인하는 사실 | 다이어그램에 미치는 영향 |
+| 요구사항 결과 | 설계 상태 | 배포 단계의 용도 |
 |---|---|---|
-| 논리 배포 모델 | workload, 상태성, workload 간 연결 | 실행 단위와 통신 경계 |
-| Resource Spec | CSP, Region, primary compute profile, replica 수, Zone, 선택적 영속 workload 배치 제약 | compute pool과 allocation |
-| 앱 runtime 계약 | container port, health path, datasource 형식, mount path | LB backend/probe, firewall port, guest·container 설정 |
-| DepKB와 프로젝트 정책 | CSP 생성 참조, 선택한 L4 realization, OS/PostgreSQL image 정책 | ResourcePlan의 provider node·edge와 검증 규칙 |
+| `requirements` | `refined_requirements` | workload·제약 제안의 원문 근거 |
+| `capability_contract` | 같은 이름 | accepted typed constraint와 미해결 질문 |
+| `resource_intake` | 같은 이름 | 사용자가 제공한 자원 값의 provenance |
+| actors/use cases/specifications | `usecase_spec` | 진입점·외부 시스템·호출 후보의 근거 |
+| `resource_spec` | 같은 이름 | provider와 위치·예산·용량 context |
 
-필수 Resource Spec 필드는 다음과 같다.
+`RESOURCE_SPEC v4`는 topology 선택표가 아니다. provider, Region, 최대 3개의 deployment
+target, 후보 Zone, 월 예산, 최소 vCPU·메모리, 트래픽 형태, 규모와 데이터 지역 제약을
+담는다. `workloads=["vm"]`은 Docker-on-VM 범위를 나타내는 호환 필드일 뿐, workload
+개수나 VM 배치를 지시하지 않는다.
 
-```text
-provider                aws | azure | gcp
-region                  실제 Region
-computeProfile          standaloneOne | managedGroupOne |
-                        managedGroupManySingleZone | managedGroupManyMultiZone
-replicaCount            one profile은 1, many profile은 2 이상
-selectedZones           single-zone은 최대 1개, multi-zone은 2개 이상
-persistentWorkloadPlacement  colocate | separateCompute
-                            영속 workload + standaloneOne일 때만 사용자 선택
-applicationStateless    replica가 여러 개면 true라는 분석 근거 필요
-```
+### 2.2 앞선 설계 산출물
 
-ResourcePlan의 배치 정본은 다음 네 목록이다.
+실제 설계 순서는 다음과 같다.
 
 ```text
-workloads      실행 단위와 stateMode(none | ephemeral | persistent)
-connections    workload 간 프로토콜 연결
-computePools   CSP compute 경계와 profile·replica·Zone
-allocations    workloadRef → computePoolRef
+class_diagram → sequence_diagram → api_spec → erd → deployment_diagram
 ```
 
-v1은 primary workload 1개와 선택적 영속 workload 1개, compute pool 최대 2개만 지원한다.
-영속 workload의 runtime 계약은 현재 PostgreSQL만 지원한다. 임의의 worker·cache·queue를
-일반 스케줄링하거나 사용자에게 workload 목록을 작성하게 하는 기능은 범위 밖이다.
+| 입력 | 사용하는 방법 | 자동으로 하지 않는 일 |
+|---|---|---|
+| 요구사항 | source reference와 LLM grounding | 자연어를 ResourcePlan에 복사 |
+| CapabilityContract | capability fact와 typed constraint | `needsQuestion`을 기본값으로 해소 |
+| resource intake/spec | planningContext와 provenance fact | topology 선택 |
+| 유스케이스 | 진입점·외부 시스템 후보 판단 | actor를 workload로 변환 |
+| BCE 클래스 | 생성 앱 코드 경계 판단 | 클래스·Entity별 workload 분할 |
+| 시퀀스 | connection 후보 판단 | protocol·port 추측 |
+| API | HTTP interface 후보 fact | public exposure 판정 |
+| ERD | engine 없는 persistent-data fact | DB workload·engine·disk 생성 |
 
-사용자 credential, Secret 값, 자동 복구 또는 고가용성 희망 여부는 이 구조 입력에 넣지 않는다.
-credential은 사용자의 실행 환경에만 있고, Secret은 기존 provider Secret reference만 배포 시
-받는다. 가용성 결과는 현재 다이어그램이 주장하지 않는다.
+모든 입력은 `inputArtifacts[]`에 artifact 이름, 선택적 version, canonical SHA-256 digest로
+기록된다. `planning_inputs_stale()`은 저장된 version/digest와 현재 값을 비교한다.
 
-## 12. 생성 알고리즘을 손으로 따라 하는 방법
+### 2.3 명시적 deployment planning facts
 
-### 12.1 논리 workload를 먼저 찾는다
+상류에서 이미 구조적으로 결정한 값은 `deployment_planning_facts`로 추가할 수 있다.
+`authority=explicit`, `status=accepted`인 다음 계약은 정규화 코드가 직접 overlay한다.
 
-1. 실제 배포 artifact를 소유한 `executionEnvironment`를 primary workload로 잡는다.
-2. `stateMode=persistent`인 실행 단위를 영속 workload로 잡는다.
-3. `Connections`의 source와 target이 workload이면 workload 연결로 기록한다.
-4. controller, entity, repository 같은 코드 구조는 별도 workload로 승격하지 않는다.
+- `workloadContract`: artifact/interface/storage/replica 수
+- `connectionContract`: workload connection과 endpoint/Secret binding
+- `constraintContract`: 구조 제약
+- capability의 `typedConstraints`: WorkloadGraph constraint
 
-`kind`와 이름은 표시용이다. 영속성·Disk 생성·배치는 `stateMode`와 allocation으로 결정한다.
-두 workload가 같은 compute pool을 참조하면 함께 배치되고, 서로 다른 pool을 참조하면 별도
-VM에 배치된다.
+명시 계약은 LLM이 정확히 복사하기를 기대하지 않는다. 명시 계약 계열이 존재하면 source
+reference가 없거나 accepted fact가 허용하지 않은 구조 제약은 후보에서 제거하고 이유를
+`derivations[]`에 남긴다.
 
-### 12.2 토폴로지 조합을 확정한다
+## 3. deployment_diagram 서브그래프
 
-다음 순서로 검사한다.
+생성 경로는 다음 세 노드다.
 
-1. `standaloneOne`은 `direct`만 허용하며 단일 VM 앞의 Load Balancer는 만들지 않는다.
-2. managed group은 하나의 고정 진입점이 필요하므로 `loadBalanced`만 사용한다.
-3. `colocatedPersistent`는 `standaloneOne`만 허용한다.
-4. many profile은 replica가 2 이상이고 App이 무상태라는 근거가 있어야 한다.
-5. multi-zone profile은 서로 다른 Zone이 2개 이상이어야 한다.
+```text
+extract_deployment_diagram
+  → finalize_deployment_diagram
+  → render_deployment_diagram
+```
 
-하나라도 충족하지 못하면 그림을 추측해서 완성하지 않고 `needsInput`으로 중단한다. 이 검사를
-통과하면 9개 논리 조합 중 하나가 되고, CSP를 곱하면 27개 provider 조합 중 하나가 된다.
+1. extract는 LLM에 구조화된 상류 context를 주고 `WorkloadGraphProposal`만 받는다.
+2. finalize는 PlanningFact, 정규화 WorkloadGraph, DeploymentPlan과 각 target의
+   ResourcePlan을 bundle로 조립한다.
+3. render는 bundle의 runtime PUML을 만들고 PlantUML 문법을 검사한다. provisioning PUML은
+   finalize 결과에 함께 저장된다.
 
-### 12.3 provider projection policy를 만든다
+LLM 응답 스키마에는 VM, VM group, subnet, disk, Public IP, LB, NAT, firewall, Registry와
+CSP IAM primitive가 없다. LLM은 workload, interface, workload 소유 storage/configuration,
+external dependency, connection과 constraint 후보만 제안한다.
 
-토폴로지를 다음 실행 제약으로 바꾼다.
+피드백 경로는 다음과 같다.
 
-- standalone 또는 provider-native managed group
-- 정확한 fixed replica 수; autoscaling 없음
-- 최소 Zone·Subnet 수와 선택 Zone
-- L4 Load Balancer 필요 여부
-- backend health check 필요 여부
-- AWS Multi-Zone이면 Zone별 App Subnet과 NLB Ingress Subnet
+```text
+revise_deployment_diagram
+  → finalize_deployment_diagram
+  → render_deployment_diagram
+  → persist → 같은 gate
+```
 
-이 정책은 “두 대이므로 HA” 같은 결과를 만들지 않는다. 오직 무엇을 몇 개, 어디에 둘지만
+reviser는 WorkloadGraph만 수정하고 하위 계획을 전부 다시 만든다. 배포 스테이지에는 별도
+`check_deployment_diagram` 노드가 없다. planner/provider validator가 `issues`와
+`unresolved`를 만들며, PlantUML 문법 통과와 배포 결정 완료는 서로 다른 판정이다.
+
+## 4. WorkloadGraph 정규화와 검증
+
+`WorkloadGraph`의 구성은 다음과 같다.
+
+- `workloads[]`: `generatedApplication` 또는 명시적 `prebuiltImage`, interface,
+  storage/configuration, 최소 자원, replication safety, source refs
+- `externalDependencies[]`: EasyDep가 배포하지 않는 명시적 외부 시스템
+- `connections[]`: source/target, protocol과 interface reference를 가진 방향성 통신
+- `constraints[]`: replica, Zone, managed replacement, colocate/separate/isolation
+- `issues[]`, `derivations[]`, 입력 digest와 `structureDigest`
+
+`connections[]`는 애플리케이션 통신 관계이고 colocate/separate는 compute 배치 제약이다.
+corpus 파일명의 `relations-*`는 fixture의 배치 제약 수를 요약할 뿐 운영 모델 필드가 아니다.
+
+`validate_workload_graph()`는 다음을 검사한다.
+
+- workload/external dependency ID의 전역 유일성과 모든 참조의 완결성
+- workload·constraint·external dependency의 source reference
+- prebuilt image의 image, engine, container mode와 지원 runtime catalog
+- interface protocol은 현재 HTTP 또는 내부 TCP이고 exposure가 명시됐는지
+- configuration ID와 `UPPER_SNAKE_CASE` 환경변수 이름의 workload 내 유일성
+- Secret 값이 graph에 저장되지 않는지
+- storage 용량, retain/delete 정책, generated app의 절대 POSIX mount path
+- connection endpoint/interface와 protocol
+- generated source workload의 connection마다 정확히 하나의 `endpointBinding`
+
+`invalid`, `unsupported`, `needsInput`, `unjustified`는 모두 blocking class다. 모호한 exposure,
+protocol, 보존 정책과 engine을 프로젝트 기본값으로 덮지 않는다.
+
+WorkloadGraph `structureDigest`는 image digest, 실제 port/health path, 일반 설정값과 Secret
+reference를 제외한다. 이 값들은 구현·배포 단계의 binding이기 때문이다.
+
+## 5. provider-neutral DeploymentPlan
+
+`build_deployment_plan()`의 현재 규칙은 다음과 같다.
+
+1. constraint가 없으면 replica 1, minimum Zone 1이다.
+2. replica, Zone 집합, minimum Zone과 managed replacement가 같은 workload는 같은 compute
+   signature를 가진다.
+3. separate/isolation 대상은 같은 signature라도 분리한다.
+4. colocate 대상의 lifecycle signature가 다르면 invalid issue를 만든다.
+5. replica가 2 이상이거나 managed replacement가 참이면 `managedVmGroup`, 아니면
+   `standaloneVm`이다.
+6. Zone 개수만 요구되면 `candidateZones` 앞에서 필요한 만큼 고른다.
+7. 같은 compute의 알려진 CPU·메모리 하한은 합산한다. 정보가 빠지면 VM SKU는 late
+   binding으로 둔다.
+8. workload storage마다 block disk binding과 runtime mount binding을 만든다.
+9. 다중 replica는 `replicationSafety=interchangeable`이어야 한다. block storage가 있으면
+   `replicaSemantics=perReplica`도 필요하다.
+10. public standalone VM은 direct Public IP, public managed group은 L4 LB를 쓴다.
+11. public ingress가 없는 compute와 managed group에는 Registry pull·외부 HTTP용 NAT
+    egress를 만든다.
+12. WorkloadGraph connection은 internal 또는 outbound network path로 바꾼다.
+
+결과는 `computeUnits`, `placements`, `storageBindings`, `networkPaths`, `runtimeBindings`,
+`locationPlan`, `lateBindings`, `issues`, `derivations`로 구성된다.
+
+endpoint 환경변수의 주소 전략은 배치 결과에 따라 정한다.
+
+| 배치 | 전략 | 값의 원천 |
+|---|---|---|
+| 같은 compute | `containerDns` | Docker workload 이름 |
+| 다른 standalone VM | `staticPrivateIp` | provider template의 예약 사설 IP |
+| 다른 managed group | `internalLoadBalancer` | 내부 L4 endpoint |
+| external dependency | `externalInput` | 실제 배포 입력 |
+
+환경변수 이름은 설계 계약이므로 LLM 또는 명시 contract가 정할 수 있다. endpoint 값과 Secret
+값은 설계 단계에서 만들지 않는다.
+
+## 6. CSP ResourcePlan으로 닫는 과정
+
+provider template은 다음 순서로 완전한 리소스 집합을 합성한다.
+
+```text
+Registry/image delivery
+  → Secret delivery and identity
+  → network/subnet/route/NAT + compute
+  → public ingress → block storage
+  → internal traffic/internal LB → runtime units/bootstrap inputs
+```
+
+provider 또는 Region이 없으면 unresolved ResourcePlan을 만들고 IaC를 막는다.
+`deploymentTargets[]`가 여러 개면 target별 projection을 만들며 bundle은
+`mode=alternatives`가 된다. 구현 단계는 하나를 선택하기 전 `alternativesReady`로 중단한다.
+
+ResourcePlan의 표현 단위는 다음과 같다.
+
+- `nodes[]`: `handling=create` 또는 `referenceExisting`인 provider primitive
+- `references[]`: HCL consumer가 producer attribute를 참조하는 계약
+- `embeddedBlocks[]`: 독립 Terraform resource가 아닌 owner 내부 block
+- `sharedValues[]`: 둘 이상의 HCL field가 함께 쓰는 Terraform local
+- `bindingSlots[]`: 구현 또는 실제 배포 때 채울 typed variable
+- `runtimeUnits[]`: compute별 bootstrap과 container 실행 단위
+
+reference 방향은 `consumer → producer`, 즉 의존하는 쪽에서 전제 리소스 쪽이다. 각 항목은
+`consumerRef`, `consumerPath`, `producerRef`, `producerAttribute`, `cardinality`를 가진다.
+의미론적 `contains`, `uses` 관계를 IaC 원본으로 쓰지 않는다.
+
+association·attachment·route·permission resource는 ResourcePlan/OpenTofu에 남는다.
+provisioning 그림에서만 독립 노드 대신 두 끝점 사이의 방향 없는 점선으로 접는다.
+
+provider validation은 create node의 Terraform type, 모든 derivation/source ref, reference
+완결성, shared value 소비 수, CIDR 포함·비중첩, workload/runtime unit 일대일 대응,
+Registry/image binding, compute의 subnet·boot image·traffic filter, ingress/NAT endpoint,
+disk/attachment를 검사한다.
+
+AWS·Azure·GCP의 service account나 IAM identity는 workload가 아니다. Registry pull 또는
+Secret read에 provider API가 요구하는 권한 주체일 때 생성되는 실행 지원 리소스다.
+
+## 7. 두 다이어그램의 의미
+
+### runtime view
+
+runtime view는 배포 후 애플리케이션 동작을 보여 준다.
+
+- provider → Region → network → subnet → compute → Docker workload 중첩
+- workload는 `component`, image는 `artifact`, block disk는 storage 도형
+- request와 workload connection은 protocol이 있는 실선 화살표
+- workload 내부에 `[env]`, `[secret]`, `[mount]`, `[image]` 계약 표시
+- Registry, Secret, health/traffic policy와 placement/mount는 전용 선 사용
+
+선의 원천은 WorkloadGraph connection과 DeploymentPlan network/storage/runtime binding이다.
+Terraform create dependency는 runtime view에 섞지 않는다.
+
+### provisioning view
+
+provisioning view는 OpenTofu field 참조를 보여 준다.
+
+- create/reference node와 shared local 표시
+- 일반 화살표는 `consumer → prerequisite producer`
+- 같은 node pair에 참조가 여러 개일 때만 짧은 역할 label 표시
+- association/attachment/permission/route는 방향 없는 점선으로 접어 표시
+- 독립 resource가 아닌 listener/health/backend 구성은 owner 내부 block으로 표시
+- runtime HTTP/TCP 흐름은 표시하지 않음
+
+정확한 HCL 할당식은 ResourcePlan에만 둔다. 그림은 참조의 존재와 방향을 보존하되 field path를
+반복하지 않는다.
+
+## 8. 저장과 사용자 피드백
+
+저장 원본은 `deployment_diagram_bundle` 하나다. 저장소는 bundle을 읽을 때 WorkloadGraph,
+단일 DeploymentPlan/ResourcePlan을 hydrate하고 두 PUML을 다시 렌더한다.
+
+설계 그래프는 `generate/revise → persist → gate` 순으로 동작한다. 사용자가 보는 버전과
+저장된 버전이 일치하며 feedback마다 새 artifact version이 생긴다. 앞선 설계 단계로
+rewind하면 그 지점부터 앞으로 다시 실행되어 낡은 배포 bundle을 재사용하지 않는다.
+
+bundle import API는 `schemaVersion=easydep-deployment-diagram`만 받는다. 두 view는 다음
+endpoint에서 SVG/PNG로 렌더한다.
+
+```text
+GET /api/apps/{appId}/stages/deployment_diagram/views/runtime/image.svg
+GET /api/apps/{appId}/stages/deployment_diagram/views/provisioning/image.svg
+```
+
+## 9. 뒷단: 구현과 IaC 연결
+
+### 9.1 CloudDesignAdapter
+
+`CloudDesignAdapter`는 bundle을 구현 오케스트레이션 계약으로 바꾼다.
+
+- bundle이 없거나 schema가 다르면 `needsRegeneration`
+- projection이 여러 개면 `alternativesReady`와 target 선택 질문
+- 단일 ResourcePlan은 provider validation 재수행
+- WorkloadGraph, DeploymentPlan, ResourcePlan, 두 PUML과 digest 인계
+
+이 adapter는 RESOURCE_SPEC에서 topology를 다시 만들거나 DB/runtime 기본값을 넣지 않는다.
+
+### 9.2 구현 관찰과 2단계 binding
+
+구현 순서는 scaffold → acceptance tests → logic → VM selection → VM delivery다.
+`ApplicationRuntimeContract.extensions.workloads[]`의 workload별 관찰은
+`bind_runtime_contract()`로 다음 값을 채운다.
+
+- generated image digest
+- 기존 interface의 port와 health path
+- 계획된 configuration의 일반 값 또는 Secret reference
+- 계획된 storage의 mount 사용 여부와 path 일치
+
+새 workload/interface/storage/configuration, exposure 변경, mount path 불일치, 계획된
+환경변수·mount 미사용은 값 binding이 아니다. `requiresDeploymentDesignRegeneration`으로
+중단한다. 값 binding 후 graph와 plan을 다시 생성하여 전후 structure digest가 같을 때만
+같은 provider로 ResourcePlan을 재투영한다.
+
+계정·Subscription·Project, CSP credential과 Secret 값은 bundle 밖의 실제 배포 입력이다.
+VM SKU 추천은 별도 VM selection 단계에서 용량·예산으로 수행되며, 설계의 `vmSku`는 구조
+digest에 포함되지 않는 late binding이다.
+
+### 9.3 OpenTofu와 bootstrap
+
+`render_open_tofu()`는 unresolved가 없는 ResourcePlan에서 provider/variable/main/output/
+locals `.tf`, compute별 bootstrap과 `doctor.sh`, `plan.sh`, `deploy.sh`, `status.sh`,
+`destroy.sh`를 만든다.
+
+renderer는 생성된 Terraform resource type 집합과 ResourcePlan create node type 집합이
+정확히 같은지 비교한다. 모든 `references[]`가 실제 렌더 과정에서 소비됐는지도 확인한다.
+VM delivery는 HCL parse preflight 후 검증된 파일을 application의 `infra/`에 원자적으로
+교체하고 Dockerfile의 계약 port를 검사한다.
+
+## 10. 검증 경로
+
+핵심 테스트는 다음과 같다.
+
+- [`tests/test_workload_graph_planner.py`](../tests/test_workload_graph_planner.py): facts,
+  graph validation, placement, digest, runtime binding
+- [`tests/test_deployment_templates.py`](../tests/test_deployment_templates.py): provider closure,
+  두 view와 15개 결정 corpus
+- [`tests/test_vm_delivery_orchestration.py`](../tests/test_vm_delivery_orchestration.py): 구현 인계와
+  구조 변경 차단
+- [`tests/test_iac_binding_validation.py`](../tests/test_iac_binding_validation.py): HCL과 계획 정합성
+
+15개 fixture는 모두 같은 생성 파이프라인을 통과한다. standalone/group,
+replica·Zone·replacement, direct IP/LB/private NAT, 단일·복수 workload, 기본 동거·명시 분리,
+block/per-replica storage와 Secret binding 경계를 포함한다.
+
+case ID는 결과의 의미 signature다.
+
+```text
+{primary-compute-kind}-cu{전체 compute 수}-r{primary replica 수}-z{primary Zone 수}
+-w{workload 수}-pw{persistent workload 수}.relations-{배치 제약}.{ingress}
+[.bindings-{추가 binding}]
+```
+
+이 ID는 corpus용 의미 식별자이며 provider와 Region은 포함하지 않는다. 각 값은 다음처럼
 정한다.
 
-### 12.4 DepKB에서 필요한 provider 관계를 가져온다
+- compute 이름, `r`, `z`: 기준 workload `web`이 배치된 compute의 종류·replica·Zone 수
+- `cu`, `w`, `pw`: 전체 compute 수, workload 수, persistent workload 수
+- `relations`: `colocate`·`separate` constraint 수. 둘 다 없으면 `none`
+- ingress: `directPublicIp`, `loadBalancer`, 또는 public path가 없는 `privateEgressOnly`
+- `bindings`: Secret과 per-replica storage 수. 둘 다 없으면 suffix 생략
 
-기본 anchor는 `vm`이다. 영속 workload가 있으면 `disk`, Load Balancer가 파생되면
-`loadBalancer`와 `load-balanced-ingress` realization을 추가한다. 여기서 얻는 것은 VPC와
-Subnet 같은 CSP 생성 참조 및 선택한 LB 구성요소다. Registry, Secret, guest 초기화처럼 현재
-DepKB 밖의 정책은 명시적인 프로젝트 정책으로 ResourcePlan에 더한다. 근거가 다른 두 종류를
-한 출처인 것처럼 표시하지 않는다.
-
-### 12.5 ResourcePlan 노드를 만든다
-
-노드는 다음 셋으로 구분한다.
-
-- `create`: 생성 IaC가 독립 Terraform resource로 만든다.
-- `referenceExisting`: AMI·VM Image·OS Image와 사용자 Secret처럼 기존 객체를 조회·참조한다.
-- `configureInsideOwner`: Azure LB Frontend IP Configuration처럼 상위 리소스 안에서 설정한다.
-
-Primary ENI, Root/OS/Boot Disk, AWS main Route Table 같은 provider 자동 생성 결과는 실제로
-존재하지만, 사용자가 작성할 현재 ResourcePlan 기본 노드에서는 생략한다. Attachment,
-Association, 권한 binding처럼 Terraform이 독립 객체로 작성해야 하는 요소는 ResourcePlan에는
-별도 노드로 보존한다. 다만 사용자용 다이어그램에서는 CSP 리소스로 오해하지 않도록 양 끝
-리소스 사이의 이름 있는 관계선으로 접는다.
-
-모든 조합에 다음 공통 노드가 들어간다.
+camelCase는 kebab-case로 바꾸며 token 순서는 고정한다. 예를 들어 compute 2개, primary
+replica/Zone 1개, workload 2개 중 persistent workload 1개, 관계 없음, direct Public IP와
+per-replica storage 1개는 다음 ID가 된다.
 
 ```text
-기존 OS image reference
-provider-native App Registry
-App runtime identity
-Registry pull binding
-Network + App Subnet + traffic filter
-standalone VM 또는 managed VM group/template
-공개 주소 또는 L4 Load Balancer 경로
+standalone-vm-cu2-r1-z1-w2-pw1.relations-none.direct-public-ip.bindings-per-replica-storage1
 ```
 
-PostgreSQL을 선택하면 다음이 추가된다.
+테스트는 생성된 WorkloadGraph와 DeploymentPlan의 축을 다시 세어 ID와 일치하는지 확인한다.
 
-```text
-기존 provider Secret reference
-App identity의 Secret read binding
-영속 data Disk + Attachment
-colocated: 같은 App VM의 PostgreSQL container
-dedicated: 고정 사설 IP State VM + 전용 Secret identity/binding
+`primary`는 corpus의 기준 workload인 `web`을 뜻하며, 공개 사례에서는 public ingress의
+target이기도 하다. 따라서 primary가 standalone VM이어도 다른 workload의 replica 정책
+때문에 두 번째 compute가 managed VM group일 수 있다.
+`relations-none`은 colocate 제약이 있다는 뜻이 아니라, 명시적 배치 관계가 없다는 뜻이다.
+같은 lifecycle signature를 가진 workload가 한 compute에 놓이는 것은 일반 배치 규칙의 결과다.
+
+persistent 사례의 `state`는 fixture가 명시한 generic prebuilt state service다. 명시 image,
+engine, runtime catalog, 내부 HTTP interface, 20 GiB retained block storage와 mount 계약을
+입력한다. ERD를 보고 데이터 workload를 자동 추가한 사례가 아니다.
+
+### 15개 결정 사례
+
+| 번호 | case ID | 입력과 예상 결과 |
+|---:|---|---|
+| 1 | `standalone-vm-cu1-r1-z1-w1-pw0.relations-none.direct-public-ip` | 공개 HTTP `web` 하나. replica·교체 제약이 없으므로 단일 standalone VM에 배치하고 직접 Public IP를 연결한다. 가장 작은 공개 배포의 기준 사례다. |
+| 2 | `standalone-vm-cu1-r1-z1-w2-pw1.relations-none.direct-public-ip` | 공개 `web`과 명시적 persistent `state`가 있고 `web → state` HTTP connection이 있다. lifecycle 정책이 같고 분리 제약이 없어 한 standalone VM에 함께 배치한다. `STATE_SERVICE_URL`은 container DNS로 주입하고 state disk를 attach/mount한다. |
+| 3 | `standalone-vm-cu2-r1-z1-w2-pw1.relations-separate1.direct-public-ip` | 2번과 같은 두 workload에 명시적 separate 제약을 추가한다. 두 standalone VM으로 분리하고 web만 직접 Public IP를 가진다. `STATE_SERVICE_URL`은 state VM의 고정 사설 IP로 바뀌며 disk는 state VM에만 연결된다. |
+| 4 | `managed-vm-group-cu1-r1-z1-w1-pw0.relations-none.load-balancer` | 공개 `web` 하나에 replica 증가는 없지만 managed replacement가 요구된다. replica 1의 managed VM group과 L4 LB를 생성한다. VM group 선택이 replica 수만이 아니라 lifecycle 요구로도 결정됨을 검증한다. |
+| 5 | `managed-vm-group-cu2-r1-z1-w2-pw1.relations-separate1.load-balancer` | managed replacement가 필요한 공개 `web`과 persistent `state`를 명시적으로 분리한다. web은 replica 1 managed group과 L4 LB, state는 standalone VM과 retained disk를 사용한다. web은 state의 고정 사설 IP를 주입받는다. |
+| 6 | `managed-vm-group-cu1-r2-z1-w1-pw0.relations-none.load-balancer` | interchangeable `web`의 replica를 2로 고정하고 한 Zone을 사용한다. 하나의 managed VM group과 L4 LB를 생성하며 두 replica에 같은 workload runtime contract를 적용한다. |
+| 7 | `managed-vm-group-cu2-r2-z1-w2-pw1.relations-separate1.load-balancer` | 한 Zone의 web replica 2개와 persistent state를 분리한다. web managed group은 L4 LB 뒤에 있고 state는 standalone VM과 disk를 가진다. web replica들은 state의 고정 사설 IP를 공통 endpoint로 사용한다. |
+| 8 | `managed-vm-group-cu1-r2-z2-w1-pw0.relations-none.load-balancer` | interchangeable `web` replica 2개에 minimum Zone 2를 요구한다. 두 후보 Zone을 선택해 하나의 managed group을 분산하고 L4 LB로 공개한다. Zone 수와 replica 수의 정합성을 검증한다. |
+| 9 | `managed-vm-group-cu2-r2-z2-w2-pw1.relations-separate1.load-balancer` | 8번의 multi-Zone web group과 persistent state를 분리한다. web은 두 Zone의 replica와 L4 LB, state는 별도 standalone VM과 retained disk를 사용한다. 공개 HA compute와 단일 persistent compute가 함께 존재하는 사례다. |
+| 10 | `standalone-vm-cu1-r1-z1-w1-pw0.relations-none.private-egress-only` | internal HTTP interface만 가진 `web` 하나. Public IP와 공인 ingress를 만들지 않고 Registry pull·외부 호출용 NAT egress만 만든다. |
+| 11 | `standalone-vm-cu2-r1-z1-w2-pw1.relations-none.direct-public-ip.bindings-per-replica-storage1` | public web은 standalone VM, state는 interchangeable replica 2개와 `perReplica` storage를 요구한다. 명시 separate 제약은 없지만 replica signature가 달라 자동으로 compute가 분리된다. state는 managed group·내부 LB·replica별 disk를 가지며 web은 내부 LB endpoint를 주입받는다. |
+| 12 | `standalone-vm-cu1-r1-z1-w1-pw0.relations-none.direct-public-ip.bindings-secret1` | 1번의 공개 단일 web에 `API_TOKEN` Secret binding을 추가한다. Secret 값은 저장하지 않고 기존 Secret reference, VM identity의 읽기 권한과 runtime 환경변수 주입을 생성한다. |
+| 13 | `standalone-vm-cu1-r1-z1-w2-pw0.relations-none.direct-public-ip` | 공개 `web`과 비공개 `worker`가 있지만 connection과 분리 제약은 없다. 동일한 기본 lifecycle signature이므로 한 standalone VM에 함께 배치하며 public ingress는 web만 대상으로 한다. |
+| 14 | `standalone-vm-cu2-r1-z1-w2-pw0.relations-separate1.direct-public-ip` | 13번의 web과 worker에 separate 제약을 추가한다. 각각 standalone VM을 사용하고 web compute만 직접 Public IP를 가진다. workload 간 connection이 없으므로 endpoint 환경변수는 만들지 않는다. |
+| 15 | `managed-vm-group-cu1-r2-z1-w1-pw0.relations-none.private-egress-only` | internal web replica 2개를 한 Zone의 managed group에 둔다. 공개 LB나 Public IP 없이 NAT egress만 생성한다. 복제와 managed lifecycle이 공인 ingress를 자동 의미하지 않음을 검증한다. |
+
+세 provider와 두 view를 조합해 90개 PUML과 90개 SVG를 생성한다.
+
+```powershell
+python scripts/generate_deployment_diagram_examples.py --check
+python scripts/validate_deployment_iac_examples.py
+python scripts/validate_deployment_iac_examples.py --plan
 ```
 
-사설 VM이 생기는 `loadBalanced` 또는 `dedicated` 조합에는 NAT를 추가한다. 단, AWS의
-`direct + dedicated`는 App public Subnet과 State private Subnet을 분리한다.
+IaC 검사는 45 module을 `fmt`/`validate`하고 대표 15 module을 정적 `plan`한다. provider는
+시스템 공용 `.easydep/provider-plugin-cache`를 사용한다.
 
-### 12.6 생성 의존성 edge를 그린다
+[`evaluation/checkpoint_e2e/`](../evaluation/checkpoint_e2e/)는 제품 UI·DB 없이 동결된
+수강신청 goldset에서 체크포인트 하나를 실행한다. `erd → deployment_diagram`은 실제
+서브그래프를 호출하고 bundle, graph, 두 plan, 두 PUML/SVG와 OpenTofu를 폴더에 남긴다.
 
-ResourcePlan 내부 edge는 `의존하는 쪽 → 참조 대상`으로 저장한다. 예를 들어 Subnet이 VPC ID를
-받으면 `Subnet → VPC`다. 사람이 보는 provisioning 다이어그램에서는 일반 생성 참조를 뒤집어
-`선행 리소스 → 후행 리소스`로 그린다.
-
-```text
-ResourcePlan 저장: Subnet → VPC          # Subnet이 VPC를 참조
-화면 표시:       VPC → Subnet           # VPC를 먼저 생성
+```powershell
+python -m evaluation.checkpoint_e2e run --case e1-aws --from erd
+python -m evaluation.checkpoint_e2e run-all --case e1-aws
 ```
 
-연결 객체는 예외다. `aws_volume_attachment` 같은 Terraform type을 가짜 CSP 리소스 노드로
-표시하지 않고 다음처럼 방향 없는 관계선으로 투영한다.
-
-```text
-ResourcePlan 내부: Attachment → EBS, Attachment → EC2
-화면 표시:        EBS Volume — attached — EC2 Instance
-```
-
-Route Table Association, NIC–NSG Association, backend membership, IAM/RBAC binding도 같은 원칙을
-적용한다. 정확한 Terraform type과 양쪽 ID 참조는 ResourcePlan과 IaC 검증에 그대로 남는다.
-
-edge를 추가하는 기준은 구체적인 입력값 또는 명시적 생성 순서다.
-
-- `subnet_id`, `vpc_id`, resource ID/ARN/self_link를 받는다.
-- Attachment·Association 객체가 양쪽 리소스 ID를 받는다.
-- 상위 리소스 안에 embedded configuration을 작성한다.
-- VM bootstrap 전에 IAM binding 또는 image digest가 반드시 준비되어야 한다.
-
-단순히 패킷이 지나간다는 이유로 생성 edge를 추가하지 않는다. 요청 경로는 기능 다이어그램에
-그린다.
-
-### 12.7 앱 runtime 계약을 마지막에 결합한다
-
-초기 ResourcePlan에서 port와 health path를 모르면 `runtimeDerived`로 둔다. 앱 분석이 끝나면
-다음을 한 번에 같은 값으로 묶는다.
-
-```text
-Spring server.port
-Docker container port
-VM host publish port
-Security Group / NSG / Firewall 허용 port
-LB backend port
-LB health-check port + readiness path
-공개 endpoint port
-```
-
-GCP passthrough Network Load Balancer는 port 변환을 하지 않으므로 VM host port를 80으로
-고정하고 `host 80 → app container port`로 publish한다. AWS와 Azure는 backend port를 앱 host
-port로 전달할 수 있다.
-
-### 12.8 두 개의 그림을 각각 렌더링한다
-
-provisioning view에는 provider resource와 생성 참조만 넣는다. 화살표는 `선행 → 후행`, 방향
-없는 점선은 IaC가 적용하는 attach·association·permission·route 관계다. runtime view에는 실제
-VM 수를 펼쳐서 다음을 표시한다.
-
-- Internet client → Public IP/LB → 각 App container
-- LB health check → readiness endpoint
-- App container → PostgreSQL container
-- VM → attached persistent disk
-- traffic filter가 허용하는 대상
-
-many profile은 `x2`라고 축약하지 않고 최소 replica 두 개를 각각 그린다. 선택 Zone이 있으면
-replica를 Zone에 순환 배치한다. 생성·기능 의미를 한 화살표에 섞지 않는다.
-
-## 13. 앱–리소스 의존성을 이해하고 검증하는 방법
-
-### 13.1 앱–리소스 의존성이란 무엇인가
-
-클라우드 콘솔에 VM, Load Balancer와 Disk가 모두 보인다고 애플리케이션 배포가 끝난 것은
-아니다. 리소스가 존재하는 것과 앱이 그 리소스를 올바르게 사용하는 것은 서로 다른 문제다.
-
-예를 들어 EBS Volume을 EC2에 attach하면 AWS 작업은 성공한다. 하지만 Linux에서 filesystem을
-만들고 디렉터리에 mount한 뒤 그 디렉터리를 PostgreSQL data path에 연결하지 않으면
-PostgreSQL은 EBS가 아니라 컨테이너의 임시 layer에 데이터를 쓴다. 이 경우 “EBS 생성 성공”은
-참이지만 “DB 데이터 영속성 확보”는 거짓이다.
-
-EasyDep는 다음 세 층이 끊기지 않고 이어졌을 때만 의존성이 해결됐다고 판단해야 한다.
-
-```text
-CSP 리소스
-  VM, Registry, IAM identity, Public IP, Load Balancer, Secret, Disk
-        ↓
-VM guest 구성
-  OS image, cloud-init, Docker, image pull, filesystem, mount, restart policy
-        ↓
-애플리케이션 계약
-  container port, readiness path, datasource URL, DB credential, PGDATA
-```
-
-이 세 층 중 하나라도 빠지면 provider 리소스 그래프는 멀쩡해 보여도 실제 서비스는 실패한다.
-
-### 13.2 검증도 네 단계로 나눈다
-
-EasyDep는 모든 검사를 단순히 “검증 통과”라고 부르면 안 된다. 다음 수준을 따로 기록한다.
-
-| 수준 | 확인하는 것 | 확인하지 못하는 것 |
-|---|---|---|
-| 계약·구조 검사 | 필수 입력, 노드·간선, port·mount·Secret 계약의 누락과 모순 | 실제 CSP가 생성되는지 |
-| Terraform source·Plan 검사 | 필요한 리소스와 ID 참조, 수량, Zone, 보안 규칙이 Plan에 나타나는지 | guest OS 안에서 명령이 성공하는지 |
-| runtime 기능 검사 | 실제 image pull, 앱 기동, HTTP 요청, DB migration·읽기·쓰기 | 장애 후 복구와 데이터 보존 |
-| fault·lifecycle 검사 | process·VM 재시작, State VM 교체, destroy·purge 결과 | SLA와 장기 성능 |
-
-구조 검사만 통과한 배포를 “앱 검증 완료”라고 표시해서는 안 된다. runtime이나 fault 검사를
-실행하지 않았다면 `notMeasured`로 남겨야 한다.
-
-### 13.3 앱 소스에서 실행 중 컨테이너까지
-
-#### 13.3.1 앱 build
-
-Spring Boot 소스만으로 VM이 실행되지는 않는다. 소스와 Dockerfile, 고정된 build/runtime base
-image를 사용해 실행 가능한 OCI image를 만들어야 한다.
-
-```text
-생성 앱 소스
-  + Dockerfile
-  + gradle:8.14.2-jdk21
-  + eclipse-temurin:21-jre
-  → App OCI image
-```
-
-EasyDep가 확인해야 할 것:
-
-1. 애플리케이션 test와 Docker image build가 실제로 성공하는가?
-2. Dockerfile이 존재하지 않는 파일이나 잘못된 build output을 복사하지 않는가?
-3. 테스트한 image와 배포할 image가 같은 digest인가?
-4. 배포 단계에서 소스를 다시 build해 다른 image를 만들지 않는가?
-
-가장 안전한 결과는 테스트를 통과한 image를 OCI archive와 digest로 보존하고, 사용자의 배포
-단계에서는 그 동일 image를 선택한 CSP Registry에 push하는 것이다.
-
-실패 예시: 테스트에서는 Java 21로 빌드했지만 배포 스크립트가 mutable `latest` base image로
-다시 빌드하면 테스트하지 않은 image가 운영 VM에서 실행될 수 있다.
-
-#### 13.3.2 Registry 게시와 digest 고정
-
-VM 여러 대에 동일한 앱을 배포하려면 한 번 만든 image를 provider-native Registry에 게시한다.
-
-| CSP | Registry |
-|---|---|
-| AWS | Amazon ECR Repository |
-| Azure | Azure Container Registry |
-| GCP | Artifact Registry Repository |
-
-여기서 tag와 digest의 차이가 중요하다. `app:latest`는 나중에 다른 image를 가리킬 수 있지만
-`app@sha256:...`는 내용이 바뀌지 않는 불변 참조다. VM이나 VM template에는 tag가 아니라 push
-결과 digest를 전달해야 한다.
-
-EasyDep가 확인해야 할 것:
-
-- push가 성공했고 Registry가 반환한 digest가 checkpoint에 기록됐는가?
-- VM bootstrap과 모든 VM Group instance가 그 digest를 사용하는가?
-- 재시도할 때 이미 성공한 동일 digest를 다시 build하지 않는가?
-- status가 보고한 실행 중 container digest가 checkpoint와 같은가?
-
-실패 예시: VM 1은 어제의 `latest`, VM 2는 오늘의 `latest`를 pull하면 같은 VM Group 안에서 서로
-다른 코드가 실행된다.
-
-#### 13.3.3 image pull identity와 권한
-
-private Registry는 아무 VM이나 image를 내려받게 하지 않는다. VM에는 CSP가 발급하는 runtime
-identity가 필요하고, 그 identity에는 선택 Repository를 읽는 최소 권한이 필요하다.
-
-```text
-AWS   EC2 IAM Role / Instance Profile ── ECR read ── ECR Repository
-Azure Managed Identity               ── AcrPull  ── Container Registry
-GCP   Service Account                ── Reader   ── Artifact Registry
-```
-
-사용자 개인 access key를 VM에 복사하면 안 된다. EasyDep가 생성해야 하는 것은 VM 전용 identity와
-Registry read 관계이며, 다이어그램에서는 IAM Attachment 같은 IaC 객체를 별도 CSP 리소스 노드가
-아니라 두 실제 리소스 사이의 권한 관계선으로 표시한다.
-
-EasyDep가 확인해야 할 것:
-
-- VM 또는 Launch/Instance Template에 계획한 identity가 연결됐는가?
-- 권한 scope가 전체 계정이 아니라 선택 Repository로 제한됐는가?
-- VM identity로 실제 digest pull에 성공하는가?
-- 별도 State VM에는 필요 없는 App Registry 권한을 부여하지 않았는가?
-
-#### 13.3.4 image pull을 위한 outbound
-
-권한이 있어도 Registry까지 네트워크가 열려 있지 않으면 pull할 수 없다.
-
-- 공인 주소가 있는 직접 공개 VM은 Internet Gateway를 통한 outbound를 사용할 수 있다.
-- 공인 주소가 없는 App/State VM은 NAT와 DNS·route가 필요하다.
-- 별도 State VM은 Docker Hub에서 `postgres:17-bookworm`도 pull해야 한다.
-
-EasyDep가 확인해야 할 것:
-
-- 사설 Subnet의 default route가 올바른 NAT를 가리키는가?
-- NAT가 공인 주소와 인터넷 경로를 갖는가?
-- GCP 기본 internet route를 실수로 삭제하지 않았는가?
-- guest에서 Registry hostname과 Docker Hub에 실제로 도달하는가?
-
-실패 예시: Terraform으로 VM과 IAM Role은 정상 생성됐지만 private Subnet에 NAT가 없으면
-cloud-init의 첫 `docker pull`에서 배포가 멈춘다.
-
-#### 13.3.5 OS 부팅과 guest 초기화
-
-AMI, Azure VM Image, Compute Engine OS Image는 VM의 최초 boot disk 내용을 정한다. 앱 OCI
-image와는 역할이 다르다. OS image 위에서 cloud-init/user-data가 Docker를 준비하고 image를
-pull한 뒤 container를 실행한다.
-
-EasyDep가 확인해야 할 것:
-
-- OS image ID가 실제 Region에서 조회되고 checkpoint에 기록됐는가?
-- guest 초기화 스크립트가 실패 시 조용히 넘어가지 않는가?
-- Docker daemon 준비 후에 pull·run을 수행하는가?
-- 재부팅 뒤 App과 PostgreSQL container가 다시 실행되는가?
-
-### 13.4 외부 요청이 앱 port까지 도달하는 과정
-
-#### 13.4.1 하나의 port 계약
-
-다음 값들은 서로 독립적으로 정하면 안 된다. 모두 앱 분석에서 얻은 하나의 port 계약에서
-파생해야 한다.
-
-```text
-Spring Boot server.port
-  ↔ Docker container port
-  ↔ VM host publish port
-  ↔ Security Group / NSG / Firewall 허용 port
-  ↔ Load Balancer backend port
-  ↔ health-check port
-```
-
-예를 들어 앱이 container port `8080`에서 수신한다고 하자.
-
-- AWS 직접 공개: `EIP → EC2 host 8080 → container 8080`
-- AWS/Azure LB: frontend 80에서 받은 요청을 backend host 8080으로 전달할 수 있다.
-- GCP passthrough NLB: port 변환을 하지 않으므로 `frontend 80 → host 80`, Docker가
-  `host 80 → container 8080`으로 게시한다.
-
-EasyDep의 정적 검증은 소스·Docker·IaC에서 관찰한 port가 계약값과 모순되는지 검사해야 한다.
-동적 검증은 VM localhost와 최종 공개 endpoint에 요청해 실제 응답을 확인해야 한다.
-
-실패 예시: 앱은 8080에서 수신하지만 Security Group만 80을 열고 Docker publish도 하지 않으면
-VM은 정상 실행 중이어도 외부 요청은 `connection refused`가 된다.
-
-#### 13.4.2 직접 공개 경로
-
-직접 공개는 다음 경로다.
-
-```text
-Internet client → 고정 Public IP → VM NIC → host port → App container
-```
-
-필요한 것은 공인 주소, 인터넷 route, 앱 port를 허용하는 traffic filter다. Load Balancer는
-자동으로 추가하지 않는다.
-
-검증 항목:
-
-- Public IP가 실제 App VM/NIC에 연결됐는가?
-- 허용 source와 port가 계획과 같은가?
-- PostgreSQL 5432는 public source에 열리지 않았는가?
-- 공개 주소에서 업무 API가 성공하는가?
-
-#### 13.4.3 Load Balancer 경로와 backend membership
-
-LB를 선택하면 공인 주소만 만든 것으로 끝나지 않는다.
-
-```text
-Public IP
-  → Listener / Load Balancing Rule / Forwarding Rule
-  → Target Group / Backend Pool / Backend Service
-  → 등록된 App VM
-  → App host port
-```
-
-LB와 VM 사이에는 Target Group Attachment, Backend Pool Association 같은 IaC 연결 객체가 있다.
-ResourcePlan과 Terraform 검증에는 이 객체를 보존하지만, 사용자 다이어그램에서는
-`Load Balancer backend — registered — App VM` 관계선으로 접는다.
-
-검증 항목:
-
-- 선택한 App VM만 backend에 등록됐는가?
-- many profile이면 최소 두 VM을 각각 확인했는가?
-- Listener/Rule의 backend 참조가 ResourcePlan과 같은가?
-- LB endpoint로 반복 요청했을 때 계획한 backend들이 실제 응답하는가?
-
-#### 13.4.4 readiness
-
-readiness endpoint는 “process가 살아 있다”가 아니라 “이 VM이 새 업무 요청을 받아도 된다”를
-표현한다. LB health check의 port와 path를 앱이 제공하는 readiness와 맞춰야 한다.
-
-```text
-LB health check → /actuator/health/readiness
-2xx             → backend에 요청 전달
-실패/timeout     → backend에서 제외
-```
-
-검증 항목:
-
-- 앱에 readiness endpoint가 실제 존재하는가?
-- LB가 같은 port와 path를 검사하는가?
-- readiness를 실패시켰을 때 해당 backend가 새 요청에서 제외되는가?
-- 복원 후 다시 backend로 들어오는가?
-
-이 검증은 VM 자동교체나 고가용성을 증명하지 않는다. 오직 LB가 backend 상태를 트래픽 선택에
-반영하는지만 확인한다.
-
-### 13.5 앱과 PostgreSQL 연결
-
-#### 13.5.1 Secret 값이 아니라 Secret reference를 받는다
-
-개발 단계에서는 사용자의 CSP 계정, Secret reference 또는 실제 비밀번호가 필요하지 않다.
-사용자가 배포 번들을 실행할 때만 현재 로그인한 Account/Subscription/Project를 확인하고 기존
-Secret의 reference를 로컬 배포 변수 `database_secret_ref`로 입력한다.
-
-Secret JSON 계약은 다음 세 key다.
-
-```json
-{
-  "POSTGRES_DB": "...",
-  "POSTGRES_USER": "...",
-  "POSTGRES_PASSWORD": "..."
-}
-```
-
-EasyDep 서버는 이 값, CSP access key 또는 로그인 token을 받거나 저장하지 않는다. 생성 IaC는
-Secret 자체나 값을 만드는 대신 App identity와 State identity에 해당 Secret read 권한만 준다.
-
-검증 항목:
-
-- `database_secret_ref` 변수가 sensitive로 선언됐는가?
-- reference가 선택한 provider와 배포 대상에 존재하는가?
-- App identity와 State identity가 해당 Secret만 읽을 수 있는가?
-- Terraform Plan, 로그, checkpoint, 다이어그램에 Secret 값이 노출되지 않는가?
-- VM runtime identity로 실제 Secret read가 성공하는가?
-
-#### 13.5.2 App과 State VM은 같은 값, 다른 identity를 사용한다
-
-PostgreSQL container는 최초 database와 사용자를 만들기 위해 Secret을 읽는다. Spring Boot도
-같은 사용자로 접속하기 위해 같은 Secret을 읽는다. 값은 같지만 권한 주체는 분리한다.
-
-```text
-Existing provider Secret
-  ├─ read → App VM identity   → Spring datasource credential
-  └─ read → State VM identity → PostgreSQL startup credential
-```
-
-State VM identity에 App Registry pull 권한까지 줄 이유는 없다. PostgreSQL image는 현재 Docker
-Hub에서 받으므로 State identity에는 Secret read만 부여한다.
-
-실패 예시: PostgreSQL은 `POSTGRES_USER=easydep`로 초기화됐는데 앱이 다른 Secret을 읽으면 두
-container 모두 정상 실행 중이어도 DB 인증은 실패한다.
-
-#### 13.5.3 DB endpoint와 datasource
-
-별도 State VM을 선택하면 앱은 다음 구체적인 endpoint를 알아야 한다.
-
-```text
-State VM의 고정 사설 IP + TCP 5432 + database name
-  → JDBC URL
-  → spring.datasource.*
-  → Spring DataSource
-```
-
-DHCP로 바뀔 수 있는 임시 주소나 public IP를 datasource에 넣지 않는다. State VM을 교체해도
-계획한 사설 주소 또는 재결합 절차가 유지되어야 한다.
-
-검증 항목:
-
-- datasource host가 실제 State VM 사설 주소인가?
-- driver, JDBC scheme과 dialect가 PostgreSQL로 일치하는가?
-- App VM에서 State VM 5432에 TCP 연결할 수 있는가?
-- 앱 시작 시 migration과 최소 create/write/read query가 성공하는가?
-
-#### 13.5.4 DB traffic policy
-
-PostgreSQL은 인터넷에 공개하지 않는다. State traffic filter는 App VM 또는 App security identity를
-source로 한 TCP 5432만 허용한다.
-
-검증 항목:
-
-- `0.0.0.0/0 → 5432`와 같은 public rule이 Plan에 없는가?
-- App source에서는 5432 연결이 성공하는가?
-- 허용하지 않은 source에서는 거부되는가?
-- State VM에 public IP가 불필요하게 붙지 않았는가?
-
-### 13.6 Disk가 PostgreSQL 데이터가 되기까지
-
-#### 13.6.1 Attachment는 시작일 뿐이다
-
-EBS Volume, Managed Disk, Persistent Disk를 VM에 attach하면 guest에는 block device 하나가
-나타난다. 아직 디렉터리도 아니고 PostgreSQL이 사용할 수 있는 저장소도 아니다.
-
-```text
-provider data Disk
-  — attached — State VM
-  → Linux block device
-  → filesystem
-  → guest mount directory
-  → Docker bind mount
-  → /var/lib/postgresql/data
-```
-
-EasyDep는 Attachment를 Terraform type 노드로 보여 주는 대신 Disk와 VM 사이의 `attached`
-관계선으로 표시한다. 다만 내부 ResourcePlan에는 실제 Terraform type과 양쪽 ID 참조를 보존해
-IaC 누락을 검사한다.
-
-#### 13.6.2 올바른 device를 안정적으로 찾는다
-
-`/dev/sdb` 같은 이름은 VM이나 재부팅 상황에 따라 달라질 수 있다. provider가 제공하는 stable
-device identity 또는 filesystem UUID를 사용해야 한다.
-
-검증 항목:
-
-- 계획한 Disk ID와 실제 attached device가 대응하는가?
-- VM과 Disk의 Region/Zone이 호환되는가?
-- boot disk를 data disk로 잘못 선택하지 않았는가?
-
-#### 13.6.3 기존 데이터를 지우지 않는 format
-
-`mkfs`는 filesystem을 새로 만드는 명령이며 기존 데이터를 지울 수 있다. 새 Disk에 filesystem이
-없을 때만 실행해야 한다.
-
-```text
-filesystem 존재 확인
-  ├─ 있음 → format하지 않음
-  └─ 없음 → 한 번만 mkfs
-```
-
-EasyDep의 정적 validator는 명백한 무조건부 `mkfs`를 오류로 처리하고 `blkid`, `lsblk` 같은 확인
-뒤 조건부 format인지 검사해야 한다. 동적 fault 검증에서는 기존 데이터가 있는 Disk를 다시
-attach해도 format되지 않는지 확인해야 한다.
-
-#### 13.6.4 mount와 재부팅 지속성
-
-filesystem은 명시한 guest 디렉터리에 mount하고 UUID 기반 `/etc/fstab` 또는 동등한 systemd
-mount로 재부팅 뒤에도 복원해야 한다.
-
-실패 예시: 최초 배포 때 `/mnt/data`에 mount했지만 fstab을 쓰지 않으면 재부팅 후 mount가
-사라진다. PostgreSQL은 같은 경로명의 boot disk 디렉터리에 새 빈 DB를 만들 수 있다.
-
-검증 항목:
-
-- 계약한 guest mount path와 실제 `mount` 대상이 같은가?
-- `/etc/fstab`이 device name이 아니라 UUID를 사용하는가?
-- State VM 재부팅 뒤 같은 filesystem이 같은 경로에 mount되는가?
-
-#### 13.6.5 Docker bind와 PostgreSQL data path
-
-guest mount가 있어도 PostgreSQL container에 연결하지 않으면 소용없다. mount 아래 전용 child
-directory를 공식 image의 data path `/var/lib/postgresql/data`에 bind한다.
-
-```text
-/mnt/easydep-state/postgres     # guest의 전용 child
-        ↓ Docker bind
-/var/lib/postgresql/data        # container 내부 PGDATA
-```
-
-filesystem root 자체를 container에 직접 bind하지 않는다. validator는 guest mount path와 Docker
-source, container target이 계약과 일치하는지 구분해서 검사해야 한다.
-
-#### 13.6.6 destroy와 purge
-
-일반 인프라 정리는 데이터 삭제와 같아서는 안 된다. data Disk는 `retain`이며 Terraform에는
-`lifecycle.prevent_destroy = true`가 필요하다.
-
-- `destroy`: Disk를 detach하고 보존한 채 실행 소유 리소스를 제거한다.
-- `purge`: 사용자가 데이터 삭제를 명시적으로 확인한 경우에만 Disk를 삭제한다.
-
-검증 항목:
-
-- Terraform Plan에 retained Disk 삭제가 포함되지 않는가?
-- destroy 뒤 Disk ID와 데이터가 남아 있는가?
-- purge 없이는 Disk 삭제 API가 호출되지 않는가?
-- State VM을 새로 만들어 기존 Disk를 reattach한 뒤 기존 row를 읽을 수 있는가?
-
-### 13.7 여러 App VM과 재시작
-
-#### 13.7.1 여러 replica의 전제는 무상태 앱이다
-
-App VM을 두 대 만들었다는 이유만으로 동일하게 동작한다고 가정하면 안 된다. 다음 상태를 VM
-로컬에 저장하면 요청이 어느 replica로 가는지에 따라 결과가 달라진다.
-
-- 로그인 session
-- 사용자 upload 파일
-- process memory의 유일한 업무 상태
-- 한 VM에서만 실행되어야 하는 scheduler·lock
-- 로컬 filesystem에 기록한 데이터
-
-many profile을 허용하기 전에 앱 분석 결과 `applicationStateless=true`가 있어야 한다. 이 값은
-사용자 희망이 아니라 코드·설정·저장 경로 분석 근거에서 나와야 한다.
-
-검증 항목:
-
-- VM별 로컬 쓰기와 in-memory session 사용이 없는가?
-- 동일 image digest와 동일 일반 설정을 모든 replica가 사용하는가?
-- Secret 값은 같고 각 VM은 자기 runtime identity로 읽는가?
-- LB를 통해 각 replica에서 같은 업무 결과를 얻는가?
-
-#### 13.7.2 process restart와 VM 복구는 별개다
-
-Docker restart policy는 VM이 살아 있는 상태에서 container process가 종료되거나 VM이 재부팅된
-뒤 container를 다시 시작하는 guest 기능이다. 다른 Zone에 replica를 만들거나 VM 자체를
-교체하는 기능과는 다르다.
-
-EasyDep가 최소한 확인해야 할 것은 다음이다.
-
-- App과 PostgreSQL container에 명시적인 restart policy가 있는가?
-- process kill 뒤 container가 다시 실행되는가?
-- VM reboot 뒤 image, Secret, mount가 준비된 다음 container가 실행되는가?
-- PostgreSQL은 mount 완료 전에 시작되지 않는가?
-
-### 13.8 EasyDep의 종단 완료 조건
-
-앱–리소스 의존성은 다음 순서가 모두 성공해야 완료다.
-
-```text
-1. 앱 test + OCI image build
-2. 테스트한 image digest 확정
-3. Terraform Plan과 ResourcePlan 참조 대조
-4. Registry push와 VM identity pull 시험
-5. VM guest 초기화 완료
-6. localhost 앱 요청 성공
-7. 공개 direct/LB endpoint 업무 요청 성공
-8. 선택 시 Secret read + DB migration + create/write/read 성공
-9. 선택 시 VM reboot + Disk 데이터 보존 확인
-10. destroy가 retained Disk를 지우지 않는지 확인
-```
-
-예를 들어 1~4까지만 성공했다면 “인프라 및 image 전달 준비 완료”이지 “애플리케이션 배포
-검증 완료”가 아니다. 6~8을 통과해야 업무 기능이 연결됐다고 말할 수 있고, 9~10을 통과해야
-재시작과 데이터 lifecycle까지 검증됐다고 말할 수 있다.
-
-### 13.9 시스템의 검증 책임을 어디에 둘 것인가
-
-같은 검사를 LLM prompt에만 적어 두면 누락을 막을 수 없다. 다음 책임을 결정적 코드와 실행
-gate로 나눈다.
-
-| 책임 위치 | 입력 | 반드시 차단할 오류 | 결과 |
-|---|---|---|---|
-| 앱 계약 추출 | 생성 소스·설정 | port·health·DB·mount 계약 미확정 | application contract |
-| topology 판정 | Resource Spec·앱 상태성 | 무효 direct/group 조합, many인데 상태성 근거 없음 | DeploymentTopology 또는 `needsInput` |
-| ResourcePlan 생성기 | topology·DepKB | dangling edge, 고립 리소스, 수량·Zone·owner 불일치 | provider별 ResourcePlan |
-| IaC source validator | 생성 Terraform·스크립트 | 필수 resource/type/변수/entrypoint 누락, port·mount 모순 | source validation report |
-| Terraform Plan validator | Plan JSON·ResourcePlan | 생성 resource 집합·ID reference·수량·보안 정책 불일치 | promotion 허용 또는 차단 |
-| `doctor` | 사용자 로컬 CSP 로그인·배포 변수 | 잘못된 Account/Project/Subscription, Region·Secret reference 접근 불가 | 실행 대상 확인 |
-| `deploy` gate | Registry·VM·guest 로그 | digest pull, cloud-init, container 시작 실패 | 단계별 checkpoint |
-| `status`·smoke test | endpoint·container·DB | 업무 HTTP, readiness, migration·query 실패 | runtime evidence |
-| fault·lifecycle test | process·VM·Disk·destroy | 재부팅 후 미기동, 데이터 유실, retained Disk 삭제 | fault evidence |
-
-현재 구현의 `topology.py`, `provider_deployment.py`, `iac_binding_validation.py`는 앞쪽의 구조·정적
-정합성 gate를 담당한다. 이 단계에서는 특히 다음을 자동 차단한다.
-
-- 지원하지 않는 topology 조합과 multi-zone 수량 오류
-- ResourcePlan의 dangling endpoint, 중복 edge, 고립 provider node
-- ResourcePlan과 Terraform source·Plan의 resource/type/reference 차이
-- HTTP v1 계획에 HTTPS/TLS 리소스를 임의로 추가한 경우
-- PostgreSQL 5432를 public source에 연 경우
-- `database_secret_ref` 변수가 없거나 sensitive가 아닌 경우
-- retained Disk에 `prevent_destroy`가 없는 경우
-- GCP Cloud NAT 설정·기본 internet route 정책 불일치
-- 필수 `doctor/plan/deploy/status/destroy` 및 선택 `purge` entrypoint 누락
-
-반면 일반 사용자 배포마다 실제 CSP에서 image pull, 업무 HTTP, DB query, reboot, destroy까지
-자동 실행해 증거를 남기는 것은 배포 번들의 실행 gate가 담당해야 한다. 해당 gate를 실행하지
-않았다면 정적 validator가 통과했더라도 runtime과 fault 상태는 `notMeasured`다.
-
-현재 정적 gate만으로 끝내지 않기 위해 추가로 완성해야 하는 자동화는 다음과 같다.
-
-- 테스트한 OCI image를 archive·digest로 고정하고 배포 시 재빌드하지 않는 gate
-- 최종 bundle·Plan 요약·로그에 실제 Secret 값이나 credential이 없는지 검사하는 secret scan
-- `doctor`가 감지한 Account/Subscription/Project를 사용자가 확인한 뒤 고정하는 gate
-- 배포마다 실제 VM identity로 Registry와 Secret을 읽는 시험
-- 공개 endpoint 업무 요청과 선택 시 DB migration·create/write/read 시험
-- VM reboot, 기존 Disk reattach, destroy·purge를 구분하는 lifecycle 시험
-
-## 14. 예제: AWS 직접 공개 App + 별도 PostgreSQL
-
-다음 입력을 가정한다.
-
-```text
-provider=aws
-region=ap-northeast-2
-computeProfile=standaloneOne
-replicaCount=1
-persistentWorkloadPlacement=separateCompute
-# publicIngress=direct는 computeProfile에서 파생
-app port=8080
-readiness=/actuator/health/readiness
-```
-
-논리 workload는 App과 PostgreSQL 둘이다. App은 직접 공개되어 public App Subnet에 두고, State
-VM은 public IP 없이 private State Subnet에 둔다. 생성 순서를 손으로 그리면 다음과 같다.
-
-```text
-VPC
-├─ Internet Gateway
-├─ App Subnet ─ public Route Table ─ default Route → Internet Gateway
-│  ├─ App Security Group
-│  └─ AMI + IAM Instance Profile + EIP → App EC2
-└─ State Subnet ─ private Route Table ─ default Route → NAT Gateway
-   ├─ State Security Group: App SG source의 TCP 5432만 허용
-   └─ AMI + State Secret Instance Profile → State EC2
-
-App Subnet + NAT EIP → NAT Gateway
-ECR Repository + App IAM Role + ECR read binding → App image pull 준비
-Existing Secret + App Secret policy → App credential read 준비
-Existing Secret + State Secret role/policy/profile → State credential read 준비
-EBS Volume + State EC2 → Volume Attachment
-```
-
-기능 경로는 별도로 다음처럼 그린다.
-
-```text
-사용자 build 환경 → ECR push → image@sha256 checkpoint
-Internet client → EIP → App EC2:8080 → Spring Boot container
-App EC2 → ECR                          # App public outbound
-State EC2 → NAT Gateway → Docker Hub   # postgres image pull
-App container → State private IP:5432 → PostgreSQL container
-EBS attachment → block device → filesystem → UUID mount → Docker bind → PGDATA
-```
-
-이 예제에서 NAT가 App inbound를 처리한다고 그리면 틀리다. NAT는 public IP가 없는 State VM의
-outbound용이다. 또한 EBS Attachment만 그려 놓고 mount와 Docker bind를 생략하면 provider
-리소스 그래프는 맞아도 앱 기능 배포는 미완성이다.
-
-## 15. 직접 다이어그램을 그릴 때의 최종 검사표
-
-1. 선택한 CSP의 공식 리소스 이름과 Terraform type을 사용했는가?
-2. provider 자동 생성 요소와 IaC 작성 요소를 구분했는가?
-3. Attachment·Association·권한 binding을 가짜 CSP 노드가 아닌 관계선으로 표시했는가?
-4. provisioning 화살표가 모두 `선행 → 후행`인가?
-5. 패킷 흐름을 provisioning edge로 잘못 섞지 않았는가?
-6. standalone과 managed group을 동시에 그리지 않았는가?
-7. many profile의 VM을 최소 두 개로 각각 펼쳤는가?
-8. `direct`에 LB를 자동 추가하지 않았는가?
-9. LB 선택 시 Listener/Rule, backend membership, health check가 모두 있는가?
-10. 사설 VM의 image pull outbound가 NAT로 닫혔는가?
-11. OS image reference와 테스트한 Registry digest를 모두 표현했는가?
-12. PostgreSQL 선택 시 사용자 Secret reference와 두 workload의 최소 read 권한이 있는가?
-13. State endpoint가 고정 사설 주소이고 5432가 public이 아닌가?
-14. data Disk의 Zone 호환, Attachment, filesystem, mount, Docker bind가 이어지는가?
-15. retained disk의 일반 destroy와 명시적 purge가 구분되는가?
-16. 앱 port, firewall port, LB backend, health path가 같은 runtime 계약에서 왔는가?
-17. 정적 검사와 실제 앱·DB 업무 기능 검증을 구분했는가?
-18. 미실행 runtime·fault 검증을 `notMeasured`로 표시했는가?
-
-이 18개를 모두 답할 수 있으면 같은 입력에서 EasyDep의 provisioning view와 runtime view를
-수작업으로도 재현할 수 있다. 실제 시스템은 동일한 규칙을
-`deployment_diagram/bundle.py → topology.py → provider_deployment.py → provider_plantuml.py`
-순서로 적용하고, PUML과 SVG만 결정적으로 생성한다.
+## 11. 현재 범위와 알려진 경계
+
+지원 범위는 Docker-on-VM, AWS/Azure/GCP, 단일 Region, 고정 replica, HTTP와 내부 TCP,
+block disk, Registry image delivery다. HTTPS, multi-Region, autoscaling, managed database,
+shared filesystem, Kubernetes/ECS는 범위 밖이다.
+
+현재 코드에는 다음 연결 지점이 아직 남아 있다.
+
+1. `deployment_planning_facts`의 workload/connection contract는 체크포인트 E2E와 직접 상태
+   주입 경로에서는 쓰지만, 일반 요구사항 API가 이를 별도 산출물로 만들지는 않는다.
+2. 배포 스테이지에는 독립 semantic check/report 노드가 없다. blocking issue는 bundle과
+   CloudDesign/VmDelivery에서 IaC를 막지만 설계 gate의 문법 통과와는 별개다.
+3. 복수 deployment target projection은 있으나 구현 전 하나를 선택하는 사용자 흐름이
+   필요하다.
+4. 단순 `ApplicationRuntimeContract` fallback은 첫 generated workload와 첫 interface만
+   관찰한다. 복수 workload/configuration/mount는 `extensions.workloads[]` 계약이 필요하다.
+5. `connectionContract.secretBindingRequired` overlay는 target Secret 환경변수 이름을
+   `POSTGRES_PASSWORD`로 만드는 잔여 규칙이 있다. provider-neutral 계약에 맞게 명시 이름
+   또는 runtime catalog에서 받아야 하는 후속 정리 대상이다.
+
+이 경계들은 새 구조를 조용히 추측할 근거가 아니다. 모호하거나 구현 관찰로 구조가 달라지면
+issue 또는 배포 설계 재생성 요구로 드러내는 것이 기본 정책이다.

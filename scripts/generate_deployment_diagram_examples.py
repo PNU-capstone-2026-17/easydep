@@ -1,20 +1,22 @@
-"""Generate the complete deterministic Docker-on-VM deployment diagram corpus.
+"""Generate the WorkloadGraph decision-coverage deployment corpus.
 
-The finite topology model has 9 logical families.  Projecting each family to
-AWS, Azure, and Google Cloud yields 27 provider-labelled families.  Each family
-has two deliberately separate views:
+The cases exercise policy-derived placement instead of enumerating closed
+topology families. The corpus is partitioned only by provider. Each case has
+two deliberately separate views:
 
 * runtime: placement plus request/data flow
 * provisioning: prerequisite -> dependent creation relationships
 
-PUML is the source artifact. SVG is rendered with the exact PlantUML image
-digest used by the application. ``--check`` renders into one system temporary
-directory and byte-compares the result with the existing generated corpus.
+ResourcePlan is the source for both diagrams and OpenTofu; PUML is not parsed
+back into IaC. SVG is rendered with the exact PlantUML image digest used by the
+application. ``--check`` renders into one system temporary directory and
+byte-compares the result with the existing generated corpus.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import tempfile
@@ -33,10 +35,6 @@ from app.design.services.deployment_diagram.provider_plantuml import (  # noqa: 
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
 )
-from app.design.services.deployment_diagram.topology import (  # noqa: E402
-    TopologyFamily,
-    enumerate_topology_families,
-)
 
 OUTPUT_ROOT = ROOT / "docs" / "examples" / "deployment-diagrams"
 TARGETS = {
@@ -46,109 +44,462 @@ TARGETS = {
 }
 
 
-def _logical_model(workload_layout: str) -> dict[str, Any]:
-    nodes: list[dict[str, Any]] = [
+def _workload(workload_id: str, *, public: bool, safety: str = "singleton") -> dict[str, Any]:
+    return {
+        "id": workload_id,
+        "name": workload_id.title(),
+        "artifact": {"kind": "generatedApplication"},
+        "interfaces": [
+            {
+                "id": "http",
+                "protocol": "http",
+                "exposure": "public" if public else "internal",
+                "sourceRefs": [f"api:{workload_id}"],
+            }
+        ],
+        "storage": [],
+        "configuration": [],
+        "resourceRequirements": {},
+        "replicationSafety": safety,
+        "sourceRefs": [f"class:{workload_id}"],
+    }
+
+
+def _state_workload() -> dict[str, Any]:
+    workload = _workload("state", public=False)
+    workload["name"] = "State Service"
+    workload["artifact"] = {
+        "kind": "prebuiltImage",
+        "image": "registry.example/state-service@sha256:" + "1" * 64,
+        "engine": "explicit-state-service",
+        "deploymentMode": "container",
+        "runtimeCatalogRef": "docker-on-vm/prebuilt-image",
+    }
+    workload["interfaces"] = [
         {
-            "name": "Application Runtime",
-            "kind": "executionEnvironment",
-            "source_classes": ["Application"],
+            "id": "service",
+            "protocol": "http",
+            "exposure": "internal",
+            "sourceRefs": ["requirement:STATE-SERVICE"],
         }
     ]
+    workload["storage"] = [
+        {
+            "id": "state-volume",
+            "persistence": "persistent",
+            "capacityGiB": 20,
+            "mountPath": "/var/lib/easydep/state",
+            "deletionPolicy": "retain",
+            "replicaSemantics": "singleAttachment",
+            "sourceRefs": ["requirement:STATE-DATA"],
+        }
+    ]
+    workload["sourceRefs"] = ["requirement:STATE-SERVICE"]
+    return workload
+
+
+def _kebab(value: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "-", value).lower()
+
+
+def semantic_case_id(
+    *,
+    compute_kind: str,
+    compute_units: int,
+    replicas: int,
+    zones: int,
+    workload_count: int,
+    persistent_workload_count: int,
+    colocate_relation_count: int,
+    separate_relation_count: int,
+    ingress_kind: str,
+    secret_binding_count: int = 0,
+    per_replica_storage_count: int = 0,
+) -> str:
+    """Return the corpus ID from normalized planning facts and relation constraints."""
+
+    compute = _kebab(compute_kind)
+    ingress = _kebab(ingress_kind)
+    relations = "-".join(
+        token
+        for token in (
+            f"colocate{colocate_relation_count}" if colocate_relation_count else "",
+            f"separate{separate_relation_count}" if separate_relation_count else "",
+        )
+        if token
+    ) or "none"
+    dependencies = "-".join(
+        token
+        for token in (
+            f"secret{secret_binding_count}" if secret_binding_count else "",
+            (
+                f"per-replica-storage{per_replica_storage_count}"
+                if per_replica_storage_count
+                else ""
+            ),
+        )
+        if token
+    )
+    case_id = (
+        f"{compute}-cu{compute_units}-r{replicas}-z{zones}"
+        f"-w{workload_count}-pw{persistent_workload_count}"
+        f".relations-{relations}.{ingress}"
+    )
+    return f"{case_id}.bindings-{dependencies}" if dependencies else case_id
+
+
+def _expectation(
+    *,
+    compute_kind: str,
+    replicas: int,
+    zones: int,
+    compute_units: int,
+    workload_count: int,
+    persistent_workload_count: int,
+    colocate_relation_count: int = 0,
+    separate_relation_count: int = 0,
+    ingress_kind: str,
+    secret_binding_count: int = 0,
+    per_replica_storage_count: int = 0,
+) -> tuple[str, dict[str, Any]]:
+    expectation = {
+        "computeKind": compute_kind,
+        "replicaCount": replicas,
+        "zoneCount": zones,
+        "computeUnitCount": compute_units,
+        "workloadCount": workload_count,
+        "persistentWorkloadCount": persistent_workload_count,
+        "colocateRelationCount": colocate_relation_count,
+        "separateRelationCount": separate_relation_count,
+        "ingressKind": ingress_kind,
+        "secretBindingCount": secret_binding_count,
+        "perReplicaStorageCount": per_replica_storage_count,
+    }
+    return semantic_case_id(
+        compute_kind=compute_kind,
+        compute_units=compute_units,
+        replicas=replicas,
+        zones=zones,
+        workload_count=workload_count,
+        persistent_workload_count=persistent_workload_count,
+        colocate_relation_count=colocate_relation_count,
+        separate_relation_count=separate_relation_count,
+        ingress_kind=ingress_kind,
+        secret_binding_count=secret_binding_count,
+        per_replica_storage_count=per_replica_storage_count,
+    ), expectation
+
+
+CASE_EXPECTATIONS: dict[str, dict[str, Any]] = dict(
+    [
+        _expectation(
+            compute_kind="standaloneVm",
+            replicas=1,
+            zones=1,
+            compute_units=1,
+            workload_count=1,
+            persistent_workload_count=0,
+            ingress_kind="directPublicIp",
+        ),
+        _expectation(
+            compute_kind="standaloneVm",
+            replicas=1,
+            zones=1,
+            compute_units=1,
+            workload_count=2,
+            persistent_workload_count=1,
+            ingress_kind="directPublicIp",
+        ),
+        _expectation(
+            compute_kind="standaloneVm",
+            replicas=1,
+            zones=1,
+            compute_units=2,
+            workload_count=2,
+            persistent_workload_count=1,
+            separate_relation_count=1,
+            ingress_kind="directPublicIp",
+        ),
+        _expectation(
+            compute_kind="managedVmGroup",
+            replicas=1,
+            zones=1,
+            compute_units=1,
+            workload_count=1,
+            persistent_workload_count=0,
+            ingress_kind="loadBalancer",
+        ),
+        _expectation(
+            compute_kind="managedVmGroup",
+            replicas=1,
+            zones=1,
+            compute_units=2,
+            workload_count=2,
+            persistent_workload_count=1,
+            separate_relation_count=1,
+            ingress_kind="loadBalancer",
+        ),
+        _expectation(
+            compute_kind="managedVmGroup",
+            replicas=2,
+            zones=1,
+            compute_units=1,
+            workload_count=1,
+            persistent_workload_count=0,
+            ingress_kind="loadBalancer",
+        ),
+        _expectation(
+            compute_kind="managedVmGroup",
+            replicas=2,
+            zones=1,
+            compute_units=2,
+            workload_count=2,
+            persistent_workload_count=1,
+            separate_relation_count=1,
+            ingress_kind="loadBalancer",
+        ),
+        _expectation(
+            compute_kind="managedVmGroup",
+            replicas=2,
+            zones=2,
+            compute_units=1,
+            workload_count=1,
+            persistent_workload_count=0,
+            ingress_kind="loadBalancer",
+        ),
+        _expectation(
+            compute_kind="managedVmGroup",
+            replicas=2,
+            zones=2,
+            compute_units=2,
+            workload_count=2,
+            persistent_workload_count=1,
+            separate_relation_count=1,
+            ingress_kind="loadBalancer",
+        ),
+        _expectation(
+            compute_kind="standaloneVm",
+            replicas=1,
+            zones=1,
+            compute_units=1,
+            workload_count=1,
+            persistent_workload_count=0,
+            ingress_kind="privateEgressOnly",
+        ),
+        _expectation(
+            compute_kind="standaloneVm",
+            replicas=1,
+            zones=1,
+            compute_units=2,
+            workload_count=2,
+            persistent_workload_count=1,
+            ingress_kind="directPublicIp",
+            per_replica_storage_count=1,
+        ),
+        _expectation(
+            compute_kind="standaloneVm",
+            replicas=1,
+            zones=1,
+            compute_units=1,
+            workload_count=1,
+            persistent_workload_count=0,
+            ingress_kind="directPublicIp",
+            secret_binding_count=1,
+        ),
+        _expectation(
+            compute_kind="standaloneVm",
+            replicas=1,
+            zones=1,
+            compute_units=1,
+            workload_count=2,
+            persistent_workload_count=0,
+            ingress_kind="directPublicIp",
+        ),
+        _expectation(
+            compute_kind="standaloneVm",
+            replicas=1,
+            zones=1,
+            compute_units=2,
+            workload_count=2,
+            persistent_workload_count=0,
+            separate_relation_count=1,
+            ingress_kind="directPublicIp",
+        ),
+        _expectation(
+            compute_kind="managedVmGroup",
+            replicas=2,
+            zones=1,
+            compute_units=1,
+            workload_count=1,
+            persistent_workload_count=0,
+            ingress_kind="privateEgressOnly",
+        ),
+    ]
+)
+DEPLOYMENT_CASES = tuple(CASE_EXPECTATIONS)
+
+
+def _graph(case: str) -> dict[str, Any]:
+    if case not in DEPLOYMENT_CASES:
+        raise ValueError(f"Unknown deployment example: {case}")
+    expectation = CASE_EXPECTATIONS[case]
+    workload_count = int(expectation["workloadCount"])
+    persistent_workload_count = int(expectation["persistentWorkloadCount"])
+    workloads = [
+        _workload(
+            "web",
+            public=expectation["ingressKind"] != "privateEgressOnly",
+        )
+    ]
     connections: list[dict[str, Any]] = []
-    if workload_layout != "primaryOnly":
-        nodes.append(
+    constraints: list[dict[str, Any]] = []
+    if workload_count == 2 and persistent_workload_count == 0:
+        workloads.append(_workload("worker", public=False))
+    if persistent_workload_count == 1:
+        workloads.append(_state_workload())
+        workloads[0]["configuration"].append(
             {
-                "name": "PostgreSQL",
-                "kind": "executionEnvironment",
-                "stateMode": "persistent",
-                "source_classes": ["Database"],
+                "id": "state-service-url",
+                "name": "STATE_SERVICE_URL",
+                "kind": "endpointBinding",
+                "connectionRef": "web-to-state",
+                "projection": "url",
+                "sourceRefs": ["sequence:STATE-ACCESS"],
             }
         )
         connections.append(
             {
-                "source": "Application Runtime",
-                "target": "PostgreSQL",
-                "protocol": "PostgreSQL protocol",
+                "id": "web-to-state",
+                "sourceRef": "web",
+                "targetRef": "state",
+                "targetInterfaceRef": "service",
+                "protocol": "http",
+                "sourceRefs": ["sequence:STATE-ACCESS"],
+            }
+        )
+    if expectation["perReplicaStorageCount"]:
+        state = next(item for item in workloads if item["id"] == "state")
+        state["replicationSafety"] = "interchangeable"
+        state["storage"][0]["replicaSemantics"] = "perReplica"
+        constraints.append(
+            {
+                "id": "data-replicas",
+                "kind": "replicaCount",
+                "workloadRefs": ["state"],
+                "value": 2,
+                "sourceRefs": ["requirement:DATA-HA"],
+            }
+        )
+    if expectation["secretBindingCount"]:
+        workloads[0]["configuration"].append(
+            {
+                "id": "api-token",
+                "name": "API_TOKEN",
+                "kind": "secretBinding",
+                "sensitive": True,
+                "sourceRefs": ["requirement:SECRET"],
+            }
+        )
+    related_workload = "state" if persistent_workload_count else "worker"
+    if expectation["separateRelationCount"]:
+        constraints.append(
+            {
+                "id": f"separate-web-{related_workload}",
+                "kind": "separate",
+                "workloadRefs": ["web", related_workload],
+                "value": True,
+                "sourceRefs": ["requirement:NFR-ISO"],
+            }
+        )
+    if expectation["colocateRelationCount"]:
+        constraints.append(
+            {
+                "id": f"colocate-web-{related_workload}",
+                "kind": "colocate",
+                "workloadRefs": ["web", related_workload],
+                "value": True,
+                "sourceRefs": ["requirement:NFR-COLOCATE"],
+            }
+        )
+    if expectation["replicaCount"] > 1:
+        workloads[0]["replicationSafety"] = "interchangeable"
+        constraints.append(
+            {
+                "id": "replicas",
+                "kind": "replicaCount",
+                "workloadRefs": ["web"],
+                "value": expectation["replicaCount"],
+                "sourceRefs": ["requirement:NFR-REP"],
+            }
+        )
+    if (
+        expectation["computeKind"] == "managedVmGroup"
+        and expectation["replicaCount"] == 1
+    ):
+        constraints.append(
+            {
+                "id": "replacement",
+                "kind": "managedReplacement",
+                "workloadRefs": ["web"],
+                "value": True,
+                "sourceRefs": ["requirement:NFR-REPLACE"],
+            }
+        )
+    if expectation["zoneCount"] > 1:
+        constraints.append(
+            {
+                "id": "zones",
+                "kind": "zoneSpread",
+                "workloadRefs": ["web"],
+                "value": {"minimumZones": expectation["zoneCount"]},
+                "sourceRefs": ["requirement:NFR-ZONE"],
             }
         )
     return {
-        "Nodes": nodes,
-        "Artifacts": [
-            {
-                "name": "application-image",
-                "deployed_on": "Application Runtime",
-                "source_classes": ["Application"],
-            }
-        ],
-        "Connections": connections,
+        "schemaVersion": "easydep-workload-graph",
+        "workloads": workloads,
+        "externalDependencies": [],
+        "connections": connections,
+        "constraints": constraints,
+        "derivations": [],
     }
 
 
-def _resource_spec(family: TopologyFamily) -> dict[str, Any]:
-    if family.provider is None:
-        raise ValueError("Example generation requires a provider-labelled family.")
-    region, available_zones = TARGETS[family.provider]
-    multi_zone = family.compute_profile == "managedGroupManyMultiZone"
-    many = family.compute_profile.startswith("managedGroupMany")
-    selected_zones = list(available_zones if multi_zone else available_zones[:1])
+def _resource_spec(provider: str) -> dict[str, Any]:
+    region, available_zones = TARGETS[provider]
     return {
-        "schemaVersion": "3",
+        "schemaVersion": "4",
         "workloads": ["vm"],
-        "provider": family.provider,
+        "provider": provider,
         "region": region,
-        "deploymentTargets": [
-            {
-                "provider": family.provider,
-                "region": region,
-                "zones": selected_zones,
-            }
-        ],
-        "computeProfile": family.compute_profile,
-        "replicaCount": 2 if many else 1,
-        "applicationStateless": bool(many),
-        "publicIngress": family.public_ingress,
-        "ingressZones": (
-            list(available_zones[:2])
-            if family.provider == "aws" and family.public_ingress == "loadBalanced"
-            else selected_zones
-        ),
-        "persistentWorkloadPlacement": (
-            "colocate" if family.workload_layout == "colocatedPersistent" else "separateCompute"
-        ),
+        "candidateZones": list(available_zones),
     }
 
 
 def _relative_sources() -> dict[Path, str]:
     outputs: dict[Path, str] = {}
-    families = enumerate_topology_families(include_providers=True)
-    if len(families) != 27:
-        raise RuntimeError(f"Expected 27 provider-labelled families, got {len(families)}.")
-    for family in families:
-        assert family.provider is not None
-        logical_model = _logical_model(family.workload_layout)
-        resource_spec = _resource_spec(family)
-        first = build_deployment_diagram_bundle(logical_model, resource_spec)
-        second = build_deployment_diagram_bundle(logical_model, resource_spec)
-        if first != second:
-            raise RuntimeError(f"Bundle generation is not deterministic: {family.id}")
-        projection = first["projections"][0]
-        if projection.get("status") != "completed":
-            raise RuntimeError(f"Unresolved example family {family.id}: {projection}")
-        actual_family_id = projection.get("topology", {}).get("familyId")
-        if actual_family_id != family.id:
-            raise RuntimeError(
-                f"Family mismatch: enumerated {family.id}, projected {actual_family_id}"
+    for provider in TARGETS:
+        for case in DEPLOYMENT_CASES:
+            workload_graph = _graph(case)
+            resource_spec = _resource_spec(provider)
+            first = build_deployment_diagram_bundle(workload_graph, resource_spec)
+            second = build_deployment_diagram_bundle(workload_graph, resource_spec)
+            if first != second:
+                raise RuntimeError(
+                    f"Bundle generation is not deterministic: {provider}/{case}"
+                )
+            projection = first["projections"][0]
+            if projection.get("status") != "completed":
+                raise RuntimeError(f"Unresolved example {provider}/{case}: {projection}")
+            provider_dir = Path(provider)
+            outputs[provider_dir / f"{case}.runtime.puml"] = (
+                deployment_bundle_runtime_puml(first).rstrip() + "\n"
             )
-        stem = family.id.removeprefix(f"{family.provider}.")
-        provider_dir = Path(family.provider)
-        outputs[provider_dir / f"{stem}.runtime.puml"] = (
-            deployment_bundle_runtime_puml(first).rstrip() + "\n"
-        )
-        outputs[provider_dir / f"{stem}.provisioning.puml"] = (
-            deployment_bundle_provisioning_puml(first).rstrip() + "\n"
-        )
-    if len(outputs) != 54:
-        raise RuntimeError(f"Expected 54 semantic views, got {len(outputs)}.")
+            outputs[provider_dir / f"{case}.provisioning.puml"] = (
+                deployment_bundle_provisioning_puml(first).rstrip() + "\n"
+            )
+    if len(outputs) != len(TARGETS) * len(DEPLOYMENT_CASES) * 2:
+        raise RuntimeError(f"Unexpected semantic view count: {len(outputs)}.")
     return outputs
 
 
@@ -190,8 +541,20 @@ def _expected_files(sources: dict[Path, str]) -> set[Path]:
     return set(sources) | {path.with_suffix(".svg") for path in sources}
 
 
+def _prune_stale_generated_files(root: Path, expected: set[Path]) -> None:
+    if not root.exists():
+        return
+    unexpected = {path.relative_to(root) for path in root.rglob("*") if path.is_file()} - expected
+    unmanaged = sorted(path for path in unexpected if path.suffix not in {".puml", ".svg"})
+    if unmanaged:
+        raise RuntimeError(f"Refusing to delete unmanaged corpus files: {unmanaged}")
+    for relative in sorted(unexpected):
+        (root / relative).unlink()
+
+
 def generate() -> None:
     sources = _relative_sources()
+    _prune_stale_generated_files(OUTPUT_ROOT, _expected_files(sources))
     _write_sources(OUTPUT_ROOT, sources)
     _render_svgs(OUTPUT_ROOT, sources)
     actual = {path.relative_to(OUTPUT_ROOT) for path in OUTPUT_ROOT.rglob("*") if path.is_file()}

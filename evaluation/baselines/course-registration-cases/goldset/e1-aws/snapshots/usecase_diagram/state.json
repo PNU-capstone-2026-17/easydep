@@ -1,0 +1,1774 @@
+{
+  "raw_requirements": [
+    "Students shall be able to view the courses being offered and the number of seats still available in each course.",
+    "Students shall be able to view course details including the course title, instructor, class time, capacity, and remaining seats.",
+    "Students shall be able to register for a course that has a seat available.",
+    "The system shall tell a student whether a registration succeeded and shall give a reason when it did not succeed.",
+    "The system shall not register the same student for the same course more than once.",
+    "The system shall not accept registrations beyond the capacity of a course.",
+    "Students shall be able to view the courses for which they are registered.",
+    "Students shall be able to cancel their own registration during the registration period.",
+    "When a registration is cancelled, the corresponding seat shall become available again.",
+    "If several students attempt to take the last available seat at the same time, the system shall not exceed the course capacity.",
+    "If one student submits several registration attempts for the same course at the same time, the system shall retain only one registration.",
+    "Course and registration information shall not be lost when the application or its server is restarted.",
+    "The application shall be deployable as a container running on Linux virtual machines.",
+    "Authoritative course registration state shall not be kept only in the local storage of one application instance, so that a replacement instance can process subsequent requests.",
+    "The system that stores course registration information shall not be directly accessible from the Internet.",
+    "Environment-specific configuration and secrets shall be supplied when the service is run rather than included in the application artifact.",
+    "The operating environment shall be able to determine automatically whether an application instance is ready to process requests.",
+    "The cloud environment required by the service shall be reproducibly created and removed from a version-controlled infrastructure definition.",
+    "For the initial pilot, a temporary service interruption caused by an application server failure is acceptable."
+  ],
+  "resource_constraints_text": "The university will pilot the service in the AWS Seoul Region (ap-northeast-2), and the monthly cloud budget must not exceed 500 USD. The fixed research scope is Docker on Linux virtual machines with Terraform and temporary HTTP endpoints. HTTPS, TLS certificates, and domain management are outside this pilot. The pilot may not use a managed database service, Kubernetes, or serverless compute and must use synthetic data instead of real personal data. Recovery from a data-storage server failure is outside this pilot.",
+  "initial_cloud_constraints": {
+    "provider": "aws",
+    "region": "ap-northeast-2",
+    "monthly_budget_amount": 500.0,
+    "monthly_budget_currency": "USD"
+  },
+  "_case": {
+    "caseId": "e1-aws",
+    "inputPath": "evaluation/checkpoint_e2e/cases/e1-aws.json"
+  },
+  "phase": "diagram",
+  "refined_requirements": [
+    {
+      "id": "FR1",
+      "text": "Students shall be able to view the courses being offered and the number of seats still available in each course.",
+      "type": "FR"
+    },
+    {
+      "id": "FR2",
+      "text": "Students shall be able to view course details including the course title, instructor, class time, capacity, and remaining seats.",
+      "type": "FR"
+    },
+    {
+      "id": "FR3",
+      "text": "Students shall be able to register for a course that has a seat available.",
+      "type": "FR"
+    },
+    {
+      "id": "FR4",
+      "text": "The system shall inform a student whether a registration succeeded.",
+      "type": "FR"
+    },
+    {
+      "id": "FR5",
+      "text": "When a registration fails, the system shall provide a reason to the student.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR1",
+      "text": "The system shall prevent registering the same student for the same course more than once.",
+      "type": "NFR"
+    },
+    {
+      "id": "FR6",
+      "text": "The system shall reject registration attempts that would exceed the capacity of a course.",
+      "type": "FR"
+    },
+    {
+      "id": "FR7",
+      "text": "Students shall be able to view the courses for which they are registered.",
+      "type": "FR"
+    },
+    {
+      "id": "FR8",
+      "text": "Students shall be able to cancel their own registration during the registration period.",
+      "type": "FR"
+    },
+    {
+      "id": "FR9",
+      "text": "When a registration is cancelled, the system shall make the corresponding seat available again.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR2",
+      "text": "The system shall enforce that concurrent attempts to take the last available seat do not exceed the course capacity.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR3",
+      "text": "The system shall retain only one registration when a student submits multiple concurrent registration attempts for the same course.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR4",
+      "text": "The system shall maintain persistent storage of course and registration information.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR5",
+      "text": "The system shall operate in its deployment environment.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR6",
+      "text": "Course and registration information shall not be lost when the application or its server is restarted.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR7",
+      "text": "The application shall be deployable as a container running on Linux virtual machines.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR8",
+      "text": "Authoritative course registration state shall not be kept only in the local storage of one application instance, so that a replacement instance can process subsequent requests.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR9",
+      "text": "The system that stores course registration information shall not be directly accessible from the Internet.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR10",
+      "text": "Environment-specific configuration and secrets shall be supplied when the service is run rather than included in the application artifact.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR11",
+      "text": "The operating environment shall be able to determine automatically whether an application instance is ready to process requests.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR12",
+      "text": "The cloud environment required by the service shall be reproducibly created and removed from a version‑controlled infrastructure definition.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR13",
+      "text": "The system shall tolerate a temporary service interruption caused by an application server failure during the initial pilot.",
+      "type": "NFR"
+    }
+  ],
+  "constraint_links": [
+    {
+      "constraint": "Course and registration information shall not be lost when the application or its server is restarted.",
+      "qualifies": "The system shall maintain persistent storage of course and registration information."
+    },
+    {
+      "constraint": "The application shall be deployable as a container running on Linux virtual machines.",
+      "qualifies": "The system shall operate in its deployment environment."
+    },
+    {
+      "constraint": "Authoritative course registration state shall not be kept only in the local storage of one application instance, so that a replacement instance can process subsequent requests.",
+      "qualifies": "The system shall operate in its deployment environment."
+    },
+    {
+      "constraint": "The system that stores course registration information shall not be directly accessible from the Internet.",
+      "qualifies": "The system shall operate in its deployment environment."
+    },
+    {
+      "constraint": "Environment-specific configuration and secrets shall be supplied when the service is run rather than included in the application artifact.",
+      "qualifies": "The system shall operate in its deployment environment."
+    },
+    {
+      "constraint": "The operating environment shall be able to determine automatically whether an application instance is ready to process requests.",
+      "qualifies": "The system shall operate in its deployment environment."
+    },
+    {
+      "constraint": "The cloud environment required by the service shall be reproducibly created and removed from a version‑controlled infrastructure definition.",
+      "qualifies": "The system shall operate in its deployment environment."
+    },
+    {
+      "constraint": "The system shall tolerate a temporary service interruption caused by an application server failure during the initial pilot.",
+      "qualifies": "The system shall operate in its deployment environment."
+    }
+  ],
+  "classified": [
+    {
+      "id": "FR1",
+      "text": "Students shall be able to view the courses being offered and the number of seats still available in each course.",
+      "type": "FR"
+    },
+    {
+      "id": "FR2",
+      "text": "Students shall be able to view course details including the course title, instructor, class time, capacity, and remaining seats.",
+      "type": "FR"
+    },
+    {
+      "id": "FR3",
+      "text": "Students shall be able to register for a course that has a seat available.",
+      "type": "FR"
+    },
+    {
+      "id": "FR4",
+      "text": "The system shall inform a student whether a registration succeeded.",
+      "type": "FR"
+    },
+    {
+      "id": "FR5",
+      "text": "When a registration fails, the system shall provide a reason to the student.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR1",
+      "text": "The system shall prevent registering the same student for the same course more than once.",
+      "type": "NFR"
+    },
+    {
+      "id": "FR6",
+      "text": "The system shall reject registration attempts that would exceed the capacity of a course.",
+      "type": "FR"
+    },
+    {
+      "id": "FR7",
+      "text": "Students shall be able to view the courses for which they are registered.",
+      "type": "FR"
+    },
+    {
+      "id": "FR8",
+      "text": "Students shall be able to cancel their own registration during the registration period.",
+      "type": "FR"
+    },
+    {
+      "id": "FR9",
+      "text": "When a registration is cancelled, the system shall make the corresponding seat available again.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR2",
+      "text": "The system shall enforce that concurrent attempts to take the last available seat do not exceed the course capacity.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR3",
+      "text": "The system shall retain only one registration when a student submits multiple concurrent registration attempts for the same course.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR4",
+      "text": "The system shall maintain persistent storage of course and registration information.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR5",
+      "text": "The system shall operate in its deployment environment.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR6",
+      "text": "Course and registration information shall not be lost when the application or its server is restarted.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR7",
+      "text": "The application shall be deployable as a container running on Linux virtual machines.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR8",
+      "text": "Authoritative course registration state shall not be kept only in the local storage of one application instance, so that a replacement instance can process subsequent requests.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR9",
+      "text": "The system that stores course registration information shall not be directly accessible from the Internet.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR10",
+      "text": "Environment-specific configuration and secrets shall be supplied when the service is run rather than included in the application artifact.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR11",
+      "text": "The operating environment shall be able to determine automatically whether an application instance is ready to process requests.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR12",
+      "text": "The cloud environment required by the service shall be reproducibly created and removed from a version‑controlled infrastructure definition.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR13",
+      "text": "The system shall tolerate a temporary service interruption caused by an application server failure during the initial pilot.",
+      "type": "NFR"
+    }
+  ],
+  "deployment_needs": {
+    "durable_storage": {
+      "role": "provide durable, shared storage for course and registration data that survives restarts and instance replacement",
+      "required": true,
+      "requirementIds": [
+        "NFR4",
+        "NFR6",
+        "NFR8"
+      ],
+      "metadata": {
+        "applicationState": {
+          "durability": "persistent"
+        }
+      },
+      "evidenceSpans": [
+        "The system shall maintain persistent storage of course and registration information.",
+        "Course and registration information shall not be lost when the application or its server is restarted.",
+        "Authoritative course registration state shall not be kept only in the local storage of one application instance, so that a replacement instance can process subsequent requests."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "accepted",
+      "rejectedMetadata": [
+        {
+          "path": "applicationState.accessScope",
+          "value": "shared-service",
+          "reason": "value-not-grounded-in-evidence-span"
+        }
+      ]
+    },
+    "container_runtime": {
+      "role": "run the service as a container on Linux virtual machines",
+      "required": true,
+      "requirementIds": [
+        "NFR7"
+      ],
+      "metadata": {
+        "os": "linux",
+        "container": "generic"
+      },
+      "evidenceSpans": [
+        "The application shall be deployable as a container running on Linux virtual machines."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "accepted"
+    },
+    "external_configuration": {
+      "role": "inject environment‑specific configuration and secrets at runtime rather than bundling them in the application artifact",
+      "required": true,
+      "requirementIds": [
+        "NFR10"
+      ],
+      "metadata": {},
+      "evidenceSpans": [
+        "Environment-specific configuration and secrets shall be supplied when the service is run rather than included in the application artifact."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "accepted"
+    },
+    "readiness_probe": {
+      "role": "expose health/readiness information so the operating environment can automatically determine when an instance is ready to process requests",
+      "required": true,
+      "requirementIds": [
+        "NFR11"
+      ],
+      "metadata": {},
+      "evidenceSpans": [
+        "The operating environment shall be able to determine automatically whether an application instance is ready to process requests."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "accepted"
+    },
+    "infrastructure_as_code": {
+      "role": "allow reproducible creation and removal of the cloud environment via a version‑controlled infrastructure definition",
+      "required": true,
+      "requirementIds": [
+        "NFR12"
+      ],
+      "metadata": {},
+      "evidenceSpans": [
+        "The cloud environment required by the service shall be reproducibly created and removed from a version‑controlled infrastructure definition."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "accepted"
+    },
+    "private_backend_network": {
+      "role": "ensure the system that stores course registration information is not directly accessible from the Internet",
+      "required": true,
+      "requirementIds": [
+        "NFR9"
+      ],
+      "metadata": {
+        "network": "private"
+      },
+      "evidenceSpans": [
+        "The system that stores course registration information shall not be directly accessible from the Internet."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "accepted"
+    },
+    "instance_failure_tolerance": {
+      "role": "tolerate a temporary service interruption caused by an application server failure, preserving data and allowing the service to resume operation",
+      "required": true,
+      "requirementIds": [
+        "NFR13"
+      ],
+      "metadata": {},
+      "evidenceSpans": [
+        "The system shall tolerate a temporary service interruption caused by an application server failure during the initial pilot."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "accepted"
+    }
+  },
+  "capability_contract": {
+    "schemaVersion": "CapabilityContract/v1",
+    "capabilities": [
+      {
+        "id": "durable_storage",
+        "statement": "provide durable, shared storage for course and registration data that survives restarts and instance replacement",
+        "requirementIds": [
+          "NFR4",
+          "NFR6",
+          "NFR8"
+        ],
+        "evidenceSpans": [
+          "The system shall maintain persistent storage of course and registration information.",
+          "Course and registration information shall not be lost when the application or its server is restarted.",
+          "Authoritative course registration state shall not be kept only in the local storage of one application instance, so that a replacement instance can process subsequent requests."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "accepted",
+        "decisionReason": "explicit-grounded-constraint",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "notRequired",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      },
+      {
+        "id": "container_runtime",
+        "statement": "run the service as a container on Linux virtual machines",
+        "requirementIds": [
+          "NFR7"
+        ],
+        "evidenceSpans": [
+          "The application shall be deployable as a container running on Linux virtual machines."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "accepted",
+        "decisionReason": "explicit-grounded-constraint",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "notRequired",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      },
+      {
+        "id": "external_configuration",
+        "statement": "inject environment‑specific configuration and secrets at runtime rather than bundling them in the application artifact",
+        "requirementIds": [
+          "NFR10"
+        ],
+        "evidenceSpans": [
+          "Environment-specific configuration and secrets shall be supplied when the service is run rather than included in the application artifact."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "accepted",
+        "decisionReason": "explicit-grounded-constraint",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "notRequired",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      },
+      {
+        "id": "readiness_probe",
+        "statement": "expose health/readiness information so the operating environment can automatically determine when an instance is ready to process requests",
+        "requirementIds": [
+          "NFR11"
+        ],
+        "evidenceSpans": [
+          "The operating environment shall be able to determine automatically whether an application instance is ready to process requests."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "accepted",
+        "decisionReason": "explicit-grounded-constraint",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "notRequired",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      },
+      {
+        "id": "infrastructure_as_code",
+        "statement": "allow reproducible creation and removal of the cloud environment via a version‑controlled infrastructure definition",
+        "requirementIds": [
+          "NFR12"
+        ],
+        "evidenceSpans": [
+          "The cloud environment required by the service shall be reproducibly created and removed from a version‑controlled infrastructure definition."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "accepted",
+        "decisionReason": "explicit-grounded-constraint",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "notRequired",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      },
+      {
+        "id": "private_backend_network",
+        "statement": "ensure the system that stores course registration information is not directly accessible from the Internet",
+        "requirementIds": [
+          "NFR9"
+        ],
+        "evidenceSpans": [
+          "The system that stores course registration information shall not be directly accessible from the Internet."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "accepted",
+        "decisionReason": "explicit-grounded-constraint",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "notRequired",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      },
+      {
+        "id": "instance_failure_tolerance",
+        "statement": "tolerate a temporary service interruption caused by an application server failure, preserving data and allowing the service to resume operation",
+        "requirementIds": [
+          "NFR13"
+        ],
+        "evidenceSpans": [
+          "The system shall tolerate a temporary service interruption caused by an application server failure during the initial pilot."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "accepted",
+        "decisionReason": "explicit-grounded-constraint",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "notRequired",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      }
+    ],
+    "questions": []
+  },
+  "resource_constraint_extraction": {
+    "status": "completed",
+    "result": {
+      "provider": "{\"value\": \"aws\", \"evidence\": \"The university will pilot the service in the AWS Seoul Region (ap-northeast-2)\"}",
+      "provider_evidence": "The university will pilot the service in the AWS Seoul Region (ap-northeast-2)",
+      "region_as_written": "{\"value\": \"ap-northeast-2\", \"evidence\": \"AWS Seoul Region (ap-northeast-2)\"}",
+      "region_evidence": "AWS Seoul Region (ap-northeast-2)",
+      "monthly_budget_amount": 0.0,
+      "monthly_budget_currency": "USD",
+      "monthly_budget_evidence": "the monthly cloud budget must not exceed 500 USD",
+      "min_vcpu": null,
+      "min_vcpu_evidence": "",
+      "min_memory_gib": null,
+      "min_memory_evidence": "",
+      "traffic_pattern": null,
+      "traffic_pattern_evidence": "",
+      "scale_value": null,
+      "scale_unit": "requestsPerSecond",
+      "scale_evidence": "",
+      "data_residency": null,
+      "data_residency_evidence": "",
+      "ambiguous_fields": [],
+      "understanding": "Extracted only the explicit cloud constraints supplied by the user. No defaults or inferred values were added."
+    }
+  },
+  "resource_intake": {
+    "draft": {
+      "schemaVersion": "4",
+      "workloads": [
+        "vm"
+      ],
+      "provider": "aws",
+      "regionAsWritten": "ap-northeast-2",
+      "region": "ap-northeast-2",
+      "monthlyBudgetUSD": 500.0
+    },
+    "valid": true,
+    "errors": [],
+    "questions": [
+      {
+        "field": "region",
+        "kind": "asked",
+        "why": "Pricing and capacity data are indexed by provider region code; the place name is resolved before those datasets are queried.",
+        "question": "Which region should host the deployment? A place name is acceptable.",
+        "seen": []
+      },
+      {
+        "field": "minVCpu",
+        "kind": "suggested",
+        "why": "A sizing floor enables instance-spec selection. Without one, the system does not assume that the cheapest or smallest instance is sufficient.",
+        "question": "If known, provide either the minimum vCPU or minimum memory required by this workload.",
+        "seen": []
+      }
+    ],
+    "understanding": "Extracted only the explicit cloud constraints supplied by the user. No defaults or inferred values were added.",
+    "provenance": [
+      {
+        "field": "provider",
+        "value": "aws",
+        "as_written": "aws",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      },
+      {
+        "field": "regionAsWritten",
+        "value": "ap-northeast-2",
+        "as_written": "ap-northeast-2",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      },
+      {
+        "field": "region",
+        "value": "ap-northeast-2",
+        "as_written": "ap-northeast-2",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      },
+      {
+        "field": "monthlyBudgetUSD",
+        "value": 500.0,
+        "as_written": "500.0",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      }
+    ],
+    "rejected": [
+      {
+        "field": "provider",
+        "as_written": "The university will pilot the service in the AWS Seoul Region (ap-northeast-2)",
+        "value": "{\"value\": \"aws\", \"evidence\": \"The university will pilot the service in the AWS Seoul Region (ap-northeast-2)\"}",
+        "source": "agent",
+        "why": "aws 또는 azure 또는 gcp여야 한다"
+      },
+      {
+        "field": "monthlyBudgetUSD",
+        "as_written": "the monthly cloud budget must not exceed 500 USD",
+        "value": 0.0,
+        "source": "agent",
+        "why": "양수여야 한다"
+      }
+    ],
+    "trace": [
+      {
+        "action": "system_scope",
+        "field": "workloads",
+        "value": [
+          "vm"
+        ]
+      },
+      {
+        "action": "record_field",
+        "field": "provider",
+        "value": "aws"
+      },
+      {
+        "action": "record_field",
+        "field": "regionAsWritten",
+        "value": "ap-northeast-2"
+      },
+      {
+        "action": "record_field",
+        "field": "region",
+        "value": "ap-northeast-2"
+      },
+      {
+        "action": "record_field",
+        "field": "monthlyBudgetUSD",
+        "value": 500.0
+      },
+      {
+        "action": "record_field",
+        "field": "provider",
+        "rejected": "aws 또는 azure 또는 gcp여야 한다"
+      },
+      {
+        "action": "ask_user",
+        "field": "region",
+        "question": "Which region should host the deployment? A place name is acceptable."
+      },
+      {
+        "action": "record_field",
+        "field": "monthlyBudgetUSD",
+        "rejected": "양수여야 한다"
+      }
+    ]
+  },
+  "resource_spec": {
+    "schemaVersion": "4",
+    "workloads": [
+      "vm"
+    ],
+    "provider": "aws",
+    "regionAsWritten": "ap-northeast-2",
+    "region": "ap-northeast-2",
+    "monthlyBudgetUSD": 500.0
+  },
+  "actors": [
+    {
+      "name": "Student",
+      "description": "A person enrolled at the institution who can view the catalog of courses, see detailed information for each course, register for courses that have available seats, receive confirmation or error messages about registration attempts, view the list of courses they are enrolled in, and cancel their own registrations during the allowed registration period.",
+      "parent_actor": null
+    }
+  ],
+  "use_cases": [
+    {
+      "id": "UC1",
+      "name": "View course catalog",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "See the list of courses that are being offered together with the number of seats still available and the detailed information for each course so the student can decide which courses to register for.",
+      "requirement_ids": [
+        "FR1",
+        "FR2"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC2",
+      "name": "Register for a course",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Enroll in a selected course that has an available seat and receive immediate feedback about the success or failure of the registration.",
+      "requirement_ids": [
+        "FR3",
+        "FR4",
+        "FR5",
+        "FR6"
+      ],
+      "nfr_ids": [
+        "NFR1",
+        "NFR2",
+        "NFR3"
+      ]
+    },
+    {
+      "id": "UC3",
+      "name": "View enrolled courses",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Display the set of courses for which the student is currently registered.",
+      "requirement_ids": [
+        "FR7"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC4",
+      "name": "Cancel course registration",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Withdraw from a previously registered course during the allowed registration period and make the released seat available for other students.",
+      "requirement_ids": [
+        "FR8",
+        "FR9"
+      ],
+      "nfr_ids": []
+    }
+  ],
+  "model_review": {
+    "issues": [],
+    "semantic_status": "ok",
+    "unexamined_rules": []
+  },
+  "coverage": {
+    "fr_total": 9,
+    "covered_fr_ids": [
+      "FR1",
+      "FR2",
+      "FR3",
+      "FR4",
+      "FR5",
+      "FR6",
+      "FR7",
+      "FR8",
+      "FR9"
+    ],
+    "orphan_fr_ids": [],
+    "unattached_nfr_ids": [
+      "NFR5"
+    ],
+    "unknown_requirement_refs": [],
+    "coverage_ratio": 1.0
+  },
+  "use_case_specs": [
+    {
+      "use_case_id": "UC1",
+      "name": "View course catalog",
+      "preconditions": [
+        "Student has an active authenticated session"
+      ],
+      "trigger": "Student initiates a request to view the course catalog",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student requests the course catalog",
+          "covered_req_ids": []
+        },
+        {
+          "step_number": 2,
+          "sentence": "System presents the list of offered courses together with the number of seats still available for each course",
+          "covered_req_ids": [
+            "FR1"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "Student selects a course from the list to view its details",
+          "covered_req_ids": []
+        },
+        {
+          "step_number": 4,
+          "sentence": "System presents the selected course's title, instructor, class time, capacity, and remaining seats",
+          "covered_req_ids": [
+            "FR2"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "System cannot retrieve the list of offered courses",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the student that the course catalog is currently unavailable"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "4a",
+          "branch_step": 4,
+          "condition": "System cannot retrieve instructor information for the selected course",
+          "handling_steps": [
+            {
+              "sub_step": "4a1",
+              "sentence": "System provides the available details (title, class time, capacity, remaining seats) and notes that instructor information is unavailable"
+            }
+          ],
+          "outcome": "alternate_success",
+          "resume_at_step": null
+        },
+        {
+          "label": "4b",
+          "branch_step": 4,
+          "condition": "Selected course is no longer offered in the catalog",
+          "handling_steps": [
+            {
+              "sub_step": "4b1",
+              "sentence": "System informs the student that the selected course is no longer available"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "Student has seen the complete list of offered courses with current seat availability and has received the full details of the selected course"
+      ],
+      "minimal_guarantee": [
+        "No enrollment data is modified during the view operation",
+        "All information presented to the student is limited to courses the student is authorized to view",
+        "System maintains confidentiality of student credentials throughout the interaction"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC2",
+      "name": "Register for a course",
+      "preconditions": [
+        "Student is enrolled at the institution and has access to the course catalog"
+      ],
+      "trigger": "Student requests registration for a selected course",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student selects a course and submits a registration request",
+          "covered_req_ids": [
+            "FR3"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies that the student is not already registered for the course and that at least one seat is available",
+          "covered_req_ids": [
+            "FR3"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System creates a registration entry for the student in the course",
+          "covered_req_ids": [
+            "FR3"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System informs the student that registration succeeded",
+          "covered_req_ids": [
+            "FR4"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "the selected course has no available seats",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the student that registration failed because the course is full"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "2b",
+          "branch_step": 2,
+          "condition": "the student is already registered for the selected course",
+          "handling_steps": [
+            {
+              "sub_step": "2b1",
+              "sentence": "System informs the student that registration failed because they are already enrolled"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "3a",
+          "branch_step": 3,
+          "condition": "concurrent registration attempts would exceed the course capacity",
+          "handling_steps": [
+            {
+              "sub_step": "3a1",
+              "sentence": "System retains only one registration for the student and discards the others"
+            },
+            {
+              "sub_step": "3a2",
+              "sentence": "System informs the student whose attempt was discarded that registration failed because the seat was taken by another request"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "The student is enrolled in the selected course",
+        "A single registration record for the student and course exists",
+        "The course seat count reflects the new enrollment",
+        "The student receives a confirmation of successful registration"
+      ],
+      "minimal_guarantee": [
+        "No registration record is created for the student if the use case fails",
+        "The system does not exceed the course capacity",
+        "The system continues to enforce that a student cannot be registered for the same course more than once",
+        "All data retained by the system remains protected according to institutional policies"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC3",
+      "name": "View enrolled courses",
+      "preconditions": [
+        "Student has an active authenticated session with the system"
+      ],
+      "trigger": "Student initiates a request to view current enrollments",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student initiates a request to view current enrollments",
+          "covered_req_ids": [
+            "FR7"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System retrieves the set of courses for which the student is registered",
+          "covered_req_ids": [
+            "FR7"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System presents the retrieved course set to the student",
+          "covered_req_ids": [
+            "FR7"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "System cannot retrieve enrollment data",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System notifies the student that enrollment information cannot be displayed due to a technical problem"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "2b",
+          "branch_step": 2,
+          "condition": "Retrieved course set is empty",
+          "handling_steps": [
+            {
+              "sub_step": "2b1",
+              "sentence": "System informs the student that no courses are currently registered"
+            }
+          ],
+          "outcome": "alternate_success",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "The student receives an accurate display of all courses for which they are currently registered"
+      ],
+      "minimal_guarantee": [
+        "The request does not modify enrollment data",
+        "The system maintains confidentiality of other students' enrollment information",
+        "Any error messages preserve system security"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC4",
+      "name": "Cancel course registration",
+      "preconditions": [
+        "Student is authenticated to the system",
+        "Registration period is open"
+      ],
+      "trigger": "Student initiates a cancellation request for a course they are enrolled in",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student requests cancellation of the selected course",
+          "covered_req_ids": []
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies that the student is registered for the selected course and that the registration period permits cancellation",
+          "covered_req_ids": [
+            "FR8"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System removes the student's registration for the course",
+          "covered_req_ids": [
+            "FR8"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System increments the available seat count for the course",
+          "covered_req_ids": [
+            "FR9"
+          ]
+        },
+        {
+          "step_number": 5,
+          "sentence": "System notifies the student that the cancellation succeeded",
+          "covered_req_ids": []
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "Student is not registered for the selected course",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the student that no registration exists for the selected course"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "2b",
+          "branch_step": 2,
+          "condition": "Registration period is closed",
+          "handling_steps": [
+            {
+              "sub_step": "2b1",
+              "sentence": "System informs the student that the cancellation period has ended"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "3a",
+          "branch_step": 3,
+          "condition": "System encounters an error while removing the registration",
+          "handling_steps": [
+            {
+              "sub_step": "3a1",
+              "sentence": "System informs the student of the error and suggests retrying later"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "4a",
+          "branch_step": 4,
+          "condition": "System fails to update the seat availability",
+          "handling_steps": [
+            {
+              "sub_step": "4a1",
+              "sentence": "System attempts to retry the seat update"
+            },
+            {
+              "sub_step": "4a2",
+              "sentence": "If the retry fails, System informs the student of the failure"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "The student is no longer registered for the cancelled course",
+        "The seat previously occupied by the student is available for other students",
+        "The student receives confirmation that the cancellation succeeded"
+      ],
+      "minimal_guarantee": [
+        "No registration is removed if cancellation cannot be completed",
+        "Seat availability remains unchanged when cancellation fails",
+        "System state remains consistent and any partial changes are rolled back"
+      ],
+      "issues": [
+        "4a2: branch word (if/else); move the branch to an extension [spec.no-branching-in-a-step · Ch. 7 (Scenarios and Steps), p.88~]"
+      ],
+      "repair_iters": 1,
+      "semantic_status": "pending",
+      "repair_stopped": "no_improvement"
+    }
+  ],
+  "spec_report": {
+    "n_specs": 4,
+    "total_issues": 1,
+    "issues_by_uc": {
+      "UC4": [
+        "4a2: branch word (if/else); move the branch to an extension [spec.no-branching-in-a-step · Ch. 7 (Scenarios and Steps), p.88~]"
+      ]
+    },
+    "total_repair_iters": 1,
+    "unvalidated_ucs": [],
+    "failed_ucs": [],
+    "repair_stopped": {
+      "clean": 3,
+      "no_improvement": 1
+    }
+  },
+  "relationships": {
+    "associations": [
+      {
+        "actor": "Student",
+        "use_case": "View course catalog"
+      },
+      {
+        "actor": "Student",
+        "use_case": "Register for a course"
+      },
+      {
+        "actor": "Student",
+        "use_case": "View enrolled courses"
+      },
+      {
+        "actor": "Student",
+        "use_case": "Cancel course registration"
+      }
+    ],
+    "includes": [],
+    "extends": [],
+    "generalizations": [],
+    "derived_use_cases": [],
+    "relationship_issues": [],
+    "semantic_status": "ok",
+    "repair_iters": 1,
+    "repair_stopped": "clean",
+    "dropped_refs": [],
+    "orphan_actors": []
+  },
+  "relationship_report": {
+    "counts": {
+      "associations": 4,
+      "includes": 0,
+      "extends": 0,
+      "generalizations": 0,
+      "derived_use_cases": 0
+    },
+    "orphan_actors": [],
+    "declared_supporting_associations": 0,
+    "missing_supporting_associations": [],
+    "dropped_refs": [],
+    "relationship_issues": [],
+    "semantic_status": "ok",
+    "repair_iters": 1,
+    "repair_stopped": "clean"
+  },
+  "diagram": "@startuml\nleft to right direction\nactor \"Student\" as Student\nrectangle System {\n  usecase \"View course catalog\" as UC1\n  usecase \"Register for a course\" as UC2\n  usecase \"View enrolled courses\" as UC3\n  usecase \"Cancel course registration\" as UC4\n}\nStudent --- UC1\nStudent --- UC2\nStudent --- UC3\nStudent --- UC4\n@enduml",
+  "usecase_spec": {
+    "actors": [
+      {
+        "name": "Student",
+        "description": "A person enrolled at the institution who can view the catalog of courses, see detailed information for each course, register for courses that have available seats, receive confirmation or error messages about registration attempts, view the list of courses they are enrolled in, and cancel their own registrations during the allowed registration period.",
+        "parent_actor": null
+      }
+    ],
+    "use_cases": [
+      {
+        "id": "UC1",
+        "name": "View course catalog",
+        "primary_actor": "Student",
+        "supporting_actors": [],
+        "level": "user_goal",
+        "goal": "See the list of courses that are being offered together with the number of seats still available and the detailed information for each course so the student can decide which courses to register for.",
+        "requirement_ids": [
+          "FR1",
+          "FR2"
+        ],
+        "nfr_ids": []
+      },
+      {
+        "id": "UC2",
+        "name": "Register for a course",
+        "primary_actor": "Student",
+        "supporting_actors": [],
+        "level": "user_goal",
+        "goal": "Enroll in a selected course that has an available seat and receive immediate feedback about the success or failure of the registration.",
+        "requirement_ids": [
+          "FR3",
+          "FR4",
+          "FR5",
+          "FR6"
+        ],
+        "nfr_ids": [
+          "NFR1",
+          "NFR2",
+          "NFR3"
+        ]
+      },
+      {
+        "id": "UC3",
+        "name": "View enrolled courses",
+        "primary_actor": "Student",
+        "supporting_actors": [],
+        "level": "user_goal",
+        "goal": "Display the set of courses for which the student is currently registered.",
+        "requirement_ids": [
+          "FR7"
+        ],
+        "nfr_ids": []
+      },
+      {
+        "id": "UC4",
+        "name": "Cancel course registration",
+        "primary_actor": "Student",
+        "supporting_actors": [],
+        "level": "user_goal",
+        "goal": "Withdraw from a previously registered course during the allowed registration period and make the released seat available for other students.",
+        "requirement_ids": [
+          "FR8",
+          "FR9"
+        ],
+        "nfr_ids": []
+      }
+    ],
+    "use_case_specs": [
+      {
+        "use_case_id": "UC1",
+        "name": "View course catalog",
+        "preconditions": [
+          "Student has an active authenticated session"
+        ],
+        "trigger": "Student initiates a request to view the course catalog",
+        "main_scenario": [
+          {
+            "step_number": 1,
+            "sentence": "Student requests the course catalog",
+            "covered_req_ids": []
+          },
+          {
+            "step_number": 2,
+            "sentence": "System presents the list of offered courses together with the number of seats still available for each course",
+            "covered_req_ids": [
+              "FR1"
+            ]
+          },
+          {
+            "step_number": 3,
+            "sentence": "Student selects a course from the list to view its details",
+            "covered_req_ids": []
+          },
+          {
+            "step_number": 4,
+            "sentence": "System presents the selected course's title, instructor, class time, capacity, and remaining seats",
+            "covered_req_ids": [
+              "FR2"
+            ]
+          }
+        ],
+        "extensions": [
+          {
+            "label": "2a",
+            "branch_step": 2,
+            "condition": "System cannot retrieve the list of offered courses",
+            "handling_steps": [
+              {
+                "sub_step": "2a1",
+                "sentence": "System informs the student that the course catalog is currently unavailable"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          },
+          {
+            "label": "4a",
+            "branch_step": 4,
+            "condition": "System cannot retrieve instructor information for the selected course",
+            "handling_steps": [
+              {
+                "sub_step": "4a1",
+                "sentence": "System provides the available details (title, class time, capacity, remaining seats) and notes that instructor information is unavailable"
+              }
+            ],
+            "outcome": "alternate_success",
+            "resume_at_step": null
+          },
+          {
+            "label": "4b",
+            "branch_step": 4,
+            "condition": "Selected course is no longer offered in the catalog",
+            "handling_steps": [
+              {
+                "sub_step": "4b1",
+                "sentence": "System informs the student that the selected course is no longer available"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          }
+        ],
+        "success_guarantee": [
+          "Student has seen the complete list of offered courses with current seat availability and has received the full details of the selected course"
+        ],
+        "minimal_guarantee": [
+          "No enrollment data is modified during the view operation",
+          "All information presented to the student is limited to courses the student is authorized to view",
+          "System maintains confidentiality of student credentials throughout the interaction"
+        ],
+        "issues": [],
+        "repair_iters": 0,
+        "semantic_status": "ok",
+        "repair_stopped": "clean"
+      },
+      {
+        "use_case_id": "UC2",
+        "name": "Register for a course",
+        "preconditions": [
+          "Student is enrolled at the institution and has access to the course catalog"
+        ],
+        "trigger": "Student requests registration for a selected course",
+        "main_scenario": [
+          {
+            "step_number": 1,
+            "sentence": "Student selects a course and submits a registration request",
+            "covered_req_ids": [
+              "FR3"
+            ]
+          },
+          {
+            "step_number": 2,
+            "sentence": "System verifies that the student is not already registered for the course and that at least one seat is available",
+            "covered_req_ids": [
+              "FR3"
+            ]
+          },
+          {
+            "step_number": 3,
+            "sentence": "System creates a registration entry for the student in the course",
+            "covered_req_ids": [
+              "FR3"
+            ]
+          },
+          {
+            "step_number": 4,
+            "sentence": "System informs the student that registration succeeded",
+            "covered_req_ids": [
+              "FR4"
+            ]
+          }
+        ],
+        "extensions": [
+          {
+            "label": "2a",
+            "branch_step": 2,
+            "condition": "the selected course has no available seats",
+            "handling_steps": [
+              {
+                "sub_step": "2a1",
+                "sentence": "System informs the student that registration failed because the course is full"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          },
+          {
+            "label": "2b",
+            "branch_step": 2,
+            "condition": "the student is already registered for the selected course",
+            "handling_steps": [
+              {
+                "sub_step": "2b1",
+                "sentence": "System informs the student that registration failed because they are already enrolled"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          },
+          {
+            "label": "3a",
+            "branch_step": 3,
+            "condition": "concurrent registration attempts would exceed the course capacity",
+            "handling_steps": [
+              {
+                "sub_step": "3a1",
+                "sentence": "System retains only one registration for the student and discards the others"
+              },
+              {
+                "sub_step": "3a2",
+                "sentence": "System informs the student whose attempt was discarded that registration failed because the seat was taken by another request"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          }
+        ],
+        "success_guarantee": [
+          "The student is enrolled in the selected course",
+          "A single registration record for the student and course exists",
+          "The course seat count reflects the new enrollment",
+          "The student receives a confirmation of successful registration"
+        ],
+        "minimal_guarantee": [
+          "No registration record is created for the student if the use case fails",
+          "The system does not exceed the course capacity",
+          "The system continues to enforce that a student cannot be registered for the same course more than once",
+          "All data retained by the system remains protected according to institutional policies"
+        ],
+        "issues": [],
+        "repair_iters": 0,
+        "semantic_status": "ok",
+        "repair_stopped": "clean"
+      },
+      {
+        "use_case_id": "UC3",
+        "name": "View enrolled courses",
+        "preconditions": [
+          "Student has an active authenticated session with the system"
+        ],
+        "trigger": "Student initiates a request to view current enrollments",
+        "main_scenario": [
+          {
+            "step_number": 1,
+            "sentence": "Student initiates a request to view current enrollments",
+            "covered_req_ids": [
+              "FR7"
+            ]
+          },
+          {
+            "step_number": 2,
+            "sentence": "System retrieves the set of courses for which the student is registered",
+            "covered_req_ids": [
+              "FR7"
+            ]
+          },
+          {
+            "step_number": 3,
+            "sentence": "System presents the retrieved course set to the student",
+            "covered_req_ids": [
+              "FR7"
+            ]
+          }
+        ],
+        "extensions": [
+          {
+            "label": "2a",
+            "branch_step": 2,
+            "condition": "System cannot retrieve enrollment data",
+            "handling_steps": [
+              {
+                "sub_step": "2a1",
+                "sentence": "System notifies the student that enrollment information cannot be displayed due to a technical problem"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          },
+          {
+            "label": "2b",
+            "branch_step": 2,
+            "condition": "Retrieved course set is empty",
+            "handling_steps": [
+              {
+                "sub_step": "2b1",
+                "sentence": "System informs the student that no courses are currently registered"
+              }
+            ],
+            "outcome": "alternate_success",
+            "resume_at_step": null
+          }
+        ],
+        "success_guarantee": [
+          "The student receives an accurate display of all courses for which they are currently registered"
+        ],
+        "minimal_guarantee": [
+          "The request does not modify enrollment data",
+          "The system maintains confidentiality of other students' enrollment information",
+          "Any error messages preserve system security"
+        ],
+        "issues": [],
+        "repair_iters": 0,
+        "semantic_status": "ok",
+        "repair_stopped": "clean"
+      },
+      {
+        "use_case_id": "UC4",
+        "name": "Cancel course registration",
+        "preconditions": [
+          "Student is authenticated to the system",
+          "Registration period is open"
+        ],
+        "trigger": "Student initiates a cancellation request for a course they are enrolled in",
+        "main_scenario": [
+          {
+            "step_number": 1,
+            "sentence": "Student requests cancellation of the selected course",
+            "covered_req_ids": []
+          },
+          {
+            "step_number": 2,
+            "sentence": "System verifies that the student is registered for the selected course and that the registration period permits cancellation",
+            "covered_req_ids": [
+              "FR8"
+            ]
+          },
+          {
+            "step_number": 3,
+            "sentence": "System removes the student's registration for the course",
+            "covered_req_ids": [
+              "FR8"
+            ]
+          },
+          {
+            "step_number": 4,
+            "sentence": "System increments the available seat count for the course",
+            "covered_req_ids": [
+              "FR9"
+            ]
+          },
+          {
+            "step_number": 5,
+            "sentence": "System notifies the student that the cancellation succeeded",
+            "covered_req_ids": []
+          }
+        ],
+        "extensions": [
+          {
+            "label": "2a",
+            "branch_step": 2,
+            "condition": "Student is not registered for the selected course",
+            "handling_steps": [
+              {
+                "sub_step": "2a1",
+                "sentence": "System informs the student that no registration exists for the selected course"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          },
+          {
+            "label": "2b",
+            "branch_step": 2,
+            "condition": "Registration period is closed",
+            "handling_steps": [
+              {
+                "sub_step": "2b1",
+                "sentence": "System informs the student that the cancellation period has ended"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          },
+          {
+            "label": "3a",
+            "branch_step": 3,
+            "condition": "System encounters an error while removing the registration",
+            "handling_steps": [
+              {
+                "sub_step": "3a1",
+                "sentence": "System informs the student of the error and suggests retrying later"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          },
+          {
+            "label": "4a",
+            "branch_step": 4,
+            "condition": "System fails to update the seat availability",
+            "handling_steps": [
+              {
+                "sub_step": "4a1",
+                "sentence": "System attempts to retry the seat update"
+              },
+              {
+                "sub_step": "4a2",
+                "sentence": "If the retry fails, System informs the student of the failure"
+              }
+            ],
+            "outcome": "fail",
+            "resume_at_step": null
+          }
+        ],
+        "success_guarantee": [
+          "The student is no longer registered for the cancelled course",
+          "The seat previously occupied by the student is available for other students",
+          "The student receives confirmation that the cancellation succeeded"
+        ],
+        "minimal_guarantee": [
+          "No registration is removed if cancellation cannot be completed",
+          "Seat availability remains unchanged when cancellation fails",
+          "System state remains consistent and any partial changes are rolled back"
+        ],
+        "issues": [
+          "4a2: branch word (if/else); move the branch to an extension [spec.no-branching-in-a-step · Ch. 7 (Scenarios and Steps), p.88~]"
+        ],
+        "repair_iters": 1,
+        "semantic_status": "pending",
+        "repair_stopped": "no_improvement"
+      }
+    ]
+  },
+  "usecase_diagram_puml": "@startuml\nleft to right direction\nactor \"Student\" as Student\nrectangle System {\n  usecase \"View course catalog\" as UC1\n  usecase \"Register for a course\" as UC2\n  usecase \"View enrolled courses\" as UC3\n  usecase \"Cancel course registration\" as UC4\n}\nStudent --- UC1\nStudent --- UC2\nStudent --- UC3\nStudent --- UC4\n@enduml",
+  "deployment_planning_facts": [
+    {
+      "id": "e1-generated-application",
+      "kind": "workloadContract",
+      "value": {
+        "workloadId": "course-registration-app",
+        "artifactKind": "generatedApplication",
+        "interface": {
+          "protocol": "http",
+          "exposure": "public"
+        },
+        "replicaCount": 1
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application"
+      ],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    },
+    {
+      "id": "e1-postgresql-runtime",
+      "kind": "workloadContract",
+      "value": {
+        "workloadId": "course-registration-db",
+        "artifactKind": "prebuiltImage",
+        "image": "postgres:16.4-bookworm",
+        "engine": "postgresql",
+        "deploymentMode": "container",
+        "runtimeCatalogRef": "docker-on-vm/prebuilt-image",
+        "interface": {
+          "protocol": "tcp",
+          "exposure": "internal",
+          "port": 5432
+        },
+        "replicaCount": 1,
+        "storage": {
+          "persistence": "persistent",
+          "capacityGiB": 20,
+          "mountPath": "/var/lib/postgresql/data",
+          "deletionPolicy": "retain",
+          "replicaSemantics": "singleAttachment"
+        }
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    },
+    {
+      "id": "e1-private-database-connection",
+      "kind": "connectionContract",
+      "value": {
+        "sourceWorkloadRef": "course-registration-app",
+        "targetWorkloadRef": "course-registration-db",
+        "protocol": "tcp",
+        "targetPort": 5432,
+        "endpointBindingRequired": true,
+        "secretBindingRequired": true
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    }
+  ]
+}

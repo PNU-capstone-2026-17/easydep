@@ -109,9 +109,8 @@ def test_resource_plan_binding_rejects_unrequested_https_upgrade():
 
 def test_authoritative_resource_plan_requires_user_run_bundle_entrypoints():
     plan = {
+        "schemaVersion": "easydep-resource-plan",
         "provider": "aws",
-        "deploymentTopology": {"publicIngress": "direct"},
-        "providerProjectionPolicy": {"mode": "standalone"},
         "nodes": [],
         "edges": [],
     }
@@ -132,9 +131,8 @@ def test_authoritative_resource_plan_requires_user_run_bundle_entrypoints():
 
 def test_gcp_cloud_nat_plan_cannot_delete_the_default_internet_route():
     plan = {
+        "schemaVersion": "easydep-resource-plan",
         "provider": "gcp",
-        "deploymentTopology": {"publicIngress": "direct", "workloadLayout": "primaryOnly"},
-        "providerProjectionPolicy": {"mode": "standalone"},
         "nodes": [
             {
                 "id": "network",

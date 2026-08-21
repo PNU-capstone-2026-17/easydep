@@ -8,8 +8,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.design.services.deployment_diagram.topology import derive_deployment_topology
-
 
 class ModelProvenance(BaseModel):
     """Make proposal ownership explicit; this is not a standards claim."""
@@ -653,25 +651,6 @@ def cloud_contract_from_legacy(requirements_result: dict[str, Any]) -> CloudCapa
                 },
             )
         )
-    resource_spec = requirements_result.get("resource_spec") or {}
-    topology = derive_deployment_topology(
-        provider=(
-            str(resource_spec.get("provider") or "")
-            if isinstance(resource_spec, dict)
-            else ""
-        ),
-        resource_spec=resource_spec if isinstance(resource_spec, dict) else {},
-    )
-    facts.append(
-        ContractFact(
-            id="policy.deployment-topology",
-            kind="cloud.deploymentTopology",
-            attributes=topology,
-            sourceRefs=["easydep-default:deployment-topology"],
-            provenanceClass="adapted",
-            extensions={"adapter": "deployment-topology/v1"},
-        )
-    )
     return CloudCapabilityContract(facts=facts)
 
 
@@ -1123,70 +1102,4 @@ def validate_binding_consistency(
                         details={"consumes": left_value, "provides": right_value},
                     )
                 )
-    managed_group = any(
-        fact.kind == "cloud.deploymentTopology"
-        and fact.attributes.get("computeManagement") == "managedGroup"
-        for fact in cloud.facts
-    )
-    observed_node_scoped_state = [
-        fact
-        for fact in application.facts
-        if fact.kind == "runtime.storage"
-        and fact.attributes.get("accessScope") == "node-filesystem"
-    ]
-    required_node_scoped_intent = [
-        fact
-        for fact in application.facts
-        if fact.kind == "runtime.storage.intent"
-        and fact.attributes.get("required") is True
-        and fact.attributes.get("accessScope") == "node-filesystem"
-    ]
-    node_scoped_state = [*required_node_scoped_intent, *observed_node_scoped_state]
-    if managed_group and node_scoped_state:
-        intent_mandates_node_scope = bool(required_node_scoped_intent)
-        alternatives = (
-            [
-                {
-                    "id": "revise-state-requirement",
-                    "repairOwner": "requirements.analysis",
-                },
-                {
-                    "id": "revise-compute-topology",
-                    "repairOwner": "requirements.analysis",
-                },
-            ]
-            if intent_mandates_node_scope
-            else [
-                {
-                    "id": "externalize-or-replicate-state",
-                    "repairOwner": "implementation.logic",
-                },
-                {
-                    "id": "revise-compute-topology",
-                    "repairOwner": "requirements.analysis",
-                },
-            ]
-        )
-        diagnostics.append(
-            ConsistencyDiagnostic(
-                code="BIND-STATE-GROUP-001",
-                message=(
-                    "A managed compute group requires node-filesystem "
-                    "state to be externalized or replicated."
-                ),
-                locations=[location for fact in node_scoped_state for location in fact.source_refs],
-                details={
-                    "decision": "needsUserInput",
-                    "question": (
-                        "Should the application externalize or replicate its node-filesystem "
-                        "state, or should the compute topology be revised?"
-                    ),
-                    "alternatives": alternatives,
-                    "automaticRepair": False,
-                    "intentMandatesNodeScope": intent_mandates_node_scope,
-                    "applicationFactIds": [fact.id for fact in node_scoped_state],
-                    "cloudFactId": "policy.deployment-topology",
-                },
-            )
-        )
     return diagnostics

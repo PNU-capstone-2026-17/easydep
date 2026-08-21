@@ -1,0 +1,22 @@
+{
+  "signature": {
+    "useCaseIds": [
+      "UC1",
+      "UC2",
+      "UC3",
+      "UC4"
+    ],
+    "findingRules": [
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)",
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)",
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)",
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)",
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)",
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)",
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)",
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)",
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)",
+      "sequence.usecase-step-coverage · app/design/rtm.py (traceability references)"
+    ]
+  }
+}

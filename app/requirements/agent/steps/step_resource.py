@@ -768,23 +768,6 @@ def _record_initial_cloud_constraints(session: _Session, initial: dict) -> None:
             }
         )
 
-    compute_profile = str(initial.get("compute_profile") or "").strip()
-    public_ingress = str(initial.get("public_ingress") or "").strip()
-    persistent_workload_placement = str(initial.get("persistent_workload_placement") or "").strip()
-    replica_count = initial.get("replica_count")
-    if compute_profile:
-        session.record("computeProfile", compute_profile, compute_profile)
-    if public_ingress:
-        session.record("publicIngress", public_ingress, public_ingress)
-    if persistent_workload_placement:
-        session.record(
-            "persistentWorkloadPlacement",
-            persistent_workload_placement,
-            persistent_workload_placement,
-        )
-    if isinstance(replica_count, int) and not isinstance(replica_count, bool):
-        session.record("replicaCount", replica_count, str(replica_count))
-
     amount = initial.get("monthly_budget_amount")
     currency = str(initial.get("monthly_budget_currency") or "USD").strip().upper()
     if amount is None:

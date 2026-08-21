@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "RESOURCE_SPEC v3",
-  "description": "Cloud coordinates and an explicit Docker-on-VM deployment topology. The topology records placement and ingress structure without making an availability or SLA claim.",
+  "title": "RESOURCE_SPEC v4",
+  "description": "Provider, location, budget, capacity, traffic, and data-residency context. Workload topology and placement are intentionally excluded.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,7 +12,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "3"
+      "const": "4"
     },
     "workloads": {
       "const": ["vm"],
@@ -76,31 +76,11 @@
       "type": "string",
       "description": "Optional user-stated data residency constraint."
     },
-    "computeProfile": {
-      "enum": [
-        "standaloneOne",
-        "managedGroupOne",
-        "managedGroupManySingleZone",
-        "managedGroupManyMultiZone"
-      ],
-      "description": "Finite app-compute topology family. It describes lifecycle control, replica multiplicity, and occupied-zone layout without claiming availability."
-    },
-    "replicaCount": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "Exact fixed app replica count. Autoscaling is outside v1."
-    },
-    "publicIngress": {
-      "enum": ["direct", "loadBalanced"],
-      "description": "Public HTTP ingress realization. standaloneOne requires direct; managed groups require loadBalanced. HTTPS/TLS is outside v1."
-    },
-    "persistentWorkloadPlacement": {
-      "enum": ["colocate", "separateCompute"],
-      "description": "Placement constraint for the optional persistent workload. Colocate is valid only with standaloneOne; managed groups always use separateCompute."
-    },
-    "applicationStateless": {
-      "type": "boolean",
-      "description": "Evidence gate for more than one app replica; true means local sessions, uploads, singleton schedulers, and writable local state are absent or externalized."
+    "candidateZones": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1},
+      "description": "Optional provider zone candidates. Workload constraints decide whether and how many zones are occupied."
     },
     "scale": {
       "type": "object",

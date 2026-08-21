@@ -46,12 +46,11 @@ from app.design.services.class_diagram.extractor import extract_bce_classes_from
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.reviser import revise_bce_classes
 from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
-from app.design.services.deployment_diagram.extractor import extract_deployment_model
 from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
     hydrate_deployment_diagram_bundle,
 )
-from app.design.services.deployment_diagram.plantuml import generate_deployment_from_model
+from app.design.services.deployment_diagram.extractor import extract_deployment_model
 from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
@@ -239,9 +238,24 @@ ERD_SPEC = DesignArtifactSpec(
 
 
 def _finalize_deployment_diagram(state: ArchitectureState) -> dict[str, Any]:
+    candidate = dict(state.get("deployment_diagram_model") or {})
     bundle = build_deployment_diagram_bundle(
-        dict(state.get("deployment_diagram_model") or {}),
+        candidate,
         dict(state.get("resource_spec") or {}),
+        planning_inputs={
+            "refined_requirements": state.get("refined_requirements") or [],
+            "capability_contract": dict(state.get("capability_contract") or {}),
+            "resource_intake": dict(state.get("resource_intake") or {}),
+            "usecase_spec": state.get("usecase_spec") or {},
+            "class_model": state.get("extracted_bce_classes") or {},
+            "sequence_model": state.get("sequence_diagram_model") or {},
+            "api_spec": state.get("api_spec") or {},
+            "erd_model": state.get("erd_bce_classes") or state.get("erd_puml") or {},
+            "artifact_versions": dict(state.get("artifact_versions") or {}),
+            "additional_planning_facts": list(
+                state.get("deployment_planning_facts") or []
+            ),
+        },
     )
     hydrated = hydrate_deployment_diagram_bundle(bundle)
     return {
@@ -265,18 +279,27 @@ DEPLOYMENT_DIAGRAM_SPEC = DesignArtifactSpec(
         state.get("sequence_diagram_puml", ""),
         state.get("api_spec", {}),
         state.get("erd_puml", ""),
+        refined_requirements=state.get("refined_requirements") or [],
+        capability_contract=state.get("capability_contract") or {},
+        resource_intake=state.get("resource_intake") or {},
+        class_model=state.get("extracted_bce_classes") or {},
+        sequence_model=state.get("sequence_diagram_model") or {},
+        erd_model=state.get("erd_bce_classes") or {},
+        deployment_planning_facts=list(state.get("deployment_planning_facts") or []),
     ),
     revise=lambda current, feedback, state, targets: revise_deployment_model(
         current, feedback, _design_context(state), targets
     ),
-    render=generate_deployment_from_model,
+    render=lambda _model: "",
     render_with_state=lambda _model, state: deployment_bundle_runtime_puml(
         dict(state.get("deployment_diagram_bundle") or {})
     ),
     validate=validate_puml_artifact,
     elements={
-        "Nodes": lambda n: n.get("name", ""),
-        "Artifacts": lambda a: a.get("name", ""),
+        "workloads": lambda n: n.get("id", ""),
+        "externalDependencies": lambda n: n.get("id", ""),
+        "connections": lambda n: n.get("id", ""),
+        "constraints": lambda n: n.get("id", ""),
     },
     finalize=_finalize_deployment_diagram,
 )

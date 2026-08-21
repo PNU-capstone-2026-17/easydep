@@ -249,11 +249,6 @@ NOT_ASKED: dict[str, str] = {
     "workloads": "시스템 범위를 Docker 기반 VM 배포로 고정했으므로 ['vm']을 넣는다",
     "regionAsWritten": "사용자가 쓴 원문을 생산자가 그대로 남기는 것이라 "
     "물을 것이 없다(join.region의 부산물)",
-    "computeProfile": "별도 질의가 아니라 배포 대안 UI의 구조화된 토폴로지 선택으로 받는다",
-    "replicaCount": "별도 질의가 아니라 many 프로필의 구조화된 VM 수로 받는다",
-    "publicIngress": "별도 질의하지 않고 computeProfile에서 direct 또는 loadBalanced로 결정한다",
-    "persistentWorkloadPlacement": "영속 workload가 있고 단일 VM을 선택했을 때만 함께 배치할지 별도 VM에 둘지 받는다",
-    "applicationStateless": "다중 VM을 선택했을 때 분석 근거로 검증하며 일반 사용자에게 선제 질문하지 않는다",
 }
 
 #: **요구사항 단계에서 안 받고 인계로 넘기는 것**과 그 이유(2026-08-01).

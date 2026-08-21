@@ -32,7 +32,7 @@ PlantUML은 사람이 보는 출력이며 IaC 입력이 아니다. IaC 에이전
 
 E1~E3는 CSP별 1회 개발 관찰이다. 반복 성공률이나 모든 합법 토폴로지의 완전성 근거로
 사용하지 않는다. 원시 결과와 실패 판정은
-[`evaluation/dependency_audit/`](../evaluation/dependency_audit/)에 보존한다.
+[`evaluation/dependency_audit/`](../../evaluation/dependency_audit/)에 보존한다.
 
 ### 기존 체크포인트 재생 결과
 
@@ -45,7 +45,7 @@ cloud enrichment만 다시 실행했다. 5개 구조화 LLM 샘플에는 69.92�
 만들었고 끊어진 edge와 미해결 결정은 0개였다. 세 배포 구조도는 각 계획 노드를 모두
 포함했다. 이 재생은 IaC 생성이나 실제 배포 성공을 측정한 것이 아니다. 비민감 요약과 입력
 hash는
-[`resource-plan-checkpoint-replay-20260815.json`](../artifacts/measurements/resource-plan-checkpoint-replay-20260815.json)에
+[`resource-plan-checkpoint-replay-20260815.json`](../../artifacts/measurements/resource-plan-checkpoint-replay-20260815.json)에
 기록했다.
 
 ## Workload 도출 경계
@@ -103,7 +103,7 @@ GCP의 별도 disk는 `google_compute_instance` 내부 블록으로 연결되어
 없다. Plan의 VM·disk 개수는 일치하지만 실제 format·mount·컨테이너 경로 연결은 정적으로
 확정하지 않고 `not-observed`로 남겼다. 세 CSP 모두 사설 runtime 연결, 업무 기능, 성능과 실제
 cloud apply는 이 실험의 측정 대상이 아니다. 기계 판정 요약은
-[`multi-provider-resource-plan-iac-adjudication-20260815.json`](../artifacts/measurements/resource-plan-iac/multi-provider-resource-plan-iac-adjudication-20260815.json)에
+[`multi-provider-resource-plan-iac-adjudication-20260815.json`](../../artifacts/measurements/resource-plan-iac/multi-provider-resource-plan-iac-adjudication-20260815.json)에
 있다.
 
 ### HTTPS 외부 입력 경계
@@ -117,7 +117,7 @@ HTTPS 구조도에 인증서 노드가 있다는 사실만으로 배포 준비�
 AWS·Azure·GCP의 직접 HTTPS와 관리형 LB HTTPS를 공통 회귀시험으로 확인했다. 입력이 없는
 6개 계획은 모두 구조도에 외부 전제와 미해결 항목을 표시하고 IaC LLM 호출 0회로 차단됐다.
 명시 입력을 준 3개 계획은 요구사항 ID를 보존한 채 미해결 상태가 해소됐다. 9개 셀의 기계
-판정은 [`tls-input-gate-20260815.json`](../artifacts/measurements/tls-input-gate-20260815.json)에
+판정은 [`tls-input-gate-20260815.json`](../../artifacts/measurements/tls-input-gate-20260815.json)에
 있다. 이는 실제 인증서 발급·DNS 검증 성공 근거가 아니라, 외부 소유 입력이 준비되기 전
 잘못된 IaC를 만들지 않는 사전 조건이다.
 
@@ -125,7 +125,7 @@ AWS·Azure·GCP의 직접 HTTPS와 관리형 LB HTTPS를 공통 회귀시험으�
 
 기존 수강신청 구현 체크포인트를 처음부터 생성하지 않고, 실패한 구현 하위 작업만 수정했다.
 최초 Docker 실행은 `/health` 500, 빈 강좌 목록, H2 메모리 DB 사용 때문에 실패했다. 이 결과는
-[`course-registration-local-gate-20260815.json`](../artifacts/measurements/course-registration-local-gate-20260815.json)에
+[`course-registration-local-gate-20260815.json`](../../artifacts/measurements/course-registration-local-gate-20260815.json)에
 보존했다. 이후 일반 계약 진단과 독립 HTTP 오라클이 다음 문제를 차례로 찾았다.
 
 - 요구된 PostgreSQL과 실제 H2 설정의 불일치
@@ -149,9 +149,9 @@ AWS·Azure·GCP의 직접 HTTPS와 관리형 LB HTTPS를 공통 회귀시험으�
 | 실험 잔여물 | 0 | 해당 실행이 만든 container와 volume을 정리함 |
 
 원본 이미지 결과는
-[`course-registration-business-oracle-original-image-20260815.json`](../artifacts/measurements/course-registration-business-oracle-original-image-20260815.json),
-[`course-registration-persistence-original-image-20260815.json`](../artifacts/measurements/course-registration-persistence-original-image-20260815.json),
-[`course-registration-database-unavailable-health-original-image-20260815.json`](../artifacts/measurements/course-registration-database-unavailable-health-original-image-20260815.json)에
+[`course-registration-business-oracle-original-image-20260815.json`](../../artifacts/measurements/course-registration-business-oracle-original-image-20260815.json),
+[`course-registration-persistence-original-image-20260815.json`](../../artifacts/measurements/course-registration-persistence-original-image-20260815.json),
+[`course-registration-database-unavailable-health-original-image-20260815.json`](../../artifacts/measurements/course-registration-database-unavailable-health-original-image-20260815.json)에
 있다. 영속성 통과는 동일 volume 재연결의 근거이며 DB 복제나 고가용성을 뜻하지 않는다.
 
 업무 오라클은 단계마다 상태를 남긴다. 마지막 좌석 경쟁에 사용한 학생이 다음 중복 신청
@@ -174,7 +174,7 @@ egress, EBS stable identity, Plan 생성 여부를 사전 검증한다. Amazon L
 공개 SSM parameter 또는 명시적 `ami_id`만 사용하도록 입력했다. 마지막 실행은 생성 38.53초와
 수정 35.33초 뒤 4번 Provider 계약 위반으로 차단됐으며, 검증되지 않은 파일은 `application/infra`에
 승격되지 않았다. 측정은
-[`course-registration-iac-ami-closure-20260815.json`](../artifacts/measurements/course-registration-iac-ami-closure-20260815.json)에
+[`course-registration-iac-ami-closure-20260815.json`](../../artifacts/measurements/course-registration-iac-ami-closure-20260815.json)에
 있다.
 
 이후 생성 응답을 새로 만들지 않고 같은 체크포인트의 IaC 응답을 재생해 생성 경계를 보완했다.
@@ -182,7 +182,7 @@ egress, EBS stable identity, Plan 생성 여부를 사전 검증한다. Amazon L
 `templatefile()`로 낮춘 결과 Plan의 18개 리소스는 통과했다. 그러나 강화된 runtime 의미
 검사는 생성 IaC가 `ebsnvme-id`를 장치 열거 없이 잘못 호출하고 있음을 찾아냈다. 따라서 순수
 시스템 생성 IaC의 종단 성공으로 판정하지 않았다. 세 replay의 시간과 최종 재판정은
-[`course-registration-iac-replay-adjudication-20260815.json`](../artifacts/measurements/course-registration-iac-replay-adjudication-20260815.json)에
+[`course-registration-iac-replay-adjudication-20260815.json`](../../artifacts/measurements/course-registration-iac-replay-adjudication-20260815.json)에
 요약했다.
 
 실제 AWS 개발 실험은 이 출력에 아래 네 가지 일반 bootstrap 수정을 명시한 실험 harness로
@@ -210,7 +210,7 @@ group·EBS를 보존하고 상태 VM, 앱 VM과 두 연결 객체만 교체한 �
 
 업무 연결에는 하루짜리 synthetic self-signed 인증서를 사용했으며 인증서 검증은 시험에서만
 비활성화했다. 전체 결과는
-[`course-registration-aws-cloud-experiment-20260815.json`](../artifacts/measurements/course-registration-aws-cloud-experiment-20260815.json)에
+[`course-registration-aws-cloud-experiment-20260815.json`](../../artifacts/measurements/course-registration-aws-cloud-experiment-20260815.json)에
 있다. 이 결과는 AWS 1회 개발 관찰이며, harness 수정이 포함됐으므로 순수 생성 성공이나 3사
 일반화 근거가 아니다. DB VM 재기동 뒤 데이터가 남았다는 사실도 상태 계층 HA를 뜻하지 않는다.
 AWS의 Linux Nitro 장치 식별은

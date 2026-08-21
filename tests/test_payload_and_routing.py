@@ -165,7 +165,7 @@ def test_deployment_preferences_preserve_selected_zones_without_deciding_topolog
     )
 
     assert intake.targets[0].zones == ["ap-northeast-2a", "ap-northeast-2b"]
-    assert intake.compute_profile == "standaloneOne"
+    assert "compute_profile" not in intake.model_dump()
 
     preferences = DeploymentPreferences.model_validate(
         {
@@ -210,7 +210,7 @@ def test_minimal_deployment_intake_does_not_invent_topology_choices():
     }
 
 
-def test_deployment_preferences_derive_ingress_from_compute_profile():
+def test_deployment_preferences_ignore_removed_topology_fields():
     from app.requirements.schemas import DeploymentPreferences
 
     preferences = DeploymentPreferences.model_validate(
@@ -220,22 +220,24 @@ def test_deployment_preferences_derive_ingress_from_compute_profile():
         }
     )
 
-    assert preferences.public_ingress == "loadBalanced"
+    assert "compute_profile" not in preferences.model_dump()
+    assert "public_ingress" not in preferences.model_dump()
 
 
-def test_deployment_preferences_reject_colocation_with_managed_group():
-    from pydantic import ValidationError
-
+def test_deployment_preferences_do_not_store_removed_placement_fields():
     from app.requirements.schemas import DeploymentPreferences
 
-    with pytest.raises(ValidationError, match="separateCompute"):
-        DeploymentPreferences.model_validate(
-            {
-                "targets": [{"provider": "aws", "region": "ap-northeast-2"}],
-                "compute_profile": "managedGroupOne",
-                "persistent_workload_placement": "colocate",
-            }
-        )
+    preferences = DeploymentPreferences.model_validate(
+        {
+            "targets": [{"provider": "aws", "region": "ap-northeast-2"}],
+            "compute_profile": "managedGroupOne",
+            "persistent_workload_placement": "colocate",
+        }
+    )
+
+    dumped = preferences.model_dump()
+    assert "compute_profile" not in dumped
+    assert "persistent_workload_placement" not in dumped
 
 
 def test_deployment_preferences_reject_two_regions_for_one_provider():

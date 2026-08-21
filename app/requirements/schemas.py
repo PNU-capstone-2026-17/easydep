@@ -608,15 +608,6 @@ class DeploymentPreferences(BaseModel):
     targets: list[DeploymentTarget] = Field(min_length=1, max_length=3)
     monthly_budget_amount: float | None = Field(default=None, gt=0)
     monthly_budget_currency: str = Field(default="USD", min_length=3, max_length=3)
-    compute_profile: Literal[
-        "standaloneOne",
-        "managedGroupOne",
-        "managedGroupManySingleZone",
-        "managedGroupManyMultiZone",
-    ] = "standaloneOne"
-    replica_count: int = Field(default=1, ge=1)
-    public_ingress: Literal["direct", "loadBalanced"] = "direct"
-    persistent_workload_placement: Literal["colocate", "separateCompute"] = "separateCompute"
     resource_constraints_text: str = Field(default="", max_length=12000)
 
     @field_validator("monthly_budget_currency")
@@ -632,25 +623,6 @@ class DeploymentPreferences(BaseModel):
         providers = [target.provider for target in self.targets]
         if len(providers) != len(set(providers)):
             raise ValueError("select at most one region for each provider")
-        many = self.compute_profile in {
-            "managedGroupManySingleZone",
-            "managedGroupManyMultiZone",
-        }
-        spread = self.compute_profile == "managedGroupManyMultiZone"
-        grouped = self.compute_profile != "standaloneOne"
-        expected_ingress = "loadBalanced" if grouped else "direct"
-        if "public_ingress" not in self.model_fields_set:
-            object.__setattr__(self, "public_ingress", expected_ingress)
-        if many and self.replica_count < 2:
-            raise ValueError("many-replica compute profiles require replica_count >= 2")
-        if not many and self.replica_count != 1:
-            raise ValueError("one-replica compute profiles require replica_count = 1")
-        if self.public_ingress != expected_ingress:
-            raise ValueError(f"{self.compute_profile} requires {expected_ingress} public ingress")
-        if grouped and self.persistent_workload_placement == "colocate":
-            raise ValueError("managed groups require separateCompute for persistent workloads")
-        if spread and any(len(target.zones) < 2 for target in self.targets):
-            raise ValueError("multi-zone spread requires at least two allowed zones per target")
         return self
 
 

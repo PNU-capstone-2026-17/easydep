@@ -1,0 +1,20 @@
+{
+  "signature": {
+    "actorNames": [
+      "Student"
+    ],
+    "useCaseIds": [
+      "UC1",
+      "UC2",
+      "UC3",
+      "UC4"
+    ],
+    "specUseCaseIds": [
+      "UC1",
+      "UC2",
+      "UC3",
+      "UC4"
+    ],
+    "hasDiagram": true
+  }
+}

@@ -219,6 +219,12 @@
         <p class="text-xs">This artifact has not been generated yet.</p>
       </div>
     {:else if tab === 'artifact'}
+      {#if selected === 'deployment_diagram' && document?.artifact_metadata?.deployment_diagram?.readOnly}
+        <div class="mb-4 rounded-xl border border-[#e3c98b] bg-[#fff8e7] p-3 text-xs leading-5 text-[#755b24]" role="status">
+          <strong class="block">Legacy deployment plan is read-only</strong>
+          <span>{document.artifact_metadata.deployment_diagram.regeneration?.reason ?? 'Regenerate this artifact as WorkloadGraph v2 before editing or IaC generation.'}</span>
+        </div>
+      {/if}
       {#if fileArtifact}
         <div class="mb-3">
           <select

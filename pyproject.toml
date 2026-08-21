@@ -19,6 +19,8 @@ include = [
     # 두 에이전트가 공유하는 얇은 층. 둘 다 내 범위라 여기도 같이 검사한다.
     "app/core/**/*.py",
     "evaluation/baselines/**/*.py",
+    "evaluation/checkpoint_e2e/**/*.py",
+    "tests/test_checkpoint_e2e.py",
 ]
 extend-exclude = [
     "app/core/cloudkb/.cache",

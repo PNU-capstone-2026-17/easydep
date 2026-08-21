@@ -735,148 +735,15 @@ def test_binding_planner_uses_app_port_and_storage_path_without_database_assumpt
     assert all(item.kind != "storage" for item in replanned_bindings.bindings)
 
 
-def test_managed_group_with_node_filesystem_state_requires_a_user_decision():
-    application = ApplicationRuntimeContract(
-        facts=[
-            ContractFact(
-                id="app-state",
-                kind="runtime.storage",
-                attributes={
-                    "accessPath": "/srv/state",
-                    "durability": "persistent",
-                    "accessScope": "node-filesystem",
-                },
-                sourceRefs=["src/main/resources/application.yml"],
-            )
-        ]
-    )
-    cloud = CloudCapabilityContract(
-        facts=[
-            ContractFact(
-                id="policy.deployment-topology",
-                kind="cloud.deploymentTopology",
-                attributes={"computeManagement": "managedGroup"},
-            )
-        ]
-    )
-
-    diagnostics = validate_binding_consistency(application, cloud, DeploymentBindingContract())
-
-    diagnostic = next(item for item in diagnostics if item.code == "BIND-STATE-GROUP-001")
-    assert diagnostic.details["decision"] == "needsUserInput"
-    assert diagnostic.details["automaticRepair"] is False
-    assert {item["repairOwner"] for item in diagnostic.details["alternatives"]} == {
-        "implementation.logic",
-        "requirements.analysis",
-    }
-
-
-def test_state_topology_question_needs_managed_group_and_node_state():
-    node_state = ContractFact(
-        id="app-state",
-        kind="runtime.storage",
-        attributes={"accessScope": "node-filesystem"},
-    )
-    shared_state = ContractFact(
-        id="shared-state",
-        kind="runtime.storage",
-        attributes={"accessScope": "shared-service"},
-    )
-    unmanaged = ContractFact(
-        id="unmanaged",
-        kind="cloud.deploymentTopology",
-        attributes={"computeManagement": "standalone"},
-    )
-    managed = unmanaged.model_copy(
-        update={
-            "id": "managed",
-            "attributes": {"computeManagement": "managedGroup"},
-        }
-    )
-
-    assert (
-        validate_binding_consistency(
-            ApplicationRuntimeContract(facts=[node_state]),
-            CloudCapabilityContract(facts=[unmanaged]),
-            DeploymentBindingContract(),
-        )
-        == []
-    )
-    assert (
-        validate_binding_consistency(
-            ApplicationRuntimeContract(facts=[shared_state]),
-            CloudCapabilityContract(facts=[managed]),
-            DeploymentBindingContract(),
-        )
-        == []
-    )
-
-
-def test_explicit_node_state_intent_requires_a_requirement_revision():
-    intent = ContractFact(
-        id="intent.open-state.state",
-        kind="runtime.storage.intent",
-        attributes={"required": True, "accessScope": "node-filesystem"},
-        sourceRefs=["R-state"],
-    )
-    topology = ContractFact(
-        id="policy.deployment-topology",
-        kind="cloud.deploymentTopology",
-        attributes={"computeManagement": "managedGroup"},
-    )
-
-    diagnostic = validate_binding_consistency(
-        ApplicationRuntimeContract(facts=[intent]),
-        CloudCapabilityContract(facts=[topology]),
-        DeploymentBindingContract(),
-    )[0]
-
-    assert diagnostic.code == "BIND-STATE-GROUP-001"
-    assert diagnostic.details["intentMandatesNodeScope"] is True
-    assert {item["id"] for item in diagnostic.details["alternatives"]} == {
-        "revise-state-requirement",
-        "revise-compute-topology",
-    }
-    assert {item["repairOwner"] for item in diagnostic.details["alternatives"]} == {
-        "requirements.analysis",
-    }
-
-
-def test_unspecified_topology_enters_the_cloud_contract_as_standalone_one():
+def test_cloud_contract_does_not_invent_deployment_topology():
     contract = cloud_contract_from_legacy(
-        {
-            "deployment_needs": {},
-            "resource_spec": {"provider": "aws"},
-        }
-    )
-
-    topology = next(
-        fact for fact in contract.facts if fact.kind == "cloud.deploymentTopology"
-    )
-    assert topology.id == "policy.deployment-topology"
-    assert topology.attributes["computeProfile"] == "standaloneOne"
-    assert topology.attributes["replicaCount"] == 1
-    assert topology.attributes["availabilityClaim"] == "none"
-
-
-def test_node_filesystem_state_does_not_conflict_with_standalone_compute():
-    application = ApplicationRuntimeContract(
-        facts=[
-            ContractFact(
-                id="app-state",
-                kind="runtime.storage",
-                attributes={"accessScope": "node-filesystem", "durability": "persistent"},
-            )
-        ]
-    )
-    cloud = cloud_contract_from_legacy(
         {"deployment_needs": {}, "resource_spec": {"provider": "aws"}}
     )
 
-    assert validate_binding_consistency(application, cloud, DeploymentBindingContract()) == []
+    assert all(fact.kind != "cloud.deploymentTopology" for fact in contract.facts)
 
 
-def test_high_availability_text_does_not_choose_a_compute_topology():
+def test_high_availability_requirement_remains_a_capability_fact():
     contract = cloud_contract_from_legacy(
         {
             "deployment_needs": {
@@ -890,9 +757,8 @@ def test_high_availability_text_does_not_choose_a_compute_topology():
         }
     )
 
-    topology = next(
-        fact for fact in contract.facts if fact.kind == "cloud.deploymentTopology"
+    assert all(fact.kind != "cloud.deploymentTopology" for fact in contract.facts)
+    assert any(
+        fact.kind == "cloud.capability.availability_requirement"
+        for fact in contract.facts
     )
-    assert topology.attributes["computeProfile"] == "standaloneOne"
-    assert topology.attributes["replicaCount"] == 1
-    assert topology.attributes["availabilityClaim"] == "none"

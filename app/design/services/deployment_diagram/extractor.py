@@ -1,112 +1,171 @@
-"""앞선 산출물 전부에서 배포 토폴로지 모델을 도출한다.
-
-클래스 다이어그램의 BCE 추출과 같은 모양이다: LLM은 PlantUML을 쓰지 않고 구조화된
-배포 모델(노드·아티팩트·연결)만 내놓고, 다이어그램은 plantuml.generate_deployment_from_model
-이 결정론적으로 렌더한다.
-"""
+"""Ask the LLM only for a source-grounded WorkloadGraph candidate."""
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app.design.services.common.structured import parse_structured
 
 
-class DeploymentNode(BaseModel):
-    name: str = Field(default="UnknownNode")
-    #: device | executionEnvironment | database | cloud | node
-    kind: str = Field(default="node")
-    #: <<...>>로 그려질 기술 표기(예: "Spring Boot", "MySQL 8").
-    stereotype: str = Field(default="")
-    description: str = Field(default="")
-    #: 이 노드를 감싸는 상위 노드 이름. 최상위면 빈 문자열.
-    parent: str = Field(default="")
-    #: 이 노드가 호스팅하는 클래스 이름. 외부 인프라(브라우저 등)는 비운다.
-    source_classes: list[str] = Field(default_factory=list)
-    #: none | ephemeral | persistent. Resource planning depends on this contract,
-    #: not on the presentation-only kind.
-    stateMode: str = Field(default="none")
+class WorkloadArtifact(BaseModel):
+    kind: Literal["generatedApplication", "prebuiltImage"]
+    image: str | None = None
+    engine: str | None = None
+    deploymentMode: Literal["container"] | None = None
+    runtimeCatalogRef: str | None = None
 
 
-class DeploymentArtifact(BaseModel):
-    name: str = Field(default="UnknownArtifact")
-    #: 이 아티팩트가 배포되는 노드 이름(Nodes 중 하나).
-    deployed_on: str = Field(default="")
-    description: str = Field(default="")
-    #: 이 아티팩트가 담고 있는 클래스 이름.
-    source_classes: list[str] = Field(default_factory=list)
+class WorkloadInterface(BaseModel):
+    id: str
+    name: str = ""
+    protocol: str = ""
+    exposure: Literal["public", "internal", "outbound", "unknown"] = "unknown"
+    port: int | None = None
+    healthPath: str | None = None
+    sourceRefs: list[str] = Field(default_factory=list)
 
 
-class DeploymentConnection(BaseModel):
-    source: str
-    target: str
-    #: HTTPS, JDBC, AMQP 등. 라벨로 그려진다.
-    protocol: str = Field(default="")
-    description: str = Field(default="")
+class WorkloadStorage(BaseModel):
+    id: str
+    persistence: Literal["persistent"] = "persistent"
+    capacityGiB: float | None = None
+    mountPath: str | None = None
+    deletionPolicy: Literal["retain", "delete"] | None = None
+    replicaSemantics: Literal["singleAttachment", "perReplica"] | None = None
+    sourceRefs: list[str] = Field(default_factory=list)
 
 
-class DeploymentModel(BaseModel):
-    Nodes: list[DeploymentNode] = Field(default_factory=list)
-    Artifacts: list[DeploymentArtifact] = Field(default_factory=list)
-    Connections: list[DeploymentConnection] = Field(default_factory=list)
+class WorkloadConfiguration(BaseModel):
+    id: str
+    name: str
+    kind: Literal["value", "secret", "secretBinding", "endpointBinding"] = "value"
+    value: Any = None
+    connectionRef: str | None = None
+    projection: Literal["url", "host", "port"] | None = None
+    sensitive: bool = False
+    sourceRefs: list[str] = Field(default_factory=list)
 
 
-DEPLOYMENT_EXTRACTION_SYSTEM_PROMPT = """
-You are a solution architect deriving a UML deployment model from the design
-artifacts of one system: a use-case specification, an analysis-level class diagram
-(Boundary-Control-Entity), a sequence diagram, a REST API specification, and an ERD.
+class ResourceRequirements(BaseModel):
+    minVCpu: float | None = None
+    minMemoryGiB: float | None = None
 
-## Input
-Use every artifact you are given, and ignore the ones that are absent. Do not invent
-infrastructure the artifacts do not imply — no caches, queues, or replicas unless
-something in the inputs calls for them.
 
-## Nodes
-- Derive nodes from where the software must actually run:
-  the actor's client (from the Boundary classes and the actor), the application
-  runtime (from the Control/Entity classes and the API spec), and the data store
-  (from the ERD).
-- `kind` is one of: device (physical/user hardware), executionEnvironment (a runtime
-  or container inside a device), database (a DBMS), cloud (a managed/external
-  service), node (anything else).
-- `parent` nests a node inside another — put an executionEnvironment inside the
-  device or cloud that hosts it. Leave it empty for top-level nodes.
-- `stereotype` names the concrete technology when the inputs justify one; otherwise
-  leave it empty rather than guessing a vendor.
-- `stateMode` is none, ephemeral, or persistent. Use persistent only when the
-  requirements and data design establish durable runtime state. Do not derive
-  persistence from the node name or `kind` alone.
+class Workload(BaseModel):
+    id: str
+    name: str
+    artifact: WorkloadArtifact
+    interfaces: list[WorkloadInterface] = Field(default_factory=list)
+    storage: list[WorkloadStorage] = Field(default_factory=list)
+    configuration: list[WorkloadConfiguration] = Field(default_factory=list)
+    resourceRequirements: ResourceRequirements = Field(default_factory=ResourceRequirements)
+    replicationSafety: Literal["singleton", "interchangeable", "unknown"] = "unknown"
+    sourceRefs: list[str] = Field(default_factory=list)
 
-## Artifacts
-- One artifact per deployable unit the design produces (a web bundle, a service jar,
-  a schema migration).
-- `deployed_on` must name one of the Nodes you return.
 
-## Connections
-- One connection per communication path the sequence diagram or API spec implies.
-- `source` and `target` must both name Nodes you return.
-- `protocol` is the wire protocol (HTTPS, JDBC, AMQP, WebSocket). Use the one the
-  API spec or ERD implies; leave it empty if the inputs do not say.
+class ExternalDependency(BaseModel):
+    id: str
+    name: str
+    interfaces: list[WorkloadInterface] = Field(default_factory=list)
+    sourceRefs: list[str] = Field(default_factory=list)
 
-## Traceability
-- `source_classes` on nodes and artifacts: the class diagram classes that run
-  there or ship inside it, copied exactly. Leave it empty for infrastructure the
-  design does not contain (a user's browser, a managed database engine).
-- **Never invent a class name.** An empty list is honest; a made-up reference is
-  a lie the trace matrix will believe.
 
-## Self-check before finalizing
-(a) every artifact's `deployed_on` names a node you returned,
-(b) every connection's source and target name nodes you returned,
-(c) every `parent` names a node you returned (or is empty),
-(d) the ERD's tables have a database node, and the API spec's endpoints have a
-    runtime node that serves them,
-(e) every `source_classes` entry names a class in the given class diagram.
+class WorkloadConnection(BaseModel):
+    id: str
+    sourceRef: str
+    targetRef: str
+    protocol: str = ""
+    sourceInterfaceRef: str = ""
+    targetInterfaceRef: str = ""
+    sourceRefs: list[str] = Field(default_factory=list)
 
-Populate the response strictly according to the provided schema. Do not include
-markdown, code fences, or any prose outside the schema fields.
+
+class WorkloadConstraint(BaseModel):
+    id: str
+    kind: Literal[
+        "replicaCount",
+        "zoneSpread",
+        "zonePlacement",
+        "managedReplacement",
+        "colocate",
+        "separate",
+        "isolate",
+        "securityIsolation",
+        "resourceIsolation",
+    ]
+    workloadRefs: list[str] = Field(default_factory=list)
+    value: Any = None
+    required: bool = True
+    sourceRefs: list[str] = Field(default_factory=list)
+
+
+class WorkloadGraphProposal(BaseModel):
+    schemaVersion: Literal["easydep-workload-graph"] = "easydep-workload-graph"
+    workloads: list[Workload] = Field(default_factory=list)
+    externalDependencies: list[ExternalDependency] = Field(default_factory=list)
+    connections: list[WorkloadConnection] = Field(default_factory=list)
+    constraints: list[WorkloadConstraint] = Field(default_factory=list)
+    derivations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# Domain name used by the generic feedback reviser.
+DeploymentModel = WorkloadGraphProposal
+
+
+WORKLOAD_GRAPH_EXTRACTION_SYSTEM_PROMPT = """
+You identify deployable workloads for EasyDep's Docker-on-VM planner. Return
+only a WorkloadGraph candidate. You do not choose VMs, VM groups, disks, public
+IPs, load balancers, NAT gateways, cloud firewall resources, or providers.
+
+Grounding and boundaries:
+- Use structured requirement, capability, use-case, BCE class, sequence, API, and
+  ERD artifacts. Put precise artifact element references in every sourceRefs list.
+- Explicit deploymentPlanningFacts are deployment-only source artifacts. Apply
+  accepted workloadContract and connectionContract values exactly; do not copy
+  them into application classes, API operations, or logical ERD entities.
+- A private connection does not imply resource isolation or separate compute.
+  Add isolation only when an accepted fact explicitly contains that constraint.
+- One generated application may contain many BCE classes. Never split workloads
+  from class count, Entity classes, actors, supporting actors, or ERD tables.
+- The application described by the API, BCE Controls, and use-case implementation
+  is a generatedApplication. A requirement that this application be packaged as
+  a container does not make it a prebuiltImage.
+- Actors and browsers are not workloads. Systems EasyDep will not build are
+  externalDependencies only when an artifact explicitly identifies them.
+- An ERD proves a logical persistent-data need. It does NOT select PostgreSQL, a
+  database container, an engine, a disk, a port, or a mount path. Do not create a
+  DB workload or storage from the ERD alone.
+- A prebuiltImage workload is legal only when the inputs explicitly select its
+  image, engine, container deployment mode, and runtimeCatalogRef
+  docker-on-vm/prebuilt-image. Never choose these values yourself.
+- API endpoints justify an HTTP interface on the generated application, but do
+  not prove public Internet exposure. Use exposure=unknown unless a typed accepted
+  capability or explicit requirement resolves public versus internal.
+- Sequence messages may justify connections. Never guess their protocol or port.
+- storage belongs under its owning workload. Include it only for explicitly
+  selected persistent block storage; deletionPolicy and capacity require evidence.
+- For a generated application, choose an absolute POSIX mountPath as part of the
+  design contract whenever explicit persistent storage is selected. The generated
+  source code will implement that path. Do not invent a mount path for a prebuilt
+  image unless its explicit runtime catalog contract supplies it.
+- Every generated application that calls another workload or external dependency
+  needs one configuration entry with kind=endpointBinding, a stable id, an
+  UPPER_SNAKE_CASE environment-variable name, connectionRef, and projection
+  (url, host, or port). You may choose clear environment-variable names because
+  they are design outputs consumed by implementation. Do not guess endpoint values.
+- Secret inputs use kind=secretBinding and an UPPER_SNAKE_CASE environment-variable
+  name. Never include a secret value or provider credential.
+- Configuration ids and names must be unique within a workload. Ordinary
+  non-secret configuration may use kind=value; include a value only when grounded.
+- replicationSafety is interchangeable only with explicit safety evidence,
+  singleton only with explicit singleton semantics, otherwise unknown.
+- Copy typed replica, zone, replacement, colocate, separate, and isolation
+  constraints. Do not translate vague prose into a structural constraint.
+
+Populate exactly the response schema and include no markdown or prose.
 """
 
 
@@ -116,24 +175,36 @@ def extract_deployment_model(
     sequence_diagram_puml: str,
     api_spec: dict[str, Any],
     erd_puml: str,
+    *,
+    refined_requirements: Any = None,
+    capability_contract: dict[str, Any] | None = None,
+    resource_intake: dict[str, Any] | None = None,
+    class_model: Any = None,
+    sequence_model: Any = None,
+    erd_model: Any = None,
+    deployment_planning_facts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """앞선 산출물 전부 → 구조화된 배포 토폴로지 모델."""
     if not scenario_text:
         return {}
-
-    import json
-
+    structured = {
+        "refinedRequirements": refined_requirements or [],
+        "capabilityContract": capability_contract or {},
+        "resourceIntake": resource_intake or {},
+        "useCaseSpecification": scenario_text,
+        "classModel": class_model or {},
+        "classDiagramPlantUML": class_diagram_puml,
+        "sequenceModel": sequence_model or {},
+        "sequenceDiagramPlantUML": sequence_diagram_puml,
+        "apiSpec": api_spec,
+        "erdModel": erd_model or {},
+        "erdPlantUML": erd_puml,
+        "deploymentPlanningFacts": deployment_planning_facts or [],
+    }
     messages = [
-        {"role": "system", "content": DEPLOYMENT_EXTRACTION_SYSTEM_PROMPT},
+        {"role": "system", "content": WORKLOAD_GRAPH_EXTRACTION_SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": (
-                f"[Use Case Specification]\n{scenario_text}\n\n"
-                f"[Class Diagram PlantUML]\n{class_diagram_puml}\n\n"
-                f"[Sequence Diagrams PlantUML]\n{sequence_diagram_puml}\n\n"
-                f"[API Spec JSON]\n{json.dumps(api_spec, ensure_ascii=False, indent=2)}\n\n"
-                f"[ERD PlantUML]\n{erd_puml}"
-            ),
+            "content": json.dumps(structured, ensure_ascii=False, indent=2),
         },
     ]
-    return parse_structured(messages, DeploymentModel)
+    return parse_structured(messages, WorkloadGraphProposal)
