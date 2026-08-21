@@ -118,8 +118,9 @@
 
     if (
       event.stage === 'implementation' &&
-      event.actor === 'assistant' &&
-      String(event.metadata?.status ?? '') === 'COMPLETED'
+      (event.kind === 'progress' ||
+        (event.actor === 'assistant' &&
+          String(event.metadata?.status ?? '') === 'COMPLETED'))
     ) {
       candidates.push(...fileArtifactTypes);
     }

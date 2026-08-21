@@ -571,6 +571,8 @@ class WorkspaceService:
                 metadata={
                     "progress_event": "designStageProgress",
                     "analysis_step": stage,
+                    "current_stage": stage,
+                    "design": {"stage": stage},
                     "progress_step_label": label,
                     "progress_detail": detail,
                     "progress_status": status,
@@ -1006,6 +1008,7 @@ class WorkspaceService:
         return {
             "progress_event": "implementationFileProgress",
             "progress_step_label": "Implementation generation",
+            "progress_card_label": "Implementation generation",
             "progress_detail": f"Editing {file_name}",
             "progress_status": "running",
             "current_file": current_file,

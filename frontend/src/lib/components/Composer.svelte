@@ -29,6 +29,27 @@
     result?.resource_question ?? result?.resource_questions?.[0] ?? null
   );
   let requiresDesignRevision = $derived(Boolean(result?.requires_revision));
+  let implementationAction = $derived(
+    command?.stage === 'implementation' &&
+      ['approve_implementation', 'rerun_implementation', 'start_implementation'].includes(command.action)
+      ? command.action
+      : null
+  );
+  let implementationResponse = $derived(
+    implementationAction && ['QUEUED', 'RUNNING'].includes(command?.status ?? '')
+      ? implementationAction === 'approve_implementation'
+        ? command?.status === 'QUEUED'
+          ? 'Implementation approval received. Queuing resume…'
+          : 'Implementation approval received. Resuming implementation…'
+        : command?.status === 'QUEUED'
+          ? 'Implementation retry requested. Queuing a new run…'
+          : 'Implementation retry requested. Preparing a new implementation run…'
+      : implementationAction && command?.status === 'COMPLETED'
+        ? String(result?.message ?? 'Implementation request completed.')
+        : implementationAction && command?.status === 'FAILED'
+          ? String(command.error ?? 'The implementation request failed.')
+          : null
+  );
 
   async function submit() {
     const value = text.trim();
@@ -46,6 +67,19 @@
 </script>
 
 <div class="mx-auto w-full max-w-3xl shrink-0 px-5 pb-5">
+  {#if implementationResponse}
+    <div
+      class="mb-2 rounded-xl border p-2.5 text-xs {command?.status === 'FAILED'
+        ? 'border-[#eccbc7] bg-[#fff7f6] text-[#85524c]'
+        : command?.status === 'COMPLETED'
+          ? 'border-[#cfe3d5] bg-[#f1f8f3] text-[#2d7354]'
+          : 'border-[#e5ddc9] bg-[#fffaf0] text-[#74520c]'}"
+      role="status"
+      aria-live="polite"
+    >
+      {implementationResponse}
+    </div>
+  {/if}
   {#if awaiting}
     <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#e5ddc9] bg-[#fffaf0] p-2.5">
       {#if confirmation}
