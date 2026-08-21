@@ -19,6 +19,7 @@ from app.implementation.generation.orchestrator import (
 )
 from app.implementation.agents.runtime import (
     EventJournal,
+    _requires_cross_phase_repair,
     break_configuration_cycles,
     execution_attempt,
     remove_placeholder_comments,
@@ -43,6 +44,7 @@ from app.implementation.agents.provider import (
 from app.implementation.agents.verification.build import (
     production_placeholder_markers,
     production_test_library_markers,
+    persistence_reserved_identifier_markers,
     read_gradle_test_failures,
     summarize_test_failure,
     task_verification_command,
@@ -981,6 +983,38 @@ void use(String... value) {}
 
             self.assertEqual(2, len(evidence))
             self.assertTrue(all(main in item for item in evidence))
+
+    def test_persistence_reserved_identifier_gate_rejects_h2_year_column(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entity = "application/src/main/java/com/example/AcademicTermEntity.java"
+            migration = "application/src/main/resources/db/migration/V1__initial.sql"
+            for relative, source in (
+                (entity, '@Column(name = "year")\nprivate Integer year;'),
+                (migration, "create table academic_term (\n  year integer not null\n);"),
+            ):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(source, encoding="utf-8")
+
+            evidence = persistence_reserved_identifier_markers(root, [entity, migration])
+
+            self.assertEqual(2, len(evidence))
+            self.assertTrue(all("year" in item for item in evidence))
+
+    def test_h2_failure_in_integration_task_skips_local_llm_repair(self) -> None:
+        self.assertTrue(
+            _requires_cross_phase_repair(
+                "integration-test",
+                {"testResults": "JdbcSQLSyntaxErrorException: expected \"identifier\""},
+            )
+        )
+        self.assertFalse(
+            _requires_cross_phase_repair(
+                "persistence-schema",
+                {"testResults": "JdbcSQLSyntaxErrorException"},
+            )
+        )
 
     def test_configuration_normalizer_removes_placeholder_line_comments(self) -> None:
         normalized, changed = remove_placeholder_comments(

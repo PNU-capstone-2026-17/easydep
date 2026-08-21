@@ -21,6 +21,7 @@ from .verification.frontend import (
 )
 from .verification.build import (
     WorkspaceVerificationError,
+    persistence_reserved_identifier_markers,
     production_placeholder_markers,
     production_test_library_markers,
     verify_agent_workspace,
@@ -306,6 +307,25 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             "testResults": "",
                         }
                     )
+                if task_type in {
+                    "persistence-entities",
+                    "persistence-mapping",
+                    "persistence-schema",
+                }:
+                    reserved_identifiers = persistence_reserved_identifier_markers(
+                        sandbox, task["allowed_write_paths"]
+                    )
+                    if reserved_identifiers:
+                        raise WorkspaceVerificationError(
+                            {
+                                "command": ["persistence-reserved-identifier-gate"],
+                                "exitCode": 1,
+                                "durationMs": 0,
+                                "stdout": "",
+                                "stderr": "\n".join(reserved_identifiers),
+                                "testResults": "",
+                            }
+                        )
                 if str(task.get("task_type", "")) == "integration-test":
                     e2e_path = sandbox / str(task["allowed_write_paths"][0])
                     repair_orphaned_java_test_statements(e2e_path)
@@ -356,6 +376,11 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 )
                 break
             except WorkspaceVerificationError as error:
+                if _requires_cross_phase_repair(task_type, error.evidence):
+                    # The integration test only exposed an upstream persistence
+                    # defect. Do not spend local LLM repair rounds rewriting a
+                    # test that cannot own the SQL or JPA mapping.
+                    raise
                 referenced = referenced_source_paths(error.evidence)
                 normalized_allowed = {
                     str(path).replace("\\", "/").lower()
@@ -430,6 +455,26 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     write_execution_result(execution_dir, task_id, attempt, result)
     shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
     return result
+
+
+def _requires_cross_phase_repair(
+    task_type: str, evidence: dict[str, object]
+) -> bool:
+    if task_type != "integration-test":
+        return False
+    output = "\n".join(
+        str(evidence.get(key, ""))
+        for key in ("stdout", "stderr", "testResults")
+    ).lower()
+    return any(
+        marker in output
+        for marker in (
+            "jdbcsqlsyntaxerror",
+            "syntax error in sql statement",
+            'expected "identifier"',
+            "reserved keyword",
+        )
+    )
 
 
 def execution_attempt(run_root: Path, task_id: str) -> int:

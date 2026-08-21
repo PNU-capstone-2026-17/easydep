@@ -12,6 +12,21 @@ from ..workspace import prepare_agent_workspace
 from .frontend import run_frontend_verification
 
 
+SQL_RESERVED_IDENTIFIERS = (
+    "year",
+    "order",
+    "group",
+    "user",
+    "status",
+    "key",
+    "value",
+    "offset",
+    "limit",
+    "check",
+    "date",
+)
+
+
 def gradle_command() -> list[str]:
     """Use EasyDep's pinned wrapper instead of a machine-global Gradle."""
     wrapper_name = "gradlew.bat" if os.name == "nt" else "gradlew"
@@ -186,6 +201,45 @@ def production_test_library_markers(
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if pattern.search(line):
                 evidence.append(f"{normalized}:{number}: {line.strip()}")
+    return evidence
+
+
+def persistence_reserved_identifier_markers(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Detect H2-reserved persistence names before expensive downstream tests.
+
+    JPA can compile with a reserved ``@Column`` name and only fail when an
+    integration test executes Hibernate SQL.  Detect it while the owning
+    persistence task is still running, so its focused repair prompt can fix
+    the entity or migration instead of repeatedly rewriting an unrelated E2E
+    test.
+    """
+    evidence: list[str] = []
+    names = "|".join(re.escape(name) for name in SQL_RESERVED_IDENTIFIERS)
+    java_pattern = re.compile(
+        rf'@(?:Column|Table)\s*\([^)]*\bname\s*=\s*"({names})"',
+        re.IGNORECASE,
+    )
+    sql_column_pattern = re.compile(
+        rf"(?:^|,)\s*({names})\s+(?:[a-z]+|[a-z]+\s*\([^)]*\))",
+        re.IGNORECASE,
+    )
+    for relative in relative_paths:
+        normalized = relative.replace("\\", "/")
+        if not normalized.endswith((".java", ".sql")):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            match = java_pattern.search(line) if normalized.endswith(".java") else sql_column_pattern.search(line)
+            if match:
+                identifier = match.group(1)
+                evidence.append(
+                    f"{normalized}:{number}: H2 reserved identifier `{identifier}` must be renamed "
+                    "consistently in the JPA mapping and migration."
+                )
     return evidence
 
 
