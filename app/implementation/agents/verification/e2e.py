@@ -83,8 +83,28 @@ def e2e_contract_violations(
                 violations.append(f"Missing HTTP path evidence: {expected_path}")
         for expected_status in contract.get("statuses", []):
             status = str(expected_status)
+            # Spring tests commonly assert the symbolic HttpStatus enum rather
+            # than the numeric wire value (e.g. HttpStatus.OK for 200).  Both
+            # forms are equivalent evidence and must satisfy the contract.
+            status_names = {
+                "200": "OK",
+                "201": "CREATED",
+                "202": "ACCEPTED",
+                "204": "NO_CONTENT",
+                "400": "BAD_REQUEST",
+                "401": "UNAUTHORIZED",
+                "403": "FORBIDDEN",
+                "404": "NOT_FOUND",
+                "409": "CONFLICT",
+                "422": "UNPROCESSABLE_ENTITY",
+                "500": "INTERNAL_SERVER_ERROR",
+            }
+            alternatives = [re.escape(status)]
+            symbolic_name = status_names.get(status)
+            if symbolic_name:
+                alternatives.append(rf"(?:HttpStatus\.)?{symbolic_name}")
             assertion = re.compile(
-                rf"(?im)^.*(?:assert|expect|status).*\b{re.escape(status)}\b.*$"
+                rf"(?im)^.*(?:assert|expect|status).*\b(?:{'|'.join(alternatives)})\b.*$"
             )
             if not assertion.search(source):
                 violations.append(f"Missing asserted HTTP status: {status}")

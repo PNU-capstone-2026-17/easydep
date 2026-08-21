@@ -871,6 +871,26 @@ void use(String value) {}
             self.assertTrue(any("422" in item for item in violations))
             self.assertFalse(any("OrderRepository" in item for item in violations))
 
+    def test_semantic_gate_accepts_spring_http_status_enums(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CourseFlowTest.java"
+            path.write_text(
+                """class CourseFlowTest {
+TestRestTemplate http; CourseRepository repository;
+@Test void created() { assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED); }
+@Test void listed() { assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK); }
+}""",
+                encoding="utf-8",
+            )
+            contract = {
+                "paths": [],
+                "statuses": [200, 201],
+                "repositories": ["CourseRepository"],
+                "minimumTests": 2,
+            }
+
+            self.assertEqual([], e2e_contract_violations(path, contract))
+
     def test_e2e_semantic_gate_rejects_simplified_weak_test(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "StockPurchaseFlowTest.java"
