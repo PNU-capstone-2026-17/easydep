@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     design_max_sequence_repair_calls: int = 4
     design_sequence_parallelism: int = 4
     implementation_max_workers: int = 1
+    implementation_task_parallelism: int = 2
     implementation_agent_model: str = "nvidia_nim/openai/gpt-oss-120b"
     implementation_agent_base_url: str = "https://integrate.api.nvidia.com/v1"
     implementation_command_timeout_seconds: int = 3600

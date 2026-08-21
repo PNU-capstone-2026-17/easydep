@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -100,11 +101,145 @@ from app.implementation.domain.implementation_ir import (
     parse_openapi_operations as parse_ir_openapi_operations,
 )
 from app.implementation.workflows.coordinator import (
+    _execute_task_batch,
+    _phase_task_batches,
     reconcile_workflow_state,
     validate_approval,
     validate_workflow_approval,
     write_transmission_request,
 )
+
+
+class ImplementationParallelismTest(unittest.TestCase):
+    @staticmethod
+    def _task(task_id: str, task_type: str, output: str) -> dict[str, object]:
+        return {
+            "taskId": task_id,
+            "taskType": task_type,
+            "status": "PENDING",
+            "attempts": 0,
+            "allowedWritePaths": [output],
+        }
+
+    def test_independent_tasks_execute_concurrently_with_bounded_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            tasks = [
+                self._task("first", "api-adapter", "application/First.java"),
+                self._task("second", "api-adapter", "application/Second.java"),
+            ]
+            (reports / "run-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "implementation_tasks": [
+                            {
+                                "task_id": task["taskId"],
+                                "allowed_write_paths": task["allowedWritePaths"],
+                            }
+                            for task in tasks
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            barrier = threading.Barrier(2, timeout=2)
+            active = 0
+            peak = 0
+            lock = threading.Lock()
+
+            def execute(root: Path, task_id: str) -> dict[str, object]:
+                nonlocal active, peak
+                with lock:
+                    active += 1
+                    peak = max(peak, active)
+                barrier.wait()
+                output = root / f"application/{task_id.title()}.java"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(f"class {task_id.title()} {{}}", encoding="utf-8")
+                with lock:
+                    active -= 1
+                return {"status": "SUCCEEDED"}
+
+            state: dict[str, object] = {"tasks": tasks, "status": "RUNNING"}
+            failures = _execute_task_batch(
+                run, state, tasks, execute, max_workers=2
+            )
+
+            self.assertEqual([], failures)
+            self.assertEqual(2, peak)
+            self.assertEqual(["SUCCEEDED", "SUCCEEDED"], [task["status"] for task in tasks])
+            persisted = json.loads((reports / "workflow-state.json").read_text(encoding="utf-8"))
+            self.assertEqual(["first", "second"], [task["taskId"] for task in persisted["tasks"]])
+
+    def test_persistence_entities_finish_before_parallel_dependents(self) -> None:
+        tasks = [
+            self._task("entities", "persistence-entities", "application/Entity.java"),
+            self._task("repositories", "persistence-repositories", "application/Repository.java"),
+            self._task("mapping", "persistence-mapping", "application/Mapper.java"),
+            self._task("schema", "persistence-schema", "application/schema.sql"),
+        ]
+
+        batches = _phase_task_batches("persistence", tasks)
+
+        self.assertEqual([["entities"], ["repositories", "mapping", "schema"]], [
+            [task["taskId"] for task in batch] for batch in batches
+        ])
+
+    def test_overlapping_outputs_force_sequential_batches(self) -> None:
+        tasks = [
+            self._task("first", "api-adapter", "application/generated"),
+            self._task("second", "api-adapter", "application/generated/Api.java"),
+        ]
+
+        batches = _phase_task_batches("api-adapters", tasks)
+
+        self.assertEqual([["first"], ["second"]], [
+            [task["taskId"] for task in batch] for batch in batches
+        ])
+
+    def test_parallel_failure_preserves_successful_task_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            tasks = [
+                self._task("failed", "api-adapter", "application/Failed.java"),
+                self._task("completed", "api-adapter", "application/Completed.java"),
+            ]
+            (reports / "run-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "implementation_tasks": [
+                            {
+                                "task_id": task["taskId"],
+                                "allowed_write_paths": task["allowedWritePaths"],
+                            }
+                            for task in tasks
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def execute(root: Path, task_id: str) -> dict[str, object]:
+                if task_id == "failed":
+                    raise RuntimeError("provider unavailable")
+                output = root / "application/Completed.java"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("class Completed {}", encoding="utf-8")
+                return {"status": "SUCCEEDED"}
+
+            state: dict[str, object] = {"tasks": tasks, "status": "RUNNING"}
+            failures = _execute_task_batch(
+                run, state, tasks, execute, max_workers=2
+            )
+
+            self.assertEqual(["failed"], [task["taskId"] for task, _ in failures])
+            self.assertEqual(["FAILED", "SUCCEEDED"], [task["status"] for task in tasks])
+            self.assertEqual("FAILED", state["status"])
+            self.assertTrue(tasks[1]["outputHashes"])
 
 
 class SourceDesignConformanceTest(unittest.TestCase):

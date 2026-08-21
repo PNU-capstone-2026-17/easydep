@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 import warnings
 from pathlib import Path
@@ -57,6 +58,7 @@ MAX_REPAIR_ITERATIONS = 4
 MAX_VERIFICATION_REPAIRS = 6
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
+_RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
 
 
 class EventJournal:
@@ -643,8 +645,10 @@ def create_openhands_conversation(
 
     registry_name = "easydep_restricted_file_editor"
     if not _RESTRICTED_EDITOR_REGISTERED:
-        register_tool(registry_name, RestrictedFileEditorTool)
-        _RESTRICTED_EDITOR_REGISTERED = True
+        with _RESTRICTED_EDITOR_REGISTRATION_LOCK:
+            if not _RESTRICTED_EDITOR_REGISTERED:
+                register_tool(registry_name, RestrictedFileEditorTool)
+                _RESTRICTED_EDITOR_REGISTERED = True
     model = configured_model(str(llm_config["model"]))
     is_qwen_coder = "qwen3-coder" in model.lower()
     is_gpt_oss = "gpt-oss" in model.lower()

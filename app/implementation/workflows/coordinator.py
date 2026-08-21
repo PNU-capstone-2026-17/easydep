@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+
+from app.core.config import settings
 
 from ..agents.runtime import execute_openhands_task
 from ..agents.verification.build import (
@@ -61,6 +64,14 @@ PHASES = (
     ("wiring", ("persistence", "api-adapters", "boundary-adapters", "outbound-adapters"), {"configuration"}),
     ("frontend", ("api-adapters",), {"frontend-implementation"}),
     ("end-to-end", ("wiring", "frontend"), {"integration-test"}),
+)
+
+# Tasks in these phases are planned from immutable design/previous-phase
+# contracts and own disjoint output files.  Persistence is handled separately:
+# entities must land first, after which repositories, mapping, and schema are
+# independent.
+PARALLEL_PHASES = frozenset(
+    {"control", "api-adapters", "boundary-adapters", "outbound-adapters"}
 )
 
 
@@ -321,20 +332,17 @@ def run_workflow(
         if not _dependencies_succeeded(state, phase_id):
             continue
         state["currentPhase"] = phase_id
-        for task in phase_tasks:
-            task["status"] = "RUNNING"
-            task["attempts"] = int(task.get("attempts", 0)) + 1
-            state["updatedAt"] = _now()
-            _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-            try:
-                result = executor(run_root, str(task["taskId"]))
-            except Exception as error:
-                task["status"] = "FAILED"
-                task["lastError"] = str(error)
-                state["status"] = "FAILED"
-                state["blockingReason"] = f"Task failed: {task['taskId']}"
-                state["updatedAt"] = _now()
-                _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+        worker_limit = max(1, int(settings.implementation_task_parallelism))
+        for task_batch in _phase_task_batches(phase_id, phase_tasks):
+            failures = _execute_task_batch(
+                run_root,
+                state,
+                task_batch,
+                executor,
+                max_workers=worker_limit,
+            )
+            if failures:
+                task, error = failures[0]
                 if isinstance(error, WorkspaceVerificationError):
                     repair = schedule_cross_phase_repair(
                         run_root, str(task["taskId"]), error.evidence
@@ -348,17 +356,7 @@ def run_workflow(
                             repaired_state,
                         )
                         return repaired_state
-                raise
-            task["status"] = "SUCCEEDED"
-            task["resultFile"] = (
-                f"reports/agent-executions/{task['taskId']}.result.json"
-            )
-            task["outputHashes"] = _task_output_hashes(run_root, str(task["taskId"]))
-            task["lastError"] = None
-            if result.get("status") != "SUCCEEDED":
-                raise RuntimeError(f"Task returned non-success status: {task['taskId']}")
-            state["updatedAt"] = _now()
-            _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+                raise error
         _verify_phase(run_root, phase_id, verifier)
         auditor(run_root)
         next(
@@ -395,6 +393,117 @@ def run_workflow(
         )
     _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
     return final_state
+
+
+def _phase_task_batches(
+    phase_id: str, tasks: list[dict[str, object]]
+) -> list[list[dict[str, object]]]:
+    """Return dependency-safe batches while preserving manifest task order."""
+    if len(tasks) < 2:
+        return [tasks]
+    if not _write_paths_are_disjoint(tasks):
+        return [[task] for task in tasks]
+    if phase_id in PARALLEL_PHASES:
+        return [tasks]
+    if phase_id == "persistence":
+        entities = [
+            task for task in tasks if task.get("taskType") == "persistence-entities"
+        ]
+        dependents = [task for task in tasks if task not in entities]
+        batches = [[task] for task in entities]
+        if dependents:
+            batches.append(dependents)
+        return batches
+    return [[task] for task in tasks]
+
+
+def _write_paths_are_disjoint(tasks: list[dict[str, object]]) -> bool:
+    """Reject exact and ancestor/descendant output overlaps conservatively."""
+    owned: list[tuple[str, ...]] = []
+    for task in tasks:
+        for value in task.get("allowedWritePaths", task.get("allowed_write_paths", [])):
+            parts = tuple(Path(str(value).replace("\\", "/")).parts)
+            if any(
+                parts[: len(previous)] == previous
+                or previous[: len(parts)] == parts
+                for previous in owned
+            ):
+                return False
+            owned.append(parts)
+    return True
+
+
+def _execute_task_batch(
+    run_root: Path,
+    state: dict[str, object],
+    tasks: list[dict[str, object]],
+    executor: Callable[[Path, str], dict[str, object]],
+    *,
+    max_workers: int,
+) -> list[tuple[dict[str, object], Exception]]:
+    """Execute a safe batch concurrently and checkpoint results deterministically."""
+    state_path = run_root / "reports" / "workflow-state.json"
+    for task in tasks:
+        task["status"] = "RUNNING"
+        task["attempts"] = int(task.get("attempts", 0)) + 1
+    state["updatedAt"] = _now()
+    _write_json_atomic(state_path, state)
+
+    def run(task: dict[str, object]) -> dict[str, object]:
+        result = executor(run_root, str(task["taskId"]))
+        if result.get("status") != "SUCCEEDED":
+            raise RuntimeError(
+                f"Task returned non-success status: {task['taskId']}"
+            )
+        return result
+
+    futures: list[Future[dict[str, object]]] = []
+    workers = min(max(1, max_workers), len(tasks))
+    if workers == 1:
+        # Preserve the original calling-thread behavior when parallelism is
+        # disabled or a dependency/overlap reduced this to a singleton batch.
+        for task in tasks:
+            future: Future[dict[str, object]] = Future()
+            try:
+                future.set_result(run(task))
+            except Exception as error:
+                future.set_exception(error)
+            futures.append(future)
+    else:
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="easydep-implementation-task"
+        ) as pool:
+            futures = [pool.submit(run, task) for task in tasks]
+
+    failures: list[tuple[dict[str, object], Exception]] = []
+    # Futures are consumed in manifest order, not completion order, so state and
+    # error selection remain deterministic even though the work runs in parallel.
+    for task, future in zip(tasks, futures):
+        try:
+            future.result()
+        except Exception as error:
+            task["status"] = "FAILED"
+            task["lastError"] = str(error)
+            failures.append((task, error))
+        else:
+            task["status"] = "SUCCEEDED"
+            task["resultFile"] = (
+                f"reports/agent-executions/{task['taskId']}.result.json"
+            )
+            task["outputHashes"] = _task_output_hashes(
+                run_root, str(task["taskId"])
+            )
+            task["lastError"] = None
+        state["updatedAt"] = _now()
+        _write_json_atomic(state_path, state)
+
+    if failures:
+        failed_task, _ = failures[0]
+        state["status"] = "FAILED"
+        state["blockingReason"] = f"Task failed: {failed_task['taskId']}"
+        state["updatedAt"] = _now()
+        _write_json_atomic(state_path, state)
+    return failures
 
 
 def _verify_phase(
