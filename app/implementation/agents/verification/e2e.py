@@ -4,6 +4,52 @@ import re
 from pathlib import Path
 
 
+def repair_nested_e2e_members(path: Path) -> bool:
+    """Unwrap class members accidentally nested in a synthetic test method."""
+    if not path.is_file():
+        return False
+    lines = path.read_text(encoding="utf-8").splitlines()
+    wrapper_index = next(
+        (
+            index
+            for index, line in enumerate(lines[:-1])
+            if re.search(r"^\s*@Test\s*$", line)
+            and re.search(
+                r"\bvoid\s+[A-Za-z_$][\w$]*\s*\(\s*\)\s*\{",
+                lines[index + 1],
+            )
+        ),
+        None,
+    )
+    if wrapper_index is None:
+        return False
+
+    depth = 0
+    wrapper_close_index: int | None = None
+    nested_member = False
+    for offset, line in enumerate(lines[wrapper_index + 1 :], wrapper_index + 1):
+        stripped = line.strip()
+        if depth > 0 and re.match(r"@(Autowired|BeforeEach|Test)\b", stripped):
+            nested_member = True
+        depth += line.count("{") - line.count("}")
+        if depth == 0 and wrapper_close_index is None:
+            wrapper_close_index = offset
+            break
+    if not nested_member or wrapper_close_index is None:
+        return False
+
+    # Keep the wrapper contents and remove its annotation/declaration.  If a
+    # separate class closing brace follows, remove the wrapper's own closing
+    # brace as well; older system-generated wrappers reused the class brace.
+    remove_end = wrapper_index + 2
+    trailing_lines = lines[wrapper_close_index + 1 :]
+    if any(line.strip() for line in trailing_lines):
+        del lines[wrapper_close_index]
+    del lines[wrapper_index:remove_end]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
+
+
 def repair_orphaned_java_test_statements(path: Path) -> bool:
     """Wrap executable statements accidentally emitted outside an E2E test method.
 
@@ -21,7 +67,7 @@ def repair_orphaned_java_test_statements(path: Path) -> bool:
     orphan_start: int | None = None
     orphan_end: int | None = None
     executable = re.compile(
-        r"^(?://|assertThat\b|assert\w*\b|[A-Z][\w<>?, ]+\s+\w+\s*=|"
+        r"^(?:assertThat\b|assert\w*\b|[A-Z][\w<>?, ]+\s+\w+\s*=|"
         r"(?:response|request|test\w*)\s*\()"
     )
     for index, line in enumerate(lines):

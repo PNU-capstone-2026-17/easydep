@@ -77,6 +77,7 @@ from app.implementation.planning.design_context import (
 )
 from app.implementation.workflows.completion import audit_run_completion
 from app.implementation.agents.verification.e2e import e2e_contract_violations
+from app.implementation.agents.verification.e2e import repair_nested_e2e_members
 from app.implementation.agents.verification.e2e import repair_orphaned_java_test_statements
 from app.implementation.delivery.kubernetes import (
     infer_intent,
@@ -3295,6 +3296,31 @@ public final class CourseData {}
             repaired = path.read_text(encoding="utf-8")
             self.assertIn("generatedOrphanFlowAssertions", repaired)
             self.assertEqual(2, repaired.count("@Test"))
+
+    def test_repairs_nested_e2e_class_members(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "FlowTest.java"
+            path.write_text(
+                "class FlowTest {\n"
+                "  @Test\n"
+                "  void llmGeneratedFlowWrapper() {\n"
+                "    @Autowired\n"
+                "    private CourseRepository repository;\n"
+                "    @BeforeEach\n"
+                "    void cleanDatabase() {}\n"
+                "    @Test\n"
+                "    void scenario() {}\n"
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(repair_nested_e2e_members(path))
+            self.assertFalse(repair_orphaned_java_test_statements(path))
+            repaired = path.read_text(encoding="utf-8")
+            self.assertNotIn("llmGeneratedFlowWrapper", repaired)
+            self.assertIn("private CourseRepository repository", repaired)
+            self.assertEqual(1, repaired.count("@Test"))
+            self.assertEqual(repaired.count("{"), repaired.count("}"))
 
     def test_reads_exact_persistence_entity_contracts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
