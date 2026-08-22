@@ -154,6 +154,29 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         return _execute_openhands_task(run_root, task_id)
 
 
+def _render_missing_output_repair_prompt(
+    task_type: str, missing_outputs: list[str]
+) -> str:
+    """Keep missing-output retries small enough for agents that stopped silently."""
+    task_hint = (
+        "For this integration-test task, inspect the existing Spring controllers, "
+        "OpenAPI contract, and generated tests, then create a compiling real HTTP "
+        "flow test. Do not modify production code."
+        if task_type == "integration-test"
+        else "Inspect the existing workspace and task contracts before creating the missing files."
+    )
+    files = "\n".join(f"- `{path}`" for path in missing_outputs)
+    return (
+        "The previous agent round did not create the required output files. "
+        "Use the file editor now; do not reply with an explanation. "
+        "Create only the missing files, preserve all existing files, and finish "
+        "immediately after writing them.\n\n"
+        + task_hint
+        + "\n\nRequired missing outputs:\n"
+        + files
+    )
+
+
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
@@ -299,12 +322,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     str((sandbox / path).resolve()) for path in missing_outputs
                 ]
                 round_iteration_limit = MAX_REPAIR_ITERATIONS
-                round_prompt = prompt + "\n\n## Missing required outputs\n\n" + (
-                    "The previous round did not create every contracted output. "
-                    "Create each file listed below now, then call finish immediately. "
-                    "Do not rewrite outputs that already exist.\n\n"
-                    + "\n".join(f"- `{path}`" for path in missing_outputs)
-                )
+                if task_type == "integration-test":
+                    round_prompt = _render_missing_output_repair_prompt(
+                        task_type, missing_outputs
+                    )
+                else:
+                    round_prompt = prompt + "\n\n## Missing required outputs\n\n" + (
+                        "The previous round did not create every contracted output. "
+                        "Create each file listed below now, then call finish immediately. "
+                        "Do not rewrite outputs that already exist.\n\n"
+                        + "\n".join(f"- `{path}`" for path in missing_outputs)
+                    )
                 continue
 
             changed = changed_files(before, snapshot_files(sandbox))

@@ -20,6 +20,7 @@ from app.implementation.generation.orchestrator import (
 from app.implementation.agents.runtime import (
     EventJournal,
     _requires_cross_phase_repair,
+    _render_missing_output_repair_prompt,
     break_configuration_cycles,
     execution_attempt,
     normalize_spring_boot_repository_discovery,
@@ -660,6 +661,15 @@ class LoadJobTest(unittest.TestCase):
              patch.object(settings, "openhands_provider_retry_max_seconds", 5):
             self.assertEqual(2, provider_retry_delay(1))
             self.assertEqual(5, provider_retry_delay(4))
+
+    def test_missing_output_repair_prompt_is_compact_and_task_specific(self) -> None:
+        prompt = _render_missing_output_repair_prompt(
+            "integration-test",
+            ["application/src/test/java/example/FlowTest.java"],
+        )
+        self.assertIn("real HTTP flow test", prompt)
+        self.assertIn("application/src/test/java/example/FlowTest.java", prompt)
+        self.assertNotIn("generatedJavaContracts", prompt)
 
     def test_task_verification_avoids_full_packaging_and_targets_owned_tests(self) -> None:
         command = task_verification_command(
