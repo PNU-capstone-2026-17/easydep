@@ -62,7 +62,10 @@ from .workspace import (
 
 MAX_AGENT_ITERATIONS = 6
 MAX_REPAIR_ITERATIONS = 4
-MAX_VERIFICATION_REPAIRS = 6
+# A repair conversation receives only the diagnostic and repair targets below;
+# keeping the number of fresh conversations bounded prevents the original
+# design prompt from being retransmitted indefinitely after a persistent gate.
+MAX_VERIFICATION_REPAIRS = 3
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
@@ -374,11 +377,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         task_type, missing_outputs
                     )
                 else:
-                    round_prompt = prompt + "\n\n## Missing required outputs\n\n" + (
-                        "The previous round did not create every contracted output. "
-                        "Create each file listed below now, then call finish immediately. "
-                        "Do not rewrite outputs that already exist.\n\n"
-                        + "\n".join(f"- `{path}`" for path in missing_outputs)
+                    round_prompt = _render_missing_output_repair_prompt(
+                        task_type, missing_outputs
                     )
                 continue
 
@@ -526,9 +526,12 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     if task_type == "frontend-implementation"
                     else render_verification_feedback
                 )
-                round_prompt = prompt + "\n\n## Verification repair\n\n" + feedback_renderer(
+                # Do not retransmit the original design prompt on every repair
+                # conversation.  The diagnostic plus the files selected by the
+                # verifier are sufficient for a bounded local correction.
+                round_prompt = feedback_renderer(
                     error.evidence,
-                    read_allowed_sources(sandbox, task["allowed_write_paths"]),
+                    read_allowed_sources(sandbox, repair_paths),
                     repair_paths,
                 )
     except Exception as error:
