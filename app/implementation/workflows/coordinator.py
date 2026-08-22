@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.config import settings
+from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import execute_openhands_task
 from ..agents.verification.build import (
@@ -255,6 +256,37 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
 
 
 def run_workflow(
+    run_root: Path,
+    spec: JobSpec,
+    approval_path: Path | None,
+    *,
+    retry_failed: bool = False,
+    executor: Callable[[Path, str], dict[str, object]] = execute_openhands_task,
+    verifier: Callable[[Path], dict[str, object]] = verify_run_workspace,
+    auditor: Callable[[Path], dict[str, object]] = audit_run_completion,
+) -> dict[str, object]:
+    """Trace the implementation workflow independently of its caller process."""
+
+    with langsmith_metrics.trace_scope(
+        "easydep.implementation.workflow",
+        metadata={
+            "agent": "implementation",
+            "operation": "workflow",
+            "run_id": run_root.name,
+        },
+    ):
+        return _run_workflow(
+            run_root,
+            spec,
+            approval_path,
+            retry_failed=retry_failed,
+            executor=executor,
+            verifier=verifier,
+            auditor=auditor,
+        )
+
+
+def _run_workflow(
     run_root: Path,
     spec: JobSpec,
     approval_path: Path | None,

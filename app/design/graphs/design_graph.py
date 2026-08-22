@@ -39,6 +39,7 @@ from app.design.nodes.gates import make_gate, route_gate
 from app.design.nodes.persist import ORIGIN_KEY, make_persist
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.session_store import SqlCheckpointSaver
+from app.metrics import langsmith as langsmith_metrics
 
 
 class StageNotReached(Exception):
@@ -129,6 +130,20 @@ def _result_payload(result: dict, app_id: str) -> dict[str, Any]:
     return payload
 
 
+def _invoke_traced_design_graph(
+    operation: str,
+    app_id: str,
+    invocation,
+) -> dict[str, Any]:
+    """Run a web-design graph operation as a privacy-safe root trace."""
+
+    with langsmith_metrics.trace_scope(
+        f"easydep.design.{operation}",
+        metadata={"agent": "design", "operation": operation, "app_id": app_id},
+    ):
+        return _result_payload(dict(invocation()), app_id)
+
+
 def start_design(app_id: str, state: ArchitectureState) -> dict[str, Any]:
     """설계 세션을 시작한다. 첫 스테이지(클래스 다이어그램)를 만들고 게이트에서 멈춘다.
 
@@ -137,7 +152,9 @@ def start_design(app_id: str, state: ArchitectureState) -> dict[str, Any]:
     """
     graph_input: ArchitectureState = {**state, "app_id": app_id}
     config: RunnableConfig = {"configurable": {"thread_id": app_id}}
-    return _result_payload(dict(graph.invoke(graph_input, config)), app_id)
+    return _invoke_traced_design_graph(
+        "start", app_id, lambda: graph.invoke(graph_input, config)
+    )
 
 
 def resume_design(app_id: str, feedback: str) -> dict[str, Any]:
@@ -147,7 +164,9 @@ def resume_design(app_id: str, feedback: str) -> dict[str, Any]:
     재생성한 뒤 같은 게이트에서 다시 묻는다.
     """
     config: RunnableConfig = {"configurable": {"thread_id": app_id}}
-    return _result_payload(dict(graph.invoke(Command(resume=feedback), config)), app_id)
+    return _invoke_traced_design_graph(
+        "resume", app_id, lambda: graph.invoke(Command(resume=feedback), config)
+    )
 
 
 def retry_design(app_id: str) -> dict[str, Any]:
@@ -161,7 +180,7 @@ def retry_design(app_id: str) -> dict[str, Any]:
     if not status["retryable"]:
         raise ValueError("The design session has no failed stage to retry.")
     config: RunnableConfig = {"configurable": {"thread_id": app_id}}
-    return _result_payload(dict(graph.invoke(None, config)), app_id)
+    return _invoke_traced_design_graph("retry", app_id, lambda: graph.invoke(None, config))
 
 
 def rewind_design(app_id: str, stage: str) -> dict[str, Any]:

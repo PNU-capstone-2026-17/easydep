@@ -27,6 +27,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.core.config import settings
 from app.core.llm_stall_probe import start_stall_probe
+from app.metrics import langsmith as langsmith_metrics
 
 
 class StructuredLlmError(RuntimeError):
@@ -49,6 +50,39 @@ def capture_llm_timings():
 
 
 def run_with_wall_timeout(
+    callable_obj,
+    *,
+    operation: str = "structured-output",
+    observation: dict[str, Any] | None = None,
+):
+    """Trace one design-model call while retaining the existing timeout contract."""
+
+    recorded_observation = observation if observation is not None else {}
+    with langsmith_metrics.trace_scope(
+        f"easydep.design.llm.{operation}",
+        run_type="llm",
+        metadata={
+            "agent": "design",
+            "operation": operation,
+            "ls_provider": "nvidia-nim",
+            "ls_model_name": settings.model,
+        },
+    ) as trace:
+        try:
+            return _run_with_wall_timeout(
+                callable_obj,
+                operation=operation,
+                observation=recorded_observation,
+            )
+        finally:
+            if "inputTokens" in recorded_observation or "outputTokens" in recorded_observation:
+                trace.set_usage(
+                    input_tokens=int(recorded_observation.get("inputTokens") or 0),
+                    output_tokens=int(recorded_observation.get("outputTokens") or 0),
+                )
+
+
+def _run_with_wall_timeout(
     callable_obj,
     *,
     operation: str = "structured-output",
@@ -158,6 +192,10 @@ def _stream_structured(
         "temperature": 0,
         "seed": 42,
         "stream": True,
+        # NVIDIA NIM documents this OpenAI-compatible option.  The final stream
+        # chunk carries provider-reported usage, which is needed for exact
+        # LangSmith token/cost totals rather than a local estimate.
+        "stream_options": {"include_usage": True},
         "response_format": _response_format(schema),
     }
     max_completion_tokens = settings.llm_max_completion_tokens
@@ -169,6 +207,7 @@ def _stream_structured(
     observation["transport"] = "structuredStream"
     observation["responseEstablishedSeconds"] = round(perf_counter() - started, 6)
     for chunk in stream:
+        _observe_stream_usage(observation, getattr(chunk, "usage", None))
         now = perf_counter()
         event_at = datetime.now(UTC).isoformat()
         event_count += 1
@@ -240,6 +279,26 @@ def _stream_structured(
                 failureContentSampleTruncated=len(content_text) > bounded * 2,
             )
         raise
+
+
+def _observe_stream_usage(observation: dict[str, Any], usage: Any) -> None:
+    """Copy provider-reported usage from the terminal SSE chunk if available."""
+
+    if usage is None:
+        return
+    if isinstance(usage, dict):
+        read = usage.get
+    else:
+        read = lambda name, default=None: getattr(usage, name, default)
+    prompt_tokens = read("prompt_tokens", read("input_tokens", None))
+    completion_tokens = read("completion_tokens", read("output_tokens", None))
+    total_tokens = read("total_tokens", None)
+    if prompt_tokens is not None:
+        observation["inputTokens"] = int(prompt_tokens)
+    if completion_tokens is not None:
+        observation["outputTokens"] = int(completion_tokens)
+    if total_tokens is not None:
+        observation["totalTokens"] = int(total_tokens)
 
 
 def parse_structured(

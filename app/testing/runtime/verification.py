@@ -11,6 +11,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 from typing import Any
 
+from app.metrics import langsmith as langsmith_metrics
 from app.testing.graphs.testing_graph import create_testing_graph, initial_state
 from app.testing.runtime.app_container import (
     ApplicationLaunchError,
@@ -26,6 +27,32 @@ def _launch(app_id: str, target_url: str):
 
 
 def run_verification_graph(
+    *,
+    run_id: str,
+    app_id: str,
+    target_url: str = "",
+    manifests_dir: str = "",
+    iac_dir: str = "",
+) -> dict[str, Any]:
+    with langsmith_metrics.trace_scope(
+        "easydep.testing.verification",
+        metadata={
+            "agent": "testing",
+            "operation": "verification",
+            "run_id": run_id,
+            "app_id": app_id,
+        },
+    ):
+        return _run_verification_graph(
+            run_id=run_id,
+            app_id=app_id,
+            target_url=target_url,
+            manifests_dir=manifests_dir,
+            iac_dir=iac_dir,
+        )
+
+
+def _run_verification_graph(
     *,
     run_id: str,
     app_id: str,

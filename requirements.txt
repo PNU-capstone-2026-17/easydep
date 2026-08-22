@@ -13,6 +13,9 @@ jsonschema>=4.20
 # LLM 호출은 langchain-openai(구조화 출력 with_structured_output)를 쓴다.
 langchain-openai>=0.2.0
 langchain-core>=0.3.0
+# Optional at runtime, but installed with EasyDep so LANGSMITH_TRACING can be
+# enabled without changing the deployment image.
+langsmith>=0.3.18,<1
 pydantic-settings>=2.5.0
 # step1_requirements → legacy.auto_clarify → legacy.example_sampler 가 쓴다.
 # 목록에 없어서 requirements.txt 만으로는 임포트조차 안 됐다.

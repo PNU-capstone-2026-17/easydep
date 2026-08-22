@@ -36,6 +36,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.config import settings
+from app.metrics import langsmith as langsmith_metrics
 from app.requirements.common.llm_stall_probe import start_stall_probe
 
 LOGGER_NAME = "easydep.agent"
@@ -214,25 +215,29 @@ def run_scope(name: str = "run") -> Iterator[RunStats]:
     중첩해도 되지만 안쪽 스코프는 독립된 집계를 갖는다 — 배치 러너가 데이터셋마다
     스코프를 여는 것처럼, "무엇 하나에 대한 합계인가"가 분명한 편이 낫다.
     """
-    stats = RunStats(name=name)
-    token = _current.set(stats)
-    started = time.perf_counter()
-    try:
-        yield stats
-    finally:
-        # 한 실행 안에서 백엔드 구성이 바뀌면 seed를 고정했어도 앞뒤 산출물의 표본
-        # 조건이 다르다. 이건 오류가 아니라 "이 실행의 재현성 주장이 약하다"는 뜻이라
-        # 저하로 남긴다 — 스코프를 닫기 전에 해야 아래 요약에 포함된다.
-        if len(stats.model_fingerprints) > 1:
-            record_degradation(
-                "llm.fingerprint",
-                "한 실행에서 백엔드 구성이 바뀌었다(seed를 고정해도 결과가 갈릴 수 있다)",
-                subject=",".join(sorted(stats.model_fingerprints)),
-            )
-        stats.wall_seconds = time.perf_counter() - started
-        _current.reset(token)
-        summary = stats.as_dict()
-        _log.info("run finished", extra=_log_fields(summary))
+    with langsmith_metrics.trace_scope(
+        f"easydep.requirements.{name}",
+        metadata={"agent": "requirements", "scope": name},
+    ):
+        stats = RunStats(name=name)
+        token = _current.set(stats)
+        started = time.perf_counter()
+        try:
+            yield stats
+        finally:
+            # 한 실행 안에서 백엔드 구성이 바뀌면 seed를 고정했어도 앞뒤 산출물의 표본
+            # 조건이 다르다. 이건 오류가 아니라 "이 실행의 재현성 주장이 약하다"는 뜻이라
+            # 저하로 남긴다 — 스코프를 닫기 전에 해야 아래 요약에 포함된다.
+            if len(stats.model_fingerprints) > 1:
+                record_degradation(
+                    "llm.fingerprint",
+                    "한 실행에서 백엔드 구성이 바뀌었다(seed를 고정해도 결과가 갈릴 수 있다)",
+                    subject=",".join(sorted(stats.model_fingerprints)),
+                )
+            stats.wall_seconds = time.perf_counter() - started
+            _current.reset(token)
+            summary = stats.as_dict()
+            _log.info("run finished", extra=_log_fields(summary))
 
 
 def bind_context(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -314,71 +319,85 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
     예외는 집계에 남기고 **그대로 다시 올린다** — 삼키는 것은 부르는 쪽의 결정이지
     계측의 결정이 아니다.
     """
-    call = LlmCall(operation)
-    started_at = datetime.now(UTC)
-    started = time.perf_counter()
-    failed: BaseException | None = None
-    stall_probe = start_stall_probe(operation)
-    _progress(
-        "llmOperationStarted",
-        operation=operation,
-        startedAt=started_at.isoformat(),
-    )
-    try:
-        yield call
-    except BaseException as exc:
-        failed = exc
-        raise
-    finally:
-        stall_probe.set()
-        elapsed = time.perf_counter() - started
-        finished_at = datetime.now(UTC)
-        _progress(
-            "llmOperationFinished",
-            operation=operation,
-            status="failed" if failed is not None else "completed",
-            errorType=type(failed).__name__ if failed is not None else None,
-            finishedAt=finished_at.isoformat(),
-            elapsedSeconds=round(elapsed, 6),
-            promptTokens=call.prompt_tokens,
-            completionTokens=call.completion_tokens,
-            structuredFallback=call.fallback_reason is not None,
-        )
-        stats = current_run()
-        if stats is not None:
-            with stats._lock:
-                stats.llm_calls += 1
-                stats.llm_seconds += elapsed
-                stats.prompt_tokens += call.prompt_tokens
-                stats.completion_tokens += call.completion_tokens
-                if failed is not None:
-                    stats.llm_failures += 1
-                if call.fallback_reason is not None:
-                    stats.structured_fallbacks += 1
-                stats.model_fingerprints |= call.fingerprints
-                stats.llm_timing_events.append(
-                    {
-                        "operation": operation,
-                        "startedAt": started_at.isoformat(),
-                        "finishedAt": finished_at.isoformat(),
-                        "elapsedSeconds": round(elapsed, 6),
-                        "status": "failed" if failed is not None else "completed",
-                        "errorType": type(failed).__name__ if failed is not None else None,
-                        "structuredFallback": call.fallback_reason is not None,
-                    }
-                )
-        record = {
+    with langsmith_metrics.trace_scope(
+        f"easydep.requirements.llm.{operation}",
+        run_type="llm",
+        metadata={
+            "agent": "requirements",
             "operation": operation,
-            "seconds": round(elapsed, 3),
-            "prompt_tokens": call.prompt_tokens,
-            "completion_tokens": call.completion_tokens,
-        }
-        if failed is not None:
-            _log.warning("llm call failed", extra=_log_fields({**record, "error": repr(failed)}))
-        elif call.fallback_reason is not None:
-            _log.warning(
-                "llm structured output fell back to json mode",
-                extra=_log_fields({**record, "reason": call.fallback_reason}),
+            "ls_provider": "nvidia-nim",
+            "ls_model_name": settings.model,
+        },
+    ) as trace:
+        call = LlmCall(operation)
+        started_at = datetime.now(UTC)
+        started = time.perf_counter()
+        failed: BaseException | None = None
+        stall_probe = start_stall_probe(operation)
+        _progress(
+            "llmOperationStarted",
+            operation=operation,
+            startedAt=started_at.isoformat(),
+        )
+        try:
+            yield call
+        except BaseException as exc:
+            failed = exc
+            raise
+        finally:
+            stall_probe.set()
+            elapsed = time.perf_counter() - started
+            finished_at = datetime.now(UTC)
+            _progress(
+                "llmOperationFinished",
+                operation=operation,
+                status="failed" if failed is not None else "completed",
+                errorType=type(failed).__name__ if failed is not None else None,
+                finishedAt=finished_at.isoformat(),
+                elapsedSeconds=round(elapsed, 6),
+                promptTokens=call.prompt_tokens,
+                completionTokens=call.completion_tokens,
+                structuredFallback=call.fallback_reason is not None,
             )
-        else:
-            _log.debug("llm call", extra=_log_fields(record))
+            stats = current_run()
+            if stats is not None:
+                with stats._lock:
+                    stats.llm_calls += 1
+                    stats.llm_seconds += elapsed
+                    stats.prompt_tokens += call.prompt_tokens
+                    stats.completion_tokens += call.completion_tokens
+                    if failed is not None:
+                        stats.llm_failures += 1
+                    if call.fallback_reason is not None:
+                        stats.structured_fallbacks += 1
+                    stats.model_fingerprints |= call.fingerprints
+                    stats.llm_timing_events.append(
+                        {
+                            "operation": operation,
+                            "startedAt": started_at.isoformat(),
+                            "finishedAt": finished_at.isoformat(),
+                            "elapsedSeconds": round(elapsed, 6),
+                            "status": "failed" if failed is not None else "completed",
+                            "errorType": type(failed).__name__ if failed is not None else None,
+                            "structuredFallback": call.fallback_reason is not None,
+                        }
+                    )
+            trace.set_usage(
+                input_tokens=call.prompt_tokens,
+                output_tokens=call.completion_tokens,
+            )
+            record = {
+                "operation": operation,
+                "seconds": round(elapsed, 3),
+                "prompt_tokens": call.prompt_tokens,
+                "completion_tokens": call.completion_tokens,
+            }
+            if failed is not None:
+                _log.warning("llm call failed", extra=_log_fields({**record, "error": repr(failed)}))
+            elif call.fallback_reason is not None:
+                _log.warning(
+                    "llm structured output fell back to json mode",
+                    extra=_log_fields({**record, "reason": call.fallback_reason}),
+                )
+            else:
+                _log.debug("llm call", extra=_log_fields(record))

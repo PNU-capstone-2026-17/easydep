@@ -11,6 +11,7 @@ import warnings
 from pathlib import Path
 
 from app.core.config import settings
+from app.metrics import langsmith as langsmith_metrics
 from ..planning.design_context import (
     read_generated_java_contracts,
     referenced_openapi_model_names,
@@ -139,6 +140,21 @@ def write_execution_plan(
 
 
 def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
+    """Execute one implementation agent task and publish only safe task metrics."""
+
+    with langsmith_metrics.trace_scope(
+        "easydep.implementation.openhands_task",
+        metadata={
+            "agent": "implementation",
+            "operation": "openhands_task",
+            "run_id": run_root.name,
+            "task_id": task_id,
+        },
+    ):
+        return _execute_openhands_task(run_root, task_id)
+
+
+def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
 
@@ -220,21 +236,39 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 ),
             )
             conversation_error: Exception | None = None
-            try:
-                conversation.send_message(round_prompt)
-                conversation.run()
-            except Exception as error:
-                # A provider can reject the final turn after the agent has already
-                # written every contracted output (for example, while emitting
-                # `finish`). Treat the conversation as transport, then let the
-                # output boundary and build verification decide whether the task
-                # is usable. Never copy unverified files merely because they exist.
-                conversation_error = error
-                conversation_warning = (
-                    f"{error.__class__.__name__}: {error}"
-                )
-            finally:
-                conversation.close()
+            with langsmith_metrics.trace_scope(
+                "easydep.implementation.openhands_conversation",
+                run_type="llm",
+                metadata={
+                    "agent": "implementation",
+                    "operation": "openhands_conversation",
+                    "run_id": run_root.name,
+                    "task_id": task_id,
+                    "repair_attempt": repair_attempt,
+                    "ls_provider": "nvidia-nim",
+                    "ls_model_name": configured_model(str(task["llm"]["model"])),
+                },
+            ) as trace:
+                try:
+                    conversation.send_message(round_prompt)
+                    conversation.run()
+                except Exception as error:
+                    # A provider can reject the final turn after the agent has already
+                    # written every contracted output (for example, while emitting
+                    # `finish`). Treat the conversation as transport, then let the
+                    # output boundary and build verification decide whether the task
+                    # is usable. Never copy unverified files merely because they exist.
+                    conversation_error = error
+                    conversation_warning = (
+                        f"{error.__class__.__name__}: {error}"
+                    )
+                finally:
+                    usage = _conversation_token_usage(conversation)
+                    if usage is not None:
+                        trace.set_usage(
+                            input_tokens=usage[0], output_tokens=usage[1]
+                        )
+                    conversation.close()
 
             missing_outputs = missing_required_outputs(
                 sandbox, task["allowed_write_paths"]
@@ -461,6 +495,22 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     write_execution_result(execution_dir, task_id, attempt, result)
     shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
     return result
+
+
+def _conversation_token_usage(conversation) -> tuple[int, int] | None:
+    """Read exact aggregate OpenHands usage without affecting task execution."""
+
+    try:
+        metrics = conversation.conversation_stats.get_combined_metrics()
+        usage = metrics.accumulated_token_usage
+        if usage is None:
+            return None
+        return (
+            max(0, int(getattr(usage, "prompt_tokens", 0) or 0)),
+            max(0, int(getattr(usage, "completion_tokens", 0) or 0)),
+        )
+    except Exception:  # noqa: BLE001 - observability is optional
+        return None
 
 
 def _requires_cross_phase_repair(

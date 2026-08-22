@@ -13,6 +13,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from app.metrics import langsmith as langsmith_metrics
 from app.testing.runtime.container_runner import (
     configured_runner_image,
     runner_command,
@@ -276,6 +277,24 @@ class TestingAdapter:
         *,
         implementation_result: dict[str, Any],
         case_id: str = "adhoc",  # noqa: ARG002 - stable adapter contract
+    ) -> dict[str, Any]:
+        run_root = str(implementation_result.get("run_root") or "")
+        with langsmith_metrics.trace_scope(
+            "easydep.testing.unit_tests",
+            metadata={
+                "agent": "testing",
+                "operation": "unit_tests",
+                "run_id": Path(run_root).name if run_root else None,
+                "case_id": case_id,
+            },
+        ):
+            return self._run(implementation_result=implementation_result, case_id=case_id)
+
+    def _run(
+        self,
+        *,
+        implementation_result: dict[str, Any],
+        case_id: str = "adhoc",
     ) -> dict[str, Any]:
         member_runner = implementation_result.get("member_runner") or {}
         runner_image = member_runner.get("image") or configured_runner_image()

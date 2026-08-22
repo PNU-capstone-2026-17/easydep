@@ -141,6 +141,7 @@ python -m pytest
 - [현재 시스템 상태](docs/current-system-status.md): 구현 범위, 검증 결과, 부족한 점
 - [문서 안내](docs/README.md): 활성 문서와 이력 문서 구분
 - [HTTP API](docs/api.md): 요구사항·설계·구현 API 계약
+- [LangSmith 관측](docs/langsmith-observability.md): 전 에이전트 기본 trace·대시보드 설정
 - [오케스트레이션](app/core/orchestration/README.md): 4단계 실행과 provider 계약
 - [비교실험 계약](evaluation/experiment-contract.md): 공통 평가 기준
 - [클라우드 지식베이스](app/core/cloudkb/document/README.md): DepKB 및 VM 지식 문서
