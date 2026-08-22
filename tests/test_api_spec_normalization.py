@@ -71,3 +71,39 @@ class DropController <<Control>> {
     assert normalized["Endpoints"][0]["control_binding"]["outcomes"] == [
         {"status": 204, "outcome": "dropped"}
     ]
+
+
+def test_body_field_types_follow_exact_control_parameter_types() -> None:
+    model = {
+        "Endpoints": [{
+            "request_schema": "TermRequest",
+            "control_binding": {
+                "control": "TermController",
+                "method": "saveTerm",
+                "arguments": [
+                    {"name": "year", "source": "$body.year"},
+                    {"name": "openDate", "source": "$body.openDate"},
+                ],
+            },
+        }],
+        "Schemas": [{
+            "name": "TermRequest",
+            "fields": [
+                {"name": "year", "type": "string"},
+                {"name": "openDate", "type": "string"},
+            ],
+        }],
+    }
+    class_diagram = """@startuml
+class TermController <<Control>> {
+  + saveTerm(year : int, openDate : java.time.LocalDate): AcademicTerm
+}
+@enduml"""
+
+    normalized = normalize_api_spec_model(model, class_diagram)
+    fields = {
+        field["name"]: field["type"]
+        for field in normalized["Schemas"][0]["fields"]
+    }
+
+    assert fields == {"year": "integer", "openDate": "string"}

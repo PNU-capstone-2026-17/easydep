@@ -222,6 +222,44 @@ def _control_return_types(class_diagram_puml: str) -> dict[tuple[str, str], str]
     return result
 
 
+def _control_parameter_types(
+    class_diagram_puml: str,
+) -> dict[tuple[str, str], dict[str, str]]:
+    """Read exact Control parameter types for request schema alignment."""
+    result: dict[tuple[str, str], dict[str, str]] = {}
+    class_pattern = re.compile(
+        r"(?ms)^\s*class\s+(?P<class>[A-Za-z_]\w*)[^\{]*\{(?P<body>.*?)^\s*\}"
+    )
+    method_pattern = re.compile(
+        r"^\s*[+\-#]\s*(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^)]*)\)"
+        r"\s*(?::\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:<[^>]+>)?)?\s*$",
+        re.MULTILINE,
+    )
+    for match in class_pattern.finditer(class_diagram_puml or ""):
+        if not re.search(r"<<\s*Control\s*>>", match.group(0), re.IGNORECASE):
+            continue
+        for method in method_pattern.finditer(match.group("body")):
+            parameters: dict[str, str] = {}
+            for raw in method.group("params").split(","):
+                name, separator, type_name = raw.strip().partition(":")
+                if separator and name.strip() and type_name.strip():
+                    parameters[name.strip()] = type_name.strip()
+            result[(match.group("class"), method.group("name"))] = parameters
+    return result
+
+
+def _api_field_type_for_control(type_name: str) -> str:
+    token = re.sub(r"\s+", "", type_name).lower()
+    if token in {"byte", "short", "int", "integer", "long"}:
+        return "integer"
+    if token in {"float", "double", "bigdecimal", "number"}:
+        return "number"
+    if token in {"boolean", "bool"}:
+        return "boolean"
+    # java.time values are represented as ISO strings at the HTTP boundary.
+    return "string"
+
+
 def normalize_api_spec_model(
     model: dict[str, Any], class_diagram_puml: str = ""
 ) -> dict[str, Any]:
@@ -236,6 +274,7 @@ def normalize_api_spec_model(
     if not isinstance(model, dict):
         return model
     control_returns = _control_return_types(class_diagram_puml)
+    control_parameters = _control_parameter_types(class_diagram_puml)
     for endpoint in model.get("Endpoints", []) or []:
         if not isinstance(endpoint, dict):
             continue
@@ -266,6 +305,14 @@ def normalize_api_spec_model(
                         source = str(argument.get("source") or "")
                         name = source.removeprefix("$body.").strip()
                         if not name or name == source or name in known:
+                            if name and name in known and source.startswith("$body."):
+                                expected = control_parameters.get(
+                                    (control, str(binding.get("method") or "")), {}
+                                ).get(str(argument.get("name") or "").strip())
+                                if expected:
+                                    for field in fields:
+                                        if isinstance(field, dict) and field.get("name") == name:
+                                            field["type"] = _api_field_type_for_control(expected)
                             continue
                         fields.append({
                             "name": name,

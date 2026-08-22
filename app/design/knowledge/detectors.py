@@ -1365,6 +1365,13 @@ def _contract_types_compatible(actual: str, expected: str) -> bool:
     expected_normalized = _normalise_contract_type(expected)
     if actual_normalized == expected_normalized:
         return True
+    # Java date/time values are serialized as ISO strings on the HTTP wire.
+    # Treating them as incompatible would reject a valid JSON representation.
+    if actual_normalized == "string" and (
+        expected_normalized.startswith("java.time.")
+        or expected_normalized in {"localdate", "localdatetime", "instant"}
+    ):
+        return True
     # Only inbound DTO conventions may stand in for a Control parameter.
     # Accepting ``Response`` here would hide a directionally-invalid mapping.
     suffixes = ("createrequest", "updaterequest", "request", "dto")
