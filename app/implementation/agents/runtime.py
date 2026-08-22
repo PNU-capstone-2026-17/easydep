@@ -23,6 +23,7 @@ from .verification.frontend import (
 from .verification.build import (
     WorkspaceVerificationError,
     persistence_reserved_identifier_markers,
+    repair_persistence_schema_table_quoting,
     production_placeholder_markers,
     production_test_library_markers,
     verify_agent_workspace,
@@ -393,6 +394,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 if str(task.get("task_type", "")) == "configuration":
                     remove_duplicate_component_adapter_beans(sandbox, task)
                     normalize_spring_boot_repository_discovery(sandbox, task)
+                if str(task.get("task_type", "")) == "persistence-schema":
+                    repair_persistence_schema_table_quoting(
+                        sandbox, list(task["allowed_write_paths"])
+                    )
                 _repair_missing_generated_model_imports(
                     sandbox, list(task["allowed_write_paths"])
                 )

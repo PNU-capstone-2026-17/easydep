@@ -247,6 +247,60 @@ def persistence_reserved_identifier_markers(
     return evidence
 
 
+def repair_persistence_schema_table_quoting(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Align harmless quoted table names with the JPA table contract.
+
+    H2 treats ``"section"`` and the unquoted identifier ``SECTION`` as
+    different names.  Agents sometimes quote an ordinary lowercase table name
+    in Flyway while ``@Table(name = "section")`` remains unquoted in Hibernate.
+    For non-reserved names, remove only table-position quotes so both layers
+    resolve the same identifier. Reserved names remain untouched and are
+    handled by the reserved-identifier gate.
+    """
+    entity_tables: set[str] = set()
+    table_pattern = re.compile(
+        r'@Table\s*\([^)]*\bname\s*=\s*"(?P<name>[a-z][a-z0-9_]*)"',
+        re.IGNORECASE,
+    )
+    entity_root = sandbox / "application" / "src" / "main" / "java"
+    for entity in entity_root.rglob("*Entity.java"):
+        entity_tables.update(
+            match.group("name") for match in table_pattern.finditer(
+                entity.read_text(encoding="utf-8")
+            )
+        )
+    if not entity_tables:
+        return []
+
+    repaired: list[str] = []
+    reserved = set(SQL_RESERVED_IDENTIFIERS)
+    for relative in relative_paths:
+        normalized = relative.replace("\\", "/")
+        if not normalized.endswith(".sql"):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        original = path.read_text(encoding="utf-8")
+        updated = original
+        for table in sorted(entity_tables):
+            if table in reserved:
+                continue
+            pattern = re.compile(
+                rf"(?P<prefix>\b(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|"
+                rf"REFERENCES|ON)\s+)\"{re.escape(table)}\"",
+                re.IGNORECASE,
+            )
+            updated, count = pattern.subn(r"\g<prefix>" + table, updated)
+            if count:
+                repaired.append(f"{normalized}: unquoted table {table}")
+        if updated != original:
+            path.write_text(updated, encoding="utf-8")
+    return repaired
+
+
 def read_gradle_test_failures(sandbox: Path) -> str:
     result_dir = sandbox / "application" / "build" / "test-results" / "test"
     reports: list[str] = []

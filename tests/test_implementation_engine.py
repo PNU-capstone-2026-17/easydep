@@ -48,6 +48,7 @@ from app.implementation.agents.verification.build import (
     production_placeholder_markers,
     production_test_library_markers,
     persistence_reserved_identifier_markers,
+    repair_persistence_schema_table_quoting,
     read_gradle_test_failures,
     summarize_test_failure,
     task_verification_command,
@@ -287,6 +288,48 @@ class GeneratedContractImportRepairTest(unittest.TestCase):
                 "import com.easydep.app.bce.CourseData;",
                 source.read_text(encoding="utf-8"),
             )
+
+
+class PersistenceSchemaContractRepairTest(unittest.TestCase):
+    def test_unquotes_non_reserved_table_to_match_jpa_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            entity = sandbox / (
+                "application/src/main/java/com/easydep/app/persistence/entity/"
+                "SectionEntity.java"
+            )
+            migration = sandbox / (
+                "application/src/main/resources/db/migration/V1__initial_schema.sql"
+            )
+            entity.parent.mkdir(parents=True)
+            migration.parent.mkdir(parents=True)
+            entity.write_text('@Table(name = "section")\nclass SectionEntity {}\n', encoding="utf-8")
+            migration.write_text(
+                'CREATE TABLE "section" (section_id VARCHAR(255));\n'
+                'CREATE INDEX idx_section ON "section"(section_id);\n'
+                'ALTER TABLE enrollment ADD CONSTRAINT fk FOREIGN KEY (section_id) REFERENCES "section"(section_id);\n',
+                encoding="utf-8",
+            )
+
+            repaired = repair_persistence_schema_table_quoting(
+                sandbox,
+                [
+                    "application/src/main/resources/db/migration/"
+                    "V1__initial_schema.sql"
+                ],
+            )
+
+            self.assertEqual(
+                repaired,
+                [
+                    "application/src/main/resources/db/migration/"
+                    "V1__initial_schema.sql: unquoted table section"
+                ],
+            )
+            updated = migration.read_text(encoding="utf-8")
+            self.assertIn("CREATE TABLE section", updated)
+            self.assertIn("ON section", updated)
+            self.assertIn("REFERENCES section", updated)
 
 
 class SourceDesignConformanceTest(unittest.TestCase):

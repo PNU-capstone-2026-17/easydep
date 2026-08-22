@@ -1372,6 +1372,9 @@ Create the initial Flyway SQL migration and a JUnit test that executes the compl
 
 Rules:
 - Use lower snake_case table and column names matching the ERD.
+- Keep ordinary table names unquoted so H2 and Hibernate resolve the same
+  identifier; quote only a genuinely reserved identifier and use that exact
+  quoted name consistently in JPA and every migration reference.
 - Use BIGINT generated identity primary keys, VARCHAR for strings, INTEGER for quantity, DOUBLE PRECISION for prices, BOOLEAN, and TIMESTAMP WITH TIME ZONE.
 - Declare every ERD foreign key and useful indexes for foreign-key columns and explicit natural identifiers.
 - Match the exact `@Table`, `@Column`, and `@JoinColumn` names derived from the ERD.
