@@ -17,6 +17,7 @@ from app.design.knowledge.detectors import (
 from app.design.services.sequence_diagram.extractor import (
     SequenceModel,
     extract_sequence_diagrams,
+    normalize_sequence_participants,
     normalize_sequence_usecase_spec,
     parse_sequence_structured,
 )
@@ -88,6 +89,34 @@ def test_extracts_one_sequence_diagram_for_each_use_case():
         "Cancel order",
     ]
     assert result["class_diagram_hash"] == hashlib.sha256(b"class Order").hexdigest()
+
+
+def test_normalizes_missing_message_participants_from_class_diagram():
+    model = {
+        "Participants": [_participant("CourseDetailsBoundary", "boundary")],
+        "Messages": [
+            _message(
+                "CourseDetailsBoundary",
+                "ScheduleController",
+                "getSchedule()",
+            )
+        ],
+    }
+    class_diagram = """@startuml
+class CourseDetailsBoundary <<Boundary>> {
+  + request()
+}
+class ScheduleController <<Control>> {
+  + getSchedule()
+}
+@enduml"""
+
+    normalized = normalize_sequence_participants(model, class_diagram)
+
+    assert [item["alias"] for item in normalized["Participants"]] == [
+        "CourseDetailsBoundary",
+        "ScheduleController",
+    ]
 
 
 def test_raw_cockburn_example_is_normalized_to_a_sequence_collection():

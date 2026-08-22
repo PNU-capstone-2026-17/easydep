@@ -392,7 +392,47 @@ def extract_sequence_model(
             ),
         },
     ]
-    return parse_sequence_structured(messages, SequenceModel)
+    model = parse_sequence_structured(messages, SequenceModel)
+    return normalize_sequence_participants(model, class_diagram_puml)
+
+
+def normalize_sequence_participants(
+    model: dict[str, Any], class_diagram_puml: str
+) -> dict[str, Any]:
+    """Add declarations for message endpoints that are valid BCE classes.
+
+    LLM-produced legacy sequence models sometimes include a valid Control call
+    but omit that Control from ``Participants``.  This is a representation
+    mismatch, not a new interaction, so it can be repaired deterministically.
+    Unknown endpoints remain undeclared and continue to fail validation.
+    """
+    if not isinstance(model, dict):
+        return model
+    classes, _ = _parse_class_catalog(class_diagram_puml)
+    diagrams = model.get("Diagrams")
+    targets = diagrams if isinstance(diagrams, list) else [model]
+    for diagram in targets:
+        if not isinstance(diagram, dict):
+            continue
+        participants = diagram.setdefault("Participants", [])
+        if not isinstance(participants, list):
+            continue
+        declared = {
+            _alias(str(item.get("alias") or item.get("name") or ""))
+            for item in participants
+            if isinstance(item, dict)
+        }
+        for message in diagram.get("Messages") or []:
+            if not isinstance(message, dict):
+                continue
+            for endpoint in (message.get("source"), message.get("target")):
+                alias = _alias(str(endpoint or ""))
+                item = classes.get(alias)
+                if not alias or alias in declared or item is None:
+                    continue
+                participants.append(_participant(item))
+                declared.add(alias)
+    return model
 
 
 def _raw_flow_step(text: Any, fallback: str) -> tuple[str, str]:
