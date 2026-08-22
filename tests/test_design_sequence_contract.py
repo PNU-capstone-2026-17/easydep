@@ -20,6 +20,7 @@ from app.design.services.sequence_diagram.extractor import (
     normalize_sequence_participants,
     normalize_sequence_usecase_spec,
     parse_sequence_structured,
+    _best_class,
 )
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import reconcile_class_methods
@@ -55,6 +56,31 @@ def _message(source: str, target: str, label: str, **overrides) -> dict:
     }
     message.update(overrides)
     return message
+
+
+def test_management_use_case_boundary_selection_keeps_resource_noun() -> None:
+    classes = {
+        name: {
+            "name": name,
+            "kind": "boundary",
+            "methods": ["manage(operation:String, data:String)"],
+        }
+        for name in (
+            "CourseManagementBoundary",
+            "StudentManagementBoundary",
+        )
+    }
+
+    selected = _best_class(
+        classes,
+        "boundary",
+        "Manage Student Records Create update and retire student records",
+        0,
+        "Manage Student Records",
+    )
+
+    assert selected is not None
+    assert selected["name"] == "StudentManagementBoundary"
 
 
 def test_extracts_one_sequence_diagram_for_each_use_case():

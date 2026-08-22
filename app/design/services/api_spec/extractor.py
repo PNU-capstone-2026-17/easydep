@@ -146,6 +146,12 @@ the inputs do not support.
   status once in `outcomes` with a meaningful named result such as `found`,
   `not_found`, `created`, or `validation_error`. Do not use fabricated values,
   implicit defaults, or an untyped `Object` result.
+- A path identifier may be mapped only when that exact parameter exists on the
+  selected Control method. Never add a path argument to a generic
+  `process(operation, data)` method just because the endpoint path contains an
+  identifier. If the Control contract cannot receive the identifier, preserve
+  the honest contract mismatch for validation and class-diagram repair instead
+  of inventing a binding.
 - **Never invent a name or an id.** An empty list is honest; a made-up
   reference is a lie the trace matrix will believe.
 

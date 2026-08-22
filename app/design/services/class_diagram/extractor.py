@@ -120,6 +120,12 @@ _PROCEDURE = """
    calculate, process, create, register, select, initiate, or generate an outcome \
    must declare an explicit `: ReturnType` or `: void`; choose a non-void type when \
    the caller uses the outcome. \
+   For update, delete, retire, or other operations that target an existing \
+   persistent record, the Control contract must receive the record identifier \
+   explicitly (for example `courseId : String`) or receive an Entity/value object \
+   that contains that identifier. Do not emit a generic `process(operation, data)` \
+   signature that leaves a path/resource identifier with no Control parameter; the \
+   downstream API binding cannot safely implement such an operation. \
 6. Field derivation: assign fields to state a class must hold — Entities \
    first; give fields to a Control or Boundary only if it must hold state \
    across steps. Do not list getters/setters as methods. Write each field as \
