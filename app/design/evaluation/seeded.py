@@ -83,7 +83,7 @@ CLEAN: dict[str, Any] = {
             "className": "Order",
             "stereotype": "Entity",
             "description": "The recorded order.",
-            "fields": ["orderedAt", "totalAmount"],
+            "fields": ["orderedAt : DateTime", "totalAmount : Int"],
             "methods": [],
             "use_case_ids": ["UC1"],
         },
@@ -182,7 +182,7 @@ def _duplicate_name() -> dict[str, Any]:
             "className": "Order",
             "stereotype": "Entity",
             "description": "A second class that reuses the name.",
-            "fields": ["note"],
+            "fields": ["note : String"],
             "methods": [],
             "use_case_ids": ["UC1"],
         }
@@ -217,7 +217,7 @@ def _entity_link_without_multiplicity() -> dict[str, Any]:
             "className": "OrderLine",
             "stereotype": "Entity",
             "description": "One line of the recorded order.",
-            "fields": ["quantity"],
+            "fields": ["quantity : Int"],
             "methods": [],
             "use_case_ids": ["UC1"],
         }
@@ -231,6 +231,12 @@ def _entity_link_without_multiplicity() -> dict[str, Any]:
 def _untyped_method_parameter() -> dict[str, Any]:
     model = _clean_model()
     model["Classes"][1]["methods"][1] = "checkAvailability(productId): boolean"
+    return model
+
+
+def _untyped_field() -> dict[str, Any]:
+    model = _clean_model()
+    model["Classes"][2]["fields"][0] = "orderedAt"
     return model
 
 
@@ -321,6 +327,12 @@ SEEDED: tuple[Seeded, ...] = (
         "class.method-parameters-typed",
         "checkAvailability의 productId 매개변수에 타입이 없다",
         _untyped_method_parameter(),
+        _clean_state(),
+    ),
+    Seeded(
+        "class.fields-typed",
+        "Order의 orderedAt 필드에 타입이 없다",
+        _untyped_field(),
         _clean_state(),
     ),
     Seeded(

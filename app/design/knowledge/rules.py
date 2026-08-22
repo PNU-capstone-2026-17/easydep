@@ -311,6 +311,23 @@ RULES: tuple[Rule, ...] = (
         ),
     ),
     Rule(
+        id="class.fields-typed",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every declared BCE field must use the Java-targeted `name : Type` form. "
+            "An untyped field cannot be compiled or mapped consistently downstream."
+        ),
+        citation="app/design/services/common/fields.py (split_field)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="fields_typed",
+        generation_note=(
+            "Choose a type grounded in the requirement semantics; do not leave the "
+            "attribute type implicit."
+        ),
+    ),
+    Rule(
         id="class.control-outcome-return-contract",
         stage=CLASS_DIAGRAM,
         severity=DEFECT,

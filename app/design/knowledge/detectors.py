@@ -385,6 +385,30 @@ def method_parameters_typed(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def fields_typed(model: dict, state: dict) -> list[Finding]:
+    """Require a Java type on every declared BCE field.
+
+    The downstream BCE generator cannot represent an untyped PlantUML
+    attribute as valid Java (its legacy parser turns it into ``void``), and an
+    untyped field also cannot be mapped consistently to persistence code.
+    """
+    rule_id = "class.fields-typed"
+    found: list[Finding] = []
+    for class_item in _classes(model):
+        class_name = str(class_item.get("className") or "?")
+        for raw_field in class_item.get("fields") or []:
+            field_name, field_type = fields.split_field(str(raw_field))
+            if field_name and not field_type:
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"{class_name}.{field_name}: 필드 타입이 선언되지 않음 — 'name : Type' 형식이 필요함",
+                        class_name,
+                    )
+                )
+    return found
+
+
 _CONTROL_OUTCOME_PREFIXES = (
     "authenticate", "authorize", "calculate", "check", "create", "find", "generate",
     "get", "initiate", "list", "process", "register", "search", "select", "show",
@@ -902,6 +926,7 @@ CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "relationship_type_known": relationship_type_known,
     "entity_association_multiplicity": entity_association_multiplicity,
     "method_parameters_typed": method_parameters_typed,
+    "fields_typed": fields_typed,
     "control_outcome_return_contract": control_outcome_return_contract,
     "names_unique": names_unique,
     "name_pascal_case": name_pascal_case,

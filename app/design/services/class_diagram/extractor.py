@@ -123,8 +123,10 @@ _PROCEDURE = """
 6. Field derivation: assign fields to state a class must hold — Entities \
    first; give fields to a Control or Boundary only if it must hold state \
    across steps. Do not list getters/setters as methods. Write each field as \
-   `name : Type` when the text tells you the type; leave the type off rather \
-   than guessing one. This is a Java-targeted model: use `int` for ordinary \
+   `name : Type` when the text tells you the type; every emitted field must \
+   include a type. When the text does not state one, choose the narrowest \
+   Java/domain type supported by the field's meaning rather than omitting it. \
+   This is a Java-targeted model: use `int` for ordinary \
    integral counts and `long` for wide-range integral values/identifiers; use \
    `BigDecimal` only when an exact fractional value is explicitly required. \
    Never write SQL types (`INT`, `BIGINT`, `DECIMAL`) or the non-Java type \
