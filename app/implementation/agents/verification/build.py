@@ -39,12 +39,16 @@ def gradle_command() -> list[str]:
 class WorkspaceVerificationError(RuntimeError):
     def __init__(self, evidence: dict[str, object]):
         self.evidence = evidence
-        output = str(
-            evidence.get("testResults")
-            or evidence.get("stderr")
-            or evidence.get("stdout")
-            or ""
+        output = next(
+            (
+                str(evidence.get(key)).strip()
+                for key in ("testResults", "stderr", "stdout")
+                if str(evidence.get(key) or "").strip()
+            ),
+            "No verification output was captured",
         )
+        if output == "No verification output was captured" and evidence.get("command"):
+            output = f"command={evidence['command']}; {output}"
         super().__init__("Agent workspace verification failed: " + output[-1000:])
 
 

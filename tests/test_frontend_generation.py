@@ -23,6 +23,9 @@ from app.implementation.generation.frontend_scaffold import (
     resolve_api_base_url,
     validate_openapi,
 )
+from app.implementation.generation.frontend import (
+    repair_typescript_fetch_export_collisions,
+)
 from app.implementation.application.jobs import ImplementationWorker
 from app.implementation.domain.models import CommandEvidence
 
@@ -76,6 +79,31 @@ def test_builds_pinned_openapi_generator_typescript_fetch_command(tmp_path: Path
     assert command[command.index("-g") + 1] == "typescript-fetch"
     assert command[command.index("-i") + 1] == "/workspace/openapi.json"
     assert command[command.index("-o") + 1] == "/workspace/frontend/src/generated"
+
+
+def test_repairs_typescript_fetch_inline_model_export_collisions(tmp_path: Path) -> None:
+    generated = tmp_path / "src/generated"
+    models = generated / "src/models"
+    apis = generated / "src/apis"
+    models.mkdir(parents=True)
+    apis.mkdir(parents=True)
+    (models / "DeleteCourseRequest.ts").write_text(
+        "export interface DeleteCourseRequest { code: string; }\n",
+        encoding="utf-8",
+    )
+    api = apis / "DefaultApi.ts"
+    api.write_text(
+        "export interface DeleteCourseRequest { code: string; }\n"
+        "export function deleteCourse(request: DeleteCourseRequest) { return request; }\n",
+        encoding="utf-8",
+    )
+
+    repaired = repair_typescript_fetch_export_collisions(generated)
+
+    assert repaired == ["DefaultApi.ts: DeleteCourseRequest -> DeleteCourseRequestParams"]
+    source = api.read_text(encoding="utf-8")
+    assert "export interface DeleteCourseRequestParams" in source
+    assert "request: DeleteCourseRequestParams" in source
 
 
 def test_react_scaffold_contains_no_hardcoded_operation_implementation() -> None:

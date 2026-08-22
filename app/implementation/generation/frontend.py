@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -19,6 +20,46 @@ from .frontend_scaffold import (
 
 
 CommandRunner = Callable[[str, list[str], Path], object]
+
+
+def repair_typescript_fetch_export_collisions(generated_client: Path) -> list[str]:
+    """Rename inline operation parameter types that collide with model exports.
+
+    ``typescript-fetch`` emits an inline interface in an API module for some
+    path-parameter operations.  If that interface has the same name as a
+    request model, the generated root index re-exports both and TypeScript
+    fails with TS2308.  Keep the generated API behaviour intact while making
+    the colliding API-local type name unique.
+    """
+    models_root = generated_client / "src" / "models"
+    apis_root = generated_client / "src" / "apis"
+    if not models_root.is_dir() or not apis_root.is_dir():
+        return []
+    model_names = {
+        path.stem
+        for path in models_root.glob("*.ts")
+        if path.stem and path.stem != "index"
+    }
+    repaired: list[str] = []
+    for api_path in apis_root.glob("*.ts"):
+        if api_path.name == "index.ts":
+            continue
+        source = api_path.read_text(encoding="utf-8")
+        collisions = sorted(
+            name
+            for name in model_names
+            if re.search(rf"\bexport interface {re.escape(name)}\b", source)
+        )
+        for name in collisions:
+            source = re.sub(
+                rf"(?<!/)\b{re.escape(name)}\b",
+                f"{name}Params",
+                source,
+            )
+            repaired.append(f"{api_path.name}: {name} -> {name}Params")
+        if collisions:
+            api_path.write_text(source, encoding="utf-8")
+    return repaired
 
 
 @dataclass(frozen=True)
@@ -63,6 +104,7 @@ def generate_frontend_project(
         ),
         workspace_root,
     )
+    repair_typescript_fetch_export_collisions(generated_client)
     scaffold = write_react_scaffold(
         frontend_root,
         api_spec,
