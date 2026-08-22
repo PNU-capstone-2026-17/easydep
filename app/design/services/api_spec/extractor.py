@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -197,10 +198,33 @@ def extract_api_spec_model(
         scenario_text, class_diagram_puml, sequence_diagram_puml
     )
     model = parse_structured(messages, ApiSpecModel)
-    return normalize_api_spec_model(model)
+    return normalize_api_spec_model(model, class_diagram_puml)
 
 
-def normalize_api_spec_model(model: dict[str, Any]) -> dict[str, Any]:
+def _control_return_types(class_diagram_puml: str) -> dict[tuple[str, str], str]:
+    """Read explicit Control method return types for API contract alignment."""
+    result: dict[tuple[str, str], str] = {}
+    class_pattern = re.compile(
+        r"(?ms)^\s*class\s+(?P<class>[A-Za-z_]\w*)[^\{]*\{(?P<body>.*?)^\s*\}"
+    )
+    method_pattern = re.compile(
+        r"^\s*[+\-#]\s*(?P<name>[A-Za-z_]\w*)\s*\([^)]*\)"
+        r"\s*(?::\s*(?P<return>[A-Za-z_]\w*(?:<[^>]+>)?))?\s*$",
+        re.MULTILINE,
+    )
+    for match in class_pattern.finditer(class_diagram_puml or ""):
+        if not re.search(r"<<\s*Control\s*>>", match.group(0), re.IGNORECASE):
+            continue
+        for method in method_pattern.finditer(match.group("body")):
+            result[(match.group("class"), method.group("name"))] = (
+                method.group("return") or "void"
+            )
+    return result
+
+
+def normalize_api_spec_model(
+    model: dict[str, Any], class_diagram_puml: str = ""
+) -> dict[str, Any]:
     """Repair mechanical traceability omissions without inventing API behavior.
 
     The structured model frequently contains a correct ``control_binding`` but
@@ -211,6 +235,7 @@ def normalize_api_spec_model(model: dict[str, Any]) -> dict[str, Any]:
     """
     if not isinstance(model, dict):
         return model
+    control_returns = _control_return_types(class_diagram_puml)
     for endpoint in model.get("Endpoints", []) or []:
         if not isinstance(endpoint, dict):
             continue
@@ -249,4 +274,21 @@ def normalize_api_spec_model(model: dict[str, Any]) -> dict[str, Any]:
                             "description": "",
                         })
                         known.add(name)
+            return_type = control_returns.get((control, str(binding.get("method") or "").strip()))
+            if return_type and return_type.lower() == "void":
+                success_responses = [
+                    response for response in endpoint.get("responses", []) or []
+                    if isinstance(response, dict)
+                    and 200 <= int(response.get("status", 0) or 0) < 300
+                    and int(response.get("status", 0) or 0) != 204
+                ]
+                if len(success_responses) == 1:
+                    response = success_responses[0]
+                    previous_status = int(response.get("status", 0) or 0)
+                    response["status"] = 204
+                    response["schema_name"] = ""
+                    response["is_array"] = False
+                    for outcome in binding.get("outcomes", []) or []:
+                        if isinstance(outcome, dict) and int(outcome.get("status", 0) or 0) == previous_status:
+                            outcome["status"] = 204
     return model

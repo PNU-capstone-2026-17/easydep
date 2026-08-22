@@ -44,3 +44,30 @@ def test_api_model_does_not_invent_body_fields_for_whole_body_binding() -> None:
     normalized = normalize_api_spec_model(model)
 
     assert normalized["Schemas"][0]["fields"] == []
+
+
+def test_void_control_success_is_normalized_to_empty_http_response() -> None:
+    model = {
+        "Endpoints": [{
+            "path": "/enrollments/{sectionId}",
+            "responses": [{"status": 200, "schema_name": "Enrollment"}],
+            "control_binding": {
+                "control": "DropController",
+                "method": "dropSection",
+                "outcomes": [{"status": 200, "outcome": "dropped"}],
+            },
+        }],
+    }
+    class_diagram = """@startuml
+class DropController <<Control>> {
+  + dropSection(sectionId : String): void
+}
+@enduml"""
+
+    normalized = normalize_api_spec_model(model, class_diagram)
+
+    response = normalized["Endpoints"][0]["responses"][0]
+    assert response == {"status": 204, "schema_name": "", "is_array": False}
+    assert normalized["Endpoints"][0]["control_binding"]["outcomes"] == [
+        {"status": 204, "outcome": "dropped"}
+    ]

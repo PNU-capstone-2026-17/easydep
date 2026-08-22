@@ -1068,6 +1068,22 @@ def _assemble_deterministic_diagrams(
     selections: dict[str, tuple[str, str]],
     classes: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    def add_message_participants(
+        participants: dict[str, dict[str, str]], messages: list[dict[str, Any]]
+    ) -> None:
+        """Keep valid message endpoints and participant declarations in sync."""
+        by_alias = {
+            _alias(item["name"]): item
+            for item in classes.values()
+            if item.get("name")
+        }
+        for message in messages:
+            for endpoint in (message.get("source"), message.get("target")):
+                alias = _alias(str(endpoint or ""))
+                item = by_alias.get(alias)
+                if alias and item and alias not in participants:
+                    participants[alias] = _participant(item)
+
     diagrams: list[dict[str, Any]] = []
     for use_case_id in dict.fromkeys(plan["use_case_id"] for plan in plans):
         use_case_plans = [plan for plan in plans if plan["use_case_id"] == use_case_id]
@@ -1223,6 +1239,7 @@ def _assemble_deterministic_diagrams(
                 continue
             coalesced.append(message)
         messages = coalesced
+        add_message_participants(participants, messages)
 
         # Only participants that actually occur in a message are emitted.
         active = {value for message in messages for value in (message["source"], message["target"])}
