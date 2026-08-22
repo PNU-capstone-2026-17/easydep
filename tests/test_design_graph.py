@@ -174,6 +174,31 @@ THREAD = {"configurable": {"thread_id": "test-app"}}
 SEED = {"usecase_spec": {"use_cases": [{"id": "UC1", "name": "주문"}]}}
 
 
+def test_revision_context_does_not_duplicate_current_or_irrelevant_artifacts():
+    state = {
+        "usecase_spec": {"use_cases": [{"id": "UC1", "name": "주문"}]},
+        "class_diagram_puml": "CLASS_CONTEXT",
+        "sequence_diagram_puml": "SEQUENCE_CONTEXT",
+        "api_spec": {"marker": "API_CONTEXT"},
+        "erd_puml": "ERD_CONTEXT",
+    }
+
+    sequence = sg._design_context(state, "sequence_diagram")
+    api = sg._design_context(state, "api_spec")
+    deployment = sg._design_context(state, "deployment_diagram")
+
+    assert "CLASS_CONTEXT" in sequence
+    assert "SEQUENCE_CONTEXT" not in sequence
+    assert "API_CONTEXT" not in sequence
+    assert "ERD_CONTEXT" not in sequence
+    assert "SEQUENCE_CONTEXT" in api
+    assert "API_CONTEXT" not in api
+    assert "ERD_CONTEXT" not in api
+    assert all(marker in deployment for marker in (
+        "CLASS_CONTEXT", "SEQUENCE_CONTEXT", "API_CONTEXT", "ERD_CONTEXT"
+    ))
+
+
 def _stage_at_gate(result: dict) -> str | None:
     """지금 멈춰 있는 게이트의 스테이지(끝났으면 None)."""
     interrupts = result.get("__interrupt__")

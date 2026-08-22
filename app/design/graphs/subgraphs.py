@@ -117,17 +117,26 @@ def _endpoint_key(endpoint: dict) -> str:
     ).strip()
 
 
-def _design_context(state: ArchitectureState) -> str:
-    """피드백 수정 때 LLM에게 주는 맥락 — 이 산출물이 무엇에서 나왔는지."""
-    return "\n\n".join(
-        [
-            "[Use Case Specification]\n" + usecase_spec_text(state),
-            "[Class Diagram]\n" + state.get("class_diagram_puml", ""),
-            "[Sequence Diagrams]\n" + state.get("sequence_diagram_puml", ""),
-            "[API Spec]\n" + str(state.get("api_spec", {})),
-            "[ERD]\n" + state.get("erd_puml", ""),
-        ]
-    )
+def _design_context(state: ArchitectureState, stage: str) -> str:
+    """Return only upstream context needed to revise one design artifact.
+
+    The current artifact is already serialized separately by ``revision_messages``.
+    Including it here duplicated the largest document in every repair request and
+    made sequence/API revisions retransmit unrelated downstream artifacts.
+    """
+    sections = ["[Use Case Specification]\n" + usecase_spec_text(state)]
+    if stage in {"sequence_diagram", "api_spec", "deployment_diagram"}:
+        sections.append("[Class Diagram]\n" + state.get("class_diagram_puml", ""))
+    if stage in {"api_spec", "deployment_diagram"}:
+        sections.append("[Sequence Diagrams]\n" + state.get("sequence_diagram_puml", ""))
+    if stage == "deployment_diagram":
+        sections.extend(
+            [
+                "[API Spec]\n" + str(state.get("api_spec", {})),
+                "[ERD]\n" + state.get("erd_puml", ""),
+            ]
+        )
+    return "\n\n".join(sections)
 
 
 CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
@@ -168,7 +177,7 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
         state.get("class_diagram_puml", ""),
     ),
     revise=lambda current, feedback, state, targets: revise_sequence_model(
-        current, feedback, _design_context(state), targets
+        current, feedback, _design_context(state, "sequence_diagram"), targets
     ),
     render=generate_sequence_from_model,
     validate=validate_puml_artifact,
@@ -198,7 +207,7 @@ API_SPEC_SPEC = DesignArtifactSpec(
         state.get("sequence_diagram_puml", ""),
     ),
     revise=lambda current, feedback, state, targets: revise_api_spec_model(
-        current, feedback, _design_context(state), targets
+        current, feedback, _design_context(state, "api_spec"), targets
     ),
     render=build_openapi_from_model,
     validate=validate_api_spec,
@@ -288,7 +297,7 @@ DEPLOYMENT_DIAGRAM_SPEC = DesignArtifactSpec(
         deployment_planning_facts=list(state.get("deployment_planning_facts") or []),
     ),
     revise=lambda current, feedback, state, targets: revise_deployment_model(
-        current, feedback, _design_context(state), targets
+        current, feedback, _design_context(state, "deployment_diagram"), targets
     ),
     render=lambda _model: "",
     render_with_state=lambda _model, state: deployment_bundle_runtime_puml(
