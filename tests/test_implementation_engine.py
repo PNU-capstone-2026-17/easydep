@@ -20,6 +20,7 @@ from app.implementation.generation.orchestrator import (
 from app.implementation.agents.runtime import (
     EventJournal,
     _requires_cross_phase_repair,
+    _repair_missing_generated_model_imports,
     _render_missing_output_repair_prompt,
     break_configuration_cycles,
     execution_attempt,
@@ -245,6 +246,47 @@ class ImplementationParallelismTest(unittest.TestCase):
             self.assertEqual(["FAILED", "SUCCEEDED"], [task["status"] for task in tasks])
             self.assertEqual("FAILED", state["status"])
             self.assertTrue(tasks[1]["outputHashes"])
+
+
+class GeneratedContractImportRepairTest(unittest.TestCase):
+    def test_repoints_absent_api_model_to_existing_bce_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            package_root = sandbox / "application/src/main/java/com/easydep/app"
+            (package_root / "api/model").mkdir(parents=True)
+            (package_root / "bce").mkdir(parents=True)
+            source = package_root / "application/impl/CourseControllerService.java"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "package com.easydep.app.application.impl;\n"
+                "import com.easydep.app.api.model.CourseData;\n"
+                "class CourseControllerService { CourseData save(CourseData value) { return value; } }\n",
+                encoding="utf-8",
+            )
+            (package_root / "bce/CourseData.java").write_text(
+                "package com.easydep.app.bce; public final class CourseData {}\n",
+                encoding="utf-8",
+            )
+
+            repaired = _repair_missing_generated_model_imports(
+                sandbox,
+                [
+                    "application/src/main/java/com/easydep/app/application/impl/"
+                    "CourseControllerService.java"
+                ],
+            )
+
+            self.assertEqual(
+                repaired,
+                [
+                    "application/src/main/java/com/easydep/app/application/impl/"
+                    "CourseControllerService.java: CourseData api.model -> bce"
+                ],
+            )
+            self.assertIn(
+                "import com.easydep.app.bce.CourseData;",
+                source.read_text(encoding="utf-8"),
+            )
 
 
 class SourceDesignConformanceTest(unittest.TestCase):

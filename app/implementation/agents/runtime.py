@@ -68,6 +68,53 @@ _RESTRICTED_EDITOR_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
 
 
+def _repair_missing_generated_model_imports(
+    sandbox: Path, allowed_write_paths: list[str]
+) -> list[str]:
+    """Repair imports that point at an absent OpenAPI model with a BCE contract.
+
+    OpenAPI and BCE designs can legitimately contain a type with the same
+    simple name.  Agents occasionally import ``api.model.X`` even when the
+    generated OpenAPI sources contain no ``X.java`` and the exact BCE contract
+    does contain it.  In that case the import is unambiguously wrong and can be
+    corrected without changing behavior or inventing a contract.  Ambiguous or
+    genuinely missing types are left untouched for the compiler/repair loop.
+    """
+    repaired: list[str] = []
+    import_pattern = re.compile(
+        r"^(?P<indent>\s*)import\s+(?P<prefix>[\w.]+)\.api\.model\."
+        r"(?P<name>[A-Z][A-Za-z0-9_]*)\s*;\s*$",
+        re.MULTILINE,
+    )
+    for relative in allowed_write_paths:
+        normalized = str(relative).replace("\\", "/")
+        if not normalized.endswith(".java"):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        original = path.read_text(encoding="utf-8")
+
+        def replace_import(match: re.Match[str]) -> str:
+            prefix = match.group("prefix")
+            name = match.group("name")
+            api_model = sandbox / "application" / "src" / "main" / "java" / Path(
+                prefix.replace(".", "/")
+            ) / "api" / "model" / f"{name}.java"
+            bce_contract = sandbox / "application" / "src" / "main" / "java" / Path(
+                prefix.replace(".", "/")
+            ) / "bce" / f"{name}.java"
+            if api_model.is_file() or not bce_contract.is_file():
+                return match.group(0)
+            repaired.append(f"{normalized}: {name} api.model -> bce")
+            return f"{match.group('indent')}import {prefix}.bce.{name};"
+
+        updated = import_pattern.sub(replace_import, original)
+        if updated != original:
+            path.write_text(updated, encoding="utf-8")
+    return repaired
+
+
 def _configure_openhands_profile_store() -> None:
     """Keep OpenHands' implicit profile lock out of the user's home directory.
 
@@ -346,6 +393,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 if str(task.get("task_type", "")) == "configuration":
                     remove_duplicate_component_adapter_beans(sandbox, task)
                     normalize_spring_boot_repository_discovery(sandbox, task)
+                _repair_missing_generated_model_imports(
+                    sandbox, list(task["allowed_write_paths"])
+                )
                 placeholders = production_placeholder_markers(
                     sandbox, task["allowed_write_paths"]
                 )
@@ -442,6 +492,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 verification = verify_agent_workspace(
                     sandbox, task_type, list(task["allowed_write_paths"])
                 )
+                # Include deterministic contract repairs in the promotion set.
+                changed = changed_files(before, snapshot_files(sandbox))
                 break
             except WorkspaceVerificationError as error:
                 if _requires_cross_phase_repair(task_type, error.evidence):
