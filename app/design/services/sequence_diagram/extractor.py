@@ -719,12 +719,11 @@ def _best_class(
     else:
         focus_tokens = focus_tokens[:1]
     focus = _words(" ".join(focus_tokens)) or wanted
-    # ``student``/``course`` are intentionally ignored by the general lexical
-    # scorer because they are often shared domain nouns.  That is unsafe for
-    # resource-specific management use cases, where the noun is precisely what
-    # distinguishes ``StudentManagementBoundary`` from
-    # ``CourseManagementBoundary``. Keep a separate resource score for those
-    # use cases without changing the generic search/detail ranking behavior.
+    # Domain nouns are intentionally ignored by the general lexical scorer
+    # because they are often shared across use cases. That is unsafe for
+    # resource-specific management use cases, where the noun distinguishes
+    # sibling resource boundaries. Keep a separate resource score for those
+    # use cases without changing generic search/detail ranking behavior.
     management_focus = bool(focus_tokens and focus_tokens[0] in {"manage", "maintain"})
     generic_class_tokens = {
         "boundary", "control", "management", "manage", "record", "records",

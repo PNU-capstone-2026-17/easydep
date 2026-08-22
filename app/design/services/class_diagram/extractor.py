@@ -122,7 +122,7 @@ _PROCEDURE = """
    the caller uses the outcome. \
    For update, delete, retire, or other operations that target an existing \
    persistent record, the Control contract must receive the record identifier \
-   explicitly (for example `courseId : String`) or receive an Entity/value object \
+   explicitly (for example `recordId : String`) or receive an Entity/value object \
    that contains that identifier. Do not emit a generic `process(operation, data)` \
    signature that leaves a path/resource identifier with no Control parameter; the \
    downstream API binding cannot safely implement such an operation. \

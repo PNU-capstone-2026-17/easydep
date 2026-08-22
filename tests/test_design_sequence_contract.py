@@ -66,21 +66,21 @@ def test_management_use_case_boundary_selection_keeps_resource_noun() -> None:
             "methods": ["manage(operation:String, data:String)"],
         }
         for name in (
-            "CourseManagementBoundary",
-            "StudentManagementBoundary",
+            "AlphaManagementBoundary",
+            "BetaManagementBoundary",
         )
     }
 
     selected = _best_class(
         classes,
         "boundary",
-        "Manage Student Records Create update and retire student records",
+        "Manage Beta Records Create update and retire beta records",
         0,
-        "Manage Student Records",
+        "Manage Beta Records",
     )
 
     assert selected is not None
-    assert selected["name"] == "StudentManagementBoundary"
+    assert selected["name"] == "BetaManagementBoundary"
 
 
 def test_extracts_one_sequence_diagram_for_each_use_case():
