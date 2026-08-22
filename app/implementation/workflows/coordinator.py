@@ -442,7 +442,9 @@ def _phase_task_batches(
             task for task in tasks if task.get("taskType") == "persistence-entities"
         ]
         dependents = [task for task in tasks if task not in entities]
-        batches = [[task] for task in entities]
+        # Entity tasks are file-disjoint and intentionally run concurrently;
+        # repositories/mapping/schema remain behind the entity barrier.
+        batches = [entities] if entities else []
         if dependents:
             batches.append(dependents)
         return batches

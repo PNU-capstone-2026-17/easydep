@@ -968,6 +968,17 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, obje
         item.get("task_id"): item
         for item in manifest.get("implementation_tasks", [])
     }
+    # Older runs used one aggregate entity/repository task. Remove those
+    # obsolete definitions when the planner is re-entered so a retry cannot
+    # execute the legacy task in addition to the new per-file tasks.
+    legacy_ids = {
+        "implement-erd-persistence-entities",
+        "implement-erd-persistence-repositories",
+    }
+    existing = {
+        task_id: item for task_id, item in existing.items()
+        if task_id not in legacy_ids
+    }
     for task in tasks:
         existing[task.task_id] = task.to_dict()
     manifest["implementation_tasks"] = list(existing.values())

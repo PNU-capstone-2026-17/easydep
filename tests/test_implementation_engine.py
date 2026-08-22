@@ -70,6 +70,7 @@ from app.implementation.planning.design_context import (
     generate_boundary_adapter_tasks,
     generate_e2e_tasks,
     generate_gateway_adapter_tasks,
+    generate_persistence_tasks,
     generate_wiring_tasks,
     parse_design_classes,
     parse_openapi_operations,
@@ -193,6 +194,54 @@ class ImplementationParallelismTest(unittest.TestCase):
         self.assertEqual([["entities"], ["repositories", "mapping", "schema"]], [
             [task["taskId"] for task in batch] for batch in batches
         ])
+
+    def test_persistence_entity_and_repository_tasks_are_split_per_file(self) -> None:
+        from app.implementation.planning import design_context
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            erd = root / "erd.puml"
+            erd.write_text("entity Course\nentity Enrollment", encoding="utf-8")
+            run = root / "run_sample"
+            run.mkdir()
+            spec = SimpleNamespace(
+                inputs={"erd": erd},
+                base_package="com.example.demo",
+                name="sample",
+                workspace_root=root,
+                agent_model="model",
+                agent_base_url="http://localhost",
+                agent_temperature=0.2,
+                agent_top_p=0.9,
+                agent_max_output_tokens=1000,
+                agent_reasoning_budget=100,
+            )
+            fake_ir = SimpleNamespace(persistent_entities=("Course", "Enrollment"))
+            with patch.object(design_context, "build_implementation_ir", return_value=fake_ir), \
+                patch.object(design_context, "read_generated_java_contracts", return_value="contract"), \
+                patch.object(design_context, "_llm_config", return_value={}):
+                tasks = generate_persistence_tasks(spec, run)
+
+            entity_tasks = [task for task in tasks if task.task_type == "persistence-entities"]
+            repository_tasks = [
+                task for task in tasks if task.task_type == "persistence-repositories"
+            ]
+            self.assertEqual(
+                [
+                    "implement-erd-persistence-entity-course",
+                    "implement-erd-persistence-entity-enrollment",
+                ],
+                [task.task_id for task in entity_tasks],
+            )
+            self.assertEqual(
+                [
+                    "implement-erd-persistence-repository-course",
+                    "implement-erd-persistence-repository-enrollment",
+                ],
+                [task.task_id for task in repository_tasks],
+            )
+            self.assertTrue(all(len(task.allowed_write_paths) == 1 for task in entity_tasks))
+            self.assertTrue(all(len(task.allowed_write_paths) == 1 for task in repository_tasks))
 
     def test_overlapping_outputs_force_sequential_batches(self) -> None:
         tasks = [

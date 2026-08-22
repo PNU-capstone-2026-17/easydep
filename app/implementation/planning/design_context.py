@@ -190,19 +190,36 @@ def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         f"application/src/main/java/{package_path}/persistence/repository/{name}Repository.java"
         for name in entity_names
     ]
+    # Keep one generated source file per agent task. A single LLM conversation
+    # can exhaust its iteration budget while creating a large entity set,
+    # leaving a partially generated workspace that fails the output gate.
     groups = [
-        (
-            "implement-erd-persistence-entities",
-            "persistence-entities",
-            entity_files,
-            render_persistence_entity_prompt(spec, erd, contracts, entity_names, entity_files),
-        ),
-        (
-            "implement-erd-persistence-repositories",
-            "persistence-repositories",
-            repository_files,
-            render_persistence_repository_prompt(spec, entity_names, repository_files),
-        ),
+        *[
+            (
+                f"implement-erd-persistence-entity-{camel_to_kebab(name)}",
+                "persistence-entities",
+                [path],
+                render_persistence_entity_prompt(
+                    spec,
+                    erd,
+                    read_generated_java_contracts(
+                        run_root, spec.base_package, {name}
+                    ),
+                    [name],
+                    [path],
+                ),
+            )
+            for name, path in zip(entity_names, entity_files, strict=True)
+        ],
+        *[
+            (
+                f"implement-erd-persistence-repository-{camel_to_kebab(name)}",
+                "persistence-repositories",
+                [path],
+                render_persistence_repository_prompt(spec, [name], [path]),
+            )
+            for name, path in zip(entity_names, repository_files, strict=True)
+        ],
         (
             "implement-erd-persistence-mapping",
             "persistence-mapping",
@@ -1282,9 +1299,10 @@ def render_allowed_output_rules(allowed: list[str]) -> str:
 def render_persistence_entity_prompt(
     spec: JobSpec, erd: str, contracts: str, names: list[str], allowed: list[str]
 ) -> str:
-    return f"""# Implementation task: ERD persistence entities
+    subject = ", ".join(f"`{name}Entity`" for name in names)
+    return f"""# Implementation task: ERD persistence entity
 
-Create all {len(names)} JPA persistence entities listed in the contracted outputs.
+Create the JPA persistence entity {subject} listed in the contracted output.
 
 Rules:
 - Use package `{spec.base_package}.persistence.entity` and Jakarta Persistence annotations.
@@ -1298,7 +1316,7 @@ Rules:
   bidirectional helper only when both navigation directions are represented in the contracts.
 - Initialize collection relationships, provide a protected no-arg constructor plus public constructors or accessors needed by the mapper, and add relationship helper methods that keep both sides consistent.
 - Do not use Lombok, records, cascading remove, or eager collections. Do not edit BCE domain entities.
-- Create every contracted file, then finish immediately.
+- Create the contracted file, then finish immediately.
 
 ## ERD
 
@@ -1320,7 +1338,7 @@ def render_persistence_repository_prompt(
     declarations = "\n".join(f"- {name}Entity -> {name}Repository" for name in names)
     return f"""# Implementation task: ERD persistence repositories
 
-Create one Spring Data JPA repository per persistence entity.
+Create the Spring Data JPA repository for the listed persistence entity.
 
 Rules:
 - Use package `{spec.base_package}.persistence.repository`.
@@ -1330,7 +1348,7 @@ Rules:
   needed by a Gateway operation. A repository with no such requirement should contain no custom query.
 - The parameter and return generic types of every derived query must exactly match the Java property type in the injected JPA entity contracts. Technical repository IDs remain `Long`, but natural identifiers are not necessarily `Long`.
 - Do not suppress invalid repositories through scanning exclusions; repository creation must succeed when the full Spring application context loads.
-- Create every contracted file, then finish immediately.
+- Create the contracted file, then finish immediately.
 
 {declarations}
 """
