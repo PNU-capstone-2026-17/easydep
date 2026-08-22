@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from difflib import SequenceMatcher
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -605,17 +606,7 @@ _DEPENDENCY = re.compile(
 _OUTPUT_METHOD_PREFIXES = ("display", "show", "render", "prompt", "notify")
 _TOKEN_STOP_WORDS = {
     "a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or",
-    "the", "to", "with", "system", "request", "student", "user", "admin",
-}
-_DOMAIN_WORD_VARIANTS = {
-    "registration": "register",
-    "authentication": "authenticate",
-    "management": "manage",
-    "enrollment": "enroll",
-    "statistics": "statistic",
-    "information": "inform",
-    "details": "detail",
-    "maintain": "manage",
+    "the", "to", "with", "system", "request",
 }
 
 
@@ -627,8 +618,6 @@ def _words(value: Any) -> set[str]:
         if len(token) <= 1 or token in _TOKEN_STOP_WORDS:
             continue
         result.add(token)
-        if variant := _DOMAIN_WORD_VARIANTS.get(token):
-            result.add(variant)
         if len(token) > 4 and token.endswith("ies"):
             result.add(token[:-3] + "y")
         elif len(token) > 4 and token.endswith("ing"):
@@ -643,6 +632,26 @@ def _words(value: Any) -> set[str]:
         elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
             result.add(token[:-1])
     return result
+
+
+def _token_overlap(left: set[str], right: set[str]) -> int:
+    """Count exact or clearly related lexical tokens without domain mappings."""
+    matches = 0
+    for left_token in left:
+        if any(
+            left_token == right_token
+            or (
+                min(len(left_token), len(right_token)) >= 4
+                and (
+                    left_token.startswith(right_token)
+                    or right_token.startswith(left_token)
+                    or SequenceMatcher(None, left_token, right_token).ratio() >= 0.68
+                )
+            )
+            for right_token in right
+        ):
+            matches += 1
+    return matches
 
 
 def _parse_class_catalog(
@@ -689,7 +698,7 @@ def _score_method(sentence: str, class_name: str, method: str) -> int:
     # operations with the same verb (for example createSection vs adjustCapacity).
     method_words = _words(method)
     class_words = _words(class_name)
-    return len(wanted & method_words) * 4 + len(wanted & class_words)
+    return _token_overlap(wanted, method_words) * 4 + _token_overlap(wanted, class_words)
 
 
 def _best_class(
@@ -704,58 +713,29 @@ def _best_class(
         return None
     wanted = _words(use_case_context)
     focus_source = focus_text or use_case_context
-    focus_tokens = [
-        token
-        for token in re.findall(r"[A-Za-z0-9]+", focus_source.lower())
-        if token not in _TOKEN_STOP_WORDS
-    ]
-    # The first verb identifies the use-case intent. Include a second verb for
-    # names such as "Search and view ...", but do not let a shared resource noun
-    # (course, section, student) decide which Boundary owns the interaction.
-    if focus_tokens and focus_tokens[0] in {"manage", "maintain", "generate", "view"}:
-        focus_tokens = focus_tokens[:5]
-    elif len(focus_tokens) > 1 and focus_tokens[1] == "and":
-        focus_tokens = focus_tokens[:3:2]
-    else:
-        focus_tokens = focus_tokens[:1]
-    focus = _words(" ".join(focus_tokens)) or wanted
-    # Domain nouns are intentionally ignored by the general lexical scorer
-    # because they are often shared across use cases. That is unsafe for
-    # resource-specific management use cases, where the noun distinguishes
-    # sibling resource boundaries. Keep a separate resource score for those
-    # use cases without changing generic search/detail ranking behavior.
-    management_focus = bool(focus_tokens and focus_tokens[0] in {"manage", "maintain"})
-    generic_class_tokens = {
-        "boundary", "control", "management", "manage", "record", "records",
-        "maintain", "view", "list", "timetable",
+    # Use the full normalized context. Candidate-name affinity is derived from
+    # the candidate set below, so no operation or domain vocabulary is embedded
+    # in the selector.
+    focus = _words(focus_source) or wanted
+    first_context_token = next(iter(re.findall(r"[A-Za-z0-9]+", focus_source)), "")
+    intent_focus = _words(first_context_token)
+    candidate_tokens = {
+        item["name"]: _words(item["name"])
+        for item in candidates
     }
-    context_resources = {
-        token.lower() for token in re.findall(
-            r"[A-Za-z0-9]+",
-            re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", focus_source),
-        )
-        if token not in generic_class_tokens
-    }
+    shared_tokens = set.intersection(*candidate_tokens.values()) if len(candidates) > 1 else set()
 
-    def resource_score(item: dict[str, Any]) -> int:
-        if not management_focus:
-            return 0
-        class_tokens = {
-            token.lower()
-            for token in re.findall(
-                r"[A-Za-z0-9]+",
-                re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", item["name"]),
-            )
-            if token not in generic_class_tokens
-        }
-        return len(context_resources & class_tokens)
+    def distinctive_name_score(item: dict[str, Any]) -> int:
+        distinctive_tokens = candidate_tokens[item["name"]] - shared_tokens
+        return _token_overlap(focus, distinctive_tokens)
 
     ranked = sorted(
         candidates,
         key=lambda item: (
-            resource_score(item) * 100,
-            len(focus & _words(item["name"])) * 50
-            + len(wanted & _words(item["name"])) * 4
+            distinctive_name_score(item) * 100,
+            _token_overlap(intent_focus, _words(item["name"])) * 75
+            + _token_overlap(focus, _words(item["name"])) * 50
+            + _token_overlap(wanted, _words(item["name"])) * 4
             + sum(sorted(
                 (_score_method(use_case_context, item["name"], method) for method in item["methods"]),
                 reverse=True,
@@ -764,14 +744,23 @@ def _best_class(
         ),
         reverse=True,
     )
-    best_score = (
-        len(focus & _words(ranked[0]["name"])) * 50
-        + len(wanted & _words(ranked[0]["name"])) * 4
-        + sum(sorted(
-            (_score_method(use_case_context, ranked[0]["name"], method) for method in ranked[0]["methods"]),
-            reverse=True,
-        )[:3])
-    )
+    def class_score(item: dict[str, Any]) -> int:
+        return (
+            _token_overlap(intent_focus, _words(item["name"])) * 75
+            + _token_overlap(focus, _words(item["name"])) * 50
+            + _token_overlap(wanted, _words(item["name"])) * 4
+            + sum(sorted(
+                (_score_method(use_case_context, item["name"], method) for method in item["methods"]),
+                reverse=True,
+            )[:3])
+        )
+
+    best_score = class_score(ranked[0])
+    if len(ranked) > 1 and best_score == class_score(ranked[1]):
+        # A lexical tie is not a rule-derived class selection. The caller
+        # escalates this use case to the structured LLM extractor instead of
+        # silently choosing by input order.
+        return None
     if best_score == 0:
         return None
     return ranked[0]
@@ -1097,10 +1086,10 @@ def _build_sequence_plans(
             actor_step = _actor_led(record["sentence"], actor)
             # A Boundary dependency is a useful first choice, but it is not a
             # complete index of the Controls that can realize a system step.
-            # In particular, maintenance use cases frequently share a generic
-            # form Boundary while their actual Control is resource-specific.
-            # Keep the linked Control first, then expose the remaining known
-            # Controls to deterministic scoring / constrained LLM selection.
+            # A Boundary dependency is only a structural hint; the actual
+            # receiver may be another known Control. Keep the linked Control
+            # first, then expose remaining Controls to deterministic matching
+            # or constrained LLM selection.
             if actor_step:
                 candidate_classes = [boundary]
             else:
@@ -1351,11 +1340,38 @@ def _generate_use_case_diagram(
     )
 
 
+def _generate_llm_use_case_diagram(
+    specification: dict[str, Any],
+    summary: dict[str, Any],
+    class_diagram_puml: str,
+) -> dict[str, Any]:
+    """규칙으로 수신자·메서드를 확정할 수 없을 때만 구조화 LLM을 호출한다."""
+    use_case_id = str(specification.get("use_case_id") or "").strip()
+    extracted = extract_sequence_model(
+        json.dumps(
+            {
+                "use_case": summary,
+                "use_case_specification": specification,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        class_diagram_puml,
+    )
+    return {
+        "use_case_id": use_case_id,
+        "use_case_name": str(
+            specification.get("name") or summary.get("name") or ""
+        ).strip(),
+        **extracted,
+    }
+
+
 def extract_sequence_diagrams(
     usecase_spec: Any,
     class_diagram_puml: str,
 ) -> dict[str, Any]:
-    """규칙 기반으로 전체 골격을 만들고 불확실한 메서드 선택만 LLM으로 보완한다."""
+    """확정 가능한 요소는 규칙으로 만들고, 모호한 유스케이스만 LLM으로 해석한다."""
     if not usecase_spec:
         return {}
     usecase_spec = normalize_sequence_usecase_spec(usecase_spec)
@@ -1381,27 +1397,9 @@ def extract_sequence_diagrams(
         diagrams = []
         for specification in specifications:
             use_case_id = str(specification.get("use_case_id") or "").strip()
-            summary = use_cases.get(use_case_id, {})
-            extracted = extract_sequence_model(
-                json.dumps(
-                    {
-                        "use_case": summary,
-                        "use_case_specification": specification,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                class_diagram_puml,
-            )
-            diagrams.append(
-                {
-                    "use_case_id": use_case_id,
-                    "use_case_name": str(
-                        specification.get("name") or summary.get("name") or ""
-                    ).strip(),
-                    **extracted,
-                }
-            )
+            diagrams.append(_generate_llm_use_case_diagram(
+                specification, use_cases.get(use_case_id, {}), class_diagram_puml
+            ))
         return SequenceDiagramCollection(
             Diagrams=diagrams,
             class_diagram_hash=hashlib.sha256(
@@ -1431,9 +1429,28 @@ def extract_sequence_diagrams(
             use_case_id = futures[future]
             try:
                 generated[use_case_id] = future.result()
+            except ValueError:
+                # A deterministic class/flow tie is semantic ambiguity, not a
+                # build failure. Delegate only that use case to the structured
+                # extractor, keeping unrelated use cases on the fast path.
+                try:
+                    generated[use_case_id] = _generate_llm_use_case_diagram(
+                        next(
+                            item for item in specifications
+                            if str(item.get("use_case_id") or "").strip() == use_case_id
+                        ),
+                        use_cases.get(use_case_id, {}),
+                        class_diagram_puml,
+                    )
+                except Exception:  # noqa: BLE001 - preserve empty validation output
+                    logger.warning(
+                        "LLM fallback sequence generation failed for use case %s",
+                        use_case_id,
+                        exc_info=True,
+                    )
             except Exception:
-                # A single malformed/under-specified use case must remain
-                # visible as an empty diagram instead of cancelling siblings.
+                # A single malformed input must remain visible as an empty
+                # diagram instead of cancelling unrelated use cases.
                 logger.warning(
                     "parallel sequence generation failed for use case %s",
                     use_case_id,
