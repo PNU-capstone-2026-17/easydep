@@ -158,6 +158,26 @@ def test_rejects_generated_contracts_over_budget_without_partial_output(
         contracts.render(max_chars=100)
 
 
+def test_compacts_generated_contracts_before_rejecting_budget(tmp_path: Path) -> None:
+    generated = tmp_path / "src/generated"
+    source = generated / "src/apis/OrdersApi.ts"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        "/** " + ("large documentation " * 40) + " */\n"
+        "export class OrdersApi {\n"
+        "  // generated operation\n"
+        "  getOrder(): string { return 'ok'; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    contracts = GeneratedClientContracts.discover(generated)
+
+    rendered = contracts.render(max_chars=180)
+
+    assert "generated operation" not in rendered
+    assert "getOrder(): string" in rendered
+
+
 def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path) -> None:
     from app.implementation.domain.models import JobSpec
     from app.implementation.generation.orchestrator import PrototypeOrchestrator

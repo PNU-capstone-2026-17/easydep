@@ -54,12 +54,13 @@ class GeneratedClientContracts:
     def render(
         self, max_chars: int = DEFAULT_FRONTEND_CONTRACT_BUDGET
     ) -> str:
-        chunks = [
-            f"// {path.relative_to(self.generated_root).as_posix()}\n"
-            f"{path.read_text(encoding='utf-8').strip()}\n"
-            for path in self.files
-        ]
+        chunks = self._render_chunks(compact=False)
         total_chars = sum(len(chunk) for chunk in chunks)
+        if total_chars > max_chars:
+            compact_chunks = self._render_chunks(compact=True)
+            compact_total = sum(len(chunk) for chunk in compact_chunks)
+            if compact_total <= max_chars:
+                return "\n".join(compact_chunks)
         if total_chars > max_chars:
             raise FrontendContractBudgetExceeded(
                 "Generated TypeScript contracts exceed the frontend-agent context "
@@ -68,6 +69,18 @@ class GeneratedClientContracts:
                 "before transmitting any partial contract."
             )
         return "\n".join(chunks)
+
+    def _render_chunks(self, *, compact: bool) -> list[str]:
+        chunks: list[str] = []
+        for path in self.files:
+            source = path.read_text(encoding="utf-8").strip()
+            if compact:
+                source = _compact_typescript(source)
+            chunks.append(
+                f"// {path.relative_to(self.generated_root).as_posix()}\n"
+                f"{source}\n"
+            )
+        return chunks
 
 
 def _discover_source_root(
@@ -85,6 +98,63 @@ def _discover_source_root(
         candidates,
         key=lambda path: (len(path.relative_to(generated_root).parts), path.as_posix()),
     )
+
+
+def _compact_typescript(source: str) -> str:
+    """Remove comments and blank lines without changing string literals."""
+    output: list[str] = []
+    index = 0
+    line: list[str] = []
+    state = "code"
+    while index < len(source):
+        char = source[index]
+        next_char = source[index + 1] if index + 1 < len(source) else ""
+        if state == "line_comment":
+            if char == "\n":
+                state = "code"
+                if "".join(line).strip():
+                    output.append("".join(line).rstrip())
+                line = []
+            index += 1
+            continue
+        if state == "block_comment":
+            if char == "*" and next_char == "/":
+                state = "code"
+                index += 2
+            else:
+                index += 1
+            continue
+        if state in {"single", "double", "template"}:
+            line.append(char)
+            if char == "\\" and next_char:
+                line.append(next_char)
+                index += 2
+                continue
+            closing = {"single": "'", "double": '"', "template": "`"}[state]
+            if char == closing:
+                state = "code"
+            index += 1
+            continue
+        if char == "/" and next_char == "/":
+            state = "line_comment"
+            index += 2
+            continue
+        if char == "/" and next_char == "*":
+            state = "block_comment"
+            index += 2
+            continue
+        if char in {"'", '"', "`"}:
+            state = {"'": "single", '"': "double", "`": "template"}[char]
+        if char == "\n":
+            if "".join(line).strip():
+                output.append("".join(line).rstrip())
+            line = []
+        else:
+            line.append(char)
+        index += 1
+    if "".join(line).strip():
+        output.append("".join(line).rstrip())
+    return "\n".join(output)
 
 
 def _is_test_contract(relative: Path) -> bool:
