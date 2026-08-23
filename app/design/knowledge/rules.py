@@ -437,9 +437,10 @@ RULES: tuple[Rule, ...] = (
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "Actor-to-Boundary calls must invoke input/event operations. Output-oriented "
-            "Boundary operations such as display, show, render, prompt, or notify are "
-            "initiated by system components, not by the actor."
+            "Actor-to-Boundary calls must invoke input/event operations, while "
+            "Control-to-Boundary calls must invoke declared output operations. "
+            "Output-oriented operations such as display, show, render, prompt, notify, "
+            "send, return, or respond are initiated by system components, not by the actor."
         ),
         citation="app/design/services/sequence_diagram/extractor.py (BCE communication rules)",
         evidence="project-convention",
@@ -636,6 +637,20 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_usecase_coverage",
     ),
     Rule(
+        id="sequence.step-operation-distinctness",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Distinct main-scenario steps must not be covered solely by repeating one "
+            "identical receiver operation. Reusing a request operation for validation, "
+            "persistence, and response is not meaningful sequence coverage."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (step-to-operation selection)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_step_operation_distinctness",
+    ),
+    Rule(
         id="sequence.flow-order",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
@@ -767,6 +782,20 @@ RULES: tuple[Rule, ...] = (
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="sequence_message_type_validity",
+    ),
+    Rule(
+        id="sequence.no-lifecycle-events",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Sequence diagrams use the shared fixed lifeline template and must not "
+            "contain activate or deactivate lifecycle events."
+        ),
+        citation="app/design/services/sequence_diagram/plantuml.py (shared sequence template)",
+        evidence="project-convention",
+        caveat="시퀀스 다이어그램의 시각적 통일성을 위한 프로젝트 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_no_lifecycle_events",
     ),
     # --- API 명세: 모델 참조 무결성 -----------------------------------------
     Rule(

@@ -1744,13 +1744,15 @@ def sequence_call_return_links(model: dict, state: dict) -> list[Finding]:
 
 
 def sequence_boundary_operation_direction(model: dict, state: dict) -> list[Finding]:
-    """Actor가 화면 출력용 Boundary 오퍼레이션을 입력 이벤트처럼 호출하지 못하게 한다."""
+    """Boundary 호출이 입력/출력 방향의 소유권을 지키는지 검사한다."""
     rule_id = "sequence.boundary-operation-direction"
     kinds = {
         _participant_id(item): str(item.get("kind", "")).strip().lower()
         for item in model.get("Participants", [])
     }
-    output_prefixes = ("display", "show", "render", "prompt", "notify")
+    output_prefixes = (
+        "display", "show", "render", "prompt", "notify", "send", "return", "respond",
+    )
     found: list[Finding] = []
     for message in model.get("Messages", []):
         if str(message.get("type", "sync")).lower() not in {"sync", "async"}:
@@ -1758,6 +1760,19 @@ def sequence_boundary_operation_direction(model: dict, state: dict) -> list[Find
         source = str(message.get("source") or "").strip()
         target = str(message.get("target") or "").strip()
         if kinds.get(source) != "actor" or kinds.get(target) != "boundary":
+            if kinds.get(source) != "control" or kinds.get(target) != "boundary":
+                continue
+            signature = method_call_signature(str(message.get("label") or ""))
+            method_name = signature.partition("(")[0].lower()
+            if method_name.startswith(output_prefixes):
+                continue
+            found.append(
+                Finding(
+                    rule_id,
+                    f"Control이 Boundary 입력 오퍼레이션 '{signature}'을 출력처럼 호출함",
+                    f"{source} -> {target} : {message.get('label', '')}",
+                )
+            )
             continue
         signature = method_call_signature(str(message.get("label") or ""))
         method_name = signature.partition("(")[0].lower()
@@ -2374,6 +2389,14 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
             for step_id in message.get("step_ids", [])
             if step_id
         }
+        # A step that is explicitly retained as unresolved is not silently
+        # missing.  It remains a review finding below, but must not also make
+        # the entire UC look as though no diagram was generated.
+        covered_steps.update(
+            str(item.get("step_id") or "").strip()
+            for item in model.get("UnresolvedSteps", []) or []
+            if isinstance(item, dict) and item.get("step_id")
+        )
         return [
             Finding(rule_id, f"시퀀스 다이어그램에 반영되지 않은 흐름 단계 id '{step_id}'", step_id)
             for step_id in sorted(flow_steps - covered_steps)
@@ -2409,8 +2432,51 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Finding]:
+    """Reject one generic operation being used to claim unrelated main steps.
+
+    ``step_ids`` are traceability references, not proof that a call explains the
+    step.  Reusing the same receiver operation for the actor request, a seat
+    check, persistence and a response lets a minimal diagram pass structural
+    coverage while saying almost nothing about the workflow.  Forwarding one
+    request through Boundary -> Control is allowed because it carries the same
+    step id; only distinct *main* step ids are rejected here.
+    """
+    rule_id = "sequence.step-operation-distinctness"
+    use_case_id = str(model.get("use_case_id") or "").strip()
+    calls: dict[str, set[str]] = {}
+    for message in model.get("Messages") or []:
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("type", "sync")).strip().lower() not in {"sync", "async", "self"}:
+            continue
+        signature = method_call_signature(str(message.get("label") or ""))
+        if not signature:
+            continue
+        main_steps = {
+            str(step_id).strip()
+            for step_id in message.get("step_ids") or []
+            if (
+                str(step_id).startswith(f"{use_case_id}:main:")
+                if use_case_id
+                else ":main:" in str(step_id)
+            )
+        }
+        if main_steps:
+            calls.setdefault(signature, set()).update(main_steps)
+    return [
+        Finding(
+            rule_id,
+            f"서로 다른 주 흐름 단계 {sorted(step_ids)}가 동일한 오퍼레이션 '{signature}'으로만 표현됨",
+            signature,
+        )
+        for signature, step_ids in sorted(calls.items())
+        if len(step_ids) > 1
+    ]
+
+
 def sequence_unresolved_steps(model: dict, state: dict) -> list[Finding]:
-    """행동이 결정되지 않은 요구사항을 그럴듯한 메시지로 채우지 못하게 차단한다."""
+    """Keep unresolved requirement or method-mapping steps visible for review."""
     rule_id = "sequence.unresolved-usecase-step"
     diagram_use_case_id = str(model.get("use_case_id") or "").strip()
     unresolved = _unresolved_flow_step_ids(state)
@@ -2418,7 +2484,7 @@ def sequence_unresolved_steps(model: dict, state: dict) -> list[Finding]:
         unresolved = {
             step_id for step_id in unresolved if step_id.startswith(f"{diagram_use_case_id}:")
         }
-    return [
+    found = [
         Finding(
             rule_id,
             f"행동이 결정되지 않은 요구사항 단계 '{step_id}'는 시퀀스 생성 전에 보완해야 함",
@@ -2426,6 +2492,22 @@ def sequence_unresolved_steps(model: dict, state: dict) -> list[Finding]:
         )
         for step_id in sorted(unresolved)
     ]
+    known = {finding.location for finding in found}
+    for item in model.get("UnresolvedSteps", []) or []:
+        if not isinstance(item, dict):
+            continue
+        step_id = str(item.get("step_id") or "").strip()
+        if not step_id or step_id in known:
+            continue
+        reason = str(item.get("reason") or "grounded method selection failed").strip()
+        found.append(
+            Finding(
+                rule_id,
+                f"흐름 단계 '{step_id}'의 클래스 메서드를 확정하지 못함: {reason}",
+                step_id,
+            )
+        )
+    return found
 
 
 def _main_step_number(step_id: str, use_case_id: str) -> int | None:
@@ -2741,6 +2823,15 @@ def sequence_orphan_participant_detection(model: dict, state: dict) -> list[Find
     Participants 목록에는 선언되어 있으나 전체 Messages 중 단 한 번도 source 나 target으로
     참여하지 않는 불필요한 유령 참가자를 탐지한다.
     """
+    # A review-only UC intentionally retains its actor/Boundary so the rendered
+    # note has real design context.  Those declarations are not ghost
+    # participants and must not turn the explanatory diagram into a hidden one.
+    if any(
+        isinstance(item, dict)
+        for item in model.get("UnresolvedSteps", []) or []
+    ):
+        return []
+
     rule_id = "sequence.orphan-participant-detection"
     active_participants: set[str] = set()
 
@@ -2903,6 +2994,22 @@ def sequence_message_type_validity(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def sequence_no_lifecycle_events(model: dict, state: dict) -> list[Finding]:
+    """Keep every generated sequence within the fixed no-activation template."""
+    rule_id = "sequence.no-lifecycle-events"
+    return [
+        Finding(
+            rule_id,
+            "공통 시퀀스 템플릿은 activation/deactivation 네모 박스를 사용하지 않음",
+            f"{message.get('source', '')} -> {message.get('target', '')}",
+        )
+        for message in model.get("Messages", []) or []
+        if isinstance(message, dict)
+        and str(message.get("type", "")).strip().lower()
+        in {"activate", "deactivate"}
+    ]
+
+
 def sequence_class_diagram_version(model: dict, state: dict) -> list[Finding]:
     """Reject a collection validated against a different class-method contract."""
     rule_id = "sequence.class-diagram-version"
@@ -2941,6 +3048,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_argument_data_flow": sequence_argument_data_flow,
     "sequence_actor_step_involvement": sequence_actor_step_involvement,
     "sequence_usecase_coverage": sequence_usecase_coverage,
+    "sequence_step_operation_distinctness": sequence_step_operation_distinctness,
     "sequence_flow_order": sequence_flow_order,
     "sequence_unresolved_steps": sequence_unresolved_steps,
     "sequence_fragment_condition_consistency": sequence_fragment_condition_consistency,
@@ -2951,6 +3059,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_message_naming_convention": sequence_message_naming_convention,
     "sequence_participant_kind_validity": sequence_participant_kind_validity,
     "sequence_message_type_validity": sequence_message_type_validity,
+    "sequence_no_lifecycle_events": sequence_no_lifecycle_events,
 }
 API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_operations_present": api_operations_present,

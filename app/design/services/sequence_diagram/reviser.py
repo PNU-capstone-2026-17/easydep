@@ -25,6 +25,9 @@ same schema. Rules:
 - When the model contains `Diagrams`, preserve exactly one diagram for every
   use case and preserve `class_diagram_hash` exactly. Edit each diagram
   independently and never move messages between use cases.
+- Preserve every `MethodProposals` entry unchanged. They are pending explicit
+  user approval for class-diagram additions and are not sequence messages for
+  this reviser to accept, remove, or rewrite.
 - Change only what the feedback asks for; leave everything else intact. Repairs
   must advance the validation order: participants/BCE, receiver methods,
   call/return contracts, argument flow, then scenario flow. A later-phase finding
@@ -57,6 +60,9 @@ same schema. Rules:
   avoid supplying its grounded return.
 - Async calls are fire-and-forget and cannot have return messages. If the caller
   consumes a result, change the grounded call to sync; otherwise remove the return.
+- Remove every `activate` and `deactivate` lifecycle event. The shared sequence
+  template deliberately has no activation rectangles; express meaningful work
+  with grounded sync/self calls and returns instead.
 - Every message's source and target must exist among the returned Participants.
 - Preserve unique participant aliases and use aliases for every message endpoint.
 - Preserve the BCE communication rules (Actor->Boundary, Boundary<->Control,
@@ -82,12 +88,16 @@ same schema. Rules:
 - Preserve main-scenario step order and keep each extension immediately after
   its declared branch_step. Do not turn an unresolved/TODO/TBD/question step into
   invented behavior.
+- Preserve every `UnresolvedSteps` entry unless you add a grounded message for
+  that exact `step_id`. An unresolved entry is a visible review result, not an
+  invitation to omit the use case or silently delete its flow step.
 - Keep `arguments` exactly aligned with the receiver method parameters. A
   call_result source_ref must name a preceding call_id with a compatible return
   type that returned to the source of the consuming call. Never let one participant
   consume a value returned to another participant without an explicit transfer;
   use input, state, or literal only when that source is grounded in the inputs.
-- Remove participants that send and receive no messages. For every resolved step
+- Remove participants that send and receive no messages, except the actor and
+  Boundary retained solely to display an `UnresolvedSteps` review note. For every resolved step
   whose subject is the PrimaryActor or user, preserve at least one actor-originated
   call into a Boundary; do not claim coverage using only an unrelated system call
   or by reusing an earlier Boundary operation for a different main actor action.

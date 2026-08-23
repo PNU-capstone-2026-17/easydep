@@ -48,6 +48,14 @@ export interface ArtifactSummary {
     findings?: string[];
     check_status?: string | null;
     repair_iters?: number;
+    method_proposals?: Array<{
+      id: string;
+      class_name: string;
+      method: string;
+      reason: string;
+      use_case_ids?: string[];
+      step_ids?: string[];
+    }>;
   };
 }
 

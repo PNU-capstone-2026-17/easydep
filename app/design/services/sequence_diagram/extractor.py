@@ -11,7 +11,6 @@ import json
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from difflib import SequenceMatcher
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -65,6 +64,23 @@ class SequenceArgumentBinding(BaseModel):
     source_kind: Literal["input", "call_result", "state", "literal"]
     #: call_result이면 선행 call_id, input이면 step_id, 나머지는 설명 가능한 식별자.
     source_ref: str = Field(min_length=1)
+
+
+class SequenceUnresolvedStep(BaseModel):
+    """A specification step that was retained but could not be grounded.
+
+    It is deliberately part of the persisted interaction model instead of an
+    exception or an omitted message.  A missing method mapping is reviewable
+    design information; dropping the step makes a partially generated diagram
+    look complete.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    step_id: str = Field(min_length=1)
+    sentence: str = ""
+    reason: str = Field(min_length=1)
+    candidates: list[str] = Field(default_factory=list)
 
 
 class SequenceMessage(BaseModel):
@@ -164,6 +180,9 @@ class UseCaseSequenceModel(SequenceModel):
 
     use_case_id: str = Field(min_length=1)
     use_case_name: str = ""
+    #: Steps which were kept visible because no grounded receiver method could
+    #: be selected.  They render as an explicit review note, never as absence.
+    UnresolvedSteps: list[SequenceUnresolvedStep] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def messages_belong_to_this_use_case(self) -> "UseCaseSequenceModel":
@@ -175,6 +194,25 @@ class UseCaseSequenceModel(SequenceModel):
         return self
 
 
+class SequenceMethodProposal(BaseModel):
+    """A user-reviewable class-method addition required by sequence repair.
+
+    The interaction extractor must never quietly extend the class contract just
+    to make a diagram look complete.  When the current contract has no suitable
+    operation, reconciliation records the proposed addition here and waits for
+    an explicit user approval before changing the class diagram.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    class_name: str = Field(min_length=1)
+    method: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    use_case_ids: list[str] = Field(default_factory=list)
+    step_ids: list[str] = Field(default_factory=list)
+
+
 class SequenceDiagramCollection(BaseModel):
     """유스케이스별 시퀀스 다이어그램 모음."""
 
@@ -182,6 +220,10 @@ class SequenceDiagramCollection(BaseModel):
     Diagrams: list[UseCaseSequenceModel]
     #: 이 시퀀스가 검증된 클래스 다이어그램 버전. 추출 뒤 코드가 주입한다.
     class_diagram_hash: str = ""
+    #: Class additions proposed by reconciliation but not yet approved by the
+    #: user.  This is intentionally persisted with the sequence source so a
+    #: page refresh cannot lose an outstanding design decision.
+    MethodProposals: list[SequenceMethodProposal] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def use_case_ids_are_unique(self) -> "SequenceDiagramCollection":
@@ -205,6 +247,21 @@ class SequenceElementSelections(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     selections: list[SequenceElementSelection]
+
+
+class SequenceRouteSelection(BaseModel):
+    """The Boundary/Control pair that owns one use-case interaction.
+
+    A diagram with several API Boundaries is normal.  Selecting the first
+    Boundary in the class model would make every later method choice look
+    grounded while routing the use case through the wrong interface, so the
+    semantic decision is explicitly constrained to existing dependency pairs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    boundary_class: str = Field(min_length=1)
+    control_class: str = ""
 
 
 SEQUENCE_EXTRACTION_SYSTEM_PROMPT = """
@@ -247,7 +304,7 @@ that the inputs do not support.
   fire-and-forget, and "self" for a call whose source and target are the same.
 - Give every sync, async, and self call a unique non-empty `call_id`. Set its
   `reply_to` to "". A return sets `call_id` to "" and `reply_to` to the exact
-  preceding call_id it answers. Activation/deactivation set both fields to "".
+  preceding call_id it answers.
 - For every sync, async, or self call, `label` MUST be a method that already exists
   on the receiver's class in the provided class diagram. Copy its complete call
   signature including the parameter declaration, but omit visibility and return type;
@@ -272,9 +329,9 @@ that the inputs do not support.
   participant unless an explicit intervening message transfers that value. For
   input, `source_ref` is an exact step_id. Never claim a value source that the
   preceding interaction does not provide.
-- Use explicit `activate` and `deactivate` events only when an execution interval
-  materially helps explain nested synchronous processing. Put the lifeline in both
-  `source` and `target` for these events and leave `label` empty.
+- Do not emit `activate` or `deactivate` events. The shared sequence template
+  uses fixed lifelines without activation rectangles; show processing through
+  regular sync/self calls and grounded returns instead.
 
 ## Fragments (alt / loop / opt)
 - `fragments` is the outer-to-inner fragment path for a message; use [] for a
@@ -400,12 +457,18 @@ def extract_sequence_model(
 def normalize_sequence_participants(
     model: dict[str, Any], class_diagram_puml: str
 ) -> dict[str, Any]:
-    """Add declarations for message endpoints that are valid BCE classes.
+    """Align participant declarations with the messages that use them.
 
     LLM-produced legacy sequence models sometimes include a valid Control call
     but omit that Control from ``Participants``.  This is a representation
     mismatch, not a new interaction, so it can be repaired deterministically.
-    Unknown endpoints remain undeclared and continue to fail validation.
+    Conversely, a participant with no messages is not part of the rendered
+    interaction.  Keeping it makes an incomplete LLM fallback look like it
+    contains an Entity or Control that it never actually uses.  Remove those
+    inactive declarations after adding any missing valid endpoints.
+
+    An explicitly unresolved diagram is the exception: it intentionally keeps
+    its actor and Boundary as context for the rendered review note.
     """
     if not isinstance(model, dict):
         return model
@@ -433,6 +496,26 @@ def normalize_sequence_participants(
                     continue
                 participants.append(_participant(item))
                 declared.add(alias)
+
+        has_unresolved_steps = any(
+            isinstance(item, dict)
+            for item in diagram.get("UnresolvedSteps") or []
+        )
+        if has_unresolved_steps:
+            continue
+        active = {
+            _alias(str(endpoint or ""))
+            for message in diagram.get("Messages") or []
+            if isinstance(message, dict)
+            for endpoint in (message.get("source"), message.get("target"))
+            if str(endpoint or "").strip()
+        }
+        participants[:] = [
+            item
+            for item in participants
+            if isinstance(item, dict)
+            and _alias(str(item.get("alias") or item.get("name") or "")) in active
+        ]
     return model
 
 
@@ -603,55 +686,9 @@ _DEPENDENCY = re.compile(
     r"(?:\"[^\"]*\"\s+)?([A-Za-z_][A-Za-z0-9_]*)",
     re.MULTILINE,
 )
-_OUTPUT_METHOD_PREFIXES = ("display", "show", "render", "prompt", "notify")
-_TOKEN_STOP_WORDS = {
-    "a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or",
-    "the", "to", "with", "system", "request",
-}
-
-
-def _words(value: Any) -> set[str]:
-    """CamelCase와 일반 문장을 같은 비교 토큰 집합으로 정규화한다."""
-    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value or ""))
-    result: set[str] = set()
-    for token in re.findall(r"[A-Za-z0-9]+", text.lower()):
-        if len(token) <= 1 or token in _TOKEN_STOP_WORDS:
-            continue
-        result.add(token)
-        if len(token) > 4 and token.endswith("ies"):
-            result.add(token[:-3] + "y")
-        elif len(token) > 4 and token.endswith("ing"):
-            result.add(token[:-3])
-            result.add(token[:-3] + "e")
-        elif len(token) > 4 and token.endswith("ed") and not token.endswith("eed"):
-            result.add(token[:-1])
-            result.add(token[:-2])
-        elif len(token) > 4 and token.endswith("es"):
-            result.add(token[:-2])
-            result.add(token[:-1])
-        elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
-            result.add(token[:-1])
-    return result
-
-
-def _token_overlap(left: set[str], right: set[str]) -> int:
-    """Count exact or clearly related lexical tokens without domain mappings."""
-    matches = 0
-    for left_token in left:
-        if any(
-            left_token == right_token
-            or (
-                min(len(left_token), len(right_token)) >= 4
-                and (
-                    left_token.startswith(right_token)
-                    or right_token.startswith(left_token)
-                    or SequenceMatcher(None, left_token, right_token).ratio() >= 0.68
-                )
-            )
-            for right_token in right
-        ):
-            matches += 1
-    return matches
+_OUTPUT_METHOD_PREFIXES = (
+    "display", "show", "render", "prompt", "notify", "send", "return", "respond",
+)
 
 
 def _parse_class_catalog(
@@ -692,78 +729,156 @@ def _alias(value: str) -> str:
     return alias
 
 
-def _score_method(sentence: str, class_name: str, method: str) -> int:
-    wanted = _words(sentence)
-    # Parameter names are part of the contract and often disambiguate two
-    # operations with the same verb (for example createSection vs adjustCapacity).
-    method_words = _words(method)
-    class_words = _words(class_name)
-    return _token_overlap(wanted, method_words) * 4 + _token_overlap(wanted, class_words)
-
-
-def _best_class(
-    classes: dict[str, dict[str, Any]],
-    kind: str,
-    use_case_context: str,
-    index: int,
-    focus_text: str = "",
+def _only_callable_class(
+    classes: dict[str, dict[str, Any]], kind: str
 ) -> dict[str, Any] | None:
-    candidates = [item for item in classes.values() if item["kind"] == kind and item["methods"]]
-    if not candidates:
-        return None
-    wanted = _words(use_case_context)
-    focus_source = focus_text or use_case_context
-    # Use the full normalized context. Candidate-name affinity is derived from
-    # the candidate set below, so no operation or domain vocabulary is embedded
-    # in the selector.
-    focus = _words(focus_source) or wanted
-    first_context_token = next(iter(re.findall(r"[A-Za-z0-9]+", focus_source)), "")
-    intent_focus = _words(first_context_token)
-    candidate_tokens = {
-        item["name"]: _words(item["name"])
-        for item in candidates
-    }
-    shared_tokens = set.intersection(*candidate_tokens.values()) if len(candidates) > 1 else set()
+    """Return a class only when the structure itself makes it unambiguous.
 
-    def distinctive_name_score(item: dict[str, Any]) -> int:
-        distinctive_tokens = candidate_tokens[item["name"]] - shared_tokens
-        return _token_overlap(focus, distinctive_tokens)
+    A use-case sentence and a method name are different semantic layers.  The
+    previous lexical-overlap score treated accidental word matches as an
+    architectural decision, which could select the wrong screen/controller or
+    discard a valid step.  When several classes are possible, the per-use-case
+    structured extractor is responsible for the semantic choice; it receives
+    the full specification and the complete class-method contract.
+    """
+    candidates = [
+        item
+        for item in classes.values()
+        if item["kind"] == kind and item["methods"]
+    ]
+    return candidates[0] if len(candidates) == 1 else None
 
-    ranked = sorted(
-        candidates,
-        key=lambda item: (
-            distinctive_name_score(item) * 100,
-            _token_overlap(intent_focus, _words(item["name"])) * 75
-            + _token_overlap(focus, _words(item["name"])) * 50
-            + _token_overlap(wanted, _words(item["name"])) * 4
-            + sum(sorted(
-                (_score_method(use_case_context, item["name"], method) for method in item["methods"]),
-                reverse=True,
-            )[:3]),
-            -list(classes).index(item["name"]),
+
+def _route_candidates(
+    classes: dict[str, dict[str, Any]],
+    dependencies: dict[str, list[str]],
+) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """Return only real Boundary -> Control routes from the BCE model.
+
+    A Boundary without a Control is valid for a small query use case, so keep it
+    as a route when it is the only Boundary.  With several Boundaries, however,
+    an unlinked Boundary is not enough evidence to associate it with an
+    arbitrary Control.
+    """
+    boundaries = sorted(
+        (
+            item
+            for item in classes.values()
+            if item["kind"] == "boundary" and item["methods"]
         ),
-        reverse=True,
+        key=lambda item: item["name"],
     )
-    def class_score(item: dict[str, Any]) -> int:
-        return (
-            _token_overlap(intent_focus, _words(item["name"])) * 75
-            + _token_overlap(focus, _words(item["name"])) * 50
-            + _token_overlap(wanted, _words(item["name"])) * 4
-            + sum(sorted(
-                (_score_method(use_case_context, item["name"], method) for method in item["methods"]),
-                reverse=True,
-            )[:3])
+    controls = sorted(
+        (
+            item
+            for item in classes.values()
+            if item["kind"] == "control" and item["methods"]
+        ),
+        key=lambda item: item["name"],
+    )
+    routes: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+    for boundary in boundaries:
+        linked = sorted(
+            (
+                classes[name]
+                for name in dependencies.get(boundary["name"], [])
+                if name in classes
+                and classes[name]["kind"] == "control"
+                and classes[name]["methods"]
+            ),
+            key=lambda item: item["name"],
         )
+        if linked:
+            routes.extend((boundary, control) for control in linked)
+        elif len(boundaries) == 1:
+            # A one-boundary model may intentionally be boundary-only.  If it
+            # has exactly one Control without an explicit dependency, preserve
+            # the existing single-route behaviour rather than inventing a
+            # choice from ordering.
+            routes.extend(
+                (boundary, control)
+                for control in controls
+            )
+            if not controls:
+                routes.append((boundary, None))
+    return routes
 
-    best_score = class_score(ranked[0])
-    if len(ranked) > 1 and best_score == class_score(ranked[1]):
-        # A lexical tie is not a rule-derived class selection. The caller
-        # escalates this use case to the structured LLM extractor instead of
-        # silently choosing by input order.
-        return None
-    if best_score == 0:
-        return None
-    return ranked[0]
+
+def _select_use_case_route(
+    specification: dict[str, Any],
+    summary: dict[str, Any],
+    classes: dict[str, dict[str, Any]],
+    dependencies: dict[str, list[str]],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Choose the single grounded Boundary/Control route for one use case.
+
+    Structural uniqueness is selected locally.  When a model exposes multiple
+    valid API routes we ask for one constrained semantic decision before method
+    selection, instead of falling back to an unconstrained full-diagram LLM
+    response or using the class declaration order.
+    """
+    candidates = _route_candidates(classes, dependencies)
+    if not candidates:
+        raise ValueError("no callable Boundary -> Control route is available")
+    if len(candidates) == 1:
+        return candidates[0]
+
+    use_case_id = str(specification.get("use_case_id") or "").strip()
+    actor = str(
+        specification.get("primary_actor")
+        or summary.get("primary_actor")
+        or "User"
+    ).strip()
+    trigger = str(specification.get("trigger") or summary.get("trigger") or "")
+    actor_steps = []
+    for index, step in enumerate(specification.get("main_scenario") or []):
+        if not isinstance(step, dict):
+            continue
+        sentence = str(step.get("sentence") or step.get("description") or "").strip()
+        if _actor_led(sentence, actor) or (
+            index == 0 and _system_receives_actor_trigger(sentence, trigger, actor)
+        ):
+            actor_steps.append(sentence)
+    payload = {
+        "use_case_id": use_case_id,
+        "use_case_name": str(
+            specification.get("name") or summary.get("name") or use_case_id
+        ).strip(),
+        "primary_actor": actor,
+        "trigger": trigger,
+        "actor_steps": actor_steps,
+        "candidates": [
+            {
+                "boundary_class": boundary["name"],
+                "boundary_methods": _method_candidates(boundary, True),
+                "control_class": control["name"] if control is not None else "",
+                "control_methods": list(control.get("methods") or [])
+                if control is not None
+                else [],
+            }
+            for boundary, control in candidates
+        ],
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Select the one Boundary/Control route that owns this use case. "
+                "Use only an exact supplied candidate pair. Choose from the actor "
+                "request and the use-case name; do not generate UML, methods, or prose."
+            ),
+        },
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    selected = parse_structured(messages, SequenceRouteSelection)
+    choice = (
+        str(selected.get("boundary_class") or "").strip(),
+        str(selected.get("control_class") or "").strip(),
+    )
+    for boundary, control in candidates:
+        if choice == (boundary["name"], control["name"] if control else ""):
+            return boundary, control
+    raise ValueError("semantic route selection chose a Boundary/Control pair outside the candidates")
 
 
 def _method_candidates(class_item: dict[str, Any], actor_led: bool) -> list[str]:
@@ -778,29 +893,19 @@ def _method_candidates(class_item: dict[str, Any], actor_led: bool) -> list[str]
 
 
 def _pick_method(
-    sentence: str,
     candidates: list[tuple[dict[str, Any], str]],
-) -> tuple[dict[str, Any] | None, str, int]:
-    ranked = sorted(
-        candidates,
-        key=lambda item: (
-            _score_method(sentence, item[0]["name"], item[1]),
-            -candidates.index(item),
-        ),
-        reverse=True,
-    )
-    if not ranked:
+) -> tuple[dict[str, Any] | None, str]:
+    """Resolve only a structurally unique method without lexical scoring.
+
+    More than one grounded candidate needs a semantic decision.  It is handled
+    by the constrained per-use-case selector below, rather than treating shared
+    words between prose and identifiers as a confidence score.
+    """
+    if not candidates:
         raise ValueError("sequence generation requires at least one callable BCE method")
-    best_score = _score_method(sentence, ranked[0][0]["name"], ranked[0][1])
-    if best_score:
-        if len(ranked) > 1 and _score_method(sentence, ranked[1][0]["name"], ranked[1][1]) == best_score:
-            return None, "", 0
-        return ranked[0][0], ranked[0][1], best_score
-    # A lexical tie is not a rule-derived choice.  Keep the candidates for the
-    # constrained LLM selector instead of letting list order invent a call.
     if len(candidates) == 1:
-        return ranked[0][0], ranked[0][1], 1
-    return None, "", 0
+        return candidates[0]
+    return None, ""
 
 
 def _flow_records(specification: dict[str, Any]) -> list[dict[str, Any]]:
@@ -875,14 +980,43 @@ def _actor_led(sentence: str, actor_name: str) -> bool:
     )
 
 
+def _system_receives_actor_trigger(
+    sentence: str,
+    trigger: str,
+    actor_name: str,
+) -> bool:
+    """Recognize a system-worded first step that is still an actor entry.
+
+    Many otherwise sound use-case specifications phrase their first main step
+    as "System receives the <actor>'s request".  Treating that as a spontaneous
+    Control action leaves the Boundary unreached and makes every later step
+    impossible to assemble.  The trigger supplies the missing actor intent, so
+    this narrow normalization creates the normal Actor -> Boundary entry rather
+    than inventing an application call.
+    """
+    normalized_sentence = re.sub(r"\s+", " ", str(sentence or "").lower()).strip()
+    if not re.match(r"(?:the )?system\s+receives?\b", normalized_sentence):
+        return False
+    if "request" not in normalized_sentence:
+        return False
+    normalized_trigger = re.sub(r"[^a-z0-9]", "", str(trigger or "").lower())
+    normalized_actor = re.sub(r"[^a-z0-9]", "", str(actor_name or "").lower())
+    return bool(
+        normalized_actor
+        and normalized_actor in normalized_trigger
+        and any(token in normalized_trigger for token in ("request", "submit", "initiat", "start"))
+    )
+
+
 def _select_uncertain_group(plans: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
-    """불확실한 단계의 메서드 선택만 한 번의 작은 LLM 요청으로 보완한다.
+    """의미 판단이 필요한 단계의 메서드를 한 번의 작은 LLM 요청으로 선택한다.
 
     응답이 실패하거나 후보 밖의 값을 고르면 그 단계는 생성하지 않는다. 선택적 보완
     때문에 전체 시퀀스 생성이 실패하거나, 후보 순서가 근거 없는 호출을 만들지 않게
-    하는 경계다.
+    하는 경계다. 단, 그 단계 자체는 ``UnresolvedSteps``로 남아 화면에서 사라지지
+    않는다.
     """
-    uncertain = [plan for plan in plans if plan["score"] == 0]
+    uncertain = [plan for plan in plans if plan["requires_semantic_selection"]]
     if not uncertain:
         return {}
     candidate_map = {
@@ -933,7 +1067,7 @@ def _select_uncertain_group(plans: list[dict[str, Any]]) -> dict[str, tuple[str,
 
 
 def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
-    """유스케이스별 불확실한 메서드 선택을 병렬 보완한다.
+    """유스케이스별 의미 판단이 필요한 메서드 선택을 병렬 보완한다.
 
     각 작업은 하나의 유스케이스만 다루므로 LLM 응답이 서로 영향을 주지 않는다.
     작업 수는 설정으로 제한하고, 실패한 작업은 해당 단계만 미확정으로 남긴다.
@@ -941,7 +1075,7 @@ def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[s
     """
     groups: dict[str, list[dict[str, Any]]] = {}
     for plan in plans:
-        if plan["score"] == 0:
+        if plan["requires_semantic_selection"]:
             groups.setdefault(str(plan["use_case_id"]), []).append(plan)
     if not groups:
         return {}
@@ -1003,12 +1137,16 @@ def _message(
     fragment: dict[str, str] | None,
     call_number: int,
     return_type: str | None = None,
+    message_type: Literal["sync", "async", "self"] = "sync",
 ) -> dict[str, Any]:
     return {
         "source": source,
         "target": target,
         "label": method,
-        "type": "sync" if (return_type and return_type.strip().lower() != "void") else "async",
+        # Void operations may still be synchronous calls.  Marking every void
+        # method async made ordinary Control self-calls look fire-and-forget and
+        # hid the normal request-processing chain in rendered diagrams.
+        "type": message_type,
         "fragments": [fragment] if fragment else [],
         "use_case_ids": [use_case_id],
         "step_ids": [step_id],
@@ -1036,75 +1174,82 @@ def _build_sequence_plans(
     summaries: dict[str, dict[str, Any]],
     classes: dict[str, dict[str, Any]],
     dependencies: dict[str, list[str]],
+    routes: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] | None = None,
 ) -> list[dict[str, Any]]:
     plans: list[dict[str, Any]] = []
-    controls = [
-        item for item in classes.values()
-        if item["kind"] == "control" and item["methods"]
-    ]
-    for use_case_index, specification in enumerate(specifications):
+    for specification in specifications:
         use_case_id = str(specification.get("use_case_id") or specification.get("id") or "").strip()
         summary = summaries.get(use_case_id) or summaries.get(str(specification.get("id") or "")) or {}
         use_case_name = str(specification.get("name") or summary.get("name") or use_case_id)
-        use_case_context = " ".join(
-            [
-                use_case_name,
-                *(
-                    str(step.get("sentence") or step.get("description") or "")
-                    for step in specification.get("main_scenario") or []
-                    if isinstance(step, dict)
-                ),
-                *(
-                    str(step.get("sentence") or step.get("description") or "")
-                    for extension in specification.get("extensions") or []
-                    if isinstance(extension, dict)
-                    for step in extension.get("handling_steps") or []
-                    if isinstance(step, dict)
-                ),
-            ]
-        )
         actor = str(
             specification.get("primary_actor")
             or summary.get("primary_actor")
             or "User"
         ).strip()
-        boundary = _best_class(
-            classes, "boundary", use_case_context, use_case_index, use_case_name
-        )
-        if boundary is None:
-            raise ValueError("sequence generation requires a Boundary class with a method")
-        linked_controls = [
-            classes[name]
-            for name in dependencies.get(boundary["name"], [])
-            if name in classes and classes[name]["kind"] == "control" and classes[name]["methods"]
-        ]
-        control = linked_controls[0] if linked_controls else _best_class(
-            classes, "control", use_case_context, use_case_index, use_case_name
+        route = (routes or {}).get(use_case_id)
+        if route is None:
+            # Retained for direct helper callers and one-boundary legacy
+            # inputs.  Production extraction resolves the route before it
+            # reaches this function.
+            boundary = _only_callable_class(classes, "boundary")
+            if boundary is None:
+                raise ValueError("sequence generation requires an explicit use-case route")
+            linked_controls = [
+                classes[name]
+                for name in dependencies.get(boundary["name"], [])
+                if name in classes
+                and classes[name]["kind"] == "control"
+                and classes[name]["methods"]
+            ]
+            control = linked_controls[0] if len(linked_controls) == 1 else _only_callable_class(classes, "control")
+        else:
+            boundary, control = route
+
+        linked_data = (
+            [
+                classes[name]
+                for name in dependencies.get(control["name"], [])
+                if name in classes
+                and classes[name]["kind"] in {"entity", "database"}
+                and classes[name]["methods"]
+            ]
+            if control is not None
+            else []
         )
 
-        for record in _flow_records(specification):
-            actor_step = _actor_led(record["sentence"], actor)
-            # A Boundary dependency is a useful first choice, but it is not a
-            # complete index of the Controls that can realize a system step.
-            # A Boundary dependency is only a structural hint; the actual
-            # receiver may be another known Control. Keep the linked Control
-            # first, then expose remaining Controls to deterministic matching
-            # or constrained LLM selection.
+        records = _flow_records(specification)
+        first_main_step_id = next(
+            (
+                str(record.get("step_id") or "")
+                for record in records
+                if ":main:" in str(record.get("step_id") or "")
+            ),
+            "",
+        )
+        trigger = str(specification.get("trigger") or summary.get("trigger") or "")
+        for record in records:
+            actor_step = _actor_led(record["sentence"], actor) or (
+                str(record.get("step_id") or "") == first_main_step_id
+                and _system_receives_actor_trigger(record["sentence"], trigger, actor)
+            )
             if actor_step:
                 candidate_classes = [boundary]
             else:
-                candidate_classes = []
-                for candidate in [boundary, *( [control] if control is not None else [] ), *controls]:
-                    if all(item["name"] != candidate["name"] for item in candidate_classes):
-                        candidate_classes.append(candidate)
+                # After the actor enters through the selected Boundary, all
+                # use-case work stays inside its selected Control and the
+                # Control's declared data collaborators.  Exposing methods on
+                # unrelated Controls was the source of cross-use-case calls.
+                candidate_classes = [
+                    candidate
+                    for candidate in [control, *linked_data]
+                    if candidate is not None
+                ]
             candidates = [
                 (class_item, method)
                 for class_item in candidate_classes
                 for method in _method_candidates(class_item, actor_step)
             ]
-            selected_class, selected_method, score = _pick_method(
-                record["sentence"], candidates
-            )
+            selected_class, selected_method = _pick_method(candidates)
             plans.append({
                 **record,
                 "use_case_id": use_case_id,
@@ -1115,7 +1260,7 @@ def _build_sequence_plans(
                 "control": control,
                 "selected_class": selected_class,
                 "selected_method": selected_method,
-                "score": score,
+                "requires_semantic_selection": selected_class is None,
                 "candidates": [
                     {"class_name": item[0]["name"], "method": item[1]}
                     for item in candidates
@@ -1162,9 +1307,23 @@ def _assemble_deterministic_diagrams(
             }
         }
         messages: list[dict[str, Any]] = []
+        unresolved_steps: list[dict[str, Any]] = []
         reached = {actor_alias}
-        used_actor_calls: set[tuple[str, str]] = set()
         call_number = 0
+
+        def mark_unresolved(plan: dict[str, Any], reason: str) -> None:
+            """Keep an ungrounded specification step visible in this UC's model."""
+            unresolved_steps.append(
+                {
+                    "step_id": plan["step_id"],
+                    "sentence": plan["sentence"],
+                    "reason": reason,
+                    "candidates": [
+                        f"{candidate['class_name']}.{candidate['method']}"
+                        for candidate in plan["candidates"]
+                    ],
+                }
+            )
 
         def emit_message(
             source: str,
@@ -1172,6 +1331,7 @@ def _assemble_deterministic_diagrams(
             method: str,
             plan: dict[str, Any],
             return_type: str | None = None,
+            message_type: Literal["sync", "async", "self"] = "sync",
         ) -> bool:
             nonlocal call_number
             call_number += 1
@@ -1184,6 +1344,7 @@ def _assemble_deterministic_diagrams(
                 plan["fragment"],
                 call_number,
                 return_type,
+                message_type,
             )
             messages.append(call)
             if return_type and return_type.strip().lower() != "void":
@@ -1204,51 +1365,68 @@ def _assemble_deterministic_diagrams(
                     plan["selected_method"],
                 ) if plan["selected_class"] is not None else ("", ""),
             )
-            # No deterministic rule and no valid constrained LLM choice means
-            # this step remains intentionally uncovered for the validation gate.
-            # Generating a call from candidate order would make a false sequence
-            # appear implementable.
+            # The semantic selector may fail or decline to choose.  Do not turn
+            # candidate list order into a false interaction, but retain the step
+            # as an explicit review item instead of making this UC disappear.
             if not selected_name or not selected_method:
+                mark_unresolved(
+                    plan,
+                    "No grounded receiver method was selected from the class diagram.",
+                )
                 continue
             selected_class = classes[selected_name]
-            # An actor entry is emitted only for an actor-led use-case step.  The
-            # former "first step" fallback picked an arbitrary Boundary method
-            # when a specification started with system behavior.
+            # An actor entry is emitted only for an actor-led use-case step.
             if plan["actor_led"]:
                 target_boundary = boundary if selected_class["kind"] != "boundary" else selected_class
                 entry_method = selected_method if selected_class["kind"] == "boundary" else target_boundary["methods"][0]
-                entry_key = (target_boundary["name"], entry_method)
-                if entry_key in used_actor_calls:
-                    unused = [
-                        candidate["method"]
-                        for candidate in plan["candidates"]
-                        if candidate["class_name"] == target_boundary["name"]
-                        and (target_boundary["name"], candidate["method"]) not in used_actor_calls
-                    ]
-                    if unused:
-                        best_alt = max(
-                            unused,
-                            key=lambda method: _score_method(
-                                plan["sentence"], target_boundary["name"], method
-                            ),
-                        )
-                        orig_score = _score_method(plan["sentence"], target_boundary["name"], entry_method)
-                        alt_score = _score_method(plan["sentence"], target_boundary["name"], best_alt)
-                        if alt_score >= orig_score or orig_score == 0:
-                            entry_method = best_alt
-                            entry_key = (target_boundary["name"], entry_method)
-                emit_message(actor_alias, _alias(target_boundary["name"]), entry_method, plan, target_boundary.get("method_returns", {}).get(entry_method))
-                used_actor_calls.add(entry_key)
-                reached.add(_alias(target_boundary["name"]))
+                boundary_alias = _alias(target_boundary["name"])
+                emit_message(
+                    actor_alias,
+                    boundary_alias,
+                    entry_method,
+                    plan,
+                    target_boundary.get("method_returns", {}).get(entry_method),
+                )
+                reached.add(boundary_alias)
+
+                # The actor's input must reach the selected Control before it
+                # can perform the following system steps.  Preserve the exact
+                # Boundary method when the Control owns the same operation;
+                # otherwise the next selected system step establishes the
+                # Boundary -> Control hand-off.
+                if control is not None and entry_method in control.get("methods", []):
+                    control_alias = _alias(control["name"])
+                    emit_message(
+                        boundary_alias,
+                        control_alias,
+                        entry_method,
+                        plan,
+                        control.get("method_returns", {}).get(entry_method),
+                    )
+                    reached.add(control_alias)
                 continue
 
             b_alias = _alias(boundary["name"])
 
             if selected_class["kind"] == "control":
-                # Boundary -> Control (BCE forward direction)
-                source = b_alias
                 target = _alias(selected_class["name"])
+                if target in reached:
+                    # A Control already reached by the initial request performs
+                    # later use-case steps as internal operations.  Repeating a
+                    # Boundary -> Control call for each step collapses checks,
+                    # persistence and notifications into one fake endpoint call.
+                    source = target
+                    message_type = "self"
+                else:
+                    # Boundary -> Control is the first hand-off when the actor
+                    # request could not be forwarded using the same signature.
+                    source = b_alias
+                    message_type = "sync"
                 if source not in reached:
+                    mark_unresolved(
+                        plan,
+                        "The Boundary was not reached by a preceding actor interaction.",
+                    )
                     continue
                 reached.add(target)
             elif selected_class["kind"] == "boundary":
@@ -1258,32 +1436,59 @@ def _assemble_deterministic_diagrams(
                 # silently rerouted to an arbitrary Control method. It remains
                 # unresolved for validation/LLM repair.
                 if control is not None and not selected_method.lower().startswith(_OUTPUT_METHOD_PREFIXES):
+                    mark_unresolved(
+                        plan,
+                        "A system step selected a Boundary input operation instead of a grounded output operation.",
+                    )
                     continue
                 if control is not None and selected_method.lower().startswith(_OUTPUT_METHOD_PREFIXES):
                     # Control -> Boundary output direction
                     ctrl_alias = _alias(control["name"])
                     if ctrl_alias not in reached:
+                        mark_unresolved(
+                            plan,
+                            "The Control was not reached before producing a Boundary output.",
+                        )
                         continue
                     source = ctrl_alias
                     target = b_alias
+                    message_type = "sync"
                 else:
                     source = target = b_alias
+                    message_type = "self"
                 reached.add(target)
             else:
                 # Control -> Entity/Database (BCE forward direction)
                 if control is None:
                     source = b_alias
                     target = _alias(selected_class["name"])
+                    message_type = "sync"
                     if source not in reached:
+                        mark_unresolved(
+                            plan,
+                            "The Boundary was not reached by a preceding actor interaction.",
+                        )
                         continue
                 else:
                     control_alias = _alias(control["name"])
                     if control_alias not in reached:
+                        mark_unresolved(
+                            plan,
+                            "The Control was not reached before accessing an Entity or Database.",
+                        )
                         continue
                     source = control_alias
                     target = _alias(selected_class["name"])
+                    message_type = "sync"
                 reached.add(target)
-            emit_message(source, target, selected_method, plan, selected_class.get("method_returns", {}).get(selected_method))
+            emit_message(
+                source,
+                target,
+                selected_method,
+                plan,
+                selected_class.get("method_returns", {}).get(selected_method),
+                message_type,
+            )
             reached.add(target)
 
         coalesced: list[dict[str, Any]] = []
@@ -1302,14 +1507,19 @@ def _assemble_deterministic_diagrams(
         messages = coalesced
         add_message_participants(participants, messages)
 
-        # Only participants that actually occur in a message are emitted.
+        # Only message participants are normally emitted.  An unresolved UC
+        # keeps its actor and Boundary as visual context for the explicit note.
         active = {value for message in messages for value in (message["source"], message["target"])}
+        if unresolved_steps:
+            active.add(actor_alias)
+            active.add(_alias(first["boundary"]["name"]))
         ordered = [participant for alias, participant in participants.items() if alias in active]
         diagrams.append({
             "use_case_id": use_case_id,
             "use_case_name": first["use_case_name"],
             "Participants": ordered,
             "Messages": messages,
+            "UnresolvedSteps": unresolved_steps,
         })
     return diagrams
 
@@ -1321,10 +1531,20 @@ def _generate_use_case_diagram(
     dependencies: dict[str, list[str]],
 ) -> dict[str, Any]:
     """한 유스케이스의 계획·선택·조립을 독립적으로 수행한다."""
-    plans = _build_sequence_plans([specification], summaries, classes, dependencies)
+    use_case_id = str(specification.get("use_case_id") or "").strip()
+    summary = summaries.get(use_case_id) or {}
+    boundary, control = _select_use_case_route(
+        specification, summary, classes, dependencies
+    )
+    plans = _build_sequence_plans(
+        [specification],
+        summaries,
+        classes,
+        dependencies,
+        {use_case_id: (boundary, control)},
+    )
     selections = _select_uncertain_elements(plans)
     diagrams = _assemble_deterministic_diagrams(plans, selections, classes)
-    use_case_id = str(specification.get("use_case_id") or "").strip()
     return next(
         (
             diagram
@@ -1336,16 +1556,95 @@ def _generate_use_case_diagram(
             "use_case_name": str(specification.get("name") or "").strip(),
             "Participants": [],
             "Messages": [],
+            "UnresolvedSteps": [],
         },
     )
+
+
+def _unresolved_use_case_diagram(
+    specification: dict[str, Any],
+    summary: dict[str, Any],
+    classes: dict[str, dict[str, Any]],
+    reason: str,
+) -> dict[str, Any]:
+    """Build a visible, reviewable UC result when semantic extraction fails.
+
+    This is intentionally not a fabricated interaction.  It preserves the
+    actor, an available Boundary for visual context, and every missing flow step
+    as a note.  The renderer can therefore produce one card per UC while the
+    design gate still reports that the mapping needs attention.
+    """
+    use_case_id = str(specification.get("use_case_id") or "").strip()
+    actor = str(
+        specification.get("primary_actor")
+        or summary.get("primary_actor")
+        or "User"
+    ).strip()
+    actor_alias = _alias(actor)
+    if actor_alias in classes:
+        actor_alias += "Actor"
+    participants: list[dict[str, str]] = [
+        {
+            "name": actor,
+            "alias": actor_alias,
+            "kind": "actor",
+            "description": "Primary actor from the use-case specification",
+            "source_class": "",
+        }
+    ]
+    boundary = next(
+        (
+            item
+            for item in sorted(classes.values(), key=lambda item: str(item.get("name") or ""))
+            if item.get("kind") == "boundary" and item.get("methods")
+        ),
+        None,
+    )
+    if boundary is not None:
+        participants.append(_participant(boundary))
+    candidates = [
+        f"{item['name']}.{method}"
+        for item in classes.values()
+        for method in item.get("methods") or []
+        if item.get("kind") in {"boundary", "control", "entity", "database"}
+    ]
+    records = _flow_records(specification)
+    unresolved = [
+        {
+            "step_id": record["step_id"],
+            "sentence": record["sentence"],
+            "reason": reason,
+            "candidates": candidates,
+        }
+        for record in records
+    ]
+    if not unresolved:
+        unresolved.append(
+            {
+                "step_id": f"{use_case_id}:specification",
+                "sentence": "",
+                "reason": "The use-case specification contains no numbered flow step.",
+                "candidates": candidates,
+            }
+        )
+    return {
+        "use_case_id": use_case_id,
+        "use_case_name": str(
+            specification.get("name") or summary.get("name") or ""
+        ).strip(),
+        "Participants": participants,
+        "Messages": [],
+        "UnresolvedSteps": unresolved,
+    }
 
 
 def _generate_llm_use_case_diagram(
     specification: dict[str, Any],
     summary: dict[str, Any],
     class_diagram_puml: str,
+    classes: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    """규칙으로 수신자·메서드를 확정할 수 없을 때만 구조화 LLM을 호출한다."""
+    """Use full UC semantics only when the BCE structure itself is ambiguous."""
     use_case_id = str(specification.get("use_case_id") or "").strip()
     extracted = extract_sequence_model(
         json.dumps(
@@ -1358,12 +1657,20 @@ def _generate_llm_use_case_diagram(
         ),
         class_diagram_puml,
     )
+    if not extracted.get("Messages") and _flow_records(specification):
+        return _unresolved_use_case_diagram(
+            specification,
+            summary,
+            classes,
+            "Semantic extraction returned no grounded interaction messages.",
+        )
     return {
         "use_case_id": use_case_id,
         "use_case_name": str(
             specification.get("name") or summary.get("name") or ""
         ).strip(),
         **extracted,
+        "UnresolvedSteps": [],
     }
 
 
@@ -1371,7 +1678,12 @@ def extract_sequence_diagrams(
     usecase_spec: Any,
     class_diagram_puml: str,
 ) -> dict[str, Any]:
-    """확정 가능한 요소는 규칙으로 만들고, 모호한 유스케이스만 LLM으로 해석한다."""
+    """Generate exactly one visible result per use case.
+
+    Structural uniqueness is resolved without an LLM.  Any semantic ambiguity
+    is resolved per use case against the class-method contract; failure leaves a
+    review note in that UC rather than omitting its diagram.
+    """
     if not usecase_spec:
         return {}
     usecase_spec = normalize_sequence_usecase_spec(usecase_spec)
@@ -1397,9 +1709,25 @@ def extract_sequence_diagrams(
         diagrams = []
         for specification in specifications:
             use_case_id = str(specification.get("use_case_id") or "").strip()
-            diagrams.append(_generate_llm_use_case_diagram(
-                specification, use_cases.get(use_case_id, {}), class_diagram_puml
-            ))
+            try:
+                diagrams.append(_generate_llm_use_case_diagram(
+                    specification,
+                    use_cases.get(use_case_id, {}),
+                    class_diagram_puml,
+                    classes,
+                ))
+            except Exception:  # noqa: BLE001 - preserve the failed UC visibly
+                logger.warning(
+                    "semantic sequence generation failed for use case %s",
+                    use_case_id,
+                    exc_info=True,
+                )
+                diagrams.append(_unresolved_use_case_diagram(
+                    specification,
+                    use_cases.get(use_case_id, {}),
+                    classes,
+                    "No parseable Boundary method contract was available for semantic extraction.",
+                ))
         return SequenceDiagramCollection(
             Diagrams=diagrams,
             class_diagram_hash=hashlib.sha256(
@@ -1408,7 +1736,7 @@ def extract_sequence_diagrams(
         ).model_dump()
 
     # Each use case is independent until the final collection assembly. Keep
-    # the worker count bounded because a worker may perform one optional LLM
+    # the worker count bounded because a worker may perform one semantic
     # selection call. Results are restored to specification order below.
     from app.core.config import settings
 
@@ -1429,32 +1757,43 @@ def extract_sequence_diagrams(
             use_case_id = futures[future]
             try:
                 generated[use_case_id] = future.result()
-            except ValueError:
-                # A deterministic class/flow tie is semantic ambiguity, not a
-                # build failure. Delegate only that use case to the structured
-                # extractor, keeping unrelated use cases on the fast path.
-                try:
-                    generated[use_case_id] = _generate_llm_use_case_diagram(
-                        next(
-                            item for item in specifications
-                            if str(item.get("use_case_id") or "").strip() == use_case_id
-                        ),
-                        use_cases.get(use_case_id, {}),
-                        class_diagram_puml,
-                    )
-                except Exception:  # noqa: BLE001 - preserve empty validation output
-                    logger.warning(
-                        "LLM fallback sequence generation failed for use case %s",
-                        use_case_id,
-                        exc_info=True,
-                    )
+            except ValueError as exc:
+                # Route or method selection was constrained to the class
+                # contract and still could not produce an exact choice.  Do
+                # not replace that safe failure with an unconstrained full
+                # diagram generation that can silently select the wrong API.
+                logger.warning(
+                    "semantic sequence selection failed for use case %s",
+                    use_case_id,
+                    exc_info=True,
+                )
+                specification = next(
+                    item for item in specifications
+                    if str(item.get("use_case_id") or "").strip() == use_case_id
+                )
+                generated[use_case_id] = _unresolved_use_case_diagram(
+                    specification,
+                    use_cases.get(use_case_id, {}),
+                    classes,
+                    str(exc) or "Semantic Boundary/Control or method selection failed.",
+                )
             except Exception:
-                # A single malformed input must remain visible as an empty
-                # diagram instead of cancelling unrelated use cases.
+                # A single malformed input must remain visible as a review
+                # result instead of cancelling unrelated use cases.
                 logger.warning(
                     "parallel sequence generation failed for use case %s",
                     use_case_id,
                     exc_info=True,
+                )
+                specification = next(
+                    item for item in specifications
+                    if str(item.get("use_case_id") or "").strip() == use_case_id
+                )
+                generated[use_case_id] = _unresolved_use_case_diagram(
+                    specification,
+                    use_cases.get(use_case_id, {}),
+                    classes,
+                    "Sequence planning failed before a grounded interaction could be assembled.",
                 )
 
     diagrams = []
@@ -1463,16 +1802,12 @@ def extract_sequence_diagrams(
         diagrams.append(
             generated.get(
                 use_case_id,
-                {
-                    "use_case_id": use_case_id,
-                    "use_case_name": str(
-                        specification.get("name")
-                        or use_cases.get(use_case_id, {}).get("name")
-                        or ""
-                    ).strip(),
-                    "Participants": [],
-                    "Messages": [],
-                },
+                _unresolved_use_case_diagram(
+                    specification,
+                    use_cases.get(use_case_id, {}),
+                    classes,
+                    "Sequence generation did not return a result for this use case.",
+                ),
             )
         )
 
@@ -1481,3 +1816,95 @@ def extract_sequence_diagrams(
         Diagrams=diagrams,
         class_diagram_hash=class_diagram_hash,
     ).model_dump()
+
+
+def reassemble_sequence_diagrams(
+    current_model: dict[str, Any],
+    usecase_spec: Any,
+    class_diagram_puml: str,
+    use_case_ids: set[str],
+) -> dict[str, Any]:
+    """Regenerate only the affected use-case diagrams from the class contract.
+
+    Reconciliation is deliberately targeted: a validation finding in ``UC3``
+    must not replace independently reviewed ``UC1``/``UC2`` interaction models.
+    The replacement still uses the normal deterministic planner, including its
+    explicit unresolved-step notes when the existing class methods cannot
+    ground an action.
+    """
+    targets = {str(value).strip() for value in use_case_ids if str(value).strip()}
+    if not targets:
+        return current_model or {}
+
+    normalized = normalize_sequence_usecase_spec(usecase_spec)
+    specifications = [
+        item
+        for item in normalized.get("use_case_specs") or []
+        if str(item.get("use_case_id") or "").strip() in targets
+    ]
+    if not specifications:
+        return current_model or {}
+
+    selected_ids = {
+        str(item.get("use_case_id") or "").strip() for item in specifications
+    }
+    scoped_spec = {
+        **normalized,
+        "use_cases": [
+            item
+            for item in normalized.get("use_cases") or []
+            if str(item.get("id") or "").strip() in selected_ids
+        ],
+        "use_case_specs": specifications,
+    }
+    regenerated = extract_sequence_diagrams(scoped_spec, class_diagram_puml)
+
+    current_diagrams = (
+        current_model.get("Diagrams")
+        if isinstance(current_model, dict)
+        and isinstance(current_model.get("Diagrams"), list)
+        else None
+    )
+    if current_diagrams is None:
+        # A legacy singleton has no independently preserved UC cards.  Move it
+        # to the collection shape rather than silently discarding a regenerated
+        # result.
+        return regenerated
+
+    generated_by_id = {
+        str(item.get("use_case_id") or "").strip(): item
+        for item in regenerated.get("Diagrams") or []
+        if isinstance(item, dict)
+    }
+    current_by_id = {
+        str(item.get("use_case_id") or "").strip(): item
+        for item in current_diagrams
+        if isinstance(item, dict)
+    }
+    ordered_ids = [
+        str(item.get("use_case_id") or "").strip()
+        for item in normalized.get("use_case_specs") or []
+        if str(item.get("use_case_id") or "").strip()
+    ]
+    diagrams: list[dict[str, Any]] = []
+    for use_case_id in ordered_ids:
+        if use_case_id in selected_ids and use_case_id in generated_by_id:
+            diagrams.append(generated_by_id[use_case_id])
+        elif use_case_id in current_by_id:
+            diagrams.append(current_by_id[use_case_id])
+
+    # Preserve malformed/unknown legacy cards for the normal validator to
+    # report instead of making them disappear during an unrelated repair.
+    known_ordered = set(ordered_ids)
+    diagrams.extend(
+        item
+        for item in current_diagrams
+        if isinstance(item, dict)
+        and str(item.get("use_case_id") or "").strip() not in known_ordered
+    )
+    return {
+        **current_model,
+        "Diagrams": diagrams,
+        "class_diagram_hash": str(regenerated.get("class_diagram_hash") or ""),
+        "MethodProposals": [],
+    }

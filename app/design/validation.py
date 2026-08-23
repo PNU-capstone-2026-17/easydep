@@ -59,14 +59,21 @@ def rehydrated_check_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
     report = design_readiness_report(state)
     by_stage = {str(item["stage"]): item for item in report["stages"]}
     result: dict[str, dict[str, Any]] = {}
-    for stage, _, check_key, _ in _CHECKED_STAGES:
+    for stage, model_key, check_key, _ in _CHECKED_STAGES:
         item = by_stage.get(stage)
         if item is None:
             continue
         findings = list(item["findings"])
-        result[check_key] = {
+        check = {
             "findings": findings,
             "repair_iters": 0,
             "stopped": "clean" if not findings else "checked_only",
         }
+        if stage == "sequence_diagram":
+            model = state.get(model_key) or {}
+            proposals = model.get("MethodProposals") if isinstance(model, dict) else []
+            if isinstance(proposals, list) and proposals:
+                check["method_proposals"] = proposals
+                check["stopped"] = "needs_input"
+        result[check_key] = check
     return result

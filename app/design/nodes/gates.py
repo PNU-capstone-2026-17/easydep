@@ -57,6 +57,7 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
                 "findings": check.get("findings", []),
                 "check_status": check.get("stopped"),
                 "repair_iters": check.get("repair_iters", 0),
+                "method_proposals": check.get("method_proposals", []),
             }
         )
         if not str(answer or "").strip():

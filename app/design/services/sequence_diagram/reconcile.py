@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any
 
 from app.design.knowledge.detectors import (
@@ -18,9 +19,72 @@ from app.design.services.sequence_diagram.methods import (
     method_return_type,
     normalize_return_type,
 )
+from app.design.services.sequence_diagram.extractor import (
+    reassemble_sequence_diagrams,
+)
 
 
 _CALL_TYPES = {"sync", "async", "self"}
+
+# These defects are best repaired by re-running the fixed sequence template
+# against the already-approved class contract.  They are not a reason to ask a
+# language model to edit an arbitrary existing interaction in place.
+_REASSEMBLY_RULE_IDS = {
+    "sequence.actor-step-involvement",
+    "sequence.boundary-operation-direction",
+    "sequence.causal-call-chain",
+    "sequence.database-access-discipline",
+    "sequence.duplicate-consecutive-messages",
+    "sequence.flow-order",
+    "sequence.fragment-condition-consistency",
+    "sequence.initial-message-entry",
+    "sequence.message-bce-flow",
+    "sequence.message-participants-exist",
+    "sequence.no-lifecycle-events",
+    "sequence.orphan-participant-detection",
+    "sequence.participant-classes-exist",
+    "sequence.references-exist",
+    "sequence.step-operation-distinctness",
+    "sequence.usecase-step-coverage",
+}
+
+
+def _pending_method_proposals(sequence: dict) -> list[dict[str, Any]]:
+    proposals = sequence.get("MethodProposals") if isinstance(sequence, dict) else None
+    return [item for item in proposals or [] if isinstance(item, dict)]
+
+
+def approved_method_proposal_ids(sequence: dict, feedback: str) -> set[str]:
+    """Return proposal ids explicitly accepted in user feedback.
+
+    The UI shows the IDs, but a human should not have to type one for every
+    method.  Korean and English "approve all/add them" replies are therefore
+    accepted, while negative wording is deliberately never treated as consent.
+    """
+    proposals = _pending_method_proposals(sequence)
+    if not proposals or not str(feedback or "").strip():
+        return set()
+    compact = re.sub(r"\s+", "", str(feedback).lower())
+    if any(token in compact for token in ("승인하지", "추가하지", "거절", "reject", "decline", "do-not-add")):
+        return set()
+    ids = {
+        str(item.get("id") or "").strip()
+        for item in proposals
+        if str(item.get("id") or "").strip()
+    }
+    approval_words = ("승인", "approve", "accept", "추가해", "추가해주세요", "추가할게")
+    all_words = ("모두", "전체", "all")
+    if any(word in compact for word in approval_words) and any(
+        word in compact for word in all_words
+    ):
+        return ids
+    lowered = str(feedback).lower()
+    return {proposal_id for proposal_id in ids if proposal_id.lower() in lowered}
+
+
+def is_method_proposal_approval(sequence: dict, feedback: str) -> bool:
+    """Whether feedback is a proposal approval rather than a diagram edit."""
+    return bool(approved_method_proposal_ids(sequence, feedback))
 
 def _sequence_diagrams(sequence: dict) -> list[dict]:
     diagrams = sequence.get("Diagrams") if isinstance(sequence, dict) else None
@@ -198,14 +262,222 @@ def _persist_class_diagram(state: dict, patch: dict) -> None:
     save_stage(app_id, "class_diagram", {**state, **patch}, origin=ORIGIN_AUTO_FIXED)
 
 
+def _reassembly_targets(sequence: dict, state: dict) -> set[str]:
+    """Find UC cards whose fixed template must be reassembled."""
+    targets: set[str] = set()
+    for diagram in _sequence_diagrams(sequence):
+        use_case_id = str(diagram.get("use_case_id") or "").strip()
+        template_entry_unresolved = any(
+            "boundary was not reached by a preceding actor interaction"
+            in str(item.get("reason") or "").lower()
+            for item in diagram.get("UnresolvedSteps") or []
+            if isinstance(item, dict)
+        )
+        if use_case_id and any(
+            finding.rule_id in _REASSEMBLY_RULE_IDS
+            for finding in sequence_diagram_findings(diagram, state)
+        ) or (use_case_id and template_entry_unresolved):
+            targets.add(use_case_id)
+
+    # Collection-level defects (for example a missing diagram) do not appear
+    # while inspecting a single card.  Their locations contain the exact UC id.
+    known = _expected_use_case_ids(state)
+    for finding in sequence_diagram_findings(sequence, state):
+        if finding.rule_id not in _REASSEMBLY_RULE_IDS:
+            continue
+        location = str(finding.location or "")
+        targets.update(
+            use_case_id
+            for use_case_id in known
+            if use_case_id and use_case_id in location
+        )
+    return targets
+
+
+def _proposal_step_ids(findings: list[Any], fallback_use_case_ids: set[str]) -> list[str]:
+    step_ids: set[str] = set()
+    for finding in findings:
+        location = str(getattr(finding, "location", "") or "")
+        step_ids.update(
+            re.findall(
+                r"[A-Za-z][A-Za-z0-9_-]*:(?:main|extension):[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?",
+                location,
+            )
+        )
+    if step_ids:
+        return sorted(step_ids)
+    return [f"{use_case_id}:review" for use_case_id in sorted(fallback_use_case_ids)]
+
+
+def _method_addition_proposals(
+    original_bce: dict,
+    candidate_bce: dict,
+    editable_signatures: dict[str, set[str]],
+    *,
+    allow_grounded_additions: bool,
+    forbidden_additions: set[tuple[str, str]],
+    findings: list[Any],
+    use_case_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Extract only validated *new* class methods from an LLM recommendation."""
+    merged = _merge_method_revision(
+        original_bce,
+        candidate_bce,
+        editable_signatures,
+        allow_grounded_additions=allow_grounded_additions,
+        forbidden_additions=forbidden_additions,
+    )
+    original_methods = _class_methods(original_bce)
+    by_class = {
+        str(item.get("className") or "").strip(): item
+        for item in merged.get("Classes") or []
+        if isinstance(item, dict) and item.get("className")
+    }
+    evidence = next(
+        (str(finding.message or "").strip() for finding in findings if finding.message),
+        "현재 시퀀스 검증이 이 동작에 대응하는 클래스 메서드를 찾지 못했습니다.",
+    )
+    step_ids = _proposal_step_ids(findings, use_case_ids)
+    proposals: list[dict[str, Any]] = []
+    for class_name, item in sorted(by_class.items()):
+        known = original_methods.get(class_name, set())
+        for raw_method in item.get("methods") or []:
+            method = str(raw_method).strip()
+            signature = method_call_signature(method)
+            if not signature or signature in known:
+                continue
+            proposals.append(
+                {
+                    "id": f"method:{class_name}:{signature}",
+                    "class_name": class_name,
+                    "method": method,
+                    "reason": evidence,
+                    "use_case_ids": sorted(use_case_ids),
+                    "step_ids": step_ids,
+                }
+            )
+            known.add(signature)
+    return proposals
+
+
+def _apply_approved_method_proposals(
+    bce: dict,
+    proposals: list[dict[str, Any]],
+    approved_ids: set[str],
+) -> dict:
+    """Apply exactly the additions the user explicitly approved."""
+    selected = {
+        str(item.get("id") or "").strip(): item
+        for item in proposals
+        if str(item.get("id") or "").strip() in approved_ids
+    }
+    if not selected:
+        return bce
+    classes: list[dict[str, Any]] = []
+    for raw_class in bce.get("Classes") or []:
+        item = dict(raw_class)
+        class_name = str(item.get("className") or "").strip()
+        existing = {
+            method_call_signature(str(method))
+            for method in item.get("methods") or []
+            if method_call_signature(str(method))
+        }
+        methods = list(item.get("methods") or [])
+        for proposal in selected.values():
+            if str(proposal.get("class_name") or "").strip() != class_name:
+                continue
+            method = str(proposal.get("method") or "").strip()
+            signature = method_call_signature(method)
+            if signature and signature not in existing:
+                methods.append(method)
+                existing.add(signature)
+        item["methods"] = methods
+        classes.append(item)
+    return {**bce, "Classes": classes}
+
+
 def reconcile_class_methods(state: ArchitectureState) -> dict:
-    """LLM이 유스케이스 근거를 검토한 뒤에만 클래스 메서드를 수정한다."""
+    """Reassemble affected UCs and ask before extending the class contract."""
     sequence = state.get("sequence_diagram_model") or {}
     bce = state.get("extracted_bce_classes") or {}
     if not bce.get("Classes"):
         return {}
 
-    diagrams = _sequence_diagrams(sequence)
+    # First use the fixed sequence template and the methods the user has
+    # already approved.  This corrects legacy generic messages, missing traces,
+    # lifecycle events, and participant ordering without changing the class
+    # model or touching unaffected UC cards.
+    result: dict[str, Any] = {}
+    reassembly_targets = _reassembly_targets(sequence, state)
+    working_sequence = sequence
+    pending_proposals = _pending_method_proposals(sequence)
+    approved_ids = approved_method_proposal_ids(
+        sequence, str(state.get("sequence_diagram_feedback") or "")
+    )
+    if approved_ids:
+        revised_bce = _apply_approved_method_proposals(
+            bce, pending_proposals, approved_ids
+        )
+        if revised_bce != bce:
+            result.update(_class_patch(revised_bce))
+            approved_use_cases = {
+                str(use_case_id).strip()
+                for proposal in pending_proposals
+                if str(proposal.get("id") or "").strip() in approved_ids
+                for use_case_id in proposal.get("use_case_ids") or []
+                if str(use_case_id).strip()
+            }
+            refreshed_targets = reassembly_targets | approved_use_cases
+            if isinstance(working_sequence.get("Diagrams"), list) and refreshed_targets:
+                working_sequence = reassemble_sequence_diagrams(
+                    working_sequence,
+                    state.get("usecase_spec"),
+                    str(result["class_diagram_puml"]),
+                    refreshed_targets,
+                )
+                working_sequence = {
+                    **working_sequence,
+                    "MethodProposals": [
+                        proposal
+                        for proposal in pending_proposals
+                        if str(proposal.get("id") or "").strip() not in approved_ids
+                    ],
+                }
+            else:
+                working_sequence = {
+                    **working_sequence,
+                    "MethodProposals": [
+                        proposal
+                        for proposal in pending_proposals
+                        if str(proposal.get("id") or "").strip() not in approved_ids
+                    ],
+                }
+            result["sequence_diagram_model"] = working_sequence
+            _persist_class_diagram(state, result)
+            return result
+
+    if isinstance(sequence.get("Diagrams"), list) and reassembly_targets:
+        working_sequence = reassemble_sequence_diagrams(
+            sequence,
+            state.get("usecase_spec"),
+            str(state.get("class_diagram_puml") or ""),
+            reassembly_targets,
+        )
+        if working_sequence != sequence:
+            result["sequence_diagram_model"] = working_sequence
+
+    # An outstanding proposal remains a user decision.  Do not call the class
+    # reviser again and produce a shifting second recommendation on every
+    # refresh or unrelated feedback round.
+    if pending_proposals:
+        if working_sequence != sequence:
+            result["sequence_diagram_model"] = {
+                **working_sequence,
+                "MethodProposals": pending_proposals,
+            }
+        return result
+
+    diagrams = _sequence_diagrams(working_sequence)
     missing: dict[str, list[str]] = {}
     misplaced_calls: set[tuple[str, str]] = set()
     misplaced_return_locations: set[str] = set()
@@ -317,7 +589,7 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
         if labels
     }
     if not missing_for_revision and not return_findings and not method_need_findings:
-        return {}
+        return result
 
     editable_signatures: dict[str, set[str]] = {
         class_name: {
@@ -399,6 +671,30 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
         scenario_text=usecase_spec_text(state),
         targets=targets,
     )
+    proposal_use_case_ids = reassembly_targets or {
+        str(diagram.get("use_case_id") or "").strip()
+        for diagram in diagrams
+        if str(diagram.get("use_case_id") or "").strip()
+    }
+    proposals = _method_addition_proposals(
+        bce,
+        proposed_bce,
+        editable_signatures,
+        allow_grounded_additions=bool(method_need_findings),
+        forbidden_additions=misplaced_calls,
+        findings=[*method_need_findings, *return_findings],
+        use_case_ids=proposal_use_case_ids,
+    )
+    if proposals:
+        result["sequence_diagram_model"] = {
+            **working_sequence,
+            "MethodProposals": proposals,
+        }
+        return result
+
+    # Correcting a return declaration on an already-existing operation is not
+    # a new capability.  Preserve the existing automatic contract correction;
+    # only *added* methods require the user's approval.
     revised_bce = _merge_method_revision(
         bce,
         proposed_bce,
@@ -406,12 +702,11 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
         allow_grounded_additions=bool(method_need_findings),
         forbidden_additions=misplaced_calls,
     )
-    result: dict[str, Any] = {}
     if revised_bce != bce:
         result.update(_class_patch(revised_bce))
-        if isinstance(sequence.get("Diagrams"), list):
+        if isinstance(working_sequence.get("Diagrams"), list):
             result["sequence_diagram_model"] = {
-                **sequence,
+                **working_sequence,
                 "class_diagram_hash": hashlib.sha256(
                     result["class_diagram_puml"].encode("utf-8")
                 ).hexdigest(),
@@ -507,9 +802,31 @@ def finalize_sequence_class_methods(state: ArchitectureState) -> dict:
     """
     report = dict(state.get("sequence_diagram_check") or {})
     findings = list(report.get("findings") or [])
+    explicit_unresolved = any(
+        isinstance(diagram, dict)
+        and any(
+            isinstance(step, dict)
+            for step in diagram.get("UnresolvedSteps", []) or []
+        )
+        for diagram in _sequence_diagrams(
+            state.get("sequence_diagram_model") or {}
+        )
+    )
+    only_explicit_unresolved = explicit_unresolved and all(
+        "[sequence.unresolved-usecase-step]" in str(finding)
+        for finding in findings
+    )
     try:
         ensure_sequence_class_methods(state)
     except ValueError as exc:
+        if only_explicit_unresolved:
+            # The diagram is intentionally a visible review artifact, not an
+            # approved interaction.  Hiding it would make this UC disappear
+            # again even though the model records exactly why it is incomplete.
+            return {
+                "sequence_diagram_renderable": True,
+                "sequence_diagram_check": report,
+            }
         if not findings:
             findings.append(f"{exc} [sequence.final-contract]")
             report.update(
@@ -524,6 +841,11 @@ def finalize_sequence_class_methods(state: ArchitectureState) -> dict:
             "sequence_diagram_check": report,
         }
     if findings:
+        if only_explicit_unresolved:
+            return {
+                "sequence_diagram_renderable": True,
+                "sequence_diagram_check": report,
+            }
         # Legacy models can pass the strict compatibility subset while the current
         # deterministic checker still reports defects.  Findings, not model age,
         # decide whether an image may be exposed.

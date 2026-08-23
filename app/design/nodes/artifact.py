@@ -101,6 +101,7 @@ _SEQUENCE_REPAIR_RULE_GROUPS = (
         "sequence.initial-message-entry",
         "sequence.causal-call-chain",
         "sequence.database-access-discipline",
+        "sequence.no-lifecycle-events",
     },
     # 그 다음 실제 수신 메서드를 확정한다. 이 단계가 고쳐져야 반환·인자 검사가
     # 비로소 판정 가능해질 수 있다.
@@ -125,6 +126,7 @@ _SEQUENCE_REPAIR_RULE_GROUPS = (
     {
         "sequence.actor-step-involvement",
         "sequence.usecase-step-coverage",
+        "sequence.step-operation-distinctness",
         "sequence.flow-order",
         "sequence.fragment-condition-consistency",
         "sequence.orphan-participant-detection",
@@ -305,8 +307,22 @@ def revise_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]
     def node(state: ArchitectureState) -> dict:
         # 게이트 피드백은 산출물 전체를 대상으로 한다 — 사용자가 그 산출물을 보면서
         # 말하는 자리라 항목을 좁힐 근거가 없다. 항목을 지목하는 수정은 cascade 가 한다.
+        # A class-method proposal is a workflow decision, not free-form sequence
+        # feedback.  Preserve the proposal-bearing model so reconciliation can
+        # apply exactly the approved additions without asking the sequence LLM
+        # to reinterpret a short "approve all" reply as a diagram edit.
+        current = state.get(spec.model_key) or {}
+        if spec.stage == "sequence_diagram":
+            from app.design.services.sequence_diagram.reconcile import (
+                is_method_proposal_approval,
+            )
+
+            if is_method_proposal_approval(
+                current, str(state.get(spec.feedback_key) or "")
+            ):
+                return {spec.model_key: current}
         revised = spec.revise(
-            state.get(spec.model_key) or {},
+            current,
             state.get(spec.feedback_key, ""),
             state,
             set(),
@@ -620,6 +636,15 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             "repair_iters": iterations,
             "stopped": stopped,
         }
+        if spec.stage == "sequence_diagram":
+            proposals = (
+                model.get("MethodProposals") if isinstance(model, dict) else []
+            )
+            if isinstance(proposals, list) and proposals:
+                report["method_proposals"] = proposals
+                # A proposed class operation is an architectural choice; it is
+                # intentionally not consumed by the automatic repair loop.
+                report["stopped"] = NEEDS_INPUT
         if error:
             report["error"] = error
         return {spec.model_key: model, spec.check_key: report}

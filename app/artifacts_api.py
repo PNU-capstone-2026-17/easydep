@@ -38,6 +38,12 @@ from app.design.services.sequence_diagram.plantuml import generate_sequence_from
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import STAGE_ARTIFACTS, AppNotFound
 
+
+# Diagram image endpoints render the current persisted model on every request.
+# Their URL does not contain an artifact version, so caching an image can show a
+# pre-feedback diagram even after the model and PlantUML source were revised.
+_NO_STORE_IMAGE_HEADERS = {"Cache-Control": "no-store, max-age=0"}
+
 router = APIRouter(tags=["apps"])
 
 #: 저장 가능한 모든 산출물 — 요구사항 4개 + 설계 5개.
@@ -190,6 +196,9 @@ def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
             "findings": findings,
             "check_status": check.get("stopped"),
             "repair_iters": check.get("repair_iters", 0),
+            # Sequence reconciliation may need a new class operation.  The
+            # proposal is review data, not an automatic class-diagram change.
+            "method_proposals": list(check.get("method_proposals") or []),
         }
 
     deployment_bundle = result.get("deployment_diagram_bundle") or {}
@@ -349,6 +358,7 @@ def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
     return Response(
         content=image,
         media_type="image/svg+xml" if extension == "svg" else "image/png",
+        headers=_NO_STORE_IMAGE_HEADERS,
     )
 
 
@@ -378,6 +388,7 @@ def get_deployment_diagram_view_image(
     return Response(
         content=image,
         media_type="image/svg+xml" if extension == "svg" else "image/png",
+        headers=_NO_STORE_IMAGE_HEADERS,
     )
 
 
@@ -426,4 +437,5 @@ def get_sequence_diagram_image(
     return Response(
         content=image,
         media_type="image/svg+xml" if extension == "svg" else "image/png",
+        headers=_NO_STORE_IMAGE_HEADERS,
     )

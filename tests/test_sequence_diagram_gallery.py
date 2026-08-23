@@ -92,6 +92,7 @@ def test_sequence_diagram_image_renders_only_requested_use_case() -> None:
     assert render.call_args.args[1] == "svg"
     assert response.body == b"<svg />"
     assert response.media_type == "image/svg+xml"
+    assert response.headers["cache-control"] == "no-store, max-age=0"
 
 
 def test_sequence_diagram_image_returns_404_for_unknown_use_case() -> None:
@@ -231,3 +232,5 @@ def test_frontend_renders_sequence_diagrams_as_individual_image_cards() -> None:
     assert 'class="sequence-diagram-card' in source
     assert 'class="sequence-diagram-image' in source
     assert "selected === 'sequence_diagram'" in source
+    assert "sequenceImageEpoch" in source
+    assert "?revision=${sequenceImageEpoch}" in source

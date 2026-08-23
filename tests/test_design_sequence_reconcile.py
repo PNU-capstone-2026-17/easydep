@@ -10,7 +10,7 @@ from app.design.services.sequence_diagram.reconcile import (
 )
 
 
-def test_sequence_reconcile_uses_llm_to_add_grounded_receiver_method():
+def test_sequence_reconcile_proposes_grounded_receiver_method_for_user_approval():
     state = {
         "app_id": "test-app-id",
         "extracted_bce_classes": {
@@ -58,11 +58,69 @@ def test_sequence_reconcile_uses_llm_to_add_grounded_receiver_method():
 
     revise.assert_called_once()
     assert "decide whether the use case genuinely requires it" in revise.call_args.kwargs["feedback"]
-    save_stage.assert_called_once()
+    save_stage.assert_not_called()
+    assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["createOrder()"]
+    assert result["sequence_diagram_model"]["MethodProposals"] == [{
+        "id": "method:OrderControl:reserveOrder()",
+        "class_name": "OrderControl",
+        "method": "reserveOrder()",
+        "reason": "현재 시퀀스 검증이 이 동작에 대응하는 클래스 메서드를 찾지 못했습니다.",
+        "use_case_ids": [],
+        "step_ids": [],
+    }]
+
+
+def test_sequence_reconcile_applies_only_approved_method_and_reassembles_its_uc():
+    proposal = {
+        "id": "method:OrderControl:reserveOrder()",
+        "class_name": "OrderControl",
+        "method": "reserveOrder(): void",
+        "reason": "UC1 flow requires a distinct reservation action.",
+        "use_case_ids": ["UC1"],
+        "step_ids": ["UC1:main:2"],
+    }
+    state = {
+        "app_id": "test-app-id",
+        "sequence_diagram_feedback": "제안 메서드 모두 승인",
+        "class_diagram_puml": "@startuml\n@enduml",
+        "extracted_bce_classes": {
+            "Classes": [{"className": "OrderControl", "methods": ["createOrder(): void"]}]
+        },
+        "sequence_diagram_model": {
+            "Diagrams": [
+                {"use_case_id": "UC1", "use_case_name": "Create", "Participants": [], "Messages": [], "UnresolvedSteps": []},
+                {"use_case_id": "UC2", "use_case_name": "Keep", "Participants": [], "Messages": [], "UnresolvedSteps": []},
+            ],
+            "class_diagram_hash": "",
+            "MethodProposals": [proposal],
+        },
+    }
+    regenerated = {
+        "Diagrams": [
+            {"use_case_id": "UC1", "use_case_name": "Create", "Participants": [], "Messages": [], "UnresolvedSteps": []},
+            state["sequence_diagram_model"]["Diagrams"][1],
+        ],
+        "class_diagram_hash": "new-hash",
+        "MethodProposals": [],
+    }
+    with (
+        patch(
+            "app.design.services.sequence_diagram.reconcile.reassemble_sequence_diagrams",
+            return_value=regenerated,
+        ) as reassemble,
+        patch("app.repositories.artifact_repository.save_stage") as save_stage,
+    ):
+        result = reconcile_class_methods(state)
+
     assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
-        "createOrder()",
-        "reserveOrder()",
+        "createOrder(): void", "reserveOrder(): void"
     ]
+    assert result["sequence_diagram_model"] == regenerated
+    # UC2 is deliberately empty in this compact fixture, so its own coverage
+    # finding joins UC1 in the fixed-template pass.  The approved method still
+    # guarantees that UC1 is included in the reassembly target set.
+    assert "UC1" in reassemble.call_args.args[3], reassemble.call_args
+    save_stage.assert_called_once()
 
 
 def test_graph_finalizer_keeps_invalid_model_for_repair_without_rendering():
@@ -173,10 +231,8 @@ def test_sequence_reconcile_ignores_unrequested_methods_from_class_llm():
     ):
         result = reconcile_class_methods(state)
 
-    assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
-        "createOrder()",
-        "reserveOrder()",
-    ]
+    assert result["sequence_diagram_model"]["MethodProposals"][0]["method"] == "reserveOrder()"
+    assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["createOrder()"]
 
 
 def test_sequence_finalizer_rejects_call_without_a_receiver_class():
@@ -452,7 +508,7 @@ def test_uncovered_flow_asks_class_llm_whether_a_method_is_missing():
     assert result == {}
 
 
-def test_uncovered_flow_can_add_a_minimal_method_chosen_by_class_llm():
+def test_uncovered_flow_proposes_a_minimal_method_chosen_by_class_llm():
     state = {
         "usecase_spec": {
             "use_case_specs": [{
@@ -486,13 +542,13 @@ def test_uncovered_flow_can_add_a_minimal_method_chosen_by_class_llm():
     ):
         result = reconcile_class_methods(state)
 
-    assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
-        "display()",
-        "submitOrder()",
-    ]
+    proposal = result["sequence_diagram_model"]["MethodProposals"][0]
+    assert proposal["class_name"] == "OrderScreen"
+    assert proposal["method"] == "submitOrder()"
+    assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["display()"]
 
 
-def test_boundary_output_violation_requires_class_llm_to_consider_input_method():
+def test_boundary_output_violation_proposes_an_input_method_for_approval():
     state = {
         "usecase_spec": {
             "use_case_specs": [{
@@ -533,10 +589,8 @@ def test_boundary_output_violation_requires_class_llm_to_consider_input_method()
         result = reconcile_class_methods(state)
 
     assert "you MUST add the minimum grounded input method" in revise.call_args.kwargs["feedback"]
-    assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
-        "display()",
-        "buyStock()",
-    ]
+    assert result["sequence_diagram_model"]["MethodProposals"][0]["method"] == "buyStock()"
+    assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["display()"]
 
 
 def _finalizer_contract_state(messages: list[dict]) -> dict:

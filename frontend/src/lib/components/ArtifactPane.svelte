@@ -40,10 +40,15 @@
   let sequenceLoading = $state(false);
   let expandedSequence = $state<SequenceDiagramSummary | null>(null);
   let sequenceLoadVersion = 0;
+  let sequenceImageEpoch = $state(0);
   let previouslySelected = '';
   let content = $derived(document?.artifacts?.[selected]);
   let fileArtifact = $derived(fileArtifacts[selected]);
   let validation = $derived(document?.validation?.[selected]);
+  // The sequence artifact itself changes when feedback is applied, even when
+  // the UC summary list keeps the same IDs.  Track it separately so images
+  // receive a new URL and cannot retain a previous revision in the DOM/cache.
+  let sequenceArtifactSource = $derived(document?.artifacts?.sequence_diagram ?? '');
 
   let availableStages = $derived(
     Object.keys(document?.artifacts ?? {})
@@ -76,18 +81,23 @@
   $effect(() => {
     const currentAppId = appId;
     const currentSelection = selected;
+    const currentSequenceSource = sequenceArtifactSource;
     const loadVersion = ++sequenceLoadVersion;
     sequenceDiagrams = [];
     sequenceError = '';
     sequenceLoading = false;
 
-    if (currentSelection !== 'sequence_diagram' || !currentAppId) return;
+    if (currentSelection !== 'sequence_diagram' || !currentAppId || !currentSequenceSource) return;
 
     sequenceLoading = true;
     getSequenceDiagrams(currentAppId)
       .then((result) => {
         if (loadVersion !== sequenceLoadVersion) return;
         sequenceDiagrams = result.diagrams;
+        // Deliberately advance after every accepted fetch.  The list is keyed
+        // by use_case_id, so without this token Svelte can retain an existing
+        // <img> whose URL still points at a pre-feedback rendering.
+        sequenceImageEpoch += 1;
       })
       .catch((error) => {
         if (loadVersion !== sequenceLoadVersion) return;
@@ -138,7 +148,7 @@
   }
 
   function sequenceImageUrl(diagram: SequenceDiagramSummary, extension: 'png' | 'svg') {
-    return `/api/apps/${encodeURIComponent(appId)}/stages/sequence_diagram/diagrams/${encodeURIComponent(diagram.use_case_id)}/image.${extension}`;
+    return `/api/apps/${encodeURIComponent(appId)}/stages/sequence_diagram/diagrams/${encodeURIComponent(diagram.use_case_id)}/image.${extension}?revision=${sequenceImageEpoch}`;
   }
 
   function expandDiagram(diagram: SequenceDiagramSummary | null = null) {
@@ -265,6 +275,16 @@
             {:else if sequenceDiagrams.length === 0}
               <p class="rounded-lg bg-[#f8f8f5] p-6 text-center text-xs text-[#85877e]">No use-case sequence diagrams are available.</p>
             {:else}
+              {#if validation?.findings?.length}
+                <p class="mb-3 rounded-lg border border-[#e3c98b] bg-[#fff8e7] px-3 py-2 text-xs leading-5 text-[#755b24]" role="status">
+                  <strong>Review required.</strong> {validation.findings.length} semantic finding{validation.findings.length === 1 ? '' : 's'} remain; rendered cards are drafts, not approved sequence contracts.
+                </p>
+              {/if}
+              {#if validation?.method_proposals?.length}
+                <p class="mb-3 rounded-lg border border-[#b8d7c5] bg-[#eef8f1] px-3 py-2 text-xs leading-5 text-[#24553d]" role="status">
+                  <strong>Class-method approval required.</strong> Review the proposed operations in Validation, then reply <code>제안 메서드 모두 승인</code> to add every proposal and regenerate the affected UC cards.
+                </p>
+              {/if}
               <div class="sequence-diagram-gallery grid grid-cols-1 gap-3 xl:grid-cols-2">
                 {#each sequenceDiagrams as diagram (diagram.use_case_id)}
                   <article class="sequence-diagram-card min-w-0 overflow-hidden rounded-lg border border-[#e1e1db] bg-white">
@@ -320,6 +340,25 @@
           <div class="flex justify-between"><dt>Rule-check status</dt><dd>{validation?.check_status ?? 'Not run'}</dd></div>
           <div class="flex justify-between"><dt>Automatic repair attempts</dt><dd>{validation?.repair_iters ?? 0}</dd></div>
         </dl>
+        {#if selected === 'sequence_diagram' && validation?.method_proposals?.length}
+          <section class="mt-4 border-t border-[#ecece7] pt-3 text-xs">
+            <strong class="text-[#24553d]">Class method additions awaiting approval</strong>
+            <p class="mt-1 leading-5 text-[#65675f]">Each operation was proposed because the current class contract cannot ground the indicated sequence flow. No class is changed until you approve it.</p>
+            <ul class="mt-3 space-y-2">
+              {#each validation.method_proposals as proposal}
+                <li class="rounded-lg border border-[#cfe2d6] bg-[#f5fbf7] p-3">
+                  <code class="font-semibold text-[#24553d]">{proposal.class_name}.{proposal.method}</code>
+                  <p class="mt-1 leading-5 text-[#55584f]">{proposal.reason}</p>
+                  {#if proposal.step_ids?.length}
+                    <p class="mt-1 text-[11px] text-[#777a70]">Flow steps: {proposal.step_ids.join(', ')}</p>
+                  {/if}
+                  <p class="mt-1 text-[11px] text-[#777a70]">Proposal ID: {proposal.id}</p>
+                </li>
+              {/each}
+            </ul>
+            <p class="mt-3 rounded-lg bg-[#eef8f1] px-3 py-2 leading-5 text-[#24553d]">Approve all: <code>제안 메서드 모두 승인</code>. To approve selected items only, include their Proposal ID in your feedback.</p>
+          </section>
+        {/if}
         {#if validation?.errors?.length || validation?.findings?.length}
           <ul class="mt-4 space-y-2 border-t border-[#ecece7] pt-3 text-xs text-[#8b3d36]">
             {#each [...(validation.errors ?? []), ...(validation.findings ?? [])] as finding}

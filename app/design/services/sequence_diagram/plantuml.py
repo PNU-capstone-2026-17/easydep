@@ -22,6 +22,18 @@ _PARTICIPANT_KEYWORD = {
     "database": "database",
 }
 
+# Class-diagram rendering has a stable visual vocabulary.  Sequence diagrams
+# use the same idea: the lifeline order is architectural rather than whatever
+# order a model/LLM happened to emit.  A use case may omit unused roles, but a
+# role that is present always occupies the same left-to-right band.
+_PARTICIPANT_ORDER = {
+    "actor": 0,
+    "boundary": 1,
+    "control": 2,
+    "entity": 3,
+    "database": 4,
+}
+
 #: 메시지 종류 → PlantUML 화살표.
 _ARROW = {
     "sync": "->",
@@ -54,7 +66,8 @@ def sanitize_text(text: str) -> str:
 def generate_sequence_from_model(model: dict[str, Any]) -> str:
     """상호작용 모델을 시퀀스 다이어그램 PlantUML로 변환한다.
 
-    참가자도 메시지도 없으면 빈 문자열을 반환한다(그릴 대상 없음).
+    A UC that has unresolved steps is still rendered as a reviewable diagram.
+    Only a genuinely empty model returns an empty string.
     """
     if not model:
         return ""
@@ -70,7 +83,10 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
 
     participants = model.get("Participants", [])
     messages = model.get("Messages", [])
-    if not participants and not messages:
+    unresolved_steps = [
+        item for item in model.get("UnresolvedSteps", []) if isinstance(item, dict)
+    ]
+    if not participants and not messages and not unresolved_steps:
         return ""
 
     diagram_id = sanitize_identifier(str(model.get("use_case_id") or ""))
@@ -96,7 +112,13 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
     # 선언된 참가자만 메시지에 쓸 수 있다. 모델이 어긋나 선언에 없는 이름이 나오면
     # 그 메시지는 버린다 — 미선언 참가자를 그리면 그림이 조용히 거짓말을 한다.
     declared: set[str] = set()
-    for participant in participants:
+    for participant in sorted(
+        (item for item in participants if isinstance(item, dict)),
+        key=lambda item: (
+            _PARTICIPANT_ORDER.get(str(item.get("kind", "")).strip().lower(), 5),
+            sanitize_identifier(str(item.get("alias") or item.get("name", ""))),
+        ),
+    ):
         alias = sanitize_identifier(participant.get("alias") or participant.get("name", ""))
         if alias in declared:
             continue
@@ -107,6 +129,14 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
         )
         display = sanitize_text(participant.get("name", "")) or alias
         lines.append(f'{keyword} "{display}" as {alias}')
+
+    # A failed semantic mapping still gets one PlantUML document and one gallery
+    # card.  The fallback alias is intentionally not a class participant; it is
+    # only an anchor for the explanatory note when a malformed import supplied
+    # no actor or Boundary at all.
+    if unresolved_steps and not declared:
+        declared.add("Unresolved")
+        lines.append('participant "Unresolved interaction" as Unresolved')
 
     lines.append("")
 
@@ -168,15 +198,15 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
         if source not in declared or target not in declared:
             continue
 
-        transition_fragments(fragment_path(message))
-
         message_type = str(message.get("type", "sync")).strip().lower()
-        if message_type == "activate":
-            lines.append(f"activate {target}")
+        # Activation bars are intentionally excluded from the shared template.
+        # Existing persisted models can still contain lifecycle events, so drop
+        # them before fragment handling rather than rendering a visual outlier
+        # (or leaving an empty fragment behind).
+        if message_type in {"activate", "deactivate"}:
             continue
-        if message_type == "deactivate":
-            lines.append(f"deactivate {target}")
-            continue
+
+        transition_fragments(fragment_path(message))
 
         arrow = _ARROW.get(message_type, "->")
         label = sanitize_text(message.get("label", ""))
@@ -186,6 +216,17 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
         lines.append(f"  {line}" if open_fragments else line)
 
     close_to(0)
+
+    if unresolved_steps:
+        anchor = sorted(declared)[0] if declared else "Unresolved"
+        lines.append("")
+        lines.append(f"note over {anchor}")
+        lines.append("  Needs review: no grounded class method was selected.")
+        for item in unresolved_steps:
+            step_id = sanitize_text(str(item.get("step_id") or "step"))
+            reason = sanitize_text(str(item.get("reason") or "Unresolved step"))
+            lines.append(f"  {step_id}: {reason}")
+        lines.append("end note")
 
     lines.append("")
     lines.append("@enduml")
