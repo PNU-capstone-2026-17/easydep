@@ -50,15 +50,21 @@ def test_trace_scope_sends_only_standard_usage_and_metadata(monkeypatch):
     monkeypatch.setenv("LANGSMITH_API_KEY", "ls__test")
     monkeypatch.setenv("LANGSMITH_PROJECT", "easydep-test")
 
-    with langsmith.trace_scope(
-        "llm-span", run_type="llm", metadata={"agent": "requirements", "run_id": "r1"}
-    ) as span:
-        span.set_usage(input_tokens=3, output_tokens=5)
+    with langsmith.trace_metadata({"app_id": "app-1"}):
+        with langsmith.trace_scope(
+            "llm-span", run_type="llm", metadata={"agent": "requirements", "run_id": "r1"}
+        ) as span:
+            span.set_usage(input_tokens=3, output_tokens=5)
 
     assert captured["trace"] == {
         "name": "llm-span",
         "run_type": "llm",
-        "metadata": {"service": "easydep", "agent": "requirements", "run_id": "r1"},
+        "metadata": {
+            "service": "easydep",
+            "app_id": "app-1",
+            "agent": "requirements",
+            "run_id": "r1",
+        },
         "project_name": "easydep-test",
         "client": captured["context"]["client"],
     }

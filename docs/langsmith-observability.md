@@ -13,6 +13,11 @@ EasyDep는 LangSmith의 기본 제공 관측 항목만 사용한다. 별도 feed
 내부 로그와 실험 출력에 계속 쓰지만, LangSmith에는 같은 수치를 별도 custom metric으로
 다시 보내지 않는다.
 
+`app_id`가 있는 웹 Requirements·Design·Implementation·Testing 실행은 모두 같은
+`app_id` metadata를 보낸다. LangSmith의 trace 목록 또는 Dashboard에서
+`metadata.app_id`로 필터하거나 Group by하면 앱별 latency, error, token, cost를 볼 수
+있다. 이 기능을 쓰려면 `LANGSMITH_HIDE_METADATA`를 켜면 안 된다.
+
 ## 설정
 
 `requirements.txt`에 `langsmith` SDK가 포함되어 있다. 기본값은 비활성화이며 아래처럼

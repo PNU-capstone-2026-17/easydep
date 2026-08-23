@@ -48,12 +48,14 @@ class JobSpec:
     # spawned generator is running.  It is deliberately outside the immutable
     # run directory, which does not exist until generation completes.
     progress_path: Path | None = None
+    app_id: str | None = None
 
 
 @dataclass
 class RunManifest:
     schema_version: str = "easydep-implementation-agent/v1alpha1"
     job_name: str = ""
+    app_id: str | None = None
     status: str = "RECEIVED"
     input_hash: str = ""
     inputs: dict[str, dict[str, Any]] = field(default_factory=dict)

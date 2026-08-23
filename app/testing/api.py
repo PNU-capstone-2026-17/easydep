@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.implementation.application.jobs import JobNotFound
 from app.implementation.application.jobs import worker as implementation_worker
+from app.metrics import langsmith as langsmith_metrics
 from app.testing.runtime.adapter import TestingAdapter
 from app.testing.runtime.verification import run_verification_graph
 
@@ -43,21 +44,22 @@ def _run_test(job_id: str, app_id: str, run_root: Path) -> None:
         # legacy orchestration graph — but it does run the same verification
         # stages: unit tests here, then static analysis and the dynamic checks
         # against a live instance built from the stored artifacts.
-        report = TestingAdapter().run(implementation_result={"run_root": str(run_root)})
-        unit_passed = bool(report.get("passed"))
+        with langsmith_metrics.trace_metadata({"app_id": app_id}):
+            report = TestingAdapter().run(implementation_result={"run_root": str(run_root)})
+            unit_passed = bool(report.get("passed"))
 
-        verification = run_verification_graph(
-            run_id=job_id,
-            app_id=app_id,
-            manifests_dir=str(run_root / "application" / "k8s"),
-            iac_dir=str(run_root / "application" / "terraform"),
-        )
-        report["verification"] = verification
-        report["passed"] = unit_passed and verification["passed"]
-        report["diagnostics"] = [
-            *(report.get("diagnostics") or []),
-            *verification["diagnostics"],
-        ]
+            verification = run_verification_graph(
+                run_id=job_id,
+                app_id=app_id,
+                manifests_dir=str(run_root / "application" / "k8s"),
+                iac_dir=str(run_root / "application" / "terraform"),
+            )
+            report["verification"] = verification
+            report["passed"] = unit_passed and verification["passed"]
+            report["diagnostics"] = [
+                *(report.get("diagnostics") or []),
+                *verification["diagnostics"],
+            ]
         _update(job_id, status="COMPLETED", result=report)
     except Exception as error:  # The job itself failed before a test report existed.
         _update(job_id, status="FAILED", error=str(error)[-4000:])

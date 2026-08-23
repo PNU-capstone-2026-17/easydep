@@ -273,6 +273,7 @@ def run_workflow(
             "agent": "implementation",
             "operation": "workflow",
             "run_id": run_root.name,
+            "app_id": spec.app_id,
         },
     ):
         return _run_workflow(

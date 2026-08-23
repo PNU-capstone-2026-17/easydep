@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
 from app.requirements.agent import resume_analysis, start_analysis
 from app.requirements.common import telemetry
@@ -120,39 +121,42 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
         resume = ResourceAnswer(answers=req.resource_answers)
     if resume is None and req.deployment_preferences is not None and not req.requirements:
         resume = req.deployment_preferences
-    if resume is not None:
-        if not req.thread_id:
-            raise HTTPException(
-                status_code=400,
-                detail="answer/edit/resource_answers 에는 thread_id가 필요합니다.",
-            )
-        payload = resume_analysis(
-            resume, req.thread_id, persist=settings.enable_session_persistence
-        )
-    else:
-        # 신규 분석 시작 경로
-        if not req.requirements:
-            raise HTTPException(
-                status_code=400,
-                detail="requirements(요구사항 문장 배열) 또는 answer+thread_id가 필요합니다.",
-            )
-        thread_id = req.thread_id or str(uuid.uuid4())
-        payload = start_analysis(
-            req.requirements,
-            thread_id,
-            req.feedback_gates,
-            persist=settings.enable_session_persistence,
-            constraints_text=req.resource_constraints_text or "",
-            cloud_constraints=(
-                req.deployment_preferences.model_dump(mode="json", exclude_unset=True)
-                if req.deployment_preferences is not None
-                else (
-                    req.cloud_constraints.model_dump(mode="json")
-                    if req.cloud_constraints is not None
-                    else None
+    with langsmith_metrics.trace_metadata(
+        {"app_id": req.app_id} if req.app_id else None
+    ):
+        if resume is not None:
+            if not req.thread_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="answer/edit/resource_answers 에는 thread_id가 필요합니다.",
                 )
-            ),
-        )
+            payload = resume_analysis(
+                resume, req.thread_id, persist=settings.enable_session_persistence
+            )
+        else:
+            # 신규 분석 시작 경로
+            if not req.requirements:
+                raise HTTPException(
+                    status_code=400,
+                    detail="requirements(요구사항 문장 배열) 또는 answer+thread_id가 필요합니다.",
+                )
+            thread_id = req.thread_id or str(uuid.uuid4())
+            payload = start_analysis(
+                req.requirements,
+                thread_id,
+                req.feedback_gates,
+                persist=settings.enable_session_persistence,
+                constraints_text=req.resource_constraints_text or "",
+                cloud_constraints=(
+                    req.deployment_preferences.model_dump(mode="json", exclude_unset=True)
+                    if req.deployment_preferences is not None
+                    else (
+                        req.cloud_constraints.model_dump(mode="json")
+                        if req.cloud_constraints is not None
+                        else None
+                    )
+                ),
+            )
 
     if req.app_id:
         try:

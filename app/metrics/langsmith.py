@@ -45,6 +45,18 @@ def tracing_enabled() -> bool:
     )
 
 
+@contextmanager
+def trace_metadata(metadata: Mapping[str, Any] | None = None) -> Iterator[None]:
+    """Attach shared, non-sensitive metadata to nested agent traces."""
+
+    combined_metadata = {**_TRACE_METADATA.get(), **dict(metadata or {})}
+    metadata_token = _TRACE_METADATA.set(combined_metadata)
+    try:
+        yield
+    finally:
+        _TRACE_METADATA.reset(metadata_token)
+
+
 def _client() -> Any:
     from langsmith import Client
 
@@ -119,34 +131,31 @@ def trace_scope(
         yield TraceRun()
         return
 
-    combined_metadata = {**_TRACE_METADATA.get(), **dict(metadata or {})}
-    metadata_token = _TRACE_METADATA.set(combined_metadata)
     span = TraceRun()
     body_error: BaseException | None = None
     try:
-        with tracing_context(
-            enabled=True,
-            client=client,
-            project_name=os.getenv("LANGSMITH_PROJECT", "easydep"),
-        ):
-            with trace(
-                name=name,
-                run_type=run_type,
-                metadata={"service": "easydep", **combined_metadata},
-                project_name=os.getenv("LANGSMITH_PROJECT", "easydep"),
+        with trace_metadata(metadata):
+            with tracing_context(
+                enabled=True,
                 client=client,
-            ) as run:
-                span.run = run
-                try:
-                    yield span
-                except BaseException as error:
-                    body_error = error
-                    raise
-                finally:
-                    span._flush()
+                project_name=os.getenv("LANGSMITH_PROJECT", "easydep"),
+            ):
+                with trace(
+                    name=name,
+                    run_type=run_type,
+                    metadata={"service": "easydep", **_TRACE_METADATA.get()},
+                    project_name=os.getenv("LANGSMITH_PROJECT", "easydep"),
+                    client=client,
+                ) as run:
+                    span.run = run
+                    try:
+                        yield span
+                    except BaseException as error:
+                        body_error = error
+                        raise
+                    finally:
+                        span._flush()
     except BaseException:
         if body_error is not None:
             raise
         _LOG.warning("LangSmith trace submission failed", exc_info=True)
-    finally:
-        _TRACE_METADATA.reset(metadata_token)

@@ -193,6 +193,7 @@ def write_execution_plan(
 def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     """Execute one implementation agent task and publish only safe task metrics."""
 
+    app_id = _run_app_id(run_root)
     with langsmith_metrics.trace_scope(
         "easydep.implementation.openhands_task",
         metadata={
@@ -200,6 +201,7 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "operation": "openhands_task",
             "run_id": run_root.name,
             "task_id": task_id,
+            "app_id": app_id,
         },
     ):
         return _execute_openhands_task(run_root, task_id)
@@ -231,6 +233,7 @@ def _render_missing_output_repair_prompt(
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
+    app_id = _run_app_id(run_root)
 
     compatibility = openhands_compatibility()
     missing = [key for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured") if not compatibility[key]]
@@ -318,6 +321,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     "operation": "openhands_conversation",
                     "run_id": run_root.name,
                     "task_id": task_id,
+                    "app_id": app_id,
                     "repair_attempt": repair_attempt,
                     "ls_provider": "nvidia-nim",
                     "ls_model_name": configured_model(str(task["llm"]["model"])),
@@ -599,6 +603,19 @@ def _conversation_token_usage(conversation) -> tuple[int, int] | None:
         )
     except Exception:  # noqa: BLE001 - observability is optional
         return None
+
+
+def _run_app_id(run_root: Path) -> str | None:
+    """Read the immutable app identity saved with an implementation run."""
+
+    try:
+        manifest = json.loads(
+            (run_root / "reports" / "run-manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return None
+    app_id = manifest.get("app_id")
+    return str(app_id) if app_id else None
 
 
 def _requires_cross_phase_repair(

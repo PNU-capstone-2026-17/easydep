@@ -110,6 +110,7 @@ class PrototypeClient:
         write("cloud", "resource-spec.json", design.get("resource_spec"))
         job = {
             "name": f"easydep-{app_id[:8]}",
+            "appId": app_id,
             "workspaceRoot": str(self.settings.repository_root),
             "inputs": inputs,
             "requiredInputs": ["bceClass", "sequence", "openapi"],

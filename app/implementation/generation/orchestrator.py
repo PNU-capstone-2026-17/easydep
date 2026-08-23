@@ -118,6 +118,7 @@ def load_job(path: Path) -> JobSpec:
             if isinstance(data.get("progressPath"), str)
             else None
         ),
+        app_id=str(data["appId"]) if data.get("appId") else None,
     )
 
 
@@ -137,7 +138,7 @@ class _ManifestBuffer:
 class PrototypeOrchestrator:
     def __init__(self, spec: JobSpec):
         self.spec = spec
-        self.manifest = RunManifest(job_name=spec.name)
+        self.manifest = RunManifest(job_name=spec.name, app_id=spec.app_id)
         self._sinks = threading.local()
 
     def _sink(self):
