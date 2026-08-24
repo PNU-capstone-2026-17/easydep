@@ -57,6 +57,7 @@ Boundary-Entity 직결을 고치려면 Control을 끼워야 하는데 그게 어
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -465,7 +466,15 @@ def _sequence_repair_score(findings: list[Finding]) -> tuple[int, ...]:
         for rule_id in rules
     }
     for finding in findings:
-        counts[phase_by_rule.get(finding.rule_id, len(counts) - 1)] += 1
+        index = phase_by_rule.get(finding.rule_id, len(counts) - 1)
+        if finding.rule_id == "sequence.duplicate-consecutive-messages":
+            # A detector reports one compact finding per duplicate run. Its
+            # count is still material: accepting 36 copies because another
+            # unrelated defect disappeared is not a repair.
+            match = re.search(r"(\d+)회\s+연달아", str(finding.message))
+            counts[index] += int(match.group(1)) if match else 1
+        else:
+            counts[index] += 1
     return tuple(counts)
 
 

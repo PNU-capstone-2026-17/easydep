@@ -12,6 +12,7 @@ from app.design.services.common.structured import revision_messages
 from app.design.services.sequence_diagram.extractor import (
     SequenceDiagramCollection,
     SequenceModel,
+    normalize_sequence_contracts,
     parse_sequence_structured,
 )
 
@@ -158,6 +159,7 @@ def revise_sequence_model(
     feedback: str,
     context_text: str = "",
     targets: set[str] | None = None,
+    class_diagram_puml: str = "",
 ) -> dict[str, Any]:
     """현재 모델 + 피드백 → 수정된 모델. 피드백이 없으면 원본을 그대로 둔다."""
     if not current_model or not feedback:
@@ -178,7 +180,7 @@ def revise_sequence_model(
         if isinstance(revision_model.get("Diagrams"), list)
         else SequenceModel
     )
-    return parse_sequence_structured(
+    revised = parse_sequence_structured(
         revision_messages(
             SEQUENCE_REVISION_SYSTEM_PROMPT,
             "Use Case Specification and Class Diagram",
@@ -189,4 +191,9 @@ def revise_sequence_model(
             targets,
         ),
         schema,
+    )
+    return (
+        normalize_sequence_contracts(revised, class_diagram_puml)
+        if class_diagram_puml
+        else revised
     )

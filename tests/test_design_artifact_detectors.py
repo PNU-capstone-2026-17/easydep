@@ -904,6 +904,24 @@ def test_duplicate_consecutive_messages_rejects_duplicates():
     findings = detectors.sequence_duplicate_consecutive_messages(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.duplicate-consecutive-messages"
+    assert "2회" in findings[0].message
+
+
+def test_duplicate_consecutive_messages_reports_one_run_with_its_size():
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "label": "doA()", "type": "sync"},
+            {"source": "A", "target": "B", "label": "doA()", "type": "sync"},
+            {"source": "A", "target": "B", "label": "doA()", "type": "sync"},
+            {"source": "A", "target": "B", "label": "doB()", "type": "sync"},
+        ],
+    }
+
+    findings = detectors.sequence_duplicate_consecutive_messages(model, STATE)
+
+    assert len(findings) == 1
+    assert "3회" in findings[0].message
+    assert "messages 1-3" in findings[0].location
 
 
 def test_extension_replaying_its_anchor_operation_is_rejected():
@@ -922,6 +940,10 @@ def test_extension_replaying_its_anchor_operation_is_rejected():
     }
     model = {
         "use_case_id": "UC1",
+        "Participants": [
+            {"alias": "Boundary", "kind": "boundary"},
+            {"alias": "Control", "kind": "control"},
+        ],
         "Messages": [
             {
                 "source": "Boundary",
@@ -972,6 +994,39 @@ def test_extension_retry_inside_loop_is_not_treated_as_duplicate_operation():
                 "label": "submit()",
                 "step_ids": ["UC1:extension:1a:1a1"],
                 "fragments": [{"id": "retry", "type": "loop", "branch": "main", "condition": "retry"}],
+            },
+        ],
+    }
+
+    assert detectors.sequence_extension_replays_anchor_operation(model, state) == []
+
+
+def test_extension_repeated_boundary_display_is_not_an_operation_replay():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "extensions": [{"label": "1a", "branch_step": 1}],
+            }]
+        }
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Participants": [
+            {"alias": "control", "kind": "control"},
+            {"alias": "boundary", "kind": "boundary"},
+        ],
+        "Messages": [
+            {
+                "source": "control", "target": "boundary",
+                "label": "displayResult(message:String)", "type": "sync",
+                "step_ids": ["UC1:main:1"], "fragments": [],
+            },
+            {
+                "source": "control", "target": "boundary",
+                "label": "displayResult(message:String)", "type": "sync",
+                "step_ids": ["UC1:extension:1a:1a1"],
+                "fragments": [{"id": "failed", "type": "opt", "branch": "main"}],
             },
         ],
     }

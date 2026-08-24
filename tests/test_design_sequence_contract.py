@@ -24,6 +24,7 @@ from app.design.services.sequence_diagram.extractor import (
     normalize_sequence_usecase_spec,
     parse_sequence_structured,
     reassemble_sequence_diagrams,
+    normalize_sequence_message_order,
     _only_callable_class,
 )
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
@@ -33,6 +34,7 @@ from app.design.nodes.artifact import (
     CLEAN,
     NEEDS_INPUT,
     NO_IMPROVEMENT,
+    _sequence_repair_score,
     check_node,
     merge_model,
     render_node,
@@ -61,6 +63,41 @@ def _message(source: str, target: str, label: str, **overrides) -> dict:
     }
     message.update(overrides)
     return message
+
+
+def test_normalize_sequence_message_order_places_extension_after_anchor():
+    messages = [
+        _message("boundary", "control", "complete()", step_ids=["UC1:main:3"], call_id="call-3"),
+        _message("boundary", "control", "submit()", step_ids=["UC1:main:1"], call_id="call-1"),
+        _message(
+            "control", "boundary", "Error", type="return", step_ids=[], reply_to="call-1"
+        ),
+        _message(
+            "control", "boundary", "displayError()",
+            step_ids=["UC1:extension:1a:1a1"],
+        ),
+        _message("boundary", "control", "next()", step_ids=["UC1:main:2"], call_id="call-2"),
+    ]
+
+    ordered = normalize_sequence_message_order(messages)
+
+    assert [message["label"] for message in ordered] == [
+        "submit()", "Error", "displayError()", "next()", "complete()"
+    ]
+
+
+def test_sequence_repair_score_counts_every_message_in_duplicate_run():
+    findings = [
+        Finding(
+            "sequence.duplicate-consecutive-messages",
+            "동일한 메시지 'display()'가 4회 연달아 중복 기입되어 있음 (Control → Boundary)",
+            "Control -> Boundary : display() (messages 1-4)",
+        )
+    ]
+
+    score = _sequence_repair_score(findings)
+
+    assert sum(score) == 4
 
 
 def test_llm_contract_normalization_repairs_only_mechanical_links() -> None:

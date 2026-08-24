@@ -213,7 +213,11 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
         state.get("class_diagram_puml", ""),
     ),
     revise=lambda current, feedback, state, targets: revise_sequence_model(
-        current, feedback, _sequence_revision_context(state, targets), targets
+        current,
+        feedback,
+        _sequence_revision_context(state, targets),
+        targets,
+        state.get("class_diagram_puml", ""),
     ),
     render=generate_sequence_from_model,
     validate=validate_puml_artifact,

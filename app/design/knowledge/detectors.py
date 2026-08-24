@@ -2996,6 +2996,26 @@ def sequence_duplicate_consecutive_messages(model: dict, state: dict) -> list[Fi
     found: list[Finding] = []
     messages = model.get("Messages", [])
 
+    duplicate_run_start: int | None = None
+    duplicate_run_key: tuple[str, str, str, str, str] | None = None
+
+    def report_run(end_index: int) -> None:
+        """Report one run with its size so repair scoring cannot hide growth."""
+        nonlocal duplicate_run_start, duplicate_run_key
+        if duplicate_run_start is None or duplicate_run_key is None:
+            return
+        source, target, label, _, _ = duplicate_run_key
+        count = end_index - duplicate_run_start + 1
+        found.append(
+            Finding(
+                rule_id,
+                f"동일한 메시지 '{label}'가 {count}회 연달아 중복 기입되어 있음 ({source} → {target})",
+                f"{source} -> {target} : {label} (messages {duplicate_run_start + 1}-{end_index + 1})",
+            )
+        )
+        duplicate_run_start = None
+        duplicate_run_key = None
+
     for i in range(1, len(messages)):
         prev = messages[i - 1]
         curr = messages[i]
@@ -3016,15 +3036,14 @@ def sequence_duplicate_consecutive_messages(model: dict, state: dict) -> list[Fi
         )
 
         if prev_key == curr_key and prev_key[2]:  # label이 비어있지 않은 경우
-            source, target, label = curr_key[0], curr_key[1], curr_key[2]
-            location = f"{source} -> {target} : {label}"
-            found.append(
-                Finding(
-                    rule_id,
-                    f"동일한 메시지 '{label}'가 연달아 중복 기입되어 있음 ({source} → {target})",
-                    location,
-                )
-            )
+            if duplicate_run_key != curr_key:
+                report_run(i - 1)
+                duplicate_run_start = i - 1
+                duplicate_run_key = curr_key
+            continue
+        report_run(i - 1)
+
+    report_run(len(messages) - 1)
 
     return found
 
@@ -3069,6 +3088,30 @@ def sequence_extension_replays_anchor_operation(
 
     call_types = {"sync", "async", "self"}
     messages = [item for item in model.get("Messages") or [] if isinstance(item, dict)]
+    participant_kinds = {
+        _participant_id(item): str(item.get("kind") or "").strip().lower()
+        for item in model.get("Participants") or []
+        if isinstance(item, dict)
+    }
+
+    def is_command_or_input(message: dict) -> bool:
+        """Only treat a repeated input/command as a second execution.
+
+        Different extension outcomes legitimately reuse one Control-to-Boundary
+        display operation.  Those presentation calls do not rerun the branch
+        anchor, whereas Actor-to-Boundary input and calls into Control/Entity
+        do represent a command that may have been executed twice.
+        """
+        source_kind = participant_kinds.get(
+            str(message.get("source") or "").strip(), ""
+        )
+        target_kind = participant_kinds.get(
+            str(message.get("target") or "").strip(), ""
+        )
+        return (
+            source_kind == "actor" and target_kind == "boundary"
+        ) or target_kind in {"control", "entity", "database"}
+
     found: list[Finding] = []
     reported: set[tuple[str, str, str, str]] = set()
     for extension_label, branch_step in extension_anchors.items():
@@ -3081,6 +3124,7 @@ def sequence_extension_replays_anchor_operation(
             )
             for message in messages
             if str(message.get("type") or "sync").lower() in call_types
+            and is_command_or_input(message)
             and anchor_step_id in {str(item) for item in message.get("step_ids") or []}
         }
         if not anchor_operations:
@@ -3088,6 +3132,8 @@ def sequence_extension_replays_anchor_operation(
         extension_prefix = f"{use_case_id}:extension:{extension_label}:"
         for message in messages:
             if str(message.get("type") or "sync").lower() not in call_types:
+                continue
+            if not is_command_or_input(message):
                 continue
             if not any(
                 str(step_id).startswith(extension_prefix)

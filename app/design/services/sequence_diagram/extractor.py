@@ -689,8 +689,64 @@ def normalize_sequence_contracts(
                 and expected_return.lower() != "void"
             ):
                 normalized_messages.append(_return_message(call, expected_return))
-        diagram["Messages"] = normalized_messages
+        diagram["Messages"] = normalize_sequence_message_order(normalized_messages)
     return normalize_sequence_participants(model, class_diagram_puml)
+
+
+def normalize_sequence_message_order(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Place traced extensions directly after their declared main-flow anchor.
+
+    The LLM decides which grounded messages express a scenario.  Their
+    ``step_ids`` already carry the deterministic ordering contract, however;
+    letting a repair append an extension after later main steps creates a
+    misleading diagram without adding any semantic information.  Keep each
+    interaction intact while ordering only traceable flow groups.  A return
+    inherits the group of the call it answers so it cannot drift behind a later
+    independent step.
+    """
+    call_groups: dict[str, tuple[int, int, str]] = {}
+
+    def explicit_group(message: dict[str, Any]) -> tuple[int, int, str] | None:
+        for step_id in message.get("step_ids") or []:
+            value = str(step_id or "").strip()
+            main = re.fullmatch(r"[^:]+:main:(\d+)", value)
+            if main:
+                return int(main.group(1)), 0, ""
+            extension = re.fullmatch(r"[^:]+:extension:([^:]+):[^:]+", value)
+            if extension:
+                label = extension.group(1)
+                match = re.match(r"(\d+)", label)
+                # Global alternatives have no numeric anchor and remain after
+                # the explicitly ordered scenario steps.
+                return (int(match.group(1)), 1, label) if match else (10**9, 1, label)
+        return None
+
+    groups: list[tuple[int, int, str] | None] = []
+    for message in messages:
+        group = explicit_group(message)
+        if group is None and str(message.get("type") or "").lower() == "return":
+            group = call_groups.get(str(message.get("reply_to") or "").strip())
+        groups.append(group)
+        if str(message.get("type") or "").lower() in {"sync", "async", "self"}:
+            call_id = str(message.get("call_id") or "").strip()
+            if call_id and group is not None:
+                call_groups[call_id] = group
+
+    # Untraced messages have no safe placement evidence. Preserve their local
+    # position instead of guessing a flow step for them.
+    if not any(group is not None for group in groups):
+        return messages
+    indexed = list(enumerate(messages))
+    return [
+        message
+        for _, message in sorted(
+            indexed,
+            key=lambda item: (
+                groups[item[0]] if groups[item[0]] is not None else (10**9, 2, ""),
+                item[0],
+            ),
+        )
+    ]
 
 
 def normalize_sequence_participants(
