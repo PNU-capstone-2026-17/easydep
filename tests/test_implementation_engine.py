@@ -65,6 +65,7 @@ from app.implementation.workflows.repair import (
 )
 from app.implementation.planning.design_context import (
     detect_e2e_design_gaps,
+    find_control_persistence_contract_gaps,
     find_empty_java_contracts,
     generate_api_adapter_tasks,
     generate_boundary_adapter_tasks,
@@ -3513,6 +3514,68 @@ $ref: '#/components/schemas/PurchaseRecord'"""
             ]
         }
         self.assertEqual("com.example.demo", task_base_package(task))
+
+
+class ControlPersistenceContractPlanningTest(unittest.TestCase):
+    def test_blocks_control_that_has_persistent_entities_but_no_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bce = root / "class-diagram.puml"
+            erd = root / "erd.puml"
+            bce.write_text(
+                """class ScheduleController <<Control>> {
+  + getSchedule(studentId: String): List<Enrollment>
+}
+class Enrollment <<Entity>> {
+}
+ScheduleController ..> Enrollment
+""",
+                encoding="utf-8",
+            )
+            erd.write_text('entity "Enrollment" as Enrollment {\n}', encoding="utf-8")
+            spec = SimpleNamespace(inputs={"bceClass": bce, "erd": erd})
+            ir = SimpleNamespace(gateways=())
+
+            with patch(
+                "app.implementation.planning.design_context.build_implementation_ir",
+                return_value=ir,
+            ):
+                gaps = find_control_persistence_contract_gaps(spec, root)
+
+            self.assertEqual(1, len(gaps))
+            self.assertEqual("ScheduleController", gaps[0]["control"])
+            self.assertEqual(["Enrollment"], gaps[0]["persistentEntities"])
+            self.assertIn("<<Gateway>>", str(gaps[0]["requiredContract"]))
+
+    def test_accepts_control_with_an_explicit_persistence_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bce = root / "class-diagram.puml"
+            erd = root / "erd.puml"
+            bce.write_text(
+                """class ScheduleController <<Control>> {
+}
+class Enrollment <<Entity>> {
+}
+class EnrollmentStore <<Gateway>> {
+  + findSchedule(studentId: String): List<Enrollment>
+}
+ScheduleController ..> Enrollment
+ScheduleController ..> EnrollmentStore
+""",
+                encoding="utf-8",
+            )
+            erd.write_text('entity "Enrollment" as Enrollment {\n}', encoding="utf-8")
+            spec = SimpleNamespace(inputs={"bceClass": bce, "erd": erd})
+            ir = SimpleNamespace(
+                gateways=(SimpleNamespace(name="EnrollmentStore", kind="persistence"),)
+            )
+
+            with patch(
+                "app.implementation.planning.design_context.build_implementation_ir",
+                return_value=ir,
+            ):
+                self.assertEqual([], find_control_persistence_contract_gaps(spec, root))
 
 
 if __name__ == "__main__":

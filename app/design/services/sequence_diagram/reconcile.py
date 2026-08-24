@@ -564,6 +564,17 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
                 "sequence.usecase-step-coverage",
                 "sequence.actor-step-involvement",
                 "sequence.boundary-operation-direction",
+                # Reusing one Boundary input for two independent actor actions
+                # usually means the class contract is missing a distinct input
+                # operation. Reassembly alone cannot create that operation.
+                "sequence.step-operation-distinctness",
+                # An unresolved step has no call to inspect, so the old
+                # missing-receiver-method path never reached the class reviser.
+                # It is still concrete evidence that the existing BCE contract
+                # cannot express a stated use-case behavior. Ask for a minimal,
+                # reviewable method proposal rather than leaving the same review
+                # note on every sequence regeneration.
+                "sequence.unresolved-usecase-step",
             }
         )
 
@@ -651,6 +662,30 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
             "represents it, you MUST add the minimum grounded input method to the most "
             "appropriate existing Boundary; do not leave the output method as a substitute."
         )
+    unresolved_feedback = ""
+    if any(
+        finding.rule_id == "sequence.unresolved-usecase-step"
+        for finding in method_need_findings
+    ):
+        unresolved_feedback = (
+            " An unresolved step means no grounded class operation could express a "
+            "behavior explicitly stated in the use case. Propose the smallest "
+            "necessary method on an existing Boundary or Control, with an exact "
+            "signature and return type. Preserve the unresolved step if the scenario "
+            "does not determine a safe method; never reuse a generic operation just "
+            "to make the diagram appear complete."
+        )
+    distinct_input_feedback = ""
+    if any(
+        finding.rule_id == "sequence.step-operation-distinctness"
+        for finding in method_need_findings
+    ):
+        distinct_input_feedback = (
+            " Different actor input steps reported as sharing one Boundary call "
+            "must not be repaired by reusing that generic method. Add a separate, "
+            "grounded Boundary input method only when the stated user actions are "
+            "semantically distinct."
+        )
     feedback = (
         "Review these sequence-to-class contract issues against the use-case specification:\n- "
         + "\n- ".join(issues)
@@ -664,6 +699,8 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
         "signature, do not copy it to the receiver; leave it for sequence remapping. "
         "Preserve every field, relationship, and unrelated method."
         + direction_feedback
+        + unresolved_feedback
+        + distinct_input_feedback
     )
     proposed_bce = revise_bce_classes(
         current_bce=bce,

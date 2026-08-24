@@ -548,6 +548,101 @@ def test_uncovered_flow_proposes_a_minimal_method_chosen_by_class_llm():
     assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["display()"]
 
 
+def test_unresolved_sequence_step_proposes_a_grounded_class_method_for_approval():
+    state = {
+        "usecase_spec": {"use_case_specs": []},
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "SignInBoundary", "methods": ["submitCredentials()"]},
+                {"className": "SignInControl", "methods": ["authenticate(): Student"]},
+            ]
+        },
+        "sequence_diagram_model": {
+            "use_case_id": "UC1",
+            "Participants": [],
+            "Messages": [],
+            "UnresolvedSteps": [{
+                "step_id": "UC1:extension:2a:2a1",
+                "sentence": "System informs the student that credentials are invalid.",
+                "reason": "No grounded receiver method was selected from the class diagram.",
+                "candidates": ["SignInControl.authenticate()"],
+            }],
+        },
+    }
+    proposed = {
+        "Classes": [
+            {
+                "className": "SignInBoundary",
+                "methods": ["submitCredentials()", "showSignInFailure(message : String): void"],
+            },
+            {"className": "SignInControl", "methods": ["authenticate(): Student"]},
+        ]
+    }
+
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+        return_value=proposed,
+    ) as revise:
+        result = reconcile_class_methods(state)
+
+    assert "unresolved step means no grounded class operation" in revise.call_args.kwargs["feedback"]
+    proposal = result["sequence_diagram_model"]["MethodProposals"][0]
+    assert proposal["class_name"] == "SignInBoundary"
+    assert proposal["method"] == "showSignInFailure(message : String): void"
+    assert proposal["step_ids"] == ["UC1:extension:2a:2a1"]
+    assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["submitCredentials()"]
+
+
+def test_distinct_actor_inputs_propose_a_separate_boundary_method_for_approval():
+    state = {
+        "usecase_spec": {"use_case_specs": []},
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "CatalogBoundary", "methods": ["requestCatalog()"]},
+            ]
+        },
+        "sequence_diagram_model": {
+            "use_case_id": "UC1",
+            "Participants": [
+                {"name": "Student", "alias": "student", "kind": "actor"},
+                {
+                    "name": "CatalogBoundary",
+                    "alias": "catalog",
+                    "kind": "boundary",
+                    "source_class": "CatalogBoundary",
+                },
+            ],
+            "Messages": [
+                {
+                    "source": "student", "target": "catalog", "label": "requestCatalog()",
+                    "type": "sync", "step_ids": ["UC1:main:1"],
+                },
+                {
+                    "source": "student", "target": "catalog", "label": "requestCatalog()",
+                    "type": "sync", "step_ids": ["UC1:main:2"],
+                },
+            ],
+        },
+    }
+    proposed = {
+        "Classes": [{
+            "className": "CatalogBoundary",
+            "methods": ["requestCatalog()", "submitCatalogFilters(): void"],
+        }]
+    }
+
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+        return_value=proposed,
+    ) as revise:
+        result = reconcile_class_methods(state)
+
+    assert "Different actor input steps reported as sharing one Boundary call" in revise.call_args.kwargs["feedback"]
+    proposal = result["sequence_diagram_model"]["MethodProposals"][0]
+    assert proposal["class_name"] == "CatalogBoundary"
+    assert proposal["method"] == "submitCatalogFilters(): void"
+
+
 def test_boundary_output_violation_proposes_an_input_method_for_approval():
     state = {
         "usecase_spec": {

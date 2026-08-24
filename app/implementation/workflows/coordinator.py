@@ -33,6 +33,7 @@ from ..generation.orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
+from ..planning.design_context import find_control_persistence_contract_gaps
 from .completion import audit_run_completion
 from .conformance import (
     SourceDesignConformanceError,
@@ -109,6 +110,9 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
         if missing_in_bce:
             details.append("missing in BCE: " + ", ".join(missing_in_bce))
         raise ValueError("BCE/ERD entity mismatch; " + "; ".join(details))
+    persistence_contract_gaps = find_control_persistence_contract_gaps(spec, run_root)
+    if persistence_contract_gaps:
+        return _block_missing_persistence_contracts(run_root, persistence_contract_gaps)
     needs_persistence = bool(bce_entities) or any(
         gateway.kind == "persistence" for gateway in ir.gateways
     )
@@ -131,6 +135,51 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
+
+
+def _block_missing_persistence_contracts(
+    run_root: Path, gaps: list[dict[str, object]]
+) -> dict[str, object]:
+    """Persist a planner-owned contract gap before an agent can invent a port."""
+    report_path = run_root / "reports" / "design-gaps" / "control-persistence-contracts.json"
+    report = {
+        "schemaVersion": "implementation-design-gaps/v1alpha1",
+        "phase": "control",
+        "status": "NEEDS_PLANNER",
+        "gaps": gaps,
+        "requiredAction": (
+            "Add an explicit BCE <<Gateway>> persistence port, relate it to each "
+            "listed Control, and define the exact operations needed by that Control."
+        ),
+    }
+    _write_json_atomic(report_path, report)
+    previous_path = run_root / "reports" / "workflow-state.json"
+    previous = _read_json(previous_path) if previous_path.is_file() else {}
+    state = {
+        "schemaVersion": WORKFLOW_SCHEMA,
+        "runId": run_root.name,
+        "status": "NEEDS_PLANNER",
+        "currentPhase": "control",
+        "updatedAt": _now(),
+        "phases": [
+            {
+                "phaseId": phase_id,
+                "dependsOn": list(dependencies),
+                "status": "UNPLANNED",
+                "taskIds": [],
+            }
+            for phase_id, dependencies, _ in PHASES
+        ],
+        "tasks": [],
+        "nextRunnableTasks": [],
+        "blockingReason": (
+            "Control persistence contracts are incomplete; see "
+            "reports/design-gaps/control-persistence-contracts.json."
+        ),
+        "approval": previous.get("approval"),
+    }
+    _write_json_atomic(previous_path, state)
+    return state
 
 
 def reconcile_workflow_state(run_root: Path) -> dict[str, object]:

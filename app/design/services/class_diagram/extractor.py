@@ -126,6 +126,15 @@ _PROCEDURE = """
    that contains that identifier. Do not emit a generic `process(operation, data)` \
    signature that leaves a path/resource identifier with no Control parameter; the \
    downstream API binding cannot safely implement such an operation. \
+   Derive operations for every distinct main-flow input, system action, success \
+   notification, and extension outcome that the specification actually states. \
+   Do not collapse two distinct actor inputs into one generic Boundary method \
+   merely because their data shape is similar. A Boundary may declare a \
+   notification/output method for a system-to-actor step; only actor-to-Boundary \
+   calls must use an input/event operation. When one Control command has to \
+   distinguish success from stated failure branches for an API or user-visible \
+   outcome, give it a specific non-void result type instead of `void`; use `void` \
+   only when the specification provides no observable result distinction. \
 6. Field derivation: assign fields to state a class must hold — Entities \
    first; give fields to a Control or Boundary only if it must hold state \
    across steps. Do not list getters/setters as methods. Write each field as \
