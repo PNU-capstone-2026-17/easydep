@@ -17,9 +17,8 @@ from app.core.config import settings
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
+    assess_bce_erd_entity_contract,
     parse_components,
-    parse_erd_association_entities,
-    parse_erd_entities,
     parse_openapi_operations,
     pascal_case,
     remove_readonly,
@@ -477,12 +476,9 @@ class PrototypeOrchestrator:
                 )
                 if item.stereotype.lower() == "entity"
             }
-            erd_entities = (
-                parse_erd_entities(erd.read_text(encoding="utf-8"))
-                if erd and erd.is_file()
-                else set()
-            )
-            if bce_entities and not erd_entities:
+            erd_source = erd.read_text(encoding="utf-8") if erd and erd.is_file() else ""
+            contract = assess_bce_erd_entity_contract(erd_source, bce_entities)
+            if bce_entities and not contract.erd_entities:
                 self.manifest.diagnostics.append(
                     Diagnostic(
                         "ERD_REQUIRED_FOR_BCE_ENTITIES",
@@ -491,19 +487,16 @@ class PrototypeOrchestrator:
                         str(bce),
                     )
                 )
-            elif bce_entities != erd_entities and erd_entities:
-                allowed_associations = parse_erd_association_entities(
-                    erd.read_text(encoding="utf-8"), bce_entities
-                )
-                unexpected_erd_entities = erd_entities - bce_entities - allowed_associations
-                missing_erd_entities = bce_entities - erd_entities
+            elif contract.missing_bce_entities or contract.unexpected_erd_entities:
+                unexpected_erd_entities = set(contract.unexpected_erd_entities)
+                missing_erd_entities = set(contract.missing_bce_entities)
                 if missing_erd_entities or unexpected_erd_entities:
                     self.manifest.diagnostics.append(
                         Diagnostic(
                             "BCE_ERD_ENTITY_MISMATCH",
                             "ERROR",
-                            "BCE and ERD entity aliases must match (join entities are allowed): "
-                            f"BCE={sorted(bce_entities)}, ERD={sorted(erd_entities)}, "
+                            "BCE and ERD entity aliases must match (generated physical tables are allowed): "
+                            f"BCE={sorted(bce_entities)}, ERD={sorted(contract.erd_entities)}, "
                             f"unmatched ERD={sorted(unexpected_erd_entities)}, "
                             f"missing ERD={sorted(missing_erd_entities)}",
                             str(erd),

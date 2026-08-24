@@ -1330,6 +1330,10 @@ Rules:
   only when required by H2/SQL and use the same normalized name in the migration.
 - Implement relationship ownership from the ERD cardinality and foreign-key direction. Add a
   bidirectional helper only when both navigation directions are represented in the contracts.
+- An ERD comment of the form `easydep:erd-origin kind=multivalued` marks a generated 1NF
+  collection table. It has no matching BCE Entity: map it through its annotated parent and field
+  (for example with `@ElementCollection` and `@CollectionTable`) instead of inventing a domain
+  entity for the table.
 - Initialize collection relationships, provide a protected no-arg constructor plus public constructors or accessors needed by the mapper, and add relationship helper methods that keep both sides consistent.
 - Do not use Lombok, records, cascading remove, or eager collections. Do not edit BCE domain entities.
 - Create the contracted file, then finish immediately.
@@ -1380,6 +1384,8 @@ Rules:
 - Map every scalar property exposed by the exact BCE accessors and persistence entity accessors.
 - Map every BCE entity represented in the ERD, including collections and relationships, without
   infinite recursion. Relationship ownership must remain consistent with the ERD.
+- Treat an ERD `easydep:erd-origin kind=multivalued` annotation as a collection persistence
+  detail of its parent BCE entity, never as an undeclared BCE domain type.
 - Never use reflection or assume an accessor absent from the contracts.
 - Tests must cover scalar mapping, portfolio/holding mapping, and null handling. Do not mock value objects.
 - Ensure date/time values and constructors match the exact parameter types declared in the generated contracts (e.g. java.time types vs domain models).

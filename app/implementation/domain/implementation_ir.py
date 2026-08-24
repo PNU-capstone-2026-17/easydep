@@ -78,6 +78,16 @@ class ImplementationIR:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class ErdEntityContract:
+    """BCE entities and ERD-only physical tables described by one ERD input."""
+
+    erd_entities: frozenset[str]
+    allowed_physical_entities: frozenset[str]
+    missing_bce_entities: frozenset[str]
+    unexpected_erd_entities: frozenset[str]
+
+
 def build_implementation_ir(
     spec: JobSpec, run_root: Path, *, persist: bool = True
 ) -> ImplementationIR:
@@ -286,6 +296,96 @@ def parse_erd_association_entities(source: str, base_entities: set[str]) -> set[
                     associations.add(name)
                     break
     return associations
+
+
+def parse_erd_multivalued_entities(source: str, base_entities: set[str]) -> set[str]:
+    """Find 1NF child tables produced from a BCE collection field.
+
+    New ERDs carry an ``easydep:erd-origin`` annotation emitted by the
+    deterministic ERD renderer.  We still recognise older rendered artifacts,
+    but only when their explicit 1NF section, parent relationship, name and
+    value-column shape all agree.  That fallback deliberately does not accept
+    arbitrary one-parent tables such as ``StudentProfile``.
+    """
+    entities = parse_erd_entities(source)
+    neighbors = _erd_neighbors(source, entities)
+    annotated: dict[str, tuple[str, str]] = {}
+    annotation_pattern = re.compile(
+        r"(?m)^\s*'\s*easydep:erd-origin\s+kind=multivalued\s+"
+        r"alias=(?P<alias>[A-Za-z_]\w*)\s+parent=(?P<parent>[A-Za-z_]\w*)\s+"
+        r"field=(?P<field>[A-Za-z_]\w*)\s*$"
+    )
+    for match in annotation_pattern.finditer(source):
+        annotated[match.group("alias")] = (match.group("parent"), match.group("field"))
+
+    legacy_start = source.find("' === 제1정규화(1NF) 분리 테이블 ===")
+    legacy_entities = (
+        set(parse_erd_entities(source[legacy_start:])) if legacy_start >= 0 else set()
+    )
+    accepted: set[str] = set()
+    for name in entities - base_entities:
+        parent_field = annotated.get(name)
+        if parent_field is not None:
+            parent, field = parent_field
+        elif name in legacy_entities:
+            parent = next(iter(neighbors.get(name, set()) & base_entities), "")
+            field = name[len(parent):] if parent and name.lower().startswith(parent.lower()) else ""
+        else:
+            continue
+        if not _is_multivalued_child_shape(source, name, parent, field, neighbors, base_entities):
+            continue
+        accepted.add(name)
+    return accepted
+
+
+def assess_bce_erd_entity_contract(source: str, base_entities: set[str]) -> ErdEntityContract:
+    """Classify domain entities separately from generated physical ERD tables."""
+    erd_entities = parse_erd_entities(source)
+    allowed = parse_erd_association_entities(source, base_entities)
+    allowed.update(parse_erd_multivalued_entities(source, base_entities))
+    return ErdEntityContract(
+        erd_entities=frozenset(erd_entities),
+        allowed_physical_entities=frozenset(allowed),
+        missing_bce_entities=frozenset(base_entities - erd_entities),
+        unexpected_erd_entities=frozenset(erd_entities - base_entities - allowed),
+    )
+
+
+def _erd_neighbors(source: str, entities: set[str]) -> dict[str, set[str]]:
+    neighbors: dict[str, set[str]] = {name: set() for name in entities}
+    relation_pattern = re.compile(
+        r"(?m)^\s*(?P<left>[A-Za-z_]\w*)\s+[^\n]*(?:--|\.\.)[^\n]*\s+"
+        r"(?P<right>[A-Za-z_]\w*)\s*$"
+    )
+    for match in relation_pattern.finditer(source):
+        left, right = match.group("left"), match.group("right")
+        if left in entities and right in entities:
+            neighbors[left].add(right)
+            neighbors[right].add(left)
+    return neighbors
+
+
+def _is_multivalued_child_shape(
+    source: str,
+    name: str,
+    parent: str,
+    field: str,
+    neighbors: dict[str, set[str]],
+    base_entities: set[str],
+) -> bool:
+    if not parent or not field or parent not in base_entities:
+        return False
+    if not name.lower().startswith(parent.lower()):
+        return False
+    if (neighbors.get(name, set()) & base_entities) != {parent}:
+        return False
+    block = re.search(
+        rf'(?ms)^\s*entity\s+"[^"]+"\s+as\s+{re.escape(name)}\s*\{{(?P<body>.*?)^\s*\}}',
+        source,
+    )
+    if not block:
+        return False
+    return bool(re.search(rf"(?mi)^\s*{re.escape(field)}_value\b", block.group("body")))
 
 
 def derive_e2e_scenarios(

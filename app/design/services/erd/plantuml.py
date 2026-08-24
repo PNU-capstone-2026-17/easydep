@@ -93,6 +93,16 @@ def render_logical_model(logical: dict[str, Any]) -> str:
     if children:
         lines.append("' === 제1정규화(1NF) 분리 테이블 ===")
         for child in children:
+            # This is a machine-readable provenance contract for implementation.
+            # A 1NF child is a persistence detail, not a missing BCE Entity.  The
+            # visible section heading above is intentionally kept for people and
+            # older artifacts; this annotation is the stable downstream contract.
+            origin = child.get("origin") or {}
+            lines.append(
+                "' easydep:erd-origin "
+                f"kind=multivalued alias={child['name']} "
+                f"parent={origin.get('table', '')} field={origin.get('field', '')}"
+            )
             lines.extend([_table_block(child), ""])
 
     for relation in logical.get("Relations") or []:

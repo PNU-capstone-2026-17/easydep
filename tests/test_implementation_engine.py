@@ -108,6 +108,7 @@ from app.implementation.domain.implementation_ir import (
     ApiResponseIR,
     build_implementation_ir,
     parse_erd_association_entities,
+    assess_bce_erd_entity_contract,
     parse_openapi_operations as parse_ir_openapi_operations,
 )
 from app.implementation.workflows.coordinator import (
@@ -3456,6 +3457,38 @@ Node ||--|{ NodeNode
             {"NodeNode"},
             parse_erd_association_entities(source, {"Node"}),
         )
+
+    def test_accepts_annotated_multivalued_child_without_allowing_unknown_table(self) -> None:
+        source = """entity "Student" as Student {}
+' easydep:erd-origin kind=multivalued alias=StudentCompletedCourses parent=Student field=completedCourses
+entity "StudentCompletedCourses" as StudentCompletedCourses {
+  * studentcompletedcourses_id : BIGINT
+  student_universityId : VARCHAR(255) <<FK>>
+  completedCourses_value : VARCHAR(255)
+}
+entity "StudentProfile" as StudentProfile {
+  * studentprofile_id : BIGINT
+}
+Student ||..o{ StudentCompletedCourses
+Student ||..o{ StudentProfile
+"""
+        contract = assess_bce_erd_entity_contract(source, {"Student"})
+        self.assertEqual({"StudentCompletedCourses"}, set(contract.allowed_physical_entities))
+        self.assertEqual({"StudentProfile"}, set(contract.unexpected_erd_entities))
+
+    def test_accepts_legacy_rendered_multivalued_child_with_full_shape(self) -> None:
+        source = """entity "Student" as Student {}
+' === 제1정규화(1NF) 분리 테이블 ===
+entity "StudentCompletedCourses" as StudentCompletedCourses {
+  * studentcompletedcourses_id : BIGINT
+  student_universityId : VARCHAR(255) <<FK>> <<not null>>
+  completedCourses_value : VARCHAR(255)
+}
+Student ||..o{ StudentCompletedCourses
+"""
+        contract = assess_bce_erd_entity_contract(source, {"Student"})
+        self.assertFalse(contract.missing_bce_entities)
+        self.assertFalse(contract.unexpected_erd_entities)
 
     def test_detects_empty_generated_contract_without_inference(self) -> None:
         contracts = """// bce/CourseData.java

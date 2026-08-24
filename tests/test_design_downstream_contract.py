@@ -189,5 +189,20 @@ def test_slice_erd_carries_a_composite_unique_constraint():
     assert "unique (a, b)" in slice_erd(puml, {"Sub"})
 
 
+def test_rendered_multivalued_table_carries_implementation_provenance():
+    puml = generate_erd_from_bce_json({
+        "Classes": [
+            {"className": "Student", "stereotype": "Entity",
+             "fields": ["completedCourses : List<String>"], "methods": []},
+        ],
+        "Relationships": [],
+    })
+
+    assert (
+        "' easydep:erd-origin kind=multivalued "
+        "alias=StudentCompletedCourses parent=Student field=completedCourses"
+    ) in puml
+
+
 def test_an_unknown_entity_name_is_reported_not_crashed():
     assert slice_erd(ERD_PUML, {"NoSuchTable"}) == "' No directly related ERD entity"
