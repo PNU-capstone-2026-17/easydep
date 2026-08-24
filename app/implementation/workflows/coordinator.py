@@ -112,7 +112,7 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
         raise ValueError("BCE/ERD entity mismatch; " + "; ".join(details))
     persistence_contract_gaps = find_control_persistence_contract_gaps(spec, run_root)
     if persistence_contract_gaps:
-        return _block_missing_persistence_contracts(run_root, persistence_contract_gaps)
+        _record_control_persistence_contract_gaps(run_root, persistence_contract_gaps)
     needs_persistence = bool(bce_entities) or any(
         gateway.kind == "persistence" for gateway in ir.gateways
     )
@@ -137,49 +137,30 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     return reconcile_workflow_state(run_root)
 
 
-def _block_missing_persistence_contracts(
+def _record_control_persistence_contract_gaps(
     run_root: Path, gaps: list[dict[str, object]]
-) -> dict[str, object]:
-    """Persist a planner-owned contract gap before an agent can invent a port."""
+) -> None:
+    """Record a design warning without treating ordinary Entity links as a block.
+
+    A Control-to-Entity relation expresses a domain dependency, not necessarily a
+    persistence operation.  Blocking every such Control prevents valid
+    in-memory/stateful prototypes from starting.  The worker prompt still
+    forbids inventing a RepositoryPort; a later concrete missing-contract error
+    can be returned to the planner with execution evidence.
+    """
     report_path = run_root / "reports" / "design-gaps" / "control-persistence-contracts.json"
     report = {
         "schemaVersion": "implementation-design-gaps/v1alpha1",
         "phase": "control",
-        "status": "NEEDS_PLANNER",
+        "status": "WARNING",
         "gaps": gaps,
-        "requiredAction": (
-            "Add an explicit BCE <<Gateway>> persistence port, relate it to each "
-            "listed Control, and define the exact operations needed by that Control."
+        "recommendedAction": (
+            "When a listed Control needs durable storage beyond its generated "
+            "Entity contract, add an explicit BCE <<Gateway>> persistence port "
+            "with the exact required operations."
         ),
     }
     _write_json_atomic(report_path, report)
-    previous_path = run_root / "reports" / "workflow-state.json"
-    previous = _read_json(previous_path) if previous_path.is_file() else {}
-    state = {
-        "schemaVersion": WORKFLOW_SCHEMA,
-        "runId": run_root.name,
-        "status": "NEEDS_PLANNER",
-        "currentPhase": "control",
-        "updatedAt": _now(),
-        "phases": [
-            {
-                "phaseId": phase_id,
-                "dependsOn": list(dependencies),
-                "status": "UNPLANNED",
-                "taskIds": [],
-            }
-            for phase_id, dependencies, _ in PHASES
-        ],
-        "tasks": [],
-        "nextRunnableTasks": [],
-        "blockingReason": (
-            "Control persistence contracts are incomplete; see "
-            "reports/design-gaps/control-persistence-contracts.json."
-        ),
-        "approval": previous.get("approval"),
-    }
-    _write_json_atomic(previous_path, state)
-    return state
 
 
 def reconcile_workflow_state(run_root: Path) -> dict[str, object]:

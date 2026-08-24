@@ -110,6 +110,7 @@ from app.implementation.domain.implementation_ir import (
     parse_openapi_operations as parse_ir_openapi_operations,
 )
 from app.implementation.workflows.coordinator import (
+    _record_control_persistence_contract_gaps,
     _execute_task_batch,
     _phase_task_batches,
     reconcile_workflow_state,
@@ -3546,6 +3547,13 @@ ScheduleController ..> Enrollment
             self.assertEqual("ScheduleController", gaps[0]["control"])
             self.assertEqual(["Enrollment"], gaps[0]["persistentEntities"])
             self.assertIn("<<Gateway>>", str(gaps[0]["requiredContract"]))
+            _record_control_persistence_contract_gaps(root, gaps)
+            report = json.loads(
+                (root / "reports/design-gaps/control-persistence-contracts.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("WARNING", report["status"])
 
     def test_accepts_control_with_an_explicit_persistence_gateway(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
