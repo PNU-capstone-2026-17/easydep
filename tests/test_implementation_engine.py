@@ -841,10 +841,13 @@ class LoadJobTest(unittest.TestCase):
     def test_missing_output_repair_prompt_is_compact_and_task_specific(self) -> None:
         prompt = _render_missing_output_repair_prompt(
             "integration-test",
-            ["application/src/test/java/example/FlowTest.java"],
+            ["C:/agent/application/src/test/java/example/FlowTest.java"],
         )
         self.assertIn("real HTTP flow test", prompt)
-        self.assertIn("application/src/test/java/example/FlowTest.java", prompt)
+        self.assertIn("C:/agent/application/src/test/java/example/FlowTest.java", prompt)
+        self.assertIn("file editor's create operation", prompt)
+        self.assertIn("Do not use /workspace", prompt)
+        self.assertNotIn("inspect", prompt)
         self.assertNotIn("generatedJavaContracts", prompt)
 
     def test_task_verification_avoids_full_packaging_and_targets_owned_tests(self) -> None:
@@ -2021,6 +2024,12 @@ PurchaseController -> ErrorScreen : showError(\"failed\")
             self.assertIn("every generated Spring Data repository bean", prompt)
             self.assertIn("ApplicationContextTest.java", prompt)
             self.assertIn("PurchaseControllerService", prompt)
+            self.assertNotIn("System sequence context", prompt)
+            self.assertNotIn("BuyScreen -> PurchaseController", prompt)
+            context = json.loads(
+                (run / tasks[0].context_file).read_text(encoding="utf-8")
+            )
+            self.assertNotIn("sequence", context)
 
     def test_gateway_planner_creates_persistence_and_trading_adapter_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

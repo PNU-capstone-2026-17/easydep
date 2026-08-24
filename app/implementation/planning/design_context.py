@@ -584,7 +584,6 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     for relative in ("application/impl", "adapter", "bce", "persistence/repository"):
         source_paths.extend(sorted((package_root / relative).rglob("*.java")))
     contracts = render_source_contracts(run_root, source_paths)
-    sequence = _read(spec.inputs.get("sequence"))
     allowed = [
         f"application/src/main/java/{package_path}/{ir.application_class}.java",
         f"application/src/main/java/{package_path}/config/ApplicationConfiguration.java",
@@ -596,7 +595,6 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         "schemaVersion": "implementation-context/v1alpha1",
         "taskId": task_id,
         "taskType": "configuration",
-        "sequence": sequence,
         "generatedJavaContracts": contracts,
         "applicationClass": ir.application_class,
     }
@@ -606,7 +604,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     context_path.write_text(
         json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    prompt = render_wiring_prompt(spec, ir.application_class, contracts, sequence)
+    prompt = render_wiring_prompt(spec, ir.application_class, contracts)
     prompt += render_allowed_output_rules(allowed)
     prompt_path = output / "application-wiring.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
@@ -1174,7 +1172,7 @@ Rules:
 
 
 def render_wiring_prompt(
-    spec: JobSpec, application_class: str, contracts: str, sequence: str
+    spec: JobSpec, application_class: str, contracts: str
 ) -> str:
     return f"""# Implementation task: Spring application wiring
 
@@ -1200,12 +1198,6 @@ Rules:
   do not mock beans or disable Flyway/JPA.
 - Do not leave TODO/FIXME markers, placeholder wording in production comments, duplicate bean definitions, or speculative configuration.
 - Create every contracted output, then finish immediately.
-
-## System sequence context
-
-```plantuml
-{sequence}
-```
 
 ## Exact existing Java contracts and constructors
 

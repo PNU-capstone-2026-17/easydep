@@ -213,20 +213,21 @@ def _render_missing_output_repair_prompt(
 ) -> str:
     """Keep missing-output retries small enough for agents that stopped silently."""
     task_hint = (
-        "For this integration-test task, inspect the existing Spring controllers, "
-        "OpenAPI contract, and generated tests, then create a compiling real HTTP "
-        "flow test. Do not modify production code."
+        "For this integration-test task, create a compiling real HTTP flow test. "
+        "Do not modify production code."
         if task_type == "integration-test"
-        else "Inspect the existing workspace and task contracts before creating the missing files."
+        else "Use the existing generated application contract; do not inspect or list directories."
     )
     files = "\n".join(f"- `{path}`" for path in missing_outputs)
     return (
         "The previous agent round did not create the required output files. "
-        "Use the file editor now; do not reply with an explanation. "
+        "Use the file editor's create operation now with the exact absolute paths below; "
+        "do not reply with an explanation. "
         "Create only the missing files, preserve all existing files, and finish "
-        "immediately after writing them.\n\n"
+        "immediately after writing them. Parent directories already exist. "
+        "Do not use /workspace, /application, relative paths, view, or directory-listing tools.\n\n"
         + task_hint
-        + "\n\nRequired missing outputs:\n"
+        + "\n\nRequired missing outputs (absolute paths):\n"
         + files
     )
 
@@ -392,14 +393,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     str((sandbox / path).resolve()) for path in missing_outputs
                 ]
                 round_iteration_limit = MAX_REPAIR_ITERATIONS
-                if task_type == "integration-test":
-                    round_prompt = _render_missing_output_repair_prompt(
-                        task_type, missing_outputs
-                    )
-                else:
-                    round_prompt = _render_missing_output_repair_prompt(
-                        task_type, missing_outputs
-                    )
+                round_prompt = _render_missing_output_repair_prompt(
+                    task_type, round_allowed
+                )
                 continue
 
             changed = changed_files(before, snapshot_files(sandbox))
