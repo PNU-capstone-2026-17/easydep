@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -139,6 +140,41 @@ def _design_context(state: ArchitectureState, stage: str) -> str:
     return "\n\n".join(sections)
 
 
+def _sequence_revision_context(
+    state: ArchitectureState, targets: set[str] | None
+) -> str:
+    """Build sequence-repair context without retransmitting unrelated use cases.
+
+    Automatic validation repair has a concrete affected use-case id. The full
+    requirements specification can be much larger than that diagram, and was
+    previously included unchanged for every single-use-case repair. Keep all
+    actors (they define valid participants), but restrict use cases and detailed
+    scenarios to the selected ids. User feedback revisions still pass no target
+    and retain the full context.
+    """
+    specification = state.get("usecase_spec")
+    if not targets or not isinstance(specification, dict):
+        return _design_context(state, "sequence_diagram")
+
+    scoped_specification = dict(specification)
+    for field, id_field in (("use_cases", "id"), ("use_case_specs", "use_case_id")):
+        values = specification.get(field)
+        if isinstance(values, list):
+            scoped_specification[field] = [
+                value
+                for value in values
+                if isinstance(value, dict)
+                and str(value.get(id_field) or "").strip() in targets
+            ]
+    return "\n\n".join(
+        [
+            "[Use Case Specification]\n"
+            + json.dumps(scoped_specification, ensure_ascii=False, indent=2),
+            "[Class Diagram]\n" + state.get("class_diagram_puml", ""),
+        ]
+    )
+
+
 CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     stage="class_diagram",
     model_key="extracted_bce_classes",
@@ -177,7 +213,7 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
         state.get("class_diagram_puml", ""),
     ),
     revise=lambda current, feedback, state, targets: revise_sequence_model(
-        current, feedback, _design_context(state, "sequence_diagram"), targets
+        current, feedback, _sequence_revision_context(state, targets), targets
     ),
     render=generate_sequence_from_model,
     validate=validate_puml_artifact,

@@ -7,7 +7,7 @@ import pytest
 
 from app.design.services.common.structured import StructuredLlmError
 
-from app.design.graphs.subgraphs import SEQUENCE_DIAGRAM_SPEC
+from app.design.graphs.subgraphs import SEQUENCE_DIAGRAM_SPEC, _sequence_revision_context
 from app.design.knowledge.detectors import (
     Finding,
     sequence_diagram_findings,
@@ -26,6 +26,7 @@ from app.design.services.sequence_diagram.extractor import (
 )
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import reconcile_class_methods
+from app.design.services.sequence_diagram import reviser as sequence_reviser
 from app.design.nodes.artifact import (
     CLEAN,
     NEEDS_INPUT,
@@ -74,6 +75,65 @@ def test_multiple_callable_boundaries_are_not_lexically_ranked() -> None:
     }
 
     assert _only_callable_class(classes, "boundary") is None
+
+
+def test_targeted_sequence_revision_sends_only_the_affected_diagram(monkeypatch) -> None:
+    current = {
+        "Diagrams": [
+            {"use_case_id": "UC1", "use_case_name": "First", "Participants": [], "Messages": []},
+            {"use_case_id": "UC2", "use_case_name": "Second", "Participants": [], "Messages": []},
+        ],
+        "class_diagram_hash": "known-version",
+        "MethodProposals": [{
+            "id": "method:OrderControl:reserveOrder()",
+            "class_name": "OrderControl",
+            "method": "reserveOrder()",
+            "reason": "requires review",
+        }],
+    }
+    received: dict[str, object] = {}
+
+    def capture(messages, schema):
+        received["messages"] = messages
+        received["schema"] = schema
+        return {"Diagrams": [], "class_diagram_hash": "known-version", "MethodProposals": []}
+
+    monkeypatch.setattr(sequence_reviser, "parse_sequence_structured", capture)
+
+    sequence_reviser.revise_sequence_model(
+        current, "repair UC2", "[context]", {"UC2"}
+    )
+
+    prompt = received["messages"][1]["content"]
+    assert '"use_case_id": "UC2"' in prompt
+    assert '"use_case_id": "UC1"' not in prompt
+    assert "reserveOrder" not in prompt
+    assert "Scoped automatic validation repair" in prompt
+
+
+def test_targeted_sequence_revision_context_excludes_other_use_cases() -> None:
+    state = {
+        "usecase_spec": {
+            "actors": [{"name": "Student"}],
+            "use_cases": [
+                {"id": "UC1", "name": "First"},
+                {"id": "UC2", "name": "Second"},
+            ],
+            "use_case_specs": [
+                {"use_case_id": "UC1", "main_scenario": [{"sentence": "first only"}]},
+                {"use_case_id": "UC2", "main_scenario": [{"sentence": "second only"}]},
+            ],
+        },
+        "class_diagram_puml": "@startuml\nclass Order\n@enduml",
+    }
+
+    context = _sequence_revision_context(state, {"UC2"})
+
+    assert '"id": "UC2"' in context
+    assert "second only" in context
+    assert '"id": "UC1"' not in context
+    assert "first only" not in context
+    assert "class Order" in context
 
 
 def test_targeted_reassembly_replaces_only_affected_use_case_card() -> None:

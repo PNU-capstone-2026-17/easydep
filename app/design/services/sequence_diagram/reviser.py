@@ -15,6 +15,39 @@ from app.design.services.sequence_diagram.extractor import (
     parse_sequence_structured,
 )
 
+
+def _targeted_revision_model(
+    current_model: dict[str, Any], targets: set[str] | None
+) -> dict[str, Any]:
+    """Return the smallest collection fragment an automatic repair can edit.
+
+    ``check_node`` identifies a single affected use case before asking the LLM
+    for a repair. Sending the complete collection nevertheless repeated every
+    other diagram (and every pending proposal) in each repair request. Large
+    applications therefore spent most of their context budget on diagrams that
+    deterministic ``merge_model`` would discard anyway.
+
+    A collection fragment is schema-valid and sufficient because the caller
+    merges only the selected diagrams back into the original collection.
+    Free-form user feedback has no deterministic target, so it deliberately
+    continues to receive the complete model.
+    """
+    diagrams = current_model.get("Diagrams")
+    if not targets or not isinstance(diagrams, list):
+        return current_model
+    return {
+        "Diagrams": [
+            diagram
+            for diagram in diagrams
+            if isinstance(diagram, dict)
+            and str(diagram.get("use_case_id") or "").strip() in targets
+        ],
+        "class_diagram_hash": str(current_model.get("class_diagram_hash") or ""),
+        # Pending proposals are workflow state, not input to a diagram repair.
+        # ``merge_model`` retains the original proposals after the targeted edit.
+        "MethodProposals": [],
+    }
+
 SEQUENCE_REVISION_SYSTEM_PROMPT = """
 You edit an existing UML sequence interaction model. You are given the current
 model (as JSON), the use-case specification and class diagram it was derived from,
@@ -22,9 +55,11 @@ and the user's natural-language feedback.
 
 Apply the feedback to the model and return the FULL revised model, following the
 same schema. Rules:
-- When the model contains `Diagrams`, preserve exactly one diagram for every
-  use case and preserve `class_diagram_hash` exactly. Edit each diagram
-  independently and never move messages between use cases.
+- When the model contains `Diagrams`, preserve exactly one supplied diagram for
+  every use case and preserve `class_diagram_hash` exactly. Edit each diagram
+  independently and never move messages between use cases. When the feedback
+  says `[Scoped automatic validation repair]`, omitted use cases are outside the
+  supplied fragment: return only the supplied diagrams and never recreate them.
 - Preserve every `MethodProposals` entry unchanged. They are pending explicit
   user approval for class-diagram additions and are not sequence messages for
   this reviser to accept, remove, or rewrite.
@@ -120,9 +155,19 @@ def revise_sequence_model(
     if not current_model or not feedback:
         return current_model or {}
 
+    revision_model = _targeted_revision_model(current_model, targets)
+    if revision_model is not current_model:
+        feedback += (
+            "\n\n[Scoped automatic validation repair]\n"
+            "Only the listed affected use-case diagrams are included in the current "
+            "model. Other diagrams and pending method proposals are intentionally "
+            "omitted and will be preserved by deterministic merge. Return exactly "
+            "the supplied diagram fragment; do not recreate omitted use cases."
+        )
+
     schema = (
         SequenceDiagramCollection
-        if isinstance(current_model.get("Diagrams"), list)
+        if isinstance(revision_model.get("Diagrams"), list)
         else SequenceModel
     )
     return parse_sequence_structured(
@@ -131,7 +176,7 @@ def revise_sequence_model(
             "Use Case Specification and Class Diagram",
             context_text,
             "Current Sequence Interaction Model",
-            current_model,
+            revision_model,
             feedback,
             targets,
         ),
