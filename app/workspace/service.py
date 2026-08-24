@@ -401,6 +401,15 @@ class WorkspaceService:
         payload = command["payload"]
         text = "" if advance else str(payload.get("text") or "").strip()
         stage = str(command["stage"])
+        if (
+            advance
+            and stage == "design"
+            and payload.get("auto_approve_method_proposals") is True
+        ):
+            # Auto mode is an affirmative user choice.  Keep the approval in
+            # the same feedback path as a manual decision so reconciliation
+            # still applies only the concrete, persisted MethodProposals.
+            text = "approve all"
         if stage == "requirements":
             action_id = str(payload.get("action_id") or "")
             previous = repository.get_command(action_id) if action_id else None

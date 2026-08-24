@@ -162,6 +162,8 @@ def test_auto_mode_advances_only_when_user_input_is_not_required() -> None:
     assert "result.action === 'confirm_change'" in policy
     assert "resourceQuestion.kind === 'suggested'" in policy
     assert "result.kind === 'question'" in policy
+    assert "hasPendingMethodProposals" in policy
+    assert "auto_approve_method_proposals" in policy
     assert "approve_implementation" in policy
     assert "start_testing" in policy
 

@@ -422,6 +422,62 @@ def _method_addition_proposals(
     return proposals
 
 
+def _scope_proposal_evidence(
+    proposals: list[dict[str, Any]],
+    diagrams: list[dict],
+    state: ArchitectureState,
+    bce: dict,
+) -> list[dict[str, Any]]:
+    """Keep every proposed method tied to the UC route that justified it.
+
+    The class reviser may examine several affected cards in one request for
+    efficiency.  Its additions must nevertheless not inherit the complete set
+    of findings from that request: doing so made one method proposal appear to
+    solve unrelated use cases.  Associate a proposal only with cards where its
+    receiver is on that card's visible Boundary/Control route.
+    """
+    scoped: list[dict[str, Any]] = []
+    for proposal in proposals:
+        class_name = str(proposal.get("class_name") or "").strip()
+        related: list[tuple[str, list[Any]]] = []
+        for diagram in diagrams:
+            use_case_id = str(diagram.get("use_case_id") or "").strip()
+            if not use_case_id or class_name not in _unresolved_contract_targets([diagram], bce):
+                continue
+            findings = [
+                finding
+                for finding in sequence_diagram_findings(diagram, state)
+                if finding.rule_id
+                in {
+                    "sequence.usecase-step-coverage",
+                    "sequence.actor-step-involvement",
+                    "sequence.boundary-operation-direction",
+                    "sequence.step-operation-distinctness",
+                    "sequence.unresolved-usecase-step",
+                }
+            ]
+            if findings:
+                related.append((use_case_id, findings))
+        if not related:
+            scoped.append(proposal)
+            continue
+        use_case_ids = {use_case_id for use_case_id, _ in related}
+        findings = [finding for _, items in related for finding in items]
+        evidence = next(
+            (str(finding.message or "").strip() for finding in findings if finding.message),
+            str(proposal.get("reason") or "").strip(),
+        )
+        scoped.append(
+            {
+                **proposal,
+                "reason": evidence,
+                "use_case_ids": sorted(use_case_ids),
+                "step_ids": _proposal_step_ids(findings, use_case_ids),
+            }
+        )
+    return scoped
+
+
 def _apply_approved_method_proposals(
     bce: dict,
     proposals: list[dict[str, Any]],
@@ -802,6 +858,8 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
         findings=[*method_need_findings, *return_findings],
         use_case_ids=proposal_use_case_ids,
     )
+    if method_need_findings:
+        proposals = _scope_proposal_evidence(proposals, scoped_diagrams, state, bce)
     if proposals:
         result["sequence_diagram_model"] = {
             **working_sequence,

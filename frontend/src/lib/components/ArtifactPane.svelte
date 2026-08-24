@@ -282,7 +282,7 @@
               {/if}
               {#if validation?.method_proposals?.length}
                 <p class="mb-3 rounded-lg border border-[#b8d7c5] bg-[#eef8f1] px-3 py-2 text-xs leading-5 text-[#24553d]" role="status">
-                  <strong>Class-method approval required.</strong> Review the proposed operations in Validation, then reply <code>제안 메서드 모두 승인</code> to add every proposal and regenerate the affected UC cards.
+                  <strong>Class-method approval required.</strong> Review the proposed operations in Validation, then reply <code>approve all</code> to add every proposal and regenerate the affected UC cards.
                 </p>
               {/if}
               <div class="sequence-diagram-gallery grid grid-cols-1 gap-3 xl:grid-cols-2">
@@ -356,7 +356,7 @@
                 </li>
               {/each}
             </ul>
-            <p class="mt-3 rounded-lg bg-[#eef8f1] px-3 py-2 leading-5 text-[#24553d]">Approve all: <code>제안 메서드 모두 승인</code>. To approve selected items only, include their Proposal ID in your feedback.</p>
+            <p class="mt-3 rounded-lg bg-[#eef8f1] px-3 py-2 leading-5 text-[#24553d]">Approve all: <code>approve all</code>. To approve selected items only, include their Proposal ID in your feedback.</p>
           </section>
         {/if}
         {#if validation?.errors?.length || validation?.findings?.length}

@@ -64,6 +64,7 @@ class WorkspaceCommandRequest(BaseModel):
     allow_assumptions: bool = True
     retry_failed: bool = False
     delegate_repair_approvals: bool = True
+    auto_approve_method_proposals: bool = False
     deployment_preferences: dict[str, Any] | None = None
 
 

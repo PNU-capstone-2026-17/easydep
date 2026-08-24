@@ -235,6 +235,61 @@ def test_sequence_reconcile_ignores_unrequested_methods_from_class_llm():
     assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["createOrder()"]
 
 
+def test_sequence_reconcile_scopes_proposal_evidence_to_its_receiver_route():
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "FirstBoundary", "stereotype": "Boundary", "methods": []},
+                {"className": "FirstControl", "stereotype": "Control", "methods": []},
+                {"className": "SecondBoundary", "stereotype": "Boundary", "methods": []},
+                {"className": "SecondControl", "stereotype": "Control", "methods": []},
+            ],
+            "Relationships": [
+                {"source": "FirstBoundary", "target": "FirstControl"},
+                {"source": "SecondBoundary", "target": "SecondControl"},
+            ],
+        },
+        "sequence_diagram_model": {
+            "Diagrams": [
+                {
+                    "use_case_id": "UC1", "Participants": [
+                        {"alias": "first", "kind": "boundary", "source_class": "FirstBoundary"},
+                        {"alias": "firstControl", "kind": "control", "source_class": "FirstControl"},
+                    ],
+                    "Messages": [],
+                    "UnresolvedSteps": [{"step_id": "UC1:main:1", "reason": "missing action"}],
+                },
+                {
+                    "use_case_id": "UC2", "Participants": [
+                        {"alias": "second", "kind": "boundary", "source_class": "SecondBoundary"},
+                        {"alias": "secondControl", "kind": "control", "source_class": "SecondControl"},
+                    ],
+                    "Messages": [],
+                    "UnresolvedSteps": [{"step_id": "UC2:main:1", "reason": "missing action"}],
+                },
+            ]
+        },
+    }
+    proposed = {"Classes": [
+        {"className": "FirstBoundary", "methods": ["submitFirst(): void"]},
+        {"className": "FirstControl", "methods": []},
+        {"className": "SecondBoundary", "methods": ["submitSecond(): void"]},
+        {"className": "SecondControl", "methods": []},
+    ]}
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+        return_value=proposed,
+    ), patch(
+        "app.design.services.sequence_diagram.reconcile.reassemble_sequence_diagrams",
+        side_effect=lambda sequence, *_: sequence,
+    ):
+        result = reconcile_class_methods(state)
+
+    proposals = result["sequence_diagram_model"]["MethodProposals"]
+    assert next(item for item in proposals if item["class_name"] == "FirstBoundary")["use_case_ids"] == ["UC1"]
+    assert next(item for item in proposals if item["class_name"] == "SecondBoundary")["use_case_ids"] == ["UC2"]
+
+
 def test_sequence_finalizer_rejects_call_without_a_receiver_class():
     state = {
         "extracted_bce_classes": {

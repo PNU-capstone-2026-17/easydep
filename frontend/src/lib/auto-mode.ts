@@ -22,6 +22,10 @@ export function nextAutoAction(
 ): AutoModeAction | null {
   if (!command) return null;
   const result = command.result ?? {};
+  const hasPendingMethodProposals =
+    command.stage === 'design' &&
+    Array.isArray(result.method_proposals) &&
+    result.method_proposals.length > 0;
 
   if (command.status === 'AWAITING_INPUT') {
     if (result.action === 'confirm_change') return null;
@@ -40,12 +44,26 @@ export function nextAutoAction(
       return null;
     }
 
-    if (command.stage === 'design' && result.requires_revision === true) {
+    if (
+      command.stage === 'design' &&
+      result.requires_revision === true &&
+      !hasPendingMethodProposals
+    ) {
       return null;
     }
 
     if (command.stage === 'requirements' || command.stage === 'design') {
-      return { action: 'advance', extra: { action_id: command.command_id } };
+      return {
+        action: 'advance',
+        extra: {
+          action_id: command.command_id,
+          // A sequence MethodProposal normally needs an architectural choice.
+          // Auto mode is the user's opt-in to apply pending, traceable proposals.
+          ...(hasPendingMethodProposals
+            ? { auto_approve_method_proposals: true }
+            : {})
+        }
+      };
     }
 
     if (
