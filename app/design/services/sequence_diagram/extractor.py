@@ -689,7 +689,9 @@ def normalize_sequence_contracts(
                 and expected_return.lower() != "void"
             ):
                 normalized_messages.append(_return_message(call, expected_return))
-        diagram["Messages"] = normalize_sequence_message_order(normalized_messages)
+        diagram["Messages"] = normalize_sequence_entry_order(
+            normalize_sequence_message_order(normalized_messages), participant_kinds
+        )
     return normalize_sequence_participants(model, class_diagram_puml)
 
 
@@ -761,6 +763,50 @@ def normalize_sequence_message_order(messages: list[dict[str, Any]]) -> list[dic
             ),
         )
     ]
+
+
+def normalize_sequence_entry_order(
+    messages: list[dict[str, Any]], participant_kinds: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Put a known actor entry before an accidentally front-loaded system call.
+
+    Step IDs order the normal scenario but a provider can omit the actor
+    trigger's trace reference while still emitting a valid ``Actor → Boundary``
+    message.  In that case grouping alone cannot distinguish a response from
+    the actual entry and a Boundary may appear to call its Control before the
+    actor reaches it.  Moving the existing entry does not select a method or
+    invent an interaction; it restores the BCE causality already expressed by
+    the two messages.
+    """
+    call_types = {"sync", "async", "self"}
+    first_call_index = next(
+        (
+            index
+            for index, message in enumerate(messages)
+            if str(message.get("type") or "").lower() in call_types
+        ),
+        None,
+    )
+    if first_call_index is None:
+        return messages
+
+    def is_actor_entry(message: dict[str, Any]) -> bool:
+        return (
+            str(message.get("type") or "").lower() in call_types
+            and participant_kinds.get(_alias(str(message.get("source") or "")), "") == "actor"
+            and participant_kinds.get(_alias(str(message.get("target") or "")), "") == "boundary"
+        )
+
+    if is_actor_entry(messages[first_call_index]):
+        return messages
+    entry_index = next(
+        (index for index, message in enumerate(messages) if is_actor_entry(message)),
+        None,
+    )
+    if entry_index is None:
+        return messages
+    entry = messages[entry_index]
+    return [entry, *messages[:entry_index], *messages[entry_index + 1:]]
 
 
 def normalize_sequence_participants(

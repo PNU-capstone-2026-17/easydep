@@ -10,7 +10,9 @@ from app.design.services.common.structured import StructuredLlmError
 from app.design.graphs.subgraphs import SEQUENCE_DIAGRAM_SPEC, _sequence_revision_context
 from app.design.knowledge.detectors import (
     Finding,
+    sequence_causal_call_chain,
     sequence_diagram_findings,
+    sequence_initial_entry,
     sequence_message_methods,
     sequence_no_lifecycle_events,
     sequence_usecase_coverage,
@@ -20,6 +22,7 @@ from app.design.services.sequence_diagram.extractor import (
     extract_sequence_model,
     extract_sequence_diagrams,
     normalize_sequence_contracts,
+    normalize_sequence_entry_order,
     normalize_sequence_participants,
     normalize_sequence_usecase_spec,
     parse_sequence_structured,
@@ -95,6 +98,35 @@ def test_normalize_sequence_message_order_never_places_reply_before_its_call():
     ordered = normalize_sequence_message_order(messages)
 
     assert [message["label"] for message in ordered] == ["submit()", "Receipt"]
+
+
+def test_normalize_sequence_entry_order_restores_actor_before_front_loaded_control_call():
+    messages = [
+        _message("RegistrationBoundary", "RegistrationController", "registerForSection()"),
+        _message("RegistrationController", "RegistrationBoundary", "Enrollment", type="return"),
+        _message("Student", "RegistrationBoundary", "requestRegistration()"),
+    ]
+    kinds = {
+        "Student": "actor",
+        "RegistrationBoundary": "boundary",
+        "RegistrationController": "control",
+    }
+
+    ordered = normalize_sequence_entry_order(messages, kinds)
+
+    assert [message["label"] for message in ordered] == [
+        "requestRegistration()", "registerForSection()", "Enrollment",
+    ]
+    model = {
+        "Participants": [
+            _participant("Student", "actor"),
+            _participant("RegistrationBoundary", "boundary"),
+            _participant("RegistrationController", "control"),
+        ],
+        "Messages": ordered,
+    }
+    assert sequence_initial_entry(model, {}) == []
+    assert sequence_causal_call_chain(model, {}) == []
 
 
 def test_sequence_repair_score_counts_every_message_in_duplicate_run():
