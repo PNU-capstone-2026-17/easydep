@@ -17,7 +17,9 @@ from app.design.knowledge.detectors import (
 )
 from app.design.services.sequence_diagram.extractor import (
     SequenceModel,
+    extract_sequence_model,
     extract_sequence_diagrams,
+    normalize_sequence_contracts,
     normalize_sequence_participants,
     normalize_sequence_usecase_spec,
     parse_sequence_structured,
@@ -59,6 +61,72 @@ def _message(source: str, target: str, label: str, **overrides) -> dict:
     }
     message.update(overrides)
     return message
+
+
+def test_llm_contract_normalization_repairs_only_mechanical_links() -> None:
+    class_diagram = """@startuml
+class OrderBoundary <<Boundary>> { + submit(data:OrderData): Receipt }
+class OrderControl <<Control>> { + persist(data:OrderData): Order }
+OrderBoundary ..> OrderControl
+@enduml"""
+    model = {
+        "Participants": [
+            _participant("Buyer", "actor"),
+            _participant("OrderBoundary", "boundary", "OrderBoundary"),
+            _participant("OrderControl", "control", "OrderControl"),
+        ],
+        "Messages": [
+            _message(
+                "Buyer", "OrderBoundary", "submit(data:OrderData)",
+                call_id="entry", reply_to="", arguments=[{
+                    "parameter": "data", "type": "Wrong", "source_kind": "state", "source_ref": "stale",
+                }],
+            ),
+            _message(
+                "OrderBoundary", "OrderControl", "persist(data:OrderData)",
+                call_id="persist", reply_to="", arguments=[{
+                    "parameter": "data", "type": "OrderData", "source_kind": "call_result", "source_ref": "entry",
+                }],
+                fragments=[{"id": "failure", "type": "alt", "branch": "else", "condition": "invalid"}],
+            ),
+            {
+                **_message("Buyer", "OrderBoundary", "Receipt", type="return"),
+                "call_id": "", "reply_to": "entry", "arguments": [],
+            },
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, class_diagram)
+    calls = [message for message in normalized["Messages"] if message["type"] in {"sync", "self"}]
+    returns = [message for message in normalized["Messages"] if message["type"] == "return"]
+
+    assert [call["call_id"] for call in calls] == ["call-1", "call-2"]
+    assert calls[0]["arguments"] == [{
+        "parameter": "data", "type": "OrderData", "source_kind": "input", "source_ref": "UC1:main:1",
+    }]
+    assert calls[1]["arguments"] == [{
+        "parameter": "data", "type": "OrderData", "source_kind": "input", "source_ref": "UC1:main:1",
+    }]
+    assert calls[1]["fragments"] == [{"id": "failure", "type": "opt", "branch": "main", "condition": "invalid"}]
+    assert {(item["reply_to"], item["label"]) for item in returns} == {
+        ("call-1", "Receipt"), ("call-2", "Order"),
+    }
+
+
+def test_llm_extraction_receives_the_allowed_interaction_routes() -> None:
+    model = {"Participants": [], "Messages": []}
+    with patch(
+        "app.design.services.sequence_diagram.extractor.parse_structured",
+        return_value=model,
+    ) as parse:
+        extract_sequence_model(
+            '{"use_case_id": "UC1"}',
+            "@startuml\n@enduml",
+            [{"boundary_class": "OrderBoundary", "control_class": "OrderControl"}],
+        )
+
+    assert "[Candidate interaction routes]" in parse.call_args.args[0][1]["content"]
+    assert "OrderBoundary" in parse.call_args.args[0][1]["content"]
 
 
 def test_multiple_callable_boundaries_are_not_lexically_ranked() -> None:
@@ -460,10 +528,19 @@ CourseApi ..> CourseController
 EnrollmentApi ..> EnrollmentController
 @enduml"""
 
-    with patch(
-        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
-        return_value={"Participants": [], "Messages": []},
-    ) as extract:
+    with (
+        patch(
+            "app.design.services.sequence_diagram.extractor._select_use_case_route",
+            return_value=(
+                {"name": "EnrollmentApi", "kind": "boundary", "methods": ["enrollInCourse()"]},
+                {"name": "EnrollmentController", "kind": "control", "methods": ["enrollInCourse()"]},
+            ),
+        ),
+        patch(
+            "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+            return_value={"Participants": [], "Messages": []},
+        ) as extract,
+    ):
         result = extract_sequence_diagrams(specification, class_diagram)
 
     extract.assert_called_once()
@@ -731,9 +808,17 @@ CourseCatalogScreen ..> CourseSearchController
 RegistrationScreen ..> RegistrationController
 @enduml"""
 
-    with patch(
-        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
-        return_value={
+    with (
+        patch(
+            "app.design.services.sequence_diagram.extractor._select_use_case_route",
+            return_value=(
+                {"name": "RegistrationScreen", "kind": "boundary", "methods": []},
+                {"name": "RegistrationController", "kind": "control", "methods": []},
+            ),
+        ),
+        patch(
+            "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+            return_value={
             "Participants": [
                 _participant("Student", "actor"),
                 _participant("RegistrationScreen", "boundary", "RegistrationScreen"),
@@ -748,8 +833,9 @@ RegistrationScreen ..> RegistrationController
                 "use_case_ids": ["UC3"],
                 "step_ids": ["UC3:main:1"],
             }],
-        },
-    ) as extract:
+            },
+        ) as extract,
+    ):
         result = extract_sequence_diagrams(specification, class_diagram)
 
     extract.assert_called_once()
@@ -782,9 +868,17 @@ CourseSearchScreen ..> CourseSearchController
 DropScreen ..> DropController
 @enduml"""
 
-    with patch(
-        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
-        return_value={
+    with (
+        patch(
+            "app.design.services.sequence_diagram.extractor._select_use_case_route",
+            return_value=(
+                {"name": "DropScreen", "kind": "boundary", "methods": []},
+                {"name": "DropController", "kind": "control", "methods": []},
+            ),
+        ),
+        patch(
+            "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+            return_value={
             "Participants": [
                 _participant("Student", "actor"),
                 _participant("DropScreen", "boundary", "DropScreen"),
@@ -799,8 +893,9 @@ DropScreen ..> DropController
                 "use_case_ids": ["UC4"],
                 "step_ids": ["UC4:main:1"],
             }],
-        },
-    ) as extract:
+            },
+        ) as extract,
+    ):
         result = extract_sequence_diagrams(specification, class_diagram)
 
     extract.assert_called_once()

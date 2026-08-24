@@ -21,6 +21,7 @@ from app.design.services.sequence_diagram.methods import (
     is_return_value_label,
     method_call_signature,
     method_return_type,
+    normalize_return_type,
 )
 
 
@@ -303,6 +304,12 @@ that the inputs do not support.
 - Actor->Boundary calls represent actor input/events. An actor MUST NOT invoke
   output-oriented Boundary methods such as display*, show*, render*, prompt*, or
   notify*; those are called by a Control or another permitted system component.
+- When a ``[Candidate interaction routes]`` section is supplied with the input,
+  choose exactly one listed Boundary/Control pair for this use case before
+  writing messages. The actor entry must target that pair's Boundary and
+  application work must use that pair's Control (and its declared data
+  collaborators). Do not combine routes or substitute a similarly named
+  Boundary/Control from another use case.
 - `type`: "sync" for a call, "return" for a reply carrying a result, "async" for
   fire-and-forget, and "self" for a call whose source and target are the same.
 - Give every sync, async, and self call a unique non-empty `call_id`. Set its
@@ -443,11 +450,18 @@ def parse_sequence_structured(
 def extract_sequence_model(
     scenario_text: str,
     class_diagram_puml: str,
+    route_candidates: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """유스케이스 명세 + 클래스 다이어그램 → 구조화된 시퀀스 상호작용 모델."""
     if not scenario_text:
         return {}
 
+    route_context = ""
+    if route_candidates:
+        route_context = (
+            "\n\n[Candidate interaction routes]\n"
+            + json.dumps(route_candidates, ensure_ascii=False)
+        )
     messages = [
         {"role": "system", "content": SEQUENCE_EXTRACTION_SYSTEM_PROMPT},
         {
@@ -455,10 +469,161 @@ def extract_sequence_model(
             "content": (
                 f"[Use Case Specification]\n{scenario_text}\n\n"
                 f"[Class Diagram PlantUML]\n{class_diagram_puml}"
+                f"{route_context}"
             ),
         },
     ]
     model = parse_sequence_structured(messages, SequenceModel)
+    return normalize_sequence_contracts(model, class_diagram_puml)
+
+
+def normalize_sequence_contracts(
+    model: dict[str, Any], class_diagram_puml: str
+) -> dict[str, Any]:
+    """Repair mechanical LLM output defects without changing its chosen behavior.
+
+    The LLM remains responsible for the semantic interaction.  This pass only
+    restores facts that are already fixed by the selected class contract: a
+    return answers the matching call in the reverse direction, each parameter
+    has the receiver's declared type, and a one-sided alternate fragment is an
+    ``opt``.  In particular, it never selects another receiver or invents a
+    call to cover an unresolved use-case step.
+    """
+    if not isinstance(model, dict):
+        return model
+    classes, _ = _parse_class_catalog(class_diagram_puml)
+    diagrams = model.get("Diagrams")
+    targets = diagrams if isinstance(diagrams, list) else [model]
+    for diagram in targets:
+        if not isinstance(diagram, dict):
+            continue
+        messages = [item for item in diagram.get("Messages") or [] if isinstance(item, dict)]
+        participants = {
+            _alias(str(item.get("alias") or item.get("name") or "")): item
+            for item in diagram.get("Participants") or []
+            if isinstance(item, dict)
+        }
+        participant_kinds = {
+            alias: str(item.get("kind") or "").lower()
+            for alias, item in participants.items()
+        }
+        participant_classes = {
+            alias: str(item.get("source_class") or item.get("name") or "").strip()
+            for alias, item in participants.items()
+        }
+
+        def declared_return_type(call: dict[str, Any]) -> str | None:
+            target = _alias(str(call.get("target") or ""))
+            class_item = classes.get(participant_classes.get(target, ""))
+            signature = method_call_signature(str(call.get("label") or ""))
+            if class_item is None or signature not in class_item.get("methods", []):
+                return None
+            return class_item.get("method_returns", {}).get(signature)
+
+        # An extension has one conditional path.  A lone ``else`` or ``alt``
+        # is a rendering-model error, not evidence for an invented main path.
+        fragment_branches: dict[str, set[str]] = {}
+        for message in messages:
+            for fragment in message.get("fragments") or []:
+                if isinstance(fragment, dict):
+                    fragment_branches.setdefault(str(fragment.get("id") or ""), set()).add(
+                        str(fragment.get("branch") or "")
+                    )
+        for message in messages:
+            for fragment in message.get("fragments") or []:
+                if not isinstance(fragment, dict):
+                    continue
+                fragment_id = str(fragment.get("id") or "")
+                if fragment.get("type") == "alt" and fragment_branches.get(fragment_id) != {"main", "else"}:
+                    fragment["type"] = "opt"
+                    fragment["branch"] = "main"
+                elif fragment.get("type") in {"opt", "loop"} and fragment.get("branch") == "else":
+                    fragment["branch"] = "main"
+
+        calls: dict[str, dict[str, Any]] = {}
+        call_order: list[str] = []
+        for index, message in enumerate(messages, 1):
+            message_type = str(message.get("type") or "").lower()
+            if message_type not in {"sync", "async", "self"}:
+                continue
+            call_id = f"call-{index}"
+            message["call_id"] = call_id
+            message["reply_to"] = ""
+            calls[call_id] = message
+            call_order.append(call_id)
+
+            target = _alias(str(message.get("target") or ""))
+            class_item = classes.get(participant_classes.get(target, ""))
+            signature = method_call_signature(str(message.get("label") or ""))
+            expected = _method_parameters(signature) if class_item and signature in class_item.get("methods", []) else {}
+            first_step = next((str(value) for value in message.get("step_ids") or [] if str(value).strip()), "")
+            bindings: list[dict[str, str]] = []
+            for parameter, parameter_type in expected.items():
+                existing = next(
+                    (item for item in message.get("arguments") or []
+                     if isinstance(item, dict) and str(item.get("parameter") or "") == parameter),
+                    {},
+                )
+                source_kind = str(existing.get("source_kind") or "")
+                source_ref = str(existing.get("source_ref") or "")
+                source_call = calls.get(source_ref)
+                if not (
+                    source_kind == "call_result"
+                    and source_call is not None
+                    and str(source_call.get("source") or "") == str(message.get("source") or "")
+                    and declared_return_type(source_call) is not None
+                    and normalize_return_type(str(declared_return_type(source_call)))
+                    == normalize_return_type(parameter_type)
+                ):
+                    # Boundary forwards actor input; internal work consumes its
+                    # own state unless the model supplied a valid prior result.
+                    if participant_kinds.get(_alias(str(message.get("source") or ""))) in {"actor", "boundary"} and first_step:
+                        source_kind, source_ref = "input", first_step
+                    else:
+                        source_kind = "state"
+                        source_ref = f"{message.get('source') or 'system'}:state"
+                bindings.append({
+                    "parameter": parameter,
+                    "type": parameter_type,
+                    "source_kind": source_kind,
+                    "source_ref": source_ref,
+                })
+            message["arguments"] = bindings
+
+        used_replies: set[str] = set()
+        for message in messages:
+            if str(message.get("type") or "").lower() != "return":
+                continue
+            candidates = [
+                call_id for call_id in reversed(call_order)
+                if call_id not in used_replies
+                and str(calls[call_id].get("source") or "") == str(message.get("target") or "")
+                and str(calls[call_id].get("target") or "") == str(message.get("source") or "")
+            ]
+            if candidates:
+                reply_to = candidates[0]
+                message["reply_to"] = reply_to
+                message["call_id"] = ""
+                expected_return = declared_return_type(calls[reply_to])
+                if expected_return:
+                    message["label"] = expected_return
+                used_replies.add(reply_to)
+            else:
+                # There is no grounded call for this return.  Leave it out
+                # rather than retaining a false call-return relation.
+                message["_drop"] = True
+        normalized_messages = [message for message in messages if not message.pop("_drop", False)]
+        for call_id in call_order:
+            call = calls[call_id]
+            expected_return = declared_return_type(call)
+            if (
+                call_id not in used_replies
+                and str(call.get("type") or "").lower() in {"sync", "self"}
+                and expected_return
+                and expected_return.lower() != "void"
+            ):
+                normalized_messages.append(_return_message(call, expected_return))
+        diagram["Messages"] = normalized_messages
     return normalize_sequence_participants(model, class_diagram_puml)
 
 
@@ -735,6 +900,20 @@ def _alias(value: str) -> str:
     if not alias or not re.match(r"[A-Za-z_]", alias):
         alias = f"Actor_{alias}"
     return alias
+
+
+def _method_parameters(signature: str) -> dict[str, str]:
+    """Return the declared parameter contract of a normalized call signature."""
+    parameters: dict[str, str] = {}
+    for raw in signature.partition("(")[2].rpartition(")")[0].split(","):
+        name, separator, type_name = raw.partition(":")
+        if (
+            separator
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name.strip())
+            and type_name.strip()
+        ):
+            parameters[name.strip()] = type_name.strip()
+    return parameters
 
 
 def _only_callable_class(
@@ -1575,16 +1754,21 @@ def _generate_use_case_diagram(
             class_diagram_puml,
             classes,
         )
-    # Selecting a route and then asking a second LLM call to assemble an
-    # ambiguous interaction duplicates semantic work and can leave the second
-    # call with the wrong fixed skeleton.  The full per-use-case model already
-    # receives all BCE contracts, so let it make both decisions together.
-    if len(_route_candidates(classes, dependencies)) != 1:
+    route_candidates = _route_candidates(classes, dependencies)
+    # A short, constrained route decision prevents the richer interaction
+    # extraction from freely choosing a valid-but-unrelated maintenance or
+    # search route.  The second request still owns message semantics; it only
+    # receives the one Boundary/Control path selected for this use case.
+    if len(route_candidates) != 1:
+        boundary, control = _select_use_case_route(
+            specification, summary, classes, dependencies
+        )
         return _generate_llm_use_case_diagram(
             specification,
             summary,
             class_diagram_puml,
             classes,
+            [(boundary, control)],
         )
 
     boundary, control = _select_use_case_route(
@@ -1618,6 +1802,7 @@ def _generate_use_case_diagram(
             summary,
             class_diagram_puml,
             classes,
+            [(boundary, control)],
         )
     selections = _select_uncertain_elements(plans)
     diagrams = _assemble_deterministic_diagrams(plans, selections, classes)
@@ -1719,6 +1904,7 @@ def _generate_llm_use_case_diagram(
     summary: dict[str, Any],
     class_diagram_puml: str,
     classes: dict[str, dict[str, Any]],
+    route_candidates: list[tuple[dict[str, Any], dict[str, Any] | None]] | None = None,
 ) -> dict[str, Any]:
     """Use full UC semantics only when the BCE structure itself is ambiguous."""
     use_case_id = str(specification.get("use_case_id") or "").strip()
@@ -1732,6 +1918,13 @@ def _generate_llm_use_case_diagram(
             indent=2,
         ),
         class_diagram_puml,
+        [
+            {
+                "boundary_class": boundary["name"],
+                "control_class": control["name"] if control is not None else "",
+            }
+            for boundary, control in route_candidates or []
+        ] or None,
     )
     if not extracted.get("Messages") and _flow_records(specification):
         return _unresolved_use_case_diagram(
