@@ -77,6 +77,12 @@ def build_llm(*, seed_override: int | None = None) -> ChatOpenAI:
             # 결과가 달라진다. 그래서 지문을 telemetry에 남겨 사후에 확인할 수 있게 한다.
             # None이면 파라미터 자체를 안 보낸다.
             seed=settings.seed if seed_override is None else seed_override,
+            reasoning_effort=(
+                settings.requirements_reasoning_effort
+                if "gpt-oss" in settings.model.lower()
+                else None
+            ),
+            max_completion_tokens=settings.requirements_max_completion_tokens,
             # 진짜 멈춘 호출이 무한 대기하지 않도록 두는 상한.
             #
             # **600에서 90으로 내렸다(2026-07-27). 근거는 실측 분포다** — 위 주석이

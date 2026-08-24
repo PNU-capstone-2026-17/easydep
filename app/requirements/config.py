@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     model: str = "openai/gpt-oss-120b"
     # 분류·구조화 작업이라 표본을 넓힐 이유가 없다. 0으로 둔다(2026-07-26까지 0.2였다).
     temperature: float = 0.0
+    requirements_reasoning_effort: str = "medium"
+    requirements_max_completion_tokens: int = 8192
     # 같은 입력에 같은 표본을 **요청**한다. None이면 파라미터를 보내지 않는다.
     #
     # ⚠ 이 둘로 출력이 고정되지는 않는다. 이유는 서버가 seed를 무시할 수 있다는 정도가

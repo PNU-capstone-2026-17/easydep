@@ -191,15 +191,24 @@ def extract_deployment_model(
         "capabilityContract": capability_contract or {},
         "resourceIntake": resource_intake or {},
         "useCaseSpecification": scenario_text,
-        "classModel": class_model or {},
-        "classDiagramPlantUML": class_diagram_puml,
-        "sequenceModel": sequence_model or {},
-        "sequenceDiagramPlantUML": sequence_diagram_puml,
         "apiSpec": api_spec,
-        "erdModel": erd_model or {},
-        "erdPlantUML": erd_puml,
         "deploymentPlanningFacts": deployment_planning_facts or [],
     }
+    # PlantUML is a deterministic projection of each structured model. Sending
+    # both representations wastes context and can present stale, conflicting
+    # evidence to the model. Keep PlantUML only as a legacy-input fallback.
+    if class_model:
+        structured["classModel"] = class_model
+    else:
+        structured["classDiagramPlantUML"] = class_diagram_puml
+    if sequence_model:
+        structured["sequenceModel"] = sequence_model
+    else:
+        structured["sequenceDiagramPlantUML"] = sequence_diagram_puml
+    if erd_model:
+        structured["erdModel"] = erd_model
+    else:
+        structured["erdPlantUML"] = erd_puml
     messages = [
         {"role": "system", "content": WORKLOAD_GRAPH_EXTRACTION_SYSTEM_PROMPT},
         {

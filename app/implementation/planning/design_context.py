@@ -6,6 +6,8 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from app.core.config import settings
+
 from .frontend_contracts import GeneratedClientContracts
 from ..domain.implementation_ir import ApiPortIR, GatewayIR, build_implementation_ir
 from ..generation.frontend_scaffold import frontend_page_names, operation_ids
@@ -155,6 +157,8 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
                 "topP": spec.agent_top_p,
                 "maxOutputTokens": spec.agent_max_output_tokens,
                 "reasoningBudget": spec.agent_reasoning_budget,
+                "reasoningEffort": settings.implementation_reasoning_effort,
+                "repairReasoningEffort": settings.implementation_repair_reasoning_effort,
                 "chatTemplateKwargs": {
                     "enable_thinking": True,
                     "force_nonempty_content": True,
@@ -1283,6 +1287,8 @@ def _llm_config(spec: JobSpec) -> dict[str, object]:
         "topP": spec.agent_top_p,
         "maxOutputTokens": spec.agent_max_output_tokens,
         "reasoningBudget": spec.agent_reasoning_budget,
+        "reasoningEffort": settings.implementation_reasoning_effort,
+        "repairReasoningEffort": settings.implementation_repair_reasoning_effort,
         "chatTemplateKwargs": {
             "enable_thinking": True,
             "force_nonempty_content": True,

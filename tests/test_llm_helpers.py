@@ -51,6 +51,8 @@ def test_client_carries_the_configured_sampling_params():
     client = llm_mod.build_llm()
     assert client.temperature == settings.temperature
     assert client.seed == settings.seed
+    assert client.reasoning_effort == settings.requirements_reasoning_effort
+    assert client.max_tokens == settings.requirements_max_completion_tokens
 
 
 def test_client_is_reused_within_a_process():

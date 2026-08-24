@@ -178,6 +178,9 @@ def test_streaming_structured_output_accepts_an_explicit_completion_limit(monkey
 
     assert parsed.answer == "ok"
     assert captured["max_completion_tokens"] == 8192
+    assert captured["reasoning_effort"] == settings.design_reasoning_effort
+    assert captured["temperature"] == settings.temperature
+    assert captured["seed"] == settings.seed
 
 
 def test_timeout_retains_incremental_stream_progress_without_content(

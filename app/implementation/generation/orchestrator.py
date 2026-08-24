@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+from app.core.config import settings
+
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
     parse_components,
@@ -109,9 +111,15 @@ def load_job(path: Path) -> JobSpec:
         agent_base_url=agent.get(
             "baseUrl", "https://integrate.api.nvidia.com/v1"
         ),
-        agent_temperature=float(agent.get("temperature", 0.6)),
+        agent_temperature=float(
+            agent.get("temperature", settings.implementation_agent_temperature)
+        ),
         agent_top_p=float(agent.get("topP", 0.7)),
-        agent_max_output_tokens=int(agent.get("maxOutputTokens", 4096)),
+        agent_max_output_tokens=int(
+            agent.get(
+                "maxOutputTokens", settings.implementation_agent_max_output_tokens
+            )
+        ),
         agent_reasoning_budget=int(agent.get("reasoningBudget", 2048)),
         progress_path=(
             resolve(data["progressPath"])

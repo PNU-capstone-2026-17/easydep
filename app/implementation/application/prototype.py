@@ -9,6 +9,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from app.core.config import settings
+
 from ..config import ImplementationSettings
 
 
@@ -121,7 +123,13 @@ class PrototypeClient:
             "tools": {
                 "puml2codeRoot": "app/implementation/tools/puml2code-bce",
             },
-            "agent": {"mode": "openhands", "model": self.settings.model, "baseUrl": self.settings.base_url},
+            "agent": {
+                "mode": "openhands",
+                "model": self.settings.model,
+                "baseUrl": self.settings.base_url,
+                "temperature": settings.implementation_agent_temperature,
+                "maxOutputTokens": settings.implementation_agent_max_output_tokens,
+            },
         }
         path = root / "job.json"
         path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")

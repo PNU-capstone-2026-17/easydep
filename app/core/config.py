@@ -20,12 +20,17 @@ class Settings(BaseSettings):
     llm_model: Optional[str] = None
     
     # LLM Options
-    llm_max_completion_tokens: Optional[int] = None
+    # Structured design models can exceed provider defaults once reasoning
+    # tokens are included. Keep a bounded, explicit allowance instead of
+    # inheriting an undocumented OpenAI-compatible gateway default.
+    llm_max_completion_tokens: Optional[int] = 16384
+    design_reasoning_effort: str = "medium"
+    design_selector_reasoning_effort: str = "low"
     llm_timeout_seconds: float = 300.0
     llm_wall_timeout_seconds: float = 330.0
     llm_max_retries: int = 0
     llm_failure_response_sample_chars: int = 0
-    
+
     # OpenHands / Implementation Provider Settings
     openhands_max_output_tokens: Optional[int] = None
     openhands_provider_retry_base_seconds: float = 1.0
@@ -58,6 +63,10 @@ class Settings(BaseSettings):
     implementation_task_parallelism: int = 2
     implementation_agent_model: str = "nvidia_nim/openai/gpt-oss-120b"
     implementation_agent_base_url: str = "https://integrate.api.nvidia.com/v1"
+    implementation_agent_temperature: float = 0.2
+    implementation_agent_max_output_tokens: int = 16384
+    implementation_reasoning_effort: str = "medium"
+    implementation_repair_reasoning_effort: str = "high"
     implementation_command_timeout_seconds: int = 3600
     implementation_startup_warmup: bool = True
     implementation_default_container_port: int = 8000

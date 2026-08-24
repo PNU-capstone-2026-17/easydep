@@ -296,7 +296,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         for repair_attempt in range(MAX_VERIFICATION_REPAIRS + 1):
             reasoning_effort = os.environ.get(
                 "OPENHANDS_REPAIR_REASONING_EFFORT" if repair_attempt else "OPENHANDS_REASONING_EFFORT",
-                "high" if repair_attempt else "medium",
+                str(
+                    task["llm"].get(
+                        "repairReasoningEffort" if repair_attempt else "reasoningEffort",
+                        settings.implementation_repair_reasoning_effort
+                        if repair_attempt
+                        else settings.implementation_reasoning_effort,
+                    )
+                ),
             )
             conversation, agent = create_openhands_conversation(
                 sandbox,
@@ -779,6 +786,12 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "stuckDetection": False,
         "verificationRepairLimit": MAX_VERIFICATION_REPAIRS,
         "reasoningBudgetCap": MAX_REASONING_BUDGET,
+        "reasoningEffort": task["llm"].get(
+            "reasoningEffort", settings.implementation_reasoning_effort
+        ),
+        "repairReasoningEffort": task["llm"].get(
+            "repairReasoningEffort", settings.implementation_repair_reasoning_effort
+        ),
         "systemPrompt": (
             "focused-frontend-implementation"
             if task.get("task_type") == "frontend-implementation"
@@ -896,7 +909,8 @@ def create_openhands_conversation(
     chat_template_kwargs = dict(llm_config["chatTemplateKwargs"])
     chat_template_kwargs.update({"enable_thinking": True, "low_effort": True})
     reasoning_budget = min(
-        int(llm_config["reasoningBudget"]), MAX_REASONING_BUDGET
+        int(llm_config.get("reasoningBudget", MAX_REASONING_BUDGET)),
+        MAX_REASONING_BUDGET,
     )
     llm_options: dict[str, object] = {
         "model": model,

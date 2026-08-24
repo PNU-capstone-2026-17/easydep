@@ -168,6 +168,24 @@ def _response_format(schema: type[BaseModel]) -> dict[str, Any]:
     }
 
 
+def _reasoning_effort(schema: type[BaseModel]) -> str | None:
+    """Use low effort for bounded choices and medium effort for model synthesis."""
+    if "gpt-oss" not in settings.model.lower():
+        return None
+    selector_schemas = {
+        "SequenceRouteSelection",
+        "SequenceElementSelections",
+    }
+    configured = (
+        settings.design_selector_reasoning_effort
+        if schema.__name__ in selector_schemas
+        else settings.design_reasoning_effort
+    ).strip().lower()
+    if configured not in {"low", "medium", "high"}:
+        raise ValueError(f"unsupported reasoning effort: {configured}")
+    return configured
+
+
 def _stream_structured(
     client,
     messages: list[dict[str, str]],
@@ -189,8 +207,8 @@ def _stream_structured(
     request: dict[str, Any] = {
         "model": settings.model,
         "messages": messages,
-        "temperature": 0,
-        "seed": 42,
+        "temperature": settings.temperature,
+        "seed": settings.seed,
         "stream": True,
         # NVIDIA NIM documents this OpenAI-compatible option.  The final stream
         # chunk carries provider-reported usage, which is needed for exact
@@ -201,6 +219,9 @@ def _stream_structured(
     max_completion_tokens = settings.llm_max_completion_tokens
     if max_completion_tokens:
         request["max_completion_tokens"] = int(max_completion_tokens)
+    reasoning_effort = _reasoning_effort(schema)
+    if reasoning_effort:
+        request["reasoning_effort"] = reasoning_effort
     stream = client.chat.completions.create(
         **request,
     )
