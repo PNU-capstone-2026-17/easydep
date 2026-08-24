@@ -20,6 +20,7 @@ from app.design.services.sequence_diagram.methods import (
     is_complete_method_call,
     is_return_value_label,
     method_call_signature,
+    method_name,
     method_return_type,
     normalize_return_type,
 )
@@ -518,6 +519,49 @@ def normalize_sequence_contracts(
             alias: str(item.get("source_class") or item.get("name") or "").strip()
             for alias, item in participants.items()
         }
+
+        def declared_signature(label: str, target: str) -> str:
+            """Return the exact receiver signature, or nothing when ungrounded.
+
+            LLMs commonly omit parameter types even when they select the right
+            method.  Restore that mechanical omission only for an unambiguous
+            name/arity match; a placeholder such as ``self()`` has no declared
+            counterpart and must never survive into the rendered diagram.
+            """
+            class_item = classes.get(participant_classes.get(_alias(target), ""))
+            signature = method_call_signature(label)
+            if class_item is None or not signature:
+                return ""
+            methods = class_item.get("methods", [])
+            if signature in methods:
+                return signature
+            name = method_name(signature)
+            raw_args = signature.partition("(")[2].rpartition(")")[0].strip()
+            arity = 0 if not raw_args else len(raw_args.split(","))
+            candidates = [
+                item for item in methods
+                if method_name(item) == name
+                and (0 if not item.partition("(")[2].rpartition(")")[0].strip()
+                     else len(item.partition("(")[2].rpartition(")")[0].split(","))) == arity
+            ]
+            return candidates[0] if len(candidates) == 1 else ""
+
+        normalized_calls: list[dict[str, Any]] = []
+        for message in messages:
+            if str(message.get("type") or "").lower() not in {"sync", "async", "self"}:
+                normalized_calls.append(message)
+                continue
+            signature = declared_signature(
+                str(message.get("label") or ""), str(message.get("target") or "")
+            )
+            if not signature:
+                # Keep semantic extraction honest: an invalid placeholder or
+                # invented receiver method is not an interaction.  Returns to
+                # it are removed below and the step is reconciled separately.
+                continue
+            message["label"] = signature
+            normalized_calls.append(message)
+        messages = normalized_calls
 
         def declared_return_type(call: dict[str, Any]) -> str | None:
             target = _alias(str(call.get("target") or ""))

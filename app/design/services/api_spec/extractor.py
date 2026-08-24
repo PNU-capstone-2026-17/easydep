@@ -46,7 +46,7 @@ class ApiControlOutcome(BaseModel):
     """The named Control outcome that produces one documented HTTP status."""
 
     status: int
-    outcome: str
+    outcome: str = Field(min_length=1)
 
 
 class ApiControlBinding(BaseModel):

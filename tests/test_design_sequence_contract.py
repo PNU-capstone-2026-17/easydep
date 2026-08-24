@@ -113,6 +113,36 @@ OrderBoundary ..> OrderControl
     }
 
 
+def test_normalizer_restores_unambiguous_parameter_types_and_drops_placeholder_calls() -> None:
+    class_diagram = """@startuml
+class DropBoundary <<Boundary>> {
+  + requestDrop(sectionId : String): void
+}
+class DropController <<Control>> {
+  + dropSection(studentId : String, sectionId : String): void
+}
+@enduml"""
+    model = {
+        "Participants": [
+            _participant("Student", "actor"),
+            _participant("DropBoundary", "boundary", "DropBoundary"),
+            _participant("DropController", "control", "DropController"),
+        ],
+        "Messages": [
+            _message("Student", "DropBoundary", "requestDrop(sectionId)", call_id="x", reply_to=""),
+            _message("DropBoundary", "DropController", "dropSection(studentId, sectionId)", call_id="y", reply_to=""),
+            _message("DropBoundary", "DropBoundary", "self()", type="self", call_id="z", reply_to=""),
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, class_diagram)
+
+    assert [message["label"] for message in normalized["Messages"]] == [
+        "requestDrop(sectionId:String)",
+        "dropSection(studentId:String,sectionId:String)",
+    ]
+
+
 def test_llm_extraction_receives_the_allowed_interaction_routes() -> None:
     model = {"Participants": [], "Messages": []}
     with patch(
