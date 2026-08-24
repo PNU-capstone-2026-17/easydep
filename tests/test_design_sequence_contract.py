@@ -563,6 +563,90 @@ class OrderApi <<Boundary>> {
     assert messages[1]["reply_to"] == messages[0]["call_id"]
 
 
+def test_repeated_control_candidate_uses_llm_semantics_and_leaves_unmapped_branch_visible():
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Register", "primary_actor": "Student"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Register",
+            "primary_actor": "Student",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Student requests registration"},
+                {"step_number": 2, "sentence": "System registers the student"},
+            ],
+            "extensions": [{
+                "label": "2a",
+                "branch_step": 2,
+                "condition": "section capacity is reached",
+                "handling_steps": [{
+                    "sub_step": "2a1",
+                    "sentence": "System informs the student that registration failed",
+                }],
+            }],
+        }],
+    }
+    class_diagram = """@startuml
+class RegistrationScreen <<Boundary>> {
+  + requestRegistration(): void
+}
+class RegistrationControl <<Control>> {
+  + registerSection(): Enrollment
+}
+RegistrationScreen ..> RegistrationControl
+@enduml"""
+    llm_model = {
+        "Participants": [
+            _participant("Student", "actor"),
+            _participant("RegistrationScreen", "boundary", "RegistrationScreen"),
+            _participant("RegistrationControl", "control", "RegistrationControl"),
+        ],
+        "Messages": [
+            {
+                **_message(
+                    "Student", "RegistrationScreen", "requestRegistration()",
+                    call_id="call-1", reply_to="", arguments=[],
+                ),
+                "step_ids": ["UC1:main:1"],
+            },
+            {
+                **_message(
+                    "RegistrationScreen", "RegistrationControl", "registerSection()",
+                    call_id="call-2", reply_to="", arguments=[],
+                ),
+                "step_ids": ["UC1:main:2"],
+            },
+            {
+                "source": "RegistrationControl",
+                "target": "RegistrationScreen",
+                "label": "Enrollment",
+                "type": "return",
+                "fragments": [],
+                "use_case_ids": ["UC1"],
+                "step_ids": ["UC1:main:2"],
+                "call_id": "",
+                "reply_to": "call-2",
+                "arguments": [],
+            },
+        ],
+    }
+
+    with patch(
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+        return_value=llm_model,
+    ) as extract:
+        result = extract_sequence_diagrams(specification, class_diagram)
+
+    extract.assert_called_once()
+    messages = result["Diagrams"][0]["Messages"]
+    assert [message["label"] for message in messages].count("registerSection()") == 1
+    assert result["Diagrams"][0]["UnresolvedSteps"] == [{
+        "step_id": "UC1:extension:2a:2a1",
+        "sentence": "System informs the student that registration failed",
+        "reason": "No grounded class method was selected for this semantically distinct use-case step.",
+        "candidates": [],
+    }]
+
+
 def test_uncertain_steps_are_not_filled_from_candidate_order_when_llm_fails():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Order", "primary_actor": "Buyer"}],
@@ -761,7 +845,7 @@ CourseForm ..> CatalogController
     assert result["Diagrams"][0]["UnresolvedSteps"] == []
 
 
-def test_duplicate_branch_operation_keeps_each_flow_step_and_never_reaches_boundary_implicitly():
+def test_duplicate_branch_operation_delegates_semantic_assembly_to_llm():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Authenticate student", "primary_actor": "Student"}],
         "use_case_specs": [{
@@ -785,31 +869,17 @@ LoginScreen ..> AuthenticationController
 @enduml"""
 
     with patch(
-        "app.design.services.sequence_diagram.extractor.parse_structured",
-        return_value={
-            "selections": [
-                {
-                    "step_id": step_id,
-                    "receiver_class": "AuthenticationController",
-                    "method": "authenticate(credentials:String)",
-                }
-                for step_id in ("UC1:main:2", "UC1:extension:2a:2a1")
-            ]
-        },
-    ):
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+        return_value={"Participants": [], "Messages": []},
+    ) as extract:
         result = extract_sequence_diagrams(specification, class_diagram)
-    messages = result["Diagrams"][0]["Messages"]
-    operations = [(message["source"], message["target"], message["label"]) for message in messages]
 
-    assert operations == [
-        ("Student", "LoginScreen", "submitCredentials(credentials:String)"),
-        ("LoginScreen", "AuthenticationController", "authenticate(credentials:String)"),
-        ("LoginScreen", "AuthenticationController", "authenticate(credentials:String)"),
-    ]
-    assert all(message["source"] != "AuthenticationController" for message in messages)
+    extract.assert_called_once()
+    assert result["Diagrams"][0]["Messages"] == []
+    assert result["Diagrams"][0]["UnresolvedSteps"]
 
 
-def test_extension_and_main_flow_keep_distinct_traceability_when_reusing_operation():
+def test_extension_reusing_control_operation_delegates_semantic_assembly_to_llm():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Authenticate student", "primary_actor": "Student"}],
         "use_case_specs": [{
@@ -833,29 +903,17 @@ LoginScreen ..> AuthenticationController
 @enduml"""
 
     with patch(
-        "app.design.services.sequence_diagram.extractor.parse_structured",
-        return_value={
-            "selections": [
-                {
-                    "step_id": step_id,
-                    "receiver_class": "AuthenticationController",
-                    "method": "validateCredentials(credentials:String)",
-                }
-                for step_id in ("UC1:extension:1a:1a1", "UC1:main:2")
-            ]
-        },
-    ):
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+        return_value={"Participants": [], "Messages": []},
+    ) as extract:
         result = extract_sequence_diagrams(specification, class_diagram)
-    messages = result["Diagrams"][0]["Messages"]
 
-    assert [message["step_ids"] for message in messages] == [
-        ["UC1:main:1"],
-        ["UC1:extension:1a:1a1"],
-        ["UC1:main:2"],
-    ]
+    extract.assert_called_once()
+    assert result["Diagrams"][0]["Messages"] == []
+    assert result["Diagrams"][0]["UnresolvedSteps"]
 
 
-def test_llm_selection_is_preserved_without_lexical_substitution():
+def test_distinct_boundary_operations_remain_deterministic():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Action", "primary_actor": "Buyer"}],
         "use_case_specs": [{
@@ -881,23 +939,16 @@ GatewayApi ..> GatewayControl
 @enduml"""
 
     with patch(
-        "app.design.services.sequence_diagram.extractor.parse_structured",
-        return_value={
-            "selections": [
-                {
-                    "step_id": step_id,
-                    "receiver_class": "GatewayApi",
-                    "method": "startFlow()",
-                }
-                for step_id in ("UC1:main:1", "UC1:main:2")
-            ]
-        },
-    ):
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+        return_value={"Participants": [], "Messages": []},
+    ) as extract:
         result = extract_sequence_diagrams(specification, class_diagram)
 
-    assert [
-        message["label"] for message in result["Diagrams"][0]["Messages"]
-    ] == ["startFlow()", "startFlow()"]
+    extract.assert_not_called()
+    # Optional candidate selection may be unavailable; this must leave steps
+    # unresolved instead of escalating a structurally unambiguous flow to the
+    # full sequence-generation LLM.
+    assert result["Diagrams"][0]["UnresolvedSteps"]
 
 
 def test_use_case_summaries_without_specs_are_rejected_instead_of_collapsed():

@@ -289,7 +289,10 @@ that the inputs do not support.
 
 ## Flow analysis
 - Fully analyze every MainSuccessScenario step and every Extensions alternate or
-  exception branch. Each individual main or handling step becomes one or more messages.
+  exception branch. Do not use a single generic Control operation as a stand-in
+  for semantically distinct validation, retrieval, presentation, success, and
+  failure steps. A call may be reused only when the specification explicitly
+  states a retry or repeated invocation of that same operation.
 
 ## Messages and receiver ownership
 - `source` and `target` must both be participant aliases you listed.
@@ -348,6 +351,10 @@ that the inputs do not support.
   becomes loop. Do not use else for opt or loop.
 - Preserve MainSuccessScenario order. Place each extension immediately after
   the main step identified by its `branch_step`, before any later main step.
+- An `opt` contains only the branch-specific behavior. Never copy its anchor
+  call, the normal success response, or a preceding message into the fragment
+  merely to give the fragment content. A successful non-void return belongs
+  after the successful path has completed, never before failure alternatives.
 - If a step is explicitly unresolved (status unresolved, TODO/TBD, or a question
   asking what behavior to perform), do not invent behavior for it. Leave it for
   the validation gate to report as requiring clarification.
@@ -375,7 +382,8 @@ that the inputs do not support.
 ## Self-check before finalizing
 (a) every message's source and target exist among Participants,
 (b) no message violates the BCE communication rules,
-(c) every main and extension handling step id is represented by at least one message,
+(c) every represented main and extension handling step id is exact; leave a step
+    uncovered rather than reusing an unrelated method,
 (d) participants are ordered actor -> boundary -> control -> entity,
 (e) every `source_class` names a class in the given class diagram, and every
     `use_case_ids` and `step_ids` entry appears in the given specification,
@@ -1544,10 +1552,30 @@ def _generate_use_case_diagram(
     summaries: dict[str, dict[str, Any]],
     classes: dict[str, dict[str, Any]],
     dependencies: dict[str, list[str]],
+    class_diagram_puml: str,
 ) -> dict[str, Any]:
-    """한 유스케이스의 계획·선택·조립을 독립적으로 수행한다."""
+    """Generate one interaction with selective LLM semantics and deterministic contracts.
+
+    The former deterministic assembler selected the sole Control method for
+    every system sentence.  It therefore converted validation, retrieval,
+    success, and exception steps into repeated self-calls.  Class contracts are
+    constraints, not enough information to decide the interaction's causal
+    order. Ambiguous flows receive that semantic decision from the per-use-case
+    LLM, while distinct grounded operations remain a deterministic projection.
+    """
     use_case_id = str(specification.get("use_case_id") or "").strip()
     summary = summaries.get(use_case_id) or {}
+    if not any(
+        item["kind"] == "boundary" and item["methods"]
+        for item in classes.values()
+    ):
+        return _generate_llm_use_case_diagram(
+            specification,
+            summary,
+            class_diagram_puml,
+            classes,
+        )
+
     boundary, control = _select_use_case_route(
         specification, summary, classes, dependencies
     )
@@ -1558,6 +1586,26 @@ def _generate_use_case_diagram(
         dependencies,
         {use_case_id: (boundary, control)},
     )
+    # Reusing one inferred receiver operation across multiple system steps is
+    # not a structural fact. It requires semantic judgment about whether the
+    # steps are validation, persistence, presentation, or an exception branch.
+    # Delegate only those ambiguous flows to the LLM; a sequence whose grounded
+    # operations are distinct remains a cheap deterministic projection.
+    selected_receivers = [
+        (plan["selected_class"]["name"], plan["selected_method"])
+        for plan in plans
+        if plan["selected_class"] is not None
+    ]
+    requires_semantic_assembly = (
+        len(selected_receivers) != len(set(selected_receivers))
+    )
+    if requires_semantic_assembly:
+        return _generate_llm_use_case_diagram(
+            specification,
+            summary,
+            class_diagram_puml,
+            classes,
+        )
     selections = _select_uncertain_elements(plans)
     diagrams = _assemble_deterministic_diagrams(plans, selections, classes)
     return next(
@@ -1679,13 +1727,33 @@ def _generate_llm_use_case_diagram(
             classes,
             "Semantic extraction returned no grounded interaction messages.",
         )
+    covered_step_ids = {
+        str(step_id)
+        for message in extracted.get("Messages") or []
+        if isinstance(message, dict)
+        for step_id in message.get("step_ids") or []
+        if str(step_id).strip()
+    }
+    unresolved = [
+        {
+            "step_id": record["step_id"],
+            "sentence": record["sentence"],
+            "reason": (
+                "No grounded class method was selected for this semantically "
+                "distinct use-case step."
+            ),
+            "candidates": [],
+        }
+        for record in _flow_records(specification)
+        if record["step_id"] not in covered_step_ids
+    ]
     return {
         "use_case_id": use_case_id,
         "use_case_name": str(
             specification.get("name") or summary.get("name") or ""
         ).strip(),
         **extracted,
-        "UnresolvedSteps": [],
+        "UnresolvedSteps": unresolved,
     }
 
 
@@ -1714,45 +1782,9 @@ def extract_sequence_diagrams(
         if isinstance(item, dict) and item.get("use_case_id")
     ]
     classes, dependencies = _parse_class_catalog(class_diagram_puml)
-    # Legacy or externally supplied class text may not expose a parseable BCE method
-    # catalog. In that genuinely under-specified case the existing full-model LLM
-    # extractor remains the last resort instead of fabricating operations.
-    if not any(
-        item["kind"] == "boundary" and item["methods"]
-        for item in classes.values()
-    ):
-        diagrams = []
-        for specification in specifications:
-            use_case_id = str(specification.get("use_case_id") or "").strip()
-            try:
-                diagrams.append(_generate_llm_use_case_diagram(
-                    specification,
-                    use_cases.get(use_case_id, {}),
-                    class_diagram_puml,
-                    classes,
-                ))
-            except Exception:  # noqa: BLE001 - preserve the failed UC visibly
-                logger.warning(
-                    "semantic sequence generation failed for use case %s",
-                    use_case_id,
-                    exc_info=True,
-                )
-                diagrams.append(_unresolved_use_case_diagram(
-                    specification,
-                    use_cases.get(use_case_id, {}),
-                    classes,
-                    "No parseable Boundary method contract was available for semantic extraction.",
-                ))
-        return SequenceDiagramCollection(
-            Diagrams=diagrams,
-            class_diagram_hash=hashlib.sha256(
-                class_diagram_puml.encode("utf-8")
-            ).hexdigest(),
-        ).model_dump()
-
-    # Each use case is independent until the final collection assembly. Keep
-    # the worker count bounded because a worker may perform one semantic
-    # selection call. Results are restored to specification order below.
+    # Each use case is independent until the final collection assembly. A worker
+    # may call the LLM when structural contracts cannot decide interaction
+    # semantics; deterministic code keeps the per-UC input and validation bounded.
     from app.core.config import settings
 
     worker_limit = max(1, int(getattr(settings, "design_sequence_parallelism", 4)))
@@ -1765,6 +1797,7 @@ def extract_sequence_diagrams(
                 use_cases,
                 classes,
                 dependencies,
+                class_diagram_puml,
             ): str(specification.get("use_case_id") or "").strip()
             for specification in specifications
         }
