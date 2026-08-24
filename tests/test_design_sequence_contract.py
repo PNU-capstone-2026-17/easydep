@@ -688,10 +688,11 @@ RegistrationScreen ..> RegistrationControl
     extract.assert_called_once()
     messages = result["Diagrams"][0]["Messages"]
     assert [message["label"] for message in messages].count("registerSection()") == 1
-    assert result["Diagrams"][0]["UnresolvedSteps"] == [{
+    assert result["Diagrams"][0]["UnresolvedSteps"] == []
+    assert result["Diagrams"][0]["NarrativeSteps"] == [{
         "step_id": "UC1:extension:2a:2a1",
         "sentence": "System informs the student that registration failed",
-        "reason": "No grounded class method was selected for this semantically distinct use-case step.",
+        "reason": "Narrative outcome or condition represented by the surrounding interaction.",
         "candidates": [],
     }]
 

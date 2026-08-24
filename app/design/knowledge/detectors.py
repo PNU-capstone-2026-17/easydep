@@ -2467,6 +2467,15 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
             for item in model.get("UnresolvedSteps", []) or []
             if isinstance(item, dict) and item.get("step_id")
         )
+        # A requirement condition or outcome can be part of an interaction's
+        # meaning without becoming a distinct receiver method.  It remains
+        # explicitly traceable in NarrativeSteps, rather than being converted
+        # into a fabricated call or a false unresolved-method defect.
+        covered_steps.update(
+            str(item.get("step_id") or "").strip()
+            for item in model.get("NarrativeSteps", []) or []
+            if isinstance(item, dict) and item.get("step_id")
+        )
         return [
             Finding(rule_id, f"시퀀스 다이어그램에 반영되지 않은 흐름 단계 id '{step_id}'", step_id)
             for step_id in sorted(flow_steps - covered_steps)

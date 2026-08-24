@@ -712,6 +712,35 @@ def test_usecase_coverage_valid():
     assert detectors.sequence_usecase_coverage(model, STATE) == []
 
 
+def test_usecase_coverage_accepts_explicit_narrative_step_without_method_call():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [
+                    {"step_number": 1, "sentence": "Student submits the request"},
+                    {"step_number": 2, "sentence": "System displays the result"},
+                ],
+                "extensions": [],
+            }],
+        },
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [{
+            "source": "Student", "target": "RequestBoundary", "type": "sync",
+            "step_ids": ["UC1:main:1"],
+        }],
+        "NarrativeSteps": [{
+            "step_id": "UC1:main:2",
+            "sentence": "System displays the result",
+            "reason": "Outcome of the preceding call",
+        }],
+    }
+
+    assert detectors.sequence_usecase_coverage(model, state) == []
+
+
 def test_usecase_coverage_rejects_uncovered_usecase():
     """유스케이스 ID가 시퀀스에 매핑되지 않았으면 지적한다."""
     state_multi_uc = {

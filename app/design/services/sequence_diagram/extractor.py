@@ -184,6 +184,10 @@ class UseCaseSequenceModel(SequenceModel):
     #: Steps which were kept visible because no grounded receiver method could
     #: be selected.  They render as an explicit review note, never as absence.
     UnresolvedSteps: list[SequenceUnresolvedStep] = Field(default_factory=list)
+    #: Conditions, outcomes, and other narrative flow steps that are explained
+    #: by the surrounding interaction but do not introduce a separate receiver
+    #: operation.  They retain traceability without fabricating a method call.
+    NarrativeSteps: list[SequenceUnresolvedStep] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def messages_belong_to_this_use_case(self) -> "UseCaseSequenceModel":
@@ -290,10 +294,13 @@ that the inputs do not support.
 
 ## Flow analysis
 - Fully analyze every MainSuccessScenario step and every Extensions alternate or
-  exception branch. Do not use a single generic Control operation as a stand-in
-  for semantically distinct validation, retrieval, presentation, success, and
-  failure steps. A call may be reused only when the specification explicitly
-  states a retry or repeated invocation of that same operation.
+  exception branch. A use-case step is not automatically a receiver operation:
+  conditions, outcomes, returned/displayed results, and actor decisions may be
+  recorded in `NarrativeSteps` when the surrounding grounded interaction already
+  explains them. Do not invent a call merely to give such a sentence a method.
+- Use `UnresolvedSteps` only when a step truly requires a concrete interaction
+  but no declared receiver method can represent it. Every flow step must appear
+  either in a message's `step_ids`, `NarrativeSteps`, or `UnresolvedSteps`.
 
 ## Messages and receiver ownership
 - `source` and `target` must both be participant aliases you listed.
@@ -389,8 +396,8 @@ that the inputs do not support.
 ## Self-check before finalizing
 (a) every message's source and target exist among Participants,
 (b) no message violates the BCE communication rules,
-(c) every represented main and extension handling step id is exact; leave a step
-    uncovered rather than reusing an unrelated method,
+(c) every represented main and extension handling step id is exact; use
+    NarrativeSteps rather than reusing an unrelated method for a non-call step,
 (d) participants are ordered actor -> boundary -> control -> entity,
 (e) every `source_class` names a class in the given class diagram, and every
     `use_case_ids` and `step_ids` entry appears in the given specification,
@@ -1510,6 +1517,7 @@ def _assemble_deterministic_diagrams(
         }
         messages: list[dict[str, Any]] = []
         unresolved_steps: list[dict[str, Any]] = []
+        narrative_steps: list[dict[str, Any]] = []
         reached = {actor_alias}
         call_number = 0
 
@@ -1571,10 +1579,23 @@ def _assemble_deterministic_diagrams(
             # candidate list order into a false interaction, but retain the step
             # as an explicit review item instead of making this UC disappear.
             if not selected_name or not selected_method:
-                mark_unresolved(
-                    plan,
-                    "No grounded receiver method was selected from the class diagram.",
-                )
+                if plan["actor_led"]:
+                    mark_unresolved(
+                        plan,
+                        "No grounded receiver method was selected from the class diagram.",
+                    )
+                else:
+                    narrative_steps.append(
+                        {
+                            "step_id": plan["step_id"],
+                            "sentence": plan["sentence"],
+                            "reason": "Narrative outcome or condition represented by the surrounding interaction.",
+                            "candidates": [
+                                f"{candidate['class_name']}.{candidate['method']}"
+                                for candidate in plan["candidates"]
+                            ],
+                        }
+                    )
                 continue
             selected_class = classes[selected_name]
             # An actor entry is emitted only for an actor-led use-case step.
@@ -1722,6 +1743,7 @@ def _assemble_deterministic_diagrams(
             "Participants": ordered,
             "Messages": messages,
             "UnresolvedSteps": unresolved_steps,
+            "NarrativeSteps": narrative_steps,
         })
     return diagrams
 
@@ -1940,6 +1962,15 @@ def _generate_llm_use_case_diagram(
         for step_id in message.get("step_ids") or []
         if str(step_id).strip()
     }
+    existing_narrative = [
+        item for item in extracted.get("NarrativeSteps") or []
+        if isinstance(item, dict) and str(item.get("step_id") or "").strip()
+    ]
+    accounted_step_ids = covered_step_ids | {
+        str(item.get("step_id") or "").strip()
+        for item in [*existing_narrative, *(extracted.get("UnresolvedSteps") or [])]
+        if isinstance(item, dict)
+    }
     unresolved = [
         {
             "step_id": record["step_id"],
@@ -1951,7 +1982,22 @@ def _generate_llm_use_case_diagram(
             "candidates": [],
         }
         for record in _flow_records(specification)
-        if record["step_id"] not in covered_step_ids
+        if record["step_id"] not in accounted_step_ids
+        and _actor_led(record["sentence"], str(specification.get("primary_actor") or summary.get("primary_actor") or "User"))
+    ]
+    narrative = [
+        *existing_narrative,
+        *[
+            {
+                "step_id": record["step_id"],
+                "sentence": record["sentence"],
+                "reason": "Narrative outcome or condition represented by the surrounding interaction.",
+                "candidates": [],
+            }
+            for record in _flow_records(specification)
+            if record["step_id"] not in accounted_step_ids
+            and not _actor_led(record["sentence"], str(specification.get("primary_actor") or summary.get("primary_actor") or "User"))
+        ],
     ]
     return {
         "use_case_id": use_case_id,
@@ -1960,6 +2006,7 @@ def _generate_llm_use_case_diagram(
         ).strip(),
         **extracted,
         "UnresolvedSteps": unresolved,
+        "NarrativeSteps": narrative,
     }
 
 
