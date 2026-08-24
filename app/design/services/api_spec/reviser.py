@@ -48,6 +48,7 @@ def revise_api_spec_model(
     feedback: str,
     context_text: str = "",
     targets: set[str] | None = None,
+    class_diagram_puml: str = "",
 ) -> dict[str, Any]:
     """현재 모델 + 피드백 → 수정된 모델. 피드백이 없으면 원본을 그대로 둔다."""
     if not current_model or not feedback:
@@ -65,4 +66,4 @@ def revise_api_spec_model(
         ),
         ApiSpecModel,
     )
-    return normalize_api_spec_model(revised)
+    return normalize_api_spec_model(revised, class_diagram_puml)

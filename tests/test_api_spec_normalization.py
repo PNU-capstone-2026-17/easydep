@@ -1,4 +1,5 @@
 from app.design.services.api_spec.extractor import normalize_api_spec_model
+from app.design.services.api_spec import reviser
 
 
 def test_api_model_fills_control_traceability_and_explicit_body_fields() -> None:
@@ -71,6 +72,36 @@ class DropController <<Control>> {
     assert normalized["Endpoints"][0]["control_binding"]["outcomes"] == [
         {"status": 204, "outcome": "dropped"}
     ]
+
+
+def test_api_revision_preserves_void_response_normalization(monkeypatch) -> None:
+    model = {
+        "Endpoints": [{
+            "path": "/enrollments/{sectionId}",
+            "responses": [{"status": 200, "schema_name": "Enrollment"}],
+            "control_binding": {
+                "control": "DropController",
+                "method": "dropSection",
+                "outcomes": [{"status": 200, "outcome": "dropped"}],
+            },
+        }],
+        "Schemas": [],
+    }
+    class_diagram = """@startuml
+class DropController <<Control>> {
+  + dropSection(sectionId : String): void
+}
+@enduml"""
+    monkeypatch.setattr(reviser, "parse_structured", lambda *_args: model)
+
+    revised = reviser.revise_api_spec_model(
+        model,
+        "Use the current model.",
+        class_diagram_puml=class_diagram,
+    )
+
+    assert revised["Endpoints"][0]["responses"][0]["status"] == 204
+    assert revised["Endpoints"][0]["control_binding"]["outcomes"][0]["status"] == 204
 
 
 def test_body_field_types_follow_exact_control_parameter_types() -> None:

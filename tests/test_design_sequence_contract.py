@@ -149,6 +149,66 @@ class EnrollmentBoundary <<Boundary>> {
     assert message["label"] == "dropCourse(studentId:String,courseId:String)"
 
 
+def test_shortened_leading_role_name_enters_the_declared_boundary() -> None:
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Maintain section", "primary_actor": "Registrar Staff"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Maintain section",
+            "primary_actor": "Registrar Staff",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Registrar enters the section details"},
+                {"step_number": 2, "sentence": "System saves the section"},
+            ],
+            "extensions": [],
+        }],
+    }
+    class_puml = """@startuml
+class SectionBoundary <<Boundary>> { + maintainSection(): Section }
+class SectionControl <<Control>> { + saveSection(): Section }
+SectionBoundary ..> SectionControl
+@enduml"""
+
+    result = extract_sequence_diagrams(specification, class_puml)
+
+    assert result["Diagrams"][0]["UnresolvedSteps"] == []
+    assert result["Diagrams"][0]["Messages"][0]["source"] == "Registrar_Staff"
+    assert result["Diagrams"][0]["Messages"][0]["target"] == "SectionBoundary"
+
+
+def test_repeated_control_operation_is_not_rejected_as_distinct_actor_inputs() -> None:
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Maintain order", "primary_actor": "Buyer"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Maintain order",
+            "primary_actor": "Buyer",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Buyer submits the order"},
+                {"step_number": 2, "sentence": "System validates the order"},
+                {"step_number": 3, "sentence": "System persists the order"},
+            ],
+            "extensions": [],
+        }],
+    }
+    class_puml = """@startuml
+class OrderBoundary <<Boundary>> { + submitOrder(): Order }
+class OrderControl <<Control>> { + saveOrder(): Order }
+OrderBoundary ..> OrderControl
+@enduml"""
+
+    result = extract_sequence_diagrams(specification, class_puml)
+    findings = sequence_diagram_findings(
+        result,
+        {"usecase_spec": specification, "class_diagram_puml": class_puml},
+    )
+
+    assert not [
+        finding for finding in findings
+        if finding.rule_id == "sequence.step-operation-distinctness"
+    ]
+
+
 def test_extracts_one_sequence_diagram_for_each_use_case():
     specification = {
         "use_cases": [

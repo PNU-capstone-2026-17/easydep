@@ -207,7 +207,11 @@ API_SPEC_SPEC = DesignArtifactSpec(
         state.get("sequence_diagram_puml", ""),
     ),
     revise=lambda current, feedback, state, targets: revise_api_spec_model(
-        current, feedback, _design_context(state, "api_spec"), targets
+        current,
+        feedback,
+        _design_context(state, "api_spec"),
+        targets,
+        state.get("class_diagram_puml", ""),
     ),
     render=build_openapi_from_model,
     validate=validate_api_spec,

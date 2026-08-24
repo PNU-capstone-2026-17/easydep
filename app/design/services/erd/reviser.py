@@ -35,6 +35,10 @@ same schema. How to edit:
 - Preserve any <<Boundary>> and <<Control>> classes unchanged; they are not part
   of the ERD but must survive so the shared model stays complete.
 - Every relationship's source and target must exist among the returned classes.
+- When a reported rule identifies a mandatory foreign-key cycle, resolve the
+  cycle from the stated domain semantics: use an optional multiplicity only
+  when the relationship can genuinely be absent, or remove/correct the
+  contradictory relationship. Never delete an entity merely to hide the cycle.
 - Keep the traceability fields (use_case_ids) accurate. Carry them over unchanged for
   elements you did not touch; update them for elements you changed; fill them
   in for elements you added. Never invent a reference — an empty list is

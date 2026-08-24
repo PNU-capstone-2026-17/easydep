@@ -967,7 +967,20 @@ def _actor_led(sentence: str, actor_name: str) -> bool:
     system_subjects = ("system ", "system.", "the system ", "system's", "database ", "server ")
     if lowered.startswith(system_subjects):
         return False
+    actor_words = [
+        word
+        for word in re.findall(r"[a-z0-9]+", actor_name.lower())
+        if word not in {"a", "an", "the"}
+    ]
+    # Use the leading role word as a *bounded* alias for a multi-word actor
+    # name. Requirement authors commonly write "Registrar" for the declared
+    # "Registrar Staff" actor. Treating that as a system action leaves the
+    # Boundary unreachable and makes every following step falsely unresolved.
+    # The alias is deliberately limited to the leading word: trailing words
+    # such as "staff", "user", or "administrator" are too generic.
     subjects = {actor_name.lower().strip(), "user", "the user", "actor", "the actor"}
+    if len(actor_words) > 1 and len(actor_words[0]) >= 3:
+        subjects.add(actor_words[0])
     return any(
         subject
         and (
@@ -1039,8 +1052,10 @@ def _select_uncertain_group(plans: list[dict[str, Any]]) -> dict[str, tuple[str,
             "role": "system",
             "content": (
                 "Select the single best existing receiver class and method for each flow step. "
-                "Use only the supplied candidates, keep every step_id exact, and do not generate "
-                "participants, messages, UML, or prose."
+                "Use only the supplied candidates, keep every selected step_id exact, and omit a "
+                "step when none of its candidates actually represents that behavior. Do not map a "
+                "generic save/process method to validation, persistence, and presentation steps just "
+                "because it is the only candidate. Do not generate participants, messages, UML, or prose."
             ),
         },
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},

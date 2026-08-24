@@ -2433,17 +2433,26 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
 
 
 def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Finding]:
-    """Reject one generic operation being used to claim unrelated main steps.
+    """Reject one Boundary input being used for distinct actor actions.
 
     ``step_ids`` are traceability references, not proof that a call explains the
     step.  Reusing the same receiver operation for the actor request, a seat
     check, persistence and a response lets a minimal diagram pass structural
-    coverage while saying almost nothing about the workflow.  Forwarding one
-    request through Boundary -> Control is allowed because it carries the same
-    step id; only distinct *main* step ids are rejected here.
+    coverage while saying almost nothing about the workflow. System-internal
+    steps are different: one Control operation may validly validate, persist,
+    and return a result as part of one command. Their method name alone cannot
+    prove that they are separate user-visible operations. Restrict this rule to
+    Actor -> Boundary input calls; the actor-step detector supplies the same
+    semantic guard and prevents a repeated generic entry operation from hiding
+    distinct user requests.
     """
     rule_id = "sequence.step-operation-distinctness"
     use_case_id = str(model.get("use_case_id") or "").strip()
+    kinds = {
+        _participant_id(participant): str(participant.get("kind") or "").strip().lower()
+        for participant in model.get("Participants", []) or []
+        if isinstance(participant, dict)
+    }
     calls: dict[str, set[str]] = {}
     for message in model.get("Messages") or []:
         if not isinstance(message, dict):
@@ -2452,6 +2461,10 @@ def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Findi
             continue
         signature = method_call_signature(str(message.get("label") or ""))
         if not signature:
+            continue
+        source = str(message.get("source") or "").strip()
+        target = str(message.get("target") or "").strip()
+        if kinds.get(source) != "actor" or kinds.get(target) != "boundary":
             continue
         main_steps = {
             str(step_id).strip()
@@ -2467,7 +2480,7 @@ def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Findi
     return [
         Finding(
             rule_id,
-            f"서로 다른 주 흐름 단계 {sorted(step_ids)}가 동일한 오퍼레이션 '{signature}'으로만 표현됨",
+            f"서로 다른 사용자 입력 단계 {sorted(step_ids)}가 동일한 Boundary 호출 '{signature}'으로만 표현됨",
             signature,
         )
         for signature, step_ids in sorted(calls.items())
