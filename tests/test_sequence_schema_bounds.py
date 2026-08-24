@@ -89,18 +89,19 @@ def test_call_message_label_accepts_complete_method_calls(label: str):
     assert message.label == label
 
 
-def test_return_message_requires_a_result_label():
-    with pytest.raises(ValidationError, match="require a result label"):
-        SequenceMessage(
-            source="B",
-            target="A",
-            label="",
-            type="return",
-            fragments=[],
-            use_case_ids=["UC1"],
-            step_ids=["UC1:main:1"],
-            **_link_fields("return"),
-        )
+def test_return_message_allows_an_empty_label_for_contract_normalization():
+    message = SequenceMessage(
+        source="B",
+        target="A",
+        label="",
+        type="return",
+        fragments=[],
+        use_case_ids=["UC1"],
+        step_ids=["UC1:main:1"],
+        **_link_fields("return"),
+    )
+
+    assert message.label == ""
 
 
 def test_return_message_accepts_a_non_empty_result_label():

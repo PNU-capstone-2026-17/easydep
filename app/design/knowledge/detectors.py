@@ -2532,6 +2532,41 @@ def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Findi
         for participant in model.get("Participants", []) or []
         if isinstance(participant, dict)
     }
+    step_sentences = {
+        f"{str(item.get('use_case_id') or '').strip()}:main:{step.get('step_number')}": str(
+            step.get("sentence") or ""
+        ).strip().lower()
+        for item in (state.get("usecase_spec") or {}).get("use_case_specs") or []
+        if isinstance(item, dict)
+        for step in item.get("main_scenario") or []
+        if isinstance(step, dict) and step.get("step_number") is not None
+    }
+
+    def is_single_submission(step_ids: set[str]) -> bool:
+        """Allow an intent followed by its entered data to share one command.
+
+        Fully dressed use-case specifications commonly split a user submission
+        into "starts creation" and "provides attributes".  Those are not two
+        independent Boundary operations unless the specification identifies a
+        second command; requiring one method per prose sentence caused false
+        class-method proposals for maintenance use cases.
+        """
+        ordered = sorted(step_ids, key=lambda value: int(value.rsplit(":", 1)[-1]))
+        if len(ordered) != 2:
+            return False
+        try:
+            first, second = (int(value.rsplit(":", 1)[-1]) for value in ordered)
+        except ValueError:
+            return False
+        if second != first + 1:
+            return False
+        intent = step_sentences.get(ordered[0], "")
+        details = step_sentences.get(ordered[1], "")
+        return (
+            any(token in intent for token in ("initiat", "indicat", "intend", "begin", "start"))
+            and any(token in details for token in ("suppl", "provid", "enter", "input", "attribute", "detail"))
+        )
+
     calls: dict[str, set[str]] = {}
     for message in model.get("Messages") or []:
         if not isinstance(message, dict):
@@ -2563,7 +2598,7 @@ def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Findi
             signature,
         )
         for signature, step_ids in sorted(calls.items())
-        if len(step_ids) > 1
+        if len(step_ids) > 1 and not is_single_submission(step_ids)
     ]
 
 

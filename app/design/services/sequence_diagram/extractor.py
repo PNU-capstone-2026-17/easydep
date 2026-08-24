@@ -147,9 +147,11 @@ class SequenceMessage(BaseModel):
                 raise ValueError("call messages require call_id and an empty reply_to")
         if self.type == "return":
             label = self.label.strip()
-            if not label:
-                raise ValueError("return messages require a result label")
-            if not is_return_value_label(label):
+            # Providers occasionally omit a return label while still emitting
+            # a usable reply link.  The normalizer can restore the exact type
+            # from the receiver contract (or remove a void return), so do not
+            # discard the whole use-case diagram for this mechanical omission.
+            if label and not is_return_value_label(label):
                 raise ValueError("return message labels must be return type identifiers")
             self.label = label
             if self.call_id.strip() or not self.reply_to.strip():
@@ -656,9 +658,13 @@ def normalize_sequence_contracts(
                 message["reply_to"] = reply_to
                 message["call_id"] = ""
                 expected_return = declared_return_type(calls[reply_to])
-                if expected_return:
+                if expected_return and expected_return.lower() != "void":
                     message["label"] = expected_return
-                used_replies.add(reply_to)
+                    used_replies.add(reply_to)
+                else:
+                    # A void method cannot have a return message.  Removing it
+                    # is contract restoration, not a semantic choice.
+                    message["_drop"] = True
             else:
                 # There is no grounded call for this return.  Leave it out
                 # rather than retaining a false call-return relation.
@@ -1893,6 +1899,7 @@ def _unresolved_use_case_diagram(
     summary: dict[str, Any],
     classes: dict[str, dict[str, Any]],
     reason: str,
+    route_candidates: list[tuple[dict[str, Any], dict[str, Any] | None]] | None = None,
 ) -> dict[str, Any]:
     """Build a visible, reviewable UC result when semantic extraction fails.
 
@@ -1919,7 +1926,8 @@ def _unresolved_use_case_diagram(
             "source_class": "",
         }
     ]
-    boundary = next(
+    route = next(iter(route_candidates or []), None)
+    boundary = route[0] if route is not None else next(
         (
             item
             for item in sorted(classes.values(), key=lambda item: str(item.get("name") or ""))
@@ -1929,6 +1937,8 @@ def _unresolved_use_case_diagram(
     )
     if boundary is not None:
         participants.append(_participant(boundary))
+    if route is not None and route[1] is not None:
+        participants.append(_participant(route[1]))
     candidates = [
         f"{item['name']}.{method}"
         for item in classes.values()
@@ -1974,24 +1984,33 @@ def _generate_llm_use_case_diagram(
 ) -> dict[str, Any]:
     """Use full UC semantics only when the BCE structure itself is ambiguous."""
     use_case_id = str(specification.get("use_case_id") or "").strip()
-    extracted = extract_sequence_model(
-        json.dumps(
-            {
-                "use_case": summary,
-                "use_case_specification": specification,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        class_diagram_puml,
-        [
-            {
-                "boundary_class": boundary["name"],
-                "control_class": control["name"] if control is not None else "",
-            }
-            for boundary, control in route_candidates or []
-        ] or None,
-    )
+    try:
+        extracted = extract_sequence_model(
+            json.dumps(
+                {
+                    "use_case": summary,
+                    "use_case_specification": specification,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            class_diagram_puml,
+            [
+                {
+                    "boundary_class": boundary["name"],
+                    "control_class": control["name"] if control is not None else "",
+                }
+                for boundary, control in route_candidates or []
+            ] or None,
+        )
+    except StructuredLlmError:
+        return _unresolved_use_case_diagram(
+            specification,
+            summary,
+            classes,
+            "Sequence planning failed before a grounded interaction could be assembled.",
+            route_candidates,
+        )
     if not extracted.get("Messages") and _flow_records(specification):
         return _unresolved_use_case_diagram(
             specification,

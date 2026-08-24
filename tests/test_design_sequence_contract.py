@@ -143,6 +143,30 @@ class DropController <<Control>> {
     ]
 
 
+def test_normalizer_drops_blank_return_for_void_receiver_method() -> None:
+    class_diagram = """@startuml
+class DepartmentBoundary <<Boundary>> { + deleteDepartment(departmentId : String): void }
+class DepartmentController <<Control>> { + deleteDepartment(departmentId : String): void }
+DepartmentBoundary ..> DepartmentController
+@enduml"""
+    model = {
+        "Participants": [
+            _participant("Administrator", "actor"),
+            _participant("DepartmentBoundary", "boundary", "DepartmentBoundary"),
+            _participant("DepartmentController", "control", "DepartmentController"),
+        ],
+        "Messages": [
+            _message("Administrator", "DepartmentBoundary", "deleteDepartment(departmentId:String)", call_id="entry", reply_to="", arguments=[]),
+            _message("DepartmentBoundary", "DepartmentController", "deleteDepartment(departmentId:String)", call_id="delete", reply_to="", arguments=[]),
+            {**_message("DepartmentController", "DepartmentBoundary", "", type="return"), "call_id": "", "reply_to": "delete", "arguments": []},
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, class_diagram)
+
+    assert not [message for message in normalized["Messages"] if message["type"] == "return"]
+
+
 def test_llm_extraction_receives_the_allowed_interaction_routes() -> None:
     model = {"Participants": [], "Messages": []}
     with patch(
@@ -764,6 +788,79 @@ class OrderApi <<Boundary>> {
         }
     ]
     assert "Needs review" in generate_sequence_from_model(result["Diagrams"][0])
+
+
+def test_llm_failure_keeps_the_selected_use_case_route_in_review_diagram():
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Maintain section", "primary_actor": "Administrator"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Maintain section",
+            "primary_actor": "Administrator",
+            "main_scenario": [{"step_number": 1, "sentence": "Administrator creates a section"}],
+            "extensions": [],
+        }],
+    }
+    class_diagram = """@startuml
+class AcademicTermBoundary <<Boundary>> { + createTerm(): void }
+class AcademicTermController <<Control>> { + createTerm(): void }
+class SectionBoundary <<Boundary>> { + createSection(): void }
+class SectionController <<Control>> { + createSection(): void }
+AcademicTermBoundary ..> AcademicTermController
+SectionBoundary ..> SectionController
+@enduml"""
+
+    with (
+        patch(
+            "app.design.services.sequence_diagram.extractor._select_use_case_route",
+            return_value=(
+                {"name": "SectionBoundary", "kind": "boundary", "methods": ["createSection()"]},
+                {"name": "SectionController", "kind": "control", "methods": ["createSection()"]},
+            ),
+        ),
+        patch(
+            "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+            side_effect=StructuredLlmError("malformed return label"),
+        ),
+    ):
+        result = extract_sequence_diagrams(specification, class_diagram)
+
+    participants = result["Diagrams"][0]["Participants"]
+    assert [participant["source_class"] for participant in participants] == [
+        "", "SectionBoundary", "SectionController",
+    ]
+
+
+def test_intent_and_attribute_entry_can_share_one_boundary_submission():
+    specification = {
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Administrator initiates creation of a department"},
+                {"step_number": 2, "sentence": "Administrator supplies the department attributes"},
+            ],
+        }],
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Participants": [
+            _participant("Administrator", "actor"),
+            _participant("DepartmentBoundary", "boundary", "DepartmentBoundary"),
+        ],
+        "Messages": [
+            _message(
+                "Administrator", "DepartmentBoundary", "createDepartment()",
+                step_ids=["UC1:main:1", "UC1:main:2"], call_id="entry", reply_to="", arguments=[],
+            ),
+        ],
+    }
+
+    findings = sequence_diagram_findings(model, {"usecase_spec": specification})
+
+    assert not [
+        finding for finding in findings
+        if finding.rule_id == "sequence.step-operation-distinctness"
+    ]
 
 
 def test_each_use_case_stays_renderable_when_semantic_selection_fails():
