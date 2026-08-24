@@ -352,6 +352,28 @@ RULES: tuple[Rule, ...] = (
         detector="control_outcome_return_contract",
     ),
     Rule(
+        id="class.control-action-dispatcher",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "A Control method that selects behavior through an action/operation/command "
+            "parameter must not collapse distinct create, update, and delete interactions; "
+            "each externally visible operation needs a concrete method contract."
+        ),
+        citation=(
+            "app/design/services/api_spec/extractor.py "
+            "(HTTP-to-Control argument binding)"
+        ),
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="control_action_dispatch_contract",
+        generation_note=(
+            "Do not use processX(..., action : String, ...) as a CRUD dispatcher. "
+            "Derive separate grounded Control operations such as createX, updateX, and deleteX "
+            "when the use case distinguishes those actions."
+        ),
+    ),
+    Rule(
         id="class.operation-inputs-explicit",
         stage=CLASS_DIAGRAM,
         severity=GUIDANCE,

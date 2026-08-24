@@ -123,9 +123,11 @@ _PROCEDURE = """
    For update, delete, retire, or other operations that target an existing \
    persistent record, the Control contract must receive the record identifier \
    explicitly (for example `recordId : String`) or receive an Entity/value object \
-   that contains that identifier. Do not emit a generic `process(operation, data)` \
-   signature that leaves a path/resource identifier with no Control parameter; the \
-   downstream API binding cannot safely implement such an operation. \
+   that contains that identifier. When the requirement distinguishes create, update, \
+   and delete, derive separate grounded methods for those actions; do not hide them \
+   behind `processX(..., action : String, ...)`, `handleX(..., operation : String, ...)`, \
+   or another action-dispatcher signature. Those generic dispatchers cannot be mapped \
+   safely to a REST path, request body, response, or sequence interaction. \
    Derive operations for every distinct main-flow input, system action, success \
    notification, and extension outcome that the specification actually states. \
    Do not collapse two distinct actor inputs into one generic Boundary method \

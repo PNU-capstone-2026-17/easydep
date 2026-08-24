@@ -508,7 +508,7 @@ def test_uncovered_flow_asks_class_llm_whether_a_method_is_missing():
     assert result == {}
 
 
-def test_uncovered_flow_proposes_a_minimal_method_chosen_by_class_llm():
+def test_uncovered_flow_without_a_visible_route_does_not_revise_every_class():
     state = {
         "usecase_spec": {
             "use_case_specs": [{
@@ -539,16 +539,15 @@ def test_uncovered_flow_proposes_a_minimal_method_chosen_by_class_llm():
     with patch(
         "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
         return_value=proposed,
-    ):
+    ) as revise:
         result = reconcile_class_methods(state)
 
-    proposal = result["sequence_diagram_model"]["MethodProposals"][0]
-    assert proposal["class_name"] == "OrderScreen"
-    assert proposal["method"] == "submitOrder()"
+    revise.assert_not_called()
+    assert result == {}
     assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["display()"]
 
 
-def test_unresolved_sequence_step_proposes_a_grounded_class_method_for_approval():
+def test_unresolved_sequence_step_without_a_visible_route_stays_unresolved():
     state = {
         "usecase_spec": {"use_case_specs": []},
         "extracted_bce_classes": {
@@ -585,12 +584,49 @@ def test_unresolved_sequence_step_proposes_a_grounded_class_method_for_approval(
     ) as revise:
         result = reconcile_class_methods(state)
 
-    assert "unresolved step means no grounded class operation" in revise.call_args.kwargs["feedback"]
-    proposal = result["sequence_diagram_model"]["MethodProposals"][0]
-    assert proposal["class_name"] == "SignInBoundary"
-    assert proposal["method"] == "showSignInFailure(message : String): void"
-    assert proposal["step_ids"] == ["UC1:extension:2a:2a1"]
+    revise.assert_not_called()
+    assert result == {}
     assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["submitCredentials()"]
+
+
+def test_unresolved_step_revision_is_scoped_to_its_visible_bce_route():
+    state = {
+        "usecase_spec": {"use_case_specs": []},
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "SignInBoundary", "stereotype": "Boundary", "methods": ["submitCredentials()"]},
+                {"className": "SignInControl", "stereotype": "Control", "methods": ["authenticate(): Session"]},
+                {"className": "ScheduleBoundary", "stereotype": "Boundary", "methods": ["showSchedule()"]},
+                {"className": "ScheduleControl", "stereotype": "Control", "methods": ["getSchedule(): Schedule"]},
+            ],
+            "Relationships": [
+                {"source": "SignInBoundary", "target": "SignInControl"},
+                {"source": "ScheduleBoundary", "target": "ScheduleControl"},
+            ],
+        },
+        "sequence_diagram_model": {
+            "use_case_id": "UC1",
+            "Participants": [
+                {"name": "Student", "alias": "student", "kind": "actor"},
+                {"name": "SignInBoundary", "alias": "signIn", "kind": "boundary", "source_class": "SignInBoundary"},
+            ],
+            "Messages": [],
+            "UnresolvedSteps": [{
+                "step_id": "UC1:main:2",
+                "sentence": "System creates an authenticated session.",
+                "reason": "No grounded receiver method was selected from the class diagram.",
+                "candidates": [],
+            }],
+        },
+    }
+
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+        return_value=state["extracted_bce_classes"],
+    ) as revise:
+        reconcile_class_methods(state)
+
+    assert revise.call_args.kwargs["targets"] == {"SignInBoundary", "SignInControl"}
 
 
 def test_distinct_actor_inputs_propose_a_separate_boundary_method_for_approval():

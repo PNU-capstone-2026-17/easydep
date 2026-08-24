@@ -155,6 +155,17 @@ the inputs do not support.
   identifier. If the Control contract cannot receive the identifier, preserve
   the honest contract mismatch for validation and class-diagram repair instead
   of inventing a binding.
+- Keep CRUD bindings operation-specific. A DELETE request has no `$body`, so
+  never map create/update attributes from `$body` into a DELETE Control call.
+  A create or update body must contain every `$body.<field>` named by its exact
+  Control method, with the same scalar type (`int` maps to `integer`, for
+  example). Do not bind a create/update endpoint to a generic
+  `processX(..., action : String, ...)` dispatcher: return the honest contract
+  mismatch for class-diagram repair instead.
+- Before choosing a Control binding, locate the exact Boundary-to-Control call
+  in the sequence diagram for the same use case. Reuse that exact target and
+  signature; do not bind an endpoint to another method from the same class just
+  because its name sounds similar.
 - **Never invent a name or an id.** An empty list is honest; a made-up
   reference is a lie the trace matrix will believe.
 

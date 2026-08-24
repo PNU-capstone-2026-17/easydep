@@ -294,6 +294,68 @@ def _reassembly_targets(sequence: dict, state: dict) -> set[str]:
     return targets
 
 
+def _unresolved_contract_targets(diagrams: list[dict], bce: dict) -> set[str]:
+    """Limit class-method proposals to the affected use-case route.
+
+    An unresolved sequence step used to make the reviser inspect every class in
+    the application.  That gave it unrelated Boundaries and Controls as
+    plausible receivers, so a sign-in failure could produce suggestions on a
+    schedule screen.  A proposal is useful only when it stays on the Boundary
+    and Control path visible in the same use-case card.  When an incomplete
+    card has not yet reached its Control, follow the declared Boundary relation
+    one hop to recover that local Control candidate.
+    """
+    classes = {
+        str(item.get("className") or "").strip(): item
+        for item in bce.get("Classes") or []
+        if isinstance(item, dict) and str(item.get("className") or "").strip()
+    }
+    neighbours: dict[str, set[str]] = {}
+    for relationship in bce.get("Relationships") or []:
+        if not isinstance(relationship, dict):
+            continue
+        source = str(relationship.get("source") or "").strip()
+        target = str(relationship.get("target") or "").strip()
+        if source in classes and target in classes:
+            neighbours.setdefault(source, set()).add(target)
+            neighbours.setdefault(target, set()).add(source)
+
+    def stereotype_of(class_name: str) -> str:
+        return (
+            str(classes[class_name].get("stereotype") or "")
+            .replace("<", "")
+            .replace(">", "")
+            .strip()
+            .lower()
+        )
+
+    targets: set[str] = set()
+    for diagram in diagrams:
+        participant_classes = set(_participant_classes(diagram).values())
+        local = {name for name in participant_classes if name in classes}
+        boundaries = {
+            name
+            for name in local
+            if stereotype_of(name) == "boundary"
+        }
+        controls = {
+            name
+            for name in local
+            if stereotype_of(name) == "control"
+        }
+        for boundary in boundaries:
+            controls.update(
+                name
+                for name in neighbours.get(boundary, set())
+                if stereotype_of(name) == "control"
+            )
+        # Legacy/minimal models may omit stereotypes.  Their visible route is
+        # still a safer scope than every BCE class.
+        targets.update(boundaries or local)
+        targets.update(controls)
+    return targets
+
+
 def _proposal_step_ids(findings: list[Any], fallback_use_case_ids: set[str]) -> list[str]:
     step_ids: set[str] = set()
     for finding in findings:
@@ -634,12 +696,30 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
                     editable_signatures.setdefault(class_name, set()).add(signature)
 
     if method_need_findings:
-        targets.update(
-            str(item.get("className") or "").strip()
-            for item in bce.get("Classes") or []
-            if item.get("className")
-        )
-        targets.discard("")
+        scoped_diagrams = [
+            diagram
+            for diagram in diagrams
+            if any(
+                finding.rule_id in {
+                    "sequence.usecase-step-coverage",
+                    "sequence.actor-step-involvement",
+                    "sequence.boundary-operation-direction",
+                    "sequence.step-operation-distinctness",
+                    "sequence.unresolved-usecase-step",
+                }
+                for finding in sequence_diagram_findings(diagram, state)
+            )
+        ]
+        scoped_targets = _unresolved_contract_targets(scoped_diagrams, bce)
+        if scoped_targets:
+            targets.update(scoped_targets)
+        elif not targets:
+            # There is no visible Boundary/Control route to which a new method
+            # can be attached.  Calling the class reviser with an empty target
+            # set would make it revise the full application model and recreate
+            # the unrelated-method proposals this scope guard exists to avoid.
+            # Keep the step unresolved until a route is present instead.
+            return result
 
     issues = [
         *(

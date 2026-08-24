@@ -46,6 +46,12 @@ the same schema. How to edit:
   must explicitly say either `: ReturnType` or `: void`.
 - Carry `use_case_ids` over unchanged for elements you did not touch; update them
   for elements you changed; fill them in for elements you added.
+- When feedback identifies a generic Control dispatcher with an `action`,
+  `operation`, `command`, or `mode` parameter, replace it with the smallest set
+  of separate, requirement-grounded methods for the distinct create, update,
+  delete, query, or registration actions. Do not keep the dispatcher merely by
+  changing its return type: its single signature cannot express exact REST and
+  sequence contracts.
 - Behavioural links (through a Boundary or Control) carry no multiplicity.
   Relationships between two Entities are structural and MUST carry both
   `sourceMultiplicity` and `targetMultiplicity`, each exactly one of "1",

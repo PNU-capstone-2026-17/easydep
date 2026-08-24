@@ -426,6 +426,44 @@ _CONTROL_VALUE_PREFIXES = (
     "search", "select", "view",
 )
 
+# ``processTerm(termId, action, ...)`` looks compact in a class diagram, but
+# it does not identify the interaction or HTTP contract for one concrete
+# operation.  In particular, a REST adapter cannot truthfully map a DELETE
+# request with no body to the attributes of a create/update command.  Keep the
+# check intentionally narrow: a domain-specific ``processPayment`` is not a
+# dispatcher merely because its name starts with ``process``; it must also take
+# an explicit action/operation selector.
+_GENERIC_ACTION_DISPATCH_PREFIXES = ("process", "handle", "manage", "maintain")
+_ACTION_SELECTOR_NAMES = {"action", "operation", "command", "mode"}
+
+
+def control_action_dispatch_contract(model: dict, state: dict) -> list[Finding]:
+    """Reject generic action-dispatcher Controls that erase endpoint semantics."""
+    rule_id = "class.control-action-dispatcher"
+    found: list[Finding] = []
+    for class_item in _classes(model):
+        if _stereotype_of(class_item) != CONTROL:
+            continue
+        class_name = str(class_item.get("className") or "?")
+        for raw_method in class_item.get("methods") or []:
+            signature = method_call_signature(str(raw_method))
+            match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\((.*)\)$", signature)
+            if not match or not match.group(1).lower().startswith(_GENERIC_ACTION_DISPATCH_PREFIXES):
+                continue
+            parameter_names = {
+                value.strip().partition(":")[0].strip().lower()
+                for value in match.group(2).split(",")
+                if value.strip()
+            }
+            if parameter_names & _ACTION_SELECTOR_NAMES:
+                found.append(Finding(
+                    rule_id,
+                    f"'{raw_method}'은 action/operation 선택자로 생성·수정·삭제를 한 메서드에 숨김 — "
+                    "각 HTTP 행위와 시퀀스 호출을 구분할 수 있는 구체적 Control 메서드가 필요함",
+                    class_name,
+                ))
+    return found
+
 
 def control_outcome_return_contract(model: dict, state: dict) -> list[Finding]:
     """Require a result contract where a Control operation exposes an outcome."""
@@ -948,6 +986,7 @@ CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "method_parameters_typed": method_parameters_typed,
     "fields_typed": fields_typed,
     "control_outcome_return_contract": control_outcome_return_contract,
+    "control_action_dispatch_contract": control_action_dispatch_contract,
     "names_unique": names_unique,
     "name_pascal_case": name_pascal_case,
     "usecase_coverage": usecase_coverage,

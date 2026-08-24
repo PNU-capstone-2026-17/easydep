@@ -47,6 +47,25 @@ def test_control_value_operation_cannot_declare_void_return() -> None:
     assert "browseCatalog" in findings[0].message
 
 
+def test_control_action_dispatcher_is_rejected_before_api_generation() -> None:
+    model = {
+        "Classes": [{
+            "className": "TermControl",
+            "stereotype": "Control",
+            "methods": [
+                "processTerm(termId : String, action : String, attributes : TermAttributes): void",
+                "processImportedTerms(file : CsvFile): void",
+            ],
+        }],
+    }
+
+    findings = detectors.control_action_dispatch_contract(model, STATE)
+
+    assert len(findings) == 1
+    assert "processTerm" in findings[0].message
+    assert "processImportedTerms" not in findings[0].message
+
+
 def test_void_command_can_document_error_statuses_without_result_contract() -> None:
     state = {
         "extracted_bce_classes": {
