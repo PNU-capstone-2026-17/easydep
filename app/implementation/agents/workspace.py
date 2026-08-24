@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -64,6 +65,39 @@ def read_persistence_entity_contracts(run_root: Path, base_package: str) -> str:
             + path.read_text(encoding="utf-8").strip()
         )
     return "\n\n".join(contracts) or "// No persistence entity contracts found"
+
+
+def ensure_mapper_accessible_persistence_constructor(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Promote generated entity no-arg constructors required by the mapper.
+
+    Persistence entities live in ``persistence.entity`` while the generated
+    mapper lives in the sibling ``persistence.mapper`` package.  A protected
+    JPA constructor is therefore not usable by a mapper that deliberately has
+    no permission to edit the entity.  JPA permits public no-arg constructors,
+    so normalize only the matching entity constructor in its contracted output.
+    """
+    repaired: list[str] = []
+    for relative in relative_paths:
+        normalized = relative.replace("\\", "/")
+        if "/persistence/entity/" not in normalized or not normalized.endswith("Entity.java"):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        class_name = path.stem
+        source = path.read_text(encoding="utf-8")
+        updated, replacements = re.subn(
+            rf"\b(?:protected|private)\s+{re.escape(class_name)}\s*\(\s*\)",
+            f"public {class_name}()",
+            source,
+            count=1,
+        )
+        if replacements:
+            path.write_text(updated, encoding="utf-8")
+            repaired.append(normalized)
+    return repaired
 
 
 def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:

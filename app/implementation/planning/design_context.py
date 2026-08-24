@@ -1331,7 +1331,7 @@ Rules:
   collection table. It has no matching BCE Entity: map it through its annotated parent and field
   (for example with `@ElementCollection` and `@CollectionTable`) instead of inventing a domain
   entity for the table.
-- Initialize collection relationships, provide a protected no-arg constructor plus public constructors or accessors needed by the mapper, and add relationship helper methods that keep both sides consistent.
+- Initialize collection relationships and provide a public no-arg constructor so the sibling persistence mapper can instantiate the entity. Add public constructors or accessors needed by the mapper and relationship helper methods that keep both sides consistent.
 - Do not use Lombok, records, cascading remove, or eager collections. Do not edit BCE domain entities.
 - Create the contracted file, then finish immediately.
 
@@ -1386,6 +1386,7 @@ Rules:
 - Never use reflection or assume an accessor absent from the contracts.
 - Tests must cover scalar mapping, portfolio/holding mapping, and null handling. Do not mock value objects.
 - Ensure date/time values and constructors match the exact parameter types declared in the generated contracts (e.g. java.time types vs domain models).
+- Instantiate persistence entities only through a public constructor exposed by the injected entity contracts. The generated entities provide a public no-arg constructor for scalar/setter mapping; never assume package-private or protected access.
 - Do not edit BCE or persistence entity files. Create both contracted files, then finish immediately.
 
 ## ERD

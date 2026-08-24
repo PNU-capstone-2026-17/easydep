@@ -31,6 +31,7 @@ from app.implementation.agents.runtime import (
 )
 from app.implementation.agents.workspace import (
     changed_files,
+    ensure_mapper_accessible_persistence_constructor,
     missing_required_outputs,
     prepare_agent_workspace,
     read_allowed_sources,
@@ -3629,6 +3630,40 @@ public final class CourseData {}
 
             self.assertIn("HoldingEntity.java", contracts)
             self.assertIn("public class HoldingEntity", contracts)
+
+    def test_makes_generated_entity_no_arg_constructor_mapper_accessible(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            relative = "application/src/main/java/com/example/demo/persistence/entity/HoldingEntity.java"
+            entity = sandbox / relative
+            entity.parent.mkdir(parents=True)
+            entity.write_text(
+                "public class HoldingEntity { protected HoldingEntity() {} }",
+                encoding="utf-8",
+            )
+
+            repaired = ensure_mapper_accessible_persistence_constructor(
+                sandbox, [relative]
+            )
+
+            self.assertEqual([relative], repaired)
+            self.assertIn("public HoldingEntity()", entity.read_text(encoding="utf-8"))
+
+    def test_leaves_public_entity_constructor_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            relative = "application/src/main/java/com/example/demo/persistence/entity/HoldingEntity.java"
+            entity = sandbox / relative
+            entity.parent.mkdir(parents=True)
+            source = "public class HoldingEntity { public HoldingEntity() {} }"
+            entity.write_text(source, encoding="utf-8")
+
+            repaired = ensure_mapper_accessible_persistence_constructor(
+                sandbox, [relative]
+            )
+
+            self.assertEqual([], repaired)
+            self.assertEqual(source, entity.read_text(encoding="utf-8"))
 
     def test_extracts_referenced_openapi_models(self) -> None:
         context = """$ref: '#/components/schemas/PurchaseRequest'

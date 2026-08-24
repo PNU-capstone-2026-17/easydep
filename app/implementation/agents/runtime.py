@@ -52,6 +52,7 @@ from .prompts import (
 )
 from .workspace import (
     changed_files,
+    ensure_mapper_accessible_persistence_constructor,
     load_task,
     missing_required_outputs,
     prepare_agent_workspace,
@@ -242,6 +243,27 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if missing:
         raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
 
+    # Older runs can already contain protected JPA constructors from a completed
+    # entity task. Normalize that generated contract before copying it into the
+    # mapper sandbox, otherwise a retry can only rewrite the mapper and remains
+    # unable to repair the incompatible entity it depends on.
+    if task_type == "persistence-mapping":
+        entity_root = (
+            run_root
+            / "application"
+            / "src"
+            / "main"
+            / "java"
+            / Path(task_base_package(task).replace(".", "/"))
+            / "persistence"
+            / "entity"
+        )
+        entity_paths = [
+            str(path.relative_to(run_root))
+            for path in sorted(entity_root.glob("*Entity.java"))
+        ]
+        ensure_mapper_accessible_persistence_constructor(run_root, entity_paths)
+
     sandbox = prepare_agent_workspace(run_root, task)
     before = snapshot_files(sandbox)
     prompt = (run_root / task["prompt_file"]).read_text(encoding="utf-8")
@@ -411,6 +433,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     normalize_spring_boot_repository_discovery(sandbox, task)
                 if str(task.get("task_type", "")) == "persistence-schema":
                     repair_persistence_schema_table_quoting(
+                        sandbox, list(task["allowed_write_paths"])
+                    )
+                if task_type == "persistence-entities":
+                    ensure_mapper_accessible_persistence_constructor(
                         sandbox, list(task["allowed_write_paths"])
                     )
                 _repair_missing_generated_model_imports(
