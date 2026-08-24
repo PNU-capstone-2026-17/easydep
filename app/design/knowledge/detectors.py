@@ -415,9 +415,20 @@ _CONTROL_OUTCOME_PREFIXES = (
     "validate", "view",
 )
 
+# These operations expose a value or a decision to their caller by their
+# analysis-level meaning.  A command such as ``drop`` may truthfully complete
+# with no body, but browsing, searching, registering, or authenticating cannot
+# be represented by an HTTP 204 response when the use case describes a result
+# or alternative outcome.
+_CONTROL_VALUE_PREFIXES = (
+    "authenticate", "authorize", "browse", "calculate", "check", "create",
+    "find", "generate", "get", "list", "register",
+    "search", "select", "view",
+)
+
 
 def control_outcome_return_contract(model: dict, state: dict) -> list[Finding]:
-    """Result-like Control verbs must state whether they return a value or are void."""
+    """Require a result contract where a Control operation exposes an outcome."""
     rule_id = "class.control-outcome-return-contract"
     found: list[Finding] = []
     for class_item in _classes(model):
@@ -427,14 +438,23 @@ def control_outcome_return_contract(model: dict, state: dict) -> list[Finding]:
         for raw_method in class_item.get("methods") or []:
             raw_text = str(raw_method)
             name = method_name(raw_text)
-            if (
-                name.startswith(_CONTROL_OUTCOME_PREFIXES)
-                and method_return_type(raw_text) is None
-            ):
+            return_type = method_return_type(raw_text)
+            if name.startswith(_CONTROL_OUTCOME_PREFIXES) and return_type is None:
                 found.append(
                     Finding(
                         rule_id,
                         f"결과·판정 성격의 Control 메서드 '{raw_text}'에 ': ReturnType' 또는 ': void' 계약이 없음",
+                        class_name,
+                    )
+                )
+            elif (
+                name.startswith(_CONTROL_VALUE_PREFIXES)
+                and normalize_return_type(return_type) == "void"
+            ):
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"결과를 노출하는 Control 메서드 '{raw_text}'는 ': void'가 아니라 구체적인 반환 타입이 필요함",
                         class_name,
                     )
                 )
@@ -1569,7 +1589,18 @@ def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
                     location,
                 ))
                 break
-        needs_result = any(status != 204 for status in documented)
+        # Error statuses can be raised by a void command without becoming its
+        # return value.  A concrete Control result is required only when the
+        # endpoint promises a successful response body (or a non-204 success).
+        needs_result = any(
+            200 <= int(response.get("status", 0) or 0) < 300
+            and (
+                int(response.get("status", 0) or 0) != 204
+                or bool(str(response.get("schema_name") or "").strip())
+            )
+            for response in endpoint.get("responses", []) or []
+            if isinstance(response, dict)
+        )
         return_type = _normalise_contract_type(str(contract.get("returnType") or ""))
         if needs_result and return_type in {"", "void", "object", "any", "map", "dict"}:
             found.append(Finding(

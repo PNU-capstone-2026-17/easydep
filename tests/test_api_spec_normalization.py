@@ -47,7 +47,7 @@ def test_api_model_does_not_invent_body_fields_for_whole_body_binding() -> None:
     assert normalized["Schemas"][0]["fields"] == []
 
 
-def test_void_control_success_is_normalized_to_empty_http_response() -> None:
+def test_void_control_does_not_rewrite_documented_http_response() -> None:
     model = {
         "Endpoints": [{
             "path": "/enrollments/{sectionId}",
@@ -68,13 +68,13 @@ class DropController <<Control>> {
     normalized = normalize_api_spec_model(model, class_diagram)
 
     response = normalized["Endpoints"][0]["responses"][0]
-    assert response == {"status": 204, "schema_name": "", "is_array": False}
+    assert response == {"status": 200, "schema_name": "Enrollment"}
     assert normalized["Endpoints"][0]["control_binding"]["outcomes"] == [
-        {"status": 204, "outcome": "dropped"}
+        {"status": 200, "outcome": "dropped"}
     ]
 
 
-def test_api_revision_preserves_void_response_normalization(monkeypatch) -> None:
+def test_api_revision_preserves_documented_response_when_control_is_void(monkeypatch) -> None:
     model = {
         "Endpoints": [{
             "path": "/enrollments/{sectionId}",
@@ -100,8 +100,8 @@ class DropController <<Control>> {
         class_diagram_puml=class_diagram,
     )
 
-    assert revised["Endpoints"][0]["responses"][0]["status"] == 204
-    assert revised["Endpoints"][0]["control_binding"]["outcomes"][0]["status"] == 204
+    assert revised["Endpoints"][0]["responses"][0]["status"] == 200
+    assert revised["Endpoints"][0]["control_binding"]["outcomes"][0]["status"] == 200
 
 
 def test_body_field_types_follow_exact_control_parameter_types() -> None:

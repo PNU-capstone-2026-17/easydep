@@ -1575,6 +1575,17 @@ def _generate_use_case_diagram(
             class_diagram_puml,
             classes,
         )
+    # Selecting a route and then asking a second LLM call to assemble an
+    # ambiguous interaction duplicates semantic work and can leave the second
+    # call with the wrong fixed skeleton.  The full per-use-case model already
+    # receives all BCE contracts, so let it make both decisions together.
+    if len(_route_candidates(classes, dependencies)) != 1:
+        return _generate_llm_use_case_diagram(
+            specification,
+            summary,
+            class_diagram_puml,
+            classes,
+        )
 
     boundary, control = _select_use_case_route(
         specification, summary, classes, dependencies
@@ -1586,18 +1597,20 @@ def _generate_use_case_diagram(
         dependencies,
         {use_case_id: (boundary, control)},
     )
-    # Reusing one inferred receiver operation across multiple system steps is
-    # not a structural fact. It requires semantic judgment about whether the
-    # steps are validation, persistence, presentation, or an exception branch.
-    # Delegate only those ambiguous flows to the LLM; a sequence whose grounded
-    # operations are distinct remains a cheap deterministic projection.
+    # A structurally non-unique receiver is not a safe fallback to the old
+    # assembler either.  Its later element-selection call can choose the same
+    # method for validation, retrieval, presentation, and exception steps,
+    # while this pre-selection list still contains ``None`` and misses the
+    # duplicate.  Both a non-unique candidate set and a repeated unique method
+    # require semantic interaction assembly.
     selected_receivers = [
         (plan["selected_class"]["name"], plan["selected_method"])
         for plan in plans
         if plan["selected_class"] is not None
     ]
     requires_semantic_assembly = (
-        len(selected_receivers) != len(set(selected_receivers))
+        any(plan["requires_semantic_selection"] for plan in plans)
+        or len(selected_receivers) != len(set(selected_receivers))
     )
     if requires_semantic_assembly:
         return _generate_llm_use_case_diagram(

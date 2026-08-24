@@ -432,7 +432,7 @@ OrderApi ..> OrderControl
     ]
 
 
-def test_selected_route_uses_one_fixed_bce_skeleton_for_all_steps():
+def test_ambiguous_control_methods_delegate_full_interaction_to_llm():
     specification = {
         "use_cases": [{"id": "UC5", "name": "Enroll in course", "primary_actor": "Student"}],
         "use_case_specs": [{
@@ -461,42 +461,14 @@ EnrollmentApi ..> EnrollmentController
 @enduml"""
 
     with patch(
-        "app.design.services.sequence_diagram.extractor.parse_structured",
-        side_effect=[
-            {
-                "boundary_class": "EnrollmentApi",
-                "control_class": "EnrollmentController",
-            },
-            {"selections": [
-                {
-                    "step_id": "UC5:main:2",
-                    "receiver_class": "EnrollmentController",
-                    "method": "checkSeatAvailability()",
-                },
-                {
-                    "step_id": "UC5:main:3",
-                    "receiver_class": "EnrollmentController",
-                    "method": "recordEnrollment()",
-                },
-            ]},
-        ],
-    ):
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+        return_value={"Participants": [], "Messages": []},
+    ) as extract:
         result = extract_sequence_diagrams(specification, class_diagram)
 
-    diagram = result["Diagrams"][0]
-    assert [item["name"] for item in diagram["Participants"]] == [
-        "Student", "EnrollmentApi", "EnrollmentController",
-    ]
-    assert [
-        (message["source"], message["target"], message["label"], message["type"])
-        for message in diagram["Messages"]
-    ] == [
-        ("Student", "EnrollmentApi", "enrollInCourse()", "sync"),
-        ("EnrollmentApi", "EnrollmentController", "enrollInCourse()", "sync"),
-        ("EnrollmentController", "EnrollmentController", "checkSeatAvailability()", "self"),
-        ("EnrollmentController", "EnrollmentController", "recordEnrollment()", "self"),
-    ]
-    assert diagram["UnresolvedSteps"] == []
+    extract.assert_called_once()
+    assert result["Diagrams"][0]["Messages"] == []
+    assert result["Diagrams"][0]["UnresolvedSteps"]
 
 
 def test_unique_element_selection_is_not_sent_to_llm():
@@ -647,7 +619,7 @@ RegistrationScreen ..> RegistrationControl
     }]
 
 
-def test_uncertain_steps_are_not_filled_from_candidate_order_when_llm_fails():
+def test_ambiguous_flow_keeps_steps_visible_when_llm_generation_fails():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Order", "primary_actor": "Buyer"}],
         "use_case_specs": [{
@@ -666,8 +638,8 @@ class OrderApi <<Boundary>> {
 @enduml"""
 
     with patch(
-        "app.design.services.sequence_diagram.extractor.parse_structured",
-        side_effect=StructuredLlmError("selection unavailable"),
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+        side_effect=StructuredLlmError("generation unavailable"),
     ):
         result = extract_sequence_diagrams(specification, class_diagram)
 
@@ -676,7 +648,7 @@ class OrderApi <<Boundary>> {
         {
             "step_id": "UC1:main:1",
             "sentence": "Buyer initiates a workflow",
-            "reason": "No grounded receiver method was selected from the class diagram.",
+            "reason": "Sequence planning failed before a grounded interaction could be assembled.",
             "candidates": [
                 "OrderApi.submitOrder()",
                 "OrderApi.cancelOrder()",
@@ -760,15 +732,27 @@ RegistrationScreen ..> RegistrationController
 @enduml"""
 
     with patch(
-        "app.design.services.sequence_diagram.extractor.parse_structured",
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
         return_value={
-            "boundary_class": "RegistrationScreen",
-            "control_class": "RegistrationController",
+            "Participants": [
+                _participant("Student", "actor"),
+                _participant("RegistrationScreen", "boundary", "RegistrationScreen"),
+                _participant("RegistrationController", "control", "RegistrationController"),
+            ],
+            "Messages": [{
+                **_message(
+                    "Student", "RegistrationScreen",
+                    "submitRegistration(studentId:String,sectionId:String)",
+                    call_id="call-1", reply_to="", arguments=[],
+                ),
+                "use_case_ids": ["UC3"],
+                "step_ids": ["UC3:main:1"],
+            }],
         },
-    ) as select:
+    ) as extract:
         result = extract_sequence_diagrams(specification, class_diagram)
 
-    select.assert_called_once()
+    extract.assert_called_once()
     assert [
         (message["source"], message["target"], message["label"])
         for message in result["Diagrams"][0]["Messages"]
@@ -799,15 +783,27 @@ DropScreen ..> DropController
 @enduml"""
 
     with patch(
-        "app.design.services.sequence_diagram.extractor.parse_structured",
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
         return_value={
-            "boundary_class": "DropScreen",
-            "control_class": "DropController",
+            "Participants": [
+                _participant("Student", "actor"),
+                _participant("DropScreen", "boundary", "DropScreen"),
+                _participant("DropController", "control", "DropController"),
+            ],
+            "Messages": [{
+                **_message(
+                    "Student", "DropScreen",
+                    "submitDrop(studentId:String,sectionId:String)",
+                    call_id="call-1", reply_to="", arguments=[],
+                ),
+                "use_case_ids": ["UC4"],
+                "step_ids": ["UC4:main:1"],
+            }],
         },
-    ) as select:
+    ) as extract:
         result = extract_sequence_diagrams(specification, class_diagram)
 
-    select.assert_called_once()
+    extract.assert_called_once()
     assert result["Diagrams"][0]["Messages"][0]["target"] == "DropScreen"
     assert result["Diagrams"][0]["UnresolvedSteps"] == []
 
@@ -913,7 +909,7 @@ LoginScreen ..> AuthenticationController
     assert result["Diagrams"][0]["UnresolvedSteps"]
 
 
-def test_distinct_boundary_operations_remain_deterministic():
+def test_multiple_boundary_candidates_delegate_semantic_assembly_to_llm():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Action", "primary_actor": "Buyer"}],
         "use_case_specs": [{
@@ -944,10 +940,7 @@ GatewayApi ..> GatewayControl
     ) as extract:
         result = extract_sequence_diagrams(specification, class_diagram)
 
-    extract.assert_not_called()
-    # Optional candidate selection may be unavailable; this must leave steps
-    # unresolved instead of escalating a structurally unambiguous flow to the
-    # full sequence-generation LLM.
+    extract.assert_called_once()
     assert result["Diagrams"][0]["UnresolvedSteps"]
 
 

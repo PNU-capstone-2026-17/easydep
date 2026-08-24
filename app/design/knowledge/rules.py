@@ -334,7 +334,9 @@ RULES: tuple[Rule, ...] = (
         statement=(
             "A Control operation named as a query, check, validation, authentication, "
             "authorization, calculation, processing, creation, registration, selection, "
-            "initiation, or generation must explicitly declare `: ReturnType` or `: void`."
+            "initiation, or generation must declare a concrete `: ReturnType` when it "
+            "exposes a result or outcome; `: void` is reserved for commands with no "
+            "observable result."
         ),
         citation=(
             "app/design/services/sequence_diagram/extractor.py "
@@ -342,8 +344,9 @@ RULES: tuple[Rule, ...] = (
         ),
         evidence="project-convention",
         caveat=(
-            "동사만으로 실제 결과 사용 여부를 완전히 판정할 수 없으므로, 이 규칙은 "
-            "반환값 자체를 추측하지 않고 명시적 계약(`ReturnType` 또는 `void`)만 요구한다."
+            "삭제·상태 변경처럼 결과 본문이 필요 없는 명령은 `: void`일 수 있지만, "
+            "조회·검색·인증·등록처럼 결과 또는 판정이 사용자에게 노출되는 연산에는 "
+            "구체적인 반환 타입이 필요하다."
         ),
         judged_by=JUDGED_DETECTOR,
         detector="control_outcome_return_contract",

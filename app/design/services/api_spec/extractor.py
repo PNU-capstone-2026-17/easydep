@@ -122,7 +122,10 @@ the inputs do not support.
 - `responses` must include the success case and every failure the specification's
   Extensions describe (e.g. 400 validation, 404 not found, 409 conflict).
   Set `schema_name` only when the response carries a body; set `is_array` for
-  collection responses.
+  collection responses. Use 204 only for a command whose successful outcome has
+  no response body. A browse, search, view, authentication, creation, or
+  registration result must use an appropriate non-204 success status and a
+  response schema.
 
 ## Schemas
 - Derive schemas from the Entity classes in the class diagram — their fields are the
@@ -207,27 +210,6 @@ def extract_api_spec_model(
     return normalize_api_spec_model(model, class_diagram_puml)
 
 
-def _control_return_types(class_diagram_puml: str) -> dict[tuple[str, str], str]:
-    """Read explicit Control method return types for API contract alignment."""
-    result: dict[tuple[str, str], str] = {}
-    class_pattern = re.compile(
-        r"(?ms)^\s*class\s+(?P<class>[A-Za-z_]\w*)[^\{]*\{(?P<body>.*?)^\s*\}"
-    )
-    method_pattern = re.compile(
-        r"^\s*[+\-#]\s*(?P<name>[A-Za-z_]\w*)\s*\([^)]*\)"
-        r"\s*(?::\s*(?P<return>[A-Za-z_]\w*(?:<[^>]+>)?))?\s*$",
-        re.MULTILINE,
-    )
-    for match in class_pattern.finditer(class_diagram_puml or ""):
-        if not re.search(r"<<\s*Control\s*>>", match.group(0), re.IGNORECASE):
-            continue
-        for method in method_pattern.finditer(match.group("body")):
-            result[(match.group("class"), method.group("name"))] = (
-                method.group("return") or "void"
-            )
-    return result
-
-
 def _control_parameter_types(
     class_diagram_puml: str,
 ) -> dict[tuple[str, str], dict[str, str]]:
@@ -279,7 +261,6 @@ def normalize_api_spec_model(
     """
     if not isinstance(model, dict):
         return model
-    control_returns = _control_return_types(class_diagram_puml)
     control_parameters = _control_parameter_types(class_diagram_puml)
     for endpoint in model.get("Endpoints", []) or []:
         if not isinstance(endpoint, dict):
@@ -327,21 +308,4 @@ def normalize_api_spec_model(
                             "description": "",
                         })
                         known.add(name)
-            return_type = control_returns.get((control, str(binding.get("method") or "").strip()))
-            if return_type and return_type.lower() == "void":
-                success_responses = [
-                    response for response in endpoint.get("responses", []) or []
-                    if isinstance(response, dict)
-                    and 200 <= int(response.get("status", 0) or 0) < 300
-                    and int(response.get("status", 0) or 0) != 204
-                ]
-                if len(success_responses) == 1:
-                    response = success_responses[0]
-                    previous_status = int(response.get("status", 0) or 0)
-                    response["status"] = 204
-                    response["schema_name"] = ""
-                    response["is_array"] = False
-                    for outcome in binding.get("outcomes", []) or []:
-                        if isinstance(outcome, dict) and int(outcome.get("status", 0) or 0) == previous_status:
-                            outcome["status"] = 204
     return model

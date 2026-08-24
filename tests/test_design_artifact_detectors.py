@@ -32,6 +32,50 @@ STATE = {
 }
 
 
+def test_control_value_operation_cannot_declare_void_return() -> None:
+    model = {
+        "Classes": [{
+            "className": "CatalogControl",
+            "stereotype": "Control",
+            "methods": ["browseCatalog(): void", "dropExpiredCache(): void"],
+        }],
+    }
+
+    findings = detectors.control_outcome_return_contract(model, STATE)
+
+    assert len(findings) == 1
+    assert "browseCatalog" in findings[0].message
+
+
+def test_void_command_can_document_error_statuses_without_result_contract() -> None:
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [{
+                "className": "EnrollmentControl",
+                "stereotype": "Control",
+                "methods": ["dropEnrollment(enrollmentId : String): void"],
+            }],
+        },
+    }
+    model = {
+        "Endpoints": [{
+            "path": "/enrollments/{enrollmentId}",
+            "method": "delete",
+            "responses": [{"status": 204}, {"status": 404}],
+            "control_binding": {
+                "control": "EnrollmentControl",
+                "method": "dropEnrollment",
+                "outcomes": [
+                    {"status": 204, "outcome": "dropped"},
+                    {"status": 404, "outcome": "not_found"},
+                ],
+            },
+        }],
+    }
+
+    assert detectors.api_control_outcomes(model, state) == []
+
+
 def test_sequence_detector_rejects_dangling_and_invalid_bce_messages():
     model = {
         "Participants": [
