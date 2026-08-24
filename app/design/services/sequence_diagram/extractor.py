@@ -705,6 +705,7 @@ def normalize_sequence_message_order(messages: list[dict[str, Any]]) -> list[dic
     independent step.
     """
     call_groups: dict[str, tuple[int, int, str]] = {}
+    call_positions: dict[str, int] = {}
 
     def explicit_group(message: dict[str, Any]) -> tuple[int, int, str] | None:
         for step_id in message.get("step_ids") or []:
@@ -724,13 +725,20 @@ def normalize_sequence_message_order(messages: list[dict[str, Any]]) -> list[dic
     groups: list[tuple[int, int, str] | None] = []
     for message in messages:
         group = explicit_group(message)
-        if group is None and str(message.get("type") or "").lower() == "return":
-            group = call_groups.get(str(message.get("reply_to") or "").strip())
         groups.append(group)
         if str(message.get("type") or "").lower() in {"sync", "async", "self"}:
             call_id = str(message.get("call_id") or "").strip()
             if call_id and group is not None:
                 call_groups[call_id] = group
+            if call_id:
+                call_positions[call_id] = len(groups) - 1
+
+    # Do this after every call has been indexed. A provider may place a return
+    # before its call in the source array, so resolving it during the first
+    # pass would miss the group's only reliable ordering evidence.
+    for index, message in enumerate(messages):
+        if groups[index] is None and str(message.get("type") or "").lower() == "return":
+            groups[index] = call_groups.get(str(message.get("reply_to") or "").strip())
 
     # Untraced messages have no safe placement evidence. Preserve their local
     # position instead of guessing a flow step for them.
@@ -743,7 +751,13 @@ def normalize_sequence_message_order(messages: list[dict[str, Any]]) -> list[dic
             indexed,
             key=lambda item: (
                 groups[item[0]] if groups[item[0]] is not None else (10**9, 2, ""),
-                item[0],
+                # A persisted LLM response can put a return above its call.
+                # A reply has no independent scenario position, so retain its
+                # call's group but never let its local order precede that call.
+                max(
+                    item[0],
+                    call_positions.get(str(item[1].get("reply_to") or ""), item[0]),
+                ) + (0.5 if str(item[1].get("type") or "").lower() == "return" else 0),
             ),
         )
     ]

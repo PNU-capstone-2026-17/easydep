@@ -540,6 +540,45 @@ def test_a_second_many_to_many_between_the_same_pair_is_surfaced_not_duplicated(
     assert logical["Unmapped"][0]["reason"] == "duplicate-junction"
 
 
+def test_duplicate_relationship_does_not_create_a_second_named_foreign_key():
+    relationship = {
+        "source": "Member", "target": "Order", "type": "Association",
+        "sourceMultiplicity": "1", "targetMultiplicity": "*",
+    }
+    logical = build_logical_model({
+        "Classes": [_entity("Member", ["name : String"]), _entity("Order", ["number : String"])],
+        "Relationships": [relationship, dict(relationship)],
+    })
+
+    order = _table(logical, "Order")
+    assert [column["name"] for column in order["columns"]] == [
+        "order_id", "number", "member_id",
+    ]
+    assert logical["Unmapped"] == [{
+        "source": "Member", "target": "Order", "reason": "duplicate-relationship",
+    }]
+
+
+def test_required_reference_that_closes_a_cycle_is_left_for_bce_repair():
+    logical = build_logical_model({
+        "Classes": [_entity("Member", ["name : String"]), _entity("Order", ["number : String"])],
+        "Relationships": [
+            {"source": "Member", "target": "Order", "type": "Association",
+             "sourceMultiplicity": "1", "targetMultiplicity": "*"},
+            {"source": "Order", "target": "Member", "type": "Association",
+             "sourceMultiplicity": "1", "targetMultiplicity": "*"},
+        ],
+    })
+
+    assert logical["Unmapped"] == [{
+        "source": "Order", "target": "Member", "reason": "mandatory-reference-cycle",
+    }]
+    assert not any(
+        column.get("references") == "Order"
+        for column in _table(logical, "Member")["columns"]
+    )
+
+
 def test_inheritance_ordering_terminates_when_a_cycle_is_reachable():
     """순환 **밖에서 안으로** 들어가는 상속에서 순서잡기가 안 끝나던 자리.
 

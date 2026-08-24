@@ -39,6 +39,11 @@ same schema. How to edit:
   cycle from the stated domain semantics: use an optional multiplicity only
   when the relationship can genuinely be absent, or remove/correct the
   contradictory relationship. Never delete an entity merely to hide the cycle.
+- Do not duplicate an identical Entity relationship. If two links are merely
+  opposite-direction restatements of one association, retain the one that
+  expresses the real foreign-key ownership. If they are genuinely distinct
+  roles between the same entities, make those roles explicit in the model
+  instead of emitting anonymous duplicate associations.
 - Keep the traceability fields (use_case_ids) accurate. Carry them over unchanged for
   elements you did not touch; update them for elements you changed; fill them
   in for elements you added. Never invent a reference — an empty list is

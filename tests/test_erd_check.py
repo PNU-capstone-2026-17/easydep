@@ -183,9 +183,13 @@ def test_a_cycle_of_mandatory_references_is_reported(relationships, expected_cyc
     ]
 
     issues = [f.as_issue() for f in erd_findings(model, CLEAN_STATE)]
-    cycles = [i for i in issues if "erd.no-mandatory-reference-cycle" in i]
+    cycle_safety_findings = [
+        issue for issue in issues
+        if "erd.no-mandatory-reference-cycle" in issue
+        or "삽입 불가능한 참조 순환" in issue
+    ]
 
-    assert bool(cycles) is expected_cycle, issues
+    assert bool(cycle_safety_findings) is expected_cycle, issues
 
 
 def test_one_cycle_is_one_finding_not_one_per_edge():
@@ -202,12 +206,13 @@ def test_one_cycle_is_one_finding_not_one_per_edge():
          "sourceMultiplicity": "1", "targetMultiplicity": "*"},
     ]
 
-    cycles = [
-        f for f in erd_findings(model, CLEAN_STATE)
-        if f.rule_id == "erd.no-mandatory-reference-cycle"
+    cycle_safety_findings = [
+        finding for finding in erd_findings(model, CLEAN_STATE)
+        if finding.rule_id == "erd.no-mandatory-reference-cycle"
+        or "삽입 불가능한 참조 순환" in finding.message
     ]
 
-    assert len(cycles) == 1, [f.as_issue() for f in cycles]
+    assert len(cycle_safety_findings) == 1, [f.as_issue() for f in cycle_safety_findings]
 
 
 def test_a_contradictory_composition_is_surfaced_not_silently_resolved():

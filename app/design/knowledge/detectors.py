@@ -650,6 +650,14 @@ UNMAPPED_PROSE: dict[str, str] = {
         "둘째는 옮기지 않았다. 하나로 합치거나, 둘을 구별해야 한다면 그 관계를 "
         "Entity로 승격시켜 양쪽과 각각 관계를 맺어라"
     ),
+    mapping.UNMAPPED_DUPLICATE_RELATIONSHIP: (
+        "동일한 Entity 관계가 두 번 선언되어 둘째를 옮기지 않았다 — 하나를 제거하라. "
+        "서로 다른 역할이라면 역할이 드러나는 별도 Entity 또는 관계로 모델링하라"
+    ),
+    mapping.UNMAPPED_MANDATORY_REFERENCE_CYCLE: (
+        "이 관계를 필수 외래키로 옮기면 삽입 불가능한 참조 순환이 된다 — "
+        "중복된 역방향 관계를 제거하거나, 실제로 선택적인 끝만 '0..1'로 고쳐라"
+    ),
 }
 
 

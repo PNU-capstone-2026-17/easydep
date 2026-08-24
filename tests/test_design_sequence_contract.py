@@ -86,6 +86,17 @@ def test_normalize_sequence_message_order_places_extension_after_anchor():
     ]
 
 
+def test_normalize_sequence_message_order_never_places_reply_before_its_call():
+    messages = [
+        _message("control", "boundary", "Receipt", type="return", step_ids=[], reply_to="call-1"),
+        _message("actor", "boundary", "submit()", call_id="call-1"),
+    ]
+
+    ordered = normalize_sequence_message_order(messages)
+
+    assert [message["label"] for message in ordered] == ["submit()", "Receipt"]
+
+
 def test_sequence_repair_score_counts_every_message_in_duplicate_run():
     findings = [
         Finding(

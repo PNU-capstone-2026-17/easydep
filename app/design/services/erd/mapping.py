@@ -36,6 +36,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.design.services.common import fields, multiplicity
@@ -64,6 +65,10 @@ UNMAPPED_MULTIPLICITY = "multiplicity-missing"
 UNMAPPED_DEPENDENCY = "dependency-between-entities"
 #: 같은 두 표를 잇는 다 : 다가 둘 이상이다. 연결 표 이름이 같아져 표가 통째로 겹친다.
 UNMAPPED_DUPLICATE_JUNCTION = "duplicate-junction"
+#: 같은 관계를 두 번 선언했다. 둘째를 사상하면 같은 외래키 사실을 이름만 바꿔 복제한다.
+UNMAPPED_DUPLICATE_RELATIONSHIP = "duplicate-relationship"
+#: 이 외래키를 필수로 더하면 어느 표도 첫 행을 가질 수 없는 순환이 된다.
+UNMAPPED_MANDATORY_REFERENCE_CYCLE = "mandatory-reference-cycle"
 
 
 def _column(
@@ -325,6 +330,36 @@ def _junction(left: dict, right: dict) -> dict:
     return table
 
 
+def _has_mandatory_reference_path(
+    tables: dict[str, dict], start: str, destination: str
+) -> bool:
+    """현재까지 만든 필수 FK를 따라 ``start``에서 ``destination``으로 갈 수 있는가.
+
+    사상기는 클래스 모델의 다중도를 바꾸지 않는다. 다만 새 필수 FK가 이미 존재하는
+    경로를 닫아 물리적으로 삽입 불가능한 스키마를 만들려 하면, 그 관계는 ERD에 억지로
+    그리지 않고 ``Unmapped``으로 남긴다. 이 탐색은 사상 순서와 무관하게 이전에 채택된
+    모든 필수 참조만 보며, 표 수가 작아 DFS가 가장 단순하고 충분하다.
+    """
+    pending = [start]
+    visited: set[str] = set()
+    while pending:
+        table_name = pending.pop()
+        if table_name == destination:
+            return True
+        if table_name in visited:
+            continue
+        visited.add(table_name)
+        table = tables.get(table_name)
+        if table is None:
+            continue
+        pending.extend(
+            str(column.get("references"))
+            for column in table.get("columns") or []
+            if column.get("mandatory") and column.get("references")
+        )
+    return False
+
+
 def _map_relationship(
     relationship: dict, tables: dict[str, dict], junctions: set[str]
 ) -> tuple[list[dict], list[dict], list[dict]]:
@@ -447,6 +482,18 @@ def _map_relationship(
     # NOT NULL은 **가리켜지는 쪽 끝**의 다중도가 정한다 — `A "1" — "*" B`면 B 하나마다
     # A가 정확히 하나이므로 `B.a_id`는 비울 수 없다.
     mandatory = source_needed if referenced is source else target_needed
+    if mandatory and _has_mandatory_reference_path(
+        tables, referenced["name"], holder["name"]
+    ):
+        # 다중도 ``1``을 ``0..1``로 바꾸어 통과시키지 않는다. 어느 관계가 독립적인지,
+        # 혹은 둘이 사실 같은 연관의 중복 표기인지 BCE만으로 단정할 수 없기 때문이다.
+        # 유효하지 않은 DDL을 내보내는 것보다, 이 링크를 명시적으로 상위 모델의 수정
+        # 대상으로 남기는 편이 안전하다.
+        return [], [], [{
+            "source": source["name"],
+            "target": target["name"],
+            "reason": UNMAPPED_MANDATORY_REFERENCE_CYCLE,
+        }]
     for fk in _foreign_key_columns(referenced, holder, unique=unique, mandatory=mandatory):
         _add_column(holder, fk)
     return [], [{"source": source["name"], "target": target["name"], "symbol": symbol,
@@ -477,7 +524,39 @@ def build_logical_model(bce: dict[str, Any]) -> dict[str, Any]:
 
     junctions: set[str] = set()
     mappable, rejected = order_for_mapping(relationships)
+    seen_relationships: set[tuple[tuple[str, str], ...]] = set()
     for relationship in mappable:
+        # 관계가 완전히 같은데도 두 번 들어오면 `_foreign_key_columns`가 둘째 FK에
+        # `related_` 접두사를 붙인다. 그것은 역할 이름이 아니라 사상기의 충돌 회피 이름이라
+        # 실제 도메인 사실을 하나 더 만든다. 원문 관계는 보존하되, 둘째를 미사상으로
+        # 드러내어 BCE 수리 단계가 제거할 수 있게 한다.
+        source_multiplicity = multiplicity.normalize(relationship.get("sourceMultiplicity"))
+        target_multiplicity = multiplicity.normalize(relationship.get("targetMultiplicity"))
+        # 다대다는 아래의 `junctions`가 더 구체적인 사유와 연결 표 이름을 이미 남긴다.
+        # 그 경로는 보존하고, FK를 직접 복제하는 나머지 관계만 여기서 막는다.
+        is_many_to_many = (
+            bool(source_multiplicity)
+            and bool(target_multiplicity)
+            and multiplicity.is_many(source_multiplicity)
+            and multiplicity.is_many(target_multiplicity)
+        )
+        signature = tuple(
+            sorted(
+                (str(key), json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
+                for key, value in relationship.items()
+            )
+        )
+        if not is_many_to_many and signature in seen_relationships:
+            source, target = _endpoints(relationship, tables)
+            if source and target:
+                unmapped.append({
+                    "source": source["name"],
+                    "target": target["name"],
+                    "reason": UNMAPPED_DUPLICATE_RELATIONSHIP,
+                })
+            continue
+        if not is_many_to_many:
+            seen_relationships.add(signature)
         new_tables, new_relations, new_unmapped = _map_relationship(
             relationship, tables, junctions
         )
