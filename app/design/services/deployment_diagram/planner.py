@@ -360,11 +360,18 @@ def validate_workload_graph(
     all_items = [*workloads, *dependencies]
     ids = [str(item.get("id") or "") for item in all_items]
     known = {item for item in ids if item}
-    if any(not item for item in ids) or len(known) != len(ids):
+    duplicate_ids = sorted(item for item in known if ids.count(item) > 1)
+    if any(not item for item in ids) or duplicate_ids:
+        detail = (
+            f" Duplicate ids: {', '.join(duplicate_ids)}."
+            if duplicate_ids
+            else ""
+        )
         issues.append(
             _issue(
                 "workloads",
-                "Workload and external dependency ids must be non-empty and globally unique.",
+                "Workload and external dependency ids must be non-empty and globally unique."
+                + detail,
                 classification="invalid",
             )
         )

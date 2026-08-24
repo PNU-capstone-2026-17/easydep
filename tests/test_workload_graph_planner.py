@@ -10,6 +10,7 @@ from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
     hydrate_deployment_diagram_bundle,
 )
+from app.design.services.deployment_diagram.extractor import WorkloadGraphProposal
 from app.design.services.deployment_diagram.planner import (
     bind_runtime_contract,
     build_deployment_plan,
@@ -554,6 +555,35 @@ def test_bundle_hydrates_as_the_only_supported_deployment_schema() -> None:
 
     with pytest.raises(ValueError, match="unsupported deployment diagram schema"):
         hydrate_deployment_diagram_bundle({"schemaVersion": "unsupported"})
+
+
+def test_workload_graph_schema_rejects_duplicate_deployment_node_ids() -> None:
+    duplicate = workload("application")
+    with pytest.raises(ValueError, match="globally unique; duplicates: application"):
+        WorkloadGraphProposal.model_validate(
+            graph(duplicate, deepcopy(duplicate))
+        )
+
+
+def test_invalid_workload_graph_becomes_reviewable_bundle_without_planning() -> None:
+    duplicate = workload("application")
+    bundle = build_deployment_diagram_bundle(
+        graph(duplicate, deepcopy(duplicate)),
+        {"schemaVersion": "4", "workloads": ["vm"], "provider": "aws", "region": "r1"},
+    )
+
+    projection = bundle["projections"][0]
+    assert bundle["status"] == "needsInput"
+    assert projection["status"] == "needsInput"
+    assert projection["deploymentPlan"] == {}
+    assert projection["resourcePlan"] == {}
+    assert "Duplicate ids: application." in projection["issues"][0]["reason"]
+
+    finalized = CloudDesignAdapter().finalize(
+        requirements_result={}, design_result={"deployment_diagram_bundle": bundle}
+    )
+    assert finalized["status"] == "needsInput"
+    assert finalized["reason"] == "deployment-diagram-needs-input"
 
 
 def test_cloud_adapter_passes_current_bundle_and_blocks_unknown_schema() -> None:

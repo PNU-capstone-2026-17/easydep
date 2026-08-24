@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.design.services.common.structured import parse_structured
 
@@ -109,6 +109,23 @@ class WorkloadGraphProposal(BaseModel):
     connections: list[WorkloadConnection] = Field(default_factory=list)
     constraints: list[WorkloadConstraint] = Field(default_factory=list)
     derivations: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def deployment_node_ids_are_globally_unique(self) -> "WorkloadGraphProposal":
+        """Reject ambiguous placement inputs before they reach the planner."""
+
+        identifiers = [
+            item.id for item in [*self.workloads, *self.externalDependencies]
+        ]
+        duplicates = sorted(
+            identifier for identifier in set(identifiers) if identifiers.count(identifier) > 1
+        )
+        if duplicates:
+            raise ValueError(
+                "workload and external dependency ids must be globally unique; "
+                f"duplicates: {', '.join(duplicates)}"
+            )
+        return self
 
 
 # Domain name used by the generic feedback reviser.

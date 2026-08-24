@@ -95,6 +95,19 @@ class CloudDesignAdapter:
         projection = dict(projections[0])
         resource_plan = dict(projection.get("resourcePlan") or {})
         deployment_plan = dict(projection.get("deploymentPlan") or {})
+        if projection.get("status") != "completed":
+            return {
+                "status": projection.get("status") or "needsInput",
+                "reason": "deployment-diagram-needs-input",
+                "provider": projection.get("provider"),
+                "region": projection.get("region"),
+                "deployment_diagram_bundle": bundle,
+                "deployment_diagram_puml": runtime_puml,
+                "deployment_diagram_provisioning_puml": provisioning_puml,
+                "open_questions": list(projection.get("issues") or []),
+                "kb_used": [],
+                "deferred": ["runtimeBinding", "vm_selection"],
+            }
         if resource_plan.get("schemaVersion") != RESOURCE_PLAN_SCHEMA:
             return {
                 "status": "failed",

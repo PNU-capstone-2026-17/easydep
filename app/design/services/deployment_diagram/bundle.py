@@ -56,8 +56,32 @@ def build_deployment_diagram_bundle(
         resource_spec=spec, **(planning_inputs or {})
     )
     graph = normalize_workload_graph(workload_graph_candidate, planning_facts=facts)
+    graph_blocking = [
+        item
+        for item in graph.get("issues") or []
+        if item.get("classification") in BLOCKING_CLASSES
+    ]
     projections: list[dict[str, Any]] = []
     for context in _target_contexts(spec):
+        # A graph can originate from an older persisted artifact or another
+        # importer, bypassing the Pydantic extraction schema.  Do not send an
+        # invalid graph to the placement planner: duplicate workload ids would
+        # otherwise surface as a raw "exactly one placement" exception.
+        if graph_blocking:
+            projections.append(
+                {
+                    "status": "needsInput",
+                    "provider": context.get("provider"),
+                    "region": context.get("region"),
+                    "planningContext": context,
+                    "deploymentPlan": {},
+                    "deploymentPlanStructureDigest": "",
+                    "resourcePlan": {},
+                    "resourcePlanStructureDigest": "",
+                    "issues": copy.deepcopy(graph_blocking),
+                }
+            )
+            continue
         deployment_plan = build_deployment_plan(graph, context)
         resource_plan = build_provider_resource_plan(
             deployment_plan,
