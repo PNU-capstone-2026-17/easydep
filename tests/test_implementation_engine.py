@@ -48,6 +48,7 @@ from app.implementation.agents.verification.build import (
     production_placeholder_markers,
     production_test_library_markers,
     persistence_reserved_identifier_markers,
+    ensure_persistence_schema_test,
     repair_persistence_schema_table_quoting,
     read_gradle_test_failures,
     summarize_test_failure,
@@ -342,6 +343,44 @@ class GeneratedContractImportRepairTest(unittest.TestCase):
 
 
 class PersistenceSchemaContractRepairTest(unittest.TestCase):
+    def test_creates_schema_test_from_existing_migration_when_agent_omits_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            migration_relative = "application/src/main/resources/db/migration/V1__initial_schema.sql"
+            test_relative = "application/src/test/java/com/example/app/persistence/PersistenceSchemaTest.java"
+            migration = sandbox / migration_relative
+            migration.parent.mkdir(parents=True)
+            migration.write_text(
+                'CREATE TABLE department (department_id BIGINT);\n'
+                'CREATE TABLE "academic_term" (term_id BIGINT);\n',
+                encoding="utf-8",
+            )
+
+            created = ensure_persistence_schema_test(
+                sandbox, [migration_relative, test_relative]
+            )
+
+            self.assertEqual(created, [test_relative])
+            source = (sandbox / test_relative).read_text(encoding="utf-8")
+            self.assertIn("package com.example.app.persistence;", source)
+            self.assertIn('Set.of("academic_term", "department")', source)
+            self.assertIn('locations("classpath:db/migration")', source)
+
+    def test_does_not_create_schema_test_without_declared_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            migration_relative = "application/src/main/resources/db/migration/V1__initial_schema.sql"
+            test_relative = "application/src/test/java/com/example/app/persistence/PersistenceSchemaTest.java"
+            migration = sandbox / migration_relative
+            migration.parent.mkdir(parents=True)
+            migration.write_text("-- migration pending\n", encoding="utf-8")
+
+            self.assertEqual(
+                ensure_persistence_schema_test(sandbox, [migration_relative, test_relative]),
+                [],
+            )
+            self.assertFalse((sandbox / test_relative).exists())
+
     def test_unquotes_non_reserved_table_to_match_jpa_mapping(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)

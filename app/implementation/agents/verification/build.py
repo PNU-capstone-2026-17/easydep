@@ -27,6 +27,97 @@ SQL_RESERVED_IDENTIFIERS = (
 )
 
 
+def ensure_persistence_schema_test(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Create the deterministic migration smoke test when only that output is missing.
+
+    A persistence-schema task has two independent outputs: the migration requires
+    design interpretation, while its Flyway/H2 smoke test is a fixed projection
+    of the generated SQL.  Retrying a stalled agent solely to write that boilerplate
+    wastes a conversation and can fail the whole run even after the migration was
+    successfully created.  Generate the test only from the migration's declared
+    ``CREATE TABLE`` statements; never invent tables or overwrite an agent test.
+    """
+    normalized = [path.replace("\\", "/") for path in relative_paths]
+    migration_relative = next(
+        (path for path in normalized if path.endswith("/db/migration/V1__initial_schema.sql")),
+        "",
+    )
+    test_relative = next(
+        (path for path in normalized if path.endswith("/persistence/PersistenceSchemaTest.java")),
+        "",
+    )
+    if not migration_relative or not test_relative:
+        return []
+    migration = sandbox / migration_relative
+    test = sandbox / test_relative
+    if not migration.is_file() or test.is_file():
+        return []
+    source = migration.read_text(encoding="utf-8")
+    tables = sorted({
+        match.group("name").strip('"').lower()
+        for match in re.finditer(
+            r"\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+(?P<name>\"?[A-Za-z_][A-Za-z0-9_]*\"?)",
+            source,
+            re.IGNORECASE,
+        )
+    })
+    if not tables:
+        return []
+    parts = Path(test_relative).parts
+    try:
+        java_index = parts.index("java")
+    except ValueError:
+        return []
+    package = ".".join(parts[java_index + 1 : -1])
+    if not package:
+        return []
+    expected = ", ".join(f'"{table}"' for table in tables)
+    test.parent.mkdir(parents=True, exist_ok=True)
+    test.write_text(
+        f'''package {package};
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.util.HashSet;
+import java.util.Set;
+import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.Test;
+
+class PersistenceSchemaTest {{
+    @Test
+    void appliesInitialMigrationAndCreatesEveryDeclaredTable() throws Exception {{
+        Flyway flyway = Flyway.configure()
+                .dataSource("jdbc:h2:mem:persistence_schema;DB_CLOSE_DELAY=-1", "sa", "")
+                .locations("classpath:db/migration")
+                .load();
+        flyway.migrate();
+
+        Set<String> actualTables = new HashSet<>();
+        try (Connection connection = flyway.getConfiguration().getDataSource().getConnection()) {{
+            DatabaseMetaData metadata = connection.getMetaData();
+            try (ResultSet rows = metadata.getTables(null, null, null, new String[]{{"TABLE"}})) {{
+                while (rows.next()) {{
+                    actualTables.add(rows.getString("TABLE_NAME").toLowerCase());
+                }}
+            }}
+        }}
+
+        for (String expectedTable : Set.of({expected})) {{
+            assertTrue(actualTables.contains(expectedTable), "Missing migrated table: " + expectedTable);
+        }}
+    }}
+}}
+''',
+        encoding="utf-8",
+    )
+    return [test_relative]
+
+
 def gradle_command() -> list[str]:
     """Use EasyDep's pinned wrapper instead of a machine-global Gradle."""
     wrapper_name = "gradlew.bat" if os.name == "nt" else "gradlew"

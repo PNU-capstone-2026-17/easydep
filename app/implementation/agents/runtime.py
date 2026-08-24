@@ -22,6 +22,7 @@ from .verification.frontend import (
 )
 from .verification.build import (
     WorkspaceVerificationError,
+    ensure_persistence_schema_test,
     persistence_reserved_identifier_markers,
     repair_persistence_schema_table_quoting,
     production_placeholder_markers,
@@ -358,6 +359,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             missing_outputs = missing_required_outputs(
                 sandbox, task["allowed_write_paths"]
             )
+            if task_type == "persistence-schema" and missing_outputs:
+                ensure_persistence_schema_test(
+                    sandbox, list(task["allowed_write_paths"])
+                )
+                missing_outputs = missing_required_outputs(
+                    sandbox, task["allowed_write_paths"]
+                )
             if missing_outputs:
                 if conversation_error is not None and transient_provider_error(conversation_error):
                     provider_retries += 1
