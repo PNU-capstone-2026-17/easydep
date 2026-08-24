@@ -321,6 +321,47 @@ def test_initial_job_proceeds_with_complete_artifacts_and_design_findings(
     assert record["design_validation"]["status"] == "NEEDS_INPUT"
 
 
+def test_initial_job_blocks_lossy_erd_bce_identifier_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    implementation_worker.client.prepare_job = lambda *_args, **_kwargs: pytest.fail(
+        "A lossy ERD/BCE identifier contract must be resolved before generation"
+    )
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.design_readiness_report",
+        lambda _design: {
+            "status": "NEEDS_INPUT",
+            "findings": [{
+                "stage": "erd",
+                "finding": (
+                    "Session: surrogate key replaces sessionId "
+                    "[erd.surrogate-key-collides]"
+                ),
+            }],
+        },
+    )
+    try:
+        record = implementation_worker.create_job(
+            "app-1",
+            {
+                "class_diagram_puml": "class Session",
+                "api_spec": {"openapi": "3.1.0", "paths": {}},
+                "extracted_bce_classes": {"Classes": [{"className": "Session"}]},
+                "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
+                "api_spec_model": {"Endpoints": [{"path": "/sessions"}]},
+            },
+            "com.example",
+            False,
+        )
+    finally:
+        implementation_worker.shutdown()
+
+    assert record["status"] == "NEEDS_INPUT"
+    assert record["workflow"]["currentPhase"] == "design-validation"
+    assert "erd.surrogate-key-collides" in record["error"]
+
+
 def test_initial_job_proceeds_with_rendered_artifacts_when_derived_models_are_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

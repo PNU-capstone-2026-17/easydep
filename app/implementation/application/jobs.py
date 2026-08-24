@@ -23,8 +23,34 @@ from .feedback import assess_feedback_eligibility
 from .prototype import PrototypeClient
 
 
+# Most design findings can remain visible while implementation proceeds: they
+# may concern an incomplete alternate sequence path or a review preference.
+# These rules are different.  Their mapping deterministically removes or
+# changes a BCE scalar before Java contracts are generated, so no mapper can
+# repair the result without inventing a persistence decision.
+_IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
+    "erd.surrogate-key-collides",
+})
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bool:
+    """Return whether a design finding would make generated contracts lossy.
+
+    This intentionally checks stable rule IDs embedded in the readiness text,
+    not field-name heuristics.  The ERD checker has already established that a
+    scalar field would be displaced by a generated surrogate key; proceeding
+    would otherwise create an unrepresentable BCE-to-JPA mapper.
+    """
+    return any(
+        rule_id in str(finding.get("finding") or "")
+        for finding in readiness.get("findings") or []
+        if isinstance(finding, dict)
+        for rule_id in _IMPLEMENTATION_BLOCKING_DESIGN_RULES
+    )
 
 
 class JobNotFound(KeyError):
@@ -64,6 +90,8 @@ class ImplementationWorker:
                 app_id, base_package, self._missing_design_model_report(missing_models)
             )
         readiness = design_readiness_report(design)
+        if _has_implementation_blocking_design_finding(readiness):
+            return self._create_design_blocked_job(app_id, base_package, readiness)
         job_id = uuid.uuid4().hex
         job_path = self.client.prepare_job(job_id, app_id, design, base_package, allow_assumptions)
         record = {
