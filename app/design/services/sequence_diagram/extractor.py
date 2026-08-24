@@ -372,6 +372,15 @@ that the inputs do not support.
   call, the normal success response, or a preceding message into the fragment
   merely to give the fragment content. A successful non-void return belongs
   after the successful path has completed, never before failure alternatives.
+- Keep a return in the local interaction of the call it answers. Its `reply_to`
+  call and return must both occur before the next independent main-scenario
+  step; never collect returns at the end of a use case after later calls have
+  already advanced the scenario.
+- An extension is the outcome of its `branch_step`, not a second execution of
+  the same operation. Do not repeat the anchor's identical source, target, and
+  method call in an `opt` or `alt` just to express failure. A genuine retry
+  must be an explicit `loop`; otherwise use a grounded output operation or a
+  narrative/unresolved step for the exceptional outcome.
 - If a step is explicitly unresolved (status unresolved, TODO/TBD, or a question
   asking what behavior to perform), do not invent behavior for it. Leave it for
   the validation gate to report as requiring clarification.

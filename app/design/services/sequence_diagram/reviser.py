@@ -123,6 +123,14 @@ same schema. Rules:
 - Preserve main-scenario step order and keep each extension immediately after
   its declared branch_step. Do not turn an unresolved/TODO/TBD/question step into
   invented behavior.
+- Keep each return in the local interaction of the call named by `reply_to`.
+  Do not move a return behind a later independent main-scenario call; complete
+  the call and its conditional outcome before advancing the scenario.
+- An extension represents the outcome of its branch step. Do not repeat that
+  anchor's identical source, target, and method call just to show a failure.
+  Keep the anchor call on the main path and use a grounded output operation,
+  narrative step, or unresolved step for the exception. A true retry must use
+  an explicit loop fragment.
 - Preserve every `UnresolvedSteps` entry unless you add a grounded message for
   that exact `step_id`. An unresolved entry is a visible review result, not an
   invitation to omit the use case or silently delete its flow step.

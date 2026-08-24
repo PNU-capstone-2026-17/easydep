@@ -769,6 +769,19 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_duplicate_consecutive_messages",
     ),
     Rule(
+        id="sequence.extension-replays-anchor-operation",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "An extension must not repeat its branch-step operation merely to express "
+            "that operation's failure. Retrying the operation requires an explicit loop."
+        ),
+        citation="app/requirements/schemas.py (Extension.branch_step and handling_steps)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_extension_replays_anchor_operation",
+    ),
+    Rule(
         id="sequence.message-naming-convention",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,

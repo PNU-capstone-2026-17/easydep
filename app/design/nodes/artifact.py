@@ -131,6 +131,7 @@ _SEQUENCE_REPAIR_RULE_GROUPS = (
         "sequence.fragment-condition-consistency",
         "sequence.orphan-participant-detection",
         "sequence.duplicate-consecutive-messages",
+        "sequence.extension-replays-anchor-operation",
     },
 )
 

@@ -906,6 +906,79 @@ def test_duplicate_consecutive_messages_rejects_duplicates():
     assert findings[0].rule_id == "sequence.duplicate-consecutive-messages"
 
 
+def test_extension_replaying_its_anchor_operation_is_rejected():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1}, {"step_number": 2}],
+                "extensions": [{
+                    "label": "1a",
+                    "branch_step": 1,
+                    "handling_steps": [{"sub_step": "1a1"}],
+                }],
+            }]
+        }
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [
+            {
+                "source": "Boundary",
+                "target": "Control",
+                "label": "validate(input:String)",
+                "type": "sync",
+                "step_ids": ["UC1:main:1"],
+                "fragments": [],
+            },
+            {
+                "source": "Boundary",
+                "target": "Control",
+                "label": "validate(input:String)",
+                "type": "sync",
+                "step_ids": ["UC1:extension:1a:1a1"],
+                "fragments": [{
+                    "id": "invalid",
+                    "type": "opt",
+                    "branch": "main",
+                    "condition": "invalid input",
+                }],
+            },
+        ],
+    }
+
+    findings = detectors.sequence_extension_replays_anchor_operation(model, state)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.extension-replays-anchor-operation"
+
+
+def test_extension_retry_inside_loop_is_not_treated_as_duplicate_operation():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "extensions": [{"label": "1a", "branch_step": 1}],
+            }]
+        }
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [
+            {"source": "A", "target": "B", "label": "submit()", "step_ids": ["UC1:main:1"]},
+            {
+                "source": "A",
+                "target": "B",
+                "label": "submit()",
+                "step_ids": ["UC1:extension:1a:1a1"],
+                "fragments": [{"id": "retry", "type": "loop", "branch": "main", "condition": "retry"}],
+            },
+        ],
+    }
+
+    assert detectors.sequence_extension_replays_anchor_operation(model, state) == []
+
+
 # ---------------------------------------------------------------------------
 # sequence.message-naming-convention
 # ---------------------------------------------------------------------------

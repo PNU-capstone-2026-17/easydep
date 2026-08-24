@@ -3029,6 +3029,101 @@ def sequence_duplicate_consecutive_messages(model: dict, state: dict) -> list[Fi
     return found
 
 
+def sequence_extension_replays_anchor_operation(
+    model: dict, state: dict
+) -> list[Finding]:
+    """Detect an error branch that replays the operation it is handling.
+
+    An extension is the conditional outcome of its ``branch_step``.  Repeating
+    the same call in an ``opt``/``alt`` branch makes a failed validation or
+    persistence operation look like a second request.  A genuine retry is
+    distinguishable because it must be represented explicitly as a loop.
+    """
+
+    rule_id = "sequence.extension-replays-anchor-operation"
+    use_case_id = str(model.get("use_case_id") or "").strip()
+    if not use_case_id:
+        return []
+    use_case = next(
+        (
+            item
+            for item in (state.get("usecase_spec") or {}).get("use_case_specs") or []
+            if str(item.get("use_case_id") or "").strip() == use_case_id
+        ),
+        None,
+    )
+    if not isinstance(use_case, dict):
+        return []
+
+    extension_anchors: dict[str, int] = {}
+    for extension in use_case.get("extensions") or []:
+        if not isinstance(extension, dict):
+            continue
+        label = str(extension.get("label") or "").strip()
+        branch_step = extension.get("branch_step")
+        if branch_step is None:
+            match = re.match(r"(\d+)", label)
+            branch_step = int(match.group(1)) if match else None
+        if label and isinstance(branch_step, int):
+            extension_anchors[label] = branch_step
+
+    call_types = {"sync", "async", "self"}
+    messages = [item for item in model.get("Messages") or [] if isinstance(item, dict)]
+    found: list[Finding] = []
+    reported: set[tuple[str, str, str, str]] = set()
+    for extension_label, branch_step in extension_anchors.items():
+        anchor_step_id = f"{use_case_id}:main:{branch_step}"
+        anchor_operations = {
+            (
+                str(message.get("source") or "").strip(),
+                str(message.get("target") or "").strip(),
+                str(message.get("label") or "").strip(),
+            )
+            for message in messages
+            if str(message.get("type") or "sync").lower() in call_types
+            and anchor_step_id in {str(item) for item in message.get("step_ids") or []}
+        }
+        if not anchor_operations:
+            continue
+        extension_prefix = f"{use_case_id}:extension:{extension_label}:"
+        for message in messages:
+            if str(message.get("type") or "sync").lower() not in call_types:
+                continue
+            if not any(
+                str(step_id).startswith(extension_prefix)
+                for step_id in message.get("step_ids") or []
+            ):
+                continue
+            if any(
+                str(fragment.get("type") or "").lower() == "loop"
+                for fragment in _message_fragments(message)
+            ):
+                continue
+            operation = (
+                str(message.get("source") or "").strip(),
+                str(message.get("target") or "").strip(),
+                str(message.get("label") or "").strip(),
+            )
+            if operation not in anchor_operations or not all(operation):
+                continue
+            key = (extension_label, *operation)
+            if key in reported:
+                continue
+            reported.add(key)
+            found.append(
+                Finding(
+                    rule_id,
+                    (
+                        f"확장 흐름 '{extension_label}'가 분기 단계 {branch_step}의 "
+                        f"호출 '{operation[2]}'을 반복함; 실패 결과는 별도 출력으로 "
+                        "표현하고 재시도는 loop로 명시해야 함"
+                    ),
+                    f"{operation[0]} -> {operation[1]} : {operation[2]}",
+                )
+            )
+    return found
+
+
 def sequence_message_naming_convention(model: dict, state: dict) -> list[Finding]:
     """오퍼레이션 라벨 표기법 규약 검사.
 
@@ -3183,6 +3278,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_self_call_method_validation": sequence_self_call_method_validation,
     "sequence_orphan_participant_detection": sequence_orphan_participant_detection,
     "sequence_duplicate_consecutive_messages": sequence_duplicate_consecutive_messages,
+    "sequence_extension_replays_anchor_operation": sequence_extension_replays_anchor_operation,
     "sequence_message_naming_convention": sequence_message_naming_convention,
     "sequence_participant_kind_validity": sequence_participant_kind_validity,
     "sequence_message_type_validity": sequence_message_type_validity,
