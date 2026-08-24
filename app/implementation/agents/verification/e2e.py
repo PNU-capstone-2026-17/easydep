@@ -94,6 +94,117 @@ def repair_orphaned_java_test_statements(path: Path) -> bool:
     return True
 
 
+_STATUS_ENUMS = {
+    "200": "OK",
+    "201": "CREATED",
+    "202": "ACCEPTED",
+    "204": "NO_CONTENT",
+    "400": "BAD_REQUEST",
+    "401": "UNAUTHORIZED",
+    "403": "FORBIDDEN",
+    "404": "NOT_FOUND",
+    "409": "CONFLICT",
+    "422": "UNPROCESSABLE_ENTITY",
+    "500": "INTERNAL_SERVER_ERROR",
+}
+
+
+def _java_test_method_bodies(source: str) -> list[str]:
+    """Return complete Java ``@Test`` bodies without assuming their formatting."""
+    declaration = re.compile(
+        r"(?ms)@Test(?:\s*\([^)]*\))?\s*"
+        r"(?:(?:public|protected|private)\s+)?void\s+"
+        r"[A-Za-z_$][\w$]*\s*\([^)]*\)\s*\{"
+    )
+    bodies: list[str] = []
+    for match in declaration.finditer(source):
+        start = match.end() - 1
+        depth = 0
+        for index in range(start, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    bodies.append(source[match.start() : index + 1])
+                    break
+    return bodies
+
+
+def _http_path_evidence_pattern(path: str) -> re.Pattern[str]:
+    """Match a literal path or Java string concatenation resolving to that path."""
+    parts = re.split(r"(\{[^}]+\})", path)
+    expression: list[str] = []
+    for part in parts:
+        if part.startswith("{") and part.endswith("}"):
+            expression.append(
+                r'"\s*\+\s*[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*'
+                r'\s*\+\s*"'
+            )
+        else:
+            expression.append(re.escape(part))
+    return re.compile(
+        r"(?<![A-Za-z0-9_/-])" + "".join(expression) + r"(?![A-Za-z0-9_/-])"
+    )
+
+
+def _status_assertion_pattern(status: object) -> re.Pattern[str]:
+    value = str(status)
+    alternatives = [re.escape(value)]
+    symbolic_name = _STATUS_ENUMS.get(value)
+    if symbolic_name:
+        alternatives.append(rf"(?:HttpStatus\.)?{symbolic_name}")
+    return re.compile(
+        rf"(?im)^.*(?:assert|expect|status).*\b(?:{'|'.join(alternatives)})\b.*$"
+    )
+
+
+def _http_method_evidence(method: str, source: str) -> bool:
+    verbs = {
+        "GET": r"\b(?:getFor(?:Entity|Object)|get)\s*\(|HttpMethod\.GET",
+        "POST": r"\bpostFor(?:Entity|Object|Location)\s*\(|HttpMethod\.POST",
+        "PUT": r"\bput\s*\(|HttpMethod\.PUT",
+        "PATCH": r"\bpatchForObject\s*\(|HttpMethod\.PATCH",
+        "DELETE": r"\bdelete\s*\(|HttpMethod\.DELETE",
+    }
+    pattern = verbs.get(method.upper(), rf"HttpMethod\.{re.escape(method.upper())}")
+    return bool(re.search(pattern, source))
+
+
+def _scenario_contract_violations(source: str, scenarios: object) -> list[str]:
+    """Verify method, resolved path, and status together for every E2E row."""
+    if not isinstance(scenarios, list):
+        return []
+    bodies = _java_test_method_bodies(source)
+    violations: list[str] = []
+    for scenario in scenarios:
+        if not isinstance(scenario, dict):
+            continue
+        method = str(scenario.get("method", "")).upper()
+        path = str(scenario.get("path", ""))
+        status = scenario.get("status")
+        if not method or not path or status is None:
+            continue
+        operation = f"{method} {path}"
+        method_bodies = [
+            body for body in bodies if _http_method_evidence(method, body)
+        ]
+        if not method_bodies:
+            violations.append(f"Missing HTTP method evidence for scenario: {operation}")
+            continue
+        matching_bodies = [
+            body for body in method_bodies if _http_path_evidence_pattern(path).search(body)
+        ]
+        if not matching_bodies:
+            violations.append(f"Missing HTTP path evidence: {path}")
+            continue
+        if not any(_status_assertion_pattern(status).search(body) for body in matching_bodies):
+            violations.append(
+                f"Missing asserted HTTP status for scenario {operation}: {status}"
+            )
+    return violations
+
+
 def e2e_contract_violations(
     path: Path, contract: dict[str, object] | None = None
 ) -> list[str]:
@@ -130,7 +241,9 @@ def e2e_contract_violations(
         if not any(token in source for token in alternatives):
             violations.append(f"Missing {label}: {' or '.join(alternatives)}")
 
-    if contract:
+    if contract and contract.get("scenarios"):
+        violations.extend(_scenario_contract_violations(source, contract["scenarios"]))
+    elif contract:
         for expected_path in contract.get("paths", []):
             pattern = re.escape(str(expected_path))
             pattern = re.sub(r"\\\{[^}]+\\\}", r'[^"\\s]+', pattern)

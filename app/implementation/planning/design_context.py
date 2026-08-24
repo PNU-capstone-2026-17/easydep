@@ -1242,6 +1242,11 @@ Rules:
 - Implement every scenario in the generated semantic contract below with at least
   {minimum_tests} independent `@Test` methods. Use real HTTP through `TestRestTemplate` or
   `MockMvc`; assert the exact response status and relevant response fields for each scenario.
+- Each semantic-contract row is immutable: in that row's test, invoke exactly the listed HTTP
+  method and path, then assert exactly its listed status. Do not infer a conventional status
+  (for example, do not substitute `201 Created` for a documented `200 OK`) and do not append
+  an undeclared path segment. A Java URL assembled from path variables is allowed only when it
+  resolves exactly to the listed path template.
 - Assert repository-backed persistence for the exercised flow. A test that only checks in-memory
   UI state is invalid; unrelated repositories do not need to be injected into this single flow test.
 - Assert observable HTTP responses, Boundary state, and repository state; do not call private methods or reproduce service logic inside the test.

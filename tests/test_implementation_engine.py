@@ -1082,6 +1082,72 @@ TestRestTemplate http; CourseRepository repository;
 
             self.assertEqual([], e2e_contract_violations(path, contract))
 
+    def test_semantic_gate_pairs_dynamic_path_method_and_status_per_scenario(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "EnrollmentFlowTest.java"
+            path.write_text(
+                """class EnrollmentFlowTest {
+TestRestTemplate http; EnrollmentRepository repository;
+@Test void enroll() {
+  String url = \"/sections/\" + SECTION_ID + \"/enrollments\";
+  ResponseEntity<Void> response = http.postForEntity(url, request, Void.class);
+  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+}
+@Test void cancel() {
+  String url = \"/sections/\" + SECTION_ID + \"/enrollments\";
+  ResponseEntity<Void> response = http.exchange(url, HttpMethod.DELETE, request, Void.class);
+  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+}
+}""",
+                encoding="utf-8",
+            )
+            contract = {
+                "repositories": ["EnrollmentRepository"],
+                "minimumTests": 2,
+                "scenarios": [
+                    {"method": "POST", "path": "/sections/{sectionId}/enrollments", "status": 200},
+                    {"method": "DELETE", "path": "/sections/{sectionId}/enrollments", "status": 204},
+                ],
+            }
+
+            self.assertEqual([], e2e_contract_violations(path, contract))
+
+    def test_semantic_gate_rejects_wrong_status_or_extra_path_segment_per_scenario(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "EnrollmentFlowTest.java"
+            path.write_text(
+                """class EnrollmentFlowTest {
+TestRestTemplate http; EnrollmentRepository repository;
+@Test void enroll() {
+  String url = \"/sections/\" + SECTION_ID + \"/enrollments\";
+  ResponseEntity<Void> response = http.postForEntity(url, request, Void.class);
+  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+}
+@Test void cancel() {
+  String url = \"/sections/\" + SECTION_ID + \"/enrollments/\" + STUDENT_ID;
+  ResponseEntity<Void> response = http.exchange(url, HttpMethod.DELETE, request, Void.class);
+  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+}
+}""",
+                encoding="utf-8",
+            )
+            contract = {
+                "repositories": ["EnrollmentRepository"],
+                "minimumTests": 2,
+                "scenarios": [
+                    {"method": "POST", "path": "/sections/{sectionId}/enrollments", "status": 200},
+                    {"method": "DELETE", "path": "/sections/{sectionId}/enrollments", "status": 204},
+                ],
+            }
+
+            violations = e2e_contract_violations(path, contract)
+
+            self.assertIn(
+                "Missing asserted HTTP status for scenario POST /sections/{sectionId}/enrollments: 200",
+                violations,
+            )
+            self.assertIn("Missing HTTP path evidence: /sections/{sectionId}/enrollments", violations)
+
     def test_e2e_semantic_gate_rejects_simplified_weak_test(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "StockPurchaseFlowTest.java"
