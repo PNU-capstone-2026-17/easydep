@@ -139,6 +139,17 @@
       </Button>
       <span class="text-xs text-[#85524c]">The app design context will be reused for a fresh implementation pass.</span>
     </div>
+  {:else if command?.status === 'FAILED' && command.stage === 'testing'}
+    <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">
+      {#if command.payload?.implementation_job_id}
+        <Button size="sm" onclick={() => onAction('start_testing', { implementation_job_id: command.payload.implementation_job_id })} disabled={busy}>
+          <RotateCcw size={13} /> Retry testing
+        </Button>
+        <span class="text-xs text-[#85524c]">The completed implementation will be tested again.</span>
+      {:else}
+        <span class="text-xs text-[#85524c]">The implementation job reference is unavailable. Refresh the workspace.</span>
+      {/if}
+    </div>
   {:else if command?.status === 'COMPLETED' && command.stage === 'requirements'}
     <div class="mb-2"><Button size="sm" onclick={() => onAction('start_design')} disabled={busy}><Play size={13} /> Start design</Button></div>
   {:else if command?.status === 'COMPLETED' && command.stage === 'design'}
