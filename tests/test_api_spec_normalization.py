@@ -29,6 +29,35 @@ def test_api_model_fills_control_traceability_and_explicit_body_fields() -> None
     assert normalized["Schemas"][0]["fields"][0]["name"] == "username"
 
 
+def test_api_model_splits_qualified_control_target_when_contract_is_exact() -> None:
+    model = {
+        "Endpoints": [{
+            "path": "/login",
+            "method": "post",
+            "control_binding": {
+                "control": "AuthenticationController.authenticate",
+                "method": "post",
+                "arguments": [],
+            },
+        }],
+        "Schemas": [],
+    }
+    class_diagram = """@startuml
+class AuthenticationController <<Control>> {
+  + authenticate(username : String, password : String): AuthenticationToken
+}
+@enduml"""
+
+    normalized = normalize_api_spec_model(model, class_diagram)
+    binding = normalized["Endpoints"][0]["control_binding"]
+
+    assert binding["control"] == "AuthenticationController"
+    assert binding["method"] == "authenticate"
+    assert normalized["Endpoints"][0]["source_classes"] == [
+        "AuthenticationController"
+    ]
+
+
 def test_api_model_does_not_invent_body_fields_for_whole_body_binding() -> None:
     model = {
         "Endpoints": [{

@@ -305,6 +305,18 @@ def normalize_api_spec_model(
         if isinstance(binding, dict):
             control = str(binding.get("control") or "").strip()
             method = str(binding.get("method") or "").strip()
+            # Some model responses flatten the qualified target into
+            # ``Class.method`` and leave the HTTP verb in ``method``.  When
+            # the split target is an exact BCE contract, this is a mechanical
+            # representation error, not a design choice; normalize it before
+            # traceability and argument validation.
+            if "." in control:
+                candidate_control, candidate_method = control.rsplit(".", 1)
+                if (candidate_control, candidate_method) in control_parameters:
+                    control = candidate_control
+                    method = candidate_method
+                    binding["control"] = control
+                    binding["method"] = method
             expected_parameters = control_parameters.get((control, method), {})
             source_classes = endpoint.setdefault("source_classes", [])
             if control and isinstance(source_classes, list) and control not in source_classes:
