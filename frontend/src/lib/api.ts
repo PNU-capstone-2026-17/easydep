@@ -99,6 +99,23 @@ export function getArtifactFile(appId: string, artifactType: string, path: strin
   );
 }
 
+export async function downloadImplementationArtifacts(appId: string) {
+  const response = await fetch(`/api/implementation/apps/${encodeURIComponent(appId)}/download`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail?.message ?? body.detail ?? `Request failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `easydep-${appId}-implementation.zip`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function connectEvents(
   appId: string,
   after: number,

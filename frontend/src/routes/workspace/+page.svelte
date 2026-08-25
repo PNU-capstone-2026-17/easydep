@@ -401,6 +401,7 @@
           </div>
           {#if error}<div class="mx-auto mb-2 w-full max-w-3xl px-5 text-xs text-[#a24037]">{error}</div>{/if}
           <Composer
+            {appId}
             {command}
             {busy}
             {autoMode}

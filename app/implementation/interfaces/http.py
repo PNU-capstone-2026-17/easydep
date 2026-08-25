@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import io
+import json
+import zipfile
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from app.db.models import (
     TYPE_DEPLOYMENT_FILE,
     TYPE_FRONTEND_SOURCE_CODE,
@@ -62,6 +68,54 @@ def get_job(job_id: str) -> dict:
         return worker.get(job_id)
     except JobNotFound as error:
         raise HTTPException(status_code=404, detail="Unknown implementation job.") from error
+
+
+@router.get("/apps/{app_id}/download")
+def download_implementation_artifacts(app_id: str) -> StreamingResponse:
+    """Download the latest generated implementation file trees as one ZIP."""
+    snapshots = []
+    try:
+        for artifact_type in sorted(FILE_ARTIFACT_TYPES):
+            snapshot = artifact_repository.load_file_snapshot(app_id, artifact_type)
+            if snapshot and snapshot.get("files"):
+                snapshots.append(snapshot)
+    except AppNotFound as error:
+        raise HTTPException(status_code=404, detail="Unknown app id.") from error
+    if not snapshots:
+        raise HTTPException(status_code=404, detail="Implementation artifacts are unavailable.")
+
+    archive = io.BytesIO()
+    manifest: dict[str, Any] = {"app_id": app_id, "artifacts": []}
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for snapshot in snapshots:
+            artifact_type = str(snapshot["artifact_type"])
+            files = snapshot.get("files") or {}
+            artifact_entry = {
+                "artifact_type": artifact_type,
+                "version_no": snapshot.get("version_no"),
+                "file_count": len(files),
+            }
+            manifest["artifacts"].append(artifact_entry)
+            for path, item in files.items():
+                relative = str(path).replace("\\", "/").lstrip("/")
+                if not relative or relative == "." or ".." in relative.split("/"):
+                    continue
+                content = item.get("content", "") if isinstance(item, dict) else str(item)
+                bundle.writestr(f"{artifact_type}/{relative}", content)
+        bundle.writestr(
+            "manifest.json",
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+        )
+    archive.seek(0)
+    return StreamingResponse(
+        archive,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="easydep-{app_id}-implementation.zip"'
+            )
+        },
+    )
 
 
 @router.post("/jobs/{job_id}/approval", status_code=202)

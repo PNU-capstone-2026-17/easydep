@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -696,6 +698,40 @@ def test_implementation_feedback_api_enqueues_revision_job(monkeypatch) -> None:
     )
     assert response.status_code == 202
     assert response.json()["job_type"] == "FEEDBACK_REVISION"
+
+
+def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> None:
+    snapshots = {
+        "SOURCE_CODE": {
+            "artifact_type": "SOURCE_CODE",
+            "version_no": 2,
+            "files": {"src/main/App.java": {"content": "class App {}", "sha256": "a"}},
+        },
+        "TEST_CODE": {
+            "artifact_type": "TEST_CODE",
+            "version_no": 1,
+            "files": {"src/test/AppTest.java": {"content": "class AppTest {}", "sha256": "b"}},
+        },
+    }
+    monkeypatch.setattr(
+        "app.implementation.interfaces.http.artifact_repository.load_file_snapshot",
+        lambda _app_id, artifact_type: snapshots.get(artifact_type),
+    )
+    application = FastAPI()
+    application.include_router(router)
+
+    response = TestClient(application).get("/api/implementation/apps/app-1/download")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/zip")
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert archive.read("SOURCE_CODE/src/main/App.java") == b"class App {}"
+        assert archive.read("TEST_CODE/src/test/AppTest.java") == b"class AppTest {}"
+        manifest = json.loads(archive.read("manifest.json"))
+    assert {item["artifact_type"] for item in manifest["artifacts"]} == {
+        "SOURCE_CODE",
+        "TEST_CODE",
+    }
 
 
 def test_implementation_api_returns_conflict_for_stale_approval(monkeypatch) -> None:

@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { ArrowUp, Check, ChevronRight, LoaderCircle, Paperclip, Play, RotateCcw, X, Zap } from '@lucide/svelte';
+  import { ArrowUp, Check, ChevronRight, Download, LoaderCircle, Paperclip, Play, RotateCcw, X, Zap } from '@lucide/svelte';
+  import { downloadImplementationArtifacts } from '$lib/api';
   import type { WorkspaceCommand } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
 
   let {
     command,
+    appId,
     busy,
     context,
     autoMode,
@@ -14,6 +16,7 @@
     onToggleAutoMode
   }: {
     command?: WorkspaceCommand | null;
+    appId: string;
     busy: boolean;
     context?: { stage: string; artifact_stage?: string; element_ref?: string } | null;
     autoMode: boolean;
@@ -63,6 +66,16 @@
             : null
       : null
   );
+  let downloadError = $state('');
+
+  async function downloadArtifacts() {
+    downloadError = '';
+    try {
+      await downloadImplementationArtifacts(appId);
+    } catch (reason) {
+      downloadError = reason instanceof Error ? reason.message : 'Could not download implementation artifacts.';
+    }
+  }
 
   async function submit() {
     const value = text.trim();
@@ -185,6 +198,13 @@
       {#if result?.job_id}
         <Button size="sm" onclick={() => onAction('start_testing', { implementation_job_id: result.job_id })} disabled={busy}><Play size={13} /> Start testing</Button>
       {/if}
+    </div>
+  {:else if command?.status === 'COMPLETED' && command.stage === 'testing'}
+    <div class="mb-2 flex flex-wrap items-center gap-2">
+      <Button size="sm" onclick={downloadArtifacts} disabled={busy}>
+        <Download size={13} /> Download implementation ZIP
+      </Button>
+      {#if downloadError}<span class="text-xs text-[#85524c]">{downloadError}</span>{/if}
     </div>
   {/if}
 
