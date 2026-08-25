@@ -825,13 +825,12 @@ def test_implementation_progress_snapshot_exposes_workflow_phase_and_verificatio
 def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     calls: list[dict] = []
 
-    def fake_create_job(app_id, design, base_package, allow_assumptions):
+    def fake_create_job(app_id, request):
         calls.append(
             {
                 "app_id": app_id,
-                "design": design,
-                "base_package": base_package,
-                "allow_assumptions": allow_assumptions,
+                "base_package": request.base_package,
+                "allow_assumptions": request.allow_assumptions,
             }
         )
         return {"job_id": "new-job", "app_id": app_id, "status": "QUEUED"}
@@ -841,6 +840,11 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
         workspace_module,
         "artifact_repository",
         SimpleNamespace(load_state=lambda _app_id: {"class_diagram_puml": "A", "api_spec": {"paths": {}}}),
+    )
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_monitor_implementation",
+        lambda _self, job, command_id=None: {"job": job},
     )
 
     service = WorkspaceService()
