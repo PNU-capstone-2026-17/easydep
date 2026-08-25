@@ -32,7 +32,6 @@ from ..generation.orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
-from ..planning.design_context import find_control_persistence_contract_gaps
 from .completion import audit_run_completion
 from .conformance import (
     SourceDesignConformanceError,
@@ -52,13 +51,17 @@ from .traceability import build_rtm_traceability_map
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
 TRANSMISSION_SCHEMA = "external-transmission-request/v1alpha1"
 PHASES = (
-    ("control", (), {"control"}),
-    ("persistence", ("control",), {
+    # Persistence contracts are generated from the ERD before Control services
+    # are implemented.  Repositories are implementation details, so they do
+    # not need to appear in the BCE class diagram, but Control services must be
+    # able to compile against the generated repository interfaces.
+    ("persistence", (), {
         "persistence-entities",
         "persistence-repositories",
         "persistence-mapping",
         "persistence-schema",
     }),
+    ("control", ("persistence",), {"control"}),
     ("api-adapters", ("control",), {"api-adapter"}),
     ("boundary-adapters", ("control",), {"boundary-adapter"}),
     ("outbound-adapters", ("control", "persistence"), {"gateway-adapter"}),
@@ -102,14 +105,6 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
         if missing_in_bce:
             details.append("missing in BCE: " + ", ".join(missing_in_bce))
         raise ValueError("BCE/ERD entity mismatch; " + "; ".join(details))
-    persistence_contract_gaps = find_control_persistence_contract_gaps(spec, run_root)
-    _record_control_persistence_contract_gaps(run_root, persistence_contract_gaps)
-    if persistence_contract_gaps:
-        # A durable Entity accessed by a Control needs an explicit persistence
-        # port.  Continuing with a UI/state Boundary can compile, but it cannot
-        # observe the generated JPA data and produces non-executable HTTP flows.
-        # Do not invent a repository contract during implementation.
-        return reconcile_workflow_state(run_root)
     needs_persistence = bool(bce_entities) or any(
         gateway.kind == "persistence" for gateway in ir.gateways
     )
@@ -132,32 +127,6 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
-
-
-def _record_control_persistence_contract_gaps(
-    run_root: Path, gaps: list[dict[str, object]]
-) -> None:
-    """Record the current durable Control-to-Entity design-contract status.
-
-    When the BCE and ERD declare an Entity as persistent, a Control connected
-    to it must declare the exact persistence Gateway it uses.  Otherwise an
-    implementation worker can only substitute stateful UI adapters, which is
-    incompatible with the generated JPA persistence contract.
-    """
-    report_path = run_root / "reports" / "design-gaps" / "control-persistence-contracts.json"
-    report = {
-        "schemaVersion": "implementation-design-gaps/v1alpha1",
-        "phase": "control",
-        "status": "NEEDS_INPUT" if gaps else "READY",
-        "gaps": gaps,
-        "recommendedAction": (
-            "Add an explicit BCE <<Gateway>> persistence port related to each "
-            "listed Control, with the exact durable read/write operations "
-            "required by its use case."
-            if gaps else None
-        ),
-    }
-    _write_json_atomic(report_path, report)
 
 
 def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
@@ -255,6 +224,15 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         ),
         None,
     )
+    blocking_details = (
+        blocking_gap[1].get("gaps")
+        if blocking_gap is not None and isinstance(blocking_gap[1].get("gaps"), list)
+        else (
+            blocking_gap[1].get("findings")
+            if blocking_gap is not None and isinstance(blocking_gap[1].get("findings"), list)
+            else []
+        )
+    )
     status = (
         "FAILED" if any(task["status"] == "FAILED" for task in pending)
         else ("READY" if pending else "NEEDS_PLANNER")
@@ -267,7 +245,6 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
     # user-actionable NEEDS_INPUT state.
     if blocking_gap is not None:
         status = "NEEDS_INPUT"
-    gap_name = blocking_gap[0] if blocking_gap is not None else ""
     state: dict[str, object] = {
         "schemaVersion": WORKFLOW_SCHEMA,
         "runId": run_root.name,
@@ -280,16 +257,14 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             [] if status == "NEEDS_INPUT" else _next_runnable_tasks(tasks, phases)
         ),
         "blockingReason": (
-            "Implementation planning is blocked by unresolved Control persistence contracts; "
-            "see reports/design-gaps/control-persistence-contracts.json."
-            if status == "NEEDS_INPUT" and gap_name == "control-persistence-contracts"
-            else (
+            (
                 "End-to-end generation is blocked by unresolved design contracts; "
                 "see reports/design-gaps/end-to-end-flow.json."
                 if status == "NEEDS_INPUT"
                 else (None if pending else "Implemented phases are complete; the audit backlog requires the next planner.")
             )
         ),
+        "blockingDetails": blocking_details if status == "NEEDS_INPUT" else [],
         "approval": previous.get("approval"),
     }
     _write_json_atomic(state_path, state)

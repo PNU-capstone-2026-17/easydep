@@ -86,8 +86,9 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
     tasks: list[ImplementationTask] = []
     class_by_name = {item.name: item for item in classes}
     ir = build_implementation_ir(spec, run_root)
-    persistence_gateways = {
-        gateway.name for gateway in ir.gateways if gateway.kind == "persistence"
+    repositories = {
+        f"{entity}Repository"
+        for entity in ir.persistent_entities
     }
     for control in sorted(item.name for item in classes if item.stereotype.lower() == "control"):
         neighbors = sorted(
@@ -137,7 +138,10 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
             "openapi": openapi_context,
             "generatedJavaContracts": generated_contracts,
             "emptyGeneratedContracts": empty_contracts,
-            "persistenceGateways": sorted(set(neighbors) & persistence_gateways),
+            "repositories": sorted(
+                repository for repository in repositories
+                if repository.removesuffix("Repository") in entity_names
+            ),
         }
         context_path = output / f"{task_slug}.context.json"
         context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1493,60 +1497,6 @@ def parse_relations(source: str) -> list[tuple[str, str, str]]:
     return result
 
 
-def find_control_persistence_contract_gaps(
-    spec: JobSpec, run_root: Path
-) -> list[dict[str, object]]:
-    """Find Controls that need persistence but lack a designed Gateway port.
-
-    Repository-port names must come from an explicit BCE ``<<Gateway>>``
-    relationship. Inferring one from an Entity would turn a framework convention
-    into an undocumented contract and lets an implementation worker hallucinate
-    imports that the generated project cannot compile.
-    """
-    bce = _read(spec.inputs.get("bceClass"))
-    classes = parse_design_classes(bce)
-    persistent_entities = {
-        item.name for item in classes if item.stereotype.lower() == "entity"
-    } & parse_erd_entities(_read(spec.inputs.get("erd")))
-    if not persistent_entities:
-        return []
-
-    persistence_gateways = {
-        gateway.name
-        for gateway in build_implementation_ir(spec, run_root).gateways
-        if gateway.kind == "persistence"
-    }
-    neighbors: dict[str, set[str]] = {item.name: set() for item in classes}
-    for left, right, _ in parse_relations(bce):
-        neighbors.setdefault(left, set()).add(right)
-        neighbors.setdefault(right, set()).add(left)
-
-    gaps: list[dict[str, object]] = []
-    for control in sorted(
-        item.name for item in classes if item.stereotype.lower() == "control"
-    ):
-        connected = neighbors.get(control, set())
-        entities = sorted(connected & persistent_entities)
-        gateways = sorted(connected & persistence_gateways)
-        if entities and not gateways:
-            gaps.append(
-                {
-                    "control": control,
-                    "persistentEntities": entities,
-                    "requiredContract": (
-                        "A BCE <<Gateway>> persistence port explicitly related "
-                        "to the Control"
-                    ),
-                    "evidence": (
-                        f"{control} is related to persistent Entity "
-                        + ", ".join(entities)
-                        + " but no related persistence Gateway exists."
-                    ),
-                }
-            )
-    return gaps
-
-
 def parse_openapi_operations(source: str) -> list[str]:
     lines = source.splitlines()
     operations: list[str] = []
@@ -1639,17 +1589,17 @@ def slice_erd(source: str, entity_names: set[str]) -> str:
 
 
 def render_prompt(spec: JobSpec, context: dict[str, object], allowed: list[str]) -> str:
-    persistence_gateways = list(context.get("persistenceGateways", []))
-    gateway_rule = (
-        "- Use persistence only through these generated Gateway contracts: "
-        + ", ".join(f"`{name}`" for name in persistence_gateways)
-        + ".\n"
-        if persistence_gateways
-        else "- This task has no generated persistence Gateway contract. Do not import, name, or infer a RepositoryPort, Gateway, repository, or persistence adapter.\n"
+    repositories = list(context.get("repositories", []))
+    repository_rule = (
+        "- Use persistence only through these ERD-derived Spring Data repositories: "
+        + ", ".join(f"`{name}`" for name in repositories)
+        + ". Do not invent repository names or custom persistence fields.\n"
+        if repositories
+        else "- This Control has no related persistent Entity in the ERD. Do not import, name, or infer a repository or persistence adapter.\n"
     )
     control_rules = (
         "- Implement all public operations defined in the Control contract.\n"
-        + gateway_rule
+        + repository_rule
         + "- Ensure clean domain logic with proper state transitions and no dummy fallbacks."
     )
     return f"""# Implementation task: {context['control']}

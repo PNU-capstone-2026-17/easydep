@@ -405,8 +405,18 @@ class ImplementationWorker:
             record["status"] = "COMPLETED"
         elif status in {"NEEDS_INPUT", "NEEDS_PLANNER", "FAILED"}:
             record["status"] = status
+            record["error"] = str(
+                workflow.get("blockingReason")
+                or workflow.get("error")
+                or f"Implementation job {status}"
+            )
+            details = workflow.get("blockingDetails")
+            record["blocking_details"] = details if isinstance(details, list) else []
         else:
             record["status"] = status
+        if status == "COMPLETE":
+            record.pop("error", None)
+            record.pop("blocking_details", None)
         record["updated_at"] = _now()
         self._write(record)
 

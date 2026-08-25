@@ -26,6 +26,37 @@ def test_job_contract_preserves_automated_placeholder_policy() -> None:
     assert CreateImplementationJobRequest().allow_assumptions is True
 
 
+def test_needs_input_workflow_exposes_the_design_blocker_in_job_error(tmp_path: Path) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    record = {
+        "job_id": "job-1",
+        "status": "RUNNING",
+        "updated_at": "before",
+        "run_root": str(tmp_path / "run"),
+    }
+    try:
+        implementation_worker._apply_workflow(
+            record,
+            {
+                "status": "NEEDS_INPUT",
+                "blockingReason": "Implementation planning is blocked by unresolved Control persistence contracts.",
+                "blockingDetails": [{
+                    "control": "CourseCatalogControl",
+                    "persistentEntities": ["Course"],
+                }],
+            },
+        )
+    finally:
+        implementation_worker.shutdown()
+
+    assert record["status"] == "NEEDS_INPUT"
+    assert "Control persistence contracts" in record["error"]
+    assert record["blocking_details"] == [{
+        "control": "CourseCatalogControl",
+        "persistentEntities": ["Course"],
+    }]
+
+
 def test_feedback_request_trims_feedback() -> None:
     request = CreateImplementationFeedbackJobRequest(feedback="  rename the service  ")
     assert request.feedback == "rename the service"
