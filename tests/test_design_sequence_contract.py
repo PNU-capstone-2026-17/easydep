@@ -29,6 +29,7 @@ from app.design.services.sequence_diagram.extractor import (
     reassemble_sequence_diagrams,
     normalize_sequence_message_order,
     _only_callable_class,
+    _recover_explicit_actor_retries,
 )
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import (
@@ -101,6 +102,58 @@ def test_normalize_sequence_message_order_never_places_reply_before_its_call():
     ordered = normalize_sequence_message_order(messages)
 
     assert [message["label"] for message in ordered] == ["submit()", "Receipt"]
+
+
+def test_explicit_actor_retry_reuses_prior_boundary_input_in_loop():
+    specification = {
+        "use_case_id": "UC1",
+        "primary_actor": "Student",
+        "main_scenario": [
+            {"step_number": 1, "sentence": "Student enters credentials."},
+            {"step_number": 2, "sentence": "System validates credentials."},
+            {"step_number": 3, "sentence": "System creates a session."},
+        ],
+        "extensions": [{
+            "label": "2a",
+            "branch_step": 2,
+            "condition": "credentials are invalid",
+            "handling_steps": [{
+                "sub_step": "2a2",
+                "sentence": "Student re-enters credentials.",
+            }],
+        }],
+    }
+    extracted = {
+        "Participants": [
+            _participant("Student", "actor"),
+            _participant("SignInForm", "boundary", "SignInForm"),
+            _participant("SignInController", "control", "SignInController"),
+        ],
+        "Messages": [
+            _message(
+                "Student", "SignInForm", "submitCredentials(username:String,password:String)",
+                step_ids=["UC1:main:1"], call_id="UC1-call-1",
+                arguments=[
+                    {"parameter": "username", "type": "String", "source_kind": "input", "source_ref": "UC1:main:1"},
+                    {"parameter": "password", "type": "String", "source_kind": "input", "source_ref": "UC1:main:1"},
+                ],
+            ),
+            _message("SignInForm", "SignInController", "authenticate()", step_ids=["UC1:main:2"], call_id="UC1-call-2"),
+        ],
+    }
+
+    _recover_explicit_actor_retries(extracted, specification, {})
+
+    retry = extracted["Messages"][2]
+    assert retry["label"] == "submitCredentials(username:String,password:String)"
+    assert retry["step_ids"] == ["UC1:extension:2a:2a2"]
+    assert retry["fragments"] == [{
+        "id": "UC1_Actor_2a",
+        "type": "loop",
+        "branch": "main",
+        "condition": "credentials are invalid",
+    }]
+    assert {argument["source_ref"] for argument in retry["arguments"]} == {"UC1:extension:2a:2a2"}
 
 
 def test_normalize_sequence_entry_order_restores_actor_before_front_loaded_control_call():
