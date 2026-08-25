@@ -297,6 +297,26 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "\n\n## Exact generated JPA persistence entity contracts\n\n"
             "```java\n" + persistence_contracts + "\n```\n"
         )
+    if task_type == "control":
+        repository_names = {
+            str(name).strip()
+            for name in context.get("repositories", [])
+            if str(name).strip()
+        }
+        if repository_names:
+            repository_contracts = read_generated_java_contracts(
+                run_root,
+                task_base_package(task),
+                set(),
+                repository_names=repository_names,
+            )
+            prompt += (
+                "\n\n## Exact generated ERD repository contracts\n\n"
+                "Use these concrete Spring Data interfaces exactly; do not create "
+                "a RepositoryPort or any other inferred port.\n\n```java\n"
+                + repository_contracts
+                + "\n```\n"
+            )
     allowed_absolute = [str((sandbox / path).resolve()) for path in task["allowed_write_paths"]]
     prompt += "\n\n## Enforced absolute write paths\n\n" + "\n".join(
         f"- `{path}`" for path in allowed_absolute

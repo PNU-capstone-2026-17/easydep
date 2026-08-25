@@ -3731,14 +3731,22 @@ class ApplicationConfiguration {
                 "package com.example.api.model; public class OrderController {}",
                 encoding="utf-8",
             )
+            repository_package = run / "application/src/main/java/com/example/persistence/repository"
+            repository_package.mkdir(parents=True)
+            (repository_package / "OrderRepository.java").write_text(
+                "package com.example.persistence.repository; public interface OrderRepository {}",
+                encoding="utf-8",
+            )
             contracts = read_generated_java_contracts(
                 run,
                 "com.example",
                 {"OrderController", "Missing"},
                 {"OrderController"},
+                {"OrderRepository"},
             )
             self.assertIn("// bce/OrderController.java", contracts)
             self.assertIn("// api/model/OrderController.java", contracts)
+            self.assertIn("// persistence/repository/OrderRepository.java", contracts)
             self.assertNotIn("Missing.java", contracts)
 
     def test_classifies_erd_join_entities_without_relaxing_unknown_aliases(self) -> None:

@@ -1690,6 +1690,7 @@ def read_generated_java_contracts(
     base_package: str,
     names: set[str],
     api_model_names: set[str] | None = None,
+    repository_names: set[str] | None = None,
 ) -> str:
     package_root = (
         run_root
@@ -1711,6 +1712,13 @@ def read_generated_java_contracts(
         if path.is_file():
             contracts.append(
                 f"// api/model/{name}.java\n{path.read_text(encoding='utf-8').strip()}"
+            )
+    for name in sorted(repository_names or set()):
+        path = package_root / "persistence" / "repository" / f"{name}.java"
+        if path.is_file():
+            contracts.append(
+                f"// persistence/repository/{name}.java\n"
+                f"{path.read_text(encoding='utf-8').strip()}"
             )
     return "\n\n".join(contracts) or "// No generated Java contracts found"
 
