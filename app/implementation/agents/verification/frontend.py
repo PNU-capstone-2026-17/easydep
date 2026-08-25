@@ -10,6 +10,18 @@ from typing import Callable
 
 MUTATING_HTTP_METHODS = {"post", "put", "patch", "delete"}
 
+RESPONSIVE_TABLE_STYLES = """
+
+/* EasyDep accessibility repair: keep data tables usable on narrow screens. */
+@media (max-width: 40rem) {
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+"""
+
 
 def has_mutating_operations(openapi: object) -> bool:
     if not isinstance(openapi, dict) or not isinstance(openapi.get("paths"), dict):
@@ -86,6 +98,35 @@ def frontend_contract_violations(
             "Data tables require responsive narrow-screen handling in styles.css"
         )
     return violations
+
+
+def repair_responsive_table_styles(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Add the narrow-screen table rule when the generated UI declares a table.
+
+    The rule is a mechanical accessibility safeguard, not a domain decision. It
+    is safe to apply before the frontend contract gate because it only touches the
+    declared ``styles.css`` output and is idempotent.
+    """
+    paths = [sandbox / relative for relative in relative_paths]
+    source_paths = [path for path in paths if path.suffix in {".ts", ".tsx"} and path.is_file()]
+    if not source_paths:
+        return []
+    if not any("<table" in path.read_text(encoding="utf-8") for path in source_paths):
+        return []
+    style_path = next(
+        (path for path in paths if path.name == "styles.css" and path.is_file()),
+        None,
+    )
+    if style_path is None:
+        return []
+    styles = style_path.read_text(encoding="utf-8")
+    if re.search(r"overflow-x\s*:\s*(?:auto|scroll)", styles):
+        return []
+    separator = "\n" if styles.endswith("\n") else "\n\n"
+    style_path.write_text(styles + separator + RESPONSIVE_TABLE_STYLES.lstrip("\n"), encoding="utf-8")
+    return [str(style_path.relative_to(sandbox)).replace("\\", "/")]
 
 
 def _jsx_attribute_values(source: str, attribute: str) -> list[str]:

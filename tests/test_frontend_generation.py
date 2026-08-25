@@ -11,6 +11,7 @@ from app.implementation.config import ImplementationSettings
 from app.implementation.agents.workspace import snapshot_files
 from app.implementation.agents.verification.build import verify_frontend_workspace
 from app.implementation.agents.verification.frontend import frontend_contract_violations
+from app.implementation.agents.verification.frontend import repair_responsive_table_styles
 from app.implementation.planning.design_context import generate_frontend_tasks
 from app.implementation.planning.frontend_contracts import (
     FrontendContractBudgetExceeded,
@@ -420,6 +421,27 @@ def test_frontend_contract_requires_accessible_success_and_responsive_table(
     assert any("success status" in item for item in violations)
     assert any("missing element id: form-error" in item for item in violations)
     assert any("responsive narrow-screen" in item for item in violations)
+
+
+def test_frontend_responsive_table_repair_is_deterministic_and_idempotent(tmp_path: Path) -> None:
+    source = tmp_path / "application/frontend/src/App.tsx"
+    styles = tmp_path / "application/frontend/src/styles.css"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "import { OrdersApi } from './generated/src'; export default function App(){return <table />;}",
+        encoding="utf-8",
+    )
+    styles.write_text("body { margin: 0; }\n", encoding="utf-8")
+    paths = [
+        "application/frontend/src/App.tsx",
+        "application/frontend/src/styles.css",
+    ]
+
+    assert repair_responsive_table_styles(tmp_path, paths) == [paths[1]]
+    first = styles.read_text(encoding="utf-8")
+    assert "overflow-x: auto" in first
+    assert repair_responsive_table_styles(tmp_path, paths) == []
+    assert styles.read_text(encoding="utf-8") == first
 
 
 def test_frontend_verification_runs_install_then_production_build(
