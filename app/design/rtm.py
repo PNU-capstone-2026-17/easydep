@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.design.services.erd.plantuml import sanitize_entity_name
+from app.design.services.sequence_diagram.methods import method_name
 
 #: 추적 대상 상류: 유스케이스와 클래스. 나머지 산출물은 이 둘을 통해 간접 추적된다.
 UPSTREAM_KINDS = ("use_case", "class")
@@ -75,6 +76,152 @@ def _as_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
     return [str(v) for v in value if v]
+
+
+def _sequence_call_links(sequence: dict) -> list[dict[str, str]]:
+    """Return traceable sequence call → receiver-class links.
+
+    A sequence diagram can contain several calls, but the public editable unit is
+    a use-case card when the modern ``Diagrams`` collection is present.  Legacy
+    singleton models retain the individual message label as their editable unit.
+    The result deliberately includes *only* concrete call messages with a known
+    receiver class: a participant name or a narrative step is not evidence that
+    editing it should rewrite a class contract.
+    """
+    if not isinstance(sequence, dict):
+        return []
+
+    diagrams = sequence.get("Diagrams")
+    if isinstance(diagrams, list):
+        units = [
+            (str(diagram.get("use_case_id") or "").strip(), diagram)
+            for diagram in diagrams
+            if isinstance(diagram, dict) and str(diagram.get("use_case_id") or "").strip()
+        ]
+    else:
+        units = [("", sequence)]
+
+    calls: list[dict[str, str]] = []
+    call_types = {"sync", "async", "self"}
+    for use_case_id, diagram in units:
+        participants = {
+            str(item.get("alias") or item.get("name") or "").strip(): str(
+                item.get("source_class") or ""
+            ).strip()
+            for item in diagram.get("Participants", []) or []
+            if isinstance(item, dict)
+        }
+        for message in diagram.get("Messages", []) or []:
+            if not isinstance(message, dict) or str(message.get("type") or "sync").lower() not in call_types:
+                continue
+            receiver = participants.get(str(message.get("target") or "").strip(), "")
+            label = str(message.get("label") or "").strip()
+            called_method = method_name(label)
+            if not receiver or not called_method:
+                continue
+            if use_case_id:
+                element = use_case_id
+                call_use_cases = {use_case_id}
+            else:
+                element = _message_element(message)
+                call_use_cases = set(_as_list(message.get("use_case_ids")))
+            if not element:
+                continue
+            calls.append(
+                {
+                    "element": element,
+                    "receiver_class": receiver,
+                    "method": called_method,
+                    "use_case_ids": "\u0000".join(sorted(call_use_cases)),
+                }
+            )
+    return calls
+
+
+def _message_element(message: dict[str, Any]) -> str:
+    """Use the same legacy message identity as the RTM row and edit API."""
+    return "{} -> {} : {}".format(
+        message.get("source", "?"), message.get("target", "?"), message.get("label", "")
+    ).strip()
+
+
+def _direct_links(state: dict, known_classes: set[str]) -> list[dict[str, str]]:
+    """Build only exact, model-backed cross-artifact links.
+
+    The old RTM connected every artifact to requirements/classes through broad
+    provenance fields.  That is useful for forward regeneration but insufficient
+    evidence for changing an earlier contract.  Reverse propagation is allowed
+    only for these stronger links:
+
+    * a sequence *call* whose receiver is a declared class;
+    * an API operation whose Control binding names that receiver and a declared method;
+    * the API operation and sequence call share a use-case id.
+
+    No fuzzy name match and no LLM-derived edge is accepted.  If an existing
+    artifact lacks the exact binding, it simply has no reverse-cascade path.
+    """
+    sequence_calls = _sequence_call_links(state.get("sequence_diagram_model") or {})
+    declared_methods = {
+        str(item.get("className") or "").strip(): {
+            method_name(str(method))
+            for method in item.get("methods", []) or []
+            if method_name(str(method))
+        }
+        for item in (state.get("extracted_bce_classes") or {}).get("Classes", []) or []
+        if isinstance(item, dict) and str(item.get("className") or "").strip()
+    }
+    links: set[tuple[str, str, str]] = set()
+
+    for call in sequence_calls:
+        receiver = call["receiver_class"]
+        if receiver in known_classes:
+            links.add(
+                (
+                    f"sequence_diagram:{call['element']}",
+                    f"class_diagram:{receiver}",
+                    "invokes",
+                )
+            )
+
+    for endpoint in (state.get("api_spec_model") or {}).get("Endpoints", []) or []:
+        if not isinstance(endpoint, dict):
+            continue
+        operation = str(endpoint.get("operation_id") or "").strip()
+        binding = endpoint.get("control_binding")
+        if not operation or not isinstance(binding, dict):
+            continue
+        control = str(binding.get("control") or "").strip()
+        # Sequence labels are complete calls while the API binding records the
+        # declared method name.  Normalize both through the same parser before
+        # comparing; case or surrounding signature syntax must not create a
+        # second, weaker name-matching rule.
+        method = method_name(str(binding.get("method") or "").strip())
+        endpoint_use_cases = set(_as_list(endpoint.get("use_case_ids")))
+        if (
+            control not in known_classes
+            or method not in declared_methods.get(control, set())
+            or not endpoint_use_cases
+        ):
+            continue
+
+        links.add((f"api_spec:{operation}", f"class_diagram:{control}", "binds"))
+        for call in sequence_calls:
+            if control != call["receiver_class"] or method != call["method"]:
+                continue
+            if endpoint_use_cases.isdisjoint(call["use_case_ids"].split("\u0000")):
+                continue
+            links.add(
+                (
+                    f"api_spec:{operation}",
+                    f"sequence_diagram:{call['element']}",
+                    "implements",
+                )
+            )
+
+    return [
+        {"from": source, "to": target, "relation": relation}
+        for source, target, relation in sorted(links)
+    ]
 
 
 def build_design_rtm(state: dict) -> dict[str, Any]:
@@ -227,6 +374,10 @@ def build_design_rtm(state: dict) -> dict[str, Any]:
     matrix = {
         "rows": rows,
         "impact": impact,
+        # ``links`` are stronger than the broad provenance index above.  They
+        # identify an exact API → sequence-call → class contract route and are
+        # the only RTM edges safe enough to use for reverse change planning.
+        "links": _direct_links(state, upstream["class"]),
         "unknown_refs": unknown,
         "summary": summary,
     }
@@ -281,6 +432,10 @@ def _build_change_plan(matrix: dict) -> list[dict[str, Any]]:
                 "ref": f"{row['stage']}:{row['element']}",
                 "stage": row["stage"],
                 "element": row["element"],
+                # Direct, contract-backed neighbours.  The client can show
+                # these as the bounded reverse-change scope before a revision
+                # is applied; broad provenance alone is never used to guess it.
+                "related": linked_elements(matrix, row["stage"], row["element"]),
                 #: 이 항목을 고치면 따라 고쳐야 할 하류 항목들(간접 포함).
                 "affects": affected,
                 #: 그 항목들이 있는 스테이지, 파이프라인 순서로.
@@ -306,6 +461,31 @@ def affected_by_element(rtm: dict, stage: str, element: str) -> list[str]:
     if not alias:
         return []
     return transitively_impacted(rtm, alias, element)
+
+
+def linked_elements(rtm: dict, stage: str, element: str) -> list[str]:
+    """Return elements joined by an exact cross-artifact contract link.
+
+    This is intentionally different from ``affected_by_element``.  The latter
+    follows broad provenance forward (for example class → API schema); this
+    function is symmetric but returns only links proven by a concrete sequence
+    call and API Control binding.  A missing link means "do not propagate", not
+    "guess a likely neighbour".
+    """
+    ref = f"{stage}:{element}"
+    linked = {
+        str(link.get("to") or "")
+        for link in rtm.get("links", []) or []
+        if isinstance(link, dict) and link.get("from") == ref
+    }
+    linked.update(
+        str(link.get("from") or "")
+        for link in rtm.get("links", []) or []
+        if isinstance(link, dict) and link.get("to") == ref
+    )
+    linked.discard("")
+    linked.discard(ref)
+    return sorted(linked)
 
 
 def impacted_by(rtm: dict, kind: str, name: str) -> list[str]:

@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
 import app.design.graphs.subgraphs as sg
@@ -86,7 +88,7 @@ def naughty_llm(monkeypatch):
             # 비대상인데 아예 빼먹었다 (OrderForm)
         ], "Relationships": [{"source": "X", "target": "Y", "type": "Association"}]}
 
-    def wreck_api(current_model, feedback, context_text="", targets=None):
+    def wreck_api(current_model, feedback, context_text="", targets=None, *_args):
         calls.append("api_spec")
         return {"title": "완전히 다른 API", "version": "9.9.9", "Endpoints": [
             # 비대상 엔드포인트를 갈아엎었다
@@ -107,7 +109,7 @@ def naughty_llm(monkeypatch):
             # member.jar 을 지워버렸다
         ], "Connections": []}
 
-    def wreck_sequence(current_model, feedback, context_text="", targets=None):
+    def wreck_sequence(current_model, feedback, context_text="", targets=None, *_args):
         calls.append("sequence_diagram")
         return {"Participants": [], "Messages": []}
 
@@ -258,6 +260,153 @@ def test_an_unknown_target_is_refused(naughty_llm):
         revise_and_cascade(STATE, "class_diagram:없는클래스", "x")
     with pytest.raises(UnknownTarget):
         revise_and_cascade(STATE, "erd:Order", "x")       # ERD 는 투영이라 대상이 아니다
+
+
+# ---------------------------------------------------------------------------
+# 정확한 API ↔ 시퀀스 ↔ 클래스 링크를 통한 역방향 cascade
+# ---------------------------------------------------------------------------
+CHAIN_STATE = {
+    "usecase_spec": {"use_cases": [{"id": "UC1"}]},
+    "extracted_bce_classes": {
+        "Classes": [
+            {"className": "OrderController", "stereotype": "Control",
+             "fields": [], "methods": ["createOrder(): Order"],
+             "use_case_ids": ["UC1"]},
+            {"className": "Member", "stereotype": "Entity",
+             "fields": ["name: String"], "methods": [], "use_case_ids": ["UC1"]},
+        ],
+        "Relationships": [],
+    },
+    "sequence_diagram_model": {
+        "Diagrams": [{
+            "use_case_id": "UC1",
+            "use_case_name": "Create order",
+            "Participants": [
+                {"name": "OrderForm", "alias": "form", "kind": "boundary",
+                 "description": "", "source_class": ""},
+                {"name": "OrderController", "alias": "control", "kind": "control",
+                 "description": "", "source_class": "OrderController"},
+            ],
+            "Messages": [{
+                "source": "form", "target": "control", "label": "createOrder()",
+                "type": "sync", "fragments": [], "use_case_ids": ["UC1"],
+                "step_ids": [], "call_id": "call-1", "reply_to": "", "arguments": [],
+            }],
+            "UnresolvedSteps": [],
+            "NarrativeSteps": [],
+        }],
+        "class_diagram_hash": "",
+        "MethodProposals": [],
+    },
+    "api_spec_model": {
+        "title": "API", "version": "1.0.0",
+        "Endpoints": [{
+            "path": "/orders", "method": "post", "summary": "Create order",
+            "operation_id": "createOrder", "path_params": [], "query_params": [],
+            "request_schema": "", "responses": [], "source_classes": ["OrderController"],
+            "use_case_ids": ["UC1"],
+            "control_binding": {"control": "OrderController", "method": "createOrder"},
+        }],
+        "Schemas": [],
+    },
+}
+
+
+@pytest.fixture
+def trace_linked_revisers(monkeypatch):
+    """Revisers that try to change siblings as well as their assigned target."""
+    calls: list[tuple[str, set[str]]] = []
+
+    def revise_classes(current_bce, feedback, scenario_text="", targets=None):
+        calls.append(("class_diagram", set(targets or set())))
+        candidate = deepcopy(current_bce)
+        for item in candidate["Classes"]:
+            if item["className"] == "OrderController":
+                item["methods"] = ["createOrder(): Order", "confirmOrder(): Order"]
+            if item["className"] == "Member":
+                item["fields"] = ["hallucinated: String"]
+        candidate["Relationships"] = [{"source": "OrderController", "target": "Member"}]
+        return candidate
+
+    def revise_sequence(current, feedback, context_text="", targets=None, *_args):
+        calls.append(("sequence_diagram", set(targets or set())))
+        candidate = deepcopy(current)
+        for diagram in candidate.get("Diagrams", []):
+            if diagram.get("use_case_id") == "UC1":
+                diagram["use_case_name"] = "Confirmed order"
+        return candidate
+
+    def revise_api(current, feedback, context_text="", targets=None, *_args):
+        calls.append(("api_spec", set(targets or set())))
+        candidate = deepcopy(current)
+        candidate["title"] = "hallucinated title"
+        for endpoint in candidate.get("Endpoints", []):
+            if endpoint.get("operation_id") == "createOrder":
+                endpoint["summary"] = "Confirmed order"
+        return candidate
+
+    monkeypatch.setattr(sg, "revise_bce_classes", revise_classes)
+    monkeypatch.setattr(sg, "revise_sequence_model", revise_sequence)
+    monkeypatch.setattr(sg, "revise_api_spec_model", revise_api)
+    import app.design.services.common.validation as validation
+    monkeypatch.setattr(validation, "check_plantuml_syntax", lambda _t: [])
+    return calls
+
+
+def test_sequence_revision_updates_only_exactly_linked_class_and_api(trace_linked_revisers):
+    """시퀀스 수정은 호출 수신 클래스와 같은 Control API만 역방향으로 건드린다."""
+    out = revise_and_cascade(
+        CHAIN_STATE, "sequence_diagram:UC1", "주문 확인 호출을 추가해줘"
+    )
+
+    assert out["changed"] == ["sequence_diagram", "class_diagram", "api_spec"]
+    assert out["touched"] == {
+        "sequence_diagram": ["UC1"],
+        "class_diagram": ["OrderController"],
+        "api_spec": ["createOrder"],
+    }
+    assert trace_linked_revisers == [
+        ("sequence_diagram", {"UC1"}),
+        ("class_diagram", {"OrderController"}),
+        ("api_spec", {"createOrder"}),
+    ]
+    classes = _classes(out["state"])
+    assert classes["OrderController"]["methods"][-1] == "confirmOrder(): Order"
+    assert classes["Member"] == _classes(CHAIN_STATE)["Member"]
+    assert out["state"]["api_spec_model"]["title"] == "API"
+
+
+def test_api_revision_updates_only_exactly_linked_sequence_and_class(trace_linked_revisers):
+    """API 수정은 binding으로 증명된 시퀀스 카드·Control만 역방향으로 건드린다."""
+    out = revise_and_cascade(
+        CHAIN_STATE, "api_spec:createOrder", "주문 확인 결과를 추가해줘"
+    )
+
+    assert out["changed"] == ["api_spec", "class_diagram", "sequence_diagram"]
+    assert out["touched"] == {
+        "api_spec": ["createOrder"],
+        "class_diagram": ["OrderController"],
+        "sequence_diagram": ["UC1"],
+    }
+    assert trace_linked_revisers == [
+        ("api_spec", {"createOrder"}),
+        ("class_diagram", {"OrderController"}),
+        ("sequence_diagram", {"UC1"}),
+    ]
+    assert _classes(out["state"])["Member"] == _classes(CHAIN_STATE)["Member"]
+
+
+def test_api_without_an_exact_binding_never_guesses_an_upstream_target(trace_linked_revisers):
+    """같은 이름이라도 binding이 없으면 API 산출물만 수정한다."""
+    unlinked = deepcopy(CHAIN_STATE)
+    unlinked["api_spec_model"]["Endpoints"][0].pop("control_binding")
+
+    out = revise_and_cascade(unlinked, "api_spec:createOrder", "요약을 고쳐줘")
+
+    assert out["changed"] == ["api_spec"]
+    assert out["related"] == []
+    assert trace_linked_revisers == [("api_spec", {"createOrder"})]
+    assert _classes(out["state"]) == _classes(unlinked)
 
 
 # ---------------------------------------------------------------------------

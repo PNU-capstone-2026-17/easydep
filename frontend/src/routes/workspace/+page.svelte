@@ -57,6 +57,16 @@
     return [...new Set(messages)];
   });
 
+  let canApproveSequenceMethodProposals = $derived(
+    command?.status === 'AWAITING_INPUT' &&
+      command?.stage === 'design' &&
+      (
+        (Array.isArray(command?.result?.method_proposals) &&
+          command.result.method_proposals.length > 0) ||
+        Boolean(artifacts?.validation?.sequence_diagram?.method_proposals?.length)
+      )
+  );
+
   let busy = $derived(actionBusy || ['QUEUED', 'RUNNING'].includes(command?.status ?? ''));
   let selectedStage = $derived(
     fileArtifactTypes.includes(selectedArtifact)
@@ -233,6 +243,33 @@
     artifactOpen = true;
   }
 
+  async function approveSequenceMethodProposals() {
+    if (!canApproveSequenceMethodProposals || !command?.command_id) return;
+    await act('advance', {
+      action_id: command.command_id,
+      // This is the user's explicit consent.  The normal sequence
+      // reconciliation path applies only persisted MethodProposals.
+      auto_approve_method_proposals: true
+    });
+  }
+
+  async function submitSequenceFeedback(
+    entries: Array<{ useCaseId: string; feedback: string }>
+  ) {
+    await act('message', {
+      text: `Targeted sequence feedback for ${entries.map((entry) => entry.useCaseId).join(', ')}`,
+      action_id: command?.status === 'AWAITING_INPUT' ? command.command_id : undefined,
+      context: {
+        stage: 'design',
+        artifact_stage: 'sequence_diagram',
+        target_feedbacks: entries.map((entry) => ({
+          target: `sequence_diagram:${entry.useCaseId}`,
+          feedback: entry.feedback
+        }))
+      }
+    });
+  }
+
   async function loadFileArtifacts(id: string) {
     const entries = await Promise.all(
       fileArtifactTypes.map(async (type) => {
@@ -368,6 +405,7 @@
             {busy}
             {autoMode}
             context={{ stage: selectedStage, artifact_stage: selectedArtifact }}
+            targetRequired={selectedArtifact === 'sequence_diagram'}
             onSend={send}
             onAction={act}
             onToggleAutoMode={toggleAutoMode}
@@ -381,6 +419,10 @@
             {events}
             selected={selectedArtifact}
             onSelect={reviewArtifact}
+            onSequenceFeedbackSubmit={submitSequenceFeedback}
+            sequenceFeedbackSubmitting={busy}
+            sequenceMethodApprovalAvailable={canApproveSequenceMethodProposals}
+            onSequenceMethodApproval={approveSequenceMethodProposals}
             onClose={() => (artifactOpen = false)}
           />
         {/if}

@@ -8,11 +8,14 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
+
 from app.design.rtm import (
     affected_by_element,
     build_design_rtm,
     impacted_by,
     impacted_stages,
+    linked_elements,
     render_design_rtm_md,
     transitively_impacted,
 )
@@ -134,6 +137,129 @@ def test_sequence_collection_is_traced_per_use_case_diagram():
         "class": ["OrderForm"],
     }
     assert "sequence_diagram:UC1" in impacted_by(rtm, "class", "OrderForm")
+
+
+def test_exact_api_sequence_class_links_are_materialized_for_reverse_changes():
+    """API↔시퀀스↔클래스는 이름이 아니라 같은 Control 호출일 때만 잇는다."""
+    state = {
+        **STATE,
+        "extracted_bce_classes": deepcopy(STATE["extracted_bce_classes"]),
+        "sequence_diagram_model": {
+            "Diagrams": [{
+                "use_case_id": "UC1",
+                "Participants": [
+                    {"name": "OrderForm", "alias": "form", "kind": "boundary",
+                     "source_class": "OrderForm"},
+                    {"name": "OrderController", "alias": "control", "kind": "control",
+                     "source_class": "OrderController"},
+                ],
+                "Messages": [{
+                    "source": "form", "target": "control", "label": "createOrder()",
+                    "type": "sync", "use_case_ids": ["UC1"],
+                }],
+            }],
+        },
+        "api_spec_model": {
+            "Endpoints": [{
+                "operation_id": "createOrder", "path": "/orders", "method": "post",
+                "source_classes": ["OrderController"], "use_case_ids": ["UC1"],
+                "control_binding": {"control": "OrderController", "method": "createOrder"},
+            }],
+            "Schemas": [],
+        },
+    }
+    next(
+        item for item in state["extracted_bce_classes"]["Classes"]
+        if item["className"] == "OrderController"
+    )["methods"] = ["createOrder(): Order"]
+
+    rtm = build_design_rtm(state)
+
+    assert {tuple(link.values()) for link in rtm["links"]} == {
+        ("api_spec:createOrder", "class_diagram:OrderController", "binds"),
+        ("api_spec:createOrder", "sequence_diagram:UC1", "implements"),
+        ("sequence_diagram:UC1", "class_diagram:OrderController", "invokes"),
+    }
+    assert linked_elements(rtm, "api_spec", "createOrder") == [
+        "class_diagram:OrderController", "sequence_diagram:UC1",
+    ]
+    assert linked_elements(rtm, "sequence_diagram", "UC1") == [
+        "api_spec:createOrder", "class_diagram:OrderController",
+    ]
+
+
+def test_missing_exact_control_binding_does_not_create_a_reverse_link():
+    """같은 이름·같은 UC여도 Control 호출 근거가 없으면 추측해 연결하지 않는다."""
+    state = {
+        **STATE,
+        "sequence_diagram_model": {
+            "Diagrams": [{
+                "use_case_id": "UC1",
+                "Participants": [
+                    {"name": "OrderController", "alias": "control", "kind": "control",
+                     "source_class": "OrderController"},
+                ],
+                "Messages": [{
+                    "source": "control", "target": "control", "label": "createOrder()",
+                    "type": "self", "use_case_ids": ["UC1"],
+                }],
+            }],
+        },
+        "api_spec_model": {
+            "Endpoints": [{
+                "operation_id": "createOrder", "source_classes": ["OrderController"],
+                "use_case_ids": ["UC1"],
+                # ``control_binding`` deliberately absent.
+            }],
+            "Schemas": [],
+        },
+    }
+
+    rtm = build_design_rtm(state)
+
+    assert linked_elements(rtm, "api_spec", "createOrder") == []
+    # The concrete sequence call still has a safe receiver-class relation.
+    assert linked_elements(rtm, "sequence_diagram", "UC1") == [
+        "class_diagram:OrderController"
+    ]
+
+
+def test_binding_to_an_undeclared_control_method_is_not_a_reverse_link():
+    """존재하지 않는 메서드 binding은 확정된 계약이 아니므로 전파 근거가 될 수 없다."""
+    state = {
+        **STATE,
+        "extracted_bce_classes": {
+            "Classes": [{
+                "className": "OrderController", "stereotype": "Control",
+                "methods": ["createOrder(): Order"], "use_case_ids": ["UC1"],
+            }],
+            "Relationships": [],
+        },
+        "sequence_diagram_model": {
+            "Diagrams": [{
+                "use_case_id": "UC1",
+                "Participants": [{
+                    "name": "OrderController", "alias": "control", "kind": "control",
+                    "source_class": "OrderController",
+                }],
+                "Messages": [{
+                    "source": "control", "target": "control", "label": "createOrder()",
+                    "type": "self", "use_case_ids": ["UC1"],
+                }],
+            }],
+        },
+        "api_spec_model": {
+            "Endpoints": [{
+                "operation_id": "createOrder", "use_case_ids": ["UC1"],
+                "control_binding": {"control": "OrderController", "method": "deleteOrder"},
+            }],
+            "Schemas": [],
+        },
+    }
+
+    rtm = build_design_rtm(state)
+
+    assert linked_elements(rtm, "api_spec", "createOrder") == []
 
 
 def test_a_bad_participant_class_is_reported_once_not_twice():

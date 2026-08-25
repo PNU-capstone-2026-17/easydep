@@ -315,19 +315,18 @@ def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: P
     assert record["status"] == "NEEDS_INPUT"
     assert record["workflow"]["currentPhase"] == "design-validation"
     assert record["design_validation"]["status"] == "NEEDS_INPUT"
+    assert "api.operations-present" in record["error"]
     report = tmp_path / ".easydep" / "implementation-runs" / record["job_id"] / "design-readiness.json"
     assert report.is_file()
 
 
-def test_initial_job_proceeds_with_complete_artifacts_and_design_findings(
+def test_initial_job_blocks_when_rendered_openapi_has_no_operation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     implementation_worker = ImplementationWorker(settings(tmp_path))
-    job_path = tmp_path / "prepared" / "job.json"
-    job_path.parent.mkdir(parents=True)
-    job_path.write_text("{}", encoding="utf-8")
-    implementation_worker.client.prepare_job = lambda *_args, **_kwargs: job_path
-    monkeypatch.setattr(implementation_worker.executor, "submit", lambda *_args, **_kwargs: None)
+    implementation_worker.client.prepare_job = lambda *_args, **_kwargs: pytest.fail(
+        "An empty rendered OpenAPI document must not reach the prototype process"
+    )
     monkeypatch.setattr(
         "app.implementation.application.jobs.design_readiness_report",
         lambda _design: {"status": "NEEDS_INPUT", "findings": [{"finding": "warning"}]},
@@ -348,8 +347,9 @@ def test_initial_job_proceeds_with_complete_artifacts_and_design_findings(
     finally:
         implementation_worker.shutdown()
 
-    assert record["status"] == "QUEUED"
+    assert record["status"] == "NEEDS_INPUT"
     assert record["design_validation"]["status"] == "NEEDS_INPUT"
+    assert "api.operations-present" in record["error"]
 
 
 def test_initial_job_blocks_lossy_erd_bce_identifier_contract(
@@ -377,7 +377,14 @@ def test_initial_job_blocks_lossy_erd_bce_identifier_contract(
             "app-1",
             {
                 "class_diagram_puml": "class Session",
-                "api_spec": {"openapi": "3.1.0", "paths": {}},
+                "api_spec": {
+                    "openapi": "3.1.0",
+                    "paths": {
+                        "/sessions": {
+                            "post": {"operationId": "createSession"}
+                        }
+                    },
+                },
                 "extracted_bce_classes": {"Classes": [{"className": "Session"}]},
                 "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
                 "api_spec_model": {"Endpoints": [{"path": "/sessions"}]},
@@ -419,6 +426,64 @@ def test_initial_job_proceeds_with_rendered_artifacts_when_derived_models_are_mi
         implementation_worker.shutdown()
 
     assert record["status"] == "QUEUED"
+
+
+def test_planning_keeps_validation_needs_input_outcome_resumable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    run_root = tmp_path / "generated-run"
+    reports = run_root / "reports"
+    reports.mkdir(parents=True)
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "NEEDS_INPUT",
+                "diagnostics": [
+                    {
+                        "code": "OPENAPI_NO_OPERATIONS",
+                        "severity": "ERROR",
+                        "message": "OpenAPI paths must contain at least one HTTP operation.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    job_path = tmp_path / "job" / "job.json"
+    job_path.parent.mkdir()
+    job_path.write_text("{}", encoding="utf-8")
+    record = {
+        "job_id": "needs-input-run",
+        "app_id": "app-1",
+        "status": "QUEUED",
+        "base_package": "com.example",
+        "job_path": str(job_path),
+        "run_root": None,
+        "workflow": None,
+        "transmission_request": None,
+        "error": None,
+        "created_at": "now",
+        "updated_at": "now",
+    }
+    implementation_worker._write(record)
+    monkeypatch.setattr(implementation_worker.client, "generate", lambda _job: run_root)
+    monkeypatch.setattr(
+        implementation_worker.client,
+        "plan_workflow",
+        lambda *_args: pytest.fail("Input validation must not invoke implementation planning"),
+    )
+    try:
+        implementation_worker._plan("needs-input-run")
+        result = implementation_worker._read("needs-input-run")
+    finally:
+        implementation_worker.shutdown()
+
+    assert result["status"] == "NEEDS_INPUT"
+    assert result["run_root"] == str(run_root)
+    assert result["workflow"]["currentPhase"] == "input-validation"
+    assert "at least one HTTP operation" in result["workflow"]["blockingReason"]
+
 
 def test_prepare_feedback_job_materializes_existing_application(tmp_path: Path) -> None:
     client = PrototypeClient(settings(tmp_path))

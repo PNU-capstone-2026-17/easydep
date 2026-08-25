@@ -29,6 +29,29 @@ def route_gate(state: ArchitectureState) -> str:
     return state.get("gate_route", "advance")
 
 
+def _api_has_no_http_operation(artifact: object) -> bool:
+    """Return whether a rendered OpenAPI artifact has no executable operation.
+
+    An empty schema-only API cannot be handed to either OpenAPI Generator.  It
+    is a repairable design defect, rather than feedback the user can silently
+    approve by submitting an empty gate response.
+    """
+    if not isinstance(artifact, dict):
+        return True
+    paths = artifact.get("paths")
+    if not isinstance(paths, dict):
+        return True
+    methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+    return not any(
+        isinstance(path_item, dict)
+        and any(
+            str(method).lower() in methods and isinstance(operation, dict)
+            for method, operation in path_item.items()
+        )
+        for path_item in paths.values()
+    )
+
+
 def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
     """스테이지 하나의 게이트 노드를 만든다.
 
@@ -43,13 +66,24 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
         # None이다 — **"위반 없음"이 아니라 "검사하지 않았다"**이고, 화면은 그 둘을
         # 구별해야 한다. 남은 위반을 게이트에서 숨기면 사용자는 통과했다고 믿는다.
         check = state.get(config.get("check_key") or "") or {}
+        artifact = state.get(config["state_key"])
+        api_operation_blocked = (
+            stage == "api_spec" and _api_has_no_http_operation(artifact)
+        )
         answer = interrupt(
             {
                 "stage": stage,
-                "status": "need_feedback",
-                "prompt": f"[{stage}] 결과에 대한 피드백을 입력하세요. "
-                "비워두면 다음 단계로 진행합니다.",
-                "artifact": state.get(config["state_key"]),
+                "status": "needs_repair" if api_operation_blocked else "need_feedback",
+                "prompt": (
+                    "[api_spec] 구현 가능한 HTTP operation이 없어 다음 단계로 진행할 수 "
+                    "없습니다. 유스케이스·BCE Control·시퀀스 호출에 근거한 endpoint를 "
+                    "추가하도록 피드백을 입력하세요. 비워두면 같은 근거로 자동 재수정을 "
+                    "한 번 시도합니다."
+                    if api_operation_blocked
+                    else f"[{stage}] 결과에 대한 피드백을 입력하세요. "
+                    "비워두면 다음 단계로 진행합니다."
+                ),
+                "artifact": artifact,
                 "valid": state.get(config["valid_key"]) if config["valid_key"] else None,
                 "errors": (
                     state.get(config["errors_key"], []) if config["errors_key"] else []
@@ -60,6 +94,18 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
                 "method_proposals": check.get("method_proposals", []),
             }
         )
+        if api_operation_blocked and not str(answer or "").strip():
+            # Do not silently approve an API that cannot be generated.  The
+            # repair node receives a concrete directive, so an empty "next"
+            # action is a bounded retry and the graph remains resumable.
+            return {
+                feedback_key: (
+                    "Repair the API model: add at least one requirement-grounded "
+                    "HTTP endpoint using an exact Boundary-to-Control call from "
+                    "the sequence diagram."
+                ),
+                "gate_route": "loop",
+            }
         if not str(answer or "").strip():
             return {"gate_route": "advance"}
         return {feedback_key: str(answer), "gate_route": "loop"}

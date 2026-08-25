@@ -4,6 +4,7 @@ from app.design.graphs.subgraphs import API_SPEC_SPEC
 from app.design.knowledge import detectors
 from app.design.nodes.artifact import check_node
 from app.design.services.api_spec.openapi import build_openapi_from_model
+from app.design.services.common.validation import validate_api_spec
 from app.design.validation import design_readiness_report
 
 
@@ -235,6 +236,22 @@ def test_api_detector_rejects_schema_only_model():
     found = {item.rule_id for item in detectors.api_spec_findings(model, STATE)}
 
     assert "api.operations-present" in found
+
+
+def test_api_artifact_validation_rejects_schema_only_openapi_document():
+    result = validate_api_spec(
+        {
+            "openapi": "3.1.0",
+            "info": {"title": "Orders", "version": "1.0.0"},
+            "paths": {},
+            "components": {"schemas": {"Order": {"type": "object"}}},
+        }
+    )
+
+    assert result["syntax_valid"] is False
+    assert result["syntax_errors"] == [
+        "API specification paths must contain at least one HTTP operation."
+    ]
 
 
 def test_schema_only_api_model_is_repaired_before_rendering(monkeypatch):

@@ -431,9 +431,37 @@ class PrototypeOrchestrator:
                 )
             openapi = self.spec.inputs.get("openapi")
             if openapi and openapi.is_file():
-                operations = parse_openapi_operations(
-                    openapi.read_text(encoding="utf-8")
-                )
+                openapi_readable = True
+                try:
+                    operations = parse_openapi_operations(
+                        openapi.read_text(encoding="utf-8")
+                    )
+                except (
+                    OSError,
+                    UnicodeDecodeError,
+                    json.JSONDecodeError,
+                    AttributeError,
+                    TypeError,
+                ) as error:
+                    self.manifest.diagnostics.append(
+                        Diagnostic(
+                            "OPENAPI_INVALID_DOCUMENT",
+                            "ERROR",
+                            f"OpenAPI input could not be read as a document: {error}",
+                            str(openapi),
+                        )
+                    )
+                    openapi_readable = False
+                    operations = []
+                if openapi_readable and not operations:
+                    self.manifest.diagnostics.append(
+                        Diagnostic(
+                            "OPENAPI_NO_OPERATIONS",
+                            "ERROR",
+                            "OpenAPI paths must contain at least one HTTP operation before implementation can start.",
+                            str(openapi),
+                        )
+                    )
                 missing = [
                     f"{operation.method} {operation.path}"
                     for operation in operations

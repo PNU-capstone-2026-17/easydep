@@ -154,6 +154,32 @@ def test_input_validation_requires_executable_sequence_and_operation_ids(
     assert "OPENAPI_MISSING_OPERATION_ID" in codes
 
 
+def test_input_validation_returns_needs_input_for_openapi_without_operations(
+    tmp_path: Path,
+) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    sequence = tmp_path / "design/sequence.puml"
+    openapi = tmp_path / "design/openapi.json"
+    sequence.write_text("A -> B : createOrder()\n", encoding="utf-8")
+    openapi.write_text(
+        json.dumps(
+            {
+                "openapi": "3.1.0",
+                "info": {"title": "Orders", "version": "1.0.0"},
+                "paths": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    orchestrator.spec.inputs.update({"sequence": sequence, "openapi": openapi})
+    orchestrator.spec.required_inputs = ["bceClass", "sequence", "openapi"]
+
+    orchestrator._validate_inputs()
+
+    codes = {item.code for item in orchestrator.manifest.diagnostics}
+    assert "OPENAPI_NO_OPERATIONS" in codes
+
+
 def test_input_validation_rejects_bce_erd_entity_mismatch(tmp_path: Path) -> None:
     orchestrator = _orchestrator(tmp_path)
     bce = orchestrator.spec.inputs["bceClass"]

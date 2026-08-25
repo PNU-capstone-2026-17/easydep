@@ -792,6 +792,10 @@ def test_implementation_progress_snapshot_exposes_workflow_phase_and_verificatio
             {
                 "status": "RUNNING",
                 "currentPhase": "persistence",
+                "phases": [
+                    {"phaseId": "control", "status": "SUCCEEDED"},
+                    {"phaseId": "persistence", "status": "RUNNING"},
+                ],
                 "tasks": [
                     {"taskId": "implement-control", "phase": "control", "status": "SUCCEEDED"},
                     {"taskId": "create-entity", "phase": "persistence", "status": "RUNNING"},
@@ -818,6 +822,8 @@ def test_implementation_progress_snapshot_exposes_workflow_phase_and_verificatio
 
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["phase-control"]["status"] == "completed"
+    assert updates["activity-verify-control"]["status"] == "completed"
+    assert updates["activity-audit-control"]["status"] == "completed"
     assert updates["phase-persistence"]["status"] == "running"
     assert updates["activity-verify-persistence"]["status"] == "running"
 
