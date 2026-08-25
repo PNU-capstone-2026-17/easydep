@@ -580,12 +580,14 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     package_root = (
         run_root / "application" / "src" / "main" / "java" / package_path
     )
+    write_spring_boot_entrypoint(
+        run_root, spec.base_package, ir.application_class
+    )
     source_paths: list[Path] = []
     for relative in ("application/impl", "adapter", "bce", "persistence/repository"):
         source_paths.extend(sorted((package_root / relative).rglob("*.java")))
     contracts = render_source_contracts(run_root, source_paths)
     allowed = [
-        f"application/src/main/java/{package_path}/{ir.application_class}.java",
         f"application/src/main/java/{package_path}/config/ApplicationConfiguration.java",
         "application/src/main/resources/application.yml",
         f"application/src/test/java/{package_path}/config/ApplicationContextTest.java",
@@ -1176,11 +1178,12 @@ def render_wiring_prompt(
 ) -> str:
     return f"""# Implementation task: Spring application wiring
 
-Create the Spring Boot entry point, explicit production bean configuration, local runtime
-properties, and a context-load integration test for the generated application.
+The system has already created the complete `{application_class}` Spring Boot entry point.
+Create the explicit production bean configuration, local runtime properties, and a context-load
+integration test for that generated application.
 
 Rules:
-- `{application_class}` must use `@SpringBootApplication` and a standard `main` method.
+- Do not create or edit `{application_class}`; it is a deterministic framework bootstrap.
 - Put explicit `@Bean` factory methods in `{spec.base_package}.config.ApplicationConfiguration` for every BCE Control service, stateful BCE Entity required directly by a service, concrete Boundary adapter, and concrete outbound Gateway adapter needed by the application graph.
 - Use only the exact public constructors below. Do not add annotations to or edit generated/agent-produced classes.
 - Generated Spring Data repositories are discovered by Spring Boot; do not instantiate repository proxies manually.
@@ -1301,6 +1304,44 @@ def _llm_config(spec: JobSpec) -> dict[str, object]:
             "force_nonempty_content": True,
         },
     }
+
+
+def write_spring_boot_entrypoint(
+    run_root: Path, base_package: str, application_class: str
+) -> Path:
+    """Write the framework bootstrap that has no domain-level implementation choice.
+
+    The application name and Java package are fixed by the implementation job.
+    A plain ``@SpringBootApplication`` entry point is therefore a complete,
+    deterministic artifact; delegating it to the wiring conversation only adds
+    token use and lets an agent accidentally alter repository discovery.
+    """
+    target = (
+        run_root
+        / "application"
+        / "src"
+        / "main"
+        / "java"
+        / Path(*base_package.split("."))
+        / f"{application_class}.java"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        f"""package {base_package};
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class {application_class} {{
+    public static void main(String[] args) {{
+        SpringApplication.run({application_class}.class, args);
+    }}
+}}
+""",
+        encoding="utf-8",
+    )
+    return target
 
 
 def render_allowed_output_rules(allowed: list[str]) -> str:

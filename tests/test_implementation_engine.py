@@ -1061,7 +1061,13 @@ paths:
                 {task.task_id for task in gateway_tasks},
             )
             wiring = generate_wiring_tasks(spec, run)[0]
-            self.assertIn("OrderManagementApplication.java", wiring.allowed_write_paths[0])
+            self.assertNotIn(
+                "application/src/main/java/com/example/orders/OrderManagementApplication.java",
+                wiring.allowed_write_paths,
+            )
+            self.assertTrue(
+                (java / "OrderManagementApplication.java").is_file()
+            )
 
     def test_semantic_gate_requires_ir_status_assertions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2108,9 +2114,35 @@ PurchaseController -> ErrorScreen : showError(\"failed\")
 
             self.assertEqual(["implement-application-wiring"], [task.task_id for task in tasks])
             self.assertEqual("configuration", tasks[0].task_type)
-            self.assertEqual(4, len(tasks[0].allowed_write_paths))
+            self.assertEqual(3, len(tasks[0].allowed_write_paths))
+            context = json.loads(
+                (run / tasks[0].context_file).read_text(encoding="utf-8")
+            )
+            application_class = context["applicationClass"]
+            self.assertNotIn(
+                f"application/src/main/java/com/example/demo/{application_class}.java",
+                tasks[0].allowed_write_paths,
+            )
+            entrypoint = run / f"application/src/main/java/com/example/demo/{application_class}.java"
+            self.assertEqual(
+                f"""package com.example.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class {application_class} {{
+    public static void main(String[] args) {{
+        SpringApplication.run({application_class}.class, args);
+    }}
+}}
+""",
+                entrypoint.read_text(encoding="utf-8"),
+            )
             prompt = (run / tasks[0].prompt_file).read_text(encoding="utf-8")
-            self.assertIn("@SpringBootApplication", prompt)
+            self.assertIn(
+                f"Do not create or edit `{application_class}`", prompt
+            )
             self.assertIn("Spring `@Lazy`", prompt)
             self.assertIn("Do not add `@EnableJpaRepositories` exclusions", prompt)
             self.assertIn("every generated Spring Data repository bean", prompt)
@@ -2118,9 +2150,6 @@ PurchaseController -> ErrorScreen : showError(\"failed\")
             self.assertIn("PurchaseControllerService", prompt)
             self.assertNotIn("System sequence context", prompt)
             self.assertNotIn("BuyScreen -> PurchaseController", prompt)
-            context = json.loads(
-                (run / tasks[0].context_file).read_text(encoding="utf-8")
-            )
             self.assertNotIn("sequence", context)
 
     def test_gateway_planner_creates_persistence_and_trading_adapter_tasks(self) -> None:
