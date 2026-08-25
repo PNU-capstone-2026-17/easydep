@@ -104,6 +104,11 @@
   let backendSubtasks = $derived(
     progressSteps.filter((step) => step.id.startsWith('sub-backend-'))
   );
+  let preparationSubtasks = $derived(
+    progressSteps.filter((step) =>
+      ['validate-input', 'generate-sources', 'prepare-build', 'verify-generated', 'plan-workflow'].includes(step.id)
+    )
+  );
   let visibleEvents = $derived.by(() => {
     const lastProgressId = latestProgress?.event_id;
     return events.filter(
@@ -227,7 +232,7 @@
               <span>{event.text}</span>
             </div>
           {:else}
-            {#each progressSteps.filter((step) => !step.id.startsWith('sub-backend-')) as step (step.id)}
+            {#each progressSteps.filter((step) => !step.id.startsWith('sub-backend-') && !['validate-input', 'generate-sources', 'prepare-build', 'verify-generated', 'plan-workflow'].includes(step.id)) as step (step.id)}
               <div class="flex items-start gap-2">
                 {#if step.status === 'completed'}
                   <CheckCircle2 size={13} class="mt-0.5 shrink-0 text-[#5d806c]" />
@@ -254,6 +259,22 @@
                   {#if step.id === 'phase-backend' && backendSubtasks.length}
                     <ul class="mt-1.5 space-y-1 border-l-2 border-[#dce3dd] pl-3 text-[10px] leading-4 text-[#62675f]">
                       {#each backendSubtasks as task (task.id)}
+                        <li class="flex items-start gap-1.5">
+                          {#if task.status === 'completed'}
+                            <CheckCircle2 size={11} class="mt-0.5 shrink-0 text-[#5d806c]" />
+                          {:else if task.status === 'failed' || task.status === 'timeout' || task.status === 'needs_review'}
+                            <AlertTriangle size={11} class="mt-0.5 shrink-0 text-[#a8433a]" />
+                          {:else}
+                            <LoaderCircle size={11} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
+                          {/if}
+                          <span>{task.label}</span>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                  {#if step.id === 'prepare-job' && preparationSubtasks.length}
+                    <ul class="mt-1.5 space-y-1 border-l-2 border-[#dce3dd] pl-3 text-[10px] leading-4 text-[#62675f]">
+                      {#each preparationSubtasks as task (task.id)}
                         <li class="flex items-start gap-1.5">
                           {#if task.status === 'completed'}
                             <CheckCircle2 size={11} class="mt-0.5 shrink-0 text-[#5d806c]" />

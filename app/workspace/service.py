@@ -1249,8 +1249,15 @@ class WorkspaceService:
             else progress_status or job_status
         )
 
-        if generation_status == "QUEUED":
-            add_update("prepare-job", "구현 작업 준비", "running", "작업을 시작하고 있습니다.")
+        if generation_status in {
+            "QUEUED",
+            "VALIDATING_INPUT",
+            "GENERATING_SOURCES",
+            "PREPARING_BUILD",
+            "VERIFYING",
+            "PLANNING",
+        }:
+            add_update("prepare-job", "구현 작업 준비", "running", "구현 작업을 준비하고 있습니다.")
         else:
             # The job leaves the queue before its first generator checkpoint.
             # Explicitly close this UI-only milestone so it cannot look like a

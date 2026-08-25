@@ -823,7 +823,7 @@ def test_implementation_progress_snapshot_exposes_generation_milestones() -> Non
         service.shutdown()
 
     updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["prepare-job"]["status"] == "completed"
+    assert updates["prepare-job"]["status"] == "running"
     assert updates["validate-input"]["status"] == "completed"
     assert updates["generate-sources"]["status"] == "completed"
     assert updates["prepare-build"] == {
@@ -978,6 +978,29 @@ def test_implementation_progress_snapshot_hides_pending_backend_tasks(
 
     subtasks = [item for item in progress["updates"] if item["step"].startswith("sub-backend-")]
     assert [item["step"] for item in subtasks] == ["sub-backend-persistence"]
+
+
+def test_implementation_progress_snapshot_keeps_preparation_parent_active_during_generation(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {
+                "run_root": str(run),
+                "status": "GENERATING_SOURCES",
+                "progress": {"status": "GENERATING_SOURCES", "message": "Generating sources"},
+            }
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["prepare-job"]["status"] == "running"
+    assert updates["generate-sources"]["status"] == "running"
 
 
 def test_implementation_progress_snapshot_closes_release_verification_for_drained_ready_workflow(
