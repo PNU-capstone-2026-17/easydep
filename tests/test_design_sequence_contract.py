@@ -193,6 +193,30 @@ OrderBoundary ..> OrderControl
     }
 
 
+def test_normalizer_links_return_to_preceding_repeated_call() -> None:
+    class_diagram = """@startuml
+class CatalogBoundary <<Boundary>> { + search(filter:Filter): List<Course> }
+class CatalogControl <<Control>> { + search(filter:Filter): List<Course> }
+CatalogBoundary ..> CatalogControl
+@enduml"""
+    model = {
+        "Participants": [
+            _participant("CatalogBoundary", "boundary", "CatalogBoundary"),
+            _participant("CatalogControl", "control", "CatalogControl"),
+        ],
+        "Messages": [
+            _message("CatalogBoundary", "CatalogControl", "search(filter:Filter)", call_id="first", reply_to=""),
+            {**_message("CatalogControl", "CatalogBoundary", "List<Course>", type="return"), "call_id": "", "reply_to": "first", "arguments": []},
+            _message("CatalogBoundary", "CatalogControl", "search(filter:Filter)", call_id="later", reply_to=""),
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, class_diagram)
+
+    replies = [item for item in normalized["Messages"] if item["type"] == "return"]
+    assert replies[0]["reply_to"] == "call-1"
+
+
 def test_normalizer_restores_unambiguous_parameter_types_and_drops_placeholder_calls() -> None:
     class_diagram = """@startuml
 class DropBoundary <<Boundary>> {

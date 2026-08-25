@@ -149,6 +149,12 @@ the inputs do not support.
   status once in `outcomes` with a meaningful named result such as `found`,
   `not_found`, `created`, or `validation_error`. Do not use fabricated values,
   implicit defaults, or an untyped `Object` result.
+- When a Control parameter is an aggregate filter or request value object (for
+  example `filter : CourseFilter`), keep it as one explicit HTTP value named
+  `filter`: declare `query_params` entry `filter` with type `CourseFilter` and
+  bind it from `$query.filter`, or use one request body when the HTTP method
+  allows a body. Do not split that one Control parameter into unrelated query
+  arguments; the adapter needs one value whose type matches the BCE contract.
 - A path identifier may be mapped only when that exact parameter exists on the
   selected Control method. Never add a path argument to a generic
   `process(operation, data)` method just because the endpoint path contains an
@@ -259,6 +265,25 @@ def _api_field_type_for_control(type_name: str) -> str:
     return "string"
 
 
+def _api_query_type_for_control(type_name: str) -> str:
+    """Keep an explicitly bound query aggregate aligned with its BCE type.
+
+    Scalar Java types have a fixed HTTP representation.  A named filter/DTO is
+    different: collapsing it to ``string`` makes a syntactically valid OpenAPI
+    parameter that cannot satisfy the Control contract.  The OpenAPI renderer
+    safely projects an unknown named query type as an object while validation
+    can still prove the exact API-to-Control type match.
+    """
+    normalized = re.sub(r"\s+", "", type_name).lower()
+    scalar = _api_field_type_for_control(type_name)
+    if scalar != "string" or normalized in {
+        "", "string", "str", "char", "character", "uuid",
+        "localdate", "localdatetime", "instant",
+    } or normalized.startswith("java.time."):
+        return scalar
+    return str(type_name).strip() or scalar
+
+
 def normalize_api_spec_model(
     model: dict[str, Any], class_diagram_puml: str = ""
 ) -> dict[str, Any]:
@@ -279,9 +304,38 @@ def normalize_api_spec_model(
         binding = endpoint.get("control_binding")
         if isinstance(binding, dict):
             control = str(binding.get("control") or "").strip()
+            method = str(binding.get("method") or "").strip()
+            expected_parameters = control_parameters.get((control, method), {})
             source_classes = endpoint.setdefault("source_classes", [])
             if control and isinstance(source_classes, list) and control not in source_classes:
                 source_classes.append(control)
+            query_params = endpoint.get("query_params")
+            if not isinstance(query_params, list):
+                query_params = []
+                endpoint["query_params"] = query_params
+            known_query_params = {
+                str(item.get("name") or "").strip()
+                for item in query_params if isinstance(item, dict)
+            } if isinstance(query_params, list) else set()
+            for argument in binding.get("arguments", []) or []:
+                if not isinstance(argument, dict):
+                    continue
+                source = str(argument.get("source") or "").strip()
+                if not source.startswith("$query."):
+                    continue
+                query_name = source.removeprefix("$query.").strip()
+                if not query_name or query_name in known_query_params:
+                    continue
+                parameter_name = str(argument.get("name") or "").strip()
+                query_params.append({
+                    "name": query_name,
+                    "type": _api_query_type_for_control(
+                        expected_parameters.get(parameter_name, "String")
+                    ),
+                    "required": True,
+                    "description": "",
+                })
+                known_query_params.add(query_name)
             request_schema = str(endpoint.get("request_schema") or "").strip()
             if request_schema:
                 schema = next(
@@ -305,7 +359,7 @@ def normalize_api_spec_model(
                         if not name or name == source or name in known:
                             if name and name in known and source.startswith("$body."):
                                 expected = control_parameters.get(
-                                    (control, str(binding.get("method") or "")), {}
+                                    (control, method), {}
                                 ).get(str(argument.get("name") or "").strip())
                                 if expected:
                                     for field in fields:

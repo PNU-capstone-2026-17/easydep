@@ -604,6 +604,7 @@ def normalize_sequence_contracts(
 
         calls: dict[str, dict[str, Any]] = {}
         call_order: list[str] = []
+        call_positions: dict[str, int] = {}
         for index, message in enumerate(messages, 1):
             message_type = str(message.get("type") or "").lower()
             if message_type not in {"sync", "async", "self"}:
@@ -613,6 +614,7 @@ def normalize_sequence_contracts(
             message["reply_to"] = ""
             calls[call_id] = message
             call_order.append(call_id)
+            call_positions[call_id] = index - 1
 
             target = _alias(str(message.get("target") or ""))
             class_item = classes.get(participant_classes.get(target, ""))
@@ -653,15 +655,25 @@ def normalize_sequence_contracts(
             message["arguments"] = bindings
 
         used_replies: set[str] = set()
-        for message in messages:
+        for message_index, message in enumerate(messages):
             if str(message.get("type") or "").lower() != "return":
                 continue
-            candidates = [
+            compatible_calls = [
                 call_id for call_id in reversed(call_order)
                 if call_id not in used_replies
                 and str(calls[call_id].get("source") or "") == str(message.get("target") or "")
                 and str(calls[call_id].get("target") or "") == str(message.get("source") or "")
             ]
+            # A return normally answers the nearest compatible call that has
+            # already occurred.  Selecting from every call in reverse order
+            # could connect it to a later repeated operation, leaving a
+            # reply_to reference that appears before its call after ordering.
+            # Some providers still emit a reply before its call, so retain a
+            # later compatible call only as a fallback for that malformed order.
+            candidates = [
+                call_id for call_id in compatible_calls
+                if call_positions.get(call_id, -1) < message_index
+            ] or compatible_calls
             if candidates:
                 reply_to = candidates[0]
                 message["reply_to"] = reply_to

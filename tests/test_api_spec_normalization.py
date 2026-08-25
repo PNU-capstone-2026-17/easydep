@@ -47,6 +47,64 @@ def test_api_model_does_not_invent_body_fields_for_whole_body_binding() -> None:
     assert normalized["Schemas"][0]["fields"] == []
 
 
+def test_api_model_declares_query_value_explicitly_bound_to_control() -> None:
+    model = {
+        "Endpoints": [{
+            "path": "/courses/{courseId}/enrollment",
+            "method": "delete",
+            "path_params": [{"name": "courseId", "type": "string", "required": True}],
+            "query_params": [],
+            "control_binding": {
+                "control": "DropCourseController",
+                "method": "removeEnrollment",
+                "arguments": [
+                    {"name": "studentId", "source": "$query.studentId"},
+                    {"name": "courseId", "source": "$path.courseId"},
+                ],
+            },
+        }],
+        "Schemas": [],
+    }
+    class_diagram = """@startuml
+class DropCourseController <<Control>> {
+  + removeEnrollment(studentId : String, courseId : String): void
+}
+@enduml"""
+
+    normalized = normalize_api_spec_model(model, class_diagram)
+
+    assert normalized["Endpoints"][0]["query_params"] == [{
+        "name": "studentId", "type": "string", "required": True, "description": "",
+    }]
+
+
+def test_api_model_preserves_explicit_query_filter_contract_type() -> None:
+    model = {
+        "Endpoints": [{
+            "path": "/courses",
+            "method": "get",
+            "query_params": [],
+            "control_binding": {
+                "control": "CatalogController",
+                "method": "searchCatalog",
+                "arguments": [{"name": "filter", "source": "$query.filter"}],
+            },
+        }],
+        "Schemas": [],
+    }
+    class_diagram = """@startuml
+class CatalogController <<Control>> {
+  + searchCatalog(filter : CourseFilter): List<Course>
+}
+@enduml"""
+
+    normalized = normalize_api_spec_model(model, class_diagram)
+
+    assert normalized["Endpoints"][0]["query_params"] == [{
+        "name": "filter", "type": "CourseFilter", "required": True, "description": "",
+    }]
+
+
 def test_void_control_does_not_rewrite_documented_http_response() -> None:
     model = {
         "Endpoints": [{

@@ -34,6 +34,11 @@ same schema. Rules:
   Control method, map each Control argument from an explicit HTTP request source,
   and name one outcome for every documented response status. Preserve an existing
   binding unchanged unless the feedback or a reported contract issue requires it.
+- A Control parameter that is an aggregate filter or request value object must
+  remain one explicit HTTP value with the same type (for example,
+  `filter : CourseFilter` maps from `$query.filter`, with a `query_params`
+  entry named `filter` and typed `CourseFilter`). Do not replace it with several
+  scalar arguments unless the BCE Control method actually declares those scalars.
 - If the reported issue says that no API operation exists, add the missing
   requirement-grounded endpoints. Derive them from actor-to-system use-case
   behavior and the exact BCE Control calls in the sequence diagram; do not add
