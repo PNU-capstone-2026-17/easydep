@@ -79,6 +79,10 @@ from app.implementation.planning.design_context import (
     read_generated_java_contracts,
     referenced_openapi_model_names,
     render_api_adapter_prompt,
+    render_boundary_adapter_prompt,
+    render_persistence_repository_prompt,
+    render_persistence_schema_prompt,
+    render_prompt,
     slice_sequence,
 )
 from app.implementation.workflows.completion import audit_run_completion
@@ -2254,6 +2258,47 @@ PurchaseController -> ErrorScreen : showError(\"failed\")
             self.assertIn("Do not annotate the adapter as a Spring bean", prompt)
             self.assertIn("Do not leave TODO", prompt)
 
+    def test_boundary_prompt_for_missing_sequence_forbids_inferred_control_calls(self) -> None:
+        prompt = render_boundary_adapter_prompt(
+            SimpleNamespace(base_package="com.example"),
+            "CourseDropBoundary",
+            "// bce/CourseDropBoundary.java\npublic interface CourseDropBoundary {}",
+            "' No directly matched sequence messages",
+        )
+        self.assertIn("Do not import, inject, infer, or call any Control", prompt)
+        self.assertIn("Never derive a collaborator or method name", prompt)
+
+    def test_control_prompt_preserves_repository_identifier_types(self) -> None:
+        prompt = render_prompt(
+            SimpleNamespace(base_package="com.example"),
+            {
+                "control": "DropController",
+                "bce": "class DropController <<Control>> {}",
+                "sequence": "' No directly matched sequence messages",
+                "erd": "' No directly related ERD entity",
+                "openapi": "' No directly matched OpenAPI operation",
+                "generatedJavaContracts": "// bce/DropController.java",
+                "emptyGeneratedContracts": [],
+                "repositories": ["CourseRepository"],
+            },
+            ["application/src/main/java/com/example/DropControllerService.java"],
+        )
+        self.assertIn("never parse or coerce a String identifier to Long", prompt)
+
+    def test_persistence_prompts_preserve_natural_key_types(self) -> None:
+        repository_prompt = render_persistence_repository_prompt(
+            SimpleNamespace(base_package="com.example"),
+            ["Course"],
+            ["application/src/main/java/com/example/persistence/repository/CourseRepository.java"],
+        )
+        schema_prompt = render_persistence_schema_prompt(
+            SimpleNamespace(base_package="com.example"),
+            'entity "Course" as Course {\n  * courseId : VARCHAR(255)\n}',
+        )
+        self.assertIn("IdType", repository_prompt)
+        self.assertIn("natural or UUID identifiers", repository_prompt)
+        self.assertIn("preserve VARCHAR/UUID natural primary keys", schema_prompt)
+
     def test_wiring_planner_contracts_bootstrap_configuration_and_context_test(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -3731,14 +3776,22 @@ class ApplicationConfiguration {
                 "package com.example.api.model; public class OrderController {}",
                 encoding="utf-8",
             )
+            repository_package = run / "application/src/main/java/com/example/persistence/repository"
+            repository_package.mkdir(parents=True)
+            (repository_package / "OrderRepository.java").write_text(
+                "package com.example.persistence.repository; public interface OrderRepository {}",
+                encoding="utf-8",
+            )
             contracts = read_generated_java_contracts(
                 run,
                 "com.example",
                 {"OrderController", "Missing"},
                 {"OrderController"},
+                {"OrderRepository"},
             )
             self.assertIn("// bce/OrderController.java", contracts)
             self.assertIn("// api/model/OrderController.java", contracts)
+            self.assertIn("// persistence/repository/OrderRepository.java", contracts)
             self.assertNotIn("Missing.java", contracts)
 
     def test_classifies_erd_join_entities_without_relaxing_unknown_aliases(self) -> None:
