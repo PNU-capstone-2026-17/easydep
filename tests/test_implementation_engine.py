@@ -3921,7 +3921,56 @@ ScheduleController ..> Enrollment
                     encoding="utf-8"
                 )
             )
-            self.assertEqual("WARNING", report["status"])
+            self.assertEqual("NEEDS_INPUT", report["status"])
+
+    def test_control_persistence_gap_blocks_pending_implementation_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run_control_persistence_gap"
+            reports = run / "reports"
+            (reports / "design-gaps").mkdir(parents=True)
+            (reports / "run-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "implementation_tasks": [
+                            {
+                                "task_id": "implement-catalog",
+                                "task_type": "control",
+                                "allowed_write_paths": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (reports / "design-gaps/control-persistence-contracts.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEEDS_INPUT",
+                        "gaps": [{"control": "CatalogController"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = reconcile_workflow_state(run)
+
+            self.assertEqual("NEEDS_INPUT", state["status"])
+            self.assertEqual([], state["nextRunnableTasks"])
+            self.assertIn("Control persistence contracts", state["blockingReason"])
+
+    def test_control_persistence_report_clears_after_design_is_corrected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            _record_control_persistence_contract_gaps(root, [])
+
+            report = json.loads(
+                (root / "reports/design-gaps/control-persistence-contracts.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("READY", report["status"])
+            self.assertEqual([], report["gaps"])
 
     def test_accepts_control_with_an_explicit_persistence_gateway(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
