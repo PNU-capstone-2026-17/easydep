@@ -512,6 +512,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     ensure_mapper_accessible_persistence_constructor(
                         sandbox, list(task["allowed_write_paths"])
                     )
+                if task_type == "control":
+                    ensure_control_service_component(
+                        sandbox, list(task["allowed_write_paths"])
+                    )
                 _repair_missing_generated_model_imports(
                     sandbox, list(task["allowed_write_paths"])
                 )
@@ -1074,6 +1078,47 @@ def create_openhands_conversation(
         visualizer=None,
     )
     return conversation, agent
+
+
+def ensure_control_service_component(
+    sandbox: Path, allowed_write_paths: list[str]
+) -> list[str]:
+    """Register generated BCE Control implementations as Spring services."""
+    changed: list[str] = []
+    for relative in allowed_write_paths:
+        normalized = str(relative).replace("\\", "/")
+        if "/src/main/java/" not in f"/{normalized}" or "/application/impl/" not in normalized:
+            continue
+        path = sandbox / relative
+        if not path.is_file() or not path.name.endswith("Service.java"):
+            continue
+        source = path.read_text(encoding="utf-8")
+        if "@Service" in source or not re.search(
+            r"\bclass\s+[A-Za-z_]\w*\s+implements\s+[A-Za-z_]\w*Controller\b", source
+        ):
+            continue
+        if not re.search(r"(?m)^\s*import\s+org\.springframework\.stereotype\.Service;", source):
+            imports = list(re.finditer(r"(?m)^import\s+[^;]+;\s*$", source))
+            import_line = "import org.springframework.stereotype.Service;\n"
+            if imports:
+                end = imports[-1].end()
+                source = source[:end] + "\n" + import_line.rstrip("\n") + source[end:]
+            else:
+                package = re.search(r"(?m)^package\s+[^;]+;\s*$", source)
+                if package:
+                    source = source[: package.end()] + "\n\n" + import_line + source[package.end() :]
+                else:
+                    source = import_line + source
+        source, count = re.subn(
+            r"(?m)^(\s*)(public\s+class\s+[A-Za-z_]\w*\s+implements\s+[A-Za-z_]\w*Controller\b)",
+            r"\1@Service\n\1\2",
+            source,
+            count=1,
+        )
+        if count:
+            path.write_text(source, encoding="utf-8")
+            changed.append(normalized)
+    return changed
 
 
 def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, object]) -> None:

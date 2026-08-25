@@ -28,6 +28,7 @@ from app.implementation.agents.runtime import (
     execution_attempt,
     normalize_spring_boot_repository_discovery,
     remove_placeholder_comments,
+    ensure_control_service_component,
     select_repair_paths,
     write_execution_result,
 )
@@ -195,6 +196,26 @@ class ImplementationParallelismTest(unittest.TestCase):
                 root, ["application/src/main/java/example/Adapter.java"]
             )
             self.assertEqual(len(markers), 1)
+
+    def test_control_service_component_repair_adds_spring_service_annotation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = "application/src/main/java/example/application/impl/CourseCatalogControllerService.java"
+            path = root / relative
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                "package example.application.impl;\n\n"
+                "import example.bce.CourseCatalogController;\n\n"
+                "public class CourseCatalogControllerService implements CourseCatalogController {}\n",
+                encoding="utf-8",
+            )
+
+            changed = ensure_control_service_component(root, [relative])
+
+            assert changed == [relative]
+            source = path.read_text(encoding="utf-8")
+            assert "import org.springframework.stereotype.Service;" in source
+            assert "@Service\npublic class CourseCatalogControllerService" in source
 
     def test_e2e_planning_is_deferred_until_non_e2e_outputs_exist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
