@@ -321,11 +321,13 @@ that the inputs do not support.
   output-oriented Boundary methods such as display*, show*, render*, prompt*, or
   notify*; those are called by a Control or another permitted system component.
 - When a ``[Candidate interaction routes]`` section is supplied with the input,
-  choose exactly one listed Boundary/Control pair for this use case before
-  writing messages. The actor entry must target that pair's Boundary and
-  application work must use that pair's Control (and its declared data
-  collaborators). Do not combine routes or substitute a similarly named
-  Boundary/Control from another use case.
+  use its first Boundary/Control pair as the primary route for this use case.
+  The actor entry and application work normally use that pair and its declared
+  collaborators. A later pair marked ``supplementary_actor_selection`` may be
+  used only for an explicit actor selection/choice/pick step when its existing
+  Boundary method represents that exact step; return to the primary route for
+  all other work. Do not combine routes otherwise or substitute a similarly
+  named Boundary/Control from another use case.
 - `type`: "sync" for a call, "return" for a reply carrying a result, "async" for
   fire-and-forget, and "self" for a call whose source and target are the same.
 - Give every sync, async, and self call a unique non-empty `call_id`. Set its
@@ -761,7 +763,12 @@ def normalize_sequence_message_order(messages: list[dict[str, Any]]) -> list[dic
     # before its call in the source array, so resolving it during the first
     # pass would miss the group's only reliable ordering evidence.
     for index, message in enumerate(messages):
-        if groups[index] is None and str(message.get("type") or "").lower() == "return":
+        if str(message.get("type") or "").lower() == "return":
+            # A reply has no independent flow step.  Providers and older
+            # persisted models can attach an earlier step ID to it, but that
+            # evidence describes the call it answers, not a separate action.
+            # Always use the linked call's group so the reply cannot be sorted
+            # ahead of that call merely because its stale step ID is earlier.
             groups[index] = call_groups.get(str(message.get("reply_to") or "").strip())
 
     # Untraced messages have no safe placement evidence. Preserve their local
@@ -1675,6 +1682,62 @@ def _build_sequence_plans(
     return plans
 
 
+_ACTOR_SELECTION_PATTERN = re.compile(
+    r"\b(?:select|selects|selected|selecting|choose|chooses|chosen|choosing|pick|picks|picked|picking)\b",
+    re.IGNORECASE,
+)
+_SELECTION_METHOD_PATTERN = re.compile(r"^(?:select|choose|pick)", re.IGNORECASE)
+
+
+def _supplementary_actor_selection_routes(
+    specification: dict[str, Any],
+    actor: str,
+    boundary: dict[str, Any],
+    control: dict[str, Any] | None,
+    route_candidates: list[tuple[dict[str, Any], dict[str, Any] | None]],
+) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """Expose an existing selection Boundary when the primary route lacks one.
+
+    A use case can legitimately begin by selecting an already displayed item
+    and then continue through a different Boundary's transaction route.  The
+    route selector still owns the primary flow; this helper merely makes an
+    explicitly declared, selection-oriented Boundary available to the semantic
+    extractor.  It never picks the method or invents an operation.
+    """
+    has_actor_selection = any(
+        _actor_led(str(record.get("sentence") or ""), actor)
+        and _ACTOR_SELECTION_PATTERN.search(str(record.get("sentence") or ""))
+        for record in _flow_records(specification)
+    )
+    primary_has_selection = any(
+        _SELECTION_METHOD_PATTERN.search(method_name(method))
+        for method in boundary.get("methods") or []
+    )
+    selected = [(boundary, control)]
+    if not has_actor_selection or primary_has_selection:
+        return selected
+
+    seen = {
+        (
+            str(boundary.get("name") or ""),
+            str(control.get("name") or "") if control is not None else "",
+        )
+    }
+    for candidate_boundary, candidate_control in route_candidates:
+        key = (
+            str(candidate_boundary.get("name") or ""),
+            str(candidate_control.get("name") or "") if candidate_control is not None else "",
+        )
+        if key in seen or not any(
+            _SELECTION_METHOD_PATTERN.search(method_name(method))
+            for method in candidate_boundary.get("methods") or []
+        ):
+            continue
+        selected.append((candidate_boundary, candidate_control))
+        seen.add(key)
+    return selected
+
+
 def _assemble_deterministic_diagrams(
     plans: list[dict[str, Any]],
     selections: dict[str, tuple[str, str]],
@@ -1982,12 +2045,19 @@ def _generate_use_case_diagram(
         boundary, control = _select_use_case_route(
             specification, summary, classes, dependencies
         )
+        extraction_routes = _supplementary_actor_selection_routes(
+            specification,
+            str(specification.get("primary_actor") or summary.get("primary_actor") or "User"),
+            boundary,
+            control,
+            route_candidates,
+        )
         return _generate_llm_use_case_diagram(
             specification,
             summary,
             class_diagram_puml,
             classes,
-            [(boundary, control)],
+            extraction_routes,
         )
 
     boundary, control = _select_use_case_route(
@@ -2016,12 +2086,19 @@ def _generate_use_case_diagram(
         or len(selected_receivers) != len(set(selected_receivers))
     )
     if requires_semantic_assembly:
+        extraction_routes = _supplementary_actor_selection_routes(
+            specification,
+            str(specification.get("primary_actor") or summary.get("primary_actor") or "User"),
+            boundary,
+            control,
+            route_candidates,
+        )
         return _generate_llm_use_case_diagram(
             specification,
             summary,
             class_diagram_puml,
             classes,
-            [(boundary, control)],
+            extraction_routes,
         )
     selections = _select_uncertain_elements(plans)
     diagrams = _assemble_deterministic_diagrams(plans, selections, classes)
@@ -2146,8 +2223,9 @@ def _generate_llm_use_case_diagram(
                 {
                     "boundary_class": boundary["name"],
                     "control_class": control["name"] if control is not None else "",
+                    "supplementary_actor_selection": index > 0,
                 }
-                for boundary, control in route_candidates or []
+                for index, (boundary, control) in enumerate(route_candidates or [])
             ] or None,
         )
     except StructuredLlmError:
@@ -2223,7 +2301,8 @@ def _generate_llm_use_case_diagram(
 
 _ACTOR_RETRY_PATTERN = re.compile(
     r"\b(?:re[- ]?enter(?:s|ed|ing)?|re[- ]?submit(?:s|ted|ting)?|retry(?:ing|ies)?|"
-    r"try\s+again|enter\s+again|submit\s+again)\b",
+    r"try\s+again|enter\s+again|submit\s+again|revise(?:s|d|ing)?|"
+    r"modify(?:s|ied|ing)?)\b",
     re.IGNORECASE,
 )
 

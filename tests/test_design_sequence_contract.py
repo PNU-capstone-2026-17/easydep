@@ -30,6 +30,7 @@ from app.design.services.sequence_diagram.extractor import (
     normalize_sequence_message_order,
     _only_callable_class,
     _recover_explicit_actor_retries,
+    _supplementary_actor_selection_routes,
 )
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import (
@@ -104,6 +105,23 @@ def test_normalize_sequence_message_order_never_places_reply_before_its_call():
     assert [message["label"] for message in ordered] == ["submit()", "Receipt"]
 
 
+def test_normalize_sequence_message_order_ignores_stale_reply_step_id():
+    messages = [
+        _message(
+            "control", "boundary", "List<Course>", type="return",
+            step_ids=["UC1:main:1"], reply_to="call-2",
+        ),
+        _message(
+            "boundary", "control", "getCatalog()", call_id="call-2",
+            step_ids=["UC1:main:2"],
+        ),
+    ]
+
+    ordered = normalize_sequence_message_order(messages)
+
+    assert [message["label"] for message in ordered] == ["getCatalog()", "List<Course>"]
+
+
 def test_explicit_actor_retry_reuses_prior_boundary_input_in_loop():
     specification = {
         "use_case_id": "UC1",
@@ -119,7 +137,7 @@ def test_explicit_actor_retry_reuses_prior_boundary_input_in_loop():
             "condition": "credentials are invalid",
             "handling_steps": [{
                 "sub_step": "2a2",
-                "sentence": "Student re-enters credentials.",
+                "sentence": "Student revises credentials.",
             }],
         }],
     }
@@ -154,6 +172,42 @@ def test_explicit_actor_retry_reuses_prior_boundary_input_in_loop():
         "condition": "credentials are invalid",
     }]
     assert {argument["source_ref"] for argument in retry["arguments"]} == {"UC1:extension:2a:2a2"}
+
+
+def test_selection_step_exposes_existing_selection_boundary_to_llm():
+    registration_boundary = {
+        "name": "RegistrationBoundary",
+        "kind": "boundary",
+        "methods": ["requestRegistration(courseId:String)", "confirmRegistration()"],
+    }
+    registration_control = {"name": "RegistrationControl", "kind": "control", "methods": []}
+    catalog_boundary = {
+        "name": "CourseCatalogBoundary",
+        "kind": "boundary",
+        "methods": ["selectCourse(courseId:String)"],
+    }
+    catalog_control = {"name": "CourseCatalogControl", "kind": "control", "methods": []}
+    specification = {
+        "use_case_id": "UC5",
+        "primary_actor": "Student",
+        "main_scenario": [
+            {"step_number": 1, "sentence": "Student selects a desired course from the catalog."},
+        ],
+        "extensions": [],
+    }
+
+    routes = _supplementary_actor_selection_routes(
+        specification,
+        "Student",
+        registration_boundary,
+        registration_control,
+        [(registration_boundary, registration_control), (catalog_boundary, catalog_control)],
+    )
+
+    assert [(boundary["name"], control["name"]) for boundary, control in routes] == [
+        ("RegistrationBoundary", "RegistrationControl"),
+        ("CourseCatalogBoundary", "CourseCatalogControl"),
+    ]
 
 
 def test_normalize_sequence_entry_order_restores_actor_before_front_loaded_control_call():
