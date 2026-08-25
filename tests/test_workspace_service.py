@@ -754,6 +754,74 @@ def test_implementation_progress_snapshot_extracts_active_file_and_class(tmp_pat
     assert progress["progress_detail"] == "Editing OrderController.java"
 
 
+def test_implementation_progress_snapshot_exposes_generation_milestones() -> None:
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {
+                "status": "GENERATING",
+                "progress": {
+                    "status": "PREPARING_BUILD",
+                    "message": "생성된 프로젝트를 준비하고 있습니다.",
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["prepare-job"]["status"] == "completed"
+    assert updates["validate-input"]["status"] == "completed"
+    assert updates["generate-sources"]["status"] == "completed"
+    assert updates["prepare-build"] == {
+        "step": "prepare-build",
+        "label": "빌드 환경 구성",
+        "status": "running",
+        "detail": "생성된 프로젝트를 준비하고 있습니다.",
+    }
+
+
+def test_implementation_progress_snapshot_exposes_workflow_phase_and_verification(
+    tmp_path,
+) -> None:
+    run_root = tmp_path / "run-001"
+    reports = run_root / "reports"
+    reports.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "currentPhase": "persistence",
+                "tasks": [
+                    {"taskId": "implement-control", "phase": "control", "status": "SUCCEEDED"},
+                    {"taskId": "create-entity", "phase": "persistence", "status": "RUNNING"},
+                ],
+                "currentActivity": {
+                    "id": "verify-persistence",
+                    "label": "데이터 영속성 단계 검증",
+                    "status": "RUNNING",
+                    "detail": "변경된 작업 공간을 검증하고 있습니다.",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {"status": "RUNNING", "run_root": str(run_root)}
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["phase-control"]["status"] == "completed"
+    assert updates["phase-persistence"]["status"] == "running"
+    assert updates["activity-verify-persistence"]["status"] == "running"
+
+
 def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     calls: list[dict] = []
 
