@@ -875,7 +875,7 @@ def test_implementation_progress_snapshot_exposes_workflow_phase_and_verificatio
 
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["phase-backend"]["status"] == "running"
-    assert updates["sub-backend-create-entity"]["status"] == "running"
+    assert updates["sub-backend-persistence"]["status"] == "running"
     assert "activity-backend" not in updates
 
 
@@ -911,8 +911,41 @@ def test_implementation_progress_snapshot_nests_backend_tasks_and_hides_duplicat
 
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["phase-backend"]["status"] == "running"
-    assert updates["sub-backend-persistence-1"]["status"] == "running"
+    assert updates["sub-backend-persistence"]["status"] == "running"
     assert "activity-backend" not in updates
+
+
+def test_implementation_progress_snapshot_collapses_backend_tasks_by_phase(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "currentPhase": "persistence",
+                "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
+                "tasks": [
+                    {"taskId": "entity-1", "phase": "persistence", "status": "SUCCEEDED"},
+                    {"taskId": "repository-1", "phase": "persistence", "status": "RUNNING"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {"run_root": str(run), "status": "RUNNING"}
+        )
+    finally:
+        service.shutdown()
+
+    subtasks = [item for item in progress["updates"] if item["step"].startswith("sub-backend-")]
+    assert [item["step"] for item in subtasks] == ["sub-backend-persistence"]
+    assert subtasks[0]["status"] == "running"
 
 
 def test_implementation_progress_snapshot_closes_release_verification_for_drained_ready_workflow(

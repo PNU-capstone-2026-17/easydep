@@ -1352,26 +1352,36 @@ class WorkspaceService:
                     # phase is active.  They are rendered as indented children
                     # of the single Backend implementation row and disappear
                     # once the phase itself is complete.
+                    tasks_by_phase: dict[str, list[dict[str, Any]]] = {}
                     for task in display_tasks:
-                        task_phase = str(task.get("phase") or "")
-                        task_status = str(task.get("status") or "PENDING").lower()
+                        tasks_by_phase.setdefault(str(task.get("phase") or ""), []).append(task)
+                    for task_phase, phase_tasks in tasks_by_phase.items():
+                        statuses = {str(task.get("status") or "PENDING").lower() for task in phase_tasks}
+                        if "failed" in statuses or "timeout" in statuses or "needs_review" in statuses:
+                            task_status = next(
+                                status for status in ("failed", "timeout", "needs_review") if status in statuses
+                            )
+                        elif statuses and statuses <= {"succeeded", "completed"}:
+                            task_status = "completed"
+                        elif "running" in statuses:
+                            task_status = "running"
+                        else:
+                            task_status = "pending"
                         task_label = next(
                             (
                                 phase_label
                                 for phase_id, phase_label in _IMPLEMENTATION_WORKFLOW_PHASES
                                 if phase_id == task_phase
                             ),
-                            str(task.get("taskId") or task.get("task_id") or task_phase),
+                            task_phase,
                         )
-                        if task_status == "succeeded":
-                            task_status = "completed"
-                        elif task_status not in {"running", "failed", "timeout", "needs_review"}:
-                            task_status = "pending"
+                        details = [str(task.get("detail") or "") for task in phase_tasks]
+                        detail = next((item for item in details if item), "")
                         add_update(
-                            f"sub-backend-{task.get('taskId') or task.get('task_id') or task_phase}",
+                            f"sub-backend-{task_phase}",
                             task_label,
                             task_status,
-                            str(task.get("detail") or ""),
+                            detail,
                         )
 
             workflow_complete = workflow_status == "COMPLETE" or (

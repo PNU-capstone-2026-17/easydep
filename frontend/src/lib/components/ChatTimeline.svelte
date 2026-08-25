@@ -216,7 +216,7 @@
             </div>
           {:else}
             {#each progressSteps as step (step.id)}
-              <div class="flex items-start gap-2">
+              <div class="flex items-start gap-2 {step.id.startsWith('sub-backend-') ? 'ml-6 border-l-2 border-[#dce3dd] pl-3' : ''}">
                 {#if step.status === 'completed'}
                   <CheckCircle2 size={13} class="mt-0.5 shrink-0 text-[#5d806c]" />
                 {:else if step.status === 'failed' || step.status === 'timeout' || step.status === 'needs_review'}
@@ -224,7 +224,7 @@
                 {:else}
                   <LoaderCircle size={13} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
                 {/if}
-                <div class="min-w-0 {step.id.startsWith('sub-backend-') ? 'ml-5 border-l border-[#dce3dd] pl-3' : ''}">
+                <div class="min-w-0">
                   <div class="leading-4">{step.label}</div>
                   {#if step.detail && step.detail !== 'Started'}
                     <div class="mt-0.5 text-[10px] leading-4 text-[#85887f]">{step.detail}</div>
