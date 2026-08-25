@@ -157,6 +157,62 @@ def test_actor_cannot_invoke_boundary_display_operation():
     assert "출력 오퍼레이션" in findings[0].message
 
 
+def test_control_can_call_declared_external_boundary_gateway():
+    state = {
+        "extracted_bce_classes": {
+            "Relationships": [
+                {
+                    "source": "RegistrationControl",
+                    "target": "ExternalEnrollmentGatewayBoundary",
+                    "type": "Dependency",
+                }
+            ]
+        }
+    }
+    model = {
+        "Participants": [
+            {
+                "name": "RegistrationControl",
+                "alias": "registration",
+                "kind": "control",
+                "source_class": "RegistrationControl",
+            },
+            {
+                "name": "ExternalEnrollmentGatewayBoundary",
+                "alias": "gateway",
+                "kind": "boundary",
+                "source_class": "ExternalEnrollmentGatewayBoundary",
+            },
+        ],
+        "Messages": [{
+            "source": "registration",
+            "target": "gateway",
+            "type": "sync",
+            "label": "registerStudent(studentId:String,courseId:String)",
+        }],
+    }
+
+    assert detectors.sequence_boundary_operation_direction(model, state) == []
+
+
+def test_control_cannot_call_undeclared_boundary_input_operation():
+    model = {
+        "Participants": [
+            {"name": "OrderControl", "alias": "control", "kind": "control"},
+            {"name": "OrderScreen", "alias": "screen", "kind": "boundary"},
+        ],
+        "Messages": [{
+            "source": "control", "target": "screen", "type": "sync",
+            "label": "submitOrder(orderId:String)",
+        }],
+    }
+
+    findings = detectors.sequence_boundary_operation_direction(model, STATE)
+
+    assert len(findings) == 1
+    assert "입력 오퍼레이션" in findings[0].message
+
+
 def test_api_detector_rejects_invalid_references_and_path_parameters():
     model = {
         "Endpoints": [

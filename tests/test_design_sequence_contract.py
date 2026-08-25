@@ -31,7 +31,10 @@ from app.design.services.sequence_diagram.extractor import (
     _only_callable_class,
 )
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
-from app.design.services.sequence_diagram.reconcile import reconcile_class_methods
+from app.design.services.sequence_diagram.reconcile import (
+    _scope_proposal_evidence,
+    reconcile_class_methods,
+)
 from app.design.services.sequence_diagram import reviser as sequence_reviser
 from app.design.nodes.artifact import (
     CLEAN,
@@ -1377,6 +1380,45 @@ def test_sequence_stage_asks_user_before_adding_receiver_method():
     save_stage.assert_not_called()
     assert result["sequence_diagram_model"]["MethodProposals"][0]["method"] == "reserveOrder()"
     assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["createOrder()"]
+
+
+def test_method_proposal_outside_affected_sequence_route_is_discarded():
+    bce = {
+        "Classes": [
+            {"className": "CatalogBoundary", "stereotype": "Boundary"},
+            {"className": "CatalogControl", "stereotype": "Control"},
+            {"className": "SearchBoundary", "stereotype": "Boundary"},
+            {"className": "SearchControl", "stereotype": "Control"},
+        ],
+        "Relationships": [
+            {"source": "CatalogBoundary", "target": "CatalogControl"},
+            {"source": "SearchBoundary", "target": "SearchControl"},
+        ],
+    }
+    diagram = {
+        "use_case_id": "UC1",
+        "Participants": [
+            _participant("CatalogBoundary", "boundary", "CatalogBoundary"),
+            _participant("CatalogControl", "control", "CatalogControl"),
+        ],
+        "Messages": [],
+    }
+    proposals = [
+        {
+            "id": "method:CatalogBoundary:submitSearch()",
+            "class_name": "CatalogBoundary",
+            "method": "submitSearch(): void",
+        },
+        {
+            "id": "method:SearchBoundary:submitSearch()",
+            "class_name": "SearchBoundary",
+            "method": "submitSearch(): void",
+        },
+    ]
+
+    scoped = _scope_proposal_evidence(proposals, [diagram], {}, bce)
+
+    assert [item["class_name"] for item in scoped] == ["CatalogBoundary"]
 
 
 def test_sequence_stage_does_not_add_method_when_llm_declines():

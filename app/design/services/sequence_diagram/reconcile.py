@@ -459,7 +459,11 @@ def _scope_proposal_evidence(
             if findings:
                 related.append((use_case_id, findings))
         if not related:
-            scoped.append(proposal)
+            # The class reviser may suggest a plausible method on an unrelated
+            # route.  It has no evidence on the affected card, so retaining it
+            # would present a misleading approval choice (for example, a search
+            # method offered to repair a catalog-browse step).  Do not turn a
+            # broad LLM guess into a cross-use-case class contract change.
             continue
         use_case_ids = {use_case_id for use_case_id, _ in related}
         findings = [finding for _, items in related for finding in items]

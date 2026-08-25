@@ -1821,6 +1821,34 @@ def sequence_call_return_links(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def _declared_control_boundary_gateways(state: dict) -> set[tuple[str, str]]:
+    """Return Control -> external-Boundary dependencies from the BCE contract.
+
+    A Boundary is not always a presentation endpoint.  An external API, identity
+    provider, or device adapter is also a Boundary, and its operation is
+    correctly invoked by a Control when the class diagram declares that
+    dependency.  Treating all Boundary methods as actor input made those valid
+    integration calls indistinguishable from a Control trying to invoke a UI.
+    """
+    pairs = {
+        (str(item.get("source") or "").strip(), str(item.get("target") or "").strip())
+        for item in (state.get("extracted_bce_classes") or {}).get("Relationships", []) or []
+        if isinstance(item, dict)
+        and str(item.get("source") or "").strip()
+        and str(item.get("target") or "").strip()
+    }
+    if pairs:
+        return pairs
+    # Older persisted designs may only retain the rendered class diagram.
+    return {
+        (match.group(1), match.group(2))
+        for match in re.finditer(
+            r"(?m)^\s*([A-Za-z_]\w*)\s+\.\.>\s+([A-Za-z_]\w*)\s*$",
+            str(state.get("class_diagram_puml") or ""),
+        )
+    }
+
+
 def sequence_boundary_operation_direction(model: dict, state: dict) -> list[Finding]:
     """Boundary 호출이 입력/출력 방향의 소유권을 지키는지 검사한다."""
     rule_id = "sequence.boundary-operation-direction"
@@ -1828,6 +1856,14 @@ def sequence_boundary_operation_direction(model: dict, state: dict) -> list[Find
         _participant_id(item): str(item.get("kind", "")).strip().lower()
         for item in model.get("Participants", [])
     }
+    classes = {
+        _participant_id(item): str(
+            item.get("source_class") or item.get("name") or ""
+        ).strip()
+        for item in model.get("Participants", [])
+        if isinstance(item, dict)
+    }
+    gateway_pairs = _declared_control_boundary_gateways(state)
     output_prefixes = (
         "display", "show", "render", "prompt", "notify", "send", "return", "respond",
     )
@@ -1842,7 +1878,10 @@ def sequence_boundary_operation_direction(model: dict, state: dict) -> list[Find
                 continue
             signature = method_call_signature(str(message.get("label") or ""))
             method_name = signature.partition("(")[0].lower()
-            if method_name.startswith(output_prefixes):
+            if (
+                (classes.get(source, ""), classes.get(target, "")) in gateway_pairs
+                or method_name.startswith(output_prefixes)
+            ):
                 continue
             found.append(
                 Finding(

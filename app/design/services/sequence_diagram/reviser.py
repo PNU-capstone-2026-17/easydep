@@ -105,6 +105,12 @@ same schema. Rules:
   Control->Entity/Database). Never call directly between distinct Boundaries,
   never call Actor->Control/Entity/Database or Boundary->Entity/Database, and do
   not let Entity or Database participants initiate application-layer calls.
+- A Boundary that is the exact target of a declared Control -> Boundary class
+  dependency is an external integration gateway. A Control may call that
+  gateway's declared operation even when its name is not a display/output verb.
+  Conversely, repair a Boundary -> external-Boundary call by routing the same
+  grounded operation through the already selected Control, and move that
+  Control's return to its actor-facing Boundary after the gateway result.
 - Actor->Boundary calls are input/events. Never repair actor coverage with an
   output method whose name begins display, show, render, prompt, or notify.
   For a `sequence.boundary-operation-direction` finding, inspect the current

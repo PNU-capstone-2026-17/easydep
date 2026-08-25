@@ -311,6 +311,12 @@ that the inputs do not support.
   Control->Entity/Database. Never call directly between distinct Boundary objects,
   never call Actor->Control/Entity/Database or Boundary->Entity/Database, and do
   not let Entity or Database participants initiate application-layer calls.
+- An external API, identity provider, or device adapter may also be modelled as
+  a Boundary. A Control may call such a Boundary only when the class diagram
+  declares that exact Control -> Boundary dependency; this is an outbound
+  gateway call, not a UI output call. Never let an actor-facing Boundary call
+  that external Boundary directly: route the call through the selected Control
+  and keep the Control's return to its Boundary after the outbound call returns.
 - Actor->Boundary calls represent actor input/events. An actor MUST NOT invoke
   output-oriented Boundary methods such as display*, show*, render*, prompt*, or
   notify*; those are called by a Control or another permitted system component.
