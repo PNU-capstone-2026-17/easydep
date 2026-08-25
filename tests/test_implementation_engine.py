@@ -22,6 +22,7 @@ from app.implementation.agents.runtime import (
     _requires_cross_phase_repair,
     _repair_missing_generated_model_imports,
     _render_missing_output_repair_prompt,
+    _promote_changed_files,
     break_configuration_cycles,
     execution_attempt,
     normalize_spring_boot_repository_discovery,
@@ -138,6 +139,20 @@ class ImplementationParallelismTest(unittest.TestCase):
                 {"status": "RUNNING"},
             )
             self.assertEqual(list(target.parent.glob("*.tmp")), [])
+
+    def test_missing_changed_file_does_not_abort_result_promotion(self) -> None:
+        """A deleted changed path is handled by the later output gate."""
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory) / "sandbox"
+            run_root = Path(directory) / "run"
+            sandbox.mkdir()
+            run_root.mkdir()
+            missing = sandbox / "application/src/main/Missing.java"
+            target = run_root / "application/src/main/Missing.java"
+            target.parent.mkdir(parents=True)
+            target.write_text("old", encoding="utf-8")
+            _promote_changed_files(sandbox, run_root, {"application/src/main/Missing.java"})
+            self.assertEqual(target.read_text(encoding="utf-8"), "old")
 
     def test_e2e_planning_is_deferred_until_non_e2e_outputs_exist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

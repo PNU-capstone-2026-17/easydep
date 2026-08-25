@@ -235,6 +235,22 @@ def _render_missing_output_repair_prompt(
     )
 
 
+def _promote_changed_files(
+    sandbox: Path, run_root: Path, changed: set[str]
+) -> None:
+    for relative in sorted(changed):
+        source = sandbox / relative
+        if not source.is_file():
+            # An agent may delete a file after the snapshot used to calculate
+            # ``changed``.  Do not turn that race into an unrelated WinError 2;
+            # the required-output/reconciliation gates will report the missing
+            # artifact with its owning task.
+            continue
+        target = run_root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
@@ -651,11 +667,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         write_execution_result(execution_dir, task_id, attempt, failure)
         shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
         raise
-    for relative in sorted(changed):
-        source = sandbox / relative
-        target = run_root / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+    _promote_changed_files(sandbox, run_root, changed)
     result = {
         "taskId": task_id,
         "taskType": task.get("task_type", "control"),
