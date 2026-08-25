@@ -1109,6 +1109,13 @@ Rules:
 def render_boundary_adapter_prompt(
     spec: JobSpec, boundary: str, contracts: str, sequence: str
 ) -> str:
+    no_sequence_delegation = sequence.strip().startswith("' No directly matched")
+    delegation_rule = (
+        "- No sequence message matches this Boundary. Do not import, inject, infer, "
+        "or call any Control; implement only the Boundary's own state behavior.\n"
+        if no_sequence_delegation
+        else ""
+    )
     return f"""# Implementation task: {boundary} BCE Boundary adapter
 
 Implement a headless, state-backed prototype adapter for the exact `{boundary}` BCE Boundary
@@ -1125,6 +1132,7 @@ Rules:
 - Expose only minimal read-only adapter accessors needed to observe display/error/portfolio state in tests.
 - Do not leave TODO, FIXME, placeholder, or speculative import comments; all exact collaborator types are included below.
 - Use constructor injection only when the sequence requires delegation to a generated Control port. Never instantiate a Control service directly.
+{delegation_rule}- Never derive a collaborator or method name from the Boundary class name; use only exact sequence messages and contracts.
 - Test every Boundary interface method, state transition, returned value, and required Control invocation. Use Mockito only for generated Control collaborators.
 - Create both contracted files, then finish immediately.
 

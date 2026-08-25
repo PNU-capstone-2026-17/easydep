@@ -79,6 +79,7 @@ from app.implementation.planning.design_context import (
     read_generated_java_contracts,
     referenced_openapi_model_names,
     render_api_adapter_prompt,
+    render_boundary_adapter_prompt,
     slice_sequence,
 )
 from app.implementation.workflows.completion import audit_run_completion
@@ -2253,6 +2254,16 @@ PurchaseController -> ErrorScreen : showError(\"failed\")
             self.assertIn("PurchaseController", prompt)
             self.assertIn("Do not annotate the adapter as a Spring bean", prompt)
             self.assertIn("Do not leave TODO", prompt)
+
+    def test_boundary_prompt_for_missing_sequence_forbids_inferred_control_calls(self) -> None:
+        prompt = render_boundary_adapter_prompt(
+            SimpleNamespace(base_package="com.example"),
+            "CourseDropBoundary",
+            "// bce/CourseDropBoundary.java\npublic interface CourseDropBoundary {}",
+            "' No directly matched sequence messages",
+        )
+        self.assertIn("Do not import, inject, infer, or call any Control", prompt)
+        self.assertIn("Never derive a collaborator or method name", prompt)
 
     def test_wiring_planner_contracts_bootstrap_configuration_and_context_test(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
