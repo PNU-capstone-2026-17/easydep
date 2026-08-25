@@ -317,6 +317,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 + repository_contracts
                 + "\n```\n"
             )
+        persistence_contracts = read_persistence_entity_contracts(
+            run_root, task_base_package(task)
+        )
+        prompt += (
+            "\n\n## Exact generated JPA entity contracts\n\n"
+            "Use only the accessors and relationship direction present in these "
+            "entities; do not infer a reverse association from the ERD.\n\n"
+            "```java\n"
+            + persistence_contracts
+            + "\n```\n"
+        )
     allowed_absolute = [str((sandbox / path).resolve()) for path in task["allowed_write_paths"]]
     prompt += "\n\n## Enforced absolute write paths\n\n" + "\n".join(
         f"- `{path}`" for path in allowed_absolute
