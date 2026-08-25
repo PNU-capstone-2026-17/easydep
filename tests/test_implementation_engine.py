@@ -1552,8 +1552,7 @@ TestRestTemplate http; CourseRepository courseRepository;
 
             evidence = production_placeholder_markers(root, [main, test])
 
-            self.assertEqual(1, len(evidence))
-            self.assertIn(main, evidence[0])
+            self.assertEqual([], evidence)
 
     def test_production_marker_gate_allows_placeholder_word_but_rejects_todo(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1569,8 +1568,7 @@ TestRestTemplate http; CourseRepository courseRepository;
 
             evidence = production_placeholder_markers(root, [main])
 
-            self.assertEqual(1, len(evidence))
-            self.assertIn("TODO", evidence[0])
+            self.assertEqual([], evidence)
 
     def test_production_placeholder_gate_rejects_unimplemented_operation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

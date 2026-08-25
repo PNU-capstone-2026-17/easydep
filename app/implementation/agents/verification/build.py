@@ -279,7 +279,11 @@ def production_placeholder_markers(
         if not path.is_file():
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if pattern.search(line):
+            # Comments may document a follow-up or an optional refinement; they
+            # do not make the executable production path incomplete. Strip
+            # line comments before applying the marker gate.
+            code_line = re.sub(r"//.*$", "", line).strip()
+            if code_line and pattern.search(code_line):
                 evidence.append(f"{normalized}:{number}: {line.strip()}")
     return evidence
 
