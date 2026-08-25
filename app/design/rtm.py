@@ -253,6 +253,40 @@ def build_design_rtm(state: dict) -> dict[str, Any]:
         ucs = _as_list(cls.get("use_case_ids"))
         note_unknown("class_diagram", name, "use_case", ucs)
         rows.append(_row("class_diagram", name, {"use_case": ucs}))
+        for operation in cls.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            operation_id = str(operation.get("operationId") or "").strip()
+            if not operation_id:
+                continue
+            step_refs = _as_list(operation.get("stepRefs"))
+            operation_sources = {
+                "use_case": ucs,
+                "class": [name],
+                "flow_step": step_refs,
+            }
+            rows.append(_row("class_diagram", operation_id, operation_sources))
+            for binding in operation.get("inputBindings") or []:
+                if not isinstance(binding, dict):
+                    continue
+                parameter = str(binding.get("parameter") or "").strip()
+                if not parameter:
+                    continue
+                use_case_id = str(binding.get("useCaseId") or "").strip()
+                source_ref = str(binding.get("sourceRef") or "").strip()
+                rows.append(
+                    _row(
+                        "class_diagram",
+                        f"{operation_id}#{parameter}",
+                        {
+                            "use_case": [use_case_id] if use_case_id else ucs,
+                            "class": [name],
+                            "class_operation": [operation_id],
+                            "flow_step": step_refs,
+                            "value_source": [source_ref] if source_ref else [],
+                        },
+                    )
+                )
 
     # --- 시퀀스 다이어그램: 참가자는 클래스, 메시지는 유스케이스 + (양끝 참가자의) 클래스 --
     sequence = state.get("sequence_diagram_model") or {}

@@ -17,55 +17,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from app.design.knowledge import rules
+from app.design.schemas.class_model import BCEModel
 from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
-
-
-class BCEClass(BaseModel):
-    className: str = Field(default="UnknownClass")
-    stereotype: str = Field(default="")
-    description: str = Field(default="")
-    fields: list[str] = Field(default_factory=list)
-    methods: list[str] = Field(default_factory=list)
-    #: 이 클래스를 낳은 유스케이스 id. 추적표(app/design/rtm.py)가 이걸 모아서
-    #: "이 유스케이스가 바뀌면 무엇이 영향받는가"를 답한다.
-    use_case_ids: list[str] = Field(default_factory=list)
-    #: 이 클래스를 식별하는 **자기 필드**들(자연키). 비어 있으면 우리가 대리키를 붙인다.
-    #:
-    #: 이 칸이 없을 때 ERD 사상은 모든 테이블에 `{table}_id BIGINT`를 만들고, 이름이
-    #: 겹치는 필드를 조용히 **버렸다.** 그래서 `Book.isbn` 같은 자연키가 산출물에서
-    #: 사라졌다. 대리키를 쓰는 것 자체는 흔한 선택이지만, 그건 우리가 고른 것이므로
-    #: **골랐다는 사실이 남아야 한다**(`erd/mapping.py`의 `keyOrigin`).
-    identifier: list[str] = Field(default_factory=list)
-
-
-class BCERelationship(BaseModel):
-    source: str
-    target: str
-    type: str = Field(default="Association")
-    #: 양 끝의 다중도. `"1"` · `"0..1"` · `"*"` · `"1..*"` 중 하나이고, **빈 문자열은
-    #: "명시 안 됨"이다.**
-    #:
-    #: 다중도는 ERD만의 개념이 아니라 UML 클래스 다이어그램의 일부다. 이 칸이 없던 동안
-    #: ERD 사상은 모든 관계를 1:N으로 **단정**했고(`erd/plantuml.py`), 그래서 M:N이
-    #: 연결 테이블이 되는 경로가 아예 없었다. 관계형 사상에서 M:N → 연결 테이블은
-    #: 선택이 아니다.
-    #:
-    #: **기본값이 `"1"`이 아니라 빈 문자열인 것이 요점이다.** 모르는 것을 그럴듯한
-    #: 값으로 채우면 지어낸 값이 기본값 뒤에 숨는다. 비어 있으면 사상은 그 관계를
-    #: 옮기지 않고 보류로 표시하고, 검사가 그 사실을 지적한다.
-    sourceMultiplicity: str = Field(default="")
-    targetMultiplicity: str = Field(default="")
-    description: str = Field(default="")
-
-
-class BCEExtractionResult(BaseModel):
-    Classes: list[BCEClass] = Field(default_factory=list)
-    Relationships: list[BCERelationship] = Field(default_factory=list)
-
 
 _PREAMBLE = """
 You are a software architect with deep expertise in UML 2.0 Robustness \
@@ -294,10 +249,12 @@ def _normalize_field_types(result: dict[str, Any]) -> dict[str, Any]:
 def run_bce_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
     """BCE 구조화 완성. 클래스 다이어그램과 ERD의 추출·수정이 공유한다.
 
-    LLM은 항상 BCEExtractionResult 스키마로만 답하므로, 반환은 검증된 BCE dict다.
+    LLM은 항상 BCEModel 스키마로만 답하므로, 반환은 검증된 BCE dict다.
     호출 배관 자체는 다섯 산출물이 공유한다(common.structured.parse_structured).
     """
-    return _normalize_field_types(parse_structured(messages, BCEExtractionResult))
+    parsed = parse_structured(messages, BCEModel)
+    normalized = _normalize_field_types(parsed)
+    return BCEModel.model_validate(normalized).model_dump(by_alias=True)
 
 
 def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
