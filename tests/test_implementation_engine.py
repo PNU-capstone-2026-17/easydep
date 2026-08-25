@@ -3573,6 +3573,18 @@ components: {}
         self.assertIn("BeanCurrentlyInCreationException", summary)
         self.assertLess(len(summary), 8000)
 
+    def test_preserves_causal_hibernate_mapped_by_failure_from_long_trace(self) -> None:
+        trace = "\n".join(
+            [
+                "org.hibernate.AnnotationException: Collection 'StudentEntity.enrollments' "
+                "is 'mappedBy' a property named 'student' which does not exist in the target entity",
+            ]
+            + [f"\tat org.hibernate.Stack.frame{number}(Stack.java:1)" for number in range(4000)]
+        )
+        summary = summarize_test_failure(trace)
+        self.assertIn("AnnotationException", summary)
+        self.assertIn("mappedBy", summary)
+
     def test_breaks_bean_factory_cycle_with_lazy_parameter(self) -> None:
         configuration = """package example.config;
 

@@ -436,7 +436,8 @@ def summarize_test_failure(detail: str) -> str:
         if re.search(
             r"(?:Caused by:|Suppressed:|Error creating bean|Requested bean is currently in creation|"
             r"NoSuchBeanDefinitionException|NoUniqueBeanDefinitionException|UnsatisfiedDependencyException|"
-            r"BeanCurrentlyInCreationException)",
+            r"BeanCurrentlyInCreationException|AnnotationException|mappedBy|"
+            r"does not exist in (?:the )?target entity|HibernateException)",
             line,
         )
     ]
