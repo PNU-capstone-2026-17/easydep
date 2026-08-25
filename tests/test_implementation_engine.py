@@ -182,6 +182,20 @@ class ImplementationParallelismTest(unittest.TestCase):
             {"application/src/main/Owned.java"},
         )
 
+    def test_production_placeholder_gate_rejects_any_unsupported_operation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "application/src/main/java/example/Adapter.java"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                'class Adapter { void run() { throw new UnsupportedOperationException("contract gap"); } }',
+                encoding="utf-8",
+            )
+            markers = production_placeholder_markers(
+                root, ["application/src/main/java/example/Adapter.java"]
+            )
+            self.assertEqual(len(markers), 1)
+
     def test_e2e_planning_is_deferred_until_non_e2e_outputs_exist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory)

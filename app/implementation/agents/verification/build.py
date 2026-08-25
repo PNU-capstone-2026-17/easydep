@@ -268,9 +268,7 @@ def production_placeholder_markers(
     evidence: list[str] = []
     pattern = re.compile(
         r"\b(?:TODO|FIXME)\b"
-        r"|\bthrow\s+new\s+UnsupportedOperationException\s*\(\s*"
-        r'"[^"\n]*\b(?:not\s+implemented|missing\s+[^"\n]*'
-        r"(?:mapping|implementation|contract))\b[^\"\n]*\"\s*\)",
+        r"|\bthrow\s+new\s+UnsupportedOperationException\s*\(",
         re.IGNORECASE,
     )
     for relative in relative_paths:
