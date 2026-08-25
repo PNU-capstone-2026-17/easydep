@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from app.design.api import (
+    BatchReviseRequest,
     FeedbackRequest,
     ReviseRequest,
     RewindRequest,
@@ -20,6 +21,7 @@ from app.design.api import (
     resume_design_session,
     retry_design_session,
     revise_design_element,
+    revise_design_elements,
     rewind_design_session,
     start_design_session,
 )
@@ -81,6 +83,16 @@ _IMPLEMENTATION_WORKFLOW_PHASES = (
     ("frontend", "프런트엔드 구현"),
     ("end-to-end", "통합 시나리오 검증"),
 )
+_IMPLEMENTATION_PHASE_ACTIVITY_LABELS = {
+    "control": "핵심 비즈니스 로직",
+    "persistence": "데이터 영속성",
+    "api-adapters": "API 어댑터",
+    "boundary-adapters": "외부 경계 연동",
+    "outbound-adapters": "아웃바운드 연동",
+    "wiring": "애플리케이션 구성",
+    "frontend": "프런트엔드",
+    "end-to-end": "통합 시나리오",
+}
 
 
 def _json_response(response: JSONResponse) -> dict[str, Any]:
@@ -103,6 +115,29 @@ class WorkspaceService:
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
 
+    @staticmethod
+    def _sequence_target_feedbacks(context: dict[str, Any]) -> list[ReviseRequest]:
+        """Parse UI-provided, per-UC feedback without inferring any target."""
+        raw_entries = context.get("target_feedbacks")
+        if raw_entries is None:
+            return []
+        if not isinstance(raw_entries, list) or not raw_entries:
+            raise ValueError("Select at least one sequence-diagram feedback target.")
+        revisions: list[ReviseRequest] = []
+        for raw in raw_entries:
+            if not isinstance(raw, dict):
+                raise ValueError("Each sequence feedback entry must name a target and feedback.")
+            target = str(raw.get("target") or "").strip()
+            feedback = str(raw.get("feedback") or "").strip()
+            if not target.startswith("sequence_diagram:") or target == "sequence_diagram:":
+                raise ValueError("Sequence feedback targets must be selected use-case diagrams.")
+            if not feedback:
+                raise ValueError(f"Feedback for {target} cannot be empty.")
+            revisions.append(ReviseRequest(target=target, feedback=feedback))
+        # Pydantic applies duplicate-target validation at the command boundary
+        # before any individual revision can run.
+        return BatchReviseRequest(revisions=revisions).revisions
+
     def submit(
         self,
         app_id: str,
@@ -115,12 +150,23 @@ class WorkspaceService:
         resolved_stage = stage or self.infer_stage(app_id, action, payload)
         self._validate_payload(action, payload)
         self._validate_action_reference(app_id, action, payload)
+        text = str(payload.get("text") or "").strip()
+        context = payload.get("context") or {}
+        if (
+            action == "message"
+            and text
+            and context.get("artifact_stage") == "sequence_diagram"
+            and not context.get("target_feedbacks")
+            and not str(context.get("element_ref") or "").strip()
+        ):
+            raise ValueError(
+                "Select at least one use-case target and enter feedback for each selected target."
+            )
         command_id = str(uuid.uuid4())
         with self._submission_lock:
             command = repository.create_command(
                 command_id, app_id, action, resolved_stage, payload
             )
-        text = str(payload.get("text") or "").strip()
         if text:
             repository.append_event(
                 app_id,
@@ -132,7 +178,6 @@ class WorkspaceService:
                 metadata={"context": payload.get("context")},
             )
 
-        context = payload.get("context") or {}
         if action == "message" and context and context.get("stage") != resolved_stage:
             result = {
                 "action_id": command_id,
@@ -519,7 +564,65 @@ class WorkspaceService:
                     f"The {failed_stage} step failed. Retry that checkpoint before "
                     "starting or advancing the design pipeline."
                 )
+            context = payload.get("context") or {}
+            target_feedbacks = self._sequence_target_feedbacks(context)
+            if target_feedbacks:
+                # Every entry has an explicit UC and its own instruction.  The
+                # batch API keeps all revisions in memory until all of them
+                # succeed, so this command cannot persist a half-applied set.
+                revised = _json_response(
+                    revise_design_elements(
+                        app_id,
+                        BatchReviseRequest(revisions=target_feedbacks),
+                    )
+                )
+                return {
+                    "awaiting_input": bool(status.get("active")),
+                    "kind": "action_required",
+                    "message": (
+                        f"Revised {len(target_feedbacks)} selected use-case diagrams and "
+                        "only their trace-linked artifacts. Review the result or continue."
+                    ),
+                    "current_stage": status.get("stage") or "design",
+                    "changed": revised.get("changed") or [],
+                    "touched": revised.get("touched") or {},
+                    "related": revised.get("related") or {},
+                    "design": revised,
+                }
+            element_ref = str(context.get("element_ref") or "").strip()
+            if text and element_ref:
+                # A UI-selected element is an explicit local-edit request, not
+                # ordinary stage feedback.  In particular, sequence feedback
+                # must carry ``sequence_diagram:UCn`` so we never rewind and
+                # regenerate every use-case card just to revise one of them.
+                revised = _json_response(
+                    revise_design_element(
+                        app_id,
+                        ReviseRequest(target=element_ref, feedback=text),
+                    )
+                )
+                return {
+                    "awaiting_input": bool(status.get("active")),
+                    "kind": "action_required",
+                    "message": (
+                        f"Revised the selected {element_ref} and only its "
+                        "trace-linked artifacts. Review the result or continue."
+                    ),
+                    "current_stage": status.get("stage") or "design",
+                    "changed": revised.get("changed") or [],
+                    "touched": revised.get("touched") or {},
+                    "related": revised.get("related") or [],
+                    "design": revised,
+                }
             current_stage = str(status.get("stage") or "")
+            if (
+                text
+                and command.get("action") == "message"
+                and current_stage == "sequence_diagram"
+            ):
+                raise ValueError(
+                    "Select one or more use-case targets and provide feedback for each target."
+                )
             if status.get("active"):
                 if text:
                     operation_stage = current_stage
@@ -916,6 +1019,7 @@ class WorkspaceService:
             *list(stage_validation.get("errors") or []),
             *list(stage_validation.get("findings") or []),
         ]
+        method_proposals = list(stage_validation.get("method_proposals") or [])
         artifact = (result.get("artifacts") or {}).get(stage)
         if artifact is None:
             config = artifact_repository.STAGE_ARTIFACTS.get(str(stage), {})
@@ -954,6 +1058,10 @@ class WorkspaceService:
             "requires_revision": requires_revision,
             "blocking_findings": findings if requires_revision else [],
             "findings": findings,
+            # Keep the pending approval decision on the workspace command as
+            # well as in the artifact payload so the UI can offer an explicit
+            # approval action instead of requiring a magic text phrase.
+            "method_proposals": method_proposals,
             "design": result,
         }
 
@@ -965,6 +1073,15 @@ class WorkspaceService:
         context = original["payload"].get("context") or {}
         feedback = str(original["payload"].get("text") or "").strip()
         app_id = str(command["app_id"])
+        target_feedbacks = self._sequence_target_feedbacks(context)
+        if target_feedbacks:
+            result = revise_design_elements(
+                app_id, BatchReviseRequest(revisions=target_feedbacks)
+            )
+            return {
+                "message": "Revised the selected use-case diagrams and trace-linked artifacts.",
+                "design": _json_response(result),
+            }
         element_ref = context.get("element_ref")
         if element_ref:
             result = revise_design_element(
@@ -1100,6 +1217,11 @@ class WorkspaceService:
             workflow_status = str(workflow.get("status") or "")
             current_phase = str(workflow.get("currentPhase") or "")
             tasks = [item for item in workflow.get("tasks", []) if isinstance(item, dict)]
+            phase_statuses = {
+                str(phase.get("phaseId") or ""): str(phase.get("status") or "")
+                for phase in workflow.get("phases", [])
+                if isinstance(phase, dict)
+            }
             for phase_id, label in _IMPLEMENTATION_WORKFLOW_PHASES:
                 phase_tasks = [
                     task for task in tasks if str(task.get("phase") or "") == phase_id
@@ -1110,7 +1232,25 @@ class WorkspaceService:
                     for task in phase_tasks
                     if str(task.get("status") or "") == "RUNNING"
                 ]
-                if phase_tasks and task_statuses == {"SUCCEEDED"}:
+                if phase_statuses.get(phase_id) == "SUCCEEDED":
+                    add_update(f"phase-{phase_id}", label, "completed")
+                    activity_label = _IMPLEMENTATION_PHASE_ACTIVITY_LABELS[phase_id]
+                    # Activities are transient in the durable workflow state:
+                    # the coordinator removes them after success.  Reconcile
+                    # their matching timeline events from the completed phase
+                    # so an old running spinner always receives its terminal
+                    # transition.
+                    add_update(
+                        f"activity-verify-{phase_id}",
+                        f"{activity_label} 단계 검증",
+                        "completed",
+                    )
+                    add_update(
+                        f"activity-audit-{phase_id}",
+                        f"{activity_label} 완료 점검",
+                        "completed",
+                    )
+                elif phase_tasks and task_statuses == {"SUCCEEDED"}:
                     add_update(f"phase-{phase_id}", label, "completed")
                 elif "FAILED" in task_statuses:
                     add_update(f"phase-{phase_id}", label, "failed")

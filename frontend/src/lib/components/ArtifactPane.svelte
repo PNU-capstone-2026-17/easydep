@@ -16,6 +16,10 @@
     events,
     selected,
     onSelect,
+    onSequenceFeedbackSubmit,
+    sequenceFeedbackSubmitting = false,
+    sequenceMethodApprovalAvailable = false,
+    onSequenceMethodApproval,
     onClose
   }: {
     appId: string;
@@ -24,6 +28,12 @@
     events: WorkspaceEvent[];
     selected: string;
     onSelect: (stage: string) => void;
+    onSequenceFeedbackSubmit?: (
+      entries: Array<{ useCaseId: string; feedback: string }>
+    ) => void | Promise<void>;
+    sequenceFeedbackSubmitting?: boolean;
+    sequenceMethodApprovalAvailable?: boolean;
+    onSequenceMethodApproval?: () => void;
     onClose?: () => void;
   } = $props();
   let tab = $state<'artifact' | 'validation' | 'changes' | 'evidence'>('artifact');
@@ -41,6 +51,8 @@
   let expandedSequence = $state<SequenceDiagramSummary | null>(null);
   let sequenceLoadVersion = 0;
   let sequenceImageEpoch = $state(0);
+  let sequenceFeedbackTargetIds = $state<string[]>([]);
+  let sequenceFeedbackDrafts = $state<Record<string, string>>({});
   let previouslySelected = '';
   let content = $derived(document?.artifacts?.[selected]);
   let fileArtifact = $derived(fileArtifacts[selected]);
@@ -94,6 +106,8 @@
       .then((result) => {
         if (loadVersion !== sequenceLoadVersion) return;
         sequenceDiagrams = result.diagrams;
+        const available = new Set(result.diagrams.map((diagram) => diagram.use_case_id));
+        sequenceFeedbackTargetIds = sequenceFeedbackTargetIds.filter((id) => available.has(id));
         // Deliberately advance after every accepted fetch.  The list is keyed
         // by use_case_id, so without this token Svelte can retain an existing
         // <img> whose URL still points at a pre-feedback rendering.
@@ -154,6 +168,34 @@
   function expandDiagram(diagram: SequenceDiagramSummary | null = null) {
     expandedSequence = diagram;
     diagramExpanded = true;
+  }
+
+  function toggleSequenceFeedbackTarget(useCaseId: string) {
+    sequenceFeedbackTargetIds = sequenceFeedbackTargetIds.includes(useCaseId)
+      ? sequenceFeedbackTargetIds.filter((id) => id !== useCaseId)
+      : [...sequenceFeedbackTargetIds, useCaseId];
+  }
+
+  function updateSequenceFeedback(useCaseId: string, feedback: string) {
+    sequenceFeedbackDrafts = { ...sequenceFeedbackDrafts, [useCaseId]: feedback };
+  }
+
+  function selectedSequenceFeedbackEntries() {
+    return sequenceFeedbackTargetIds.map((useCaseId) => ({
+      useCaseId,
+      feedback: (sequenceFeedbackDrafts[useCaseId] ?? '').trim()
+    }));
+  }
+
+  function canSubmitSequenceFeedback() {
+    const entries = selectedSequenceFeedbackEntries();
+    return entries.length > 0 && entries.every((entry) => Boolean(entry.feedback));
+  }
+
+  function submitSequenceFeedback() {
+    const entries = selectedSequenceFeedbackEntries();
+    if (!canSubmitSequenceFeedback() || sequenceFeedbackSubmitting) return;
+    void onSequenceFeedbackSubmit?.(entries);
   }
 
   function diagramImageUrl(stage: string) {
@@ -275,15 +317,59 @@
             {:else if sequenceDiagrams.length === 0}
               <p class="rounded-lg bg-[#f8f8f5] p-6 text-center text-xs text-[#85877e]">No use-case sequence diagrams are available.</p>
             {:else}
+              <section class="mb-3 rounded-lg border border-[#cfe2d6] bg-[#f5fbf7] p-3 text-xs" aria-label="Sequence feedback target">
+                <strong class="block text-[#24553d]">Targeted sequence feedback</strong>
+                <p class="mt-1 leading-5 text-[#4e6d5b]">Select one or more UC cards, enter a separate instruction for each, then apply them together. Untargeted sequence feedback is disabled.</p>
+                <div class="mt-3 space-y-2">
+                  {#each sequenceDiagrams as diagram (diagram.use_case_id)}
+                    <div class="rounded-md border border-[#d4e5d9] bg-white p-2">
+                      <label class="flex cursor-pointer items-center gap-2 font-semibold text-[#305a44]">
+                        <input
+                          type="checkbox"
+                          checked={sequenceFeedbackTargetIds.includes(diagram.use_case_id)}
+                          onchange={() => toggleSequenceFeedbackTarget(diagram.use_case_id)}
+                        />
+                        {diagram.use_case_name && diagram.use_case_name !== diagram.use_case_id
+                          ? `${diagram.use_case_id} · ${diagram.use_case_name}`
+                          : diagram.use_case_id}
+                      </label>
+                      {#if sequenceFeedbackTargetIds.includes(diagram.use_case_id)}
+                        <textarea
+                          class="focus-ring mt-2 min-h-16 w-full resize-y rounded-md border border-[#c9ddd0] px-2 py-1.5 text-xs leading-5"
+                          value={sequenceFeedbackDrafts[diagram.use_case_id] ?? ''}
+                          oninput={(event) => updateSequenceFeedback(diagram.use_case_id, event.currentTarget.value)}
+                          placeholder={`Feedback for ${diagram.use_case_id}`}
+                          disabled={sequenceFeedbackSubmitting}
+                        ></textarea>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+                <button
+                  class="focus-ring mt-3 rounded-md bg-[#24553d] px-3 py-1.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  onclick={submitSequenceFeedback}
+                  disabled={!canSubmitSequenceFeedback() || sequenceFeedbackSubmitting || !onSequenceFeedbackSubmit}
+                >
+                  Apply feedback to {sequenceFeedbackTargetIds.length || 'selected'} UC{sequenceFeedbackTargetIds.length === 1 ? '' : 's'}
+                </button>
+              </section>
               {#if validation?.findings?.length}
-                <p class="mb-3 rounded-lg border border-[#e3c98b] bg-[#fff8e7] px-3 py-2 text-xs leading-5 text-[#755b24]" role="status">
+                <div class="mb-3 rounded-lg border border-[#e3c98b] bg-[#fff8e7] px-3 py-2 text-xs leading-5 text-[#755b24]" role="status">
                   <strong>Review required.</strong> {validation.findings.length} semantic finding{validation.findings.length === 1 ? '' : 's'} remain; rendered cards are drafts, not approved sequence contracts.
-                </p>
+                  Use the targeted feedback form above to revise one or more selected UC cards.
+                </div>
               {/if}
               {#if validation?.method_proposals?.length}
-                <p class="mb-3 rounded-lg border border-[#b8d7c5] bg-[#eef8f1] px-3 py-2 text-xs leading-5 text-[#24553d]" role="status">
-                  <strong>Class-method approval required.</strong> Review the proposed operations in Validation, then reply <code>approve all</code> to add every proposal and regenerate the affected UC cards.
-                </p>
+                <div class="mb-3 rounded-lg border border-[#b8d7c5] bg-[#eef8f1] px-3 py-2 text-xs leading-5 text-[#24553d]" role="status">
+                  <strong>Class-method approval required.</strong> Review the proposed operations in Validation, then approve them to add every proposal and regenerate only the affected UC cards.
+                  <button
+                    class="focus-ring mt-2 rounded-md border border-[#78a88a] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#24553d] disabled:cursor-not-allowed disabled:opacity-50"
+                    onclick={() => onSequenceMethodApproval?.()}
+                    disabled={!sequenceMethodApprovalAvailable || !onSequenceMethodApproval}
+                  >
+                    Approve all proposed methods
+                  </button>
+                </div>
               {/if}
               <div class="sequence-diagram-gallery grid grid-cols-1 gap-3 xl:grid-cols-2">
                 {#each sequenceDiagrams as diagram (diagram.use_case_id)}

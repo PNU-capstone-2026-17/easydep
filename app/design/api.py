@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.artifacts_api import (
     require_app,
@@ -86,6 +86,24 @@ class ReviseRequest(BaseModel):
     #: "{stage}:{element}" — 추적표의 change_plan 이 주는 ref 그대로.
     target: str
     feedback: str = ""
+
+
+class BatchReviseRequest(BaseModel):
+    """An all-or-nothing group of explicitly targeted design revisions."""
+
+    revisions: list[ReviseRequest] = Field(min_length=1, max_length=20)
+
+    @field_validator("revisions")
+    @classmethod
+    def targets_are_unique(cls, revisions: list[ReviseRequest]) -> list[ReviseRequest]:
+        targets = [revision.target.strip() for revision in revisions]
+        if any(not target for target in targets):
+            raise ValueError("Every targeted revision needs an element reference.")
+        if len(targets) != len(set(targets)):
+            raise ValueError("A target can appear only once in a revision batch.")
+        if any(not revision.feedback.strip() for revision in revisions):
+            raise ValueError("Every targeted revision needs feedback text.")
+        return revisions
 
 
 class ResolveIssuesRequest(BaseModel):
@@ -254,29 +272,59 @@ def revise_design_element(app_id: str, request: ReviseRequest) -> JSONResponse:
     here the untargeted elements are copied from the original and the model's output
     for them is never read. See app/design/cascade.py.
     """
+    return revise_design_elements(
+        app_id, BatchReviseRequest(revisions=[request])
+    )
+
+
+@router.post("/api/apps/{app_id}/design/revise-batch")
+def revise_design_elements(app_id: str, request: BatchReviseRequest) -> JSONResponse:
+    """Apply several independently-worded targeted changes atomically.
+
+    Each revision is evaluated against the in-memory result of the preceding
+    one, but nothing is persisted until every target has completed.  Thus a
+    failed UC cannot leave earlier UCs in a partially saved batch.
+    """
     validate_app_id(app_id)
-    state = require_app(app_id)
+    working = require_app(app_id)
+    changed: list[str] = []
+    touched: dict[str, set[str]] = {}
+    related: dict[str, list[str]] = {}
 
     try:
-        result = revise_and_cascade(state, request.target, request.feedback)
+        for revision in request.revisions:
+            result = revise_and_cascade(working, revision.target, revision.feedback)
+            working = result["state"]
+            for stage in result["changed"]:
+                if stage not in changed:
+                    changed.append(stage)
+            for stage, elements in result["touched"].items():
+                touched.setdefault(stage, set()).update(elements)
+            related[revision.target] = result.get("related", [])
     except UnknownTarget as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(
-            status_code=502, detail=f"Revision failed: {error}"
+            status_code=502, detail=f"Revision failed; no batch changes were saved: {error}"
         ) from error
 
-    persist_cascade(app_id, result)
+    combined = {
+        "state": working,
+        "changed": changed,
+        "touched": {stage: sorted(elements) for stage, elements in touched.items()},
+    }
+    persist_cascade(app_id, combined)
     # 파이프라인 밖에서 고쳤으므로 체크포인트도 맞춰둔다 — 안 그러면 재개할 때
     # 고치기 전 상태로 돌아간다.
-    sync_design_state(app_id, result["state"])
+    sync_design_state(app_id, working)
 
     return JSONResponse(
         content={
             "app_id": app_id,
-            **to_web_response(result["state"]),
-            "changed": result["changed"],
-            "touched": result["touched"],
+            **to_web_response(working),
+            "changed": changed,
+            "touched": combined["touched"],
+            "related": related,
         }
     )
 

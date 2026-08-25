@@ -210,7 +210,10 @@ def main() -> int:
     output = PrototypeOrchestrator(load_job(args.job)).run()
     manifest = json.loads((output / "reports" / "run-manifest.json").read_text(encoding="utf-8"))
     print(json.dumps({"status": manifest["status"], "output": str(output)}, ensure_ascii=False))
-    return 0 if manifest["status"] == "SUCCEEDED" else 1
+    # ``NEEDS_INPUT`` is an expected, resumable validation outcome.  Returning
+    # success lets the web worker retain the generated diagnostic report rather
+    # than converting it into a subprocess-crash failure.
+    return 0 if manifest["status"] in {"SUCCEEDED", "NEEDS_INPUT"} else 1
 
 
 if __name__ == "__main__":

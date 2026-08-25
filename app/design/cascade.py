@@ -19,18 +19,20 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.db.models import ORIGIN_FEEDBACK_REVISED
-from app.design.graphs.subgraphs import DESIGN_SPECS, DESIGN_STAGES
+from app.design.graphs.subgraphs import DESIGN_SPECS
 from app.design.nodes.artifact import (
     CHECKED_ONLY,
     CLEAN,
     DesignArtifactSpec,
+    assert_untargeted_elements_preserved,
     merge_model,
     render_and_validate,
 )
-from app.design.rtm import affected_by_element, build_design_rtm
+from app.design.rtm import affected_by_element, build_design_rtm, linked_elements
 from app.design.schemas.architecture_state import ArchitectureState
 from app.repositories import artifact_repository
 
@@ -74,6 +76,10 @@ def _apply(
     original = state.get(spec.model_key) or {}
     revised = spec.revise(original, feedback, state, targets)
     merged = merge_model(spec, original, revised, targets)
+    # The LLM boundary ends here: merge_model must retain every non-target
+    # value from the persisted source before a deterministic finalizer derives
+    # its own runtime bundle fields.
+    assert_untargeted_elements_preserved(spec, original, merged, targets)
 
     # 지목 수정은 비대상 보존이 계약이므로 전체 흐름 재추출을 포함하는 reconcile은
     # 실행하지 않는다. 대신 최종 불변식은 반드시 적용해, 새 시퀀스 호출의 메서드는
@@ -90,6 +96,62 @@ def _apply(
     if spec.check_key:
         patch[spec.check_key] = _check_report(spec, merged, working)
     return patch
+
+
+def _refs_by_stage(refs: list[str]) -> dict[str, set[str]]:
+    """Split ``stage:element`` references without accepting unknown stages."""
+    grouped: dict[str, set[str]] = {}
+    for ref in refs:
+        stage, separator, element = ref.partition(":")
+        if separator and stage in DESIGN_SPECS and element:
+            grouped.setdefault(stage, set()).add(element)
+    return grouped
+
+
+def _selected_source_payload(
+    state: ArchitectureState, stage: str, elements: set[str]
+) -> dict[str, Any]:
+    """Return only the source elements that justified a reverse update.
+
+    Passing an entire diagram/API document back to a reviser gives it needless
+    opportunities to reinterpret unrelated content.  The feedback already
+    carries the user's instruction; this compact payload provides just the
+    exact RTM-linked evidence for the other artifact.
+    """
+    spec = DESIGN_SPECS[stage]
+    model = state.get(spec.model_key) or {}
+    if not isinstance(model, dict):
+        return {}
+    selected: dict[str, list[dict[str, Any]]] = {}
+    for field, key_of in spec.elements.items():
+        matches = [
+            item
+            for item in model.get(field, []) or []
+            if isinstance(item, dict) and key_of(item) in elements
+        ]
+        if matches:
+            selected[field] = matches
+    return selected
+
+
+def _trace_backed_feedback(
+    state: ArchitectureState,
+    source_stage: str,
+    source_elements: set[str],
+    feedback: str,
+) -> str:
+    """Give a related artifact only approved, trace-backed revision evidence."""
+    evidence = _selected_source_payload(state, source_stage, source_elements)
+    return (
+        f'The user explicitly revised {source_stage}:{", ".join(sorted(source_elements))} '
+        f'with: "{feedback}". This is an exact RTM contract link, not a name match. '
+        "Update only the listed target elements so their existing contract agrees. "
+        "Do not add, remove, rename, or alter any other element or any unrelated "
+        "field, method, relationship, message, endpoint, or schema. If the evidence "
+        "does not determine a safe change, preserve the target unchanged.\n"
+        "[Trace-backed source elements]\n"
+        + json.dumps(evidence, ensure_ascii=False, indent=2)
+    )
 
 
 def _reproject_erd(state: ArchitectureState) -> dict[str, Any]:
@@ -122,13 +184,19 @@ def revise_and_cascade(
     target: str,
     feedback: str,
 ) -> dict[str, Any]:
-    """`{stage}:{element}` 를 고치고, 영향받는 하류 항목만 따라 고친다.
+    """`{stage}:{element}` 를 고치고, 증명된 관련 항목만 따라 고친다.
 
     반환 {"state": 바뀐 상태, "changed": [스테이지...], "touched": {스테이지: [항목...]}}
     — 화면이 "무엇을 고쳤는지" 보여줄 재료다.
 
-    무관한 스테이지는 리바이저를 **부르지도 않는다.** LLM 호출이 곧 변경 위험이므로,
-    안 부르는 것이 가장 확실한 보존이다.
+    클래스 수정은 기존처럼 provenance RTM을 따라 하류를 고친다. 시퀀스/API 수정은
+    ``links``의 *정확한* Control-binding/sequence-call 계약이 있을 때만 관련 클래스를
+    역방향으로 고치고, 그 클래스에서 다시 하류를 맞춘다. 링크가 없으면 추측하지 않는다.
+
+    어느 경로든 무관한 스테이지는 리바이저를 **부르지도 않는다**. LLM 출력은
+    finalizer보다 먼저 ``assert_untargeted_elements_preserved``를 통과해야 하므로,
+    환각한 형제 변경은 저장·전파되기 전에 거절된다. 그 뒤의 finalizer는 별도 LLM
+    출력 없이 실행되는 결정론적 번들 투영이다.
     """
     stage, _, element = target.partition(":")
     if stage not in DESIGN_SPECS or stage == "erd":
@@ -141,47 +209,94 @@ def revise_and_cascade(
     ):
         raise UnknownTarget(f"{target} is not in the current artifacts.")
 
-    # ① 지목한 항목을 고친다.
-    working.update(_apply(DESIGN_SPECS[stage], working, feedback, {element}))
-    changed = [stage]
-    touched: dict[str, list[str]] = {stage: [element]}
+    changed: list[str] = []
+    touched: dict[str, list[str]] = {}
+    processed: dict[str, set[str]] = {}
 
-    # ② 추적표가 알려준 하류 항목을 스테이지별로 모은다. 추적표는 **수정 전** 상태에서
-    #    읽는다 — 수정 후에는 방금 지운 링크가 사라져서 하류를 놓칠 수 있다.
-    downstream: dict[str, list[str]] = {}
-    for affected in affected_by_element(rtm, stage, element):
-        affected_stage, _, affected_element = affected.partition(":")
-        downstream.setdefault(affected_stage, []).append(affected_element)
+    def apply_targets(
+        target_stage: str, targets: set[str], revision_feedback: str
+    ) -> None:
+        """Apply one bounded stage patch and record its immutable scope."""
+        pending = targets - processed.get(target_stage, set())
+        if not pending:
+            return
+        working.update(_apply(DESIGN_SPECS[target_stage], working, revision_feedback, pending))
+        processed.setdefault(target_stage, set()).update(pending)
+        if target_stage not in changed:
+            changed.append(target_stage)
+            touched[target_stage] = []
+        touched[target_stage] = sorted(set(touched[target_stage]) | pending)
 
-    # ③ 파이프라인 순서로 따라간다 — 앞 스테이지의 결과가 뒤의 맥락이 되기 때문이다.
-    upstream_note = (
-        f"An upstream change was applied to {stage}:{element} — \"{feedback}\". "
-        "Update the listed elements so they agree with it. Change nothing else."
-    )
-    for next_stage in DESIGN_STAGES[DESIGN_STAGES.index(stage) + 1 :]:
-        if next_stage == "erd":
-            # ERD 는 투영이다. 영향 여부와 무관하게 클래스가 바뀌었으면 다시 그린다.
-            #
-            # **다만 이미 있는 ERD 만 다시 그린다.** 지목 수정은 설계가 끝나기 전에도
-            # 부를 수 있고(화면이 파이프라인 진행 중에도 대상 고르기를 연다), 그때
-            # 없던 ERD 를 여기서 만들어 저장하면 파이프라인이 아직 도달하지 않은
-            # 단계가 완료된 것처럼 보인다. 하류를 맞추는 일이지 앞질러 만드는 일이 아니다.
-            if "class_diagram" in changed and working.get(DESIGN_SPECS["erd"].model_key):
-                working.update(_reproject_erd(working))
-                changed.append("erd")
-                touched["erd"] = ["(클래스 BCE 에서 재투영)"]
-            continue
+    # ① The user-selected element is the only unconditionally editable source.
+    apply_targets(stage, {element}, feedback)
 
-        elements = downstream.get(next_stage)
-        if not elements:
-            continue        # 영향 없음 — 리바이저를 부르지 않는다
-        working.update(
-            _apply(DESIGN_SPECS[next_stage], working, upstream_note, set(elements))
+    # ② Freeze direct links from the *pre-change* RTM.  We must not discover
+    # links from an LLM revision itself: that would let a hallucinated reference
+    # enlarge the change scope while the cascade is already in progress.
+    directly_linked = _refs_by_stage(linked_elements(rtm, stage, element))
+    source_elements = {element}
+    trace_feedback = _trace_backed_feedback(working, stage, source_elements, feedback)
+
+    # A sequence/API element may change an earlier class contract only when the
+    # direct-link builder proved the route.  Class edits stay element-targeted;
+    # a guessed class name is never passed to a reviser.
+    if stage in {"sequence_diagram", "api_spec"}:
+        apply_targets(
+            "class_diagram",
+            directly_linked.get("class_diagram", set()),
+            trace_feedback,
         )
-        changed.append(next_stage)
-        touched[next_stage] = sorted(set(elements))
 
-    return {"state": working, "changed": changed, "touched": touched}
+    # ③ A touched class is now the authoritative structural change.  Follow its
+    # frozen forward provenance links, but do not re-edit the user-selected
+    # source element.  Reprocessing it could overwrite the feedback it just
+    # approved and would create a new LLM opportunity for unrelated changes.
+    scheduled = {
+        target_stage: set(elements)
+        for target_stage, elements in directly_linked.items()
+        if target_stage in {"sequence_diagram", "api_spec"}
+    }
+    for class_name in processed.get("class_diagram", set()):
+        for affected in affected_by_element(rtm, "class_diagram", class_name):
+            affected_stage, _, affected_element = affected.partition(":")
+            if affected_stage and affected_element:
+                scheduled.setdefault(affected_stage, set()).add(affected_element)
+
+    # Keep the design order after the reverse class patch.  An API feedback can
+    # therefore repair its exact sequence card against the bounded class result;
+    # a sequence feedback can repair only the exact API operation that binds it.
+    for next_stage in ("sequence_diagram", "api_spec"):
+        apply_targets(
+            next_stage,
+            scheduled.get(next_stage, set()),
+            trace_feedback,
+        )
+
+    # ERD is deterministic, never LLM-revised.  As before, do not materialize a
+    # future stage solely because an earlier one was edited.
+    if (
+        processed.get("class_diagram")
+        and working.get(DESIGN_SPECS["erd"].model_key)
+    ):
+        working.update(_reproject_erd(working))
+        if "erd" not in changed:
+            changed.append("erd")
+        touched["erd"] = ["(클래스 BCE 에서 재투영)"]
+
+    # Deployment has no reverse contract link.  It is updated only when the
+    # frozen class provenance explicitly names one of its elements.
+    apply_targets(
+        "deployment_diagram",
+        scheduled.get("deployment_diagram", set()),
+        trace_feedback,
+    )
+
+    return {
+        "state": working,
+        "changed": changed,
+        "touched": touched,
+        "related": sorted(linked_elements(rtm, stage, element)),
+    }
 
 
 def persist_cascade(app_id: str, result: dict[str, Any]) -> None:

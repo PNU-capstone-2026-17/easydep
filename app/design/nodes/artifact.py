@@ -280,6 +280,59 @@ def merge_model(
     return merged
 
 
+def assert_untargeted_elements_preserved(
+    spec: DesignArtifactSpec,
+    original: dict,
+    candidate: dict,
+    targets: set[str],
+) -> None:
+    """Fail closed if a targeted revision changed anything outside its scope.
+
+    ``merge_model`` normally makes this true by construction.  Keep this
+    independent assertion at the LLM boundary as a regression guard: before a
+    deterministic finalizer derives runtime bundle fields, no unrelated
+    element or top-level field from the LLM may enter the candidate.  The
+    selected elements may change; all other values must remain byte-for-value
+    equal to the persisted original model.
+    """
+    if not targets or not spec.elements:
+        return
+    if not isinstance(candidate, dict):
+        raise ValueError(f"{spec.stage} targeted revision did not return a model object")
+
+    for field, original_value in original.items():
+        if field not in spec.elements and candidate.get(field) != original_value:
+            raise ValueError(
+                f"{spec.stage} targeted revision changed unscoped field {field!r}"
+            )
+    for field in candidate:
+        if field not in original and field not in spec.elements:
+            raise ValueError(
+                f"{spec.stage} targeted revision added unscoped field {field!r}"
+            )
+
+    for list_field, key_of in spec.elements.items():
+        if list_field not in original and list_field not in candidate:
+            continue
+        before = original.get(list_field) or []
+        after = candidate.get(list_field) or []
+        if not isinstance(before, list) or not isinstance(after, list):
+            raise ValueError(
+                f"{spec.stage} targeted revision changed element collection {list_field!r}"
+            )
+        before_keys = [key_of(item) for item in before]
+        after_keys = [key_of(item) for item in after]
+        if before_keys != after_keys:
+            raise ValueError(
+                f"{spec.stage} targeted revision changed unscoped element identities"
+            )
+        for before_item, after_item, key in zip(before, after, before_keys):
+            if key not in targets and before_item != after_item:
+                raise ValueError(
+                    f"{spec.stage} targeted revision changed unscoped element {key!r}"
+                )
+
+
 def model_elements(spec: DesignArtifactSpec, model: dict) -> list[str]:
     """이 모델 안에서 지목할 수 있는 항목 이름들."""
     return [

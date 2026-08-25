@@ -29,7 +29,11 @@ from .prototype import PrototypeClient
 # changes a BCE scalar before Java contracts are generated, so no mapper can
 # repair the result without inventing a persistence decision.
 _IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
+    "api.operations-present",
     "erd.surrogate-key-collides",
+})
+_OPENAPI_HTTP_METHODS = frozenset({
+    "delete", "get", "head", "options", "patch", "post", "put", "trace",
 })
 
 
@@ -51,6 +55,51 @@ def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bo
         if isinstance(finding, dict)
         for rule_id in _IMPLEMENTATION_BLOCKING_DESIGN_RULES
     )
+
+
+def _has_rendered_openapi_operation(api_spec: object) -> bool:
+    """Check the rendered artifact, not just the intermediate endpoint model."""
+    if not isinstance(api_spec, dict):
+        return False
+    paths = api_spec.get("paths")
+    return isinstance(paths, dict) and any(
+        isinstance(path_item, dict)
+        and any(
+            str(method).lower() in _OPENAPI_HTTP_METHODS
+            and isinstance(operation, dict)
+            for method, operation in path_item.items()
+        )
+        for path_item in paths.values()
+    )
+
+
+def _missing_openapi_operation_report(readiness: dict[str, Any]) -> dict[str, Any]:
+    """Add a deterministic rendered-contract finding to a readiness report."""
+    finding = (
+        "OpenAPI paths에 구현 가능한 HTTP operation이 없음 — 유스케이스·BCE Control·"
+        "시퀀스 호출에 근거한 endpoint를 생성해야 함 [api.operations-present]"
+    )
+    if any(
+        "api.operations-present" in str(item.get("finding") or "")
+        for item in readiness.get("findings") or []
+        if isinstance(item, dict)
+    ):
+        return readiness
+
+    result = {**readiness}
+    findings = list(readiness.get("findings") or [])
+    findings.append({"stage": "api_spec", "finding": finding})
+    result["findings"] = findings
+    stages = [dict(item) for item in readiness.get("stages") or [] if isinstance(item, dict)]
+    api_stage = next((item for item in stages if item.get("stage") == "api_spec"), None)
+    if api_stage is None:
+        stages.append({"stage": "api_spec", "status": "NEEDS_INPUT", "findings": [finding]})
+    else:
+        api_stage["status"] = "NEEDS_INPUT"
+        api_stage["findings"] = [*list(api_stage.get("findings") or []), finding]
+    result["stages"] = stages
+    result["status"] = "NEEDS_INPUT"
+    return result
 
 
 class JobNotFound(KeyError):
@@ -85,11 +134,20 @@ class ImplementationWorker:
             )
             if not isinstance(design.get(key), dict) or not design[key]
         ]
+        readiness = design_readiness_report(design)
+        # Prefer the concrete rendered-contract defect over a generic missing
+        # model report: this is the exact reason both OpenAPI generators would
+        # reject the hand-off.
+        if not _has_rendered_openapi_operation(design.get("api_spec")):
+            return self._create_design_blocked_job(
+                app_id,
+                base_package,
+                _missing_openapi_operation_report(readiness),
+            )
         if missing_models and not self._has_substantial_rendered_design(design):
             return self._create_design_blocked_job(
                 app_id, base_package, self._missing_design_model_report(missing_models)
             )
-        readiness = design_readiness_report(design)
         if _has_implementation_blocking_design_finding(readiness):
             return self._create_design_blocked_job(app_id, base_package, readiness)
         job_id = uuid.uuid4().hex
@@ -122,11 +180,7 @@ class ImplementationWorker:
             return False
         if not isinstance(api_spec, dict):
             return False
-        paths = api_spec.get("paths")
-        return isinstance(paths, dict) and any(
-            isinstance(item, dict) and item
-            for item in paths.values()
-        )
+        return _has_rendered_openapi_operation(api_spec)
 
     def _create_design_blocked_job(
         self, app_id: str, base_package: str, readiness: dict[str, Any]
@@ -365,11 +419,37 @@ class ImplementationWorker:
             # user cancelled while that process was finishing.
             if self._read(job_id).get("status") == "CANCELLED":
                 return
+            record["run_root"] = str(run_root)
+            manifest_path = run_root / "reports" / "run-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.get("status") == "NEEDS_INPUT":
+                # Input-contract defects are expected and actionable.  Keep
+                # their immutable report and hand the job back to design
+                # instead of attempting planners that require generated code.
+                diagnostics = [
+                    str(item.get("message") or "")
+                    for item in manifest.get("diagnostics") or []
+                    if isinstance(item, dict) and item.get("severity") == "ERROR"
+                ]
+                workflow = {
+                    "schemaVersion": "implementation-workflow/v1alpha1",
+                    "status": "NEEDS_INPUT",
+                    "currentPhase": "input-validation",
+                    "updatedAt": _now(),
+                    "phases": [],
+                    "tasks": [],
+                    "nextRunnableTasks": [],
+                    "blockingReason": (
+                        "; ".join(diagnostics)
+                        or "Implementation input validation requires design changes."
+                    ),
+                }
+                self._apply_workflow(record, workflow)
+                return
             self._set_status(record, "PLANNING")
             workflow = self.client.plan_workflow(run_root, Path(record["job_path"]))
             if self._read(job_id).get("status") == "CANCELLED":
                 return
-            record["run_root"] = str(run_root)
             self._apply_workflow(record, workflow)
         except Exception as error:
             self._fail(record, error)
