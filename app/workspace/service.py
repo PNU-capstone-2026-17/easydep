@@ -1278,6 +1278,7 @@ class WorkspaceService:
             add_update("validate-input", "입력 및 설계 검증", "completed")
             add_update("prepare-feedback", "피드백 적용 준비", "running", progress_message)
 
+        workflow_complete = False
         if isinstance(workflow, dict):
             workflow_status = str(workflow.get("status") or "")
             current_phase = str(workflow.get("currentPhase") or "")
@@ -1368,6 +1369,11 @@ class WorkspaceService:
                 add_update("release-verification", "최종 릴리스 검증", "completed")
 
         current_file: str | None = None
+        if workflow_complete or job_status in TERMINAL_JOB_STATUSES:
+            # Agent event journals retain the last edited file after the run
+            # drains. Do not append a synthetic running step that can mask the
+            # completed implementation message in the progress card.
+            run_path = None
         if run_path is not None:
             events_dir = run_path / "reports" / "agent-executions"
             latest_path: Path | None = None

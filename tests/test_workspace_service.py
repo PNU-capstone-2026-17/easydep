@@ -919,6 +919,49 @@ def test_implementation_progress_snapshot_closes_release_verification_for_draine
     assert updates["release-verification"]["status"] == "completed"
 
 
+def test_implementation_progress_snapshot_does_not_reopen_completed_file_activity(
+    tmp_path,
+) -> None:
+    run_root = tmp_path / "run-001"
+    reports = run_root / "reports"
+    events = reports / "agent-executions"
+    events.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "READY",
+                "phases": [
+                    {"phaseId": "persistence", "status": "SUCCEEDED"},
+                    {"phaseId": "outbound-adapters", "status": "UNPLANNED"},
+                ],
+                "tasks": [{"taskId": "task-1", "phase": "persistence", "status": "SUCCEEDED"}],
+                "nextRunnableTasks": [],
+                "blockingReason": None,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (events / "task.events.jsonl").write_text(
+        json.dumps(
+            {"tool": "restricted_file_editor", "event": {"path": "application/src/Main.java"}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {"status": "COMPLETED", "run_root": str(run_root)}
+        )
+    finally:
+        service.shutdown()
+
+    assert "current_file" not in progress
+    assert progress["progress_status"] == "completed"
+
+
 def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     calls: list[dict] = []
 
