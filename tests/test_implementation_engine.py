@@ -1410,6 +1410,8 @@ TestRestTemplate http; CourseRepository courseRepository;
         self.assertIn("201 Created", prompt)
         self.assertIn("422 Invalid order", prompt)
         self.assertIn("every documented status", prompt)
+        self.assertIn("Do not pass an API", prompt)
+        self.assertIn("public no-argument constructor", prompt)
 
     def test_production_placeholder_gate_ignores_tests_and_rejects_main_java(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3654,6 +3656,7 @@ class ApplicationConfiguration {
         self.assertIn("doThrow", hints)
         self.assertIn("SQL Syntax / Reserved Keyword", hints)
         self.assertIn("Incompatible types", hints)
+        self.assertIn("API/BCE request conversion", hints)
 
     def test_runtime_failure_hints_preserve_exact_e2e_http_contract(self) -> None:
         hints = verification_failure_hints(

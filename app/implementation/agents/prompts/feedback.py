@@ -111,6 +111,20 @@ def verification_failure_hints(output: str) -> str:
             "- Incompatible types: Check package imports and exact contract types (e.g. java.time types vs domain models). "
             "Ensure constructor and method arguments match the exact declared parameter types in the contracts."
         )
+        object_conversion = re.findall(
+            r"(?P<source>[\w.$]+) cannot be converted to (?P<target>[\w.$]+)",
+            output,
+        )
+        if object_conversion:
+            pairs = ", ".join(
+                f"{source} -> {target}" for source, target in object_conversion
+            )
+            hints.append(
+                "- API/BCE request conversion: the generated HTTP parameter type is not the BCE "
+                f"Control parameter ({pairs}). Do not pass the body directly or cast it. Build the "
+                "exact BCE input using its public constructor/accessors; for an empty BCE DTO use "
+                "its public no-argument constructor, and map every shared field for non-empty DTOs."
+            )
     if "TooManyActualInvocations" in output:
         hints.append(
             "- TooManyActualInvocations: do not verify a broad matcher once when the "

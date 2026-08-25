@@ -321,6 +321,36 @@ def test_prepare_job_adds_missing_openapi_path_parameters(tmp_path: Path) -> Non
     assert len(delete_parameters) == 1
 
 
+def test_prepare_job_preserves_named_empty_openapi_dtos(tmp_path: Path) -> None:
+    client = PrototypeClient(settings(tmp_path))
+    path = client.prepare_job(
+        "job-empty-dto",
+        "12345678-0000-0000-0000-000000000000",
+        {
+            "api_spec": {
+                "openapi": "3.0.3",
+                "paths": {},
+                "components": {
+                    "schemas": {
+                        "CourseFilter": {"type": "object", "properties": {}},
+                        "Course": {
+                            "type": "object",
+                            "properties": {"id": {"type": "string"}},
+                        },
+                    }
+                },
+            }
+        },
+        "com.example.orders",
+        False,
+    )
+
+    job = json.loads(path.read_text(encoding="utf-8"))
+    openapi = json.loads((tmp_path / job["inputs"]["openapi"]).read_text(encoding="utf-8"))
+    assert openapi["components"]["schemas"]["CourseFilter"]["additionalProperties"] is False
+    assert "additionalProperties" not in openapi["components"]["schemas"]["Course"]
+
+
 def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -> None:
     job_path = tmp_path / "job" / "job.json"
     job_path.parent.mkdir(parents=True)

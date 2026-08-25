@@ -33,6 +33,7 @@ def _normalize_openapi_path_parameters(api_spec: Any) -> Any:
         return api_spec
 
     normalized = json.loads(json.dumps(api_spec))
+    _normalize_empty_object_schemas(normalized)
     for path, path_item in normalized["paths"].items():
         if not isinstance(path, str) or not isinstance(path_item, dict):
             continue
@@ -66,6 +67,31 @@ def _normalize_openapi_path_parameters(api_spec: Any) -> Any:
                     {"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
                 )
     return normalized
+
+
+def _normalize_empty_object_schemas(api_spec: dict[str, Any]) -> None:
+    """Keep named empty DTOs as closed schemas for OpenAPI generators.
+
+    OpenAPI Generator treats ``type: object`` schemas with no properties and
+    no ``additionalProperties`` declaration as free-form ``Object`` values.
+    That erases the name of a design DTO (for example ``CourseFilter``), so an
+    API adapter can no longer map it to the corresponding BCE type.  An empty
+    design DTO is a closed value, not an arbitrary JSON map; explicitly marking
+    it as closed preserves the generated model type without inventing fields.
+    """
+    components = api_spec.get("components")
+    schemas = components.get("schemas") if isinstance(components, dict) else None
+    if not isinstance(schemas, dict):
+        return
+    for schema in schemas.values():
+        if not isinstance(schema, dict):
+            continue
+        if (
+            schema.get("type") == "object"
+            and schema.get("properties", {}) == {}
+            and "additionalProperties" not in schema
+        ):
+            schema["additionalProperties"] = False
 
 
 class PrototypeClient:

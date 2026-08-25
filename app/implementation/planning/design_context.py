@@ -1073,6 +1073,12 @@ Rules:
 - Select Control operations only from the exact injected interfaces and sequence messages. Match
   request fields by name and compatible type; never fabricate domain values or silently drop a
   required input.
+- HTTP request DTOs and BCE input types are separate generated contracts. Do not pass an API
+  `Object` or API-model instance directly to a BCE method unless Java declares them assignable.
+  Convert the request explicitly to the exact BCE parameter type using only public constructors,
+  accessors, and fields present in both contracts. For a named empty request DTO whose BCE type
+  has no state, create the BCE value with its public no-argument constructor; never cast an
+  `Object` body or hide the mismatch with reflection.
 - Follow the reviewed API-to-Control binding below when one is supplied. Its `arguments` map
   is the only permitted HTTP-to-Control value flow and its `outcomes` map is the required
   Control-result-to-HTTP-status mapping. Do not replace it with a resource-name guess.
