@@ -1368,6 +1368,11 @@ Rules:
   only when required by H2/SQL and use the same normalized name in the migration.
 - Implement relationship ownership from the ERD cardinality and foreign-key direction. Add a
   bidirectional helper only when both navigation directions are represented in the contracts.
+- A collection annotated with `@OneToMany(mappedBy = "property")` is valid only when the target
+  entity declares that exact Java property as the owning `@ManyToOne` or `@OneToOne` association.
+  Never use a scalar foreign-key column as the `mappedBy` target. If this entity cannot declare or
+  safely coordinate that owning association, omit the inverse collection rather than emitting an
+  invalid one-sided bidirectional mapping.
 - An ERD comment of the form `easydep:erd-origin kind=multivalued` marks a generated 1NF
   collection table. It has no matching BCE Entity: map it through its annotated parent and field
   (for example with `@ElementCollection` and `@CollectionTable`) instead of inventing a domain

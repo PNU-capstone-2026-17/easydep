@@ -60,8 +60,23 @@ def schedule_cross_phase_repair(
 
     evidence_text = _evidence_text(evidence)
     causal_evidence = _causal_evidence_text(evidence)
-    owner_ids = _owners_named_in_evidence(tasks, failed_task_id, causal_evidence)
-    if not owner_ids:
+    mapped_by_failure = (
+        "is 'mappedby' a property named" in causal_evidence.lower()
+        or (
+            "annotationexception" in causal_evidence.lower()
+            and "mappedby" in causal_evidence.lower()
+        )
+    )
+    # A compiler path normally identifies one owner. Hibernate's mappedBy
+    # error is different: it describes an inconsistent pair, so prefer the
+    # pair-aware inference even when its stack trace happens to include only
+    # one entity source path.
+    owner_ids = (
+        _infer_upstream_owners(tasks, failed, causal_evidence)
+        if mapped_by_failure
+        else _owners_named_in_evidence(tasks, failed_task_id, causal_evidence)
+    )
+    if not owner_ids and not mapped_by_failure:
         owner_ids = _infer_upstream_owners(tasks, failed, causal_evidence)
     if not owner_ids:
         return None
@@ -289,6 +304,35 @@ def _infer_upstream_owners(
 ) -> set[str]:
     failed_type = str(failed.get("task_type", ""))
     lowered = evidence.lower()
+    if (
+        failed_type != "persistence-entities"
+        and (
+            "is 'mappedby' a property named" in lowered
+            or ("annotationexception" in lowered and "mappedby" in lowered)
+        )
+    ):
+        # Hibernate's mappedBy error names the entity that owns the missing
+        # property, but the inverse entity can also need correction. Re-plan
+        # every named persistence entity task; if an older Hibernate message
+        # does not expose a name, repair the small persistence-entity phase as
+        # a unit rather than retrying configuration or an integration test.
+        mentioned = {
+            name.lower()
+            for name in re.findall(r"\b([A-Za-z_]\w*)Entity\b", evidence)
+        }
+        entity_tasks = [
+            task for task in tasks
+            if task.get("task_type") == "persistence-entities"
+        ]
+        named = {
+            str(task["task_id"])
+            for task in entity_tasks
+            if any(
+                Path(str(path)).stem.removesuffix("Entity").lower() in mentioned
+                for path in task.get("allowed_write_paths", [])
+            )
+        }
+        return named or {str(task["task_id"]) for task in entity_tasks}
     if failed_type == "configuration" and re.search(r"repository|jpa|entitymanager|bean", lowered):
         return {
             str(task["task_id"]) for task in tasks

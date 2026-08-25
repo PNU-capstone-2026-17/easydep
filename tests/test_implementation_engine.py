@@ -247,6 +247,9 @@ class ImplementationParallelismTest(unittest.TestCase):
             )
             self.assertTrue(all(len(task.allowed_write_paths) == 1 for task in entity_tasks))
             self.assertTrue(all(len(task.allowed_write_paths) == 1 for task in repository_tasks))
+            entity_prompt = (run / entity_tasks[0].prompt_file).read_text(encoding="utf-8")
+            self.assertIn("mappedBy", entity_prompt)
+            self.assertIn("scalar foreign-key column", entity_prompt)
 
     def test_overlapping_outputs_force_sequential_batches(self) -> None:
         tasks = [
@@ -776,6 +779,71 @@ class LoadJobTest(unittest.TestCase):
             )
             self.assertEqual(1, len(plan["entries"]))
             self.assertEqual(3, plan["entries"][0]["revision"])
+
+    def test_mapped_by_context_failure_repairs_named_persistence_entities(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            tasks = [
+                {
+                    "task_id": "implement-student-entity",
+                    "task_type": "persistence-entities",
+                    "allowed_write_paths": [
+                        "application/src/main/java/example/persistence/entity/StudentEntity.java"
+                    ],
+                },
+                {
+                    "task_id": "implement-enrollment-entity",
+                    "task_type": "persistence-entities",
+                    "allowed_write_paths": [
+                        "application/src/main/java/example/persistence/entity/EnrollmentEntity.java"
+                    ],
+                },
+                {
+                    "task_id": "implement-application-wiring",
+                    "task_type": "configuration",
+                    "allowed_write_paths": ["application/src/main/java/example/Application.java"],
+                },
+                {
+                    "task_id": "implement-end-to-end-flow",
+                    "task_type": "integration-test",
+                    "allowed_write_paths": ["application/src/test/java/example/ApplicationFlowTest.java"],
+                },
+            ]
+            (reports / "run-manifest.json").write_text(
+                json.dumps({"implementation_tasks": tasks}), encoding="utf-8"
+            )
+
+            repair = schedule_cross_phase_repair(
+                run,
+                "implement-application-wiring",
+                {
+                    "testResults": (
+                        "AnnotationException: Collection 'StudentEntity.enrollments' "
+                        "is 'mappedBy' a property named 'student' which does not exist "
+                        "in target entity 'EnrollmentEntity'\n"
+                        "C:/work/application/src/main/java/example/persistence/entity/"
+                        "EnrollmentEntity.java:28"
+                    )
+                },
+            )
+
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertEqual(
+                ["implement-enrollment-entity", "implement-student-entity"],
+                repair["ownerTaskIds"],
+            )
+            self.assertEqual(
+                ["implement-application-wiring", "implement-end-to-end-flow"],
+                repair["revalidationTaskIds"],
+            )
+            plan = json.loads(
+                (reports / "repair-plan.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(1, len(plan["entries"]))
+            self.assertEqual(1, plan["entries"][0]["revision"])
 
     def test_warning_file_name_does_not_select_repair_owner(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1360,6 +1428,20 @@ TestRestTemplate http; CourseRepository courseRepository;
             _requires_cross_phase_repair(
                 "integration-test",
                 {"stderr": "StudentRepository available: expected at least 1 bean which qualifies as autowire candidate"},
+            )
+        )
+
+    def test_mapped_by_failure_in_wiring_skips_local_llm_repair(self) -> None:
+        self.assertTrue(
+            _requires_cross_phase_repair(
+                "configuration",
+                {
+                    "testResults": (
+                        "AnnotationException: Collection 'StudentEntity.enrollments' "
+                        "is 'mappedBy' a property named 'student' which does not exist "
+                        "in target entity 'EnrollmentEntity'"
+                    )
+                },
             )
         )
 

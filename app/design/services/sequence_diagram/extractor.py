@@ -387,6 +387,10 @@ that the inputs do not support.
   method call in an `opt` or `alt` just to express failure. A genuine retry
   must be an explicit `loop`; otherwise use a grounded output operation or a
   narrative/unresolved step for the exceptional outcome.
+- When an extension explicitly says that the actor retries, re-enters, or
+  re-submits the same input, reuse the already grounded Actor -> Boundary input
+  operation in that `loop`. It is a repetition of the original command, not a
+  new Boundary method or a semantically distinct user operation.
 - If a step is explicitly unresolved (status unresolved, TODO/TBD, or a question
   asking what behavior to perform), do not invent behavior for it. Leave it for
   the validation gate to report as requiring clarification.
@@ -2247,6 +2251,7 @@ def _generate_llm_use_case_diagram(
             classes,
             "Semantic extraction returned no grounded interaction messages.",
         )
+    _recover_explicit_actor_retries(extracted, specification, summary)
     covered_step_ids = {
         str(step_id)
         for message in extracted.get("Messages") or []
@@ -2300,6 +2305,128 @@ def _generate_llm_use_case_diagram(
         "UnresolvedSteps": unresolved,
         "NarrativeSteps": narrative,
     }
+
+
+_ACTOR_RETRY_PATTERN = re.compile(
+    r"\b(?:re[- ]?enter(?:s|ed|ing)?|re[- ]?submit(?:s|ted|ting)?|retry(?:ing|ies)?|"
+    r"try\s+again|enter\s+again|submit\s+again)\b",
+    re.IGNORECASE,
+)
+
+
+def _recover_explicit_actor_retries(
+    extracted: dict[str, Any], specification: dict[str, Any], summary: dict[str, Any]
+) -> None:
+    """Restore an omitted retry with the already grounded Boundary command.
+
+    An extension such as "the user re-enters the credentials" repeats a prior
+    input; it does not imply a new class operation.  Some semantic extraction
+    responses omit that repetition to avoid duplicate messages, which then
+    incorrectly turns a valid retry into a class-method proposal.  This repair
+    is intentionally narrow: it applies only to explicit actor retry wording,
+    reuses a preceding Actor -> Boundary call, and renders that call in a loop.
+    """
+    messages = extracted.get("Messages")
+    if not isinstance(messages, list):
+        return
+    use_case_id = str(specification.get("use_case_id") or "").strip()
+    actor = str(
+        specification.get("primary_actor") or summary.get("primary_actor") or "User"
+    ).strip()
+    if not use_case_id or not actor:
+        return
+
+    participants = extracted.get("Participants") or []
+    actor_aliases = {
+        str(item.get("alias") or "").strip()
+        for item in participants
+        if isinstance(item, dict) and str(item.get("kind") or "").lower() == "actor"
+    }
+    boundary_aliases = {
+        str(item.get("alias") or "").strip()
+        for item in participants
+        if isinstance(item, dict) and str(item.get("kind") or "").lower() == "boundary"
+    }
+    if not actor_aliases or not boundary_aliases:
+        return
+
+    covered = {
+        str(step_id).strip()
+        for message in messages
+        if isinstance(message, dict)
+        for step_id in message.get("step_ids") or []
+        if str(step_id).strip()
+    }
+    call_ids = {
+        str(message.get("call_id") or "").strip()
+        for message in messages
+        if isinstance(message, dict)
+    }
+    records = _flow_records(specification)
+    for record in records:
+        step_id = str(record.get("step_id") or "").strip()
+        if (
+            not step_id
+            or step_id in covered
+            or ":extension:" not in step_id
+            or not _actor_led(str(record.get("sentence") or ""), actor)
+            or not _ACTOR_RETRY_PATTERN.search(str(record.get("sentence") or ""))
+        ):
+            continue
+        anchor = re.match(rf"^{re.escape(use_case_id)}:extension:(\d+)[A-Za-z]*:", step_id)
+        if anchor is None:
+            continue
+        anchor_step_id = f"{use_case_id}:main:{anchor.group(1)}"
+        template_index = -1
+        template: dict[str, Any] | None = None
+        anchor_index = -1
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict):
+                continue
+            step_ids = {str(value).strip() for value in message.get("step_ids") or []}
+            if anchor_step_id in step_ids:
+                anchor_index = index
+            if (
+                str(message.get("source") or "").strip() in actor_aliases
+                and str(message.get("target") or "").strip() in boundary_aliases
+                and str(message.get("type") or "sync").strip().lower() in {"sync", "async"}
+                and method_call_signature(str(message.get("label") or ""))
+                and any(
+                    re.fullmatch(rf"{re.escape(use_case_id)}:main:\d+", candidate)
+                    for candidate in step_ids
+                )
+            ):
+                template_index = index
+                template = message
+        if template is None or template_index > anchor_index:
+            continue
+        fragment = dict(record.get("fragment") or {})
+        if not fragment:
+            continue
+        fragment.update({"type": "loop", "branch": "main"})
+        retry = dict(template)
+        retry["fragments"] = [fragment]
+        retry["use_case_ids"] = [use_case_id]
+        retry["step_ids"] = [step_id]
+        retry["reply_to"] = ""
+        suffix = 1
+        call_id = f"{use_case_id}-retry-{suffix}"
+        while call_id in call_ids:
+            suffix += 1
+            call_id = f"{use_case_id}-retry-{suffix}"
+        retry["call_id"] = call_id
+        retry["arguments"] = [
+            {
+                **argument,
+                "source_kind": "input",
+                "source_ref": step_id,
+            }
+            for argument in template.get("arguments") or []
+            if isinstance(argument, dict)
+        ]
+        messages.insert(anchor_index + 1, retry)
+        covered.add(step_id)
+        call_ids.add(call_id)
 
 
 def extract_sequence_diagrams(

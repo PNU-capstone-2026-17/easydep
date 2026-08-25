@@ -665,12 +665,22 @@ def _run_app_id(run_root: Path) -> str | None:
 def _requires_cross_phase_repair(
     task_type: str, evidence: dict[str, object]
 ) -> bool:
-    if task_type != "integration-test":
-        return False
     output = "\n".join(
         str(evidence.get(key, ""))
         for key in ("stdout", "stderr", "testResults")
     ).lower()
+    # Hibernate validates mappedBy while loading the application context. The
+    # failing task is often wiring or an integration test, but neither owns the
+    # persistence entity pair that defines the association. Return it to the
+    # cross-phase planner immediately instead of spending local LLM repair
+    # rounds on a task whose allowlist cannot contain the fix.
+    if task_type != "persistence-entities" and (
+        "is 'mappedby' a property named" in output
+        or ("annotationexception" in output and "mappedby" in output)
+    ):
+        return True
+    if task_type != "integration-test":
+        return False
     return any(
         marker in output
         for marker in (
