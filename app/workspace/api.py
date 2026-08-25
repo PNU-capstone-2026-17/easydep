@@ -187,6 +187,7 @@ def save_deployment_preferences(
 def get_workspace(app_id: str) -> dict[str, Any]:
     validate_app_id(app_id)
     state = require_app(app_id)
+    workspace_service.reconcile_implementation_command(app_id)
     web = to_web_response(state)
     artifacts = {
         name: {

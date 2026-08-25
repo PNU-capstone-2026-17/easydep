@@ -30,6 +30,59 @@ def test_workspace_tables_are_part_of_the_shared_database_schema() -> None:
     } <= set(Base.metadata.tables)
 
 
+def test_reconcile_implementation_command_closes_stale_running_command(monkeypatch) -> None:
+    command = {
+        "command_id": "command-1",
+        "action": "approve_implementation",
+        "status": "RUNNING",
+        "payload": {"job_id": "job-1"},
+    }
+    completed_job = {"job_id": "job-1", "status": "COMPLETED"}
+    updated = {**command, "status": "COMPLETED"}
+    events: list[dict] = []
+    monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
+    monkeypatch.setattr(workspace_module.implementation_worker, "get", lambda _job_id: completed_job)
+    monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: updated)
+    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
+    monkeypatch.setattr(repository, "now", lambda: datetime.now())
+
+    service = WorkspaceService()
+    try:
+        result = service.reconcile_implementation_command("app-1")
+    finally:
+        service.shutdown()
+
+    assert result["status"] == "COMPLETED"
+    assert events[0]["metadata"]["status"] == "COMPLETED"
+
+
+def test_reconcile_implementation_command_recovers_interrupted_command(monkeypatch) -> None:
+    command = {
+        "command_id": "command-1",
+        "action": "approve_implementation",
+        "status": "INTERRUPTED",
+        "payload": {"job_id": "job-1"},
+    }
+    updated = {**command, "status": "COMPLETED"}
+    monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {"job_id": "job-1", "status": "COMPLETED"},
+    )
+    monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: updated)
+    monkeypatch.setattr(repository, "append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(repository, "now", lambda: datetime.now())
+
+    service = WorkspaceService()
+    try:
+        result = service.reconcile_implementation_command("app-1")
+    finally:
+        service.shutdown()
+
+    assert result["status"] == "COMPLETED"
+
+
 def test_chat_event_timestamp_is_returned_as_explicit_korean_time() -> None:
     event = repository.event_dict(
         SimpleNamespace(

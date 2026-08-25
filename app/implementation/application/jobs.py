@@ -481,7 +481,9 @@ class ImplementationWorker:
         status = str(workflow.get("status", "FAILED"))
         if request:
             record["status"] = "AWAITING_APPROVAL"
-        elif status == "COMPLETE":
+        elif status == "COMPLETE" or (
+            status == "READY" and self._workflow_is_complete(workflow)
+        ):
             record["status"] = "COMPLETED"
         elif status in {"NEEDS_INPUT", "NEEDS_PLANNER", "FAILED"}:
             record["status"] = status
@@ -499,6 +501,34 @@ class ImplementationWorker:
             record.pop("blocking_details", None)
         record["updated_at"] = _now()
         self._write(record)
+
+    @staticmethod
+    def _workflow_is_complete(workflow: dict[str, Any]) -> bool:
+        """Treat a fully drained READY workflow as a completed execution.
+
+        Older workflow runners return ``READY`` after the final audit even
+        though every task has succeeded.  ``READY`` is also used for a newly
+        planned workflow, so only a task-bearing workflow with no runnable or
+        blocked work can be promoted to the job's terminal COMPLETED state.
+        """
+        tasks = workflow.get("tasks")
+        phases = workflow.get("phases")
+        if not isinstance(tasks, list) or not tasks:
+            return False
+        if not isinstance(phases, list) or not phases:
+            return False
+        if workflow.get("nextRunnableTasks"):
+            return False
+        if workflow.get("blockingReason") or workflow.get("blockingDetails"):
+            return False
+        return all(
+            isinstance(task, dict) and task.get("status") == "SUCCEEDED"
+            for task in tasks
+        ) and all(
+            isinstance(phase, dict)
+            and phase.get("status") in {"SUCCEEDED", "UNPLANNED"}
+            for phase in phases
+        )
 
     def _persist_outputs(self, record: dict[str, Any]) -> None:
         application = Path(record["run_root"]) / "application"

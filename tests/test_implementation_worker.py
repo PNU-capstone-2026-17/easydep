@@ -57,6 +57,54 @@ def test_needs_input_workflow_exposes_the_design_blocker_in_job_error(tmp_path: 
     }]
 
 
+def test_ready_workflow_with_all_tasks_succeeded_is_completed(tmp_path: Path) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    record = {
+        "job_id": "job-ready",
+        "status": "RUNNING",
+        "updated_at": "before",
+        "run_root": str(tmp_path / "run"),
+    }
+    try:
+        implementation_worker._apply_workflow(
+            record,
+            {
+                "status": "READY",
+                "nextRunnableTasks": [],
+                "phases": [{"status": "SUCCEEDED"}, {"status": "UNPLANNED"}],
+                "tasks": [{"status": "SUCCEEDED"}],
+            },
+        )
+    finally:
+        implementation_worker.shutdown()
+
+    assert record["status"] == "COMPLETED"
+
+
+def test_ready_workflow_with_pending_tasks_remains_ready(tmp_path: Path) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    record = {
+        "job_id": "job-planned",
+        "status": "PLANNING",
+        "updated_at": "before",
+        "run_root": str(tmp_path / "run"),
+    }
+    try:
+        implementation_worker._apply_workflow(
+            record,
+            {
+                "status": "READY",
+                "nextRunnableTasks": ["task-1"],
+                "phases": [{"status": "PENDING"}],
+                "tasks": [{"status": "PENDING"}],
+            },
+        )
+    finally:
+        implementation_worker.shutdown()
+
+    assert record["status"] == "READY"
+
+
 def test_feedback_request_trims_feedback() -> None:
     request = CreateImplementationFeedbackJobRequest(feedback="  rename the service  ")
     assert request.feedback == "rename the service"

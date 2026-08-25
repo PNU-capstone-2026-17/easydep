@@ -115,6 +115,64 @@ class WorkspaceService:
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
 
+    def reconcile_implementation_command(self, app_id: str) -> dict[str, Any] | None:
+        """Close a stale workspace command after the durable worker completed.
+
+        A completed workflow can be persisted as ``READY`` by older runners.
+        The implementation worker is authoritative, so reconcile that state
+        when the workspace is read instead of leaving the UI in an endless
+        running state after a server restart or monitor interruption.
+        """
+        command = repository.latest_command(app_id)
+        if not command or command.get("status") not in {"RUNNING", "INTERRUPTED"}:
+            return command
+        if command.get("action") not in {
+            "start_implementation",
+            "rerun_implementation",
+            "approve_implementation",
+        }:
+            return command
+        payload = command.get("payload") or {}
+        job_id = str(payload.get("job_id") or "")
+        if not job_id:
+            return command
+        try:
+            job = implementation_worker.get(job_id)
+        except Exception:
+            return command
+        job_status = str(job.get("status") or "")
+        workflow = job.get("workflow")
+        workflow_complete = (
+            isinstance(workflow, dict)
+            and implementation_worker._workflow_is_complete(workflow)
+        )
+        if job_status != "COMPLETED" and not (
+            job_status == "READY" and workflow_complete
+        ):
+            return command
+        result = {
+            "message": "Implementation completed.",
+            "job_id": job_id,
+            "job": job,
+        }
+        updated = repository.update_command(
+            command["command_id"],
+            status="COMPLETED",
+            result=result,
+            completed_at=repository.now(),
+            error=None,
+        )
+        repository.append_event(
+            app_id,
+            command_id=command["command_id"],
+            stage="implementation",
+            kind="status",
+            actor="system",
+            text="Implementation completed.",
+            metadata={"status": "COMPLETED", "job_id": job_id},
+        )
+        return updated
+
     @staticmethod
     def _sequence_target_feedbacks(context: dict[str, Any]) -> list[ReviseRequest]:
         """Parse UI-provided, per-UC feedback without inferring any target."""
