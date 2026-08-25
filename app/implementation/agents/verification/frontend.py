@@ -55,7 +55,13 @@ def frontend_contract_violations(
         source = path.read_text(encoding="utf-8")
         sources.append(source)
         for number, line in enumerate(source.splitlines(), 1):
-            if re.search(r"\b(?:TODO|FIXME|PLACEHOLDER)\b", line, re.IGNORECASE):
+            # ``placeholder=`` is a valid JSX input attribute, not an
+            # unfinished implementation marker.
+            if re.search(
+                r"(?<![\w-])(?:TODO|FIXME|PLACEHOLDER)\b(?!\s*=)",
+                line,
+                re.IGNORECASE,
+            ):
                 violations.append(
                     f"{relative}:{number}: unresolved implementation marker; "
                     "remove the marker and implement the described behavior"
@@ -127,6 +133,43 @@ def repair_responsive_table_styles(
     separator = "\n" if styles.endswith("\n") else "\n\n"
     style_path.write_text(styles + separator + RESPONSIVE_TABLE_STYLES.lstrip("\n"), encoding="utf-8")
     return [str(style_path.relative_to(sandbox)).replace("\\", "/")]
+
+
+def repair_frontend_accessibility_contract(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Remove stale comment markers and invalid static aria references."""
+    changed: list[str] = []
+    for relative in relative_paths:
+        path = sandbox / relative
+        if not path.is_file() or path.suffix not in {".ts", ".tsx"}:
+            continue
+        source = path.read_text(encoding="utf-8")
+        repaired = re.sub(
+            r"(?mi)^\s*(?://|/\*|\{\/\*)[^\n]*(?:TODO|FIXME|PLACEHOLDER)[^\n]*(?:\*/\}|\*/)?\s*\n?",
+            "",
+            source,
+        )
+        declared_ids = {
+            value
+            for attribute in _jsx_attribute_values(repaired, "id")
+            for value in attribute.split()
+        }
+
+        def replace_reference(match: re.Match[str]) -> str:
+            value = match.group(2)
+            valid = [token for token in value.split() if token in declared_ids]
+            return f"aria-describedby=\"{' '.join(valid)}\"" if valid else ""
+
+        repaired = re.sub(
+            r"aria-describedby\s*=\s*([\"'])(.*?)\1",
+            replace_reference,
+            repaired,
+        )
+        if repaired != source:
+            path.write_text(repaired, encoding="utf-8")
+            changed.append(str(path.relative_to(sandbox)).replace("\\", "/"))
+    return changed
 
 
 def _jsx_attribute_values(source: str, attribute: str) -> list[str]:

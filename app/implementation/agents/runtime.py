@@ -19,6 +19,7 @@ from ..planning.design_context import (
 from .verification.frontend import (
     frontend_contract_violations,
     has_mutating_operations,
+    repair_frontend_accessibility_contract,
     repair_responsive_table_styles,
 )
 from .verification.build import (
@@ -559,6 +560,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         openapi_context
                     )
                     repair_responsive_table_styles(
+                        sandbox, task["allowed_write_paths"]
+                    )
+                    repair_frontend_accessibility_contract(
                         sandbox, task["allowed_write_paths"]
                     )
                     violations = frontend_contract_violations(

@@ -10,7 +10,10 @@ from app.db.models import TYPE_FRONTEND_SOURCE_CODE
 from app.implementation.config import ImplementationSettings
 from app.implementation.agents.workspace import snapshot_files
 from app.implementation.agents.verification.build import verify_frontend_workspace
-from app.implementation.agents.verification.frontend import frontend_contract_violations
+from app.implementation.agents.verification.frontend import (
+    frontend_contract_violations,
+    repair_frontend_accessibility_contract,
+)
 from app.implementation.agents.verification.frontend import repair_responsive_table_styles
 from app.implementation.planning.design_context import generate_frontend_tasks
 from app.implementation.planning.frontend_contracts import (
@@ -442,6 +445,45 @@ def test_frontend_responsive_table_repair_is_deterministic_and_idempotent(tmp_pa
     assert "overflow-x: auto" in first
     assert repair_responsive_table_styles(tmp_path, paths) == []
     assert styles.read_text(encoding="utf-8") == first
+
+
+def test_frontend_accessibility_repair_removes_stale_markers_and_aria_references(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "application/frontend/src/pages/OverviewPage.tsx"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "// TODO: generated placeholder\n"
+        "export default function App(){return <section aria-describedby=\"searchError\">ok</section>;}",
+        encoding="utf-8",
+    )
+
+    changed = repair_frontend_accessibility_contract(
+        tmp_path, ["application/frontend/src/pages/OverviewPage.tsx"]
+    )
+
+    assert changed == ["application/frontend/src/pages/OverviewPage.tsx"]
+    repaired = source.read_text(encoding="utf-8")
+    assert "TODO" not in repaired and "PLACEHOLDER" not in repaired
+    assert "aria-describedby" not in repaired
+
+
+def test_frontend_contract_does_not_treat_input_placeholder_as_marker(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "application/frontend/src/App.tsx"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "import { OrdersApi } from './generated/src';"
+        "export default function App(){return <input placeholder=\"Search courses\" />;}",
+        encoding="utf-8",
+    )
+
+    violations = frontend_contract_violations(
+        tmp_path, ["application/frontend/src/App.tsx"]
+    )
+
+    assert not any("implementation marker" in item for item in violations)
 
 
 def test_frontend_verification_runs_install_then_production_build(
