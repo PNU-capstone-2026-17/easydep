@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 
 def render_verification_feedback(
     evidence: dict[str, object],
@@ -79,6 +81,25 @@ Current allowlisted sources:
 
 def verification_failure_hints(output: str) -> str:
     hints: list[str] = []
+    missing_paths = re.findall(r"Missing HTTP path evidence:\s*(\S+)", output)
+    if missing_paths:
+        expected = ", ".join(dict.fromkeys(missing_paths))
+        hints.append(
+            "- E2E path contract: the request URI must resolve exactly to the listed "
+            f"template(s) ({expected}). Use the template literally or concatenate only "
+            "the declared path variables; remove any extra suffix, prefix, or resource "
+            "segment. Do not substitute a similar endpoint."
+        )
+    missing_methods = re.findall(
+        r"Missing HTTP method evidence for scenario:\s*(\S+\s+\S+)", output
+    )
+    if missing_methods:
+        expected = ", ".join(dict.fromkeys(missing_methods))
+        hints.append(
+            "- E2E method contract: invoke the exact HTTP verb with TestRestTemplate "
+            f"or MockMvc for each listed scenario ({expected}); do not replace it with "
+            "a repository or controller call."
+        )
     if 'expected "identifier"' in output or "Syntax error in SQL statement" in output or "JdbcSQLSyntaxErrorException" in output:
         hints.append(
             "- SQL Syntax / Reserved Keyword: H2/SQL query or table definition contains a reserved keyword "

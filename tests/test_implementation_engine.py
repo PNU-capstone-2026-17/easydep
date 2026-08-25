@@ -3643,6 +3643,15 @@ class ApplicationConfiguration {
         self.assertIn("SQL Syntax / Reserved Keyword", hints)
         self.assertIn("Incompatible types", hints)
 
+    def test_runtime_failure_hints_preserve_exact_e2e_http_contract(self) -> None:
+        hints = verification_failure_hints(
+            "Missing HTTP path evidence: /courses/{courseId}\n"
+            "Missing HTTP method evidence for scenario: GET /courses/{courseId}"
+        )
+        self.assertIn("resolve exactly", hints)
+        self.assertIn("remove any extra suffix", hints)
+        self.assertIn("exact HTTP verb", hints)
+
     def test_event_journal_writes_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "events.jsonl"
