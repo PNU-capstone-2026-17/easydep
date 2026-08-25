@@ -121,6 +121,7 @@ from app.implementation.workflows.coordinator import (
     _e2e_prerequisites_complete,
     _phase_task_batches,
     reconcile_workflow_state,
+    _write_json_atomic,
     validate_approval,
     validate_workflow_approval,
     write_transmission_request,
@@ -128,6 +129,16 @@ from app.implementation.workflows.coordinator import (
 
 
 class ImplementationParallelismTest(unittest.TestCase):
+    def test_atomic_state_write_uses_unique_temporary_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "reports" / "workflow-state.json"
+            _write_json_atomic(target, {"status": "RUNNING"})
+            self.assertEqual(
+                json.loads(target.read_text(encoding="utf-8")),
+                {"status": "RUNNING"},
+            )
+            self.assertEqual(list(target.parent.glob("*.tmp")), [])
+
     def test_e2e_planning_is_deferred_until_non_e2e_outputs_exist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory)

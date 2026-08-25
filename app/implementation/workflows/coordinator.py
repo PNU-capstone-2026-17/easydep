@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1163,11 +1166,38 @@ def _read_json(path: Path) -> dict[str, object]:
 
 def _write_json_atomic(path: Path, value: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    temporary.replace(path)
+    temporary_name: str | None = None
+    try:
+        # A shared ``workflow-state.json.tmp`` collides when a retry or a
+        # parallel worker persists state at the same time.  Windows also
+        # briefly rejects replace while an antivirus/indexer has the target
+        # open, so use a unique file and retry only that transient operation.
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_name = handle.name
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+        temporary = Path(temporary_name)
+        for attempt in range(5):
+            try:
+                os.replace(temporary, path)
+                temporary_name = None
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        if temporary_name:
+            try:
+                Path(temporary_name).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _now() -> str:
