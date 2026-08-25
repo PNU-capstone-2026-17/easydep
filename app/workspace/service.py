@@ -151,9 +151,10 @@ class WorkspaceService:
         ):
             return command
         result = {
-            "message": "Implementation completed.",
+            "message": "Review the generated implementation artifacts below.",
             "job_id": job_id,
             "job": job,
+            "review_artifacts": True,
         }
         updated = repository.update_command(
             command["command_id"],
@@ -1487,9 +1488,10 @@ class WorkspaceService:
                 if status != "COMPLETED":
                     raise RuntimeError(str(current.get("error") or f"Implementation job {status}"))
                 return {
-                    "message": "Implementation completed.",
+                    "message": "Review the generated implementation artifacts below.",
                     "job_id": job_id,
                     "job": current,
+                    "review_artifacts": True,
                 }
             time.sleep(1)
 

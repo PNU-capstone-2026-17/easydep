@@ -145,6 +145,13 @@
     if (event.stage === 'implementation' && event.kind === 'error') {
       return 'An implementation error occurred. Review the detailed error log below.';
     }
+    if (
+      event.stage === 'implementation' &&
+      event.kind === 'status' &&
+      String(event.metadata?.status ?? '') === 'COMPLETED'
+    ) {
+      return 'Review the generated implementation artifacts below.';
+    }
     return event.text;
   }
 </script>

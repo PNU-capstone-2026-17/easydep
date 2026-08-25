@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Braces, CheckCircle2, Clock3, FileText, Image, Layers3, Maximize2, ShieldCheck, X } from '@lucide/svelte';
+  import { Braces, Check, CheckCircle2, Clock3, Copy, FileCode2, FileText, Image, Layers3, Maximize2, ShieldCheck, X } from '@lucide/svelte';
   import type { ArtifactDocument, FileArtifactSnapshot, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
   import { getArtifactFile, getFileArtifactVersions, getSequenceDiagrams, getVersions } from '$lib/api';
   import { errorMessage } from '$lib/utils';
@@ -45,6 +45,7 @@
   let selectedFile = $state('');
   let fileContent = $state('');
   let fileError = $state('');
+  let copiedFile = $state(false);
   let sequenceDiagrams = $state<SequenceDiagramSummary[]>([]);
   let sequenceError = $state('');
   let sequenceLoading = $state(false);
@@ -56,6 +57,10 @@
   let previouslySelected = '';
   let content = $derived(document?.artifacts?.[selected]);
   let fileArtifact = $derived(fileArtifacts[selected]);
+  let implementationStages = $derived(
+    Object.keys(fileArtifacts).filter((stage) => Boolean(fileArtifacts[stage]))
+  );
+  let fileLines = $derived(fileContent.split('\n'));
   let validation = $derived(document?.validation?.[selected]);
   // The sequence artifact itself changes when feedback is applied, even when
   // the UC summary list keeps the same IDs.  Track it separately so images
@@ -142,6 +147,27 @@
     } catch (error) {
       fileError = errorMessage(error);
       fileContent = '';
+    }
+  }
+
+  function fileLanguage(path: string): string {
+    const extension = path.split('.').pop()?.toLowerCase() ?? '';
+    return {
+      java: 'Java', kt: 'Kotlin', ts: 'TypeScript', tsx: 'TSX', js: 'JavaScript',
+      svelte: 'Svelte', py: 'Python', yml: 'YAML', yaml: 'YAML', json: 'JSON',
+      tf: 'Terraform', dockerfile: 'Dockerfile', xml: 'XML', gradle: 'Gradle',
+      properties: 'Properties', sh: 'Shell', sql: 'SQL', md: 'Markdown'
+    }[extension] ?? (path.endsWith('Dockerfile') ? 'Dockerfile' : 'Text');
+  }
+
+  async function copySelectedFile() {
+    if (!fileContent || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(fileContent);
+      copiedFile = true;
+      window.setTimeout(() => (copiedFile = false), 1600);
+    } catch {
+      copiedFile = false;
     }
   }
 
@@ -278,18 +304,67 @@
         </div>
       {/if}
       {#if fileArtifact}
-        <div class="mb-3">
-          <select
-            class="focus-ring h-9 w-full rounded-xl border border-[#dadbd4] bg-white px-3 text-xs"
-            value={selectedFile}
-            onchange={(event) => loadFile(event.currentTarget.value)}
-            aria-label="Select file"
-          >
-            {#each fileArtifact.files as file}<option value={file.path}>{file.path}</option>{/each}
-          </select>
-        </div>
-        {#if fileError}<p class="mb-2 text-xs text-[#9a4139]">{fileError}</p>{/if}
-        <pre class="prose-json min-h-40 overflow-auto rounded-xl border border-[#e1e1db] bg-white p-3">{fileContent}</pre>
+        <section class="overflow-hidden rounded-xl border border-[#d9ddd7] bg-white shadow-[0_10px_24px_rgba(32,48,38,.06)]" aria-label="Implementation source review">
+          <header class="border-b border-[#e4e7e1] bg-[#f6f8f4] px-3 py-3">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-[10px] font-bold uppercase tracking-[.13em] text-[#65806d]">Implementation review</p>
+                <h3 class="mt-0.5 text-sm font-semibold text-[#30362f]">{artifactLabels[selected]}</h3>
+              </div>
+              <span class="rounded-full border border-[#d4e5d9] bg-white px-2 py-1 text-[10px] font-semibold text-[#467055]">{fileArtifact.files.length} files</span>
+            </div>
+            <div class="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Implementation artifact categories">
+              {#each implementationStages as stage}
+                <button
+                  class="focus-ring rounded-md border px-2 py-1 text-[10px] font-semibold transition {selected === stage ? 'border-[#78a88a] bg-[#eaf5ed] text-[#24553d]' : 'border-[#dfe3dc] bg-white text-[#656960] hover:bg-[#f3f6f2]'}"
+                  role="tab"
+                  aria-selected={selected === stage}
+                  onclick={() => onSelect(stage)}
+                >{artifactLabels[stage] ?? stage}</button>
+              {/each}
+            </div>
+          </header>
+          <div class="grid min-h-[30rem] grid-cols-[minmax(10rem,31%)_minmax(0,1fr)] bg-[#fcfdfb]">
+            <nav class="scrollbar-thin overflow-auto border-r border-[#e4e7e1] bg-[#f5f7f3] p-2" aria-label="Source files">
+              <p class="px-2 pb-2 pt-1 text-[9px] font-bold uppercase tracking-[.13em] text-[#83887e]">Explorer</p>
+              <div class="space-y-0.5">
+                {#each fileArtifact.files as file}
+                  <button
+                    class="focus-ring flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition {selectedFile === file.path ? 'bg-[#dceee1] text-[#24553d]' : 'text-[#596057] hover:bg-[#e9eee9]'}"
+                    onclick={() => loadFile(file.path)}
+                    title={file.path}
+                  >
+                    <FileCode2 size={13} class="shrink-0" />
+                    <span class="min-w-0 truncate font-mono">{file.path}</span>
+                  </button>
+                {/each}
+              </div>
+            </nav>
+            <div class="flex min-w-0 flex-col overflow-hidden bg-[#1e2420]">
+              <header class="flex min-w-0 items-center justify-between gap-2 border-b border-white/10 bg-[#262f29] px-3 py-2 text-[10px] text-[#c9d2ca]">
+                <div class="min-w-0 truncate font-mono">{selectedFile || 'Select a file'}</div>
+                <div class="flex shrink-0 items-center gap-2">
+                  <span class="rounded bg-white/10 px-1.5 py-0.5 text-[9px] font-semibold text-[#d9e8dc]">{fileLanguage(selectedFile)}</span>
+                  <button class="focus-ring flex items-center gap-1 rounded px-1.5 py-1 hover:bg-white/10" onclick={copySelectedFile} aria-label="Copy source code">
+                    {#if copiedFile}<Check size={12} /> Copied{:else}<Copy size={12} /> Copy{/if}
+                  </button>
+                </div>
+              </header>
+              {#if fileError}
+                <p class="m-3 rounded-md border border-[#8e4a42] bg-[#3b2623] p-2 text-xs text-[#ffb8ae]">{fileError}</p>
+              {:else}
+                <div class="scrollbar-thin flex-1 overflow-auto py-3 font-mono text-[12px] leading-6" aria-label="Source code">
+                  {#each fileLines as line, index}
+                    <div class="grid min-w-max grid-cols-[3.5rem_minmax(0,1fr)] px-3 hover:bg-white/[0.035]">
+                      <span class="select-none pr-4 text-right text-[#778179]">{index + 1}</span>
+                      <code class="whitespace-pre text-[#e3ebe4]">{line || ' '}</code>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+        </section>
       {:else}
       {#if diagramArtifactTypes.has(selected)}
         <div class="mb-4 overflow-hidden rounded-xl border border-[#deded7] bg-white p-3">
