@@ -352,7 +352,7 @@ def test_api_control_contract_detects_missing_binding_before_implementation():
     report = design_readiness_report({**state, "api_spec_model": model}, ("api_spec",))
 
     assert "api.control-binding-exists" in found
-    assert report["status"] == "NEEDS_INPUT"
+    assert report["status"] == "BLOCKED"
 
 
 def test_api_control_contract_accepts_exact_mapping_and_projects_openapi_extension():

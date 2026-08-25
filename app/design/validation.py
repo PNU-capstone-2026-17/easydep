@@ -1,23 +1,53 @@
 """Design-readiness checks shared by design hand-off and implementation entry."""
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
+from app.core.validation import ValidationReport
 from app.design.knowledge.detectors import (
-    class_diagram_findings,
-    erd_findings,
+    Finding,
+    api_spec_validation_report,
+    class_diagram_validation_report,
+    erd_validation_report,
     sequence_diagram_findings,
-    api_spec_findings,
 )
 
 DESIGN_READINESS_SCHEMA = "easydep-design-readiness/v1alpha1"
 
 
-_CHECKED_STAGES: tuple[tuple[str, str, str, Callable[[dict, dict], list]], ...] = (
-    ("class_diagram", "extracted_bce_classes", "class_diagram_check", class_diagram_findings),
+def _finding_payload(finding: Finding) -> dict[str, Any]:
+    """Keep display text while exposing typed validation evidence."""
+    return {
+        "ruleId": finding.rule_id,
+        "finding": finding.as_issue(),
+        "message": finding.message,
+        "location": finding.location,
+        "requiresUserInput": finding.requires_user_input,
+        "origin": finding.origin,
+    }
+
+
+def _readiness_status(
+    findings: list[Finding], validation_status: str | None = None
+) -> str:
+    """Map typed validation evidence to the design hand-off vocabulary."""
+    if validation_status in {"disabled", "error"}:
+        return "BLOCKED"
+    if not findings:
+        return "READY"
+    if all(finding.requires_user_input for finding in findings):
+        return "NEEDS_INPUT"
+    return "BLOCKED"
+
+
+_CHECKED_STAGES: tuple[
+    tuple[str, str, str, Callable[[dict, dict], ValidationReport | list[Finding]]], ...
+] = (
+    ("class_diagram", "extracted_bce_classes", "class_diagram_check", class_diagram_validation_report),
     ("sequence_diagram", "sequence_diagram_model", "sequence_diagram_check", sequence_diagram_findings),
-    ("api_spec", "api_spec_model", "api_spec_check", api_spec_findings),
-    ("erd", "erd_bce_classes", "erd_check", erd_findings),
+    ("api_spec", "api_spec_model", "api_spec_check", api_spec_validation_report),
+    ("erd", "erd_bce_classes", "erd_check", erd_validation_report),
 )
 
 
@@ -33,12 +63,21 @@ def design_readiness_report(
         model = state.get(model_key)
         if not isinstance(model, dict) or not model:
             continue
-        findings = check(model, state)
+        checked = check(model, state)
+        validation_status: str | None = None
+        if isinstance(checked, ValidationReport):
+            validation_status = checked.status
+            findings = [Finding.model_validate(finding) for finding in checked.findings]
+        else:
+            # Sequence collections include cross-diagram checks in their
+            # established public list-returning adapter.
+            findings = checked
         reports.append(
             {
                 "stage": stage,
                 "findings": [finding.as_issue() for finding in findings],
-                "status": "READY" if not findings else "NEEDS_INPUT",
+                "findingRecords": [_finding_payload(finding) for finding in findings],
+                "status": _readiness_status(findings, validation_status),
             }
         )
     unresolved = [
@@ -46,11 +85,21 @@ def design_readiness_report(
         for report in reports
         for finding in report["findings"]
     ]
+    status = "READY"
+    if any(report["status"] == "BLOCKED" for report in reports):
+        status = "BLOCKED"
+    elif any(report["status"] == "NEEDS_INPUT" for report in reports):
+        status = "NEEDS_INPUT"
     return {
         "schemaVersion": DESIGN_READINESS_SCHEMA,
-        "status": "READY" if not unresolved else "NEEDS_INPUT",
+        "status": status,
         "stages": reports,
         "findings": unresolved,
+        "findingRecords": [
+            {"stage": report["stage"], **finding}
+            for report in reports
+            for finding in report["findingRecords"]
+        ],
     }
 
 

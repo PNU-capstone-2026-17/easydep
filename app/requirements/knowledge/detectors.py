@@ -23,13 +23,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
 
+from app.core.validation import CheckSpec, ValidationReport, run_checks
+from app.core.validation import Finding as ValidationFinding
 from app.requirements.knowledge import rules
 
 
-@dataclass(frozen=True)
-class Finding:
+class Finding(ValidationFinding):
     """규칙 위반 하나. **어느 규칙인지를 들고 다닌다.**"""
 
     rule_id: str
@@ -68,7 +68,7 @@ def _locations(spec: dict) -> Iterator[tuple[str, str]]:
             yield handling["sub_step"], handling["sentence"]
 
 
-def extension_refs(spec: dict) -> list[Finding]:
+def extension_refs(spec: dict, _context: object | None = None) -> list[Finding]:
     """확장의 분기·복귀 참조가 주 시나리오를 실제로 가리키는지."""
     rule_id = "spec.extension-reference-integrity"
     step_nums = {s["step_number"] for s in spec.get("main_scenario", [])}
@@ -94,7 +94,7 @@ def extension_refs(spec: dict) -> list[Finding]:
     return found
 
 
-def branch_words(spec: dict) -> list[Finding]:
+def branch_words(spec: dict, _context: object | None = None) -> list[Finding]:
     """문장에 명시적 분기어(if/else)가 있는지."""
     return [
         Finding("spec.no-branching-in-a-step", "branch word (if/else); move the branch to an extension", loc)
@@ -103,7 +103,7 @@ def branch_words(spec: dict) -> list[Finding]:
     ]
 
 
-def control_tokens(spec: dict) -> list[Finding]:
+def control_tokens(spec: dict, _context: object | None = None) -> list[Finding]:
     """문장에 시나리오 종결 토큰(Success!/Fail!)이 산문으로 섞였는지."""
     return [
         Finding("spec.no-control-tokens-in-prose", "control token (Success!/Fail!); use the outcome field", loc)
@@ -112,7 +112,7 @@ def control_tokens(spec: dict) -> list[Finding]:
     ]
 
 
-def ui_terms(spec: dict) -> list[Finding]:
+def ui_terms(spec: dict, _context: object | None = None) -> list[Finding]:
     """문장에 UI 용어(예시 단어)가 있는지."""
     found: list[Finding] = []
     for loc, sentence in _locations(spec):
@@ -124,7 +124,7 @@ def ui_terms(spec: dict) -> list[Finding]:
     return found
 
 
-def contract_fields(spec: dict) -> list[Finding]:
+def contract_fields(spec: dict, _context: object | None = None) -> list[Finding]:
     """계약(전제조건·성공보장)이 비어 있는지."""
     rule_id = "spec.contract-completeness"
     found: list[Finding] = []
@@ -135,9 +135,17 @@ def contract_fields(spec: dict) -> list[Finding]:
     return found
 
 
-#: 검출기 이름 → 구현. 이름은 `rules.Rule.detector`가 가리키는 그것이다.
-#: 양방향으로 맞물려 있어야 한다(선언만 있고 구현이 없거나, 구현만 있고 아무 규칙도
-#: 안 쓰는 검출기가 있으면 테스트가 실패한다).
+#: Runtime validation uses the direct registry below.  It follows the legacy
+#: detector order exactly so existing text output remains stable.
+SPEC_CHECKS: tuple[CheckSpec[dict, object | None], ...] = (
+    CheckSpec("spec.extension-reference-integrity", extension_refs),
+    CheckSpec("spec.no-branching-in-a-step", branch_words),
+    CheckSpec("spec.no-control-tokens-in-prose", control_tokens),
+    CheckSpec("spec.black-box-no-ui-mechanics", ui_terms),
+    CheckSpec("spec.contract-completeness", contract_fields),
+)
+
+#: Legacy name-to-callable catalog retained for rule-audit and external callers.
 SPEC_DETECTORS: dict[str, Callable[[dict], list[Finding]]] = {
     "extension_refs": extension_refs,
     "branch_words": branch_words,
@@ -152,7 +160,12 @@ def spec_findings(spec: dict) -> list[Finding]:
 
     검출기 등록 순서를 따른다 — 참조 무결성 → 문장 정적 체크 → 계약 완결성.
     """
-    found: list[Finding] = []
-    for detect in SPEC_DETECTORS.values():
-        found.extend(detect(spec))
-    return found
+    report = spec_validation_report(spec)
+    if report.errors:
+        raise RuntimeError("; ".join(report.errors))
+    return [Finding.model_validate(finding) for finding in report.findings]
+
+
+def spec_validation_report(spec: dict) -> ValidationReport:
+    """Return typed deterministic evidence while preserving ``spec_findings``."""
+    return run_checks(SPEC_CHECKS, spec, None)

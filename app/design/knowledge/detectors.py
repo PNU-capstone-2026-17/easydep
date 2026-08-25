@@ -43,9 +43,10 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
+from app.core.validation import CheckSpec, ValidationReport, run_checks
+from app.core.validation import Finding as ValidationFinding
 from app.design import rtm
 from app.design.knowledge import rules
 from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
@@ -68,8 +69,7 @@ BCE_STEREOTYPES = (BOUNDARY, CONTROL, ENTITY)
 _PASCAL_CASE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 
 
-@dataclass(frozen=True)
-class Finding:
+class Finding(ValidationFinding):
     """규칙 위반 하나. **어느 규칙인지를 들고 다닌다.**"""
 
     rule_id: str
@@ -81,6 +81,13 @@ class Finding:
         """상태·게이트·저장소에 실리는 한 줄. 꼬리표로 근거가 함께 간다."""
         head = f"{self.location}: {self.message}" if self.location else self.message
         return f"{head} {rules.tag_of(self.rule_id)}"
+
+
+def _findings_from_report(report: ValidationReport) -> list[Finding]:
+    """Project shared report records back to the legacy design Finding type."""
+    if report.errors:
+        raise RuntimeError("; ".join(report.errors))
+    return [Finding.model_validate(finding) for finding in report.findings]
 
 
 # ---------------------------------------------------------------------------
@@ -960,6 +967,31 @@ ERD_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
 }
 
 
+ERD_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
+    CheckSpec("erd.relationship-endpoints-exist", erd_relationship_endpoints),
+    CheckSpec("erd.stereotype-is-bce", erd_stereotype_is_bce),
+    CheckSpec("erd.entity-name-usable", erd_entity_name_usable),
+    CheckSpec("erd.has-entity", erd_has_entity),
+    CheckSpec("erd.relationship-mapped", erd_relationships_mapped),
+    CheckSpec("erd.composition-owner-is-mandatory", erd_composition_owner),
+    CheckSpec("erd.no-mandatory-reference-cycle", erd_mandatory_reference_cycle),
+    CheckSpec("erd.identifier-fields-exist", erd_identifier_fields),
+    CheckSpec("erd.surrogate-key-collides", erd_surrogate_key_collides),
+    CheckSpec("erd.table-names-unique", erd_table_names_unique),
+    CheckSpec(
+        "erd.entity-typed-field-needs-relationship",
+        erd_entity_typed_field_needs_relationship,
+    ),
+    CheckSpec("erd.field-looks-like-reference", erd_reference_like_fields),
+)
+
+
+def erd_validation_report(model: dict, state: dict) -> ValidationReport:
+    """Return shared validation evidence for one ERD model."""
+    logical = mapping.build_logical_model(model or {})
+    return run_checks(ERD_CHECKS, model or {}, logical)
+
+
 def erd_findings(model: dict, state: dict) -> list[Finding]:
     """ERD 모델 하나에 대한 결정론 검증 전부.
 
@@ -970,11 +1002,7 @@ def erd_findings(model: dict, state: dict) -> list[Finding]:
     사상을 여기서 한 번 돌린다. 렌더가 다시 돌리므로 두 번 도는 셈인데, 순수 함수라
     결과가 같고 캐시를 두면 "언제 무효화하나"가 새 문제가 된다.
     """
-    logical = mapping.build_logical_model(model or {})
-    found: list[Finding] = []
-    for detect in ERD_DETECTORS.values():
-        found.extend(detect(model or {}, logical))
-    return found
+    return _findings_from_report(erd_validation_report(model, state))
 
 
 #: 검출기 이름 → 구현. 이름은 `rules.Rule.detector`가 가리키는 그것이다.
@@ -1001,16 +1029,60 @@ CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
 }
 
 
+def _communication_rule_findings(
+    model: dict, state: dict, rule_id: str
+) -> list[Finding]:
+    """Project the legacy multi-rule detector onto its owning rule."""
+    return [
+        finding
+        for finding in communication_rules(model, state)
+        if finding.rule_id == rule_id
+    ]
+
+
+def class_no_boundary_entity_link(model: dict, state: dict) -> list[Finding]:
+    return _communication_rule_findings(model, state, "class.no-boundary-entity-link")
+
+
+def class_no_boundary_boundary_link(model: dict, state: dict) -> list[Finding]:
+    return _communication_rule_findings(model, state, "class.no-boundary-boundary-link")
+
+
+def class_entity_does_not_initiate(model: dict, state: dict) -> list[Finding]:
+    return _communication_rule_findings(model, state, "class.entity-does-not-initiate")
+
+
+CLASS_DIAGRAM_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
+    CheckSpec("class.relationship-endpoints-exist", relationship_endpoints),
+    CheckSpec("class.usecase-ids-exist", usecase_ids),
+    CheckSpec("class.stereotype-is-bce", stereotype_is_bce),
+    CheckSpec("class.no-boundary-entity-link", class_no_boundary_entity_link),
+    CheckSpec("class.no-boundary-boundary-link", class_no_boundary_boundary_link),
+    CheckSpec("class.entity-does-not-initiate", class_entity_does_not_initiate),
+    CheckSpec("class.relationship-type-known", relationship_type_known),
+    CheckSpec("class.entity-association-multiplicity", entity_association_multiplicity),
+    CheckSpec("class.method-parameters-typed", method_parameters_typed),
+    CheckSpec("class.fields-typed", fields_typed),
+    CheckSpec("class.control-outcome-return-contract", control_outcome_return_contract),
+    CheckSpec("class.control-action-dispatcher", control_action_dispatch_contract),
+    CheckSpec("class.names-unique", names_unique),
+    CheckSpec("class.name-pascal-case", name_pascal_case),
+    CheckSpec("class.covers-use-cases", usecase_coverage),
+)
+
+
+def class_diagram_validation_report(model: dict, state: dict) -> ValidationReport:
+    """Return shared validation evidence for one BCE class model."""
+    return run_checks(CLASS_DIAGRAM_CHECKS, model or {}, state or {})
+
+
 def class_diagram_findings(model: dict, state: dict) -> list[Finding]:
     """BCE 모델 하나에 대한 결정론 검증 전부.
 
     `state`가 필요한 이유는 `usecase_ids`·`usecase_coverage`가 입력 유스케이스 명세를
     봐야 해서다 — 모델만으로는 "지어낸 id"와 "정당한 id"를 구별할 수 없다.
     """
-    found: list[Finding] = []
-    for detect in CLASS_DIAGRAM_DETECTORS.values():
-        found.extend(detect(model or {}, state or {}))
-    return found
+    return _findings_from_report(class_diagram_validation_report(model, state))
 
 
 # ---------------------------------------------------------------------------
@@ -3377,6 +3449,45 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_message_type_validity": sequence_message_type_validity,
     "sequence_no_lifecycle_events": sequence_no_lifecycle_events,
 }
+
+
+SEQUENCE_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
+    CheckSpec("sequence.message-participants-exist", sequence_participants),
+    CheckSpec("sequence.message-bce-flow", sequence_bce_flow),
+    CheckSpec("sequence.boundary-operation-direction", sequence_boundary_operation_direction),
+    CheckSpec("sequence.references-exist", sequence_traceability),
+    CheckSpec("sequence.class-diagram-version", sequence_class_diagram_version),
+    CheckSpec("sequence.participant-classes-exist", sequence_participant_classes),
+    CheckSpec("sequence.message-labels-match-methods", sequence_message_methods),
+    CheckSpec("sequence.initial-message-entry", sequence_initial_entry),
+    CheckSpec("sequence.unmatched-return-message", sequence_unmatched_returns),
+    CheckSpec("sequence.call-return-links", sequence_call_return_links),
+    CheckSpec("sequence.return-label-matches-method-return", sequence_return_values_match_methods),
+    CheckSpec("sequence.async-call-has-no-return", sequence_async_returns),
+    CheckSpec("sequence.nonvoid-call-requires-return", sequence_nonvoid_calls_have_returns),
+    CheckSpec("sequence.causal-call-chain", sequence_causal_call_chain),
+    CheckSpec("sequence.argument-data-flow", sequence_argument_data_flow),
+    CheckSpec("sequence.actor-step-involvement", sequence_actor_step_involvement),
+    CheckSpec("sequence.usecase-step-coverage", sequence_usecase_coverage),
+    CheckSpec("sequence.step-operation-distinctness", sequence_step_operation_distinctness),
+    CheckSpec("sequence.flow-order", sequence_flow_order),
+    CheckSpec("sequence.unresolved-usecase-step", sequence_unresolved_steps),
+    CheckSpec("sequence.fragment-condition-consistency", sequence_fragment_condition_consistency),
+    CheckSpec("sequence.database-access-discipline", sequence_database_access_discipline),
+    CheckSpec("sequence.self-call-method-validation", sequence_self_call_method_validation),
+    CheckSpec("sequence.orphan-participant-detection", sequence_orphan_participant_detection),
+    CheckSpec("sequence.duplicate-consecutive-messages", sequence_duplicate_consecutive_messages),
+    CheckSpec(
+        "sequence.extension-replays-anchor-operation",
+        sequence_extension_replays_anchor_operation,
+    ),
+    CheckSpec("sequence.message-naming-convention", sequence_message_naming_convention),
+    CheckSpec("sequence.participant-kind-validity", sequence_participant_kind_validity),
+    CheckSpec("sequence.message-type-validity", sequence_message_type_validity),
+    CheckSpec("sequence.no-lifecycle-events", sequence_no_lifecycle_events),
+)
+
+
 API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_operations_present": api_operations_present,
     "api_path_parameters": api_path_parameters,
@@ -3388,6 +3499,21 @@ API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_control_outcomes": api_control_outcomes,
     "api_control_sequence": api_control_sequence,
 }
+
+
+API_SPEC_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
+    CheckSpec("api.operations-present", api_operations_present),
+    CheckSpec("api.path-parameters-match", api_path_parameters),
+    CheckSpec("api.schema-references-exist", api_schema_references),
+    CheckSpec("api.operation-ids-unique", api_operation_ids),
+    CheckSpec("api.references-exist", api_traceability),
+    CheckSpec("api.control-binding-exists", api_control_binding),
+    CheckSpec("api.control-arguments-match", api_control_arguments),
+    CheckSpec("api.control-outcomes-cover-responses", api_control_outcomes),
+    CheckSpec("api.control-call-in-sequence", api_control_sequence),
+)
+
+
 SPEC_DETECTORS = {**CLASS_DIAGRAM_DETECTORS, **SEQUENCE_DIAGRAM_DETECTORS, **API_SPEC_DETECTORS}
 
 
@@ -3396,6 +3522,10 @@ def _artifact_findings(model: dict, state: dict, stage: str) -> list[Finding]:
     for rule in rules.judged_by(stage, rules.JUDGED_DETECTOR):
         found.extend(SPEC_DETECTORS[rule.detector](model or {}, state or {}))
     return found
+
+
+def _sequence_rule_findings(model: dict, state: dict) -> list[Finding]:
+    return _findings_from_report(run_checks(SEQUENCE_CHECKS, model or {}, state or {}))
 
 
 def sequence_diagram_findings(model: dict, state: dict) -> list[Finding]:
@@ -3452,10 +3582,15 @@ def sequence_diagram_findings(model: dict, state: dict) -> list[Finding]:
                             str(message.get("label") or "<message>"),
                         )
                     )
-            found.extend(_artifact_findings(diagram, state, rules.SEQUENCE_DIAGRAM))
+            found.extend(_sequence_rule_findings(diagram, state))
         return found
-    return _artifact_findings(model, state, rules.SEQUENCE_DIAGRAM)
+    return _sequence_rule_findings(model, state)
+
+
+def api_spec_validation_report(model: dict, state: dict) -> ValidationReport:
+    """Return shared validation evidence for one API specification model."""
+    return run_checks(API_SPEC_CHECKS, model or {}, state or {})
 
 
 def api_spec_findings(model: dict, state: dict) -> list[Finding]:
-    return _artifact_findings(model, state, rules.API_SPEC)
+    return _findings_from_report(api_spec_validation_report(model, state))
