@@ -435,6 +435,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     repair_persistence_schema_table_quoting(
                         sandbox, list(task["allowed_write_paths"])
                     )
+                    # The migration is design-sensitive, but its metadata smoke
+                    # test is a deterministic projection.  Always replace an
+                    # agent-authored test so H2/JDBC identifier casing cannot
+                    # turn a valid migration into a failed implementation run.
+                    ensure_persistence_schema_test(
+                        sandbox, list(task["allowed_write_paths"]), overwrite=True
+                    )
                 if task_type == "persistence-entities":
                     ensure_mapper_accessible_persistence_constructor(
                         sandbox, list(task["allowed_write_paths"])

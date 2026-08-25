@@ -1406,7 +1406,8 @@ Rules:
 def render_persistence_schema_prompt(spec: JobSpec, erd: str) -> str:
     return f"""# Implementation task: ERD schema migration
 
-Create the initial Flyway SQL migration and a JUnit test that executes the complete SQL against an in-memory H2 database.
+Create the initial Flyway SQL migration. The runtime derives the accompanying
+Flyway/H2 metadata smoke test deterministically from your declared tables.
 
 Rules:
 - Use lower snake_case table and column names matching the ERD.
@@ -1417,9 +1418,8 @@ Rules:
 - Declare every ERD foreign key and useful indexes for foreign-key columns and explicit natural identifiers.
 - Match the exact `@Table`, `@Column`, and `@JoinColumn` names derived from the ERD.
 - Avoid unquoted SQL/H2 reserved words as identifiers (such as `year`, `order`, `group`, `user`, `status`, `key`, `value`, `offset`, `limit`, `check`, `date`). When a column or table name is a reserved keyword, quote it (e.g. `"year"` or `\"year\"`) or use safe column names consistent with JPA entity `@Column(name = ...)`.
-- The test must invoke `Flyway.configure().dataSource(...).locations("classpath:db/migration").load().migrate()` against an H2 in-memory JDBC URL, then use JDBC metadata to assert that every ERD table exists. Do not split or parse SQL manually and do not require a Spring application context.
-- Use package `{spec.base_package}.persistence` for the test.
-- Create both contracted files, then finish immediately.
+- Do not create or edit the schema test; it is generated after your migration so JDBC identifier-case behavior cannot make the task fail spuriously.
+- Create the migration file, then finish immediately.
 
 ## ERD
 

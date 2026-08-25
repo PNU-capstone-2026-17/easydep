@@ -28,16 +28,18 @@ SQL_RESERVED_IDENTIFIERS = (
 
 
 def ensure_persistence_schema_test(
-    sandbox: Path, relative_paths: list[str]
+    sandbox: Path, relative_paths: list[str], *, overwrite: bool = False
 ) -> list[str]:
-    """Create the deterministic migration smoke test when only that output is missing.
+    """Create the deterministic migration smoke test from the declared tables.
 
     A persistence-schema task has two independent outputs: the migration requires
     design interpretation, while its Flyway/H2 smoke test is a fixed projection
     of the generated SQL.  Retrying a stalled agent solely to write that boilerplate
     wastes a conversation and can fail the whole run even after the migration was
     successfully created.  Generate the test only from the migration's declared
-    ``CREATE TABLE`` statements; never invent tables or overwrite an agent test.
+    ``CREATE TABLE`` statements; never invent tables.  ``overwrite`` is used
+    after an agent completes: JDBC metadata identifier case varies by database,
+    so a generated test must not keep an agent's brittle exact-name lookup.
     """
     normalized = [path.replace("\\", "/") for path in relative_paths]
     migration_relative = next(
@@ -52,7 +54,7 @@ def ensure_persistence_schema_test(
         return []
     migration = sandbox / migration_relative
     test = sandbox / test_relative
-    if not migration.is_file() or test.is_file():
+    if not migration.is_file() or (test.is_file() and not overwrite):
         return []
     source = migration.read_text(encoding="utf-8")
     tables = sorted({

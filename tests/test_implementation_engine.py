@@ -345,6 +345,31 @@ class GeneratedContractImportRepairTest(unittest.TestCase):
 
 
 class PersistenceSchemaContractRepairTest(unittest.TestCase):
+    def test_replaces_agent_schema_test_with_case_independent_metadata_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            migration_relative = "application/src/main/resources/db/migration/V1__initial_schema.sql"
+            test_relative = "application/src/test/java/com/example/app/persistence/PersistenceSchemaTest.java"
+            migration = sandbox / migration_relative
+            migration.parent.mkdir(parents=True)
+            migration.write_text(
+                "CREATE TABLE academic_term (term_id BIGINT);\n", encoding="utf-8"
+            )
+            test = sandbox / test_relative
+            test.parent.mkdir(parents=True)
+            test.write_text("// brittle agent test\n", encoding="utf-8")
+
+            created = ensure_persistence_schema_test(
+                sandbox, [migration_relative, test_relative], overwrite=True
+            )
+
+            self.assertEqual([test_relative], created)
+            source = test.read_text(encoding="utf-8")
+            self.assertIn("metadata.getTables(null, null, null", source)
+            self.assertIn(
+                'actualTables.add(rows.getString("TABLE_NAME").toLowerCase())', source
+            )
+
     def test_creates_schema_test_from_existing_migration_when_agent_omits_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)
