@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 
 
@@ -7,6 +8,7 @@ def render_verification_feedback(
     evidence: dict[str, object],
     current_sources: str = "",
     repair_targets: list[str] | None = None,
+    semantic_contract: dict[str, object] | None = None,
 ) -> str:
     output = (
         str(evidence.get("stdout", ""))
@@ -17,6 +19,17 @@ def render_verification_feedback(
     )[-20000:]
     hints = verification_failure_hints(output)
     target_text = "\n".join(f"- `{path}`" for path in (repair_targets or []))
+    contract_text = ""
+    if semantic_contract:
+        contract_text = f"""
+E2E semantic contract (immutable):
+```json
+{json.dumps(semantic_contract, ensure_ascii=False, indent=2)}
+```
+For an E2E repair, preserve every existing passing test and append or correct the
+missing scenario tests. Do not replace the file with a smaller sample and do not
+remove scenarios that are not named in the current diagnostic.
+"""
     return f"""The orchestrator compiled and tested your files, and verification failed.
 Fix every reported error in the existing allowed files, including test compilation errors.
 Generated contracts are authoritative: never assume a return value or method that is absent from their exact signatures.
@@ -32,6 +45,8 @@ Emit all required `restricted_file_editor` create calls in one response, then ca
 
 Failure-specific guidance:
 {hints}
+
+{contract_text}
 
 Gradle output:
 ```text
@@ -99,6 +114,16 @@ def verification_failure_hints(output: str) -> str:
             "- E2E method contract: invoke the exact HTTP verb with TestRestTemplate "
             f"or MockMvc for each listed scenario ({expected}); do not replace it with "
             "a repository or controller call."
+        )
+    minimum_match = re.search(
+        r"Expected at least (\d+) independent E2E scenarios, found (\d+)",
+        output,
+    )
+    if minimum_match:
+        hints.append(
+            "- E2E scenario coverage: preserve every existing @Test method and append one "
+            f"independent test for each missing scenario until there are at least {minimum_match.group(1)}. "
+            "Do not replace the current flow with a smaller sample."
         )
     if 'expected "identifier"' in output or "Syntax error in SQL statement" in output or "JdbcSQLSyntaxErrorException" in output:
         hints.append(

@@ -1271,7 +1271,9 @@ Rules:
   method and path, then assert exactly its listed status. Do not infer a conventional status
   (for example, do not substitute `201 Created` for a documented `200 OK`) and do not append
   an undeclared path segment. A Java URL assembled from path variables is allowed only when it
-  resolves exactly to the listed path template.
+  resolves exactly to the listed path template. A shared helper such as `performLogin()` is
+  allowed when the calling `@Test` invokes that helper and the helper contains the exact HTTP
+  request; do not omit the scenario because the request is factored into a helper.
 - Assert repository-backed persistence for the exercised flow. A test that only checks in-memory
   UI state is invalid; unrelated repositories do not need to be injected into this single flow test.
 - Assert observable HTTP responses, Boundary state, and repository state; do not call private methods or reproduce service logic inside the test.

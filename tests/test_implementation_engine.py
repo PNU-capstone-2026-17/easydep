@@ -1293,6 +1293,35 @@ TestRestTemplate http; CourseRepository repository;
 
             self.assertEqual([], e2e_contract_violations(path, contract))
 
+    def test_semantic_gate_accepts_http_helpers_and_concatenated_terminal_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CourseFlowTest.java"
+            path.write_text(
+                """class CourseFlowTest {
+TestRestTemplate http; CourseRepository repository;
+@Test void login() { performLogin(); }
+@Test void details() {
+  ResponseEntity<Object> response = http.getForEntity("/courses/" + COURSE_ID, Object.class);
+  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+}
+void performLogin() {
+  ResponseEntity<Object> response = http.postForEntity("/auth/login", request, Object.class);
+  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+}
+}""",
+                encoding="utf-8",
+            )
+            contract = {
+                "repositories": ["CourseRepository"],
+                "minimumTests": 2,
+                "scenarios": [
+                    {"method": "POST", "path": "/auth/login", "status": 200},
+                    {"method": "GET", "path": "/courses/{courseId}", "status": 200},
+                ],
+            }
+
+            self.assertEqual([], e2e_contract_violations(path, contract))
+
     def test_semantic_gate_rejects_wrong_status_or_extra_path_segment_per_scenario(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "EnrollmentFlowTest.java"

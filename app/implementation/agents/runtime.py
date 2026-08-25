@@ -617,10 +617,16 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 # Do not retransmit the original design prompt on every repair
                 # conversation.  The diagnostic plus the files selected by the
                 # verifier are sufficient for a bounded local correction.
+                feedback_kwargs = {}
+                if task_type == "integration-test":
+                    semantic_contract = context.get("semanticContract")
+                    if isinstance(semantic_contract, dict):
+                        feedback_kwargs["semantic_contract"] = semantic_contract
                 round_prompt = feedback_renderer(
                     error.evidence,
                     read_allowed_sources(sandbox, repair_paths),
                     repair_paths,
+                    **feedback_kwargs,
                 )
     except Exception as error:
         failure = {

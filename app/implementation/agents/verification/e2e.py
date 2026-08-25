@@ -131,6 +131,48 @@ def _java_test_method_bodies(source: str) -> list[str]:
     return bodies
 
 
+def _java_method_bodies(source: str) -> dict[str, str]:
+    """Return named Java method bodies so tests can reuse HTTP helpers."""
+    declaration = re.compile(
+        r"(?ms)(?:(?:public|protected|private|static|final|synchronized)\s+)*"
+        r"[\w<>?, \[\]]+\s+(?P<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{"
+    )
+    methods: dict[str, str] = {}
+    for match in declaration.finditer(source):
+        start = match.end() - 1
+        depth = 0
+        for index in range(start, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    methods[match.group("name")] = source[match.start() : index + 1]
+                    break
+    return methods
+
+
+def _expanded_java_test_method_bodies(source: str) -> list[str]:
+    """Include helper methods called by each test in its HTTP evidence."""
+    tests = _java_test_method_bodies(source)
+    helpers = _java_method_bodies(source)
+    expanded: list[str] = []
+    for test in tests:
+        body = test
+        seen: set[str] = set()
+        pending = list(helpers)
+        while pending:
+            name = pending.pop()
+            if name in seen or not re.search(rf"\b{re.escape(name)}\s*\(", body):
+                continue
+            seen.add(name)
+            helper = helpers[name]
+            body += "\n" + helper
+            pending.extend(helpers)
+        expanded.append(body)
+    return expanded
+
+
 def _http_path_evidence_pattern(path: str) -> re.Pattern[str]:
     """Match a URI template literal or Java concatenation resolving to ``path``.
 
@@ -140,16 +182,14 @@ def _http_path_evidence_pattern(path: str) -> re.Pattern[str]:
     concatenated URL.
     """
     parts = re.split(r"(\{[^}]+\})", path)
-    expression: list[str] = []
-    for part in parts:
-        if part.startswith("{") and part.endswith("}"):
-            expression.append(
-                r'"\s*\+\s*[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*'
-                r'\s*\+\s*"'
-            )
-        else:
-            expression.append(re.escape(part))
-    resolved_expression = "".join(expression)
+    resolved_expression = '"' + re.escape(parts[0]) + '"'
+    for index in range(1, len(parts), 2):
+        resolved_expression += (
+            r'\s*\+\s*[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*'
+        )
+        suffix = parts[index + 1]
+        if suffix:
+            resolved_expression += r'\s*\+\s*"' + re.escape(suffix) + '"'
     literal_template = re.escape(path)
     return re.compile(
         r"(?<![A-Za-z0-9_/-])(?:"
@@ -187,7 +227,7 @@ def _scenario_contract_violations(source: str, scenarios: object) -> list[str]:
     """Verify method, resolved path, and status together for every E2E row."""
     if not isinstance(scenarios, list):
         return []
-    bodies = _java_test_method_bodies(source)
+    bodies = _expanded_java_test_method_bodies(source)
     violations: list[str] = []
     for scenario in scenarios:
         if not isinstance(scenario, dict):
