@@ -78,6 +78,23 @@ def test_analyze_response_accepts_and_omits_pipeline_fields():
     assert resp2.diagram is None and resp2.use_cases is None and resp2.actors is None
 
 
+def test_analyze_response_keeps_requirement_provenance_without_changing_payload_keys():
+    requirement = {
+        "id": "RR1",
+        "text": "Customers shall place orders.",
+        "type": "FR",
+        "draft_ref": "RR1",
+        "source_refs": ["RAW1"],
+    }
+
+    response = AnalyzeResponse(**_result_payload({"classified": [requirement]}, "tid"))
+
+    assert response.requirements is not None
+    assert response.requirements[0].id == "RR1"
+    assert response.requirements[0].draft_ref == "RR1"
+    assert response.requirements[0].source_refs == ["RAW1"]
+
+
 # ---------------------------------------------------------------------------
 # 구조화 편집(F) — 게이트가 준 재료가 응답까지 흘러가는가, 라우팅이 갈리는가.
 # ---------------------------------------------------------------------------

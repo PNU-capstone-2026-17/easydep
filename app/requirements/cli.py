@@ -126,7 +126,9 @@ def main(argv: list[str] | None = None) -> int:
         "--constraints-file", help="클라우드 제약 원문을 담은 파일",
     )
     parser.add_argument(
-        "--no-bert", action="store_true", help="BERT 검증 비활성화(빠르게 실행)"
+        "--no-bert",
+        action="store_true",
+        help="Reject raw analysis and point to the preclassified batch runner.",
     )
     parser.add_argument(
         "--interactive", "-i", action="store_true",
@@ -135,7 +137,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.no_bert:
-        settings.enable_bert_verify = False
+        parser.error(
+            "--no-bert cannot classify raw requirements. Provide an input JSON with "
+            "classified [{id, text, type}] items to "
+            "`python -m app.requirements.run_pipeline --input <file>` instead."
+        )
     if args.interactive:
         # 대화형: 모든 interrupt 게이트를 켜고 그래프를 재컴파일한다.
         # (step2~4 파이프라인은 모드와 무관하게 항상 실행된다.)

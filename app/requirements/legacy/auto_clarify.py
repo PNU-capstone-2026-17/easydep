@@ -72,11 +72,19 @@ def refine_requirements_prompt(
     )
     SYSTEM_PROMPT = f"""
     You are a System Architect and an expert in Requirements Engineering.
-    You are given a set of user requirement statements. You must decompose and refine them into specific, testable requirement statements.
-    You must strictly mimic the tone, level of detail, and writing style of the [Reference Examples] provided below.
+    You are given a set of user requirement statements. Refine them into specific, testable
+    requirements while preserving the user's level of abstraction. Decomposition is selective,
+    not a goal by itself.
+    Reference examples demonstrate writing style only. Never copy their facts, actors, technology,
+    quantities, thresholds, or level of detail into the user's requirements.
 
-    [Singularity — one need per statement]
-    - Each output statement MUST express exactly ONE need (IEEE 29148 singularity/atomicity).
+    [Refinement boundary]
+    - Preserve one refined statement per source statement by default. Split functional behavior
+      only when the source contains independently initiated and independently completed actor
+      goals with distinct acceptance outcomes. Keep their shared RAW source reference.
+    - A refined statement may contain several cohesive steps from one user journey or lifecycle
+      operations under one management responsibility. Do not merge a separate optional actor goal
+      into its prerequisite goal merely because both were written in one source sentence.
     - Separate every non-functional / quality constraint into its OWN statement. NEVER fuse a
       performance ("within 1 second", "within 500 ms"), load ("under 200 concurrent sessions"),
       security ("encrypted at rest"), reliability/atomicity ("recorded atomically"), or availability
@@ -85,11 +93,35 @@ def refine_requirements_prompt(
         Compound:  "The system shall let a registered user log in and return a response within 1 second."
         Split ->   "The system shall authenticate a registered user by email and password."
                    "The login response shall be returned within 1 second of request receipt."
-    - Keep the functional actions that form a single operation together; only split OUT quality
-      constraints — do not shatter one function into meaningless fragments.
+    - Keep together actions that share one actor, business object, precondition, and acceptance
+      outcome. Lifecycle operations described under one management goal may remain together.
+    - Keep one policy statement for an enumerated set of data, roles, resources, or lifecycle
+      operations. Do not duplicate the same policy once per list item.
+    - Keep a constraint and its explicit scope together when the latter only strengthens the same
+      acceptance rule, for example a rule that must also hold under concurrency.
+    - Every refined statement must stand on its own. Do not emit a sibling sentence that refers
+      back with phrases such as "the prevention", "the operation", or "the above behavior".
+    - Do not expand an umbrella verb such as "manage" into invented create/update/delete actions.
+    - Do not replace a provider-neutral constraint with a particular topology, service, protocol,
+      product, or implementation mechanism.
+    - Preserve the source's subject, responsibility, modality, and logical polarity. A prohibition
+      or allowance must not be rewritten as one stronger positive solution, and a capability
+      assigned to an external environment must not become application behavior.
+    - Do not introduce numeric values, units, deadlines, thresholds, actors, external systems,
+      behavior, or acceptance criteria that are not stated by the source requirements.
+    - Split an independently verifiable quality constraint that would otherwise be fused into
+      functional behavior, and split independently initiated actor goals as defined above. Do not
+      split a source statement merely because it contains multiple verbs. The normal output count
+      should remain close to the input count.
     - Whenever you split a constraint out, RECORD it in constraint_links: map the constraint
       sentence to the functional sentence it qualifies (both written verbatim as they appear in
-      refined_requirements). This preserves the FR<-NFR traceability link.
+      requirementDrafts[].text). This preserves the FR<-NFR traceability link.
+
+    [Source provenance]
+    - The user message labels every source statement RAW1..N. Return each refined sentence as one
+      requirementDrafts object containing text and sourceRefs.
+    - sourceRefs must cite all and only the RAW statements from which the refined text was derived.
+      Do not return a separate provenance mapping.
 
     {reference_block}
     """

@@ -49,12 +49,12 @@ def _load_bundle():
             model = BertForSequenceClassification.from_pretrained(model_dir)
             model.eval()
             _bundle = (tokenizer, model, torch)
-        except Exception as exc:  # noqa: BLE001 - 분류는 옵션 기능이라 실패해도 앱은 계속
-            # 이건 부가 기능의 저하가 아니다 — BERT가 없으면 step1이 모든 요구사항을
-            # FR로 강등하므로 NFR이 하나도 안 나온다. 산출물 전체의 의미가 바뀐다.
+        except Exception as exc:  # noqa: BLE001 - preclassified batch execution can continue
+            # Raw analysis fails closed when classification is unavailable.  The process may
+            # still serve execution paths whose inputs already carry authoritative labels.
             telemetry.record_degradation(
                 "classifier.bert",
-                f"로드 실패로 FR/NFR 분류를 못 한다(전부 FR로 강등됨): "
+                f"Raw FR/NFR classification is unavailable: "
                 f"{type(exc).__name__}: {exc}",
             )
             _bundle = False
@@ -86,17 +86,17 @@ def warmup() -> bool:
 def warmup_or_raise() -> bool:
     """Warm up the enabled classifier and fail startup when it cannot load.
 
-    STEP 1 uses BERT as its only FR/NFR classifier.  Continuing with BERT enabled
-    but unavailable silently turns every requirement into an FR, so a server must
-    not advertise itself as healthy in that state.  Operators that intentionally
-    run the lightweight mode can still set ``ENABLE_BERT_VERIFY=false``.
+    STEP 1 uses BERT as its only FR/NFR classifier, so a server configured to
+    classify raw requirements must not advertise itself as healthy without it.
+    A process intentionally limited to preclassified batch inputs may set
+    ``ENABLE_BERT_VERIFY=false``.
     """
     loaded = warmup()
     if settings.enable_bert_verify and not loaded:
         raise RuntimeError(
             "BERT FR/NFR classifier is enabled but failed to load. "
             "Check the classifier.bert degradation log and model assets, or set "
-            "ENABLE_BERT_VERIFY=false to explicitly use lightweight FR-only mode."
+            "ENABLE_BERT_VERIFY=false only for preclassified batch execution."
         )
     return loaded
 

@@ -1,4 +1,6 @@
 """CLI 로직 테스트 (start/resume_analysis 목킹, 입출력 주입)."""
+import pytest
+
 from app.requirements import cli
 
 
@@ -102,17 +104,12 @@ def test_cloud_constraints_reach_the_graph(monkeypatch):
     assert seen["constraints"] == "Deploy on AWS in the Seoul region."
 
 
-def test_missing_constraints_are_announced_not_swallowed(monkeypatch, capsys, tmp_path):
-    """**없으면 없다고 말한다.**
-
-    조용히 넘어가면 `RESOURCE_SPEC`이 안 나온 이유를 나중에 못 찾는다 — 배선이
-    빠져 있던 동안 정확히 그랬다.
-    """
-    monkeypatch.setattr(
-        cli, "start_analysis",
-        lambda reqs, tid, constraints_text="": {"status": "completed", "requirements": []},
-    )
+def test_no_bert_rejects_raw_input_and_points_to_preclassified_runner(capsys, tmp_path):
+    """Raw CLI intake must not downgrade all requirements to FR without BERT."""
     reqs = tmp_path / "r.txt"
     reqs.write_text("A student can log in.\n", encoding="utf-8")
-    cli.main(["--file", str(reqs), "--no-bert"])
-    assert "클라우드 제약 없음" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as error:
+        cli.main(["--file", str(reqs), "--no-bert"])
+
+    assert error.value.code == 2
+    assert "app.requirements.run_pipeline" in capsys.readouterr().err

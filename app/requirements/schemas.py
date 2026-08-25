@@ -27,29 +27,46 @@ class ConstraintLink(BaseModel):
 
     constraint: str = Field(
         description="The non-functional / quality constraint sentence — MUST also appear "
-        "verbatim in refined_requirements."
+        "verbatim in requirementDrafts[].text."
     )
     qualifies: str = Field(
         description="The functional requirement sentence this constraint qualifies — MUST also "
-        "appear verbatim in refined_requirements."
+        "appear verbatim in requirementDrafts[].text."
     )
+
+
+class RefinedRequirementProposal(BaseModel):
+    """One refined requirement together with its RAW-input provenance."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    text: str = Field(min_length=1)
+    source_refs: list[str] = Field(alias="sourceRefs", min_length=1)
+
+
+class ExpandedRequirementsResult(BaseModel):
+    """Concrete requirement sentences expanded from one initial product idea."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    requirements: list[str] = Field(min_length=1)
 
 
 class ClarifyOnlyResult(BaseModel):
     """요구사항 구체화 결과 출력."""
 
-    refined_requirements: list[str] = Field(
+    requirement_drafts: list[RefinedRequirementProposal] = Field(
+        alias="requirementDrafts",
         default_factory=list,
-        description="The current best set of concrete, single-need (atomic) requirement "
-        "statements in English — each expresses exactly ONE need, with any quality/performance/"
-        "security/reliability constraint separated into its own statement (not fused into a "
-        "functional sentence). Populated once enough information is available.",
+        description="Refined English requirements bundled directly with their RAW source refs. "
+        "Preserve one item per source statement by default; split only independently verifiable "
+        "quality constraints. Do not return provenance as a separate list.",
     )
     constraint_links: list[ConstraintLink] = Field(
         default_factory=list,
         description="For EACH quality constraint you split OUT of a compound requirement, one link "
         "mapping the constraint sentence to the functional sentence it qualifies. Both strings MUST "
-        "appear verbatim in refined_requirements. Empty if no constraint was separated.",
+        "appear verbatim in requirementDrafts[].text. Empty if no constraint was separated.",
     )
 
 
@@ -630,11 +647,13 @@ class DeploymentPreferences(BaseModel):
 # HTTP API 스키마
 # ----------------------------------------------------------------------------
 class RequirementItemOut(BaseModel):
-    """최종 FR/NFR 목록의 한 항목 (BERT 단독 분류). id는 FR1/NFR2 형식."""
+    """Final requirement with stable identity, BERT label, and RAW provenance."""
 
     id: str
     text: str
     type: ReqType
+    draft_ref: str | None = None
+    source_refs: list[str] = Field(default_factory=list)
 
 
 class AnalyzeRequest(BaseModel):

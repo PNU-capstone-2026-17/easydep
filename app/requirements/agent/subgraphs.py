@@ -34,6 +34,7 @@ from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step1_requirements import (  # noqa: F401
     clarify,
     classify,
+    expand_requirements,
     intake,
 )
 from app.requirements.agent.steps.step2_usecases import (  # noqa: F401

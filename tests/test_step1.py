@@ -1,21 +1,153 @@
-"""STEP 1 노드 단위 테스트 (BERT 목킹)."""
+"""Focused STEP 1 expansion, provenance, and BERT-classification tests."""
+import pytest
+
 from app.requirements.agent.steps import step1_requirements as s1
+from app.requirements.legacy.auto_clarify import refine_requirements_prompt
+from app.requirements.schemas import ClarifyOnlyResult, ExpandedRequirementsResult
 
 
-def test_classify_defaults_to_fr_when_bert_unavailable(monkeypatch):
-    # BERT 비활성 → 전부 FR로 강등, id는 유형+순번(FR1, FR2), 필드는 id/text/type만.
+def test_expand_requirements_keeps_the_user_raw_input_and_maps_to_raw1(monkeypatch):
+    monkeypatch.setattr(
+        s1,
+        "invoke_structured",
+        lambda _schema, _messages: ExpandedRequirementsResult(
+            requirements=[
+                "Customers shall browse products.",
+                "Customers shall place orders.",
+            ]
+        ),
+    )
+    state = {"raw_requirements": ["I want to build a shopping mall service."]}
+
+    result = s1.expand_requirements(state)
+
+    assert state["raw_requirements"] == ["I want to build a shopping mall service."]
+    assert result["expanded_requirements"] == [
+        "Customers shall browse products.",
+        "Customers shall place orders.",
+    ]
+    assert result["expanded_source_refs"] == [["RAW1"], ["RAW1"]]
+
+
+def test_expand_requirements_preserves_an_existing_requirement_set(monkeypatch):
+    def forbidden_call(*_args, **_kwargs):
+        raise AssertionError("multi-item requirement sets must not be expanded")
+
+    monkeypatch.setattr(s1, "invoke_structured", forbidden_call)
+    source = [
+        "Students shall browse published courses.",
+        "Registrations shall survive application restarts.",
+    ]
+
+    result = s1.expand_requirements({"raw_requirements": source})
+
+    assert result["expanded_requirements"] == source
+    assert result["expanded_source_refs"] == [["RAW1"], ["RAW2"]]
+
+
+def test_clarify_maps_expanded_items_back_to_the_immutable_raw_source(monkeypatch):
+    seen = {}
+
+    def fake_structured(_schema, messages):
+        seen["source_message"] = messages[-1].content
+        return ClarifyOnlyResult.model_validate(
+            {
+                "requirementDrafts": [
+                    {"text": "Customers shall browse products.", "sourceRefs": ["RAW1"]},
+                    {"text": "Customers shall place orders.", "sourceRefs": ["RAW1"]},
+                ]
+            }
+        )
+
+    monkeypatch.setattr(s1, "invoke_structured", fake_structured)
+    raw = ["I want to build a shopping mall service."]
+    result = s1.clarify(
+        {
+            "raw_requirements": raw,
+            "expanded_requirements": [
+                "Customers shall browse products.",
+                "Customers shall place orders.",
+            ],
+            "expanded_source_refs": [["RAW1"], ["RAW1"]],
+            "messages": [],
+        }
+    )
+
+    assert raw == ["I want to build a shopping mall service."]
+    assert seen["source_message"].count("RAW1:") == 2
+    assert [item["sourceRefs"] for item in result["requirement_drafts"]] == [
+        ["RAW1"],
+        ["RAW1"],
+    ]
+
+
+def test_source_mapping_assigns_stable_refs_and_reports_missing_sources():
+    result = ClarifyOnlyResult.model_validate(
+        {
+            "requirementDrafts": [
+                {"text": "Second requirement.", "sourceRefs": ["RAW2"]},
+                {"text": "First requirement.", "sourceRefs": ["RAW1"]},
+                {"text": "Invalid requirement.", "sourceRefs": ["RAW9"]},
+            ]
+        }
+    )
+
+    drafts, issues = s1._source_mapping(result, ["first", "second", "third"])
+
+    assert [(item["ref"], item["sourceRefs"]) for item in drafts] == [
+        ("RR1", ["RAW1"]),
+        ("RR2", ["RAW2"]),
+        ("RR3", []),
+    ]
+    assert any("RAW9" in issue for issue in issues)
+    assert any("RAW3" in issue for issue in issues)
+
+
+def test_refinement_prompt_preserves_source_abstraction_and_raw_provenance():
+    prompt = refine_requirements_prompt("Users manage records.", method="none")
+
+    assert "Decomposition is selective" in prompt
+    assert "Do not introduce numeric values" in prompt
+    assert "Do not expand an umbrella verb" in prompt
+    assert "particular topology" in prompt
+    assert "logical polarity" in prompt
+    assert "shared RAW source reference" in prompt
+
+
+def test_expansion_prompt_requires_a_final_grounding_audit():
+    prompt = " ".join(s1._EXPAND_REQUIREMENTS_SYSTEM.split())
+
+    assert "Final grounding audit before returning" in prompt
+    assert "delivery channel" in prompt
+    assert "provider-neutral, local system outcome" in prompt
+    assert "ordinary primary or operator role may be inferred" in prompt
+    assert "smallest coherent, testable first scope" in prompt
+    assert "Do not add requirements to reach a quota." in prompt
+    assert "6 to 10" not in prompt
+
+
+def test_expansion_prompt_requires_business_goal_granularity():
+    prompt = " ".join(s1._EXPAND_REQUIREMENTS_SYSTEM.split())
+
+    assert "one independently completed actor or business goal, not one UI action or CRUD verb" in prompt
+    assert "cohesive query-and-inspect flow together" in prompt
+    assert "one temporary collection together" in prompt
+    assert "one management responsibility" in prompt
+    assert "outcome or confirmation with the goal that causes it" in prompt
+    assert "Every extra statement expands scope" in prompt
+    assert "distinct trigger and acceptance outcome" in prompt
+
+
+def test_classify_rejects_unclassified_input_when_bert_unavailable(monkeypatch):
+    # Raw requirements cannot receive guessed fallback labels.
     monkeypatch.setattr(s1, "bert_available", lambda: False)
 
-    out = s1.classify({"refined_requirements": ["Log in", "Be fast"]})
-    items = out["classified"]
-
-    assert [it["id"] for it in items] == ["FR1", "FR2"]
-    assert all(it["type"] == "FR" for it in items)
-    assert set(items[0].keys()) == {"id", "text", "type"}  # 축소된 필드만
+    with pytest.raises(RuntimeError, match="requires the BERT classifier"):
+        s1.classify({"refined_requirements": ["Log in", "Be fast"]})
 
 
 def test_classify_uses_bert_labels_and_numbers_per_type(monkeypatch):
-    # BERT 단독 분류: 라벨에 따라 유형별로 번호를 매긴다(FR1, NFR1, FR2 ...).
+    # BERT labels are independent of stable RR identities.
     monkeypatch.setattr(s1, "bert_available", lambda: True)
     monkeypatch.setattr(
         s1, "classify_bert",
@@ -26,8 +158,40 @@ def test_classify_uses_bert_labels_and_numbers_per_type(monkeypatch):
         {"refined_requirements": ["log in", "be fast", "place order", "be reliable and fast"]}
     )["classified"]
 
-    assert [it["id"] for it in items] == ["FR1", "NFR1", "FR2", "NFR2"]
+    assert [it["id"] for it in items] == ["RR1", "RR2", "RR3", "RR4"]
     assert [it["type"] for it in items] == ["FR", "NFR", "FR", "NFR"]
+
+
+def test_classified_requirements_keep_draft_sources_and_constraint_links(monkeypatch):
+    monkeypatch.setattr(s1, "bert_available", lambda: True)
+    monkeypatch.setattr(
+        s1,
+        "classify_bert",
+        lambda text: ("NFR", 0.95) if "within" in text else ("FR", 0.95),
+    )
+
+    items = s1.classify(
+        {
+            "requirement_drafts": [
+                {"ref": "RR1", "text": "Users shall submit requests.", "sourceRefs": ["RAW1"]},
+                {
+                    "ref": "RR2",
+                    "text": "Request responses shall arrive within two seconds.",
+                    "sourceRefs": ["RAW1"],
+                },
+            ],
+            "constraint_links": [
+                {
+                    "constraint": "Request responses shall arrive within two seconds.",
+                    "qualifies": "Users shall submit requests.",
+                }
+            ],
+        }
+    )["classified"]
+
+    assert items[0]["id"] == items[0]["draft_ref"] == "RR1"
+    assert items[0]["source_refs"] == ["RAW1"]
+    assert items[1]["qualifies"] == ["RR1"]
 
 
 def test_intake_creates_message():

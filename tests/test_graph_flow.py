@@ -7,7 +7,7 @@
 import uuid
 
 from app.requirements.agent import graph as g
-from app.requirements.schemas import ClarifyOnlyResult
+from app.requirements.schemas import ClarifyOnlyResult, ExpandedRequirementsResult
 
 
 def _tid():
@@ -24,10 +24,20 @@ def test_step1_classifies_via_bert_and_gates(scripted_llm, fake_bert, monkeypatc
     gate_graph = _gate_graph(monkeypatch)
     # clarify 가 소비하는 단일 구체화 응답.
     scripted_llm([
-        ClarifyOnlyResult(refined_requirements=[
+        ExpandedRequirementsResult(requirements=[
             "Users can log in with email and password.",
             "The system shall respond within 2 seconds.",
         ]),
+        ClarifyOnlyResult.model_validate({"requirementDrafts": [
+            {
+                "text": "Users can log in with email and password.",
+                "sourceRefs": ["RAW1"],
+            },
+            {
+                "text": "The system shall respond within 2 seconds.",
+                "sourceRefs": ["RAW1"],
+            },
+        ]}),
     ])
     # BERT 단독 분류: "respond"는 NFR, 나머지는 FR.
     fake_bert(lambda text: ("NFR", 0.9) if "respond" in text else ("FR", 0.95))
@@ -38,14 +48,19 @@ def test_step1_classifies_via_bert_and_gates(scripted_llm, fake_bert, monkeypatc
     )
 
     reqs = result["classified"]
-    assert [r["id"] for r in reqs] == ["FR1", "NFR1"]   # 유형별 순번 id
+    assert [r["id"] for r in reqs] == ["RR1", "RR2"]
     assert [r["type"] for r in reqs] == ["FR", "NFR"]
-    assert set(reqs[0].keys()) == {"id", "text", "type"}  # 축소된 필드만
+    assert reqs[0]["source_refs"] == ["RAW1"]
 
 
 def test_gates_on_interrupts_for_feedback(scripted_llm, fake_bert, monkeypatch):
     gate_graph = _gate_graph(monkeypatch)
-    scripted_llm([ClarifyOnlyResult(refined_requirements=["Users can log in."])])
+    scripted_llm([
+        ExpandedRequirementsResult(requirements=["Users can log in."]),
+        ClarifyOnlyResult.model_validate({
+            "requirementDrafts": [{"text": "Users can log in.", "sourceRefs": ["RAW1"]}]
+        }),
+    ])
     fake_bert(lambda text: ("FR", 0.99))
 
     result = gate_graph.invoke(

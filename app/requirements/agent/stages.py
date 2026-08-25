@@ -32,7 +32,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from app.requirements.agent.steps.step1_requirements import clarify, classify, intake
+from app.requirements.agent.steps.step1_requirements import (
+    clarify,
+    classify,
+    expand_requirements,
+    intake,
+)
 from app.requirements.agent.steps.step2_usecases import (
     check_coverage,
     identify_actors,
@@ -74,6 +79,7 @@ class Stage:
 
 #: 실행 순서 그대로. 이 순서가 그래프 엣지·배치 실행·cascade의 근거다.
 PIPELINE: tuple[Stage, ...] = (
+    Stage("expand_requirements", expand_requirements, group="refine_requirements"),
     Stage("intake", intake, group="refine_requirements"),
     Stage("clarify", clarify, group="refine_requirements"),
     Stage("classify", classify, group="refine_requirements"),

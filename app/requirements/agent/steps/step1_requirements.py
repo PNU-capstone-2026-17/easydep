@@ -19,38 +19,133 @@ from app.requirements.config import settings
 from app.requirements.legacy.auto_clarify import *
 from app.requirements.schemas import *
 
+_EXPAND_REQUIREMENTS_SYSTEM = """You expand an initial software-product description into a
+practical first set of concrete English requirement statements.
+
+- Expand a short or broad product idea into the smallest coherent, testable first scope: the
+  primary end-to-end user goals and only the basic administration needed to operate them.
+- Do not add requirements to reach a quota.
+- Do not add optional enhancements, localization, analytics, observability, legal content,
+  customer-support tooling, or external integrations unless the user explicitly requests them.
+- EasyDep supports English only. Never introduce multilingual or localization requirements.
+- Keep an already concrete requirement within its stated scope; split it only when it contains
+  independently testable needs.
+- Set requirement granularity to one independently completed actor or business goal, not one UI
+  action or CRUD verb. Keep a cohesive query-and-inspect flow together; keep the add, view,
+  update, and remove actions for one temporary collection together; and keep a create, update,
+  and delete lifecycle under one management responsibility.
+- Keep an outcome or confirmation with the goal that causes it unless it has its own independent
+  trigger. Every extra statement expands scope and is allowed only when it has a distinct trigger
+  and acceptance outcome.
+- Write one need per sentence using clear shall-style English.
+- Do not invent numeric targets, implementation technology, cloud topology, protocols, or named
+  external integrations.
+- Final grounding audit before returning: every actor or role, delivery channel, named
+  integration, technology choice, and quantitative constraint must be stated in the source idea.
+  A necessary ordinary primary or operator role may be inferred solely to express the minimal
+  product scope. Remove or rewrite every other unsupported detail. When the source requires a
+  result or notification but gives no delivery mechanism, express only a provider-neutral, local
+  system outcome rather than inventing a channel or integration.
+- Do not classify the requirements as functional or non-functional.
+- Return only the structured result.
+"""
+
+
+@contract(
+    "expand_requirements",
+    requires=("raw_requirements",),
+    produces=("expanded_requirements", "expanded_source_refs"),
+)
+def expand_requirements(state: AgentState) -> dict:
+    """Expand one terse product idea before traceable RR refinement.
+
+    A multi-item input is already a requirement set.  Rewriting it here would
+    silently change its scope before the RAW-to-RR provenance stage can inspect
+    it, so it deliberately bypasses semantic expansion.
+    """
+    source = list(state.get("raw_requirements") or [])
+    if len(source) != 1:
+        return {
+            "expanded_requirements": source,
+            "expanded_source_refs": [[f"RAW{index}"] for index in range(1, len(source) + 1)],
+            "phase": "expand_requirements",
+        }
+
+    listing = "\n".join(f"- {item}" for item in source)
+    result: ExpandedRequirementsResult = invoke_structured(
+        ExpandedRequirementsResult,
+        [
+            SystemMessage(content=_EXPAND_REQUIREMENTS_SYSTEM),
+            HumanMessage(content=f"Initial requirements:\n{listing}"),
+        ],
+    )
+    expanded = [item.strip() for item in result.requirements if item.strip()]
+    working_set = expanded or source
+    return {
+        "expanded_requirements": working_set,
+        # Expansion elaborates one user statement, so all derived requirements
+        # retain the original source instead of inventing new RAW identities.
+        "expanded_source_refs": [["RAW1"] for _ in working_set],
+        "phase": "expand_requirements",
+    }
+
 
 @contract("intake", requires=("raw_requirements",), produces=("messages",))
 def intake(state: AgentState) -> dict:
     """입력 요구사항 배열을 첫 사용자 메시지로 그래프에 넣는다."""
-    reqs = state.get("raw_requirements") or []
+    reqs = state.get("expanded_requirements") or state.get("raw_requirements") or []
     listing = "\n".join(f"- {r}" for r in reqs)
     human = HumanMessage(content=f"Here are my requirements:\n{listing}")
     return {"messages": [human], "phase": "intake"}
 
 
 # 구체화본이 없으면 원문으로 분류한다. 둘 다 없을 때만 상류가 안 돈 것이다.
-@contract("classify", requires_any=("refined_requirements", "raw_requirements"),
+@contract("classify", requires_any=(
+    "requirement_drafts", "refined_requirements", "expanded_requirements", "raw_requirements",
+),
           produces=("classified",))
 def classify(state: AgentState, feedback: str = "") -> dict:
     """refined 요구사항을 파인튜닝 BERT로 FR/NFR 분류한다(BERT 단독).
 
-    각 요구사항 문장을 BERT로 분류하고, 유형별 순번으로 id를 FR1/NFR2 형식으로 부여한다.
-    분류는 결정론적이므로 feedback은 (게이트 시그니처 유지용으로만 받고) 결과에 영향 없다.
-    BERT 사용 불가(enable_bert_verify=False/로드 실패) 시 기본값 FR로 강등한다.
+    Each requirement keeps its RR identity while BERT independently assigns the
+    FR/NFR label.  Raw analysis fails closed when BERT is unavailable: assigning
+    every item FR would manufacture an authoritative-looking, false result.
     """
-    refined = state.get("refined_requirements") or state.get("raw_requirements") or []
-    available = bert_available()
-    counters = {"FR": 0, "NFR": 0}
+    drafts = list(state.get("requirement_drafts") or [])
+    refined = [str(item.get("text") or "") for item in drafts]
+    if not refined:
+        refined = list(
+            state.get("refined_requirements")
+            or state.get("expanded_requirements")
+            or state.get("raw_requirements")
+            or []
+        )
+
+    if not bert_available():
+        raise RuntimeError(
+            "FR/NFR classification requires the BERT classifier. "
+            "For an execution without BERT, provide preclassified requirements "
+            "to `python -m app.requirements.run_pipeline` instead."
+        )
+
     classified: list[RequirementItem] = []
-    for text in refined:
-        req_type: Literal["FR", "NFR"] = "FR"
-        if available:
-            verified = classify_bert(text)
-            if verified is not None and verified[0] == "NFR":
-                req_type = "NFR"
-        counters[req_type] += 1
-        item: RequirementItem = {"id": f"{req_type}{counters[req_type]}", "text": text, "type": req_type}
+    for index, text in enumerate(refined):
+        verified = classify_bert(text)
+        if verified is None:
+            raise RuntimeError(
+                "BERT became unavailable during FR/NFR classification; "
+                "the analysis was stopped without inventing labels."
+            )
+        req_type: Literal["FR", "NFR"] = verified[0]
+        requirement_id = (
+            str(drafts[index].get("ref") or f"RR{index + 1}")
+            if drafts
+            else f"RR{index + 1}"
+        )
+        item: RequirementItem = {"id": requirement_id, "text": text, "type": req_type}
+        if drafts:
+            item["draft_ref"] = str(drafts[index].get("ref") or "")
+            item["source_refs"] = list(drafts[index].get("sourceRefs") or [])
         classified.append(item)
 
     _apply_constraint_links(classified, state.get("constraint_links") or [])
@@ -79,20 +174,77 @@ def _apply_constraint_links(classified: list[RequirementItem], links: list[dict]
                 child["qualifies"].append(parent["id"])
 
 
+def _source_mapping(result: ClarifyOnlyResult, raw: list[str]) -> tuple[list[dict], list[str]]:
+    """Validate RAW references and give refined requirements stable RR ids."""
+    raw_ids = {f"RAW{index}" for index in range(1, len(raw) + 1)}
+    issues: list[str] = []
+    drafts: list[dict] = []
+    covered: set[str] = set()
+    for proposal_order, proposal in enumerate(result.requirement_drafts):
+        refs = sorted(
+            {ref for ref in proposal.source_refs if ref in raw_ids},
+            key=lambda ref: int(ref[3:]),
+        )
+        invalid = sorted(set(proposal.source_refs) - raw_ids)
+        if invalid or not refs:
+            issues.append(
+                f"refined requirement has invalid source refs "
+                f"{invalid or proposal.source_refs}: {proposal.text}"
+            )
+        covered.update(refs)
+        drafts.append({
+            "text": proposal.text,
+            "sourceRefs": refs,
+            "_proposalOrder": proposal_order,
+        })
+
+    missing = sorted(raw_ids - covered, key=lambda ref: int(ref[3:]))
+    if missing:
+        issues.append(f"source requirements have no refined requirement: {', '.join(missing)}")
+
+    drafts.sort(key=lambda item: (
+        min((int(ref[3:]) for ref in item["sourceRefs"]), default=len(raw) + 1),
+        item["_proposalOrder"],
+    ))
+    for index, item in enumerate(drafts, 1):
+        item.pop("_proposalOrder", None)
+        item["ref"] = f"RR{index}"
+    return drafts, issues
+
+
 
 @contract("clarify", requires=("raw_requirements", "messages"),
-          produces=("refined_requirements", "constraint_links"))
+          produces=("refined_requirements", "constraint_links", "requirement_drafts"))
 def clarify(state: AgentState) -> dict:
     """구체화 Few-Shot 예시가 포함된 프롬프트"""
-    # few-shot 예시 선별 방법은 settings 로 전환(random | mmr+nim). mmr+nim 은
-    # 원본 요구사항을 쿼리로 써야 관련 예시가 나오므로 raw_requirements 를 넘긴다.
-    query = "\n".join(state.get("raw_requirements") or [])
+    # Expansion produces a working set for refinement, but RAW identifiers always
+    # refer to the immutable user input kept in ``raw_requirements``.
+    raw = list(state.get("raw_requirements") or [])
+    working_set = list(state.get("expanded_requirements") or raw)
+    source_refs = list(state.get("expanded_source_refs") or [])
+    if len(source_refs) != len(working_set):
+        source_refs = [[f"RAW{index}"] for index in range(1, len(working_set) + 1)]
+
+    query = "\n".join(working_set)
     system = refine_requirements_prompt(query, method=settings.example_sampling_method)
-    messages = [SystemMessage(content=system), *state["messages"]]
+    raw_listing = "\n".join(
+        f"{', '.join(refs)}: {text}"
+        for text, refs in zip(working_set, source_refs, strict=True)
+    )
+    messages = [
+        SystemMessage(content=system),
+        HumanMessage(content=f"Source requirements:\n{raw_listing}"),
+    ]
     result: ClarifyOnlyResult = invoke_structured(ClarifyOnlyResult, messages)
 
     # Phase 2(RTM): 분리된 제약↔기능 링크를 문장쌍으로 실어 보낸다(classify가 id로 해소).
     links = [{"constraint": c.constraint, "qualifies": c.qualifies}
              for c in result.constraint_links]
-    return {"refined_requirements": result.refined_requirements,
-            "constraint_links": links, "phase": "clarify"}
+    drafts, issues = _source_mapping(result, raw)
+    return {
+        "refined_requirements": [item["text"] for item in drafts],
+        "constraint_links": links,
+        "requirement_drafts": drafts,
+        "requirement_source_issues": issues,
+        "phase": "clarify",
+    }

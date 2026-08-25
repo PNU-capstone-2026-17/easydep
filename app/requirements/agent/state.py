@@ -21,6 +21,10 @@ class RequirementItem(TypedDict):
     id: str
     text: str
     type: Literal["FR", "NFR"]
+    # Stable refinement identity and the RAW inputs that produced this item.
+    # ``id`` is RR1..N for raw analysis; type is an independent BERT label.
+    draft_ref: NotRequired[str]
+    source_refs: NotRequired[list[str]]
     # Phase 2(RTM): 이 NFR이 한정하는(qualify) FR id들. clarify가 복합요구에서 분리해낸
     # 제약이면 classify가 부모 FR id로 채운다(NFR에만, 없으면 부재). 추적성 링크.
     qualifies: NotRequired[list[str]]
@@ -84,7 +88,15 @@ class UseCaseSpecItem(TypedDict):
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     raw_requirements: list[str]
+    # Expansion is a working set only.  Never overwrite raw_requirements: RAW
+    # identifiers always denote the user's submitted statements.
+    expanded_requirements: NotRequired[list[str]]
+    expanded_source_refs: NotRequired[list[list[str]]]
     refined_requirements: list[str]
+    # Traceable clarification proposals.  Each item is {ref, text, sourceRefs}
+    # where ref is stable RR1..N and sourceRefs contains RAW1..N identifiers.
+    requirement_drafts: NotRequired[list[dict]]
+    requirement_source_issues: NotRequired[list[str]]
     # Phase 2(RTM): clarify가 분리한 (constraint 문장 → qualify하는 functional 문장) 링크.
     # classify가 이 문장쌍을 id로 해소해 RequirementItem.qualifies를 채운다.
     constraint_links: NotRequired[list[dict]]
