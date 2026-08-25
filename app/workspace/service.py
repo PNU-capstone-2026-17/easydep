@@ -60,6 +60,29 @@ TERMINAL_JOB_STATUSES = {
 }
 
 
+# The implementation worker has two distinct parts: initial deterministic
+# generation and the resumable agent workflow.  Keep their user-facing labels
+# here so the workspace can report the same stable milestones even when the
+# underlying task plan differs by application.
+_IMPLEMENTATION_GENERATION_STEPS = (
+    ("validate-input", "입력 및 설계 검증"),
+    ("generate-sources", "기본 소스 생성"),
+    ("prepare-build", "빌드 환경 구성"),
+    ("verify-generated", "초기 컴파일 검증"),
+    ("plan-workflow", "구현 작업 계획"),
+)
+_IMPLEMENTATION_WORKFLOW_PHASES = (
+    ("control", "핵심 비즈니스 로직 구현"),
+    ("persistence", "데이터 영속성 구현"),
+    ("api-adapters", "API 어댑터 구현"),
+    ("boundary-adapters", "외부 경계 연동 구현"),
+    ("outbound-adapters", "아웃바운드 연동 구현"),
+    ("wiring", "애플리케이션 구성 연결"),
+    ("frontend", "프런트엔드 구현"),
+    ("end-to-end", "통합 시나리오 검증"),
+)
+
+
 def _json_response(response: JSONResponse) -> dict[str, Any]:
     return json.loads(response.body.decode("utf-8"))
 
@@ -970,66 +993,228 @@ class WorkspaceService:
 
     @staticmethod
     def _implementation_progress_snapshot(job: dict[str, Any]) -> dict[str, Any]:
-        job_id = str(job.get("job_id") or "")
-        if not job_id:
-            return {}
-        run_root = str(job.get("run_root") or "").strip()
-        if not run_root:
-            try:
-                run_root = str(implementation_worker._read(job_id).get("run_root") or "").strip()
-            except Exception:
-                return {}
-        if not run_root:
-            return {}
+        """Build user-facing implementation milestones from durable checkpoints.
 
-        events_dir = Path(run_root) / "reports" / "agent-executions"
-        latest_path: Path | None = None
-        for candidate in sorted(events_dir.glob("*.events.jsonl")):
-            if latest_path is None or candidate.stat().st_mtime >= latest_path.stat().st_mtime:
-                latest_path = candidate
-        if latest_path is None:
-            return {}
+        ``generation-progress.json`` covers the deterministic generator, while
+        ``workflow-state.json`` is checkpointed before and after every agent
+        task.  Reading both lets the chat show useful progress without exposing
+        the implementation run directory to the browser.
+        """
+        job_id = str(job.get("job_id") or "")
+        private_job = job
+        if job_id:
+            try:
+                private_job = implementation_worker._read(job_id)
+            except Exception:  # Progress reporting must not interrupt a job.
+                private_job = job
+
+        run_root = str(
+            private_job.get("run_root") or job.get("run_root") or ""
+        ).strip()
+        workflow = private_job.get("workflow")
+        run_path = Path(run_root) if run_root else None
+        if run_path is not None:
+            state_path = run_path / "reports" / "workflow-state.json"
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                state = None
+            if isinstance(state, dict):
+                workflow = state
+
+        updates: list[dict[str, str]] = []
+
+        def add_update(
+            step: str, label: str, status: str, detail: str = ""
+        ) -> None:
+            updates.append(
+                {
+                    "step": step,
+                    "label": label,
+                    "status": status,
+                    "detail": detail,
+                }
+            )
+
+        job_status = str(job.get("status") or private_job.get("status") or "")
+        live_progress = job.get("progress")
+        progress_status = (
+            str(live_progress.get("status") or "")
+            if isinstance(live_progress, dict)
+            else ""
+        )
+        progress_message = (
+            str(live_progress.get("message") or "")
+            if isinstance(live_progress, dict)
+            else ""
+        )
+        generation_status = (
+            "PLANNING"
+            if job_status == "PLANNING"
+            else progress_status or job_status
+        )
+
+        if generation_status == "QUEUED":
+            add_update("prepare-job", "구현 작업 준비", "running", "작업을 시작하고 있습니다.")
+        else:
+            # The job leaves the queue before its first generator checkpoint.
+            # Explicitly close this UI-only milestone so it cannot look like a
+            # long-running task while source generation or compilation proceeds.
+            add_update("prepare-job", "구현 작업 준비", "completed")
+
+        if generation_status in {
+            "VALIDATING_INPUT",
+            "GENERATING_SOURCES",
+            "PREPARING_BUILD",
+            "VERIFYING",
+            "PLANNING",
+            "SUCCEEDED",
+        }:
+            status_to_index = {
+                "VALIDATING_INPUT": 0,
+                "GENERATING_SOURCES": 1,
+                "PREPARING_BUILD": 2,
+                "VERIFYING": 3,
+                "PLANNING": 4,
+                "SUCCEEDED": len(_IMPLEMENTATION_GENERATION_STEPS),
+            }
+            active_index = status_to_index[generation_status]
+            for index, (step, label) in enumerate(_IMPLEMENTATION_GENERATION_STEPS):
+                if index < active_index:
+                    add_update(step, label, "completed")
+                elif index == active_index and generation_status != "SUCCEEDED":
+                    add_update(step, label, "running", progress_message)
+        elif generation_status == "REUSING_GENERATED_RUN":
+            add_update("validate-input", "입력 및 설계 검증", "completed")
+            add_update(
+                "reuse-generated-run",
+                "기존 생성 결과 재사용",
+                "running",
+                progress_message,
+            )
+        elif generation_status == "PREPARING_FEEDBACK":
+            add_update("validate-input", "입력 및 설계 검증", "completed")
+            add_update("prepare-feedback", "피드백 적용 준비", "running", progress_message)
+
+        if isinstance(workflow, dict):
+            workflow_status = str(workflow.get("status") or "")
+            current_phase = str(workflow.get("currentPhase") or "")
+            tasks = [item for item in workflow.get("tasks", []) if isinstance(item, dict)]
+            for phase_id, label in _IMPLEMENTATION_WORKFLOW_PHASES:
+                phase_tasks = [
+                    task for task in tasks if str(task.get("phase") or "") == phase_id
+                ]
+                task_statuses = {str(task.get("status") or "") for task in phase_tasks}
+                running_tasks = [
+                    str(task.get("taskId") or "")
+                    for task in phase_tasks
+                    if str(task.get("status") or "") == "RUNNING"
+                ]
+                if phase_tasks and task_statuses == {"SUCCEEDED"}:
+                    add_update(f"phase-{phase_id}", label, "completed")
+                elif "FAILED" in task_statuses:
+                    add_update(f"phase-{phase_id}", label, "failed")
+                elif "RUNNING" in task_statuses or (
+                    workflow_status == "RUNNING" and current_phase == phase_id
+                ):
+                    detail = (
+                        "작업 중: " + ", ".join(item for item in running_tasks if item)
+                        if running_tasks
+                        else "단계 검증을 준비하고 있습니다."
+                    )
+                    add_update(f"phase-{phase_id}", label, "running", detail)
+
+            activity = workflow.get("currentActivity")
+            if isinstance(activity, dict) and str(activity.get("id") or ""):
+                activity_status = str(activity.get("status") or "running").lower()
+                if activity_status == "succeeded":
+                    activity_status = "completed"
+                add_update(
+                    "activity-" + str(activity["id"]),
+                    str(activity.get("label") or "구현 검증"),
+                    activity_status,
+                    str(activity.get("detail") or ""),
+                )
+            elif workflow_status == "COMPLETE":
+                add_update("release-verification", "최종 릴리스 검증", "completed")
 
         current_file: str | None = None
-        for line in latest_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            event = payload.get("event") if isinstance(payload, dict) else None
-            tool_name = str(payload.get("tool") or "") if isinstance(payload, dict) else ""
-            if not isinstance(event, dict):
-                continue
-            path_value = event.get("path") or event.get("file_path") or event.get("filePath")
-            if not isinstance(path_value, str) or not path_value.strip():
-                continue
-            if "file_editor" not in tool_name and tool_name not in {"restricted_file_editor", "file_editor"}:
-                continue
-            current_file = path_value.strip()
+        if run_path is not None:
+            events_dir = run_path / "reports" / "agent-executions"
+            latest_path: Path | None = None
+            for candidate in sorted(events_dir.glob("*.events.jsonl")):
+                try:
+                    if (
+                        latest_path is None
+                        or candidate.stat().st_mtime >= latest_path.stat().st_mtime
+                    ):
+                        latest_path = candidate
+                except OSError:
+                    continue
+            if latest_path is not None:
+                try:
+                    lines = latest_path.read_text(encoding="utf-8").splitlines()
+                except OSError:
+                    lines = []
+                for line in lines:
+                    if not line.strip():
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    event = payload.get("event") if isinstance(payload, dict) else None
+                    tool_name = (
+                        str(payload.get("tool") or "")
+                        if isinstance(payload, dict)
+                        else ""
+                    )
+                    if not isinstance(event, dict):
+                        continue
+                    path_value = (
+                        event.get("path")
+                        or event.get("file_path")
+                        or event.get("filePath")
+                    )
+                    if not isinstance(path_value, str) or not path_value.strip():
+                        continue
+                    if (
+                        "file_editor" not in tool_name
+                        and tool_name not in {"restricted_file_editor", "file_editor"}
+                    ):
+                        continue
+                    current_file = path_value.strip()
 
-        if current_file is None:
+        if current_file:
+            file_name = Path(current_file).name
+            add_update(
+                "implementation-file",
+                "현재 구현 파일",
+                "running",
+                f"Editing {file_name}",
+            )
+
+        if not updates:
             return {}
-
-        file_name = Path(current_file).name
-        class_name = Path(file_name).stem
-        return {
-            "progress_event": "implementationFileProgress",
-            "progress_step_label": "Implementation generation",
-            "progress_card_label": "Implementation generation",
-            "progress_detail": f"Editing {file_name}",
-            "progress_status": "running",
-            "current_file": current_file,
-            "current_class": class_name,
-            "text": f"Editing {file_name}",
+        latest = updates[-1]
+        snapshot: dict[str, Any] = {
+            "updates": updates,
+            "progress_card_label": "구현 진행 상황",
+            "text": latest["detail"] or latest["label"],
+            "progress_detail": latest["detail"] or latest["label"],
+            "progress_status": latest["status"],
         }
+        if current_file:
+            file_name = Path(current_file).name
+            snapshot["current_file"] = current_file
+            snapshot["current_class"] = Path(file_name).stem
+        return snapshot
 
     def _monitor_implementation(self, job: dict[str, Any], *, command_id: str | None = None) -> dict[str, Any]:
         job_id = str(job["job_id"])
         app_id = str(job.get("app_id") or "")
         last_status: str | None = None
-        last_progress: str | None = None
+        last_progress: dict[str, str] = {}
         while True:
             current = implementation_worker.get(job_id)
             status = str(current.get("status") or "")
@@ -1046,18 +1231,42 @@ class WorkspaceService:
                     )
                     last_status = status
                 progress = self._implementation_progress_snapshot(current)
-                progress_key = str(progress.get("current_file") or "") if progress else ""
-                if progress and progress_key != last_progress:
+                for update in progress.get("updates", []) if progress else []:
+                    if not isinstance(update, dict):
+                        continue
+                    step = str(update.get("step") or "")
+                    if not step:
+                        continue
+                    progress_key = "|".join(
+                        str(update.get(field) or "")
+                        for field in ("status", "label", "detail")
+                    )
+                    if last_progress.get(step) == progress_key:
+                        continue
                     repository.append_event(
                         app_id,
                         command_id=command_id,
                         stage="implementation",
                         kind="progress",
                         actor="system",
-                        text=str(progress.get("text") or progress.get("progress_detail") or "Implementation in progress."),
-                        metadata=progress,
+                        text=str(update.get("detail") or update.get("label") or "구현을 진행하고 있습니다."),
+                        metadata={
+                            "progress_event": "implementationStepUpdated",
+                            "step": step,
+                            "progress_step_label": str(update.get("label") or step),
+                            "progress_card_label": str(
+                                progress.get("progress_card_label") or "구현 진행 상황"
+                            ),
+                            "progress_detail": str(update.get("detail") or ""),
+                            "progress_status": str(update.get("status") or "running"),
+                            **{
+                                key: progress[key]
+                                for key in ("current_file", "current_class")
+                                if isinstance(progress.get(key), str)
+                            },
+                        },
                     )
-                    last_progress = progress_key
+                    last_progress[step] = progress_key
             if status == "AWAITING_APPROVAL":
                 request = current.get("transmission_request") or {}
                 return {

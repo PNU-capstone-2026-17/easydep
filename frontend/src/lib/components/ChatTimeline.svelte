@@ -39,7 +39,6 @@
   );
   let implementationFocus = $derived.by(() => {
     const metadata = latestProgress?.metadata ?? {};
-    if (String(metadata.progress_event ?? '') !== 'implementationFileProgress') return null;
     const file = String(metadata.current_file ?? '');
     const className = String(metadata.current_class ?? '');
     if (!file && !className) return null;

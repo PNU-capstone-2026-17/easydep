@@ -74,6 +74,16 @@ PHASES = (
 PARALLEL_PHASES = frozenset(
     {"control", "api-adapters", "boundary-adapters", "outbound-adapters"}
 )
+PHASE_LABELS = {
+    "control": "핵심 비즈니스 로직",
+    "persistence": "데이터 영속성",
+    "api-adapters": "API 어댑터",
+    "boundary-adapters": "외부 경계 연동",
+    "outbound-adapters": "아웃바운드 연동",
+    "wiring": "애플리케이션 구성",
+    "frontend": "프런트엔드",
+    "end-to-end": "통합 시나리오",
+}
 
 
 def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
@@ -333,10 +343,24 @@ def _run_workflow(
             + ", ".join(failed_runnable)
         )
     if not runnable:
+        state["currentActivity"] = {
+            "id": "completion-audit",
+            "label": "최종 완성도 점검",
+            "status": "RUNNING",
+            "detail": "생성된 작업 공간을 검증하고 있습니다.",
+        }
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         verification = verifier(run_root)
         audit = auditor(run_root)
         state = reconcile_workflow_state(run_root)
         if audit.get("status") == "COMPLETE":
+            state["currentActivity"] = {
+                "id": "release-verification",
+                "label": "최종 릴리스 검증",
+                "status": "RUNNING",
+                "detail": "설계 정합성과 실행 가능 여부를 확인하고 있습니다.",
+            }
+            _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
             try:
                 conformance = verify_source_design_conformance(run_root, spec)
             except SourceDesignConformanceError as error:
@@ -350,10 +374,16 @@ def _run_workflow(
         state["audit"] = "reports/implementation-completion-audit.json"
         if state["status"] == "COMPLETE":
             state["blockingReason"] = None
+            state["currentActivity"] = {
+                "id": "release-verification",
+                "label": "최종 릴리스 검증",
+                "status": "SUCCEEDED",
+            }
         elif state["status"] != "NEEDS_INPUT":
             state["blockingReason"] = (
                 "No runnable planned task; implement the first unplanned audit backlog phase."
             )
+            state.pop("currentActivity", None)
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         return state
 
@@ -412,19 +442,50 @@ def _run_workflow(
                         )
                         return repaired_state
                 raise error
+        state["currentActivity"] = {
+            "id": f"verify-{phase_id}",
+            "label": f"{PHASE_LABELS[phase_id]} 단계 검증",
+            "status": "RUNNING",
+            "detail": "변경된 작업 공간을 검증하고 있습니다.",
+        }
+        state["updatedAt"] = _now()
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         _verify_phase(run_root, phase_id, verifier)
+        state["currentActivity"] = {
+            "id": f"audit-{phase_id}",
+            "label": f"{PHASE_LABELS[phase_id]} 완료 점검",
+            "status": "RUNNING",
+            "detail": "다음 단계로 진행할 수 있는지 점검하고 있습니다.",
+        }
+        state["updatedAt"] = _now()
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         auditor(run_root)
         next(
             phase for phase in state["phases"] if phase["phaseId"] == phase_id
         )["status"] = "SUCCEEDED"
+        state.pop("currentActivity", None)
 
     # A completed phase can change the exact generated sources embedded in a
     # downstream prompt (notably Boundary outputs used by Spring wiring).
     # Re-plan before emitting the next approval request so its hash never
     # describes stale pre-phase context.
     final_state = plan_workflow(run_root, spec)
+    final_state["currentActivity"] = {
+        "id": "completion-audit",
+        "label": "최종 완성도 점검",
+        "status": "RUNNING",
+        "detail": "전체 구현 결과를 점검하고 있습니다.",
+    }
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
     audit = auditor(run_root)
     if audit.get("status") == "COMPLETE":
+        final_state["currentActivity"] = {
+            "id": "release-verification",
+            "label": "최종 릴리스 검증",
+            "status": "RUNNING",
+            "detail": "설계 정합성과 실행 가능 여부를 확인하고 있습니다.",
+        }
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
         verification = verifier(run_root)
         try:
             conformance = verify_source_design_conformance(run_root, spec)
@@ -440,12 +501,19 @@ def _run_workflow(
     final_state["audit"] = "reports/implementation-completion-audit.json"
     if final_state["status"] == "COMPLETE":
         final_state["blockingReason"] = None
+        final_state["currentActivity"] = {
+            "id": "release-verification",
+            "label": "최종 릴리스 검증",
+            "status": "SUCCEEDED",
+        }
     elif final_state["status"] == "READY":
         final_state["blockingReason"] = None
+        final_state.pop("currentActivity", None)
     elif final_state["status"] != "NEEDS_INPUT":
         final_state["blockingReason"] = (
             "The audit contains backlog work without an implemented planner."
         )
+        final_state.pop("currentActivity", None)
     _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
     return final_state
 
