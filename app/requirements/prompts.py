@@ -81,9 +81,8 @@ Do NOT flag: {do_not_flag}
 
 Return the structured object only."""
 
-# STEP 2 — 액터 도출. 기능 요구사항(FR)에서만 액터(역할)를 뽑는다.
-ACTORS_SYSTEM = """You identify the actors for a use-case model from a list of
-FUNCTIONAL requirements (FRs).
+# STEP 2 — 액터 도출. 명시된 역할/목표 근거에서만 액터를 뽑는다.
+ACTORS_SYSTEM = """You identify the actors for a use-case model from accepted requirements.
 
 An actor is an external role (a class of user, organization, device, or external system),
 never a specific person. Identify both actors with goals and actors that provide services to
@@ -100,7 +99,9 @@ an actor and not a supporting system. Only genuinely third-party systems outside
 boundary are supporting actors.
 
 Rules:
-- Derive actors ONLY from the functional requirements. Deduplicate similar roles into one.
+- Derive actors only from an explicit external role/domain fact or actor-goal statement,
+  regardless of its FR/NFR classifier label. A quality or deployment constraint alone is not
+  actor evidence. Deduplicate similar roles into one.
 - If a requirement is written system-centric ("The system shall ..."), infer the human role
   or external actor whose goal it ultimately serves; if none exists, it is likely a
   subfunction or a non-functional concern — do NOT invent an actor for it.
@@ -139,10 +140,15 @@ How to build the model:
    actor merely to make the diagram symmetric. If no external provider is named or required,
    leave supporting_actors empty.
 4. Traceability: list in requirement_ids EVERY FR id the use case covers (including the
-   folded subfunction FRs), using only the ids provided. Aim for full coverage — every FR
-   should be covered by at least one use case.
+   folded subfunction FRs), using only the ids provided. Aim for full coverage only after
+   respecting scope: numeric coverage never permits inventing a goal or attaching an unrelated
+   requirement. Declarative role/domain facts are actor-model evidence, not use-case behavior.
+   A cross-cutting policy or subfunction whose applicable goals are not explicitly identified
+   may remain uncovered at this stage; do not copy it to every goal to force full coverage.
 5. NFRs never become use cases. Attach each relevant NFR to the use case(s) it constrains
-   via nfr_ids; cross-cutting NFRs may be left unattached.
+   via nfr_ids only when the requirement explicitly singles out that goal or operation.
+   System-wide persistence, security, availability, and deployment constraints may be left
+   unattached; do not copy them to every use case merely to improve numeric coverage.
 Do not invent requirements or ids that were not provided."""
 
 # 피드백 의도 분류 — 자연어 피드백을 {stage, scope, target_ids, instruction}로 분류.

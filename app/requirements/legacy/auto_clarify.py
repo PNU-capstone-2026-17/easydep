@@ -97,6 +97,10 @@ def refine_requirements_prompt(
       outcome. Lifecycle operations described under one management goal may remain together.
     - Keep one policy statement for an enumerated set of data, roles, resources, or lifecycle
       operations. Do not duplicate the same policy once per list item.
+    - Keep declarative domain and role facts declarative. A statement that defines a role,
+      specialization, business term, or domain fact is evidence for later analysis; do not
+      rewrite it as behavior such as "the system shall define/configure/manage" that the source
+      did not request.
     - Keep a constraint and its explicit scope together when the latter only strengthens the same
       acceptance rule, for example a rule that must also hold under concurrency.
     - Every refined statement must stand on its own. Do not emit a sibling sentence that refers

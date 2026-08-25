@@ -36,7 +36,7 @@ class ActorItem(TypedDict):
     name: str
     description: str
     parent_actor: str | None  # 일반화(상속) 부모 액터, 없으면 None
-
+    source_refs: list[str]  # Accepted requirement IDs supporting this actor role.
 
 class UseCaseItem(TypedDict):
     """도출된 유스케이스 (user-goal 고도). FR 추적성·NFR 제약을 담는다."""

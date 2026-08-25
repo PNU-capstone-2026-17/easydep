@@ -83,12 +83,19 @@ class Actor(BaseModel):
     액터의 고정 속성이 아니라 유스케이스별 역할이다.
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str = Field(description="Actor role name, e.g. 'Registered User'.")
     description: str = Field(description="One sentence describing the actor's role.")
     parent_actor: str | None = Field(
         default=None,
         description="If this actor specializes another (e.g. Member specializes Guest), the "
         "parent role name; grounds an actor generalization. Null if none.",
+    )
+    source_refs: list[str] = Field(
+        alias="sourceRefs",
+        min_length=1,
+        description="Accepted requirement IDs that explicitly support this actor role.",
     )
 
 

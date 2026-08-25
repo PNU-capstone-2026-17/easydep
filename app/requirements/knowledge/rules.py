@@ -194,11 +194,15 @@ RULES: tuple[Rule, ...] = (
         probe=("actor", "system under design"),
     ),
     Rule(
-        id="actors.derived-from-functional-requirements",
+        id="actors.source-grounded-external-roles",
         stage=MODEL_USE_CASES,
         severity=GUIDANCE,
-        statement="Derive actors from functional requirements only.",
-        citation="easydep convention",
+        statement=(
+            "Derive an external actor only from an accepted actor-goal statement or an "
+            "explicit role/domain fact, regardless of its FR/NFR classifier label. Ordinary "
+            "quality and deployment constraints do not create actors."
+        ),
+        citation="easydep convention (source-grounded actor projection)",
         evidence="project-convention",
         caveat="우리 규약이다 — 책이 액터의 출처를 요구사항 유형으로 제한한 것은 아니다.",
     ),

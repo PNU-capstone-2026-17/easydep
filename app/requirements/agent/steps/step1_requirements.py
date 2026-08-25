@@ -169,6 +169,15 @@ def _apply_constraint_links(classified: list[RequirementItem], links: list[dict]
         child = by_norm.get(_norm(link.get("constraint", "")))
         parent = by_norm.get(_norm(link.get("qualifies", "")))
         if child and parent and child["type"] == "NFR" and parent["type"] == "FR":
+            child_sources = set(child.get("source_refs") or [])
+            parent_sources = set(parent.get("source_refs") or [])
+            # A clarify-time constraint link is evidence that one compound RAW
+            # statement was split.  Separate sources cannot acquire a semantic
+            # qualifies edge merely because the model found them related.
+            if (child_sources or parent_sources) and not (
+                child_sources & parent_sources
+            ):
+                continue
             child.setdefault("qualifies", [])
             if parent["id"] not in child["qualifies"]:
                 child["qualifies"].append(parent["id"])

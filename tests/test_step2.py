@@ -20,11 +20,21 @@ import os
 import pytest
 from conftest import dataset_names, load_dataset
 
+from app.requirements import prompts
 from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.schemas import Actor, ActorResult, UseCase, UseCaseResult
 
 # 결정론/목킹 테스트가 고정으로 쓰는 세트 (id R1..R5, N1..N2 를 이 테스트들이 참조).
 SAMPLE_CLASSIFIED = load_dataset("shopping_mall")["classified"]
+
+
+def test_use_case_prompt_keeps_structural_facts_and_global_constraints_out_of_goals():
+    prompt = " ".join(prompts.USECASES_SYSTEM.split())
+
+    assert "Declarative role/domain facts are actor-model evidence" in prompt
+    assert "do not copy them to every use case" in prompt
+    assert "numeric coverage never permits inventing a goal" in prompt
+    assert "may remain uncovered at this stage" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -83,11 +93,31 @@ def test_coverage_no_fr_is_full():
 # ---------------------------------------------------------------------------
 # 2. identify_actors / identify_use_cases — invoke_structured 목킹
 # ---------------------------------------------------------------------------
+def test_identify_actors_uses_structural_sources_and_canonical_parent(monkeypatch):
+    result = ActorResult(actors=[
+        Actor(name="Member", description="specialized role", parent_actor="  user ",
+              source_refs=["NFR1", "FR1"]),
+        Actor(name="User", description="general role", source_refs=["NFR1"]),
+    ])
+    monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: result)
+
+    out = s2.identify_actors({
+        "classified": [
+            {"id": "FR1", "text": "A user submits a request.", "type": "FR"},
+            {"id": "NFR1", "text": "Member specializes user.", "type": "NFR"},
+        ],
+    })
+
+    member = next(actor for actor in out["actors"] if actor["name"] == "Member")
+    assert member["parent_actor"] == "User"
+    assert member["source_refs"] == ["FR1", "NFR1"]
+
+
 def test_identify_actors_shapes_dicts(monkeypatch):
     result = ActorResult(
         actors=[
-            Actor(name="Registered User", description="shopper"),
-            Actor(name="Address Service", description="external"),
+            Actor(name="Registered User", description="shopper", source_refs=["R1"]),
+            Actor(name="Address Service", description="external", source_refs=["R3"]),
         ]
     )
     monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: result)
@@ -97,11 +127,12 @@ def test_identify_actors_shapes_dicts(monkeypatch):
 
     assert out["phase"] == "actors"
     assert [a["name"] for a in actors] == ["Registered User", "Address Service"]
+    assert actors[0]["source_refs"] == ["R1"]
     assert "kind" not in actors[0]
     assert "kind" not in actors[1]
 
 
-def test_identify_actors_empty_when_no_fr(monkeypatch):
+def test_identify_actors_empty_when_no_accepted_requirements(monkeypatch):
     called = False
 
     def _fake(schema, messages):
@@ -111,7 +142,7 @@ def test_identify_actors_empty_when_no_fr(monkeypatch):
 
     monkeypatch.setattr(s2, "invoke_structured", _fake)
 
-    out = s2.identify_actors({"classified": [{"id": "N1", "text": "x", "type": "NFR"}]})
+    out = s2.identify_actors({"classified": []})
     assert out["actors"] == []
     assert called is False  # FR이 없으면 LLM을 아예 호출하지 않음
 
@@ -144,6 +175,48 @@ def test_identify_use_cases_assigns_ids_and_maps_fields(monkeypatch):
     assert ucs[1]["nfr_ids"] == ["N1"]  # NFR은 제약으로만 부착
     # step2는 시나리오를 만들지 않는다 (시나리오/확장은 step3)
     assert "main_scenario_steps" not in ucs[1]
+
+
+def test_identify_use_cases_retries_a_dangling_actor_reference_once(monkeypatch):
+    calls = []
+
+    def fake(schema, messages):
+        calls.append(messages[-1].content)
+        primary = "Unknown actor" if len(calls) == 1 else "  customer "
+        return UseCaseResult(use_cases=[
+            UseCase(name="Submit request", primary_actor=primary, goal="submit a request",
+                    requirement_ids=["R1"]),
+        ])
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases({
+        "classified": [{"id": "R1", "text": "A customer submits a request.", "type": "FR"}],
+        "actors": [{"name": "Customer", "description": "requester", "source_refs": ["R1"]}],
+    })
+
+    assert out["use_cases"][0]["primary_actor"] == "Customer"
+    assert len(calls) == 2
+    assert "ACTOR IDENTITY REPAIR" in calls[1]
+
+
+def test_explicit_sign_in_goal_is_kept_as_a_use_case(monkeypatch):
+    result = UseCaseResult(use_cases=[
+        UseCase(name="Sign in", primary_actor="User", goal="access an account",
+                requirement_ids=["R1"]),
+        UseCase(name="View account", primary_actor="User", goal="view account details",
+                requirement_ids=["R2"]),
+    ])
+    monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: result)
+
+    out = s2.identify_use_cases({
+        "classified": [
+            {"id": "R1", "text": "A user can sign in.", "type": "FR"},
+            {"id": "R2", "text": "A user can view account details.", "type": "FR"},
+        ],
+        "actors": [{"name": "User", "description": "account holder", "source_refs": ["R1", "R2"]}],
+    })
+
+    assert {use_case["name"] for use_case in out["use_cases"]} == {"Sign in", "View account"}
 
 
 def test_identify_use_cases_local_edit_preserves_siblings(monkeypatch):
@@ -193,7 +266,11 @@ def test_identify_use_cases_local_edit_reindexes_on_count_change(monkeypatch):
     ]))
 
     out = s2.identify_use_cases(
-        {"classified": SAMPLE_CLASSIFIED, "actors": [], "use_cases": existing},
+        {
+            "classified": SAMPLE_CLASSIFIED,
+            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+            "use_cases": existing,
+        },
         feedback="UC1을 둘로 쪼개줘", target_ids=["UC1"],
     )
     assert [u["id"] for u in out["use_cases"]] == ["UC1", "UC2"]
@@ -219,7 +296,7 @@ def _uc_result(*id_groups):
     ])
 
 
-def test_coverage_repair_covers_orphans(monkeypatch):
+def test_actor_goal_audit_can_restore_an_explicit_omitted_goal(monkeypatch):
     # 1차엔 R1만 커버(R2~R5 고아) → 재생성이 나머지를 보충.
     calls = {"n": 0}
 
@@ -237,11 +314,13 @@ def test_coverage_repair_covers_orphans(monkeypatch):
     assert calls["n"] == 2                              # 1회 재생성으로 완료
 
 
-def test_coverage_repair_stops_at_budget(monkeypatch):
-    monkeypatch.setattr(s2.settings, "max_coverage_iters", 2)
+def test_actor_goal_audit_runs_without_a_coverage_iteration_budget(monkeypatch):
     monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: _uc_result(["R1"]))
 
-    out = s2.identify_use_cases({"classified": SAMPLE_CLASSIFIED, "actors": []})
+    out = s2.identify_use_cases({
+        "classified": SAMPLE_CLASSIFIED,
+        "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+    })
     covered = {rid for uc in out["use_cases"] for rid in uc["requirement_ids"]}
     assert covered == {"R1"}   # 예산 소진, 나머지는 이후 check_coverage가 고아로 표면화
 

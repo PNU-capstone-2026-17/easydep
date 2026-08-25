@@ -6,6 +6,13 @@ from app.requirements.legacy.auto_clarify import refine_requirements_prompt
 from app.requirements.schemas import ClarifyOnlyResult, ExpandedRequirementsResult
 
 
+def test_refinement_preserves_declarative_role_and_domain_facts():
+    prompt = " ".join(refine_requirements_prompt("A role hierarchy is defined.").split())
+
+    assert "Keep declarative domain and role facts declarative" in prompt
+    assert "do not rewrite it as behavior" in prompt
+
+
 def test_expand_requirements_keeps_the_user_raw_input_and_maps_to_raw1(monkeypatch):
     monkeypatch.setattr(
         s1,
@@ -192,6 +199,28 @@ def test_classified_requirements_keep_draft_sources_and_constraint_links(monkeyp
     assert items[0]["id"] == items[0]["draft_ref"] == "RR1"
     assert items[0]["source_refs"] == ["RAW1"]
     assert items[1]["qualifies"] == ["RR1"]
+
+
+def test_constraint_link_cannot_join_requirements_from_different_raw_sources(monkeypatch):
+    monkeypatch.setattr(s1, "bert_available", lambda: True)
+    monkeypatch.setattr(
+        s1,
+        "classify_bert",
+        lambda text: ("NFR", 0.95) if "survive" in text else ("FR", 0.95),
+    )
+
+    items = s1.classify({
+        "requirement_drafts": [
+            {"ref": "RR1", "text": "Operators shall manage records.", "sourceRefs": ["RAW1"]},
+            {"ref": "RR2", "text": "Records shall survive restarts.", "sourceRefs": ["RAW2"]},
+        ],
+        "constraint_links": [{
+            "constraint": "Records shall survive restarts.",
+            "qualifies": "Operators shall manage records.",
+        }],
+    })["classified"]
+
+    assert "qualifies" not in items[1]
 
 
 def test_intake_creates_message():
