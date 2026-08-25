@@ -37,6 +37,15 @@
       (event) => event.stage === 'implementation' && event.kind === 'error'
     )?.event_id
   );
+  let implementationTimelineResetId = $derived(
+    [...events]
+      .reverse()
+      .find(
+        (event) =>
+          event.stage === 'implementation' &&
+          event.metadata?.reset_implementation_timeline === true
+      )?.event_id ?? 0
+  );
   let implementationFocus = $derived.by(() => {
     const metadata = latestProgress?.metadata ?? {};
     const file = String(metadata.current_file ?? '');
@@ -52,7 +61,10 @@
   let progressSteps = $derived.by(() => {
     if (!latestProgress) return [];
     const commandEvents = events.filter(
-      (event) => event.kind === 'progress' && event.command_id === latestProgress?.command_id
+      (event) =>
+        event.kind === 'progress' &&
+        event.command_id === latestProgress?.command_id &&
+        (event.stage !== 'implementation' || event.event_id >= implementationTimelineResetId)
     );
     const steps = new Map<
       string,
@@ -84,6 +96,15 @@
     const lastProgressId = latestProgress?.event_id;
     return events.filter(
       (event) =>
+        !(
+          event.stage === 'implementation' &&
+          implementationTimelineResetId > 0 &&
+          event.event_id < implementationTimelineResetId
+        ) &&
+        !(
+          event.stage === 'implementation' &&
+          event.metadata?.reset_implementation_timeline === true
+        ) &&
         (event.kind !== 'status' || eventArtifactStages(event).length > 0) &&
         (event.kind !== 'progress' || event.event_id === lastProgressId)
     );
@@ -203,7 +224,7 @@
                 {:else}
                   <LoaderCircle size={13} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
                 {/if}
-                <div class="min-w-0">
+                <div class="min-w-0 {step.id.startsWith('sub-backend-') ? 'ml-5 border-l border-[#dce3dd] pl-3' : ''}">
                   <div class="leading-4">{step.label}</div>
                   {#if step.detail && step.detail !== 'Started'}
                     <div class="mt-0.5 text-[10px] leading-4 text-[#85887f]">{step.detail}</div>

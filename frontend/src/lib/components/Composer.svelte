@@ -41,14 +41,10 @@
       : null
   );
   let implementationResponse = $derived(
-    implementationAction && ['QUEUED', 'RUNNING'].includes(command?.status ?? '')
-      ? implementationAction === 'approve_implementation'
-        ? command?.status === 'QUEUED'
-          ? 'Implementation approval received. Queuing resume…'
-          : 'Implementation approval received. Resuming implementation…'
-        : command?.status === 'QUEUED'
-          ? 'Implementation retry requested. Queuing a new run…'
-          : 'Implementation retry requested. Preparing a new implementation run…'
+    implementationAction && implementationAction !== 'approve_implementation' && ['QUEUED', 'RUNNING'].includes(command?.status ?? '')
+      ? command?.status === 'QUEUED'
+        ? 'Implementation retry requested. Queuing a new run…'
+        : 'Implementation retry requested. Preparing a new implementation run…'
       : implementationAction && command?.status === 'COMPLETED'
         ? String(result?.message ?? 'Implementation request completed.')
         : implementationAction && command?.status === 'FAILED'

@@ -875,7 +875,44 @@ def test_implementation_progress_snapshot_exposes_workflow_phase_and_verificatio
 
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["phase-backend"]["status"] == "running"
-    assert updates["activity-backend"]["status"] == "running"
+    assert updates["sub-backend-create-entity"]["status"] == "running"
+    assert "activity-backend" not in updates
+
+
+def test_implementation_progress_snapshot_nests_backend_tasks_and_hides_duplicate_activity(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "currentPhase": "persistence",
+                "phases": [
+                    {"phaseId": "control", "status": "SUCCEEDED"},
+                    {"phaseId": "persistence", "status": "RUNNING"},
+                ],
+                "tasks": [
+                    {"taskId": "control-1", "phase": "control", "status": "SUCCEEDED"},
+                    {"taskId": "persistence-1", "phase": "persistence", "status": "RUNNING"},
+                ],
+                "currentActivity": {"id": "persistence-1", "status": "RUNNING"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = WorkspaceService()
+
+    progress = service._implementation_progress_snapshot(
+        {"job_id": "job-1", "run_root": str(run), "status": "RUNNING"}
+    )
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["phase-backend"]["status"] == "running"
+    assert updates["sub-backend-persistence-1"]["status"] == "running"
+    assert "activity-backend" not in updates
 
 
 def test_implementation_progress_snapshot_closes_release_verification_for_drained_ready_workflow(
@@ -964,6 +1001,7 @@ def test_implementation_progress_snapshot_does_not_reopen_completed_file_activit
 
 def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     calls: list[dict] = []
+    events: list[dict] = []
 
     def fake_create_job(app_id, request):
         calls.append(
@@ -976,6 +1014,11 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
         return {"job_id": "new-job", "app_id": app_id, "status": "QUEUED"}
 
     monkeypatch.setattr(workspace_module, "create_job", fake_create_job)
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "append_event",
+        lambda *args, **kwargs: events.append(kwargs),
+    )
     monkeypatch.setattr(
         workspace_module,
         "artifact_repository",
@@ -1003,3 +1046,4 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
 
     assert calls and calls[0]["app_id"] == "app-1"
     assert result["job"]["job_id"] == "new-job"
+    assert events and events[0]["metadata"]["reset_implementation_timeline"] is True

@@ -472,6 +472,19 @@ class WorkspaceService:
         if action == "dismiss_change":
             return {"message": "Kept the existing artifacts and dismissed the change request."}
         if action in {"start_implementation", "rerun_implementation"}:
+            if action == "rerun_implementation":
+                # The retry starts a new implementation run.  Tell the UI to
+                # discard only the previous implementation timeline while
+                # preserving requirement and design conversation history.
+                repository.append_event(
+                    str(command["app_id"]),
+                    command_id=str(command["command_id"]),
+                    stage="implementation",
+                    kind="status",
+                    actor="system",
+                    text="",
+                    metadata={"reset_implementation_timeline": True},
+                )
             request = CreateImplementationJobRequest(
                 base_package=str(
                     command["payload"].get("base_package") or "com.easydep.app"
@@ -1334,6 +1347,32 @@ class WorkspaceService:
                         "running",
                         f"{label}을 진행하고 있습니다.",
                     )
+                if display_id == "backend" and not all_succeeded:
+                    # Keep backend's concrete workflow tasks visible while the
+                    # phase is active.  They are rendered as indented children
+                    # of the single Backend implementation row and disappear
+                    # once the phase itself is complete.
+                    for task in display_tasks:
+                        task_phase = str(task.get("phase") or "")
+                        task_status = str(task.get("status") or "PENDING").lower()
+                        task_label = next(
+                            (
+                                phase_label
+                                for phase_id, phase_label in _IMPLEMENTATION_WORKFLOW_PHASES
+                                if phase_id == task_phase
+                            ),
+                            str(task.get("taskId") or task.get("task_id") or task_phase),
+                        )
+                        if task_status == "succeeded":
+                            task_status = "completed"
+                        elif task_status not in {"running", "failed", "timeout", "needs_review"}:
+                            task_status = "pending"
+                        add_update(
+                            f"sub-backend-{task.get('taskId') or task.get('task_id') or task_phase}",
+                            task_label,
+                            task_status,
+                            str(task.get("detail") or ""),
+                        )
 
             workflow_complete = workflow_status == "COMPLETE" or (
                 workflow_status == "READY"
@@ -1359,12 +1398,16 @@ class WorkspaceService:
                     ("implementation", "Backend 구현", frozenset()),
                 )
                 activity_prefix = "빌드 및 Unit Test" if activity_id.startswith("verify-") else "구현 결과 확인"
-                add_update(
-                    "activity-" + display_id,
-                    f"{display_label} {activity_prefix}",
-                    activity_status,
-                    str(activity.get("detail") or ""),
-                )
+                # Backend already exposes its concrete workflow tasks under
+                # the Backend row.  Adding a second "Backend 구현 결과 확인"
+                # row duplicates the same phase in the timeline.
+                if display_id != "backend":
+                    add_update(
+                        "activity-" + display_id,
+                        f"{display_label} {activity_prefix}",
+                        activity_status,
+                        str(activity.get("detail") or ""),
+                    )
             elif workflow_complete:
                 add_update("release-verification", "최종 릴리스 검증", "completed")
 
