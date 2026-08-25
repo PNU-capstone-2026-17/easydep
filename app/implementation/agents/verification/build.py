@@ -261,11 +261,18 @@ def production_placeholder_markers(
 
     A prose comment containing the generic word ``placeholder`` has no runtime
     effect and is not evidence of incomplete code.  Keep this gate focused on
-    actionable TODO/FIXME markers so it does not reject a compiling artifact
-    merely for its wording.
+    actionable markers, including a direct ``UnsupportedOperationException``
+    that explicitly says an API operation is unimplemented.  The latter can
+    compile while making a documented endpoint unusable at runtime.
     """
     evidence: list[str] = []
-    pattern = re.compile(r"\b(?:TODO|FIXME)\b", re.IGNORECASE)
+    pattern = re.compile(
+        r"\b(?:TODO|FIXME)\b"
+        r"|\bthrow\s+new\s+UnsupportedOperationException\s*\(\s*"
+        r'"[^"\n]*\b(?:not\s+implemented|missing\s+[^"\n]*'
+        r"(?:mapping|implementation|contract))\b[^\"\n]*\"\s*\)",
+        re.IGNORECASE,
+    )
     for relative in relative_paths:
         normalized = relative.replace("\\", "/")
         if "/src/main/java/" not in f"/{normalized}" or not normalized.endswith(".java"):

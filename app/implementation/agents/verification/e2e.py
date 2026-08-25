@@ -132,7 +132,13 @@ def _java_test_method_bodies(source: str) -> list[str]:
 
 
 def _http_path_evidence_pattern(path: str) -> re.Pattern[str]:
-    """Match a literal path or Java string concatenation resolving to that path."""
+    """Match a URI template literal or Java concatenation resolving to ``path``.
+
+    ``RestTemplate`` accepts URI-template literals together with trailing
+    variable arguments (for example ``\"/courses/{courseId}\"``).  That is
+    executable HTTP evidence and must be treated equivalently to a manually
+    concatenated URL.
+    """
     parts = re.split(r"(\{[^}]+\})", path)
     expression: list[str] = []
     for part in parts:
@@ -143,8 +149,14 @@ def _http_path_evidence_pattern(path: str) -> re.Pattern[str]:
             )
         else:
             expression.append(re.escape(part))
+    resolved_expression = "".join(expression)
+    literal_template = re.escape(path)
     return re.compile(
-        r"(?<![A-Za-z0-9_/-])" + "".join(expression) + r"(?![A-Za-z0-9_/-])"
+        r"(?<![A-Za-z0-9_/-])(?:"
+        + literal_template
+        + r"|"
+        + resolved_expression
+        + r")(?![A-Za-z0-9_/-])"
     )
 
 

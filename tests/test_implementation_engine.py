@@ -1212,6 +1212,39 @@ TestRestTemplate http; EnrollmentRepository repository;
 
             self.assertEqual([], e2e_contract_violations(path, contract))
 
+    def test_semantic_gate_accepts_rest_template_uri_template_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CourseFlowTest.java"
+            path.write_text(
+                """class CourseFlowTest {
+TestRestTemplate http; CourseRepository repository;
+@Test void courseDetail() {
+  ResponseEntity<Object> response = http.getForEntity("/courses/{courseId}", Object.class, COURSE_ID);
+  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+}
+@Test void cancelEnrollment() {
+  ResponseEntity<Void> response = http.exchange("/enrollments/{courseId}", HttpMethod.DELETE, request, Void.class, COURSE_ID);
+  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+}
+@Test void schedule() {
+  ResponseEntity<Object> response = http.getForEntity("/students/{studentId}/schedule", Object.class, STUDENT_ID);
+  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+}
+}""",
+                encoding="utf-8",
+            )
+            contract = {
+                "repositories": ["CourseRepository"],
+                "minimumTests": 3,
+                "scenarios": [
+                    {"method": "GET", "path": "/courses/{courseId}", "status": 200},
+                    {"method": "DELETE", "path": "/enrollments/{courseId}", "status": 204},
+                    {"method": "GET", "path": "/students/{studentId}/schedule", "status": 200},
+                ],
+            }
+
+            self.assertEqual([], e2e_contract_violations(path, contract))
+
     def test_semantic_gate_rejects_wrong_status_or_extra_path_segment_per_scenario(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "EnrollmentFlowTest.java"
@@ -1361,6 +1394,26 @@ TestRestTemplate http; CourseRepository courseRepository;
 
             self.assertEqual(1, len(evidence))
             self.assertIn("TODO", evidence[0])
+
+    def test_production_placeholder_gate_rejects_unimplemented_operation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            main = "application/src/main/java/com/example/CoursesApiController.java"
+            path = root / main
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                """class CoursesApiController {
+  Object searchCourses(Object body) {
+    throw new UnsupportedOperationException("SearchCourses not implemented: missing SearchCriteria mapping.");
+  }
+}""",
+                encoding="utf-8",
+            )
+
+            evidence = production_placeholder_markers(root, [main])
+
+            self.assertEqual(1, len(evidence))
+            self.assertIn("UnsupportedOperationException", evidence[0])
 
     def test_production_test_library_gate_rejects_mockito_only_in_main_java(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2459,10 +2512,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             )
 
             spec = load_job(job)
-            self.assertEqual(
-                ["implement-end-to-end-flow"],
-                [task.task_id for task in generate_e2e_tasks(spec, run)],
-            )
+            self.assertEqual([], generate_e2e_tasks(spec, run))
             gaps = detect_e2e_design_gaps(spec, run)
             self.assertEqual(
                 {"OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED"},

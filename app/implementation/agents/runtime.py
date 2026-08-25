@@ -459,7 +459,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     violations = []
                     if placeholders:
                         violations.append(
-                            "Production outputs contain unresolved TODO/FIXME/placeholder markers:"
+                            "Production outputs contain unresolved TODO/FIXME or unimplemented-operation markers:"
                         )
                         violations.extend(placeholders)
                     if test_libraries:
