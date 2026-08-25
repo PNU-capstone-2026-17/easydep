@@ -90,7 +90,16 @@
         status
       });
     }
-    return [...steps.values()];
+    const order = (id: string): number => {
+      if (id === 'prepare-job') return 10;
+      if (id.startsWith('validate-') || id.startsWith('generate-') || id.startsWith('prepare-') || id.startsWith('verify-') || id === 'plan-workflow') return 20;
+      if (id === 'phase-backend') return 100;
+      if (id.startsWith('sub-backend-')) return 110;
+      if (id === 'phase-frontend') return 200;
+      if (id === 'phase-e2e') return 300;
+      return 400;
+    };
+    return [...steps.values()].sort((left, right) => order(left.id) - order(right.id));
   });
   let visibleEvents = $derived.by(() => {
     const lastProgressId = latestProgress?.event_id;

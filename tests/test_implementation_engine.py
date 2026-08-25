@@ -277,6 +277,36 @@ class ImplementationParallelismTest(unittest.TestCase):
             persisted = json.loads((reports / "workflow-state.json").read_text(encoding="utf-8"))
             self.assertEqual(["first", "second"], [task["taskId"] for task in persisted["tasks"]])
 
+    def test_parallel_batch_marks_only_worker_slots_as_running(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            tasks = [
+                self._task(f"task-{index}", "api-adapter", f"application/{index}.java")
+                for index in range(4)
+            ]
+            (reports / "run-manifest.json").write_text(
+                json.dumps({"implementation_tasks": [
+                    {"task_id": task["taskId"], "allowed_write_paths": task["allowedWritePaths"]}
+                    for task in tasks
+                ]}),
+                encoding="utf-8",
+            )
+            observed: list[list[str]] = []
+
+            def execute(root: Path, task_id: str) -> dict[str, object]:
+                observed.append([str(task["status"]) for task in tasks])
+                output = root / f"application/{task_id}.java"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("class Generated {}", encoding="utf-8")
+                return {"status": "SUCCEEDED"}
+
+            state: dict[str, object] = {"tasks": tasks, "status": "RUNNING"}
+            self.assertEqual([], _execute_task_batch(run, state, tasks, execute, max_workers=2))
+            self.assertTrue(observed)
+            self.assertLessEqual(sum(status == "RUNNING" for status in observed[0]), 2)
+
     def test_persistence_entities_finish_before_parallel_dependents(self) -> None:
         tasks = [
             self._task("entities", "persistence-entities", "application/Entity.java"),

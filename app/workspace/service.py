@@ -1354,6 +1354,19 @@ class WorkspaceService:
                     # once the phase itself is complete.
                     tasks_by_phase: dict[str, list[dict[str, Any]]] = {}
                     for task in display_tasks:
+                        task_status = str(task.get("status") or "PENDING").lower()
+                        # Pending tasks have not started and must not look like
+                        # active work in the progress card. They will appear
+                        # once the coordinator marks them RUNNING or SUCCEEDED.
+                        if task_status not in {
+                            "running",
+                            "succeeded",
+                            "completed",
+                            "failed",
+                            "timeout",
+                            "needs_review",
+                        }:
+                            continue
                         tasks_by_phase.setdefault(str(task.get("phase") or ""), []).append(task)
                     for task_phase, phase_tasks in tasks_by_phase.items():
                         statuses = {str(task.get("status") or "PENDING").lower() for task in phase_tasks}

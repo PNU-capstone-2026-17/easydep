@@ -619,8 +619,12 @@ def _execute_task_batch(
 ) -> list[tuple[dict[str, object], Exception]]:
     """Execute a safe batch concurrently and checkpoint results deterministically."""
     state_path = run_root / "reports" / "workflow-state.json"
+    workers = min(max(1, max_workers), len(tasks))
     for task in tasks:
-        task["status"] = "RUNNING"
+        # Only worker slots are active at once.  Remaining tasks are submitted
+        # to the pool but stay pending in the durable state so the UI does not
+        # claim that the entire batch is executing concurrently.
+        task["status"] = "RUNNING" if tasks.index(task) < workers else "PENDING"
         task["attempts"] = int(task.get("attempts", 0)) + 1
     state["updatedAt"] = _now()
     _write_json_atomic(state_path, state)
@@ -634,7 +638,6 @@ def _execute_task_batch(
         return result
 
     futures: list[Future[dict[str, object]]] = []
-    workers = min(max(1, max_workers), len(tasks))
     if workers == 1:
         # Preserve the original calling-thread behavior when parallelism is
         # disabled or a dependency/overlap reduced this to a singleton batch.
