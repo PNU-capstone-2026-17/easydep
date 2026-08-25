@@ -855,9 +855,9 @@ def test_implementation_progress_snapshot_exposes_workflow_phase_and_verificatio
                 ],
                 "currentActivity": {
                     "id": "verify-persistence",
-                    "label": "데이터 영속성 단계 검증",
+                    "label": "Repository 빌드 및 Unit Test",
                     "status": "RUNNING",
-                    "detail": "변경된 작업 공간을 검증하고 있습니다.",
+                    "detail": "변경된 소스를 빌드하고 Unit Test를 실행하고 있습니다.",
                 },
             },
             ensure_ascii=False,
@@ -874,11 +874,8 @@ def test_implementation_progress_snapshot_exposes_workflow_phase_and_verificatio
         service.shutdown()
 
     updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["phase-control"]["status"] == "completed"
-    assert updates["activity-verify-control"]["status"] == "completed"
-    assert updates["activity-audit-control"]["status"] == "completed"
-    assert updates["phase-persistence"]["status"] == "running"
-    assert updates["activity-verify-persistence"]["status"] == "running"
+    assert updates["phase-backend"]["status"] == "running"
+    assert updates["activity-backend"]["status"] == "running"
 
 
 def test_implementation_progress_snapshot_closes_release_verification_for_drained_ready_workflow(

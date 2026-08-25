@@ -74,27 +74,33 @@ _IMPLEMENTATION_GENERATION_STEPS = (
     ("plan-workflow", "구현 작업 계획"),
 )
 _IMPLEMENTATION_WORKFLOW_PHASES = (
-    ("control", "핵심 비즈니스 로직 구현"),
-    ("persistence", "데이터 영속성 구현"),
-    ("api-adapters", "API 어댑터 구현"),
-    ("boundary-adapters", "외부 경계 연동 구현"),
-    ("outbound-adapters", "아웃바운드 연동 구현"),
-    ("wiring", "애플리케이션 구성 연결"),
-    ("frontend", "프런트엔드 구현"),
-    ("end-to-end", "통합 시나리오 검증"),
+    ("control", "Control 구현"),
+    ("persistence", "Repository 구현"),
+    ("api-adapters", "API Adapter 구현"),
+    ("boundary-adapters", "Boundary Adapter 구현"),
+    ("outbound-adapters", "Outbound Adapter 구현"),
+    ("wiring", "Application Setup"),
+    ("frontend", "Frontend 구현"),
+    ("end-to-end", "E2E Test 실행"),
 )
-_IMPLEMENTATION_PHASE_ACTIVITY_LABELS = {
-    "control": "핵심 비즈니스 로직",
-    "persistence": "데이터 영속성",
-    "api-adapters": "API 어댑터",
-    "boundary-adapters": "외부 경계 연동",
-    "outbound-adapters": "아웃바운드 연동",
-    "wiring": "애플리케이션 구성",
-    "frontend": "프런트엔드",
-    "end-to-end": "통합 시나리오",
-}
-
-
+_IMPLEMENTATION_DISPLAY_PHASES = (
+    (
+        "backend",
+        "Backend 구현",
+        frozenset(
+            {
+                "control",
+                "persistence",
+                "api-adapters",
+                "boundary-adapters",
+                "outbound-adapters",
+                "wiring",
+            }
+        ),
+    ),
+    ("frontend", "Frontend 구현", frozenset({"frontend"})),
+    ("e2e", "E2E 통합 테스트 실행", frozenset({"end-to-end"})),
+)
 def _json_response(response: JSONResponse) -> dict[str, Any]:
     return json.loads(response.body.decode("utf-8"))
 
@@ -1281,47 +1287,52 @@ class WorkspaceService:
                 for phase in workflow.get("phases", [])
                 if isinstance(phase, dict)
             }
-            for phase_id, label in _IMPLEMENTATION_WORKFLOW_PHASES:
-                phase_tasks = [
-                    task for task in tasks if str(task.get("phase") or "") == phase_id
+            for display_id, label, phase_ids in _IMPLEMENTATION_DISPLAY_PHASES:
+                display_phases = [
+                    phase_id
+                    for phase_id, _phase_label in _IMPLEMENTATION_WORKFLOW_PHASES
+                    if phase_id in phase_ids
                 ]
-                task_statuses = {str(task.get("status") or "") for task in phase_tasks}
-                running_tasks = [
-                    str(task.get("taskId") or "")
-                    for task in phase_tasks
-                    if str(task.get("status") or "") == "RUNNING"
+                display_tasks = [
+                    task
+                    for task in tasks
+                    if str(task.get("phase") or "") in phase_ids
                 ]
-                if phase_statuses.get(phase_id) == "SUCCEEDED":
-                    add_update(f"phase-{phase_id}", label, "completed")
-                    activity_label = _IMPLEMENTATION_PHASE_ACTIVITY_LABELS[phase_id]
-                    # Activities are transient in the durable workflow state:
-                    # the coordinator removes them after success.  Reconcile
-                    # their matching timeline events from the completed phase
-                    # so an old running spinner always receives its terminal
-                    # transition.
-                    add_update(
-                        f"activity-verify-{phase_id}",
-                        f"{activity_label} 단계 검증",
-                        "completed",
+                task_statuses = {
+                    str(task.get("status") or "") for task in display_tasks
+                }
+                all_succeeded = all(
+                    phase_statuses.get(phase_id) == "SUCCEEDED"
+                    or (
+                        any(
+                            str(task.get("phase") or "") == phase_id
+                            for task in display_tasks
+                        )
+                        and all(
+                            str(task.get("status") or "") == "SUCCEEDED"
+                            for task in display_tasks
+                            if str(task.get("phase") or "") == phase_id
+                        )
                     )
-                    add_update(
-                        f"activity-audit-{phase_id}",
-                        f"{activity_label} 완료 점검",
-                        "completed",
-                    )
-                elif phase_tasks and task_statuses == {"SUCCEEDED"}:
-                    add_update(f"phase-{phase_id}", label, "completed")
-                elif "FAILED" in task_statuses:
-                    add_update(f"phase-{phase_id}", label, "failed")
-                elif "RUNNING" in task_statuses or (
-                    workflow_status == "RUNNING" and current_phase == phase_id
+                    for phase_id in display_phases
+                )
+                if all_succeeded:
+                    add_update(f"phase-{display_id}", label, "completed")
+                elif "FAILED" in task_statuses or any(
+                    phase_statuses.get(phase_id) == "FAILED"
+                    for phase_id in display_phases
                 ):
-                    detail = (
-                        "작업 중: " + ", ".join(item for item in running_tasks if item)
-                        if running_tasks
-                        else "단계 검증을 준비하고 있습니다."
+                    add_update(f"phase-{display_id}", label, "failed")
+                elif (
+                    workflow_status == "RUNNING"
+                    and current_phase in phase_ids
+                ) or "RUNNING" in task_statuses:
+                    add_update(
+                        f"phase-{display_id}",
+                        label,
+                        "running",
+                        f"{label}을 진행하고 있습니다.",
                     )
-                    add_update(f"phase-{phase_id}", label, "running", detail)
 
             workflow_complete = workflow_status == "COMPLETE" or (
                 workflow_status == "READY"
@@ -1336,9 +1347,20 @@ class WorkspaceService:
                 activity_status = str(activity.get("status") or "running").lower()
                 if activity_status == "succeeded":
                     activity_status = "completed"
+                activity_id = str(activity["id"])
+                activity_phase = activity_id.removeprefix("verify-").removeprefix("audit-")
+                display_id, display_label, _ = next(
+                    (
+                        item
+                        for item in _IMPLEMENTATION_DISPLAY_PHASES
+                        if activity_phase in item[2]
+                    ),
+                    ("implementation", "Backend 구현", frozenset()),
+                )
+                activity_prefix = "빌드 및 Unit Test" if activity_id.startswith("verify-") else "구현 결과 확인"
                 add_update(
-                    "activity-" + str(activity["id"]),
-                    str(activity.get("label") or "구현 검증"),
+                    "activity-" + display_id,
+                    f"{display_label} {activity_prefix}",
                     activity_status,
                     str(activity.get("detail") or ""),
                 )

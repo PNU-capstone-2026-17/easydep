@@ -78,14 +78,14 @@ PARALLEL_PHASES = frozenset(
     {"control", "api-adapters", "boundary-adapters", "outbound-adapters"}
 )
 PHASE_LABELS = {
-    "control": "핵심 비즈니스 로직",
-    "persistence": "데이터 영속성",
-    "api-adapters": "API 어댑터",
-    "boundary-adapters": "외부 경계 연동",
-    "outbound-adapters": "아웃바운드 연동",
-    "wiring": "애플리케이션 구성",
-    "frontend": "프런트엔드",
-    "end-to-end": "통합 시나리오",
+    "control": "Control",
+    "persistence": "Repository",
+    "api-adapters": "API Adapter",
+    "boundary-adapters": "Boundary Adapter",
+    "outbound-adapters": "Outbound Adapter",
+    "wiring": "Application Setup",
+    "frontend": "Frontend",
+    "end-to-end": "E2E Test",
 }
 
 
@@ -393,9 +393,9 @@ def _run_workflow(
     if not runnable:
         state["currentActivity"] = {
             "id": "completion-audit",
-            "label": "최종 완성도 점검",
+            "label": "최종 구현 결과 확인",
             "status": "RUNNING",
-            "detail": "생성된 작업 공간을 검증하고 있습니다.",
+            "detail": "생성된 소스를 빌드하고 테스트하고 있습니다.",
         }
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         verification = verifier(run_root)
@@ -492,18 +492,18 @@ def _run_workflow(
                 raise error
         state["currentActivity"] = {
             "id": f"verify-{phase_id}",
-            "label": f"{PHASE_LABELS[phase_id]} 단계 검증",
+            "label": f"{PHASE_LABELS[phase_id]} 빌드 및 Unit Test",
             "status": "RUNNING",
-            "detail": "변경된 작업 공간을 검증하고 있습니다.",
+            "detail": "변경된 소스를 빌드하고 Unit Test를 실행하고 있습니다.",
         }
         state["updatedAt"] = _now()
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         _verify_phase(run_root, phase_id, verifier)
         state["currentActivity"] = {
             "id": f"audit-{phase_id}",
-            "label": f"{PHASE_LABELS[phase_id]} 완료 점검",
+            "label": f"{PHASE_LABELS[phase_id]} 구현 결과 확인",
             "status": "RUNNING",
-            "detail": "다음 단계로 진행할 수 있는지 점검하고 있습니다.",
+            "detail": "다음 구현 단계로 진행할 수 있는지 확인하고 있습니다.",
         }
         state["updatedAt"] = _now()
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
@@ -520,9 +520,9 @@ def _run_workflow(
     final_state = plan_workflow(run_root, spec)
     final_state["currentActivity"] = {
         "id": "completion-audit",
-        "label": "최종 완성도 점검",
+        "label": "최종 구현 결과 확인",
         "status": "RUNNING",
-        "detail": "전체 구현 결과를 점검하고 있습니다.",
+        "detail": "전체 구현 결과를 빌드하고 테스트하고 있습니다.",
     }
     _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
     audit = auditor(run_root)

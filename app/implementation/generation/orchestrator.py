@@ -229,7 +229,7 @@ class PrototypeOrchestrator:
                 return final
             self._set_status(
                 "GENERATING_SOURCES",
-                "BCE·OpenAPI·프런트엔드 코드를 생성하고 있습니다.",
+                "BCE·OpenAPI·Frontend 코드를 생성하고 있습니다.",
             )
             self._generate_sources(application, java_root)
             self._set_status("PREPARING_BUILD", "생성된 애플리케이션 프로젝트를 준비하고 있습니다.")
