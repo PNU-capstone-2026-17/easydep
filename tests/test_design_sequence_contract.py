@@ -220,6 +220,63 @@ CatalogBoundary ..> CatalogControl
     assert replies[0]["reply_to"] == "call-1"
 
 
+def test_normalizer_defers_boundary_return_until_control_returns() -> None:
+    class_diagram = """@startuml
+class AuthenticationBoundary <<Boundary>> {
+  + submitCredentials(username : String, password : String): User
+}
+class AuthenticationControl <<Control>> {
+  + authenticate(username : String, password : String): User
+}
+AuthenticationBoundary ..> AuthenticationControl
+@enduml"""
+    model = {
+        "Participants": [
+            _participant("User", "actor"),
+            _participant("AuthenticationBoundary", "boundary", "AuthenticationBoundary"),
+            _participant("AuthenticationControl", "control", "AuthenticationControl"),
+        ],
+        "Messages": [
+            _message(
+                "User", "AuthenticationBoundary",
+                "submitCredentials(username:String,password:String)",
+                call_id="submit", reply_to="", arguments=[],
+            ),
+            {
+                **_message("AuthenticationBoundary", "User", "User", type="return"),
+                "call_id": "", "reply_to": "submit", "arguments": [],
+            },
+            _message(
+                "AuthenticationBoundary", "AuthenticationControl",
+                "authenticate(username:String,password:String)",
+                call_id="authenticate", reply_to="", arguments=[],
+                step_ids=["UC1:main:2"],
+            ),
+            {
+                **_message("AuthenticationControl", "AuthenticationBoundary", "User", type="return"),
+                "call_id": "", "reply_to": "authenticate", "arguments": [],
+                "step_ids": ["UC1:main:2"],
+            },
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, class_diagram)
+
+    assert [
+        (message["source"], message["target"], message["label"])
+        for message in normalized["Messages"]
+    ] == [
+        ("User", "AuthenticationBoundary", "submitCredentials(username:String,password:String)"),
+        ("AuthenticationBoundary", "AuthenticationControl", "authenticate(username:String,password:String)"),
+        ("AuthenticationControl", "AuthenticationBoundary", "User"),
+        ("AuthenticationBoundary", "User", "User"),
+    ]
+    diagram = generate_sequence_from_model(normalized)
+    assert diagram.index("AuthenticationBoundary -> AuthenticationControl") < diagram.index(
+        "AuthenticationControl --> AuthenticationBoundary"
+    ) < diagram.index("AuthenticationBoundary --> User")
+
+
 def test_normalizer_restores_unambiguous_parameter_types_and_drops_placeholder_calls() -> None:
     class_diagram = """@startuml
 class DropBoundary <<Boundary>> {

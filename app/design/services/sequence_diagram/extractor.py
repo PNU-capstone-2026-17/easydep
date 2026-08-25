@@ -707,9 +707,10 @@ def normalize_sequence_contracts(
                 and expected_return.lower() != "void"
             ):
                 normalized_messages.append(_return_message(call, expected_return))
-        diagram["Messages"] = normalize_sequence_entry_order(
+        ordered_messages = normalize_sequence_entry_order(
             normalize_sequence_message_order(normalized_messages), participant_kinds
         )
+        diagram["Messages"] = normalize_sequence_return_order(ordered_messages)
     return normalize_sequence_participants(model, class_diagram_puml)
 
 
@@ -825,6 +826,91 @@ def normalize_sequence_entry_order(
         return messages
     entry = messages[entry_index]
     return [entry, *messages[:entry_index], *messages[entry_index + 1:]]
+
+
+def normalize_sequence_return_order(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Defer an early caller return until its delegated work has completed.
+
+    Flow-step ordering gives a call and its return the same group.  That is
+    normally useful, but it can put ``Boundary -> Actor`` immediately after an
+    actor input even when the Boundary then delegates to a Control.  A returned
+    call is still open when its receiver sends a later call, so move that outer
+    return behind the delegated call's completion.  The rule uses existing
+    call/return links only; it neither creates a new call nor changes a result.
+    """
+    call_types = {"sync", "async", "self"}
+    calls: dict[str, tuple[int, dict[str, Any]]] = {}
+    returns: dict[str, tuple[int, dict[str, Any]]] = {}
+
+    for index, message in enumerate(messages):
+        message_type = str(message.get("type") or "").lower()
+        if message_type in call_types:
+            call_id = str(message.get("call_id") or "").strip()
+            if call_id:
+                calls[call_id] = (index, message)
+        elif message_type == "return":
+            reply_to = str(message.get("reply_to") or "").strip()
+            if reply_to and reply_to not in returns:
+                returns[reply_to] = (index, message)
+
+    # Each item is a delegated call that was emitted only after its caller's
+    # return.  A same-direction call starts a new invocation, so it is a safe
+    # boundary for the look-ahead rather than work to nest under the old call.
+    late_children: dict[str, list[str]] = {}
+    for call_id, (_, call) in calls.items():
+        reply = returns.get(call_id)
+        if reply is None:
+            continue
+        reply_index, _ = reply
+        children: list[str] = []
+        for message in messages[reply_index + 1:]:
+            message_type = str(message.get("type") or "").lower()
+            if message_type not in call_types:
+                continue
+            source = str(message.get("source") or "")
+            target = str(message.get("target") or "")
+            if source == str(call.get("source") or "") and target == str(call.get("target") or ""):
+                break
+            if source == str(call.get("target") or ""):
+                child_id = str(message.get("call_id") or "").strip()
+                if child_id and child_id in calls:
+                    children.append(child_id)
+        if children:
+            late_children[call_id] = children
+
+    def completion_key(call_id: str, seen: set[str] | None = None) -> tuple[int, int]:
+        """Return the position after which a call's result may be emitted."""
+        call_index, _ = calls[call_id]
+        reply = returns.get(call_id)
+        position = reply[0] if reply is not None else call_index
+        depth = 0
+        active = seen or set()
+        if call_id in active:
+            return position, depth
+        active = {*active, call_id}
+        for child_id in late_children.get(call_id, []):
+            child_position, child_depth = completion_key(child_id, active)
+            if child_position >= position:
+                position = child_position
+                depth = max(depth, child_depth + 1)
+        return position, depth
+
+    if not late_children:
+        return messages
+
+    def order_key(item: tuple[int, dict[str, Any]]) -> tuple[int, int, int]:
+        index, message = item
+        if str(message.get("type") or "").lower() != "return":
+            return index, 0, 0
+        reply_to = str(message.get("reply_to") or "").strip()
+        if reply_to not in calls:
+            return index, 1, 0
+        completion_index, depth = completion_key(reply_to)
+        # A completion at the same source index belongs after the inner return
+        # (or the void child call) that established it.
+        return completion_index, 1, depth
+
+    return [message for _, message in sorted(enumerate(messages), key=order_key)]
 
 
 def normalize_sequence_participants(
