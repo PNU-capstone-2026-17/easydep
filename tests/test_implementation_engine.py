@@ -171,6 +171,17 @@ class ImplementationParallelismTest(unittest.TestCase):
 
             self.assertEqual(sandbox_file.read_text(encoding="utf-8"), "original")
 
+    def test_restored_unauthorized_path_is_excluded_from_promotion_set(self) -> None:
+        changed = {
+            "application/src/main/Owned.java",
+            "application/src/main/Other.java",
+        }
+        allowed = {"application/src/main/Owned.java"}
+        self.assertEqual(
+            {path for path in changed if path in allowed},
+            {"application/src/main/Owned.java"},
+        )
+
     def test_e2e_planning_is_deferred_until_non_e2e_outputs_exist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory)

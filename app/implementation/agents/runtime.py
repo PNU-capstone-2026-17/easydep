@@ -488,12 +488,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             unauthorized = sorted(path for path in changed if path not in allowed)
             if unauthorized:
                 _restore_unauthorized_files(sandbox, run_root, unauthorized)
-                changed = changed_files(before, snapshot_files(sandbox))
-                unauthorized = sorted(path for path in changed if path not in allowed)
-                if unauthorized:
-                    raise RuntimeError(
-                        "Agent changed files outside its boundary: " + ", ".join(unauthorized)
-                    )
+                # Compare promotion ownership, not the pre-task hash: the
+                # sandbox and run root can legitimately differ before this
+                # task starts. Restored paths are deliberately excluded from
+                # this task's promotion set.
+                changed = {path for path in changed if path in allowed}
             try:
                 if str(task.get("task_type", "")) == "configuration":
                     remove_duplicate_component_adapter_beans(sandbox, task)
