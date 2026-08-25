@@ -80,6 +80,9 @@ from app.implementation.planning.design_context import (
     referenced_openapi_model_names,
     render_api_adapter_prompt,
     render_boundary_adapter_prompt,
+    render_persistence_repository_prompt,
+    render_persistence_schema_prompt,
+    render_prompt,
     slice_sequence,
 )
 from app.implementation.workflows.completion import audit_run_completion
@@ -2264,6 +2267,37 @@ PurchaseController -> ErrorScreen : showError(\"failed\")
         )
         self.assertIn("Do not import, inject, infer, or call any Control", prompt)
         self.assertIn("Never derive a collaborator or method name", prompt)
+
+    def test_control_prompt_preserves_repository_identifier_types(self) -> None:
+        prompt = render_prompt(
+            SimpleNamespace(base_package="com.example"),
+            {
+                "control": "DropController",
+                "bce": "class DropController <<Control>> {}",
+                "sequence": "' No directly matched sequence messages",
+                "erd": "' No directly related ERD entity",
+                "openapi": "' No directly matched OpenAPI operation",
+                "generatedJavaContracts": "// bce/DropController.java",
+                "emptyGeneratedContracts": [],
+                "repositories": ["CourseRepository"],
+            },
+            ["application/src/main/java/com/example/DropControllerService.java"],
+        )
+        self.assertIn("never parse or coerce a String identifier to Long", prompt)
+
+    def test_persistence_prompts_preserve_natural_key_types(self) -> None:
+        repository_prompt = render_persistence_repository_prompt(
+            SimpleNamespace(base_package="com.example"),
+            ["Course"],
+            ["application/src/main/java/com/example/persistence/repository/CourseRepository.java"],
+        )
+        schema_prompt = render_persistence_schema_prompt(
+            SimpleNamespace(base_package="com.example"),
+            'entity "Course" as Course {\n  * courseId : VARCHAR(255)\n}',
+        )
+        self.assertIn("IdType", repository_prompt)
+        self.assertIn("natural or UUID identifiers", repository_prompt)
+        self.assertIn("preserve VARCHAR/UUID natural primary keys", schema_prompt)
 
     def test_wiring_planner_contracts_bootstrap_configuration_and_context_test(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

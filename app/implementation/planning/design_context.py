@@ -1417,11 +1417,16 @@ Create the Spring Data JPA repository for the listed persistence entity.
 
 Rules:
 - Use package `{spec.base_package}.persistence.repository`.
-- Each public interface extends `JpaRepository<CorrespondingEntity, Long>`.
+- Each public interface extends `JpaRepository<CorrespondingEntity, IdType>`, where
+  `IdType` must exactly match the generated Entity's `@Id` field type. Do not default
+  natural or UUID identifiers to `Long`.
 - Import entities from `{spec.base_package}.persistence.entity`.
 - Add a derived query only for a natural identifier explicitly present in the ERD/BCE contract and
   needed by a Gateway operation. A repository with no such requirement should contain no custom query.
-- The parameter and return generic types of every derived query must exactly match the Java property type in the injected JPA entity contracts. Technical repository IDs remain `Long`, but natural identifiers are not necessarily `Long`.
+- The parameter and return generic types of every derived query must exactly match the
+  Java property type in the injected JPA entity contracts. A technical auto-increment
+  key is `Long` only when the ERD/entity explicitly declares that key as numeric; natural
+  String or UUID identifiers remain String or UUID throughout the repository API.
 - Do not suppress invalid repositories through scanning exclusions; repository creation must succeed when the full Spring application context loads.
 - Create the contracted file, then finish immediately.
 
@@ -1472,7 +1477,10 @@ Rules:
 - Keep ordinary table names unquoted so H2 and Hibernate resolve the same
   identifier; quote only a genuinely reserved identifier and use that exact
   quoted name consistently in JPA and every migration reference.
-- Use BIGINT generated identity primary keys, VARCHAR for strings, INTEGER for quantity, DOUBLE PRECISION for prices, BOOLEAN, and TIMESTAMP WITH TIME ZONE.
+- Use the exact ERD column types. A generated identity primary key is BIGINT only when
+  the ERD declares a numeric surrogate key; preserve VARCHAR/UUID natural primary keys
+  and their foreign-key types. Use INTEGER for quantity, DOUBLE PRECISION for prices,
+  BOOLEAN, and TIMESTAMP WITH TIME ZONE where declared.
 - Declare every ERD foreign key and useful indexes for foreign-key columns and explicit natural identifiers.
 - Match the exact `@Table`, `@Column`, and `@JoinColumn` names derived from the ERD.
 - Avoid unquoted SQL/H2 reserved words as identifiers (such as `year`, `order`, `group`, `user`, `status`, `key`, `value`, `offset`, `limit`, `check`, `date`). When a column or table name is a reserved keyword, quote it (e.g. `"year"` or `\"year\"`) or use safe column names consistent with JPA entity `@Column(name = ...)`.
@@ -1608,6 +1616,9 @@ def render_prompt(spec: JobSpec, context: dict[str, object], allowed: list[str])
     control_rules = (
         "- Implement all public operations defined in the Control contract.\n"
         + repository_rule
+        + "- Treat each repository's generic ID type and the corresponding Entity ID "
+        "accessor type as authoritative. Preserve incoming BCE identifier types; "
+        "never parse or coerce a String identifier to Long or another inferred type.\n"
         + "- Ensure clean domain logic with proper state transitions and no dummy fallbacks."
     )
     return f"""# Implementation task: {context['control']}
