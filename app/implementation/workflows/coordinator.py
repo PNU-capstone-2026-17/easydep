@@ -123,10 +123,59 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     plan_wiring_tasks(spec, run_root)
     if (run_root / "application" / "frontend" / "src" / "generated").is_dir():
         plan_frontend_tasks(spec, run_root)
-    plan_e2e_tasks(spec, run_root)
+    # E2E gap detection is an audit of the completed application, not an
+    # input gate for the phases that produce that application.  Running it
+    # during the initial plan sees every controller/repository as missing and
+    # incorrectly blocks the first persistence batch with NEEDS_INPUT.
+    if _e2e_prerequisites_complete(run_root):
+        plan_e2e_tasks(spec, run_root)
+    else:
+        _defer_e2e_planning(run_root)
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
+
+
+def _e2e_prerequisites_complete(run_root: Path) -> bool:
+    """Return whether every currently planned non-E2E task has landed outputs.
+
+    E2E generation depends on the production and adapter phases.  Checking the
+    manifest's allowed paths gives us a durable, process-independent
+    checkpoint and also works when a workflow is resumed in a new process.
+    """
+    manifest = _read_json(run_root / "reports" / "run-manifest.json")
+    tasks = [
+        item for item in manifest.get("implementation_tasks", [])
+        if item.get("task_type") != "integration-test"
+    ]
+    return all(
+        (run_root / str(path)).is_file()
+        for item in tasks
+        for path in item.get("allowed_write_paths", [])
+    )
+
+
+def _defer_e2e_planning(run_root: Path) -> None:
+    """Remove stale E2E tasks/gaps while their producer phases are pending."""
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = _read_json(manifest_path)
+    manifest["implementation_tasks"] = [
+        item for item in manifest.get("implementation_tasks", [])
+        if item.get("task_type") != "integration-test"
+    ]
+    _write_json_atomic(manifest_path, manifest)
+    gap_path = run_root / "reports" / "design-gaps" / "end-to-end-flow.json"
+    gap_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_atomic(
+        gap_path,
+        {
+            "schemaVersion": "implementation-design-gaps/v1alpha1",
+            "phase": "end-to-end",
+            "status": "PENDING",
+            "gaps": [],
+            "reason": "Awaiting completion of prerequisite implementation phases.",
+        },
+    )
 
 
 def reconcile_workflow_state(run_root: Path) -> dict[str, object]:

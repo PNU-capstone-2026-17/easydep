@@ -112,7 +112,9 @@ from app.implementation.domain.implementation_ir import (
     parse_openapi_operations as parse_ir_openapi_operations,
 )
 from app.implementation.workflows.coordinator import (
+    _defer_e2e_planning,
     _execute_task_batch,
+    _e2e_prerequisites_complete,
     _phase_task_batches,
     reconcile_workflow_state,
     validate_approval,
@@ -122,6 +124,50 @@ from app.implementation.workflows.coordinator import (
 
 
 class ImplementationParallelismTest(unittest.TestCase):
+    def test_e2e_planning_is_deferred_until_non_e2e_outputs_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir(parents=True)
+            output = "application/src/main/java/com/example/Repository.java"
+            (reports / "run-manifest.json").write_text(
+                json.dumps({
+                    "implementation_tasks": [
+                        {
+                            "task_id": "implement-repository",
+                            "task_type": "persistence-repositories",
+                            "allowed_write_paths": [output],
+                        },
+                        {
+                            "task_id": "implement-e2e-flow",
+                            "task_type": "integration-test",
+                            "allowed_write_paths": ["application/src/test/FlowTest.java"],
+                        },
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            self.assertFalse(_e2e_prerequisites_complete(run))
+            _defer_e2e_planning(run)
+            manifest = json.loads(
+                (reports / "run-manifest.json").read_text(encoding="utf-8")
+            )
+            report = json.loads(
+                (reports / "design-gaps/end-to-end-flow.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                ["implement-repository"],
+                [item["task_id"] for item in manifest["implementation_tasks"]],
+            )
+            self.assertEqual("PENDING", report["status"])
+
+            (run / output).parent.mkdir(parents=True)
+            (run / output).write_text("interface Repository {}", encoding="utf-8")
+            self.assertTrue(_e2e_prerequisites_complete(run))
+
     @staticmethod
     def _task(task_id: str, task_type: str, output: str) -> dict[str, object]:
         return {
