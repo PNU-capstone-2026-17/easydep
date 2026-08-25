@@ -60,6 +60,11 @@ with fetch, axios, XMLHttpRequest, or hard-coded endpoint strings.
 Repair targets:
 {targets}
 
+Marker-specific rule:
+- Remove every TODO, FIXME, or PLACEHOLDER token from the repair targets, including
+  prose comments. Replace placeholder values or branches with the actual contracted UI
+  behavior; do not merely rename the marker or leave a hard-coded demo fallback.
+
 Verification output:
 ```text
 {output}

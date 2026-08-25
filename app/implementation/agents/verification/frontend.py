@@ -42,8 +42,12 @@ def frontend_contract_violations(
             continue
         source = path.read_text(encoding="utf-8")
         sources.append(source)
-        if re.search(r"\b(?:TODO|FIXME|PLACEHOLDER)\b", source, re.IGNORECASE):
-            violations.append(f"{relative}: unresolved implementation marker")
+        for number, line in enumerate(source.splitlines(), 1):
+            if re.search(r"\b(?:TODO|FIXME|PLACEHOLDER)\b", line, re.IGNORECASE):
+                violations.append(
+                    f"{relative}:{number}: unresolved implementation marker; "
+                    "remove the marker and implement the described behavior"
+                )
         if re.search(
             r"(?:(?:window|globalThis)\s*\.\s*)?\b(?:fetch|XMLHttpRequest)\s*\(",
             source,

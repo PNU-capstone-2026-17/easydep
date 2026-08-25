@@ -372,6 +372,7 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     assert "src/generated" in prompt
     assert context["generatedImportRoot"] == "src/generated"
     assert "../generated/apis" in prompt
+    assert "TODO" in prompt and "PLACEHOLDER" in prompt
     assert "application/frontend/src/pages/OrdersPage.tsx" in task.allowed_write_paths
 
 

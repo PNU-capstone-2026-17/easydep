@@ -712,6 +712,10 @@ Rules:
   navigation/layout, and every contracted page must be reachable from the application.
 - Preserve all generated client/model files and project configuration exactly.
 - Create every contracted output and finish immediately. `npm run build` is the acceptance gate.
+- Production source must contain no `TODO`, `FIXME`, or `PLACEHOLDER` markers, including in
+  comments or strings. Do not leave demo-only identities, empty handlers, or speculative
+  fallback branches described as placeholders; implement the contracted behavior or show a
+  real loading, empty, validation, or API-error state instead.
 
 ## Contracted pages
 {page_list}
