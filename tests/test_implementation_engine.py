@@ -23,6 +23,7 @@ from app.implementation.agents.runtime import (
     _repair_missing_generated_model_imports,
     _render_missing_output_repair_prompt,
     _promote_changed_files,
+    _restore_unauthorized_files,
     break_configuration_cycles,
     execution_attempt,
     normalize_spring_boot_repository_discovery,
@@ -153,6 +154,22 @@ class ImplementationParallelismTest(unittest.TestCase):
             target.write_text("old", encoding="utf-8")
             _promote_changed_files(sandbox, run_root, {"application/src/main/Missing.java"})
             self.assertEqual(target.read_text(encoding="utf-8"), "old")
+
+    def test_unauthorized_file_changes_are_restored_from_run_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory) / "sandbox"
+            run_root = Path(directory) / "run"
+            unauthorized = "application/src/main/Other.java"
+            baseline = run_root / unauthorized
+            sandbox_file = sandbox / unauthorized
+            baseline.parent.mkdir(parents=True)
+            sandbox_file.parent.mkdir(parents=True)
+            baseline.write_text("original", encoding="utf-8")
+            sandbox_file.write_text("agent changed", encoding="utf-8")
+
+            _restore_unauthorized_files(sandbox, run_root, [unauthorized])
+
+            self.assertEqual(sandbox_file.read_text(encoding="utf-8"), "original")
 
     def test_e2e_planning_is_deferred_until_non_e2e_outputs_exist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

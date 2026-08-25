@@ -251,6 +251,20 @@ def _promote_changed_files(
         shutil.copy2(source, target)
 
 
+def _restore_unauthorized_files(
+    sandbox: Path, run_root: Path, unauthorized: list[str]
+) -> None:
+    """Restore files written outside a task's ownership boundary."""
+    for relative in unauthorized:
+        sandbox_path = sandbox / relative
+        baseline = run_root / relative
+        if baseline.is_file():
+            sandbox_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(baseline, sandbox_path)
+        elif sandbox_path.exists():
+            sandbox_path.unlink()
+
+
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
@@ -473,9 +487,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             allowed = set(task["allowed_write_paths"])
             unauthorized = sorted(path for path in changed if path not in allowed)
             if unauthorized:
-                raise RuntimeError(
-                    "Agent changed files outside its boundary: " + ", ".join(unauthorized)
-                )
+                _restore_unauthorized_files(sandbox, run_root, unauthorized)
+                changed = changed_files(before, snapshot_files(sandbox))
+                unauthorized = sorted(path for path in changed if path not in allowed)
+                if unauthorized:
+                    raise RuntimeError(
+                        "Agent changed files outside its boundary: " + ", ".join(unauthorized)
+                    )
             try:
                 if str(task.get("task_type", "")) == "configuration":
                     remove_duplicate_component_adapter_beans(sandbox, task)
