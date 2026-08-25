@@ -881,6 +881,47 @@ def test_implementation_progress_snapshot_exposes_workflow_phase_and_verificatio
     assert updates["activity-verify-persistence"]["status"] == "running"
 
 
+def test_implementation_progress_snapshot_closes_release_verification_for_drained_ready_workflow(
+    tmp_path,
+) -> None:
+    run_root = tmp_path / "run-001"
+    reports = run_root / "reports"
+    reports.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "READY",
+                "currentPhase": "outbound-adapters",
+                "phases": [
+                    {"phaseId": "persistence", "status": "SUCCEEDED"},
+                    {"phaseId": "outbound-adapters", "status": "UNPLANNED"},
+                ],
+                "tasks": [{"taskId": "task-1", "phase": "persistence", "status": "SUCCEEDED"}],
+                "nextRunnableTasks": [],
+                "blockingReason": None,
+                "currentActivity": {
+                    "id": "release-verification",
+                    "label": "최종 릴리스 검증",
+                    "status": "RUNNING",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {"status": "COMPLETED", "run_root": str(run_root)}
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["release-verification"]["status"] == "completed"
+
+
 def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     calls: list[dict] = []
 

@@ -52,6 +52,17 @@
           ? null
           : null
   );
+  let testingResponse = $derived(
+    command?.stage === 'testing' && command.action === 'start_testing'
+      ? command?.status === 'QUEUED'
+        ? 'Testing requested. Preparing the test run…'
+        : command?.status === 'RUNNING'
+          ? 'System testing is in progress…'
+          : command?.status === 'COMPLETED'
+            ? String(result?.message ?? 'Testing completed.')
+            : null
+      : null
+  );
 
   async function submit() {
     const value = text.trim();
@@ -84,6 +95,20 @@
           <LoaderCircle size={13} class="shrink-0 animate-spin text-[#2d7354]" />
         {/if}
         {implementationResponse}
+      </span>
+    </div>
+  {/if}
+  {#if testingResponse}
+    <div
+      class="mb-2 rounded-xl border border-[#cfe3d5] bg-[#f1f8f3] p-2.5 text-xs text-[#2d7354]"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="flex items-center gap-2">
+        {#if ['QUEUED', 'RUNNING'].includes(command?.status ?? '')}
+          <LoaderCircle size={13} class="shrink-0 animate-spin text-[#2d7354]" />
+        {/if}
+        {testingResponse}
       </span>
     </div>
   {/if}

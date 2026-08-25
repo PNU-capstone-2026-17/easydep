@@ -1322,8 +1322,16 @@ class WorkspaceService:
                     )
                     add_update(f"phase-{phase_id}", label, "running", detail)
 
+            workflow_complete = workflow_status == "COMPLETE" or (
+                workflow_status == "READY"
+                and implementation_worker._workflow_is_complete(workflow)
+            )
             activity = workflow.get("currentActivity")
-            if isinstance(activity, dict) and str(activity.get("id") or ""):
+            if (
+                not workflow_complete
+                and isinstance(activity, dict)
+                and str(activity.get("id") or "")
+            ):
                 activity_status = str(activity.get("status") or "running").lower()
                 if activity_status == "succeeded":
                     activity_status = "completed"
@@ -1333,7 +1341,7 @@ class WorkspaceService:
                     activity_status,
                     str(activity.get("detail") or ""),
                 )
-            elif workflow_status == "COMPLETE":
+            elif workflow_complete:
                 add_update("release-verification", "최종 릴리스 검증", "completed")
 
         current_file: str | None = None
