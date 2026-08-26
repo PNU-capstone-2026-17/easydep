@@ -18,67 +18,27 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.design.knowledge import rules
-from app.design.services.class_diagram.extractor import rules_section, run_bce_parse
+from app.design.services.class_diagram.behavior import enrich_bce_behavior
+from app.design.services.class_diagram.extractor import (
+    BCE_CLASS_EXTRACTION_SYSTEM_PROMPT,
+    run_domain_structure_parse,
+)
 from app.design.services.common.structured import focus_note
 
-
-_REVISION_PREAMBLE = """
-You edit an existing analysis-level class model expressed in the
-Boundary-Control-Entity (BCE) pattern. You are given the current BCE model
-(as JSON), the use-case specification it was derived from, and the user's
-natural-language feedback.
-
-Apply the feedback to the model and return the FULL revised model, following
-the same schema. How to edit:
-- Change only what the feedback asks for; leave everything else intact.
-- Keep the model grounded in the use-case specification — do not invent classes,
-  fields, methods, or relationships that the feedback and spec do not support.
-- Write methods as `methodName()` or `methodName(parameterName : Type, ...)`; `...`
-  itself is not a parameter. Add a named, typed parameter for each value the
-  specification says a caller submits, selects, searches by, identifies, or supplies
-  to the receiver. Do not leave such a method parameterless, and do not invent
-  parameters for Entity state the receiver already has. If a caller uses a method's
-  result, declare its return type as `methodName(...): ReturnType`; sequence return
-  labels are validated against this declaration. Use `: void` for commands with no
-  result. Control operations that query, validate, authenticate, authorize,
-  calculate, process, create, register, select, initiate, or generate an outcome
-  must explicitly say either `: ReturnType` or `: void`.
-- Carry `use_case_ids` over unchanged for elements you did not touch; update them
-  for elements you changed; fill them in for elements you added.
-- When feedback identifies a generic Control dispatcher with an `action`,
-  `operation`, `command`, or `mode` parameter, replace it with the smallest set
-  of separate, requirement-grounded methods for the distinct create, update,
-  delete, query, or registration actions. Do not keep the dispatcher merely by
-  changing its return type: its single signature cannot express exact REST and
-  sequence contracts.
-- Behavioural links (through a Boundary or Control) carry no multiplicity.
-  Relationships between two Entities are structural and MUST carry both
-  `sourceMultiplicity` and `targetMultiplicity`, each exactly one of "1",
-  "0..1", "*", "1..*" (the equivalent spellings "0..*" and "1..1" are accepted
-  and read as "*" and "1"). They are what the ER diagram turns into foreign keys and
-  join tables; one left empty is not mapped at all. If the model you were given
-  has an Entity-to-Entity relationship without them, fill them in from the
-  use-case specification rather than leaving them as you found them.
-- `identifier` lists the Entity's own fields that already identify it. Leave it
-  empty when the specification names no such field — a surrogate key is added
-  downstream, and the empty list is what records that the key was this project's
-  choice rather than the specification's.
-"""
-
-_REVISION_CLOSING = """
-The rules above hold for the model you return, not just for the parts you edited.
-A revision that fixes what was asked but breaks a rule elsewhere will be rejected
-whole, so re-read them against your full answer before returning it.
-
-Return the revised model strictly according to the provided schema. Do not
-include markdown, code fences, or any prose outside the schema fields.
-"""
-
 #: 수정 프롬프트. 규범은 추출과 같은 지식베이스에서, 편집하는 법만 여기 산문에서 온다.
-BCE_REVISION_SYSTEM_PROMPT = (
-    _REVISION_PREAMBLE + rules_section(rules.CLASS_DIAGRAM) + _REVISION_CLOSING
-)
+BCE_REVISION_SYSTEM_PROMPT = BCE_CLASS_EXTRACTION_SYSTEM_PROMPT + """
+
+Revise only the BCE domain structure in response to the supplied feedback.
+Return the full Classes, referenced DataTypes, reusable typed operation
+signatures, and Entity structural relationships.  Keep unaffected structure
+unchanged and ground every change in the use-case specification.
+
+Do not return methods, behavioral Dependency relationships, Collaborations,
+calls, actor-entry flags, input bindings, call ids, or argument sources.
+Execution collaborations are regenerated deterministically after this revision;
+feedback never edits an old call tree directly.  Return only the supplied
+schema.
+""".strip()
 
 
 def revise_bce_classes(
@@ -91,11 +51,21 @@ def revise_bce_classes(
     if not current_bce or not feedback:
         return current_bce or {}
 
+    structural_current = {
+        **{
+            key: value for key, value in current_bce.items()
+            if key != "Collaborations"
+        },
+        "Relationships": [
+            item for item in current_bce.get("Relationships") or []
+            if isinstance(item, dict) and str(item.get("type") or "") != "Dependency"
+        ],
+    }
     user_content = (
         "[Use Case Specification]\n"
         f"{scenario_text}\n\n"
         "[Current BCE Class Model]\n"
-        f"{json.dumps(current_bce, ensure_ascii=False, indent=2)}\n\n"
+        f"{json.dumps(structural_current, ensure_ascii=False, indent=2)}\n\n"
         "[User Feedback]\n"
         f"{feedback}" + focus_note(targets)
     )
@@ -103,4 +73,23 @@ def revise_bce_classes(
         {"role": "system", "content": BCE_REVISION_SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
-    return run_bce_parse(messages)
+    revised = run_domain_structure_parse(messages, operation="ClassStructureRevision")
+    revised["Collaborations"] = []
+    stereotypes = {
+        str(item.get("className") or ""): str(item.get("stereotype") or "").casefold()
+        for item in revised.get("Classes") or [] if isinstance(item, dict)
+    }
+    revised["Relationships"] = [
+        item for item in revised.get("Relationships") or []
+        if isinstance(item, dict)
+        and str(item.get("type") or "") != "Dependency"
+        and stereotypes.get(str(item.get("source") or "")) == "entity"
+        and stereotypes.get(str(item.get("target") or "")) == "entity"
+    ]
+    try:
+        scenario = json.loads(scenario_text) if scenario_text else {}
+    except json.JSONDecodeError:
+        scenario = {}
+    if isinstance(scenario, dict) and scenario.get("use_case_specs"):
+        return enrich_bce_behavior(scenario, revised)
+    return revised

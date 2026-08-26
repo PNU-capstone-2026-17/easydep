@@ -12,9 +12,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.design.services.common import multiplicity
-from app.design.services.common import fields
-
+from app.design.schemas.class_model import operation_method_signature
+from app.design.services.common import fields, multiplicity
 
 # PlantUML 구조 문자: 멤버/라벨 텍스트에 그대로 들어가면 class 본문을 조기에 닫거나
 # 라벨을 깨뜨린다. 의미는 최대한 보존하며 안전한 문자로 바꾼다.
@@ -69,8 +68,9 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
 
     classes = json_data.get("Classes", [])
     relationships = json_data.get("Relationships", [])
+    data_types = json_data.get("DataTypes", [])
 
-    if not classes and not relationships:
+    if not classes and not data_types and not relationships:
         return ""
 
     puml_lines = [
@@ -99,7 +99,18 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
             if clean_field:
                 puml_lines.append(f"  - {clean_field}")
 
-        for method in class_item.get("methods", []):
+        operation_methods = [
+            operation_method_signature(
+                str(operation.get("name") or ""),
+                [parameter for parameter in operation.get("parameters") or [] if isinstance(parameter, dict)],
+                str(operation.get("returnType") or "void"),
+            )
+            for operation in class_item.get("operations") or []
+            if isinstance(operation, dict) and operation.get("name")
+        ]
+        # Legacy models have no Collaborations and can still be displayed. New
+        # models always project their reusable signatures from ``operations``.
+        for method in operation_methods or class_item.get("methods", []):
             # 과거/외부 BCE도 `Integer`·`Decimal` 매개변수나 반환형을 그대로 보이지
             # 않게 한다. 새 BCE는 extractor에서 이미 정규화되지만, 렌더러가 마지막
             # 방어선이다.
@@ -115,6 +126,38 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
                 puml_lines.append(f"note top of {class_name} : {clean_description}")
 
         puml_lines.append("")
+
+    if data_types:
+        puml_lines.append('package "Data Types" {')
+        for data_type in data_types:
+            if not isinstance(data_type, dict):
+                continue
+            type_name = sanitize_class_name(str(data_type.get("name") or ""))
+            kind = str(data_type.get("kind") or "")
+            if kind == "enumeration":
+                puml_lines.append(f"  enum {type_name} {{")
+                for value in data_type.get("values") or []:
+                    clean_value = sanitize_text(str(value))
+                    if clean_value:
+                        puml_lines.append(f"    {clean_value}")
+                puml_lines.append("  }")
+                continue
+            puml_lines.append(f"  class {type_name} <<ValueObject>> {{")
+            for field in data_type.get("fields") or []:
+                clean_field = sanitize_text(fields.normalize_java_field(str(field)))
+                if clean_field:
+                    puml_lines.append(f"    - {clean_field}")
+            puml_lines.append("  }")
+        puml_lines.append("}")
+        puml_lines.append("")
+
+    if json_data.get("Collaborations"):
+        # A persisted model should already contain these relationships.  Using
+        # the projector here also makes an unpersisted-but-valid model render
+        # correctly without putting call boxes into the class diagram.
+        from app.design.services.class_diagram.behavior import project_call_dependencies
+
+        relationships = project_call_dependencies(json_data)
 
     for relationship in relationships:
         source = sanitize_class_name(relationship.get("source", ""))

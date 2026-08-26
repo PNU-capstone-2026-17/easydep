@@ -108,12 +108,30 @@ class Class {
     return String(this.stereotype).toLowerCase() === 'entity';
   }
 
+  isValueObject() {
+    return String(this.stereotype).toLowerCase() === 'valueobject';
+  }
+
+  isEnumeration() { // eslint-disable-line class-methods-use-this
+    return false;
+  }
+
   isActor() {
     return String(this.stereotype).toLowerCase() === 'actor';
   }
 
   shouldGenerate() {
     return !this.isActor();
+  }
+
+  hasUnresolvedPlaceholder() {
+    const unknown = value => /\bunknownclass\w*\b/i.test(String(value || ''));
+    if (unknown(this.getName())) return true;
+    return this.members.some((member) => {
+      if (unknown(member.getReturnType && member.getReturnType())) return true;
+      return (member.getParameters ? member.getParameters() : [])
+        .some(parameter => unknown(parameter.getReturnType()));
+    });
   }
 
   getJavaImports() {

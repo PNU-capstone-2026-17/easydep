@@ -291,26 +291,6 @@ RULES: tuple[Rule, ...] = (
         ),
     ),
     Rule(
-        id="class.method-parameters-typed",
-        stage=CLASS_DIAGRAM,
-        severity=DEFECT,
-        statement=(
-            "Every declared method parameter must be a unique named, typed value in "
-            "the form `parameterName : Type`; an empty parameter list is written `()`."
-        ),
-        citation=(
-            "app/design/services/sequence_diagram/extractor.py "
-            "(SequenceArgumentBinding requires the receiver parameter name and type)"
-        ),
-        evidence="pipeline-invariant",
-        judged_by=JUDGED_DETECTOR,
-        detector="method_parameters_typed",
-        generation_note=(
-            "Use `methodName()` only when no new value crosses into the receiver. "
-            "Do not use `...` as a placeholder parameter."
-        ),
-    ),
-    Rule(
         id="class.fields-typed",
         stage=CLASS_DIAGRAM,
         severity=DEFECT,
@@ -325,52 +305,6 @@ RULES: tuple[Rule, ...] = (
         generation_note=(
             "Choose a type grounded in the requirement semantics; do not leave the "
             "attribute type implicit."
-        ),
-    ),
-    Rule(
-        id="class.control-outcome-return-contract",
-        stage=CLASS_DIAGRAM,
-        severity=DEFECT,
-        statement=(
-            "A Control operation named as a query, check, validation, authentication, "
-            "authorization, calculation, processing, creation, registration, selection, "
-            "initiation, or generation must declare a concrete `: ReturnType` when it "
-            "exposes a result or outcome; `: void` is reserved for commands with no "
-            "observable result."
-        ),
-        citation=(
-            "app/design/services/sequence_diagram/extractor.py "
-            "(non-void Control calls have a matching typed return)"
-        ),
-        evidence="project-convention",
-        caveat=(
-            "삭제·상태 변경처럼 결과 본문이 필요 없는 명령은 `: void`일 수 있지만, "
-            "조회·검색·인증·등록처럼 결과 또는 판정이 사용자에게 노출되는 연산에는 "
-            "구체적인 반환 타입이 필요하다."
-        ),
-        judged_by=JUDGED_DETECTOR,
-        detector="control_outcome_return_contract",
-    ),
-    Rule(
-        id="class.control-action-dispatcher",
-        stage=CLASS_DIAGRAM,
-        severity=DEFECT,
-        statement=(
-            "A Control method that selects behavior through an action/operation/command "
-            "parameter must not collapse distinct create, update, and delete interactions; "
-            "each externally visible operation needs a concrete method contract."
-        ),
-        citation=(
-            "app/design/services/api_spec/extractor.py "
-            "(HTTP-to-Control argument binding)"
-        ),
-        evidence="pipeline-invariant",
-        judged_by=JUDGED_DETECTOR,
-        detector="control_action_dispatch_contract",
-        generation_note=(
-            "Do not use processX(..., action : String, ...) as a CRUD dispatcher. "
-            "Derive separate grounded Control operations such as createX, updateX, and deleteX "
-            "when the use case distinguishes those actions."
         ),
     ),
     Rule(
@@ -396,9 +330,9 @@ RULES: tuple[Rule, ...] = (
         stage=CLASS_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "Accepted class operations must use their canonical operationId, mirror exactly "
-            "to methods, and form one valid Boundary-to-Control execution path for each "
-            "actor-associated root or a Control path for an internal flow."
+            "Accepted class operations and collaboration calls must use canonical ids, "
+            "resolve every referenced type and endpoint, and form one valid execution "
+            "path for each accepted execution group."
         ),
         citation="app/design/services/class_diagram/validation.py (operation contract projection)",
         evidence="pipeline-invariant",
@@ -410,9 +344,9 @@ RULES: tuple[Rule, ...] = (
         stage=CLASS_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "Each bound operation parameter must name exactly one finite source: its actor "
-            "entry step, an earlier reachable operation parameter, or an earlier compatible "
-            "non-void operation result."
+            "Each call argument must name exactly one finite source: its actor input step, "
+            "an explicit precondition context, an ancestor call parameter, or an earlier "
+            "compatible non-void call result."
         ),
         citation="app/design/services/class_diagram/validation.py (finite source validation)",
         evidence="pipeline-invariant",
@@ -1153,29 +1087,6 @@ RULES: tuple[Rule, ...] = (
         generation_note=(
             "If the part can exist on its own, or can belong to more than one whole, it "
             "is an Association or an Aggregation — not a Composition."
-        ),
-    ),
-    Rule(
-        id="erd.no-mandatory-reference-cycle",
-        stage=ERD,
-        severity=DEFECT,
-        statement=(
-            "Mandatory references must not form a cycle. If every row of A needs a row of "
-            "B and every row of B needs a row of A — or a row needs another row of its own "
-            "table — no first row can ever exist."
-        ),
-        # 외래키의 널 허용을 다중도에서 끌어오면서(그전에는 합성일 때만 필수였다) 이
-        # 조합에 닿는 길이 넓어졌다. `Emp "1" — "*" Emp`(모든 사원에게 상사가 있다) 같은,
-        # 자연스러워 보이는 모델이 **행을 하나도 못 넣는 스키마**가 된다.
-        #
-        # 널 허용으로 풀어 주지 않는다 — 그건 모델이 적은 `"1"`을 우리가 뒤집는 것이다.
-        citation="app/design/services/erd/mapping.py (_map_relationship — needed())",
-        evidence="pipeline-invariant",
-        judged_by=JUDGED_DETECTOR,
-        detector="erd_mandatory_reference_cycle",
-        generation_note=(
-            "A self-referencing parent link (manager, parent category, reply-to) is almost "
-            "always optional at the referenced end — write \"0..1\", not \"1\"."
         ),
     ),
     Rule(

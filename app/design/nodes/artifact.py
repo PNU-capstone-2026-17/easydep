@@ -164,8 +164,8 @@ def repair_directive(findings: list[Finding]) -> str:
         "[YOUR PREVIOUS OUTPUT FAILED THESE CHECKS]\n"
         f"{listed}\n\n"
         "Fix every one of them. Keep everything that was already correct — the same "
-        "classes, the same fields and methods, the same order — and do not introduce "
-        "new violations."
+        "classes, data types, operation signatures, relationships, collaborations, "
+        "and order — and do not introduce new violations."
     )
 
 
@@ -215,8 +215,8 @@ class DesignArtifactSpec:
     #: 값은 dict: {findings: list[str], repair_iters: int, stopped: str, error?: str}.
     check_key: str = ""
     #: 모델이 만들어진 뒤, 검사 전에 **다른 산출물과 대사**하는 후크. 그래프에서
-    #: extract/revise 노드와 check/render 사이에 선택적으로 끼워진다. 시퀀스 다이어그램이
-    #: 이것으로 클래스 다이어그램에 빠진 메서드를 보강한다.
+    #: extract/revise 노드와 check/render 사이에 선택적으로 끼워진다. 하위 산출물은
+    #: 상위 계약을 수정하지 않는 것이 원칙이며, 필요한 스테이지에만 둔다.
     #: None이면 대사 노드가 생기지 않는다 — 그 산출물은 다른 것을 고칠 일이 없다는 뜻이고,
     #: 그래프에 빈 노드가 뜨지 않는다.
     reconcile: Callable[[ArchitectureState], dict] | None = None
@@ -371,20 +371,7 @@ def revise_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]
     def node(state: ArchitectureState) -> dict:
         # 게이트 피드백은 산출물 전체를 대상으로 한다 — 사용자가 그 산출물을 보면서
         # 말하는 자리라 항목을 좁힐 근거가 없다. 항목을 지목하는 수정은 cascade 가 한다.
-        # A class-method proposal is a workflow decision, not free-form sequence
-        # feedback.  Preserve the proposal-bearing model so reconciliation can
-        # apply exactly the approved additions without asking the sequence LLM
-        # to reinterpret a short "approve all" reply as a diagram edit.
         current = state.get(spec.model_key) or {}
-        if spec.stage == "sequence_diagram":
-            from app.design.services.sequence_diagram.reconcile import (
-                is_method_proposal_approval,
-            )
-
-            if is_method_proposal_approval(
-                current, str(state.get(spec.feedback_key) or "")
-            ):
-                return {spec.model_key: current}
         revised = spec.revise(
             current,
             state.get(spec.feedback_key, ""),
@@ -729,15 +716,6 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             "repair_iters": iterations,
             "stopped": stopped,
         }
-        if spec.stage == "sequence_diagram":
-            proposals = (
-                model.get("MethodProposals") if isinstance(model, dict) else []
-            )
-            if isinstance(proposals, list) and proposals:
-                report["method_proposals"] = proposals
-                # A proposed class operation is an architectural choice; it is
-                # intentionally not consumed by the automatic repair loop.
-                report["stopped"] = NEEDS_INPUT
         if error:
             report["error"] = error
         return {spec.model_key: model, spec.check_key: report}

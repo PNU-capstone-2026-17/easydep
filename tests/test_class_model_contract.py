@@ -3,133 +3,159 @@ from pydantic import ValidationError
 
 from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import extractor
+from app.design.services.class_diagram.extractor import DomainStructureProposal
 
 
-def _class_with_operation() -> dict:
-    return {
-        "className": "OrderController",
-        "stereotype": "Control",
-        "methods": ["outdated()"],
-        "use_case_ids": ["UC1"],
-        "operations": [
-            {
-                "operationId": "OrderController::placeOrder(orderRequest:OrderRequest)",
-                "name": "placeOrder",
-                "parameters": [{"name": "orderRequest", "type": "OrderRequest"}],
-                "returnType": "Order",
-                "stepRefs": ["UC1:main:2"],
-                "actorEntry": False,
-                "inputBindings": [
-                    {
-                        "useCaseId": "UC1",
-                        "parameter": "orderRequest",
-                        "sourceRef": "UC1:main:1#orderRequest",
-                    }
-                ],
-            }
-        ],
+def test_operations_are_reusable_signatures_without_execution_metadata():
+    model = BCEModel.model_validate({
+        "Classes": [{
+            "className": "OrderControl", "stereotype": "Control",
+            "use_case_ids": ["UC1"],
+            "operations": [{
+                "operationId": "ignored", "name": "placeOrder",
+                "parameters": [{"name": "request", "type": "OrderRequest"}],
+                "returnType": "Order", "stepRefs": ["UC1:main:2"],
+            }],
+        }],
+    })
+
+    operation = model.model_dump(by_alias=True)["Classes"][0]["operations"][0]
+    assert operation == {
+        "operationId": "OrderControl::placeOrder(request:OrderRequest)",
+        "name": "placeOrder",
+        "parameters": [{"name": "request", "type": "OrderRequest"}],
+        "returnType": "Order",
+        "stepRefs": ["UC1:main:2"],
     }
 
 
-def test_accepted_class_operations_mirror_legacy_methods():
-    model = BCEModel.model_validate(
-        {"Classes": [_class_with_operation()], "Relationships": []}
-    )
-
-    assert model.Classes[0].methods == [
-        "placeOrder(orderRequest : OrderRequest): Order"
-    ]
-    dumped = model.model_dump(by_alias=True)
-    assert dumped["Classes"][0]["operations"][0]["inputBindings"] == [
-        {
-            "useCaseId": "UC1",
-            "parameter": "orderRequest",
-            "sourceRef": "UC1:main:1#orderRequest",
-        }
-    ]
-
-
-def test_legacy_methods_survive_when_no_operation_contract_exists():
-    model = BCEModel.model_validate({
+@pytest.mark.parametrize("legacy_key", ["methods", "actorEntry", "inputBindings"])
+def test_legacy_execution_fields_are_not_persistable(legacy_key: str):
+    operation = {
+        "operationId": "ignored", "name": "placeOrder", "parameters": [],
+        "returnType": "void", "stepRefs": ["UC1:main:2"],
+    }
+    payload = {
         "Classes": [{
-            "className": "LegacyController",
-            "stereotype": "Control",
-            "methods": ["handle(request : String): void"],
-            "use_case_ids": ["UC1"],
+            "className": "OrderControl", "stereotype": "Control",
+            "use_case_ids": ["UC1"], "operations": [operation],
         }],
-        "Relationships": [],
+    }
+    if legacy_key == "methods":
+        payload["Classes"][0][legacy_key] = ["placeOrder(): void"]
+    else:
+        operation[legacy_key] = False if legacy_key == "actorEntry" else []
+
+    with pytest.raises(ValidationError, match=legacy_key):
+        BCEModel.model_validate(payload)
+
+
+def test_data_types_are_minimal_and_concrete():
+    model = BCEModel.model_validate({
+        "DataTypes": [
+            {"name": "Address", "kind": "valueObject", "fields": ["line1 : String"]},
+            {"name": "OrderStatus", "kind": "enumeration", "values": ["PENDING", "PAID"]},
+        ],
     })
 
-    assert model.Classes[0].methods == ["handle(request : String): void"]
+    assert [item.kind for item in model.DataTypes] == ["valueObject", "enumeration"]
+    with pytest.raises(ValidationError, match="enumeration needs values"):
+        BCEModel.model_validate({"DataTypes": [{"name": "Empty", "kind": "enumeration"}]})
+
+
+def _domain_class(*, stereotype: str = "Control", fields=None, identifier=None, operations=None) -> dict:
+    return {
+        "className": "OrderControl", "stereotype": stereotype,
+        "use_case_ids": ["UC1"], "fields": fields or [], "identifier": identifier or [],
+        "operations": operations if operations is not None else [{
+            "operationId": "OrderControl::place()", "name": "place", "parameters": [],
+            "returnType": "void", "stepRefs": ["UC1:main:1"],
+        }],
+    }
 
 
 @pytest.mark.parametrize(
-    "name",
-    ["UnknownClass", "Unknown Class", "UnknownClass12", "UnknownClassDraft", "Unknown-Class"],
+    ("proposal", "message"),
+    [
+        ({"Classes": []}, "at least 1 item"),
+        ({"Classes": [_domain_class(operations=[])]}, "need at least one operation"),
+        ({"Classes": [_domain_class(operations=[{
+            "operationId": "OrderControl::place()", "name": "place", "parameters": [],
+            "returnType": "void", "stepRefs": [],
+        }])]}, "at least 1 item"),
+        ({"Classes": [_domain_class(operations=[{
+            "operationId": "OrderControl::place()", "name": "place", "parameters": [],
+            "returnType": "void", "stepRefs": ["UC1:1"],
+        }])]}, "canonical main or extension"),
+        ({"Classes": [_domain_class(operations=[{
+            "operationId": "OrderControl::place()", "name": "place", "parameters": [],
+            "returnType": "MissingResult", "stepRefs": ["UC1:main:1"],
+        }])]}, "all field, parameter, and return types must resolve"),
+        ({"Classes": [_domain_class(fields=["orderId : String {identifier}"])]}, "inline {identifier}"),
+        ({"Classes": [_domain_class()], "Relationships": [{"source": "A", "target": "B", "type": "Dependency"}]}, "Input should be"),
+    ],
 )
-def test_accepted_class_rejects_unknown_class_placeholders(name: str):
-    with pytest.raises(ValidationError, match="concrete BCE class"):
-        BCEModel.model_validate(
-            {
-                "Classes": [
-                    {
-                        "className": name,
-                        "stereotype": "Control",
-                        "use_case_ids": ["UC1"],
-                    }
-                ]
-            }
-        )
+def test_domain_structure_proposal_rejects_empty_or_behavioral_structure(proposal, message):
+    with pytest.raises(ValidationError, match=message):
+        DomainStructureProposal.model_validate(proposal)
 
 
-def test_extraction_boundary_persists_aliases_and_empty_operations(monkeypatch):
-    captured: dict = {}
+def test_domain_structure_proposal_has_no_collaboration_escape_hatch():
+    proposal = {"Classes": [_domain_class()], "Collaborations": []}
 
-    def parsed(_messages, schema):
-        captured["schema"] = schema
-        return {
-            "Classes": [
-                {
-                    "class_name": "Order",
-                    "stereotype": "Entity",
-                    "use_case_ids": ["UC1"],
-                }
-            ],
-            "Relationships": [
-                {
-                    "source": "Order",
-                    "target": "Order",
-                    "source_multiplicity": "1",
-                    "target_multiplicity": "*",
-                }
-            ],
-        }
-
-    monkeypatch.setattr(extractor, "parse_structured", parsed)
-
-    result = extractor.run_bce_parse([])
-
-    assert captured["schema"] is BCEModel
-    assert result["Classes"][0]["className"] == "Order"
-    assert result["Classes"][0]["operations"] == []
-    assert result["Relationships"][0]["sourceMultiplicity"] == "1"
+    with pytest.raises(ValidationError, match="Collaborations"):
+        DomainStructureProposal.model_validate(proposal)
 
 
-def test_extraction_boundary_rejects_non_contract_fields(monkeypatch):
+def test_structure_projection_drops_only_dangling_identifier(monkeypatch):
+    proposal = {
+        "Classes": [{
+            **_domain_class(
+                stereotype="Entity",
+                fields=["orderId : String"],
+                identifier=["missingId"],
+                operations=[],
+            ),
+            "className": "Order",
+        }],
+    }
+    monkeypatch.setattr(extractor, "parse_structured", lambda *_args, **_kwargs: proposal)
+
+    model = extractor.run_domain_structure_parse([], operation="test")
+
+    assert model["Classes"][0]["fields"] == ["orderId : String"]
+    assert model["Classes"][0]["identifier"] == []
+
+
+def test_structure_projection_honors_explicit_value_object_marker(monkeypatch):
+    control = _domain_class(operations=[{
+        "operationId": "OrderControl::place()",
+        "name": "place",
+        "parameters": [],
+        "returnType": "Receipt",
+        "stepRefs": ["UC1:main:1"],
+    }])
+    receipt = {
+        **_domain_class(
+            stereotype="Entity",
+            fields=["accepted : boolean"],
+            operations=[],
+        ),
+        "className": "Receipt",
+        "description": "ValueObject",
+    }
     monkeypatch.setattr(
         extractor,
         "parse_structured",
-        lambda _messages, _schema: {
-            "Classes": [
-                {
-                    "className": "Order",
-                    "stereotype": "Entity",
-                    "use_case_ids": ["UC1"],
-                    "unexpected": True,
-                }
-            ]
-        },
+        lambda *_args, **_kwargs: {"Classes": [control, receipt]},
     )
 
-    with pytest.raises(ValidationError, match="unexpected"):
-        extractor.run_bce_parse([])
+    model = extractor.run_domain_structure_parse([], operation="test")
+
+    assert [item["className"] for item in model["Classes"]] == ["OrderControl"]
+    assert model["DataTypes"] == [{
+        "name": "Receipt",
+        "kind": "valueObject",
+        "fields": ["accepted : boolean"],
+        "values": [],
+    }]

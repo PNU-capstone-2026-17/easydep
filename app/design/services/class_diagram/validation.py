@@ -1,427 +1,422 @@
-"""Deterministic validation for accepted BCE operation contracts."""
+"""Deterministic validation for reusable BCE signatures and collaborations."""
 from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any
 
-from app.design.schemas.class_model import canonical_operation_id, operation_method_signature
+from app.design.schemas.class_model import canonical_call_id, canonical_operation_id
 from app.design.services.class_diagram.behavior import (
-    _binding_source_operation_id,
-    _class_in_scope,
+    _available_trace_steps,
     _class_name,
-    _dependencies,
-    _execution_order_edges,
-    _formal_callsite_source_ref,
-    _group_contract_issues,
-    _Group,
-    _is_scalar_value_type,
-    _operation_sort_key,
-    _reachable,
+    _precondition_refs,
+    _primary_actor,
+    _required_trace_steps,
     _specification_map,
-    _steps,
     _stereotype,
     _text,
-    _topological_operation_order,
+    _trace_scope_ids,
     execution_groups,
     group_outcomes,
-    relationship_pairs,
+    project_call_dependencies,
+)
+from app.design.services.class_diagram.type_system import (
+    field_type,
+    referenced_type_names,
+    type_is_resolved,
 )
 
 
-def operation_contract_issues(
-    model: dict[str, Any], state: dict[str, Any]
-) -> list[tuple[str, str, str | None]]:
-    """Validate operation ids, bindings, and finite producer order.
+def is_stale_class_model(model: dict[str, Any]) -> bool:
+    """Whether an artifact predates collaboration persistence.
 
-    The return tuples let the class detector map operation-shape versus
-    input/producer failures onto the existing class rule catalog without adding
-    diagnostic fields to the persisted BCE artifact.
+    This intentionally has no version label in the artifact.  Consumers can
+    retain rendering support for old ``methods`` records while blocking them
+    from execution-aware downstream generation.
     """
-    scenario = state.get("usecase_spec") if isinstance(state, dict) else None
-    if not isinstance(scenario, dict):
-        return []
-    relationships = state.get("relationships") if isinstance(state, dict) else None
-    if isinstance(relationships, dict):
-        scenario = {**scenario, "relationships": relationships}
-    classes = [item for item in model.get("Classes") or [] if isinstance(item, dict)]
-    if not any("operations" in item for item in classes):
-        return []
-    class_by_name = {_class_name(item): item for item in classes}
-    operations: dict[str, tuple[str, dict[str, Any]]] = {}
-    issues: list[tuple[str, str, str | None]] = []
-    for class_item in classes:
-        class_name = _class_name(class_item)
-        expected_methods: list[str] = []
-        for operation in class_item.get("operations") or []:
-            if not isinstance(operation, dict):
-                issues.append(("operation", "operation must be an object", class_name))
-                continue
-            operation_id = _text(operation.get("operationId"))
-            if operation_id != canonical_operation_id(
-                class_name,
-                _text(operation.get("name")),
-                [item for item in operation.get("parameters") or [] if isinstance(item, dict)],
-            ):
-                issues.append(("operation", "operationId is not canonical", operation_id or class_name))
-            if operation_id in operations:
-                issues.append(("operation", "operationId is duplicated", operation_id))
-            else:
-                operations[operation_id] = (class_name, operation)
-            parameters = operation.get("parameters") or []
-            names = [_text(item.get("name")) for item in parameters if isinstance(item, dict)]
-            if len(names) != len(parameters) or not all(names) or len(set(names)) != len(names):
-                issues.append(("operation", "operation parameters are invalid or duplicated", operation_id or class_name))
-            expected_methods.append(operation_method_signature(
-                _text(operation.get("name")),
-                [item for item in operation.get("parameters") or [] if isinstance(item, dict)],
-                _text(operation.get("returnType")) or "void",
-            ))
-        if list(class_item.get("methods") or []) != expected_methods:
-            issues.append(("operation", "methods must mirror accepted operations", class_name))
 
-    groups = execution_groups(scenario)
-    group_by_step = {step: group for group in groups for step in group.step_ids}
-    edges = _dependencies(model)
-    ranks = _operation_ranks(
-        operations, groups, group_by_step, scenario, class_by_name, edges, issues
-    )
-    _topology_issues(operations, groups, ranks, class_by_name, edges, issues, scenario)
-    _binding_issues(
-        operations, ranks, group_by_step, edges, scenario, class_by_name, issues
+    if not isinstance(model, dict):
+        return False
+    if not model.get("Classes") and not model.get("Relationships"):
+        return False
+    if "Collaborations" not in model:
+        return True
+    for class_item in model.get("Classes") or []:
+        if not isinstance(class_item, dict):
+            continue
+        if "methods" in class_item:
+            return True
+        for operation in class_item.get("operations") or []:
+            if isinstance(operation, dict) and ({"actorEntry", "inputBindings"} & set(operation)):
+                return True
+    return False
+
+
+def operation_contract_issues(
+    model: dict[str, Any], state: dict[str, Any],
+) -> list[tuple[str, str, str | None]]:
+    """Return deterministic operation/collaboration defects.
+
+    Tuple kinds remain compatible with the existing detector bridge: operation
+    covers durable signature/call topology defects; input covers provenance.
+    No diagnostic data is added to the persisted model.
+    """
+
+    if not isinstance(model, dict):
+        return []
+    issues: list[tuple[str, str, str | None]] = []
+    if is_stale_class_model(model):
+        has_legacy_execution = any(
+            isinstance(item, dict) and (
+                "methods" in item or any(
+                    isinstance(operation, dict) and ({"actorEntry", "inputBindings"} & set(operation))
+                    for operation in item.get("operations") or []
+                )
+            )
+            for item in model.get("Classes") or []
+        )
+        if not has_legacy_execution:
+            return []
+        return [("operation", "class model is stale: Collaborations are required for execution-aware consumers", None)]
+
+    classes = [item for item in model.get("Classes") or [] if isinstance(item, dict)]
+    class_by_name = {_class_name(item): item for item in classes}
+    data_types = {
+        _text(item.get("name")): item
+        for item in model.get("DataTypes") or [] if isinstance(item, dict)
+    }
+    operations = _operation_catalog(classes, issues)
+    _type_issues(classes, data_types, issues)
+    scenario = state.get("usecase_spec") if isinstance(state, dict) else None
+    if isinstance(scenario, dict):
+        relationships = state.get("relationships") if isinstance(state, dict) else None
+        if isinstance(relationships, dict):
+            scenario = {**scenario, "relationships": relationships}
+    _relationship_issues(model, class_by_name, issues)
+    _collaboration_issues(
+        model, operations, class_by_name, issues,
+        scenario if isinstance(scenario, dict) else None,
     )
     for outcome in group_outcomes(model):
         if outcome.status == "accepted":
             continue
-        message = outcome.issues[0] if outcome.issues else "behavior enrichment did not accept the group"
+        message = outcome.issues[0] if outcome.issues else "collaboration enrichment did not accept the execution group"
         issues.append((
-            "operation",
-            f"behavior enrichment {outcome.status} for {outcome.group_id}: {message}",
+            "needs_input" if outcome.needs_input else "operation",
+            f"collaboration enrichment {outcome.status} for {outcome.group_id}: {message}",
             outcome.group_id,
         ))
     return issues
 
 
-def _operation_ranks(
-    operations: dict[str, tuple[str, dict[str, Any]]],
-    groups: list[_Group],
-    group_by_step: dict[str, _Group],
-    scenario: dict[str, Any],
-    class_by_name: dict[str, dict[str, Any]],
-    edges: dict[str, set[str]],
-    issues: list[tuple[str, str, str | None]],
-) -> dict[str, tuple[str, int]]:
-    grouped: dict[str, _Group] = {}
-    for operation_id, (_, operation) in operations.items():
-        refs = [_text(ref) for ref in operation.get("stepRefs") or []]
-        group = next((group_by_step[ref] for ref in refs if ref in group_by_step), None)
-        if not group or any(group_by_step.get(ref) != group for ref in refs):
-            issues.append(("operation", "operation stepRefs do not belong to one execution group", operation_id))
-        else:
-            grouped[operation_id] = group
-    ranks: dict[str, tuple[str, int]] = {}
-    for group in groups:
-        step_order = {
-            step.id: step.order
-            for step in _steps(_specification_map(scenario).get(group.use_case_id, {}))
-        }
-        members = {
-            operation_id: (class_name, operation)
-            for operation_id, (class_name, operation) in operations.items()
-            if grouped.get(operation_id) == group
-        }
-        for operation_id, (class_name, _operation) in members.items():
-            if not _class_in_scope(class_by_name.get(class_name, {}), group.use_case_id):
-                issues.append((
-                    "operation",
-                    "operation class is outside its execution group's use_case_ids scope",
-                    operation_id,
-                ))
-        binding_edges = {
-            (source_id, operation_id)
-            for operation_id, (_class_name, operation) in members.items()
-            for binding in operation.get("inputBindings") or []
-            if isinstance(binding, dict)
-            if (source_id := _binding_source_operation_id(
-                _text(binding.get("sourceRef")), set(members)
-            ))
-        }
-        _binding_order, binding_cyclic = _topological_operation_order(
-            members, step_order, binding_edges
-        )
-        if binding_cyclic:
-            issues.append((
-                "producer",
-                f"operation input bindings form a cycle in {group.id}: {sorted(binding_cyclic)}",
-                group.id,
-            ))
-        stereotypes = {
-            class_name: _stereotype(class_by_name.get(class_name, {}))
-            for class_name, _operation in members.values()
-        }
-        execution_edges = _execution_order_edges(
-            group, members, step_order, edges, stereotypes
-        )
-        ordered_ids, cyclic = _topological_operation_order(
-            members, step_order, binding_edges | execution_edges
-        )
-        if cyclic:
-            issues.append((
-                "producer" if cyclic & binding_cyclic else "operation",
-                f"operation execution order forms a cycle in {group.id}: {sorted(cyclic)}",
-                group.id,
-            ))
-        for index, operation_id in enumerate(ordered_ids):
-            ranks[operation_id] = (group.id, index)
-    return ranks
+def _operation_catalog(
+    classes: list[dict[str, Any]], issues: list[tuple[str, str, str | None]],
+) -> dict[str, tuple[str, dict[str, Any]]]:
+    operations: dict[str, tuple[str, dict[str, Any]]] = {}
+    for class_item in classes:
+        class_name = _class_name(class_item)
+        for operation in class_item.get("operations") or []:
+            if not isinstance(operation, dict):
+                issues.append(("operation", "operation must be an object", class_name))
+                continue
+            operation_id = _text(operation.get("operationId"))
+            parameters = [item for item in operation.get("parameters") or [] if isinstance(item, dict)]
+            expected = canonical_operation_id(class_name, _text(operation.get("name")), parameters)
+            if class_name[:1].isupper() and class_name.isalnum() and operation_id != expected:
+                issues.append(("operation", "operationId is not canonical", operation_id or class_name))
+            names = [_text(item.get("name")) for item in parameters]
+            if len(parameters) != len(operation.get("parameters") or []) or not all(names) or len(names) != len(set(names)):
+                issues.append(("operation", "operation parameters are invalid or duplicated", operation_id or class_name))
+            if operation_id in operations:
+                issues.append(("operation", "operationId is duplicated", operation_id))
+            elif operation_id:
+                operations[operation_id] = (class_name, operation)
+    return operations
 
 
-def _topology_issues(
-    operations: dict[str, tuple[str, dict[str, Any]]],
-    groups: list[_Group],
-    ranks: dict[str, tuple[str, int]],
-    class_by_name: dict[str, dict[str, Any]],
-    edges: dict[str, set[str]],
-    issues: list[tuple[str, str, str | None]],
-    scenario: dict[str, Any],
-) -> None:
-    for group in groups:
-        group_operations = [
-            (operation_id, class_name, operation)
-            for operation_id, (class_name, operation) in operations.items()
-            if ranks.get(operation_id, (None,))[0] == group.id
-        ]
-        ordered_ids = [
-            operation_id
-            for operation_id, _class_name, _operation in sorted(
-                group_operations,
-                key=lambda item: ranks[item[0]][1],
-            )
-        ]
-        group_members = [
-            (class_name, operation)
-            for _operation_id, class_name, operation in group_operations
-        ]
-        for issue in _group_contract_issues(
-            group, group_members, ordered_ids, class_by_name, edges, scenario
-        ):
-            issues.append(("operation", issue, group.id))
-    for _kind, base_id, child_id in relationship_pairs(scenario):
-        caller_controls = [
-            class_name for operation_id, (class_name, _operation) in operations.items()
-            if ranks.get(operation_id, ("",))[0].partition(":")[0] == base_id
-            and _stereotype(class_by_name.get(class_name, {})) == "control"
-        ]
-        child_controls = [
-            class_name for operation_id, (class_name, _operation) in operations.items()
-            if ranks.get(operation_id, ("",))[0] == f"{child_id}:internal"
-            and _stereotype(class_by_name.get(class_name, {})) == "control"
-        ]
-        if caller_controls and child_controls and not any(
-            _reachable(edges, caller, child)
-            for caller in caller_controls for child in child_controls
-        ):
-            issues.append(("operation", "caller Control has no reachable dependency path to internal Control", f"{base_id}->{child_id}"))
-
-
-def _binding_issues(
-    operations: dict[str, tuple[str, dict[str, Any]]],
-    ranks: dict[str, tuple[str, int]],
-    group_by_step: dict[str, _Group],
-    edges: dict[str, set[str]],
-    scenario: dict[str, Any],
-    class_by_name: dict[str, dict[str, Any]],
+def _type_issues(
+    classes: list[dict[str, Any]], data_types: dict[str, dict[str, Any]],
     issues: list[tuple[str, str, str | None]],
 ) -> None:
-    for operation_id, (class_name, operation) in operations.items():
-        parameters = {
-            _text(parameter.get("name")): _text(parameter.get("type"))
-            for parameter in operation.get("parameters") or [] if isinstance(parameter, dict)
-        }
-        bindings: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for binding in operation.get("inputBindings") or []:
-            if isinstance(binding, dict):
-                bindings[_text(binding.get("parameter"))].append(binding)
-            else:
-                issues.append(("input", "inputBinding must be an object", operation_id))
-        rank = ranks.get(operation_id)
-        is_internal_entry = operation_id == _internal_entry_operation_id(
-            operations, ranks, class_by_name, scenario, rank
-        )
-        if is_internal_entry:
-            for parameter, _type_name in parameters.items():
-                values = bindings.get(parameter, [])
-                location = f"{operation_id}#{parameter}"
-                if len(values) != 1:
-                    issues.append(("input", "every operation parameter needs exactly one binding", location))
-                    continue
-                binding = values[0]
-                expected = _formal_callsite_source_ref(rank[0], parameter) if rank else ""
-                if (
-                    _text(binding.get("useCaseId")) != rank[0].partition(":")[0]
-                    or _text(binding.get("sourceRef")) != expected
-                ):
-                    issues.append((
-                        "input",
-                        "internal reusable entry must bind each formal to its callsite source",
-                        location,
-                    ))
-            for parameter in sorted(set(bindings) - set(parameters)):
-                issues.append(("input", "inputBinding names no declared parameter", f"{operation_id}#{parameter}"))
-            continue
-        for parameter, type_name in parameters.items():
-            values = bindings.get(parameter, [])
-            location = f"{operation_id}#{parameter}"
-            if len(values) != 1:
-                issues.append(("input", "every operation parameter needs exactly one binding", location))
+    names = {_class_name(item) for item in classes} | set(data_types)
+    referenced_data_types: set[str] = set()
+    for class_item in classes:
+        class_name = _class_name(class_item)
+        for field in class_item.get("fields") or []:
+            type_name = field_type(field)
+            referenced_data_types.update(referenced_type_names(type_name))
+            if type_name and not type_is_resolved(type_name, names, allow_void=False):
+                issues.append(("operation", "field type does not resolve to a primitive, Class, or DataType", class_name))
+        for operation in class_item.get("operations") or []:
+            if not isinstance(operation, dict):
                 continue
-            binding = values[0]
-            use_case_id, source_ref = _text(binding.get("useCaseId")), _text(binding.get("sourceRef"))
-            target_rank = ranks.get(operation_id)
-            if not target_rank or use_case_id != target_rank[0].partition(":")[0]:
-                issues.append(("input", "binding useCaseId does not own the target operation", location))
-                continue
-            _source_issue(
-                source_ref, parameter, type_name, operation_id, class_name, operation,
-                use_case_id, target_rank, operations, ranks, group_by_step, edges,
-                scenario, issues,
-            )
-        for parameter in sorted(set(bindings) - set(parameters)):
-            issues.append(("input", "inputBinding names no declared parameter", f"{operation_id}#{parameter}"))
+            operation_id = _text(operation.get("operationId")) or class_name
+            for parameter in operation.get("parameters") or []:
+                if isinstance(parameter, dict) and not type_is_resolved(_text(parameter.get("type")), names, allow_void=False):
+                    issues.append(("operation", "parameter type does not resolve to a primitive, Class, or DataType", operation_id))
+                if isinstance(parameter, dict):
+                    referenced_data_types.update(referenced_type_names(_text(parameter.get("type"))))
+            if not type_is_resolved(_text(operation.get("returnType")), names, allow_void=True):
+                issues.append(("operation", "return type does not resolve to a primitive, Class, or DataType", operation_id))
+            referenced_data_types.update(referenced_type_names(_text(operation.get("returnType"))))
+    for name, data_type in data_types.items():
+        for field in data_type.get("fields") or []:
+            type_name = field_type(field)
+            referenced_data_types.update(referenced_type_names(type_name))
+            if type_name and not type_is_resolved(type_name, names, allow_void=False):
+                issues.append(("operation", "DataType field type does not resolve to a primitive, Class, or DataType", name))
+    for name in sorted(set(data_types) - referenced_data_types):
+        issues.append(("operation", "DataType is not referenced by a Class or operation", name))
 
 
-def _internal_entry_operation_id(
-    operations: dict[str, tuple[str, dict[str, Any]]],
-    ranks: dict[str, tuple[str, int]],
-    class_by_name: dict[str, dict[str, Any]],
-    scenario: dict[str, Any],
-    rank: tuple[str, int] | None,
-) -> str | None:
-    """Identify an internal callable's first Control without rank-side effects."""
-    if not rank or not rank[0].endswith(":internal"):
-        return None
-    use_case_id = rank[0].partition(":")[0]
-    step_order = {
-        step.id: step.order
-        for step in _steps(_specification_map(scenario).get(use_case_id, {}))
+def _relationship_issues(
+    model: dict[str, Any], class_by_name: dict[str, dict[str, Any]],
+    issues: list[tuple[str, str, str | None]],
+) -> None:
+    expected_dependencies = {
+        (_text(item.get("source")), _text(item.get("target")))
+        for item in project_call_dependencies(model)
+        if _text(item.get("type")) == "Dependency"
     }
-    candidates = [
-        (operation_id, class_name, operation)
-        for operation_id, (class_name, operation) in operations.items()
-        if ranks.get(operation_id, (None,))[0] == rank[0]
-        and _stereotype(class_by_name.get(class_name, {})) == "control"
-    ]
-    if not candidates:
-        return None
-    return min(
-        candidates,
-        key=lambda item: _operation_sort_key((item[1], item[2]), step_order),
-    )[0]
+    actual_dependencies: set[tuple[str, str]] = set()
+    comparable = True
+    for relationship in model.get("Relationships") or []:
+        if not isinstance(relationship, dict):
+            comparable = False
+            continue
+        source, target = _text(relationship.get("source")), _text(relationship.get("target"))
+        relationship_type = _text(relationship.get("type"))
+        if source not in class_by_name or target not in class_by_name:
+            comparable = False
+            continue
+        if relationship_type == "Dependency":
+            if (
+                _stereotype(class_by_name[source]) in {"boundary", "control"}
+                and _stereotype(class_by_name[target]) in {"control", "entity"}
+            ):
+                actual_dependencies.add((source, target))
+            else:
+                comparable = False
+            continue
+        if relationship_type not in {"Association", "Aggregation", "Composition", "Inheritance"}:
+            comparable = False
+        if not (
+            _stereotype(class_by_name[source]) == _stereotype(class_by_name[target]) == "entity"
+        ):
+            # Dedicated relationship/BCE checks own malformed semantic links.
+            comparable = False
+    if comparable and actual_dependencies != expected_dependencies:
+        issues.append(("operation", "Dependency relationships must be projected exactly from collaboration calls", None))
+
+
+def _collaboration_issues(
+    model: dict[str, Any], operations: dict[str, tuple[str, dict[str, Any]]],
+    class_by_name: dict[str, dict[str, Any]], issues: list[tuple[str, str, str | None]],
+    scenario: dict[str, Any] | None,
+) -> None:
+    collaborations = [item for item in model.get("Collaborations") or [] if isinstance(item, dict)]
+    expected_groups = {group.id: group for group in execution_groups(scenario)} if scenario else {}
+    seen_collaborations: set[str] = set()
+    for collaboration in collaborations:
+        collaboration_id = _text(collaboration.get("collaborationId"))
+        if not collaboration_id or collaboration_id in seen_collaborations:
+            issues.append(("operation", "collaborationId is missing or duplicated", collaboration_id or None))
+            continue
+        seen_collaborations.add(collaboration_id)
+        use_case_ids = [_text(value) for value in collaboration.get("useCaseIds") or []]
+        if not use_case_ids or not all(use_case_ids) or len(use_case_ids) != len(set(use_case_ids)):
+            issues.append(("operation", "Collaboration useCaseIds must be a non-duplicated ordered list", collaboration_id))
+            continue
+        group = expected_groups.get(collaboration_id)
+        if scenario:
+            if not group:
+                issues.append(("operation", "collaborationId does not identify an accepted execution group", collaboration_id))
+            else:
+                expected_scope = _trace_scope_ids(group, scenario)
+                if use_case_ids != expected_scope:
+                    issues.append(("operation", "useCaseIds must put the execution/root use case first, followed by deterministic include/extend trace scope", collaboration_id))
+                _actor_issue(collaboration, group, scenario, issues)
+        _call_issues(collaboration, operations, class_by_name, group, scenario, issues)
+    if scenario:
+        for group_id in sorted(set(expected_groups) - seen_collaborations):
+            issues.append(("operation", "accepted execution group has no Collaboration", group_id))
+
+
+def _actor_issue(
+    collaboration: dict[str, Any], group, scenario: dict[str, Any],
+    issues: list[tuple[str, str, str | None]],
+) -> None:
+    actor = _text(collaboration.get("entryActor"))
+    expected_actor = _primary_actor(scenario, _specification_map(scenario).get(group.use_case_id, {}))
+    if group.actor_step and actor != expected_actor:
+        issues.append(("operation", "actor execution group must declare its deterministic entryActor", group.id))
+    if not group.actor_step and actor:
+        issues.append(("operation", "non-actor execution group cannot declare entryActor", group.id))
+
+
+def _call_issues(
+    collaboration: dict[str, Any], operations: dict[str, tuple[str, dict[str, Any]]],
+    class_by_name: dict[str, dict[str, Any]], group, scenario: dict[str, Any] | None,
+    issues: list[tuple[str, str, str | None]],
+) -> None:
+    collaboration_id = _text(collaboration.get("collaborationId"))
+    calls = [item for item in collaboration.get("calls") or [] if isinstance(item, dict)]
+    if len(calls) != len(collaboration.get("calls") or []) or not calls:
+        issues.append(("operation", "Collaboration must contain ordered call objects", collaboration_id))
+        return
+    known_steps: set[str] = set()
+    required_steps: set[str] = set()
+    if scenario and group:
+        known_steps = _available_trace_steps(group, scenario)
+        required_steps = _required_trace_steps(group, scenario)
+    call_by_id: dict[str, dict[str, Any]] = {}
+    covered: set[str] = set()
+    for position, call in enumerate(calls, start=1):
+        call_id = _text(call.get("callId"))
+        expected_call_id = canonical_call_id(collaboration_id, position)
+        if call_id != expected_call_id:
+            issues.append(("operation", "callId is not deterministic for collaboration order", call_id or collaboration_id))
+        parent_id = _text(call.get("parentCallId"))
+        if position == 1:
+            if parent_id:
+                issues.append(("operation", "the first call cannot have parentCallId", call_id))
+        elif not parent_id or parent_id not in call_by_id:
+            issues.append(("operation", "parentCallId must reference an earlier call in the same collaboration", call_id))
+        operation_id = _text(call.get("receiverOperationId"))
+        target = operations.get(operation_id)
+        if not target:
+            issues.append(("operation", "call receiverOperationId does not exist", call_id or collaboration_id))
+        else:
+            class_name = target[0]
+            trace_scope = {_text(item) for item in collaboration.get("useCaseIds") or []}
+            if not set(class_by_name.get(class_name, {}).get("use_case_ids") or []) & trace_scope:
+                issues.append(("operation", "call receiver class is outside collaboration useCaseIds trace scope", call_id))
+        step_refs = [_text(ref) for ref in call.get("stepRefs") or []]
+        if not step_refs:
+            issues.append(("operation", "every call needs stepRefs", call_id))
+        elif known_steps and any(ref not in known_steps for ref in step_refs):
+            issues.append(("operation", "call stepRefs are outside collaboration trace scope", call_id))
+        covered.update(step_refs)
+        call_by_id[call_id] = call
+    if required_steps - covered:
+        issues.append(("operation", "collaboration calls do not cover every execution-group step", collaboration_id))
+    if group and calls:
+        first_target = operations.get(_text(calls[0].get("receiverOperationId")))
+        if first_target:
+            first_stereotype = _stereotype(class_by_name.get(first_target[0], {}))
+            if group.actor_step and first_stereotype != "boundary":
+                issues.append(("operation", "actor group's root call must target a Boundary operation", collaboration_id))
+            if group.internal and first_stereotype != "control":
+                issues.append(("operation", "internal group's root call must target a Control operation", collaboration_id))
+        called_stereotypes = {
+            _stereotype(class_by_name.get(target[0], {}))
+            for call in calls
+            if (target := operations.get(_text(call.get("receiverOperationId"))))
+        }
+        if group.actor_step and "control" not in called_stereotypes:
+            issues.append((
+                "operation",
+                "actor group's Boundary root must delegate to a Control call",
+                collaboration_id,
+            ))
+    for position, call in enumerate(calls):
+        target = operations.get(_text(call.get("receiverOperationId")))
+        if not target:
+            continue
+        _binding_issues_for_call(
+            collaboration, calls, position, target[1], operations, group, scenario, issues,
+        )
+
+
+def _binding_issues_for_call(
+    collaboration: dict[str, Any], calls: list[dict[str, Any]], index: int,
+    operation: dict[str, Any], operations: dict[str, tuple[str, dict[str, Any]]], group,
+    scenario: dict[str, Any] | None, issues: list[tuple[str, str, str | None]],
+) -> None:
+    call = calls[index]
+    call_id = _text(call.get("callId"))
+    declared = {
+        _text(parameter.get("name")): _text(parameter.get("type"))
+        for parameter in operation.get("parameters") or [] if isinstance(parameter, dict)
+    }
+    bindings: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for binding in call.get("argumentBindings") or []:
+        if isinstance(binding, dict):
+            bindings[_text(binding.get("parameter"))].append(binding)
+        else:
+            issues.append(("input", "argumentBinding must be an object", call_id))
+    for parameter, type_name in declared.items():
+        entries = bindings.get(parameter, [])
+        location = f"{call_id}#{parameter}"
+        if len(entries) != 1:
+            issues.append(("input", "every call parameter needs exactly one argumentBinding", location))
+            continue
+        _source_issue(
+            _text(entries[0].get("sourceRef")), parameter, type_name,
+            collaboration, calls, index, operations, group, scenario, issues,
+        )
+    for parameter in sorted(set(bindings) - set(declared)):
+        issues.append(("input", "argumentBinding names no declared receiver parameter", f"{call_id}#{parameter}"))
 
 
 def _source_issue(
-    source_ref: str, parameter: str, type_name: str, target_id: str,
-    target_class: str, target: dict[str, Any], use_case_id: str,
-    target_rank: tuple[str, int], operations: dict[str, tuple[str, dict[str, Any]]],
-    ranks: dict[str, tuple[str, int]], group_by_step: dict[str, _Group],
-    edges: dict[str, set[str]], scenario: dict[str, Any],
+    source_ref: str, parameter: str, type_name: str, collaboration: dict[str, Any],
+    calls: list[dict[str, Any]], index: int,
+    operations: dict[str, tuple[str, dict[str, Any]]], group, scenario: dict[str, Any] | None,
     issues: list[tuple[str, str, str | None]],
 ) -> None:
-    location = f"{target_id}#{parameter}"
-    if source_ref.startswith("callsite:"):
-        issues.append((
-            "producer",
-            "callsite source is allowed only on an internal reusable Control formal",
-            location,
-        ))
+    call_id = _text(calls[index].get("callId"))
+    location = f"{call_id}#{parameter}"
+    if not source_ref:
+        issues.append(("input", "argumentBinding sourceRef is required", location))
         return
-    if "#" in source_ref:
-        source_id, source_parameter = source_ref.rsplit("#", 1)
-        known_steps = {step.id for step in _steps(_specification_map(scenario).get(use_case_id, {}))}
-        if source_id in known_steps:
-            group = group_by_step.get(source_id)
-            if not (
-                bool(target.get("actorEntry")) and group and group.id == target_rank[0]
-                and source_id == group.actor_step and source_parameter == parameter
-            ):
-                issues.append(("producer", "actor-step input is allowed only on its Boundary actorEntry", location))
+    if group and scenario and source_ref == f"{group.actor_step}#{parameter}":
+        if index != 0 or not _text(collaboration.get("entryActor")):
+            issues.append(("producer", "actor/main-step input is valid only for the entry call", location))
+        return
+    if group and scenario and source_ref in _precondition_refs(
+        _specification_map(scenario).get(group.use_case_id, {})
+    ):
+        specification = _specification_map(scenario).get(group.use_case_id, {})
+        if source_ref not in _precondition_refs(specification):
+            issues.append(("producer", "precondition context sourceRef is not declared", location))
+        return
+    earlier = {_text(call.get("callId")): call for call in calls[:index]}
+    if "#" in source_ref and not source_ref.endswith("#result"):
+        source_call_id, source_parameter = source_ref.rsplit("#", 1)
+        source_call = earlier.get(source_call_id)
+        if not source_call:
+            issues.append(("producer", "ancestor-call parameter source must reference an earlier call", location))
             return
-        source = operations.get(source_id)
-        if not source:
-            issues.append(("producer", "input sourceRef does not name a known actor step or operation", location))
+        if source_call_id not in _ancestor_ids(calls, index):
+            issues.append(("producer", "parameter source must be an ancestor call, not an unrelated earlier call", location))
             return
-        source_class, source_operation = source
+        source_operation = operations.get(_text(source_call.get("receiverOperationId")), ("", {}))[1]
         source_type = next((
             _text(item.get("type")) for item in source_operation.get("parameters") or []
             if isinstance(item, dict) and _text(item.get("name")) == source_parameter
         ), "")
-        if source_parameter != parameter:
-            issues.append((
-                "producer",
-                "operation-parameter source must use the exact same parameter name",
-                location,
-            ))
-        if source_type != type_name:
-            issues.append(("producer", "operation-parameter source type is incompatible", location))
-        if (
-            not _reachable(edges, source_class, target_class)
-            or not _earlier_in_group(source_id, target_id, ranks)
-            or not _source_step_is_not_later(source_operation, target, use_case_id, scenario)
-        ):
-            issues.append(("producer", "operation-parameter source is future, reverse, cyclic, or unreachable", location))
+        if source_parameter != parameter or source_type != type_name:
+            issues.append(("producer", "ancestor-call parameter source must preserve parameter name and type", location))
         return
-    source = operations.get(source_ref)
-    if not source:
-        issues.append(("producer", "result sourceRef does not name a known operation", location))
+    source_call_id, separator, source_kind = source_ref.partition("#")
+    if not separator or source_kind != "result":
+        issues.append(("producer", "earlier call result sourceRef must end with #result", location))
         return
-    source_class, source_operation = source
+    source_call = earlier.get(source_call_id)
+    if not source_call:
+        issues.append(("producer", "sourceRef must be actor input, precondition context, ancestor parameter, or earlier call result", location))
+        return
+    source_operation = operations.get(_text(source_call.get("receiverOperationId")), ("", {}))[1]
     return_type = _text(source_operation.get("returnType"))
     if return_type.casefold() == "void" or return_type != type_name:
-        issues.append(("producer", "operation-result source must be compatible and non-void", location))
-    elif _is_scalar_value_type(type_name):
-        issues.append((
-            "producer",
-            "scalar operation result cannot bind a differently named parameter without semantic identity",
-            location,
-        ))
-    if not (
-        _reachable(edges, source_class, target_class)
-        or _reachable(edges, target_class, source_class)
-    ):
-        issues.append((
-            "producer",
-            "operation-result source has no caller-callee dependency path",
-            location,
-        ))
-    if (
-        not _earlier_in_group(source_ref, target_id, ranks)
-        or not _source_step_is_not_later(source_operation, target, use_case_id, scenario)
-    ):
-        issues.append(("producer", "operation-result source is future, reverse, cyclic, or unreachable", location))
+        issues.append(("producer", "earlier call result must be non-void and type-compatible", location))
 
 
-def _earlier_in_group(
-    source_id: str, target_id: str, ranks: dict[str, tuple[str, int]],
-) -> bool:
-    source_rank, target_rank = ranks.get(source_id), ranks.get(target_id)
-    return bool(
-        source_rank and target_rank and source_rank[0] == target_rank[0]
-        and source_rank[1] < target_rank[1]
-    )
-
-
-def _source_step_is_not_later(
-    source: dict[str, Any], target: dict[str, Any], use_case_id: str, scenario: dict[str, Any]
-) -> bool:
-    order = {
-        step.id: step.order
-        for step in _steps(_specification_map(scenario).get(use_case_id, {}))
-    }
-    source_first = min(
-        (order.get(_text(ref), 10**9) for ref in source.get("stepRefs") or []),
-        default=10**9,
-    )
-    target_first = min(
-        (order.get(_text(ref), 10**9) for ref in target.get("stepRefs") or []),
-        default=10**9,
-    )
-    return source_first <= target_first
+def _ancestor_ids(calls: list[dict[str, Any]], index: int) -> set[str]:
+    prior = {_text(call.get("callId")): call for call in calls[:index]}
+    result: set[str] = set()
+    parent = _text(calls[index].get("parentCallId"))
+    while parent and parent in prior:
+        result.add(parent)
+        parent = _text(prior[parent].get("parentCallId"))
+    return result

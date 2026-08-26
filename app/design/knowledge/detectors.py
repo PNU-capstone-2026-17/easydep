@@ -50,6 +50,7 @@ from app.core.validation import Finding as ValidationFinding
 from app.design import rtm
 from app.design.knowledge import rules
 from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
+from app.design.schemas.class_model import operation_method_signature
 from app.design.services.class_diagram.validation import operation_contract_issues
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
@@ -96,6 +97,23 @@ def _findings_from_report(report: ValidationReport) -> list[Finding]:
 # ---------------------------------------------------------------------------
 def _classes(model: dict[str, Any]) -> list[dict]:
     return [c for c in (model.get("Classes") or []) if isinstance(c, dict)]
+
+
+def _class_method_signatures(class_item: dict[str, Any]) -> list[str]:
+    """Project typed operations; read legacy method strings only for old artifacts."""
+
+    operations = class_item.get("operations")
+    if isinstance(operations, list):
+        return [
+            operation_method_signature(
+                str(operation.get("name") or ""),
+                list(operation.get("parameters") or []),
+                str(operation.get("returnType") or "void"),
+            )
+            for operation in operations
+            if isinstance(operation, dict) and str(operation.get("name") or "").strip()
+        ]
+    return [str(method) for method in class_item.get("methods") or []]
 
 
 def _relationships(model: dict[str, Any]) -> list[dict]:
@@ -346,63 +364,6 @@ def entity_association_multiplicity(model: dict, state: dict) -> list[Finding]:
     return found
 
 
-def _parameter_items(signature: str) -> list[str]:
-    """Read comma-separated parameters while preserving generic type commas."""
-    inside = signature.partition("(")[2].rpartition(")")[0]
-    if not inside:
-        return []
-    values: list[str] = []
-    start = 0
-    depth = 0
-    for index, character in enumerate(inside):
-        if character == "<":
-            depth += 1
-        elif character == ">":
-            depth = max(0, depth - 1)
-        elif character == "," and depth == 0:
-            values.append(inside[start:index])
-            start = index + 1
-    values.append(inside[start:])
-    return values
-
-
-def method_parameters_typed(model: dict, state: dict) -> list[Finding]:
-    """BCE methods that declare inputs make their names and types usable downstream."""
-    rule_id = "class.method-parameters-typed"
-    found: list[Finding] = []
-    for class_item in _classes(model):
-        class_name = str(class_item.get("className") or "?")
-        for raw_method in class_item.get("methods") or []:
-            raw_text = str(raw_method)
-            signature = method_call_signature(raw_text)
-            if not signature:
-                continue
-            seen: set[str] = set()
-            invalid = False
-            for item in _parameter_items(signature):
-                name, separator, type_name = item.partition(":")
-                name = name.strip()
-                if (
-                    not separator
-                    or not name
-                    or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
-                    or not type_name.strip()
-                    or name in seen
-                ):
-                    invalid = True
-                    break
-                seen.add(name)
-            if invalid:
-                found.append(
-                    Finding(
-                        rule_id,
-                        f"메서드 '{raw_text}'의 매개변수는 중복 없이 'name : Type' 형식이어야 함",
-                        class_name,
-                    )
-                )
-    return found
-
-
 def fields_typed(model: dict, state: dict) -> list[Finding]:
     """Require a Java type on every declared BCE field.
 
@@ -427,102 +388,18 @@ def fields_typed(model: dict, state: dict) -> list[Finding]:
     return found
 
 
-_CONTROL_OUTCOME_PREFIXES = (
-    "authenticate", "authorize", "calculate", "check", "create", "find", "generate",
-    "get", "initiate", "list", "process", "register", "search", "select", "show",
-    "validate", "view",
-)
-
-# These operations expose a value or a decision to their caller by their
-# analysis-level meaning.  A command such as ``drop`` may truthfully complete
-# with no body, but browsing, searching, registering, or authenticating cannot
-# be represented by an HTTP 204 response when the use case describes a result
-# or alternative outcome.
-_CONTROL_VALUE_PREFIXES = (
-    "authenticate", "authorize", "browse", "calculate", "check", "create",
-    "find", "generate", "get", "list", "register",
-    "search", "select", "view",
-)
-
-# ``processTerm(termId, action, ...)`` looks compact in a class diagram, but
-# it does not identify the interaction or HTTP contract for one concrete
-# operation.  In particular, a REST adapter cannot truthfully map a DELETE
-# request with no body to the attributes of a create/update command.  Keep the
-# check intentionally narrow: a domain-specific ``processPayment`` is not a
-# dispatcher merely because its name starts with ``process``; it must also take
-# an explicit action/operation selector.
-_GENERIC_ACTION_DISPATCH_PREFIXES = ("process", "handle", "manage", "maintain")
-_ACTION_SELECTOR_NAMES = {"action", "operation", "command", "mode"}
-
-
-def control_action_dispatch_contract(model: dict, state: dict) -> list[Finding]:
-    """Reject generic action-dispatcher Controls that erase endpoint semantics."""
-    rule_id = "class.control-action-dispatcher"
-    found: list[Finding] = []
-    for class_item in _classes(model):
-        if _stereotype_of(class_item) != CONTROL:
-            continue
-        class_name = str(class_item.get("className") or "?")
-        for raw_method in class_item.get("methods") or []:
-            signature = method_call_signature(str(raw_method))
-            match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\((.*)\)$", signature)
-            if not match or not match.group(1).lower().startswith(_GENERIC_ACTION_DISPATCH_PREFIXES):
-                continue
-            parameter_names = {
-                value.strip().partition(":")[0].strip().lower()
-                for value in match.group(2).split(",")
-                if value.strip()
-            }
-            if parameter_names & _ACTION_SELECTOR_NAMES:
-                found.append(Finding(
-                    rule_id,
-                    f"'{raw_method}'은 action/operation 선택자로 생성·수정·삭제를 한 메서드에 숨김 — "
-                    "각 HTTP 행위와 시퀀스 호출을 구분할 수 있는 구체적 Control 메서드가 필요함",
-                    class_name,
-                ))
-    return found
-
-
-def control_outcome_return_contract(model: dict, state: dict) -> list[Finding]:
-    """Require a result contract where a Control operation exposes an outcome."""
-    rule_id = "class.control-outcome-return-contract"
-    found: list[Finding] = []
-    for class_item in _classes(model):
-        if _stereotype_of(class_item) != CONTROL:
-            continue
-        class_name = str(class_item.get("className") or "?")
-        for raw_method in class_item.get("methods") or []:
-            raw_text = str(raw_method)
-            name = method_name(raw_text)
-            return_type = method_return_type(raw_text)
-            if name.startswith(_CONTROL_OUTCOME_PREFIXES) and return_type is None:
-                found.append(
-                    Finding(
-                        rule_id,
-                        f"결과·판정 성격의 Control 메서드 '{raw_text}'에 ': ReturnType' 또는 ': void' 계약이 없음",
-                        class_name,
-                    )
-                )
-            elif (
-                name.startswith(_CONTROL_VALUE_PREFIXES)
-                and normalize_return_type(return_type) == "void"
-            ):
-                found.append(
-                    Finding(
-                        rule_id,
-                        f"결과를 노출하는 Control 메서드 '{raw_text}'는 ': void'가 아니라 구체적인 반환 타입이 필요함",
-                        class_name,
-                    )
-                )
-    return found
-
-
 def operation_contract(model: dict, state: dict) -> list[Finding]:
     """Validate canonical accepted operations and their BCE execution topology."""
     return [
-        Finding("class.operation-contract-canonical", message, location)
+        Finding(
+            "class.operation-contract-canonical",
+            message,
+            location,
+            requires_user_input=kind == "needs_input",
+            origin="semantic" if kind == "needs_input" else "deterministic",
+        )
         for kind, message, location in operation_contract_issues(model, state)
-        if kind == "operation"
+        if kind in {"operation", "needs_input"}
     ]
 
 
@@ -744,61 +621,6 @@ def erd_composition_owner(model: dict, logical: dict) -> list[Finding]:
     return found
 
 
-def erd_mandatory_reference_cycle(model: dict, logical: dict) -> list[Finding]:
-    """필수 외래키만 따라가 **제자리로 돌아오는 고리**를 찾는다. 자기 참조도 고리다.
-
-    고리마다 **지적 하나**를 낸다. 간선마다 내면 한 실수가 여러 지적이 되어, 재생성이
-    하나를 고쳐도 위반 수가 안 줄고 수정본이 통째로 버려진다.
-    """
-    rule_id = "erd.no-mandatory-reference-cycle"
-    edges: dict[str, set[str]] = {}
-    for table in _tables(logical):
-        name = str(table.get("name") or "")
-        edges[name] = {
-            str(c["references"])
-            for c in table.get("columns") or []
-            if c.get("references") and c.get("mandatory")
-        }
-
-    found: list[Finding] = []
-    reported: set[frozenset[str]] = set()
-    for start in edges:
-        path: list[str] = []
-
-        def walk(node: str) -> list[str] | None:
-            if node == start and path:
-                return [*path, start]
-            if node in path:
-                return None
-            path.append(node)
-            for nxt in sorted(edges.get(node, ())):
-                cycle = walk(nxt)
-                if cycle:
-                    return cycle
-            path.pop()
-            return None
-
-        for first in sorted(edges[start]):
-            cycle = walk(first)
-            if not cycle:
-                continue
-            key = frozenset(cycle)
-            if key in reported:
-                break
-            reported.add(key)
-            found.append(
-                Finding(
-                    rule_id,
-                    "필수 외래키가 " + " → ".join([start, *cycle]) + " 로 제자리에 돌아온다 "
-                    "— 이 고리에는 첫 행을 넣을 수 없다. 한 곳의 다중도를 '0..1'로 바꾸거나 "
-                    "관계를 다시 보라",
-                    start,
-                )
-            )
-            break
-    return found
-
-
 def erd_identifier_fields(model: dict, logical: dict) -> list[Finding]:
     """**없는 필드**를 가리키는 것과 있지만 **키가 될 수 없는** 필드(다중값)를 가리키는
     것을 구별해 말한다 — 고치는 쪽이 할 일이 다르다. BCE 층에서 본다(논리 모델에는 이미
@@ -985,7 +807,6 @@ ERD_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "erd_has_entity": erd_has_entity,
     "erd_relationships_mapped": erd_relationships_mapped,
     "erd_composition_owner": erd_composition_owner,
-    "erd_mandatory_reference_cycle": erd_mandatory_reference_cycle,
     "erd_identifier_fields": erd_identifier_fields,
     "erd_surrogate_key_collides": erd_surrogate_key_collides,
     "erd_table_names_unique": erd_table_names_unique,
@@ -1003,7 +824,6 @@ ERD_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("erd.has-entity", erd_has_entity),
     CheckSpec("erd.relationship-mapped", erd_relationships_mapped),
     CheckSpec("erd.composition-owner-is-mandatory", erd_composition_owner),
-    CheckSpec("erd.no-mandatory-reference-cycle", erd_mandatory_reference_cycle),
     CheckSpec("erd.identifier-fields-exist", erd_identifier_fields),
     CheckSpec("erd.surrogate-key-collides", erd_surrogate_key_collides),
     CheckSpec("erd.table-names-unique", erd_table_names_unique),
@@ -1048,10 +868,7 @@ CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "communication_rules": communication_rules,
     "relationship_type_known": relationship_type_known,
     "entity_association_multiplicity": entity_association_multiplicity,
-    "method_parameters_typed": method_parameters_typed,
     "fields_typed": fields_typed,
-    "control_outcome_return_contract": control_outcome_return_contract,
-    "control_action_dispatch_contract": control_action_dispatch_contract,
     "operation_contract": operation_contract,
     "operation_input_producers": operation_input_producers,
     "names_unique": names_unique,
@@ -1092,10 +909,7 @@ CLASS_DIAGRAM_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("class.entity-does-not-initiate", class_entity_does_not_initiate),
     CheckSpec("class.relationship-type-known", relationship_type_known),
     CheckSpec("class.entity-association-multiplicity", entity_association_multiplicity),
-    CheckSpec("class.method-parameters-typed", method_parameters_typed),
     CheckSpec("class.fields-typed", fields_typed),
-    CheckSpec("class.control-outcome-return-contract", control_outcome_return_contract),
-    CheckSpec("class.control-action-dispatcher", control_action_dispatch_contract),
     CheckSpec("class.operation-contract-canonical", operation_contract),
     CheckSpec("class.operation-input-producers", operation_input_producers),
     CheckSpec("class.names-unique", names_unique),
@@ -1224,7 +1038,7 @@ def _class_methods_from_state(state: dict) -> dict[str, set[str]]:
         if not name:
             continue
         methods: set[str] = set()
-        for m in c.get("methods") or []:
+        for m in _class_method_signatures(c):
             normalized = _normalize_method_name(str(m).strip())
             if normalized:
                 methods.add(normalized)
@@ -1353,7 +1167,7 @@ def sequence_message_methods(model: dict, state: dict) -> list[Finding]:
     class_methods = {
         str(class_item.get("className")): {
             signature
-            for raw_method in class_item.get("methods") or []
+            for raw_method in _class_method_signatures(class_item)
             if (signature := method_call_signature(str(raw_method)))
         }
         for class_item in classes
@@ -1489,7 +1303,7 @@ def _control_method_contracts(state: dict) -> dict[str, dict[str, dict[str, obje
         if not class_name:
             continue
         methods: dict[str, dict[str, object]] = {}
-        for raw in class_item.get("methods") or []:
+        for raw in _class_method_signatures(class_item):
             text = str(raw)
             signature = method_call_signature(text)
             if not signature:
@@ -2124,7 +1938,7 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
         if not class_name:
             continue
         by_method: dict[str, set[str]] = {}
-        for raw_method in class_item.get("methods") or []:
+        for raw_method in _class_method_signatures(class_item):
             signature = method_call_signature(str(raw_method))
             if not signature:
                 continue
@@ -2227,7 +2041,7 @@ def sequence_nonvoid_calls_have_returns(model: dict, state: dict) -> list[Findin
             continue
         contracts[class_name] = {
             signature: return_type
-            for raw_method in class_item.get("methods") or []
+            for raw_method in _class_method_signatures(class_item)
             if (signature := method_call_signature(str(raw_method)))
             and (return_type := method_return_type(str(raw_method)))
         }
@@ -2330,7 +2144,7 @@ def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
             continue
         contracts[class_name] = {
             signature: (_method_parameters(signature), method_return_type(str(raw_method)))
-            for raw_method in class_item.get("methods") or []
+            for raw_method in _class_method_signatures(class_item)
             if (signature := method_call_signature(str(raw_method)))
         }
 
@@ -2472,7 +2286,11 @@ def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
     }
     class_method_counts = {
         str(item.get("className") or "").strip(): len(
-            [method for method in item.get("methods") or [] if method_call_signature(str(method))]
+            [
+                method
+                for method in _class_method_signatures(item)
+                if method_call_signature(str(method))
+            ]
         )
         for item in (state.get("extracted_bce_classes") or {}).get("Classes", [])
         if str(item.get("className") or "").strip()

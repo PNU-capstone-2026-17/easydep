@@ -7,7 +7,6 @@ from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.common.validation import validate_api_spec
 from app.design.validation import design_readiness_report
 
-
 STATE = {
     "class_diagram_puml": "class OrderBoundary <<Boundary>>\nclass OrderControl <<Control>>\nclass Order <<Entity>>\n",
     "usecase_spec": {"use_cases": [{"id": "UC1", "name": "Create order"}]},
@@ -31,40 +30,6 @@ STATE = {
         ],
     },
 }
-
-
-def test_control_value_operation_cannot_declare_void_return() -> None:
-    model = {
-        "Classes": [{
-            "className": "CatalogControl",
-            "stereotype": "Control",
-            "methods": ["browseCatalog(): void", "dropExpiredCache(): void"],
-        }],
-    }
-
-    findings = detectors.control_outcome_return_contract(model, STATE)
-
-    assert len(findings) == 1
-    assert "browseCatalog" in findings[0].message
-
-
-def test_control_action_dispatcher_is_rejected_before_api_generation() -> None:
-    model = {
-        "Classes": [{
-            "className": "TermControl",
-            "stereotype": "Control",
-            "methods": [
-                "processTerm(termId : String, action : String, attributes : TermAttributes): void",
-                "processImportedTerms(file : CsvFile): void",
-            ],
-        }],
-    }
-
-    findings = detectors.control_action_dispatch_contract(model, STATE)
-
-    assert len(findings) == 1
-    assert "processTerm" in findings[0].message
-    assert "processImportedTerms" not in findings[0].message
 
 
 def test_void_command_can_document_error_statuses_without_result_contract() -> None:

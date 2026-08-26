@@ -130,7 +130,7 @@ class SequenceMessage(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def event_shape_is_valid(self) -> "SequenceMessage":
+    def event_shape_is_valid(self) -> SequenceMessage:
         if self.type == "self" and self.source != self.target:
             raise ValueError("self messages require source == target")
         if self.type in {"activate", "deactivate"} and self.source != self.target:
@@ -173,7 +173,7 @@ class SequenceModel(BaseModel):
     Messages: list[SequenceMessage]
 
     @model_validator(mode="after")
-    def aliases_are_unique(self) -> "SequenceModel":
+    def aliases_are_unique(self) -> SequenceModel:
         aliases = [participant.alias for participant in self.Participants]
         if len(aliases) != len(set(aliases)):
             raise ValueError("participant aliases must be unique")
@@ -194,7 +194,7 @@ class UseCaseSequenceModel(SequenceModel):
     NarrativeSteps: list[SequenceUnresolvedStep] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def messages_belong_to_this_use_case(self) -> "UseCaseSequenceModel":
+    def messages_belong_to_this_use_case(self) -> UseCaseSequenceModel:
         for message in self.Messages:
             if message.use_case_ids != [self.use_case_id]:
                 raise ValueError(
@@ -235,11 +235,570 @@ class SequenceDiagramCollection(BaseModel):
     MethodProposals: list[SequenceMethodProposal] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def use_case_ids_are_unique(self) -> "SequenceDiagramCollection":
+    def use_case_ids_are_unique(self) -> SequenceDiagramCollection:
         identifiers = [diagram.use_case_id for diagram in self.Diagrams]
         if len(identifiers) != len(set(identifiers)):
             raise ValueError("sequence diagram use_case_ids must be unique")
         return self
+
+
+def _has_persisted_collaborations(class_model: Any | None) -> bool:
+    """Whether ``class_model`` uses the collaboration-first BCE contract.
+
+    The key check is intentional.  A missing key denotes a pre-collaboration
+    artifact which remains viewable through the old importer.  A present but
+    empty list is a current artifact that is stale for sequence generation and
+    must never be back-filled from method names or prose.
+    """
+
+    payload = _class_model_payload(class_model)
+    return isinstance(payload, dict) and "Collaborations" in payload
+
+
+def _operation_signature(operation: dict[str, Any]) -> str:
+    """Return the PlantUML call projection of one typed operation."""
+
+    name = str(operation.get("name") or "").strip()
+    parameters = operation.get("parameters") or []
+    rendered: list[str] = []
+    for parameter in parameters:
+        if not isinstance(parameter, dict):
+            raise TypeError(f"operation {name or '<unnamed>'} has an invalid parameter")
+        parameter_name = str(parameter.get("name") or "").strip()
+        parameter_type = str(parameter.get("type") or "").strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", parameter_name) or not parameter_type:
+            raise ValueError(f"operation {name or '<unnamed>'} has an unresolved parameter")
+        rendered.append(f"{parameter_name}:{parameter_type}")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError("collaboration references an operation without a concrete name")
+    return f"{name}({','.join(rendered)})"
+
+
+def _collaboration_operation_catalog(class_model: Any) -> dict[str, dict[str, Any]]:
+    """Index the accepted operations that collaborations are allowed to call."""
+
+    payload = _class_model_payload(class_model)
+    if not isinstance(payload, dict):
+        raise TypeError("collaboration sequence generation requires a structured class model")
+    catalog: dict[str, dict[str, Any]] = {}
+    for raw_class in payload.get("Classes") or []:
+        if not isinstance(raw_class, dict):
+            continue
+        class_name = str(raw_class.get("className") or raw_class.get("class_name") or "").strip()
+        if not class_name:
+            raise ValueError("collaboration sequence generation found a class without className")
+        stereotype = str(raw_class.get("stereotype") or "Entity").strip().lower()
+        if stereotype not in {"boundary", "control", "entity", "database"}:
+            stereotype = "entity"
+        for raw_operation in raw_class.get("operations") or []:
+            if not isinstance(raw_operation, dict):
+                continue
+            operation_id = str(
+                raw_operation.get("operationId") or raw_operation.get("operation_id") or ""
+            ).strip()
+            if not operation_id:
+                raise ValueError(f"{class_name} has an operation without operationId")
+            if operation_id in catalog:
+                raise ValueError(f"operationId {operation_id!r} is not unique")
+            catalog[operation_id] = {
+                "class_name": class_name,
+                "kind": stereotype,
+                "signature": _operation_signature(raw_operation),
+                "return_type": str(
+                    raw_operation.get("returnType")
+                    or raw_operation.get("return_type")
+                    or "void"
+                ).strip() or "void",
+                "parameters": [
+                    {
+                        "name": str(parameter.get("name") or "").strip(),
+                        "type": str(parameter.get("type") or "").strip(),
+                    }
+                    for parameter in raw_operation.get("parameters") or []
+                    if isinstance(parameter, dict)
+                ],
+            }
+    return catalog
+
+
+def _receiver_operation_id(raw_call: dict[str, Any]) -> str:
+    """Read the canonical collaboration receiver id (with import fallback)."""
+
+    return str(
+        raw_call.get("receiverOperationId")
+        or raw_call.get("receiver_operation_id")
+        # ``operationId`` belonged to an early unpersisted adapter draft.  It
+        # remains read-only import compatibility and is never emitted.
+        or raw_call.get("operationId")
+        or raw_call.get("operation_id")
+        or ""
+    ).strip()
+
+
+def _source_ref_call_id(source_ref: str, call_ids: set[str]) -> str:
+    """Return a call id from a qualified source reference, if it has one."""
+
+    candidate = str(source_ref or "").partition("#")[0].strip()
+    return candidate if candidate in call_ids else ""
+
+
+def _collaboration_argument_bindings(
+    raw_call: dict[str, Any], operation: dict[str, Any], call_ids: set[str], step_refs: set[str],
+) -> list[dict[str, str]]:
+    """Project collaboration bindings without guessing missing parameter flow."""
+
+    raw_bindings = raw_call.get("argumentBindings")
+    if raw_bindings is None:
+        raw_bindings = raw_call.get("argument_bindings")
+    if not isinstance(raw_bindings, list):
+        raise TypeError(f"call {raw_call.get('callId')!r} has no argumentBindings list")
+    by_parameter: dict[str, str] = {}
+    for binding in raw_bindings:
+        if not isinstance(binding, dict):
+            raise TypeError(f"call {raw_call.get('callId')!r} has an invalid argument binding")
+        parameter = str(binding.get("parameter") or "").strip()
+        source_ref = str(binding.get("sourceRef") or binding.get("source_ref") or "").strip()
+        if not parameter or not source_ref or parameter in by_parameter:
+            raise ValueError(f"call {raw_call.get('callId')!r} has an unresolved argument binding")
+        by_parameter[parameter] = source_ref
+
+    expected = operation["parameters"]
+    expected_names = {parameter["name"] for parameter in expected}
+    if set(by_parameter) != expected_names:
+        raise ValueError(
+            f"call {raw_call.get('callId')!r} argumentBindings must exactly match "
+            f"{operation['signature']}"
+        )
+    result: list[dict[str, str]] = []
+    for parameter in expected:
+        source_ref = by_parameter[parameter["name"]]
+        # The persisted collaboration deliberately has one neutral sourceRef
+        # vocabulary.  The old renderer needs a display category, so derive it
+        # only from an already-existing id; never introduce an input binding.
+        source_kind = "call_result" if _source_ref_call_id(source_ref, call_ids) else (
+            "input" if source_ref.partition("#")[0] in step_refs else "state"
+        )
+        result.append({
+            "parameter": parameter["name"],
+            "type": parameter["type"],
+            "source_kind": source_kind,
+            "source_ref": source_ref,
+        })
+    return result
+
+
+def _collaboration_messages(
+    collaboration: dict[str, Any],
+    operations: dict[str, dict[str, Any]],
+    use_case_id: str,
+    extension_fragments: dict[str, dict[str, str]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Render ordered collaboration calls (and only those calls) as messages."""
+
+    raw_calls = collaboration.get("calls") or []
+    if not isinstance(raw_calls, list) or not raw_calls:
+        raise ValueError("collaboration has no calls; regenerate the class model with Collaborations")
+    normalized_calls: list[dict[str, Any]] = []
+    call_ids: set[str] = set()
+    all_step_refs: set[str] = set()
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            raise TypeError("collaboration contains an invalid call")
+        call_id = str(raw_call.get("callId") or raw_call.get("call_id") or "").strip()
+        if not call_id or call_id in call_ids:
+            raise ValueError("collaboration callId values must be non-empty and unique")
+        call_ids.add(call_id)
+        all_step_refs.update(
+            str(step).strip() for step in raw_call.get("stepRefs", raw_call.get("step_refs", [])) or []
+            if str(step).strip()
+        )
+        normalized_calls.append(raw_call)
+
+    call_by_id = {
+        str(call.get("callId") or call.get("call_id") or "").strip(): call
+        for call in normalized_calls
+    }
+    children: dict[str, list[str]] = defaultdict(list)
+    roots: list[str] = []
+    ordered_ids: list[str] = []
+    for raw_call in normalized_calls:
+        call_id = str(raw_call.get("callId") or raw_call.get("call_id") or "").strip()
+        operation_id = _receiver_operation_id(raw_call)
+        if operation_id not in operations:
+            raise ValueError(
+                f"collaboration call {call_id!r} references unresolved receiverOperationId {operation_id!r}"
+            )
+        parent_id = str(raw_call.get("parentCallId") or raw_call.get("parent_call_id") or "").strip()
+        if parent_id:
+            if parent_id not in call_by_id or parent_id not in ordered_ids:
+                raise ValueError(
+                    f"collaboration call {call_id!r} has an unresolved or forward parentCallId {parent_id!r}"
+                )
+            children[parent_id].append(call_id)
+        else:
+            roots.append(call_id)
+        ordered_ids.append(call_id)
+
+    entry_actor = str(
+        collaboration.get("entryActor") or collaboration.get("entry_actor") or ""
+    ).strip()
+    actor_alias = _alias(entry_actor) if entry_actor else ""
+    messages: list[dict[str, Any]] = []
+    participants: dict[str, dict[str, Any]] = {}
+    class_aliases: dict[str, str] = {}
+    if entry_actor:
+        participants[actor_alias] = {
+            "name": entry_actor,
+            "alias": actor_alias,
+            "kind": "actor",
+            "description": "",
+            "source_class": "",
+        }
+
+    def fragment_path(step_refs: list[str]) -> list[dict[str, str]]:
+        catalog = extension_fragments or {}
+        if not step_refs or any(step_ref not in catalog for step_ref in step_refs):
+            return []
+        selected = {catalog[step_ref]["id"] for step_ref in step_refs}
+        if len(selected) != 1:
+            return []
+        return [dict(catalog[step_refs[0]])]
+
+    def class_participant(operation: dict[str, Any]) -> str:
+        class_name = operation["class_name"]
+        if class_name in class_aliases:
+            return class_aliases[class_name]
+        base_alias = _alias(class_name)
+        alias = base_alias
+        if alias in participants:
+            suffix = _alias(str(operation["kind"]).title()) or "Class"
+            alias = f"{base_alias}_{suffix}"
+            counter = 2
+            while alias in participants:
+                alias = f"{base_alias}_{suffix}{counter}"
+                counter += 1
+        class_aliases[class_name] = alias
+        display_name = (
+            class_name
+            if alias == base_alias
+            else f"{class_name} ({str(operation['kind']).title()})"
+        )
+        participants.setdefault(alias, {
+            "name": display_name,
+            "alias": alias,
+            "kind": operation["kind"],
+            "description": "",
+            "source_class": class_name,
+        })
+        return alias
+
+    def append_call(call_id: str, caller: str) -> None:
+        raw_call = call_by_id[call_id]
+        operation_id = _receiver_operation_id(raw_call)
+        operation = operations[operation_id]
+        target = class_participant(operation)
+        step_refs = [
+            str(step).strip()
+            for step in raw_call.get("stepRefs", raw_call.get("step_refs", [])) or []
+            if str(step).strip()
+        ]
+        fragments = fragment_path(step_refs)
+        messages.append({
+            "source": caller or target,
+            "target": target,
+            "label": operation["signature"],
+            "type": "self" if (caller or target) == target else "sync",
+            "fragments": fragments,
+            "use_case_ids": [use_case_id],
+            "step_ids": step_refs,
+            "call_id": call_id,
+            "reply_to": "",
+            "arguments": _collaboration_argument_bindings(
+                raw_call, operation, call_ids, all_step_refs
+            ),
+        })
+        for child_id in children.get(call_id, []):
+            append_call(child_id, target)
+        if operation["return_type"].casefold() != "void":
+            messages.append(_return_message(messages[-1] if not children.get(call_id) else {
+                "source": caller or target,
+                "target": target,
+                "step_ids": step_refs,
+                "use_case_ids": [use_case_id],
+                "call_id": call_id,
+                "fragments": fragments,
+            }, operation["return_type"]))
+
+    for root_id in roots:
+        append_call(root_id, actor_alias)
+    return messages, list(participants.values())
+
+
+def _collaboration_sequence_collection(
+    usecase_spec: Any, class_diagram_puml: str, class_model: Any,
+) -> dict[str, Any]:
+    """Create sequence diagrams by projecting the persisted collaboration graph.
+
+    This is intentionally independent of the legacy LLM/planner path.  A
+    collaboration is the accepted behavioural contract; sequence generation may
+    arrange its nested returns for PlantUML, but never selects or repairs a
+    class operation.
+    """
+
+    payload = _class_model_payload(class_model)
+    assert isinstance(payload, dict)  # guarded by _has_persisted_collaborations
+    operations = _collaboration_operation_catalog(payload)
+    collaborations = payload.get("Collaborations")
+    if not isinstance(collaborations, list) or not collaborations:
+        requested = normalize_sequence_usecase_spec(usecase_spec) if usecase_spec else {}
+        identifiers = [
+            str(item.get("use_case_id") or "").strip()
+            for item in requested.get("use_case_specs") or []
+            if isinstance(item, dict) and str(item.get("use_case_id") or "").strip()
+        ]
+        diagrams = [
+            {
+                "use_case_id": identifier,
+                "use_case_name": "",
+                "Participants": [],
+                "Messages": [],
+                "UnresolvedSteps": [{
+                    "step_id": f"{identifier}:collaboration",
+                    "reason": "Class model is stale: Collaborations are required for sequence regeneration.",
+                }],
+                "NarrativeSteps": [],
+            }
+            for identifier in identifiers
+        ]
+        return SequenceDiagramCollection(
+            Diagrams=diagrams,
+            class_diagram_hash=hashlib.sha256(class_diagram_puml.encode("utf-8")).hexdigest(),
+        ).model_dump()
+
+    requested = normalize_sequence_usecase_spec(usecase_spec) if usecase_spec else {}
+    names = {
+        str(item.get("id") or "").strip(): str(item.get("name") or "").strip()
+        for item in requested.get("use_cases") or []
+        if isinstance(item, dict)
+    }
+    extension_fragments: dict[str, dict[str, str]] = {}
+    for specification in requested.get("use_case_specs") or []:
+        if not isinstance(specification, dict):
+            continue
+        use_case_id = str(specification.get("use_case_id") or "").strip()
+        for extension in specification.get("extensions") or []:
+            if not isinstance(extension, dict):
+                continue
+            label = str(extension.get("label") or "").strip()
+            condition = str(extension.get("condition") or "").strip()
+            if not use_case_id or not label or not condition:
+                continue
+            fragment = {
+                "id": f"{use_case_id}:extension:{label}",
+                "type": "opt",
+                "branch": "main",
+                "condition": condition,
+            }
+            for step in extension.get("handling_steps") or []:
+                if isinstance(step, dict) and step.get("sub_step") is not None:
+                    extension_fragments[
+                        f"{use_case_id}:extension:{label}:{step['sub_step']}"
+                    ] = fragment
+    main_step_order = {
+        (str(specification.get("use_case_id") or "").strip(), str(step.get("step_number"))): position
+        for specification in requested.get("use_case_specs") or []
+        if isinstance(specification, dict)
+        for position, step in enumerate(specification.get("main_scenario") or [])
+        if isinstance(step, dict) and step.get("step_number") is not None
+    }
+
+    def collaboration_order(item: tuple[int, Any]) -> tuple[int, int]:
+        original_position, collaboration = item
+        if not isinstance(collaboration, dict):
+            return (10**9, original_position)
+        scope = collaboration.get("useCaseIds")
+        if not isinstance(scope, list):
+            scope = collaboration.get("use_case_ids") or []
+        owner = str(scope[0] if scope else "").strip()
+        positions: list[int] = []
+        for call in collaboration.get("calls") or []:
+            if not isinstance(call, dict):
+                continue
+            for step_ref in call.get("stepRefs", call.get("step_refs", [])) or []:
+                match = re.fullmatch(r"([^:]+):main:(.+)", str(step_ref).strip())
+                if match and match.group(1) == owner:
+                    position = main_step_order.get((owner, match.group(2)))
+                    if position is not None:
+                        positions.append(position)
+        return (min(positions) if positions else 10**9, original_position)
+
+    diagrams: dict[str, dict[str, Any]] = {}
+    ordered_collaborations = [
+        collaboration for _position, collaboration in sorted(
+            enumerate(collaborations), key=collaboration_order,
+        )
+    ]
+    for collaboration in ordered_collaborations:
+        if not isinstance(collaboration, dict):
+            raise TypeError("Collaborations contains an invalid collaboration")
+        collaboration_id = str(
+            collaboration.get("collaborationId") or collaboration.get("collaboration_id") or ""
+        ).strip()
+        if not collaboration_id:
+            raise ValueError("collaboration is missing collaborationId")
+        use_case_ids = collaboration.get("useCaseIds")
+        if use_case_ids is None:
+            use_case_ids = collaboration.get("use_case_ids")
+        if not isinstance(use_case_ids, list) or not use_case_ids:
+            raise ValueError(f"collaboration {collaboration_id!r} has no useCaseIds")
+        normalized_scope = [str(value or "").strip() for value in use_case_ids]
+        if not all(normalized_scope):
+            raise ValueError(f"collaboration {collaboration_id!r} has an empty useCaseId")
+        # A collaboration is one concrete execution group.  Its first use case
+        # owns the diagram; multiple actor-entry groups of the same use case
+        # are appended to that diagram in persisted collaboration order.  Later
+        # ids identify included/extended trace scope and must not duplicate that
+        # execution as independent diagrams.
+        use_case_id = normalized_scope[0]
+        messages, participants = _collaboration_messages(
+            collaboration, operations, use_case_id, extension_fragments,
+        )
+        diagram = diagrams.get(use_case_id)
+        if diagram is None:
+            diagrams[use_case_id] = {
+                "use_case_id": use_case_id,
+                "use_case_name": names.get(use_case_id, ""),
+                "Participants": participants,
+                "Messages": messages,
+                "UnresolvedSteps": [],
+                "NarrativeSteps": [],
+            }
+            continue
+        aliases = {
+            str(item.get("alias") or item.get("name") or "")
+            for item in diagram["Participants"]
+            if isinstance(item, dict)
+        }
+        diagram["Participants"].extend(
+            item for item in participants
+            if str(item.get("alias") or item.get("name") or "") not in aliases
+        )
+        diagram["Messages"].extend(messages)
+
+    requested_ids = [
+        str(item.get("use_case_id") or "").strip()
+        for item in requested.get("use_case_specs") or []
+        if isinstance(item, dict) and str(item.get("use_case_id") or "").strip()
+    ]
+    # Included/extended use cases may appear in a collaboration's trace scope
+    # without owning their own root execution.  Only primary ids require a
+    # sequence diagram.
+    scoped_only_ids = {
+        str(value or "").strip()
+        for collaboration in collaborations
+        if isinstance(collaboration, dict)
+        for value in (
+            collaboration.get("useCaseIds")
+            if isinstance(collaboration.get("useCaseIds"), list)
+            else collaboration.get("use_case_ids") or []
+        )[1:]
+    }
+    missing = [
+        identifier for identifier in requested_ids
+        if identifier not in diagrams and identifier not in scoped_only_ids
+    ]
+    if missing:
+        raise ValueError(
+            "class model is stale for sequence regeneration; missing Collaborations for "
+            + ", ".join(missing)
+        )
+    ordered_ids = [identifier for identifier in requested_ids if identifier in diagrams] or list(diagrams)
+    return SequenceDiagramCollection(
+        Diagrams=[diagrams[identifier] for identifier in ordered_ids],
+        class_diagram_hash=hashlib.sha256(class_diagram_puml.encode("utf-8")).hexdigest(),
+    ).model_dump()
+
+
+def _assert_sequence_matches_collaborations(
+    model: dict[str, Any], class_diagram_puml: str, class_model: Any,
+) -> None:
+    """Reject a sequence edit that changes accepted collaboration calls.
+
+    Fragments and presentation ordering are sequence concerns.  Receiver,
+    operation, arguments, and call ancestry are not: those facts are already
+    persisted in ``Collaborations`` and must be regenerated at the class-model
+    stage when they change.
+    """
+
+    expected = _collaboration_sequence_collection({}, class_diagram_puml, class_model)
+    payload = _class_model_payload(class_model)
+    concrete_classes = {
+        str(item.get("className") or item.get("class_name") or "").strip()
+        for item in payload.get("Classes") or []
+        if isinstance(item, dict)
+    } if isinstance(payload, dict) else set()
+    expected_diagrams = {
+        str(diagram.get("use_case_id") or ""): diagram
+        for diagram in expected.get("Diagrams") or []
+        if isinstance(diagram, dict)
+    }
+    actual_diagrams = model.get("Diagrams") if isinstance(model.get("Diagrams"), list) else [model]
+    for actual in actual_diagrams:
+        if not isinstance(actual, dict):
+            raise TypeError("sequence model contains an invalid use-case diagram")
+        use_case_id = str(actual.get("use_case_id") or "")
+        expected_diagram = expected_diagrams.get(use_case_id)
+        if expected_diagram is None:
+            raise ValueError(
+                f"sequence diagram {use_case_id!r} has no accepted Collaboration"
+            )
+        participants = {
+            _alias(str(participant.get("alias") or participant.get("name") or "")): participant
+            for participant in actual.get("Participants") or []
+            if isinstance(participant, dict)
+        }
+        for alias, participant in participants.items():
+            if str(participant.get("kind") or "").casefold() == "actor":
+                continue
+            source_class = str(
+                participant.get("source_class") or participant.get("name") or ""
+            ).strip()
+            if not alias or source_class not in concrete_classes:
+                raise ValueError(
+                    f"sequence lifeline {alias or '<empty>'!r} does not resolve to a concrete BCE class"
+                )
+        for message in actual.get("Messages") or []:
+            if not isinstance(message, dict):
+                continue
+            if (
+                _alias(str(message.get("source") or "")) not in participants
+                or _alias(str(message.get("target") or "")) not in participants
+            ):
+                raise ValueError("sequence message endpoint does not resolve to a declared lifeline")
+        def calls(diagram: dict[str, Any]) -> dict[str, tuple[Any, ...]]:
+            return {
+                str(message.get("call_id") or ""): (
+                    str(message.get("source") or ""),
+                    str(message.get("target") or ""),
+                    str(message.get("label") or ""),
+                    tuple(
+                        (
+                            str(argument.get("parameter") or ""),
+                            str(argument.get("type") or ""),
+                            str(argument.get("source_ref") or ""),
+                        )
+                        for argument in message.get("arguments") or []
+                        if isinstance(argument, dict)
+                    ),
+                )
+                for message in diagram.get("Messages") or []
+                if isinstance(message, dict)
+                and str(message.get("type") or "").lower() in {"sync", "async", "self"}
+            }
+        if calls(actual) != calls(expected_diagram):
+            raise ValueError(
+                f"sequence calls for {use_case_id!r} do not exactly match accepted Collaborations"
+            )
 
 
 class SequenceElementSelection(BaseModel):
@@ -492,6 +1051,15 @@ def extract_sequence_model(
     """유스케이스 명세 + 클래스 다이어그램 → 구조화된 시퀀스 상호작용 모델."""
     if not scenario_text:
         return {}
+    if _has_persisted_collaborations(class_model):
+        # This single-use-case LLM helper has no collaboration selection
+        # input.  Letting it fall through would reconstruct interactions from
+        # prose and method names, which is precisely what the accepted
+        # collaboration contract replaces.
+        raise ValueError(
+            "structured BCE Collaborations require extract_sequence_diagrams; "
+            "sequence calls are not reconstructed from scenario text"
+        )
 
     route_context = ""
     if route_candidates:
@@ -510,7 +1078,7 @@ def extract_sequence_model(
             "role": "user",
             "content": (
                 f"[Use Case Specification]\n{scenario_text}\n\n"
-                + f"[{class_context_label}]\n"
+                f"[{class_context_label}]\n"
                 + (
                     json.dumps(class_context, ensure_ascii=False, indent=2)
                     if isinstance(class_context, (dict, list))
@@ -537,6 +1105,14 @@ def normalize_sequence_contracts(
     call to cover an unresolved use-case step.
     """
     if not isinstance(model, dict):
+        return model
+    if _has_persisted_collaborations(class_model):
+        payload = _class_model_payload(class_model)
+        if not (isinstance(payload, dict) and payload.get("Collaborations")):
+            # A stale accepted class artifact blocks regeneration but does not
+            # make an already persisted legacy diagram unreadable.
+            return model
+        _assert_sequence_matches_collaborations(model, class_diagram_puml, class_model)
         return model
     classes, _ = _class_catalog(class_model, class_diagram_puml)
     diagrams = model.get("Diagrams")
@@ -1182,7 +1758,7 @@ def _normalize_raw_use_cases(items: list[dict[str, Any]]) -> dict[str, Any]:
 def normalize_sequence_usecase_spec(usecase_spec: Any) -> dict[str, Any]:
     """Return a canonical, complete per-use-case collection or fail explicitly."""
     if not isinstance(usecase_spec, dict):
-        raise ValueError(
+        raise TypeError(
             "sequence generation requires a structured use-case collection, not free text"
         )
 
@@ -2757,6 +3333,23 @@ def extract_sequence_diagrams(
     """
     if not usecase_spec:
         return {}
+    payload = _class_model_payload(class_model)
+    if (
+        isinstance(payload, dict)
+        and payload.get("Classes")
+        and "Collaborations" not in payload
+    ):
+        # Legacy class artifacts remain renderable, but their calls cannot be
+        # reconstructed honestly from method strings or prose.
+        return _collaboration_sequence_collection(
+            usecase_spec,
+            class_diagram_puml,
+            {**payload, "Collaborations": []},
+        )
+    if _has_persisted_collaborations(class_model):
+        return _collaboration_sequence_collection(
+            usecase_spec, class_diagram_puml, class_model
+        )
     usecase_spec = normalize_sequence_usecase_spec(usecase_spec)
 
     use_cases = {

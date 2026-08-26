@@ -158,19 +158,14 @@ def test_an_empty_model_is_not_an_error():
     assert detectors.class_diagram_findings({"Classes": [], "Relationships": []}, {}) == []
 
 
-def test_usecase_checks_stay_quiet_when_there_is_no_upstream_to_compare_against():
-    """대조할 상류가 없으면 검사하지 않는다.
-
-    유스케이스 id가 하나도 없는 입력에서 모든 id를 unknown으로 부르면, 그건 "LLM이
-    지어냈다"가 아니라 "대조할 것이 없다"는 뜻이다. 재생성이 고칠 수 없는 지적이므로
-    내지 않는다.
-    """
+def test_legacy_structure_remains_viewable_without_execution_validation():
+    """과거 모델 열람은 허용하고, 하위 산출물 재생성 경계에서만 차단한다."""
     model = {
         "Classes": [{"className": "Order", "stereotype": "Entity", "use_case_ids": ["UC1"]}],
         "Relationships": [],
     }
     found = detectors.class_diagram_findings(model, {"usecase_spec": {}})
-    assert [f.rule_id for f in found] == []
+    assert found == []
 
 
 # ---------------------------------------------------------------------------
@@ -339,63 +334,6 @@ def test_every_hedged_rule_states_the_limit_of_its_source():
 def test_unknown_rule_ids_are_not_silently_dressed_up_as_grounded():
     """모르는 id에 근거 있는 꼬리표를 달아 주지 않는가."""
     assert "알 수 없는 규칙" in rules.tag_of("class.does-not-exist")
-
-
-# ---------------------------------------------------------------------------
-# 쓰는 쪽과 판정하는 쪽이 같은 규칙을 받는가
-# ---------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "stage, prompt",
-    [(s, p) for s in STAGES for p in s.prompts],
-    ids=[f"{s.stage}-{i}" for s in STAGES for i, _ in enumerate(s.prompts)],
-)
-def test_every_prompt_carries_every_enforced_rule(stage, prompt):
-    """그 스테이지의 프롬프트가 **강제되는 규칙 전부**를 싣는가.
-
-    규칙이 프롬프트 산문과 코드에 따로 있으면 갈라진다. 실제로 갈라진 적이 있다 —
-    수정 프롬프트는 "Actor<->Boundary"를 요구했는데 우리 스키마에는 액터가 없어서
-    판정할 수도 없는 줄이었다.
-
-    수정 프롬프트가 특히 중요하다: **재생성 루프가 그것을 부른다.** 지적받은 위반을
-    고치면서 다른 규칙을 새로 어기면 위반 수가 안 줄고, 수정본이 통째로 버려진다.
-    ERD는 추출 프롬프트가 없으므로 수정 프롬프트가 규칙을 받는 **유일한** 자리다.
-    """
-    for rule in rules.rules_for(stage.stage):
-        if rule.severity in (rules.DEFECT, rules.GUIDANCE):
-            assert rule.id in prompt, f"{rule.id}가 {stage.stage} 프롬프트에 없다"
-
-
-@pytest.mark.parametrize("stage", STAGES, ids=lambda s: s.stage)
-def test_prompts_say_which_rules_are_not_rules(stage):
-    """`NON_RULE`을 생성 쪽에 그 사실 그대로 주는가.
-
-    과적합은 판정할 때가 아니라 **쓸 때** 일어난다. "액터당 Boundary 하나"를 목표로
-    알아들은 모델은 필요 없는 Boundary를 지어내거나 필요한 것을 합친다. ERD 쪽도 같다 —
-    "상속을 어떻게 테이블로 만들지"를 규칙으로 알아들으면 모델이 그것을 겨냥해 클래스를
-    재배치한다.
-    """
-    prompt = stage.prompts[0]
-    for rule in rules.rules_for(stage.stage, rules.NON_RULE):
-        assert rule.id in prompt, rule.id
-    assert "do NOT optimise for these" in prompt
-
-
-def test_prompts_do_not_claim_a_page_the_project_never_verified():
-    """확인하지 못한 인용을 확인된 것처럼 내보내지 않는가.
-
-    예전 프롬프트는 "BCE Stereotype Definitions (Jacobson, 1992)"라고 적어 규범에 연도
-    인용을 달았다. 그 좌표는 이 저장소가 대조한 적이 없다 — 책이 여기 없다. 규칙을
-    지식베이스로 옮기면서 그 주장을 승격시키지 않았다는 것을 고정한다.
-
-    출처를 아예 언급하지 말라는 뜻이 아니다. Jacobson에게서 왔다고 **밝히되**, 확인하지
-    못했다는 사실을 함께 싣는다(`basis.prompt_note`).
-    """
-    from app.design.services.class_diagram.extractor import (
-        BCE_CLASS_EXTRACTION_SYSTEM_PROMPT as prompt,
-    )
-
-    assert "(Jacobson, 1992)" not in prompt
-    assert "could not verify the page" in prompt
 
 
 # ---------------------------------------------------------------------------

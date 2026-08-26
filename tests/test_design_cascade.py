@@ -88,7 +88,9 @@ def naughty_llm(monkeypatch):
             # 비대상인데 아예 빼먹었다 (OrderForm)
         ], "Relationships": [{"source": "X", "target": "Y", "type": "Association"}]}
 
-    def wreck_api(current_model, feedback, context_text="", targets=None, *_args):
+    def wreck_api(
+        current_model, feedback, context_text="", targets=None, *_args, **_kwargs
+    ):
         calls.append("api_spec")
         return {"title": "완전히 다른 API", "version": "9.9.9", "Endpoints": [
             # 비대상 엔드포인트를 갈아엎었다
@@ -340,7 +342,9 @@ def trace_linked_revisers(monkeypatch):
                 diagram["use_case_name"] = "Confirmed order"
         return candidate
 
-    def revise_api(current, feedback, context_text="", targets=None, *_args):
+    def revise_api(
+        current, feedback, context_text="", targets=None, *_args, **_kwargs
+    ):
         calls.append(("api_spec", set(targets or set())))
         candidate = deepcopy(current)
         candidate["title"] = "hallucinated title"
@@ -447,8 +451,8 @@ def test_a_stale_clean_verdict_does_not_survive_a_revision(monkeypatch, naughty_
     assert any("class.stereotype-is-bce" in issue for issue in check["findings"])
 
 
-def test_a_revision_that_stays_within_the_rules_reports_clean(naughty_llm):
-    """위반이 없으면 `clean` 이다 — 경로가 달라도 그 뜻은 같아야 한다."""
+def test_revision_replaces_a_stale_verdict_with_current_contract_findings(naughty_llm):
+    """지목 수정은 자동 repair 없이 현재 모델 계약을 다시 검사한다."""
     out = revise_and_cascade(
         {**STATE, "class_diagram_check": {"findings": ["낡은 지적"],
                                           "repair_iters": 1, "stopped": "budget"}},
@@ -457,8 +461,9 @@ def test_a_revision_that_stays_within_the_rules_reports_clean(naughty_llm):
     )
     check = out["state"]["class_diagram_check"]
 
-    assert check["stopped"] == "clean"
-    assert check["findings"] == []      # 낡은 지적도 함께 사라진다
+    assert check["stopped"] == "checked_only"
+    assert all("낡은 지적" not in finding for finding in check["findings"])
+    assert any("Collaborations are required" in finding for finding in check["findings"])
 
 
 def test_the_cascade_never_runs_the_repair_loop(monkeypatch, naughty_llm):

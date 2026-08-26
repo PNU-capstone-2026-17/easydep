@@ -216,6 +216,7 @@ def extract_api_spec_model(
     scenario_text: str,
     class_diagram_puml: str,
     sequence_diagram_puml: str,
+    class_model: Any | None = None,
 ) -> dict[str, Any]:
     """유스케이스 + 클래스 + 시퀀스 → 구조화된 API 엔드포인트 모델."""
     if not scenario_text:
@@ -224,14 +225,45 @@ def extract_api_spec_model(
         scenario_text, class_diagram_puml, sequence_diagram_puml
     )
     model = parse_structured(messages, ApiSpecModel)
-    return normalize_api_spec_model(model, class_diagram_puml)
+    return normalize_api_spec_model(model, class_diagram_puml, class_model)
 
 
 def _control_parameter_types(
     class_diagram_puml: str,
+    class_model: Any | None = None,
 ) -> dict[tuple[str, str], dict[str, str]]:
     """Read exact Control parameter types for request schema alignment."""
     result: dict[tuple[str, str], dict[str, str]] = {}
+    payload = (
+        class_model.model_dump(by_alias=True)
+        if isinstance(class_model, BaseModel)
+        else class_model
+    )
+    if isinstance(payload, dict) and isinstance(payload.get("Classes"), list):
+        # Operations are the accepted signature source.  PlantUML remains a
+        # compatibility projection for older callers, not an API type parser.
+        for class_item in payload["Classes"]:
+            if not isinstance(class_item, dict):
+                continue
+            if str(class_item.get("stereotype") or "").strip().casefold() != "control":
+                continue
+            class_name = str(class_item.get("className") or "").strip()
+            for operation in class_item.get("operations") or []:
+                if not isinstance(operation, dict):
+                    continue
+                method_name = str(operation.get("name") or "").strip()
+                if not class_name or not method_name:
+                    continue
+                parameters: dict[str, str] = {}
+                for parameter in operation.get("parameters") or []:
+                    if not isinstance(parameter, dict):
+                        continue
+                    name = str(parameter.get("name") or "").strip()
+                    type_name = str(parameter.get("type") or "").strip()
+                    if name and type_name:
+                        parameters[name] = type_name
+                result[(class_name, method_name)] = parameters
+        return result
     class_pattern = re.compile(
         r"(?ms)^\s*class\s+(?P<class>[A-Za-z_]\w*)[^\{]*\{(?P<body>.*?)^\s*\}"
     )
@@ -285,7 +317,7 @@ def _api_query_type_for_control(type_name: str) -> str:
 
 
 def normalize_api_spec_model(
-    model: dict[str, Any], class_diagram_puml: str = ""
+    model: dict[str, Any], class_diagram_puml: str = "", class_model: Any | None = None,
 ) -> dict[str, Any]:
     """Repair mechanical traceability omissions without inventing API behavior.
 
@@ -297,7 +329,7 @@ def normalize_api_spec_model(
     """
     if not isinstance(model, dict):
         return model
-    control_parameters = _control_parameter_types(class_diagram_puml)
+    control_parameters = _control_parameter_types(class_diagram_puml, class_model)
     for endpoint in model.get("Endpoints", []) or []:
         if not isinstance(endpoint, dict):
             continue

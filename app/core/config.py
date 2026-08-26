@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # Behaviour proposals are independent per execution group.  Keep the
     # default bounded so a larger scenario cannot fan out unbounded NIM calls.
     design_class_behavior_parallelism: int = 4
+    design_class_structure_max_completion_tokens: int = 16384
+    design_class_collaboration_max_completion_tokens: int = 8192
+    design_class_selector_max_completion_tokens: int = 1024
+    design_class_review_max_completion_tokens: int = 8192
     implementation_max_workers: int = 1
     implementation_task_parallelism: int = 2
     implementation_agent_model: str = "nvidia_nim/openai/gpt-oss-120b"

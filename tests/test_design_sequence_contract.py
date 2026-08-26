@@ -37,7 +37,6 @@ from app.design.services.sequence_diagram.extractor import (
 )
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import (
-    _scope_proposal_evidence,
     reconcile_class_methods,
 )
 from app.design.services.sequence_diagram import reviser as sequence_reviser
@@ -1607,9 +1606,7 @@ def test_targeted_sequence_revision_preserves_other_use_case_diagrams():
 
 
 def test_sequence_stage_asks_user_before_adding_receiver_method():
-    assert SEQUENCE_DIAGRAM_SPEC.reconcile is None
     state = {
-        "app_id": "test-app-id",
         "extracted_bce_classes": {
             "Classes": [{"className": "OrderControl", "methods": ["createOrder()"]}]
         },
@@ -1618,65 +1615,12 @@ def test_sequence_stage_asks_user_before_adding_receiver_method():
             "Messages": [_message("OrderControl", "OrderControl", "reserveOrder()")],
         },
     }
-    revised_bce = {
-        "Classes": [
-            {
-                "className": "OrderControl",
-                "methods": ["createOrder()", "reserveOrder()"],
-            }
-        ]
-    }
-    with (
-        patch(
-            "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
-            return_value=revised_bce,
-        ) as revise,
-        patch("app.repositories.artifact_repository.save_stage") as save_stage,
-    ):
-        result = reconcile_class_methods(state)
-    revise.assert_called_once()
-    save_stage.assert_not_called()
-    assert result["sequence_diagram_model"]["MethodProposals"][0]["method"] == "reserveOrder()"
+    before = copy.deepcopy(state["extracted_bce_classes"])
+
+    assert SEQUENCE_DIAGRAM_SPEC.reconcile is None
+    assert reconcile_class_methods(state) == {}
     assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["createOrder()"]
-
-
-def test_method_proposal_outside_affected_sequence_route_is_discarded():
-    bce = {
-        "Classes": [
-            {"className": "CatalogBoundary", "stereotype": "Boundary"},
-            {"className": "CatalogControl", "stereotype": "Control"},
-            {"className": "SearchBoundary", "stereotype": "Boundary"},
-            {"className": "SearchControl", "stereotype": "Control"},
-        ],
-        "Relationships": [
-            {"source": "CatalogBoundary", "target": "CatalogControl"},
-            {"source": "SearchBoundary", "target": "SearchControl"},
-        ],
-    }
-    diagram = {
-        "use_case_id": "UC1",
-        "Participants": [
-            _participant("CatalogBoundary", "boundary", "CatalogBoundary"),
-            _participant("CatalogControl", "control", "CatalogControl"),
-        ],
-        "Messages": [],
-    }
-    proposals = [
-        {
-            "id": "method:CatalogBoundary:submitSearch()",
-            "class_name": "CatalogBoundary",
-            "method": "submitSearch(): void",
-        },
-        {
-            "id": "method:SearchBoundary:submitSearch()",
-            "class_name": "SearchBoundary",
-            "method": "submitSearch(): void",
-        },
-    ]
-
-    scoped = _scope_proposal_evidence(proposals, [diagram], {}, bce)
-
-    assert [item["class_name"] for item in scoped] == ["CatalogBoundary"]
+    assert state["extracted_bce_classes"] == before
 
 
 def test_sequence_stage_does_not_add_method_when_llm_declines():
@@ -1689,14 +1633,7 @@ def test_sequence_stage_does_not_add_method_when_llm_declines():
         },
     }
 
-    with patch(
-        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
-        return_value=bce,
-    ) as revise:
-        result = reconcile_class_methods(state)
-
-    revise.assert_called_once()
-    assert result == {}
+    assert reconcile_class_methods(state) == {}
     assert bce["Classes"][0]["methods"] == ["createOrder()"]
 
 
@@ -2247,7 +2184,7 @@ def test_sequence_spec_hands_the_typed_class_model_to_its_extractor(monkeypatch)
     assert received["class_diagram_puml"] == "@startuml\n@enduml"
 
 
-def test_typed_class_model_bypasses_the_plantuml_parser(monkeypatch):
+def test_typed_legacy_class_model_bypasses_parser_but_is_stale(monkeypatch):
     specification = {
         "use_cases": [{"id": "UC1", "name": "Drop course", "primary_actor": "Student"}],
         "use_case_specs": [{
@@ -2289,9 +2226,9 @@ def test_typed_class_model_bypasses_the_plantuml_parser(monkeypatch):
         class_model=class_model,
     )
 
-    message = generated["Diagrams"][0]["Messages"][0]
-    assert message["target"] == "EnrollmentBoundary"
-    assert message["label"] == "dropCourse(courseId:String)"
+    diagram = generated["Diagrams"][0]
+    assert diagram["Messages"] == []
+    assert "stale" in diagram["UnresolvedSteps"][0]["reason"].lower()
 
 
 def test_typed_multi_parameter_contract_restores_arguments_and_return():

@@ -2,6 +2,7 @@
 const Class = require('./Class');
 const AbstractClass = require('./AbstractClass');
 const InterfaceClass = require('./InterfaceClass');
+const Enum = require('./Enum');
 const Connection = require('./Connection');
 
 class Namespace {
@@ -43,7 +44,7 @@ class Namespace {
       if (this.aItems[i] instanceof Namespace) {
         this.aItems[i].setNamespace(this);
       } else if (this.aItems[i] instanceof Class || this.aItems[i] instanceof AbstractClass
-          || this.aItems[i] instanceof InterfaceClass) {
+          || this.aItems[i] instanceof InterfaceClass || this.aItems[i] instanceof Enum) {
         this.aItems[i].setNamespace(this);
       } else if (this.aItems[i] instanceof Connection) {
         this.aItems[i].setNamespace(this);

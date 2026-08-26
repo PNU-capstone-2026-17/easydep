@@ -62,7 +62,6 @@ from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
 from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
-from app.design.services.sequence_diagram.reconcile import finalize_sequence_class_methods
 from app.design.services.sequence_diagram.reviser import revise_sequence_model
 
 # 기존 테스트·확장 코드가 패치하는 이름을 유지하되 실제 동작은 복수 추출이다.
@@ -173,6 +172,13 @@ def _sequence_revision_context(
     )
 
 
+def _class_scenario(state: ArchitectureState) -> dict[str, Any]:
+    scenario = state.get("usecase_spec") or {}
+    if not isinstance(scenario, dict):
+        return {}
+    return {**scenario, "relationships": state.get("relationships") or scenario.get("relationships") or {}}
+
+
 def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
     """Build a fixed structural skeleton, then enrich only structured scenarios.
 
@@ -186,7 +192,7 @@ def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
     # Relationship decisions are a separate persisted artifact.  Give the
     # skeleton pass the same complete scenario that behaviour enrichment sees,
     # so a derived internal include can receive its own explicit BCE scope.
-    scenario = {**scenario, "relationships": state.get("relationships") or {}}
+    scenario = _class_scenario(state)
     skeleton = extract_bce_classes_from_scenario(json.dumps(scenario, ensure_ascii=False))
     if not scenario.get("use_case_specs"):
         return skeleton
@@ -205,12 +211,16 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     revise=lambda current, feedback, state, targets: revise_bce_classes(
         current_bce=current,
         feedback=feedback,
-        scenario_text=usecase_spec_text(state),
+        scenario_text=json.dumps(_class_scenario(state), ensure_ascii=False, indent=2),
         targets=targets,
     ),
     render=generate_plantuml_from_bce_json,
     validate=validate_puml_artifact,
-    elements={"Classes": lambda c: c.get("className", "")},
+    elements={
+        "Classes": lambda c: c.get("className", ""),
+        "DataTypes": lambda item: item.get("name", ""),
+        "Collaborations": lambda item: item.get("collaborationId", ""),
+    },
     # 규칙 지식베이스를 가진 두 스테이지 중 하나다(다른 하나는 ERD). 시퀀스·API·배포는
     # 아직 `check_key`가 없고, 그래서 검사 노드도 생기지 않는다 — 검사하지 않는다는
     # 사실이 그래프에 그대로 보인다.
@@ -249,7 +259,6 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     },
     check=sequence_diagram_findings,
     check_key="sequence_diagram_check",
-    finalize=finalize_sequence_class_methods,
 )
 
 API_SPEC_SPEC = DesignArtifactSpec(
@@ -264,6 +273,7 @@ API_SPEC_SPEC = DesignArtifactSpec(
         usecase_spec_text(state),
         state.get("class_diagram_puml", ""),
         state.get("sequence_diagram_puml", ""),
+        class_model=state.get("extracted_bce_classes") or {},
     ),
     revise=lambda current, feedback, state, targets: revise_api_spec_model(
         current,
@@ -271,6 +281,7 @@ API_SPEC_SPEC = DesignArtifactSpec(
         _design_context(state, "api_spec"),
         targets,
         state.get("class_diagram_puml", ""),
+        class_model=state.get("extracted_bce_classes") or {},
     ),
     render=build_openapi_from_model,
     validate=validate_api_spec,

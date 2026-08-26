@@ -371,9 +371,9 @@ def test_sequence_generation_checks_before_final_gate_and_never_mutates_classes(
     edges = {(edge.source, edge.target) for edge in graph.edges}
 
     assert "reconcile_sequence_diagram" not in graph.nodes
+    assert "finalize_sequence_diagram" not in graph.nodes
     assert ("extract_sequence_diagram", "check_sequence_diagram") in edges
-    assert ("check_sequence_diagram", "finalize_sequence_diagram") in edges
-    assert ("finalize_sequence_diagram", "render_sequence_diagram") in edges
+    assert ("check_sequence_diagram", "render_sequence_diagram") in edges
     assert ("extract_sequence_diagram", "render_sequence_diagram") not in edges
 
 

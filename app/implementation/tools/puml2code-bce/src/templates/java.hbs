@@ -21,6 +21,29 @@ public interface {{getName}} {
   {{this.getJavaType}} {{this.getName}}{{#if this.getParameters}}({{#each this.getParameters}}{{#if @first}}{{else}}, {{/if}}{{this.getJavaType}} {{#if this.getName}}{{this.getName}}{{else}}param{{@index}}{{/if}}{{/each}}){{else}}(){{/if}};
 {{/each}}
 }
+{{else}}{{#if isEnumeration}}
+public enum {{getName}} {
+{{#each getValues}}
+  {{this}}{{#unless @last}},{{/unless}}
+{{/each}}
+}
+{{else}}{{#if isValueObject}}
+public final class {{getName}} {
+{{#each getFields}}
+  private final {{this.getJavaType}} {{this.getName}};
+{{/each}}
+
+  public {{getName}}({{#each getFields}}{{#if @first}}{{else}}, {{/if}}{{this.getJavaType}} {{this.getName}}{{/each}}) {
+{{#each getFields}}
+    this.{{this.getName}} = {{this.getName}};
+{{/each}}
+  }
+{{#each getFields}}
+  public {{this.getJavaType}} get{{this.getJavaAccessorSuffix}}() {
+    return this.{{this.getName}};
+  }
+{{/each}}
+}
 {{else}}
 public class {{getName}} {
 {{#each getFields}}
@@ -50,4 +73,4 @@ public class {{getName}} {
   }
 {{/each}}
 }
-{{/if}}{{/if}}{{/if}}
+{{/if}}{{/if}}{{/if}}{{/if}}{{/if}}

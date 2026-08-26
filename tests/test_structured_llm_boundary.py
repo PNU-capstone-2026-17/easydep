@@ -135,6 +135,7 @@ def test_structured_llm_error_names_the_output_schema():
     assert events[0]["operation"] == "ApiSpecModel"
     assert events[0]["status"] == "failed"
     assert events[0]["errorType"] == "TimeoutError"
+    assert events[0]["failureCategory"] == "timeout"
     assert events[0]["elapsedSeconds"] >= 0
 
 
@@ -201,11 +202,15 @@ def test_streaming_structured_output_accepts_an_explicit_completion_limit(monkey
     monkeypatch.setattr(settings, "llm_max_completion_tokens", 8192)
 
     parsed = _stream_structured(
-        client, [{"role": "user", "content": "x"}], Result, {}
+        client,
+        [{"role": "user", "content": "x"}],
+        Result,
+        {},
+        max_completion_tokens=1024,
     )
 
     assert parsed.answer == "ok"
-    assert captured["max_completion_tokens"] == 8192
+    assert captured["max_completion_tokens"] == 1024
     assert captured["reasoning_effort"] == "medium"
     assert captured["temperature"] == settings.temperature
     assert captured["seed"] == settings.seed

@@ -20,6 +20,7 @@ import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
+from functools import lru_cache
 from time import perf_counter
 from typing import Any
 
@@ -32,6 +33,22 @@ from app.metrics import langsmith as langsmith_metrics
 
 class StructuredLlmError(RuntimeError):
     """어느 구조화 산출물 호출이 실패했는지 보존하는 경계 오류."""
+
+
+def _failure_category(error: BaseException) -> str:
+    """Classify transport failures without mistaking sandbox/network causes for 429s."""
+
+    text = str(error).casefold()
+    name = type(error).__name__.casefold()
+    if "429" in text or "ratelimit" in name or "rate limit" in text:
+        return "rate_limit"
+    if "timeout" in name or "timed out" in text:
+        return "timeout"
+    if "connection" in name or "connection" in text or "dns" in text:
+        return "connection"
+    if isinstance(error, ValidationError):
+        return "schema_validation"
+    return "provider_or_runtime"
 
 
 _TIMING_EVENTS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
@@ -89,6 +106,7 @@ def _run_with_wall_timeout(
     observation: dict[str, Any] | None = None,
 ):
     """벽시계 타임아웃. 클라이언트 타임아웃이 걸리지 않는 지연(연결 후 무응답 등)을 막는다."""
+    recorded_observation = observation if observation is not None else {}
     timeout_seconds = settings.llm_wall_timeout_seconds
     started_at = datetime.now(UTC)
     started = perf_counter()
@@ -125,6 +143,7 @@ def _run_with_wall_timeout(
             status = "completed"
             return result
         error_type = type(result).__name__
+        recorded_observation["failureCategory"] = _failure_category(result)
         raise StructuredLlmError(f"{operation}: {result}") from result
     finally:
         stall_probe.set()
@@ -190,6 +209,7 @@ def _stream_structured(
     observation: dict[str, Any],
     *,
     reasoning_effort: str | None = None,
+    max_completion_tokens: int | None = None,
 ) -> BaseModel:
     """구조화 응답을 스트리밍으로 받아 진행 시간과 최종 스키마를 함께 검증한다."""
     started = perf_counter()
@@ -215,12 +235,23 @@ def _stream_structured(
         "stream_options": {"include_usage": True},
         "response_format": _response_format(schema),
     }
-    max_completion_tokens = settings.llm_max_completion_tokens
-    if max_completion_tokens:
-        request["max_completion_tokens"] = int(max_completion_tokens)
+    completion_limit = (
+        max_completion_tokens
+        if max_completion_tokens is not None
+        else settings.llm_max_completion_tokens
+    )
+    if completion_limit:
+        request["max_completion_tokens"] = int(completion_limit)
     provider_reasoning_effort = _reasoning_effort(reasoning_effort)
     if provider_reasoning_effort:
         request["reasoning_effort"] = provider_reasoning_effort
+    observation.update(
+        schema=schema.__name__,
+        provider="nvidia-nim",
+        model=settings.model,
+        reasoningEffort=provider_reasoning_effort,
+        maxCompletionTokens=int(completion_limit) if completion_limit else None,
+    )
     stream = client.chat.completions.create(
         **request,
     )
@@ -279,6 +310,7 @@ def _stream_structured(
         reasoningCharacters=reasoning_characters,
         finishReasonObserved=bool(finish_reasons),
         finishReasons=finish_reasons,
+        responseSha256=hashlib.sha256(content_text.encode("utf-8")).hexdigest(),
     )
     try:
         return schema.model_validate_json(content_text)
@@ -309,7 +341,8 @@ def _observe_stream_usage(observation: dict[str, Any], usage: Any) -> None:
     if isinstance(usage, dict):
         read = usage.get
     else:
-        read = lambda name, default=None: getattr(usage, name, default)
+        def read(name: str, default: Any = None) -> Any:
+            return getattr(usage, name, default)
     prompt_tokens = read("prompt_tokens", read("input_tokens", None))
     completion_tokens = read("completion_tokens", read("output_tokens", None))
     total_tokens = read("total_tokens", None)
@@ -327,32 +360,52 @@ def parse_structured(
     *,
     reasoning_effort: str | None = None,
     repair_reasoning_effort: str | None = None,
+    max_completion_tokens: int | None = None,
+    operation: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """LLM에게 schema를 강제해 구조화 결과를 받고 dict로 돌려준다.
 
     temperature/seed를 고정하는 것은 같은 입력이 같은 모델을 내도록 하기 위해서다 —
     산출물이 재현되지 않으면 피드백이 무엇을 고쳤는지 알 수 없다.
     """
-    from dotenv import load_dotenv
-    from openai import OpenAI
-
-    load_dotenv()
-
-    client = OpenAI(
-        base_url=settings.base_url,
-        api_key=settings.api_key,
-        timeout=settings.llm_timeout_seconds,
-        max_retries=settings.llm_max_retries,
-    )
-
     parsed = _parse_with_schema_repair(
-        client,
+        _structured_client(
+            settings.base_url,
+            settings.api_key,
+            float(settings.llm_timeout_seconds),
+            int(settings.llm_max_retries),
+        ),
         messages,
         schema,
         reasoning_effort=reasoning_effort,
         repair_reasoning_effort=repair_reasoning_effort,
+        max_completion_tokens=max_completion_tokens,
+        operation=operation,
+        metadata=metadata,
     )
     return parsed.model_dump()
+
+
+@lru_cache(maxsize=4)
+def _structured_client(
+    base_url: str | None,
+    api_key: str | None,
+    timeout_seconds: float,
+    max_retries: int,
+):
+    """Reuse one OpenAI-compatible client per configured provider tuple."""
+
+    from dotenv import load_dotenv
+    from openai import OpenAI
+
+    load_dotenv()
+    return OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=timeout_seconds,
+        max_retries=max_retries,
+    )
 
 
 def _parse_with_schema_repair(
@@ -362,6 +415,9 @@ def _parse_with_schema_repair(
     *,
     reasoning_effort: str | None = None,
     repair_reasoning_effort: str | None = None,
+    max_completion_tokens: int | None = None,
+    operation: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> BaseModel:
     """Retry local schema validation once, retaining the declared effort policy.
 
@@ -369,7 +425,12 @@ def _parse_with_schema_repair(
     into a different repair level (for example ``high``); no repair is silently
     escalated.
     """
-    observation: dict[str, Any] = {"schemaRepairAttempt": 0}
+    operation_name = operation or schema.__name__
+    observation: dict[str, Any] = {
+        "schemaRepairAttempt": 0,
+        "taskKind": operation_name,
+        **dict(metadata or {}),
+    }
     try:
         return run_with_wall_timeout(
             lambda: _stream_structured(
@@ -378,8 +439,13 @@ def _parse_with_schema_repair(
                 schema,
                 observation,
                 reasoning_effort=reasoning_effort,
+                **(
+                    {"max_completion_tokens": max_completion_tokens}
+                    if max_completion_tokens is not None
+                    else {}
+                ),
             ),
-            operation=schema.__name__,
+            operation=operation_name,
             observation=observation,
         )
     except StructuredLlmError as error:
@@ -407,7 +473,11 @@ def _parse_with_schema_repair(
             ),
         },
     ]
-    repair_observation: dict[str, Any] = {"schemaRepairAttempt": 1}
+    repair_observation: dict[str, Any] = {
+        "schemaRepairAttempt": 1,
+        "taskKind": operation_name,
+        **dict(metadata or {}),
+    }
     return run_with_wall_timeout(
         lambda: _stream_structured(
             client,
@@ -415,8 +485,13 @@ def _parse_with_schema_repair(
             schema,
             repair_observation,
             reasoning_effort=repair_reasoning_effort or reasoning_effort,
+            **(
+                {"max_completion_tokens": max_completion_tokens}
+                if max_completion_tokens is not None
+                else {}
+            ),
         ),
-        operation=f"{schema.__name__}:schema-repair",
+        operation=f"{operation_name}:schema-repair",
         observation=repair_observation,
     )
 

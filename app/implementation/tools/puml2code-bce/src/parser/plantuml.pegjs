@@ -15,6 +15,7 @@ umlline
   / declaration:packagedeclaration newline { return declaration }
   / declaration:namespacedeclaration newline { return declaration }
   / declaration:classdeclaration newline { return declaration }
+  / declaration:enumdeclaration newline { return declaration }
   / declaration:abstractclassdeclaration newline { return declaration }
   / declaration:interfacedeclaration newline { return declaration }
   / declaration:memberdeclaration newline { return declaration }
@@ -76,8 +77,11 @@ endblock
 propertyset
   = "setpropname.*"
 packagedeclaration
-  = "package " objectname startblock newline umllines endblock
-  / "package " objectname newline umllines "end package"
+  = "package " name:packagename startblock newline lines:umllines endblock { var Package = require("./Package"); return new Package(name, lines); }
+  / "package " name:packagename newline lines:umllines "end package" { var Package = require("./Package"); return new Package(name, lines); }
+packagename
+  = name:objectname { return name; }
+  / '"' name:[^"]* '"' { return name.join(""); }
 interfacedeclaration
   = noise "interface " noise classname:objectname noise startblock lines:umllines endblock { var InterfaceClass = require("./InterfaceClass"); return new InterfaceClass(classname, lines) }
 abstractclassdeclaration
@@ -96,6 +100,13 @@ classdeclaration
   / noise "class " noise classname:objectname stereotype:stereotype noise { var Class = require("./Class"); return new Class(classname, [], stereotype) }
   / noise "class " noise classname:objectname noise { var Class = require("./Class"); return new Class(classname) }
   / noise "class " noise classname:objectname noise newline noise lines:umllines "end class" { var Class = require("./Class"); return new Class(classname, lines) }
+enumdeclaration
+  = noise "enum " noise classname:objectname stereotype:stereotype? noise startblock values:enumvalues endblock { var Enum = require("./Enum"); return new Enum(classname, values, stereotype); }
+  / noise "enum " noise classname:objectname stereotype:stereotype? noise { var Enum = require("./Enum"); return new Enum(classname, [], stereotype); }
+enumvalues
+  = values:(enumspace value:membername enumspace [,]? { return value; })* { return values; }
+enumspace
+  = [ \t\r\n]*
 color
   = [#][0-9a-fA-F]+
 namespacedeclaration
@@ -106,10 +117,13 @@ staticmemberdeclaration
 memberdeclaration
   = declaration:bcemethoddeclaration { return declaration }
   / declaration:bcefielddeclaration { return declaration }
+  / declaration:datatypefielddeclaration { return declaration }
   / declaration:methoddeclaration { return declaration }
   / declaration:fielddeclaration { return declaration }
 bcefielddeclaration
   = noise accessortype:accessortype noise membername:membername noise ":" noise datatype:javatype noise { var Field = require("./Field"); return new Field(accessortype, datatype, membername, false) }
+datatypefielddeclaration
+  = noise membername:membername noise ":" noise datatype:javatype noise { var Field = require("./Field"); return new Field("-", datatype, membername, false) }
 bcemethoddeclaration
   = noise accessortype:accessortype noise methodname:membername noise "(" parameters:bceparameters? ")" returntype:bcereturntype? noise { var Method = require("./Method"); return new Method(accessortype, returntype || "void", methodname, parameters || []); }
 bceparameters

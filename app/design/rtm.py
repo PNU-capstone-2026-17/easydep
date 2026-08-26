@@ -24,11 +24,29 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.design.schemas.class_model import operation_method_signature
 from app.design.services.erd.plantuml import sanitize_entity_name
 from app.design.services.sequence_diagram.methods import method_name
 
 #: 추적 대상 상류: 유스케이스와 클래스. 나머지 산출물은 이 둘을 통해 간접 추적된다.
 UPSTREAM_KINDS = ("use_case", "class")
+
+
+def _class_method_signatures(class_item: dict[str, Any]) -> list[str]:
+    """Project current typed operations and retain a read-only legacy fallback."""
+
+    operations = class_item.get("operations")
+    if isinstance(operations, list):
+        return [
+            operation_method_signature(
+                str(operation.get("name") or ""),
+                list(operation.get("parameters") or []),
+                str(operation.get("returnType") or "void"),
+            )
+            for operation in operations
+            if isinstance(operation, dict) and str(operation.get("name") or "").strip()
+        ]
+    return [str(method) for method in class_item.get("methods") or []]
 
 
 def upstream_names(state: dict) -> dict[str, set[str]]:
@@ -164,7 +182,7 @@ def _direct_links(state: dict, known_classes: set[str]) -> list[dict[str, str]]:
     declared_methods = {
         str(item.get("className") or "").strip(): {
             method_name(str(method))
-            for method in item.get("methods", []) or []
+            for method in _class_method_signatures(item)
             if method_name(str(method))
         }
         for item in (state.get("extracted_bce_classes") or {}).get("Classes", []) or []
@@ -246,7 +264,9 @@ def build_design_rtm(state: dict) -> dict[str, Any]:
                 )
 
     # --- 클래스 다이어그램: 유스케이스에서 나온다 -------------------------------
-    for cls in (state.get("extracted_bce_classes") or {}).get("Classes", []):
+    class_model = state.get("extracted_bce_classes") or {}
+    operation_classes: dict[str, str] = {}
+    for cls in class_model.get("Classes", []):
         name = cls.get("className")
         if not name:
             continue
@@ -259,6 +279,7 @@ def build_design_rtm(state: dict) -> dict[str, Any]:
             operation_id = str(operation.get("operationId") or "").strip()
             if not operation_id:
                 continue
+            operation_classes[operation_id] = str(name)
             step_refs = _as_list(operation.get("stepRefs"))
             operation_sources = {
                 "use_case": ucs,
@@ -266,21 +287,56 @@ def build_design_rtm(state: dict) -> dict[str, Any]:
                 "flow_step": step_refs,
             }
             rows.append(_row("class_diagram", operation_id, operation_sources))
-            for binding in operation.get("inputBindings") or []:
+
+    # Calls, not reusable operations, own concrete argument provenance.
+    for collaboration in class_model.get("Collaborations") or []:
+        if not isinstance(collaboration, dict):
+            continue
+        collaboration_id = str(collaboration.get("collaborationId") or "").strip()
+        use_case_ids = _as_list(collaboration.get("useCaseIds"))
+        if collaboration_id:
+            rows.append(
+                _row(
+                    "class_diagram",
+                    collaboration_id,
+                    {"use_case": use_case_ids},
+                )
+            )
+        for call in collaboration.get("calls") or []:
+            if not isinstance(call, dict):
+                continue
+            call_id = str(call.get("callId") or "").strip()
+            operation_id = str(call.get("receiverOperationId") or "").strip()
+            if not call_id or not operation_id:
+                continue
+            class_name = operation_classes.get(operation_id, "")
+            step_refs = _as_list(call.get("stepRefs"))
+            rows.append(
+                _row(
+                    "class_diagram",
+                    call_id,
+                    {
+                        "use_case": use_case_ids,
+                        "class": [class_name] if class_name else [],
+                        "class_operation": [operation_id],
+                        "flow_step": step_refs,
+                    },
+                )
+            )
+            for binding in call.get("argumentBindings") or []:
                 if not isinstance(binding, dict):
                     continue
                 parameter = str(binding.get("parameter") or "").strip()
                 if not parameter:
                     continue
-                use_case_id = str(binding.get("useCaseId") or "").strip()
                 source_ref = str(binding.get("sourceRef") or "").strip()
                 rows.append(
                     _row(
                         "class_diagram",
-                        f"{operation_id}#{parameter}",
+                        f"{call_id}#{parameter}",
                         {
-                            "use_case": [use_case_id] if use_case_id else ucs,
-                            "class": [name],
+                            "use_case": use_case_ids,
+                            "class": [class_name] if class_name else [],
                             "class_operation": [operation_id],
                             "flow_step": step_refs,
                             "value_source": [source_ref] if source_ref else [],

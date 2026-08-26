@@ -118,11 +118,5 @@ def rehydrated_check_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "repair_iters": 0,
             "stopped": "clean" if not findings else "checked_only",
         }
-        if stage == "sequence_diagram":
-            model = state.get(model_key) or {}
-            proposals = model.get("MethodProposals") if isinstance(model, dict) else []
-            if isinstance(proposals, list) and proposals:
-                check["method_proposals"] = proposals
-                check["stopped"] = "needs_input"
         result[check_key] = check
     return result

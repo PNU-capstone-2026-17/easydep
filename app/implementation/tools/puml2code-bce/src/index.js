@@ -147,6 +147,11 @@ class PlantUmlToCode {
         if (lang === 'java') {
           element.setBasePackage(options.basePackage);
           if (!element.shouldGenerate()) return;
+          if (element.hasUnresolvedPlaceholder && element.hasUnresolvedPlaceholder()) {
+            throw new Error(
+              `cannot generate Java for unresolved placeholder ${element.getName()}`,
+            );
+          }
           files[element.getOutputPath()] = template(element, renderOptions);
           return;
         }

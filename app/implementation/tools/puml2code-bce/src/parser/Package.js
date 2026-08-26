@@ -3,5 +3,9 @@ class Package {
     this.namespaceName = namespaceName;
     this.fileLines = fileLines;
   }
+
+  getItems() {
+    return this.fileLines;
+  }
 }
 module.exports = Package;

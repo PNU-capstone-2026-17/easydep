@@ -43,8 +43,19 @@ from typing import Any
 CLEAN_STATE: dict[str, Any] = {
     "usecase_spec": {
         "use_cases": [
-            {"id": "UC1", "name": "Place an order"},
-        ]
+            {"id": "UC1", "name": "Place an order", "primary_actor": "Member"},
+        ],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Member submits the order."},
+                {"step_number": 2, "sentence": "System records the order."},
+            ],
+            "extensions": [],
+        }],
+        "relationships": {
+            "associations": [{"actor": "Member", "use_case": "Place an order"}],
+        },
     }
 }
 
@@ -54,8 +65,8 @@ CLEAN_STATE: dict[str, Any] = {
 #: (`app/requirements/evaluation/seeded.py` docstring). 대조군이 오염되면 오탐을 못 재고,
 #: 못 재면 "다 잡는 눈금"과 "제대로 잡는 눈금"이 구별되지 않는다. 그래서 여기 있는 것은
 #: 규칙 하나하나에 대고 손으로 확인한 것이다:
-#:   - 관계 두 개의 양 끝이 전부 선언돼 있다
-#:   - Boundary→Control, Control→Entity — 금지 조합이 아니다
+#:   - 관계의 양 끝이 전부 선언돼 있고, Collaboration 호출과도 일치한다
+#:   - Boundary→Control — 금지 조합이 아니다
 #:   - 세 이름 모두 PascalCase이고 렌더 후에도 서로 다르다
 #:   - UC1을 세 클래스가 전부 가리키고, 그 밖의 id는 없다
 CLEAN: dict[str, Any] = {
@@ -65,33 +76,60 @@ CLEAN: dict[str, Any] = {
             "stereotype": "Boundary",
             "description": "Collects the order request from the member.",
             "fields": [],
-            "methods": ["submitOrder(orderRequest : OrderRequest)"],
             "use_case_ids": ["UC1"],
+            "operations": [{
+                "operationId": "OrderForm::submitOrder(request:String)",
+                "name": "submitOrder",
+                "parameters": [{"name": "request", "type": "String"}],
+                "returnType": "void",
+                "stepRefs": ["UC1:main:1"],
+            }],
         },
         {
             "className": "OrderController",
             "stereotype": "Control",
             "description": "Coordinates availability check and order recording.",
             "fields": [],
-            "methods": [
-                "placeOrder(orderRequest : OrderRequest): void",
-                "checkAvailability(productId : String): boolean",
-            ],
             "use_case_ids": ["UC1"],
+            "operations": [{
+                "operationId": "OrderController::placeOrder(request:String)",
+                "name": "placeOrder",
+                "parameters": [{"name": "request", "type": "String"}],
+                "returnType": "void",
+                "stepRefs": ["UC1:main:2"],
+            }],
         },
         {
             "className": "Order",
             "stereotype": "Entity",
             "description": "The recorded order.",
             "fields": ["orderedAt : DateTime", "totalAmount : Int"],
-            "methods": [],
             "use_case_ids": ["UC1"],
         },
     ],
     "Relationships": [
         {"source": "OrderForm", "target": "OrderController", "type": "Dependency"},
-        {"source": "OrderController", "target": "Order", "type": "Dependency"},
     ],
+    "Collaborations": [{
+        "collaborationId": "UC1:main:1",
+        "useCaseIds": ["UC1"],
+        "entryActor": "Member",
+        "calls": [
+            {
+                "callId": "UC1:main:1::call:1",
+                "receiverOperationId": "OrderForm::submitOrder(request:String)",
+                "stepRefs": ["UC1:main:1"],
+                "argumentBindings": [{"parameter": "request", "sourceRef": "UC1:main:1#request"}],
+            },
+            {
+                "callId": "UC1:main:1::call:2",
+                "parentCallId": "UC1:main:1::call:1",
+                "receiverOperationId": "OrderController::placeOrder(request:String)",
+                "stepRefs": ["UC1:main:2"],
+                "argumentBindings": [{"parameter": "request", "sourceRef": "UC1:main:1::call:1#request"}],
+            },
+        ],
+    }],
 }
 
 
@@ -155,7 +193,6 @@ def _boundary_boundary_link() -> dict[str, Any]:
             "stereotype": "Boundary",
             "description": "Shows the accepted order back to the member.",
             "fields": [],
-            "methods": ["showReceipt()"],
             "use_case_ids": ["UC1"],
         }
     )
@@ -183,7 +220,6 @@ def _duplicate_name() -> dict[str, Any]:
             "stereotype": "Entity",
             "description": "A second class that reuses the name.",
             "fields": ["note : String"],
-            "methods": [],
             "use_case_ids": ["UC1"],
         }
     )
@@ -203,7 +239,7 @@ def _unknown_relationship_type() -> dict[str, Any]:
     # 렌더러가 모르는 종류로 바꾼다. `Realization`은 구조적 종류가 아니므로
     # `class.entity-association-multiplicity`를 함께 어기지 않는다.
     model = _clean_model()
-    model["Relationships"][1]["type"] = "Realization"
+    model["Relationships"][0]["type"] = "Realization"
     return model
 
 
@@ -218,7 +254,6 @@ def _entity_link_without_multiplicity() -> dict[str, Any]:
             "stereotype": "Entity",
             "description": "One line of the recorded order.",
             "fields": ["quantity : Int"],
-            "methods": [],
             "use_case_ids": ["UC1"],
         }
     )
@@ -228,21 +263,9 @@ def _entity_link_without_multiplicity() -> dict[str, Any]:
     return model
 
 
-def _untyped_method_parameter() -> dict[str, Any]:
-    model = _clean_model()
-    model["Classes"][1]["methods"][1] = "checkAvailability(productId): boolean"
-    return model
-
-
 def _untyped_field() -> dict[str, Any]:
     model = _clean_model()
     model["Classes"][2]["fields"][0] = "orderedAt"
-    return model
-
-
-def _control_outcome_without_return_contract() -> dict[str, Any]:
-    model = _clean_model()
-    model["Classes"][1]["methods"][1] = "checkAvailability(productId : String)"
     return model
 
 
@@ -255,67 +278,78 @@ def _uncovered_use_case() -> dict[str, Any]:
 
 
 def _operation_state() -> dict[str, Any]:
-    return {
-        "usecase_spec": {
-            "use_cases": [{"id": "UC1", "name": "Place an order", "primary_actor": "Member"}],
-            "use_case_specs": [{
-                "use_case_id": "UC1",
-                "main_scenario": [
-                    {"step_number": 1, "sentence": "Member submits the order."},
-                    {"step_number": 2, "sentence": "System records the order."},
-                ],
-            }],
-            "relationships": {"associations": [{"actor": "Member", "use_case": "Place an order"}]},
-        }
-    }
+    return _clean_state()
 
 
 def _operation_model() -> dict[str, Any]:
+    """A minimal collaboration-first control for operation contract seeds.
+
+    Operation signatures are reusable class declarations.  The concrete call
+    order and argument provenance belong to ``Collaborations``; keeping them
+    separate prevents a method from silently carrying a different input source
+    in each use-case path.
+    """
     entry_id = "OrderForm::submitOrder(request:String)"
     control_id = "OrderController::handleOrder(request:String)"
     return {
         "Classes": [
             {
                 "className": "OrderForm", "stereotype": "Boundary", "fields": [],
-                "methods": ["submitOrder(request : String): void"], "use_case_ids": ["UC1"],
+                "use_case_ids": ["UC1"],
                 "operations": [{
                     "operationId": entry_id, "name": "submitOrder",
                     "parameters": [{"name": "request", "type": "String"}],
-                    "returnType": "void", "stepRefs": ["UC1:main:1"], "actorEntry": True,
-                    "inputBindings": [{"useCaseId": "UC1", "parameter": "request", "sourceRef": "UC1:main:1#request"}],
+                    "returnType": "void", "stepRefs": ["UC1:main:1"],
                 }],
             },
             {
                 "className": "OrderController", "stereotype": "Control", "fields": [],
-                "methods": ["handleOrder(request : String): void"], "use_case_ids": ["UC1"],
+                "use_case_ids": ["UC1"],
                 "operations": [{
                     "operationId": control_id, "name": "handleOrder",
                     "parameters": [{"name": "request", "type": "String"}],
-                    "returnType": "void", "stepRefs": ["UC1:main:2"], "actorEntry": False,
-                    "inputBindings": [{"useCaseId": "UC1", "parameter": "request", "sourceRef": f"{entry_id}#request"}],
+                    "returnType": "void", "stepRefs": ["UC1:main:2"],
                 }],
             },
         ],
         "Relationships": [{"source": "OrderForm", "target": "OrderController", "type": "Dependency"}],
+        "Collaborations": [{
+            "collaborationId": "UC1:main:1",
+            "useCaseIds": ["UC1"],
+            "entryActor": "Member",
+            "calls": [
+                {
+                    "callId": "UC1:main:1::call:1",
+                    "receiverOperationId": entry_id,
+                    "stepRefs": ["UC1:main:1"],
+                    "argumentBindings": [{"parameter": "request", "sourceRef": "UC1:main:1#request"}],
+                },
+                {
+                    "callId": "UC1:main:1::call:2",
+                    "parentCallId": "UC1:main:1::call:1",
+                    "receiverOperationId": control_id,
+                    "stepRefs": ["UC1:main:2"],
+                    "argumentBindings": [{"parameter": "request", "sourceRef": "UC1:main:1::call:1#request"}],
+                },
+            ],
+        }],
     }
 
 
 def _noncanonical_operation_id() -> dict[str, Any]:
     model = _operation_model()
     model["Classes"][1]["operations"][0]["operationId"] = "wrong"
+    model["Collaborations"][0]["calls"][1]["receiverOperationId"] = "wrong"
     return model
 
 
 def _cyclic_operation_source() -> dict[str, Any]:
     model = _operation_model()
-    operation = model["Classes"][1]["operations"][0]
-    operation["inputBindings"][0]["sourceRef"] = operation["operationId"] + "#request"
-    return model
-
-
-def _control_action_dispatcher() -> dict[str, Any]:
-    model = _clean_model()
-    model["Classes"][1]["methods"] = ["processOrder(orderId : String, action : String): void"]
+    # The second call tries to consume itself.  It is neither an earlier call
+    # nor a specification input, so the finite-source gate must reject it.
+    model["Collaborations"][0]["calls"][1]["argumentBindings"][0]["sourceRef"] = (
+        "UC1:main:1::call:2#request"
+    )
     return model
 
 
@@ -389,27 +423,9 @@ SEEDED: tuple[Seeded, ...] = (
         _clean_state(),
     ),
     Seeded(
-        "class.method-parameters-typed",
-        "checkAvailability의 productId 매개변수에 타입이 없다",
-        _untyped_method_parameter(),
-        _clean_state(),
-    ),
-    Seeded(
         "class.fields-typed",
         "Order의 orderedAt 필드에 타입이 없다",
         _untyped_field(),
-        _clean_state(),
-    ),
-    Seeded(
-        "class.control-outcome-return-contract",
-        "결과를 확인하는 checkAvailability에 반환 계약이 없다",
-        _control_outcome_without_return_contract(),
-        _clean_state(),
-    ),
-    Seeded(
-        "class.control-action-dispatcher",
-        "processOrder가 action 매개변수로 여러 행위를 선택한다",
-        _control_action_dispatcher(),
         _clean_state(),
     ),
     Seeded(
@@ -453,7 +469,6 @@ ERD_CLEAN: dict[str, Any] = {
             "stereotype": "Control",
             "description": "Coordinates order recording.",
             "fields": [],
-            "methods": ["placeOrder()"],
             "use_case_ids": ["UC1"],
         },
         {
@@ -462,7 +477,6 @@ ERD_CLEAN: dict[str, Any] = {
             "description": "The account that places orders.",
             "fields": ["email : String", "displayName : String"],
             "identifier": ["email"],
-            "methods": [],
             "use_case_ids": ["UC1"],
         },
         {
@@ -471,7 +485,6 @@ ERD_CLEAN: dict[str, Any] = {
             "description": "The recorded order.",
             "fields": ["orderedAt : DateTime", "totalAmount : Int"],
             "identifier": [],
-            "methods": [],
             "use_case_ids": ["UC1"],
         },
     ],
@@ -525,7 +538,6 @@ def _erd_unusable_entity_name() -> dict[str, Any]:
             "description": "A class the model forgot to name.",
             "fields": ["note : String"],
             "identifier": [],
-            "methods": [],
             "use_case_ids": ["UC1"],
         }
     )
@@ -569,25 +581,7 @@ def _two_entities_share_a_name() -> dict[str, Any]:
             "description": "A second class that reuses the name.",
             "fields": ["note : String"],
             "identifier": [],
-            "methods": [],
             "use_case_ids": ["UC1"],
-        }
-    )
-    return model
-
-
-def _mandatory_self_reference() -> dict[str, Any]:
-    # Order 가 자기를 필수로 가리키게 한다("모든 주문에는 원주문이 있다"). 참조되는 끝이
-    # `1` 이라 외래키가 NOT NULL 이 되고, 그러면 **첫 행을 넣을 수 없다.**
-    # 다중도는 아는 표기이고 끝점·딱지·키는 그대로라 다른 규칙은 조용하다.
-    model = _clean_erd()
-    model["Relationships"].append(
-        {
-            "source": "Order",
-            "target": "Order",
-            "type": "Association",
-            "sourceMultiplicity": "1",
-            "targetMultiplicity": "*",
         }
     )
     return model
@@ -666,12 +660,6 @@ ERD_SEEDED: tuple[Seeded, ...] = (
         "erd.relationship-mapped",
         "Member–Order 연관에 다중도가 없어 사상되지 않는다",
         _association_without_multiplicity(),
-        _clean_state(),
-    ),
-    Seeded(
-        "erd.no-mandatory-reference-cycle",
-        "Order가 자기 자신을 필수로 가리킨다 — 첫 행을 넣을 수 없다",
-        _mandatory_self_reference(),
         _clean_state(),
     ),
     Seeded(
