@@ -514,9 +514,8 @@ def identify_use_cases(
     }
 
 
-@contract("review_model", requires=("actors", "use_cases"), produces=("model_review",))
-def review_model(state: AgentState) -> dict:
-    _ = settings.enable_semantic_validator
+def _model_review(state: AgentState) -> dict:
+    """Review one fixed actor/use-case proposal without triggering a repair."""
     payload = {
         "requirements": [
             {key: requirement.get(key) for key in ("id", "text", "type", "qualifies")}
@@ -539,11 +538,105 @@ def review_model(state: AgentState) -> dict:
         rules.MODEL_USE_CASES, payload, prefix="model", source="use_cases.semantic_validator"
     )
     return {
-        "model_review": {
-            "issues": result.findings,
-            "semantic_status": result.status,
-            "unexamined_rules": list(result.unexamined),
-        },
+        "issues": result.findings,
+        "semantic_status": result.status,
+        "unexamined_rules": list(result.unexamined),
+    }
+
+
+def _actor_reference_defects(state: AgentState) -> set[tuple[str, str, str]]:
+    """Return use-case actor links that do not resolve to a preserved actor."""
+    known = {
+        _actor_key(actor.get("name"))
+        for actor in (state.get("actors") or [])
+        if _actor_key(actor.get("name"))
+    }
+    defects: set[tuple[str, str, str]] = set()
+    for use_case in state.get("use_cases") or []:
+        use_case_key = _actor_key(use_case.get("name"))
+        primary = _actor_key(use_case.get("primary_actor"))
+        if not primary or primary not in known:
+            defects.add((use_case_key, "primary_actor", primary))
+        for supporting_actor in use_case.get("supporting_actors") or []:
+            supporting = _actor_key(supporting_actor)
+            if not supporting or supporting not in known:
+                defects.add((use_case_key, "supporting_actor", supporting))
+    return defects
+
+
+def _review_feedback(issues: list[str]) -> str:
+    return (
+        "Regenerate only the use-case proposal to address the independent model review below. "
+        "Keep the accepted requirements and canonical actor list fixed. Do not add actors or "
+        "change requirement text or classification:\n"
+        + "\n".join(f"- {issue}" for issue in issues)
+    )
+
+
+def _review_issue_keys(issues: list[str]) -> set[str]:
+    """Compare semantic defects by stable rule identity, not fluctuating prose."""
+    return {
+        rules.rule_of(issue) or issue
+        for issue in issues
+    }
+
+
+@contract("review_model", requires=("actors", "use_cases"), produces=("model_review",))
+def review_model(state: AgentState) -> dict:
+    """Review the model and make at most one guarded, use-case-only repair."""
+    _ = settings.enable_semantic_validator
+    initial_review = _model_review(state)
+    issues = initial_review["issues"]
+    # ``classified`` is not part of this node's historical contract because review itself needs
+    # only the artifact. A repair, however, must be source-grounded and run at the ordinary
+    # identify-use-cases -> review boundary. Legacy/direct review calls (including a completed
+    # handoff audit with downstream artifacts) therefore cannot mutate use cases behind those
+    # artifacts and keep the original result.
+    if not issues or not state.get("classified") or state.get("phase") != "use_cases":
+        return {"model_review": initial_review, "phase": "model_review"}
+
+    try:
+        candidate_update = identify_use_cases(state, feedback=_review_feedback(issues))
+        candidate_state = dict(state)
+        candidate_state.update(candidate_update)
+        candidate_review = _model_review(candidate_state)
+        initial_coverage = check_coverage(state)["coverage"]
+        candidate_coverage = check_coverage(candidate_state)["coverage"]
+    except Exception as exc:  # noqa: BLE001 - preserve the reviewed original for the handoff gate
+        telemetry.record_degradation(
+            "use_cases.model_repair",
+            f"{type(exc).__name__}: {exc}",
+        )
+        return {"model_review": initial_review, "phase": "model_review"}
+
+    new_actor_defects = _actor_reference_defects(candidate_state) - _actor_reference_defects(state)
+    initial_issue_keys = _review_issue_keys(issues)
+    candidate_issue_keys = _review_issue_keys(candidate_review["issues"])
+    new_unexamined = set(candidate_review["unexamined_rules"]) - set(
+        initial_review["unexamined_rules"]
+    )
+    coverage_regressed = any(
+        set(candidate_coverage[field]) - set(initial_coverage[field])
+        for field in ("orphan_fr_ids", "unattached_nfr_ids")
+    )
+    improved = (
+        candidate_review["semantic_status"] == validator.OK
+        and candidate_issue_keys < initial_issue_keys
+        and not new_unexamined
+        and not candidate_coverage["unknown_requirement_refs"]
+        and not coverage_regressed
+        and not new_actor_defects
+    )
+    if not improved:
+        telemetry.record_degradation(
+            "use_cases.model_repair",
+            "candidate rejected: model findings did not strictly improve or references regressed",
+        )
+        return {"model_review": initial_review, "phase": "model_review"}
+
+    return {
+        "use_cases": candidate_update["use_cases"],
+        "model_review": candidate_review,
         "phase": "model_review",
     }
 

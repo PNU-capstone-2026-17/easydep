@@ -162,6 +162,128 @@ def test_handoff_blockers_expand_only_as_reports_become_available():
     assert any("supporting associations" in issue for issue in relationships)
 
 
+def test_handoff_blocks_unresolved_source_resource_and_capability_contracts():
+    state = _state(
+        requirement_source_issues=[
+            "RR2 has no RAW source",
+            "RR1 has an invalid RAW source",
+        ],
+        resource_intake={
+            "valid": False,
+            "errors": ["[required] region missing"],
+            "questions": [
+                {"field": "provider", "kind": "missing"},
+                {"field": "minVCpu", "kind": "suggested"},
+            ],
+        },
+        capability_contract={
+            "capabilities": [
+                {"id": "zone_placement", "decision": "needsQuestion"},
+                {"id": "https_ingress", "decision": "accepted"},
+            ]
+        },
+    )
+
+    issues = supervisor.blocking_issues(state, through="model")
+
+    assert issues == [
+        (
+            "requirement source mapping has unresolved issues: "
+            "RR1 has an invalid RAW source, RR2 has no RAW source"
+        ),
+        (
+            "resource contract is missing: errors: [required] region missing; "
+            "required questions: provider"
+        ),
+        "capability contract needs answers for: zone_placement",
+    ]
+
+
+def test_handoff_allows_optional_resource_questions_and_abstained_capabilities():
+    state = _state(
+        resource_intake={
+            "valid": True,
+            "errors": [],
+            "questions": [
+                {"field": "minVCpu", "kind": "suggested"},
+                {"field": "monthlyBudgetUSD", "kind": "asked"},
+            ],
+        },
+        resource_spec={
+            "schemaVersion": "4",
+            "workloads": ["vm"],
+            "provider": "aws",
+            "region": "ap-northeast-2",
+        },
+        capability_contract={
+            "capabilities": [
+                {"id": "optional_https", "decision": "abstained"},
+            ]
+        },
+    )
+
+    assert supervisor.blocking_issues(state, through="model") == []
+
+
+def test_handoff_ignores_a_stale_question_when_the_required_value_is_present():
+    state = _state(
+        resource_intake={
+            "valid": True,
+            "errors": [],
+            "questions": [{"field": "region", "kind": "asked"}],
+        },
+        resource_spec={
+            "schemaVersion": "4",
+            "workloads": ["vm"],
+            "provider": "aws",
+            "region": "ap-northeast-2",
+        },
+    )
+
+    assert supervisor.blocking_issues(state, through="model") == []
+
+
+def test_handoff_blocks_an_incomplete_relationship_review():
+    state = _state(
+        relationship_report={
+            "relationship_issues": [],
+            "unexamined_rules": ["rel.extend-adds-conditional-behavior"],
+            "semantic_status": "ungrounded",
+        }
+    )
+
+    assert supervisor.blocking_issues(state) == [
+        (
+            "relationship review left rules unexamined: "
+            "rel.extend-adds-conditional-behavior"
+        ),
+        "relationship review was not validated: ungrounded",
+    ]
+
+
+def test_handoff_reads_embedded_reviews_when_summary_reports_are_absent():
+    state = _state(
+        use_case_specs=[
+            {
+                "use_case_id": "UC1",
+                "issues": ["spec defect"],
+                "semantic_status": "ok",
+            }
+        ],
+        relationships={
+            "relationship_issues": ["relationship defect"],
+            "semantic_status": "failed",
+            "unexamined_rules": [],
+        },
+    )
+
+    issues = supervisor.blocking_issues(state)
+
+    assert "specification report has 1 unresolved issue(s)" in issues
+    assert "relationship report: relationship defect" in issues
+    assert "relationship review was not validated: failed" in issues
+
+
 # ---------------------------------------------------------------------------
 # 3. 그래프 노드
 # ---------------------------------------------------------------------------

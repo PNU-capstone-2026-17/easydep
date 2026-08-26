@@ -1,7 +1,7 @@
-"""BERT 기반 FR/NFR 검증 분류기.
+"""BERT 기반 FR/NFR 분류기.
 
 materials/BERT_FR_NFR_Classifier 노트북에서 파인튜닝한 BertForSequenceClassification
-체크포인트를 로드해, LLM 분류 결과를 대조·검증하는 데 사용한다.
+체크포인트를 로드해 요구사항의 FR/NFR 유형을 단독으로 판정한다.
 
 라벨 매핑(학습 시 고정): 0 = NFR, 1 = FR
 전처리(노트북 추론 셀과 동일): max_length=128, padding/truncation, softmax confidence.

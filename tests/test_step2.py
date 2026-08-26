@@ -426,6 +426,164 @@ def test_actor_goal_audit_runs_without_a_coverage_iteration_budget(monkeypatch):
     assert covered == {"R1"}   # 예산 소진, 나머지는 이후 check_coverage가 고아로 표면화
 
 
+def _reviewed_state():
+    return {
+        "phase": "use_cases",
+        "classified": [
+            {"id": "R1", "text": "A user submits a request.", "type": "FR"},
+        ],
+        "actors": [
+            {
+                "name": "User",
+                "description": "requester",
+                "parent_actor": None,
+                "source_refs": ["R1"],
+            },
+        ],
+        "use_cases": [
+            {
+                "id": "UC1",
+                "name": "Submit request badly",
+                "primary_actor": "User",
+                "supporting_actors": [],
+                "level": "user_goal",
+                "goal": "submit a request",
+                "requirement_ids": ["R1"],
+                "nfr_ids": [],
+            },
+        ],
+    }
+
+
+def _candidate_use_case(**updates):
+    candidate = {
+        "id": "UC1",
+        "name": "Submit request",
+        "primary_actor": "User",
+        "supporting_actors": [],
+        "level": "user_goal",
+        "goal": "submit a request",
+        "requirement_ids": ["R1"],
+        "nfr_ids": [],
+    }
+    candidate.update(updates)
+    return candidate
+
+
+def _model_finding(rule_id, text):
+    return f"[model] {text} {s2.rules.tag_of(rule_id)}"
+
+
+def test_model_review_accepts_one_use_case_only_repair_when_findings_decrease(monkeypatch):
+    state = _reviewed_state()
+    calls = {"reviews": 0, "repairs": 0}
+
+    def fake_review(*args, **kwargs):
+        calls["reviews"] += 1
+        findings = (
+            [
+                _model_finding("actors.sud-is-not-an-actor", "first defect"),
+                    _model_finding("usecases.user-goal-level", "second defect"),
+            ]
+            if calls["reviews"] == 1
+            else [_model_finding("usecases.user-goal-level", "remaining defect")]
+        )
+        return s2.validator.Review(findings=findings)
+
+    def fake_identify(received, feedback="", target_ids=None):
+        calls["repairs"] += 1
+        assert received["actors"] is state["actors"]
+        assert received["classified"] is state["classified"]
+        assert target_ids is None
+        assert "first defect" in feedback
+        return {"use_cases": [_candidate_use_case()], "phase": "use_cases"}
+
+    monkeypatch.setattr(s2.validator, "review", fake_review)
+    monkeypatch.setattr(s2, "identify_use_cases", fake_identify)
+
+    out = s2.review_model(state)
+
+    assert calls == {"reviews": 2, "repairs": 1}
+    assert out["use_cases"] == [_candidate_use_case()]
+    assert "remaining defect" in out["model_review"]["issues"][0]
+
+
+def test_model_review_keeps_original_when_the_single_repair_does_not_improve(monkeypatch):
+    state = _reviewed_state()
+    calls = {"reviews": 0, "repairs": 0}
+
+    def fake_review(*args, **kwargs):
+        calls["reviews"] += 1
+        return s2.validator.Review(findings=["same defect"])
+
+    def fake_identify(*args, **kwargs):
+        calls["repairs"] += 1
+        return {"use_cases": [_candidate_use_case()], "phase": "use_cases"}
+
+    monkeypatch.setattr(s2.validator, "review", fake_review)
+    monkeypatch.setattr(s2, "identify_use_cases", fake_identify)
+
+    out = s2.review_model(state)
+
+    assert calls == {"reviews": 2, "repairs": 1}
+    assert "use_cases" not in out
+    assert out["model_review"]["issues"] == ["same defect"]
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        _candidate_use_case(requirement_ids=["UNKNOWN"]),
+        _candidate_use_case(primary_actor="Unknown actor"),
+    ],
+    ids=["unknown-requirement", "new-actor-reference"],
+)
+def test_model_review_rejects_a_semantically_clean_repair_with_reference_regression(
+    monkeypatch, candidate,
+):
+    state = _reviewed_state()
+    reviews = iter([
+        s2.validator.Review(findings=["repair this"]),
+        s2.validator.Review(findings=[]),
+    ])
+    monkeypatch.setattr(s2.validator, "review", lambda *args, **kwargs: next(reviews))
+    monkeypatch.setattr(
+        s2,
+        "identify_use_cases",
+        lambda *args, **kwargs: {"use_cases": [candidate], "phase": "use_cases"},
+    )
+
+    out = s2.review_model(state)
+
+    assert "use_cases" not in out
+    assert out["model_review"]["issues"] == ["repair this"]
+
+
+def test_model_review_rejects_a_repair_that_creates_new_coverage_gaps(monkeypatch):
+    state = _reviewed_state()
+    state["classified"].append(
+        {"id": "R2", "text": "A user reviews the result.", "type": "FR"}
+    )
+    state["use_cases"][0]["requirement_ids"] = ["R1", "R2"]
+    reviews = iter([
+        s2.validator.Review(findings=["repair this"]),
+        s2.validator.Review(findings=[]),
+    ])
+    monkeypatch.setattr(s2.validator, "review", lambda *args, **kwargs: next(reviews))
+    monkeypatch.setattr(
+        s2,
+        "identify_use_cases",
+        lambda *args, **kwargs: {
+            "use_cases": [_candidate_use_case(requirement_ids=["R1"])],
+            "phase": "use_cases",
+        },
+    )
+
+    out = s2.review_model(state)
+
+    assert "use_cases" not in out
+
+
 # ---------------------------------------------------------------------------
 # 3. 라이브 end-to-end — 실제 NIM (옵트인)
 # ---------------------------------------------------------------------------

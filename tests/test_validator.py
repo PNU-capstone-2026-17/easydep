@@ -148,6 +148,101 @@ def test_a_single_vote_keeps_the_old_behaviour(monkeypatch):
     assert captured and len(review.findings) == 1
 
 
+def test_clean_review_does_not_spend_a_confirmation_call(monkeypatch):
+    calls = {"n": 0}
+
+    def fake(schema, messages):
+        calls["n"] += 1
+        return _all()
+
+    monkeypatch.setattr(validator, "invoke_structured", fake)
+    review = validator.review(
+        _STAGE,
+        {"trigger": "t"},
+        prefix="semantic",
+        source="spec.semantic_validator",
+        confirm_violations=True,
+    )
+
+    assert calls["n"] == 1
+    assert review.status == validator.OK
+    assert review.findings == []
+
+
+def test_only_a_confirmed_violation_is_returned(monkeypatch):
+    calls: list[str] = []
+    ballots = iter([
+        _all(violated={
+            "spec.no-scope-creep": "drop the invented capability",
+            "spec.no-hidden-branching": "move the branch",
+        }),
+        Critique(verdicts=[
+            RuleVerdict(
+                rule_id="spec.no-scope-creep",
+                violated=True,
+                directive="drop it",
+            ),
+            RuleVerdict(rule_id="spec.no-hidden-branching", violated=False),
+        ]),
+    ])
+
+    def fake(schema, messages):
+        calls.append(messages[0].content)
+        return next(ballots)
+
+    monkeypatch.setattr(validator, "invoke_structured", fake)
+    review = validator.review(
+        _STAGE,
+        {"trigger": "t"},
+        prefix="semantic",
+        source="spec.semantic_validator",
+        confirm_violations=True,
+    )
+
+    assert len(calls) == 2
+    assert "spec.no-scope-creep" in calls[1]
+    assert "spec.no-hidden-branching" in calls[1]
+    assert "spec.no-precondition-recheck" not in calls[1]
+    assert {rules.rule_of(finding) for finding in review.findings} == {
+        "spec.no-scope-creep"
+    }
+
+
+@pytest.mark.parametrize(
+    "confirmation, expected_status",
+    [
+        (Critique(verdicts=[]), validator.UNGROUNDED),
+        (RuntimeError("NIM down"), validator.FAILED),
+    ],
+)
+def test_failed_confirmation_is_not_reported_as_clean(
+    monkeypatch, confirmation, expected_status
+):
+    results = iter([
+        _all(violated={"spec.no-scope-creep": "drop it"}),
+        confirmation,
+    ])
+
+    def fake(schema, messages):
+        result = next(results)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(validator, "invoke_structured", fake)
+    review = validator.review(
+        _STAGE,
+        {"trigger": "t"},
+        prefix="semantic",
+        source="spec.semantic_validator",
+        confirm_violations=True,
+    )
+
+    assert review.status == expected_status
+    assert review.findings == []
+    assert "spec.no-scope-creep" in review.unexamined
+
+
 def test_review_can_limit_the_semantic_rule_group(monkeypatch):
     selected = ("spec.no-scope-creep", "spec.causal-flow-consistency")
     captured = _patch(monkeypatch, _all())

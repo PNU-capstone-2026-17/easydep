@@ -140,14 +140,6 @@ def _assemble(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecItem:
 _REVIEWED_FIELDS = ("trigger", "preconditions", "main_scenario", "extensions",
                     "success_guarantee", "minimal_guarantee")
 
-# Scope and causal flow depend on the use-case goal boundary and the full path at once.
-# Keep that judgement small instead of burying it in the complete semantic checklist.
-_FOCUSED_SEMANTIC_RULE_IDS = (
-    "spec.no-scope-creep",
-    "spec.causal-flow-consistency",
-)
-
-
 def spec_review_payload(
     item: dict,
     requirements: list[dict] | None = None,
@@ -190,41 +182,19 @@ def _semantic_findings(
     '깨끗함'으로 통과했다.
     """
     payload = spec_review_payload(item, requirements, goal_context)
-    all_rule_ids = tuple(
-        rule.id
-        for rule in rules.judged_by(rules.WRITE_SPECIFICATIONS, rules.JUDGED_VALIDATOR)
+    review = validator.review(
+        rules.WRITE_SPECIFICATIONS,
+        payload,
+        prefix="semantic",
+        source="spec.semantic_validator",
+        subject=item.get("use_case_id"),
+        confirm_violations=True,
     )
-    general_rule_ids = tuple(
-        rule_id for rule_id in all_rule_ids if rule_id not in _FOCUSED_SEMANTIC_RULE_IDS
-    )
-    reviews = []
-    rule_groups = (general_rule_ids,) + tuple(
-        (rule_id,) for rule_id in _FOCUSED_SEMANTIC_RULE_IDS
-    )
-    for group in rule_groups:
-        if not group:
-            continue
-        review = validator.review(
-            rules.WRITE_SPECIFICATIONS,
-            payload,
-            prefix="semantic",
-            source="spec.semantic_validator",
-            subject=item.get("use_case_id"),
-            rule_ids=group,
-        )
-        reviews.append(review)
-        if review.status in (validator.FAILED, validator.DISABLED):
-            break
-    findings = list(dict.fromkeys(finding for review in reviews for finding in review.findings))
-    status = next(
-        (review.status for review in reviews if review.status in validator.UNVALIDATED),
-        (
-            validator.DISABLED
-            if reviews and all(review.status == validator.DISABLED for review in reviews)
-            else validator.OK
-        ),
-    )
-    return findings, status
+    # A partial verdict is not a clean semantic review. Keep the persisted shape small by
+    # representing that existing condition with the existing unvalidated status instead of
+    # adding another per-spec audit field.
+    status = validator.UNGROUNDED if review.unexamined else review.status
+    return review.findings, status
 
 
 def requirement_view(uc: UseCaseItem, by_id: dict[str, RequirementItem]) -> list[dict]:

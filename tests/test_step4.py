@@ -152,6 +152,51 @@ def test_semantic_include_rejection_does_not_create_a_diagram_node(monkeypatch):
     assert "candidate_decisions" not in rel
 
 
+def test_materialized_relationships_are_independently_reviewed(monkeypatch):
+    state = _shared_state()
+    candidate = s4._include_candidates(
+        state,
+        state["use_cases"],
+        {item["use_case_id"]: item for item in state["use_case_specs"]},
+    )[0]
+    monkeypatch.setattr(
+        s4,
+        "invoke_structured",
+        lambda *_: RelationshipModel(
+            includes=[
+                IncludeSelection(
+                    candidate_id=candidate["candidate_id"],
+                    decision="approve",
+                    included_use_case_name="Validate enrollment eligibility",
+                )
+            ]
+        ),
+    )
+    reviewed = {}
+
+    def review(stage, artifact, **kwargs):
+        reviewed.update({"stage": stage, "artifact": artifact, **kwargs})
+        return s4.validator.Review(
+            findings=["[rel] Invalid include [rule:rel.include-is-the-default-relationship]"],
+            status=s4.validator.OK,
+            unexamined=("rel.generalization-keeps-meaning",),
+        )
+
+    monkeypatch.setattr(s4.validator, "review", review)
+
+    rel = s4.identify_relationships(state)["relationships"]
+
+    assert reviewed["stage"] == s4.rules.DRAW_DIAGRAM
+    assert reviewed["confirm_violations"] is True
+    assert reviewed["artifact"]["relationships"]["includes"] == rel["includes"]
+    assert reviewed["artifact"]["requirements"][0]["id"] == "FR-SHARED"
+    assert reviewed["artifact"]["actors"][0]["name"] == "User"
+    assert rel["semantic_status"] == "ok"
+    assert rel["relationship_issues"]
+    assert rel["unexamined_rules"] == ["rel.generalization-keeps-meaning"]
+    assert rel["repair_stopped"] == "unresolved"
+
+
 def test_extend_selection_is_bounded_to_existing_ids_and_exact_base_step(monkeypatch):
     state = {
         "actors": [{"name": "Actor", "description": "a", "parent_actor": None}],

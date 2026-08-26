@@ -261,6 +261,74 @@ def _relationship_prompt(
     return prompts.apply_user_feedback(prompt, feedback)
 
 
+def _relationship_review_payload(
+    requirements: list[dict],
+    actors: list[dict],
+    use_cases: list[dict],
+    specs_by_id: dict[str, dict],
+    relationships: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose only the accepted evidence and the materialized relationship result."""
+    return {
+        "requirements": [
+            {
+                "id": str(requirement.get("id") or ""),
+                "text": str(requirement.get("text") or ""),
+                "type": str(requirement.get("type") or ""),
+            }
+            for requirement in requirements
+            if requirement.get("id")
+        ],
+        "actors": [
+            {
+                "name": str(actor.get("name") or ""),
+                "description": str(actor.get("description") or ""),
+                "parent_actor": actor.get("parent_actor"),
+            }
+            for actor in actors
+            if actor.get("name")
+        ],
+        "use_cases": [
+            {
+                "id": str(use_case["id"]),
+                "name": str(use_case.get("name") or ""),
+                "goal": str(use_case.get("goal") or ""),
+                "primary_actor": str(use_case.get("primary_actor") or ""),
+                "supporting_actors": list(use_case.get("supporting_actors") or []),
+                "requirement_ids": list(use_case.get("requirement_ids") or []),
+                "preconditions": list(
+                    (specs_by_id.get(str(use_case["id"])) or {}).get("preconditions") or []
+                ),
+                "trigger": str(
+                    (specs_by_id.get(str(use_case["id"])) or {}).get("trigger") or ""
+                ),
+                "main_scenario": list(
+                    (specs_by_id.get(str(use_case["id"])) or {}).get("main_scenario") or []
+                ),
+                "extensions": list(
+                    (specs_by_id.get(str(use_case["id"])) or {}).get("extensions") or []
+                ),
+                "success_guarantee": list(
+                    (specs_by_id.get(str(use_case["id"])) or {}).get("success_guarantee")
+                    or []
+                ),
+            }
+            for use_case in use_cases
+            if str(use_case["id"]) in specs_by_id
+        ],
+        "relationships": {
+            key: relationships.get(key, [])
+            for key in (
+                "associations",
+                "includes",
+                "extends",
+                "generalizations",
+                "derived_use_cases",
+            )
+        },
+    }
+
+
 def _normalize_step_ref(value: object) -> str | None:
     match = re.fullmatch(r"(?:main:|step\s*)?(\d+)", _clean_text(value), re.IGNORECASE)
     if not match:
@@ -518,6 +586,26 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
         "repair_iters": 0,
         "repair_stopped": "single_pass" if specs_by_id else "not_applicable",
     }
+    if specs_by_id:
+        review = validator.review(
+            rules.DRAW_DIAGRAM,
+            _relationship_review_payload(
+                cast(list[dict], state.get("classified") or []),
+                actors,
+                use_cases,
+                specs_by_id,
+                relations,
+            ),
+            prefix="rel",
+            source="relationships.semantic_validator",
+            confirm_violations=True,
+        )
+        relations["relationship_issues"] = review.findings
+        relations["semantic_status"] = review.status
+        relations["unexamined_rules"] = list(review.unexamined)
+        relations["repair_stopped"] = (
+            "clean" if review.status == validator.OK and not review.findings else "unresolved"
+        )
     return {"relationships": relations, "phase": "relationships"}
 
 
@@ -585,6 +673,7 @@ def check_relationships(state: AgentState) -> dict:
         "dropped_refs": rel.get("dropped_refs", []),
         "relationship_issues": rel.get("relationship_issues", []),
         "semantic_status": rel.get("semantic_status", "unknown"),
+        "unexamined_rules": rel.get("unexamined_rules", []),
         "repair_iters": rel.get("repair_iters", 0),
         "repair_stopped": rel.get("repair_stopped", "unknown"),
     }

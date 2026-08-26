@@ -325,7 +325,7 @@ SEEDED_SEMANTIC: tuple[SeededSemantic, ...] = (
                                  "origin": "failure", "rationale": "error path"}]),
     ),
     SeededSemantic(
-        "rel.extend-is-only-optional-interruption", rules.DRAW_DIAGRAM,
+        "rel.extend-adds-conditional-behavior", rules.DRAW_DIAGRAM,
         "단순 후속 순서(주문 후 배송)를 extend로 표현했다",
         _rel(extends=[{"base_use_case": "Place an order",
                        "extending_use_case": "Ship the order",

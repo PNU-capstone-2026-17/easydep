@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     # --- 요구사항 분석 에이전트 설정 ---
     # materials의 파인튜닝 BERT(FR/NFR) 모델 디렉토리. (0=NFR, 1=FR)
     bert_model_path: str = "materials/BERT_FR_NFR_Classifier/bert_model"
-    # BERT 검증 노드 사용 여부. False면 torch 로드를 건너뛰고 LLM 분류만 사용
-    # (경량 배포/AKS 메모리 제약 시 유용).
+    # BERT 분류기 사용 여부. False면 torch 로드를 건너뛴다. 이 모드에서 원문 요구사항을
+    # 분류할 수는 없으며, 실행 입력이 이미 FR/NFR로 분류된 체크포인트여야 한다.
     enable_bert_verify: bool = True
     # (2~4단계는 항상 실행한다. 예전 enable_pipeline_stubs 게이트는 제거됨.)
     # step3 명세 생성·semantic 커버리지 채점의 동시 LLM 호출 상한(UC별 병렬).
@@ -44,8 +44,6 @@ class Settings(BaseSettings):
     spec_concurrency: int = 8
     # step3 명세 반성(reflection) 루프: 검증 실패 시 수술적 지시로 재생성하는 최대 횟수.
     max_repair_iters: int = 2
-    # step2 커버리지 강제-수리 루프: 고아 FR을 재프롬프트로 보충하는 최대 횟수.
-    max_coverage_iters: int = 2
     # 파이프라인 되돌아가기(supervisor) 최대 횟수. 0이면 끈다.
     #
     # **기본값이 0인 이유는 측정 결과다**(2026-07-26, toystore, 조건별 2회):

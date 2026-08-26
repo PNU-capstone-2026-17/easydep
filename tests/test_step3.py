@@ -546,6 +546,25 @@ def test_ungrounded_finding_is_dropped_and_not_reported_as_clean(monkeypatch):
     assert report["unvalidated_ucs"] == ["UC1"]      # 리포트가 확인 못 한 사실을 싣는다
 
 
+def test_partially_examined_spec_review_is_not_reported_as_clean(monkeypatch):
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec())
+    monkeypatch.setattr(
+        s3.validator,
+        "review",
+        lambda *args, **kwargs: s3.validator.Review(
+            status=s3.validator.OK,
+            unexamined=("spec.no-hidden-branching",),
+        ),
+    )
+
+    state = s3.generate_specs(
+        {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
+    )
+
+    assert state["use_case_specs"][0]["semantic_status"] == "ungrounded"
+    assert s3.check_specs(state)["spec_report"]["unvalidated_ucs"] == ["UC1"]
+
+
 def test_dead_semantic_validator_is_not_reported_as_clean(monkeypatch):
     """검증기가 죽으면 "결함 없음"이 아니라 "확인하지 못함"이어야 한다.
 

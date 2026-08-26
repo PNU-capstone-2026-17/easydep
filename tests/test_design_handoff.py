@@ -90,6 +90,58 @@ def test_handoff_rejects_existing_requirements_report_blockers():
     ("update", "message"),
     [
         (
+            {"requirement_source_issues": ["RR1 has no RAW source"]},
+            "requirement source mapping",
+        ),
+        (
+            {
+                "resource_intake": {
+                    "valid": False,
+                    "errors": ["[required] provider missing"],
+                    "questions": [
+                        {"field": "provider", "kind": "missing"},
+                    ],
+                }
+            },
+            "resource contract is missing",
+        ),
+        (
+            {
+                "capability_contract": {
+                    "capabilities": [
+                        {"id": "zone_placement", "decision": "needsQuestion"},
+                    ]
+                }
+            },
+            "capability contract needs answers",
+        ),
+    ],
+)
+def test_handoff_rejects_incomplete_requirement_contracts(update, message):
+    with pytest.raises(DesignContractError, match=message):
+        DesignAdapter._state(_requirements_result(**update))
+
+
+def test_handoff_allows_suggested_capacity_questions():
+    state = DesignAdapter._state(
+        _requirements_result(
+            resource_intake={
+                "valid": True,
+                "errors": [],
+                "questions": [
+                    {"field": "minMemoryGiB", "kind": "suggested"},
+                ],
+            }
+        )
+    )
+
+    assert state["resource_intake"]["questions"][0]["kind"] == "suggested"
+
+
+@pytest.mark.parametrize(
+    ("update", "message"),
+    [
+        (
             {"use_case_specs": []},
             "did not produce use_case_specs",
         ),

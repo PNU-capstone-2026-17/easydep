@@ -51,7 +51,7 @@ RUN mkdir -p /app/.easydep /app/.gradle-cache \
 # weights stage에서 되살린 BERT 체크포인트(약 +417MB). chown -R 뒤에 복사해야
 # 417MB가 통째로 한 레이어 더 쌓이지 않는다. 읽기 전용이라 root 소유로 둬도 된다.
 # 경량 이미지가 필요하면 아래 두 줄을 지우고 ENABLE_BERT_VERIFY=false 로 배포하면
-# LLM 분류만으로 동작한다.
+# 이미 FR/NFR로 분류된 체크포인트만 실행할 수 있다.
 ENV BERT_MODEL_CACHE_DIR=/app/.easydep/models/bert_fr_nfr
 COPY --from=weights /opt/bert_model /app/.easydep/models/bert_fr_nfr
 

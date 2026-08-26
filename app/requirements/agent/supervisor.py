@@ -39,6 +39,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from app.core import cloud_contract
 from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.knowledge import rules
@@ -66,6 +67,63 @@ def blocking_issues(state: dict, through: str = "relationships") -> list[str]:
         raise ValueError(f"Unknown requirements handoff scope: {through!r}")
 
     issues: list[str] = []
+
+    source_issues = state.get("requirement_source_issues") or []
+    if source_issues:
+        findings = sorted({str(issue) for issue in source_issues})
+        issues.append(
+            f"requirement source mapping has unresolved issues: {', '.join(findings)}"
+        )
+
+    resource_intake = state.get("resource_intake") or {}
+    if isinstance(resource_intake, dict):
+        resource_errors = sorted(
+            {str(error) for error in resource_intake.get("errors") or []}
+        )
+        current_resource_values = (
+            resource_intake.get("draft")
+            or state.get("resource_spec")
+            or {}
+        )
+        missing_required_fields = set(
+            cloud_contract.missing_fields(current_resource_values)
+        )
+        required_questions = sorted(
+            {
+                str(question.get("field") or "unknown field")
+                for question in (resource_intake.get("questions") or [])
+                if isinstance(question, dict)
+                and question.get("kind") != "suggested"
+                and question.get("field") in missing_required_fields
+            }
+        )
+        if resource_errors or required_questions:
+            detail = []
+            if resource_errors:
+                detail.append(f"errors: {', '.join(resource_errors)}")
+            if required_questions:
+                detail.append(f"required questions: {', '.join(required_questions)}")
+            status = "missing" if not state.get("resource_spec") else "invalid"
+            issues.append(f"resource contract is {status}: {'; '.join(detail)}")
+
+    capability_contract = state.get("capability_contract") or {}
+    if isinstance(capability_contract, dict):
+        unresolved_capabilities = sorted(
+            {
+                str(capability.get("id") or f"item {index}")
+                for index, capability in enumerate(
+                    capability_contract.get("capabilities") or [], start=1
+                )
+                if isinstance(capability, dict)
+                and capability.get("decision") == "needsQuestion"
+            }
+        )
+        if unresolved_capabilities:
+            issues.append(
+                "capability contract needs answers for: "
+                f"{', '.join(unresolved_capabilities)}"
+            )
+
     review = state.get("model_review") or {}
     if isinstance(review, dict):
         issues.extend(f"model review: {issue}" for issue in review.get("issues") or [])
@@ -91,6 +149,21 @@ def blocking_issues(state: dict, through: str = "relationships") -> list[str]:
         return list(dict.fromkeys(issues))
 
     specs = state.get("spec_report") or {}
+    if not specs and state.get("use_case_specs"):
+        raw_specs = state.get("use_case_specs") or []
+        specs = {
+            "total_issues": sum(len(spec.get("issues") or []) for spec in raw_specs),
+            "failed_ucs": [
+                spec.get("use_case_id")
+                for spec in raw_specs
+                if spec.get("generated") is False
+            ],
+            "unvalidated_ucs": [
+                spec.get("use_case_id")
+                for spec in raw_specs
+                if spec.get("semantic_status") in {"failed", "ungrounded"}
+            ],
+        }
     if isinstance(specs, dict):
         total = specs.get("total_issues", 0) or 0
         if total:
@@ -105,7 +178,10 @@ def blocking_issues(state: dict, through: str = "relationships") -> list[str]:
     if through == "specs":
         return list(dict.fromkeys(issues))
 
-    relationships = state.get("relationship_report") or {}
+    relationships = {
+        **(state.get("relationships") or {}),
+        **(state.get("relationship_report") or {}),
+    }
     if isinstance(relationships, dict):
         for field, label in (
             ("relationship_issues", "relationship report"),
@@ -116,6 +192,17 @@ def blocking_issues(state: dict, through: str = "relationships") -> list[str]:
             findings = relationships.get(field) or []
             if findings:
                 issues.append(f"{label}: {', '.join(map(str, findings))}")
+        unexamined = relationships.get("unexamined_rules") or []
+        if unexamined:
+            issues.append(
+                "relationship review left rules unexamined: "
+                f"{', '.join(map(str, unexamined))}"
+            )
+        if relationships.get("semantic_status") in {"failed", "ungrounded"}:
+            issues.append(
+                "relationship review was not validated: "
+                f"{relationships['semantic_status']}"
+            )
     return list(dict.fromkeys(issues))
 
 # `stages`는 **함수 안에서** import한다. 단계 함수들이 이 모듈의 `feedback_for`를 쓰는데

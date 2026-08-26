@@ -678,8 +678,10 @@ RULES: tuple[Rule, ...] = (
         stage=DRAW_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "Failures, errors, and cancellations stay inline extensions of their use "
-            "case. Do not promote them to <<extend>> or to a derived use case."
+            "A scenario branch whose sole purpose is handling a failure, error, or cancellation "
+            "and which has no independent actor goal and observable result stays an inline "
+            "extension of its use case. Do not promote a mere failure branch to <<extend>> or "
+            "to a derived use case."
         ),
         citation=f"{_BOOK}, p.109 (Ch. 8, Extensions)",
         evidence="cockburn-page",
@@ -689,23 +691,19 @@ RULES: tuple[Rule, ...] = (
         probe=("extension", "fail"),
     ),
     Rule(
-        id="rel.extend-is-only-optional-interruption",
+        id="rel.extend-adds-conditional-behavior",
         stage=DRAW_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "<<extend>> is for genuinely optional, interrupting, electively triggered "
-            "behaviour — not for failure cases and not for ordinary 'after A do B' order."
+            "Use <<extend>> when an extending use case adds behavior at an explicitly "
+            "referenced extension point of a base use case that remains meaningful on its "
+            "own. A condition may govern insertion, including an actor's optional choice. "
+            "Do not use <<extend>> for mandatory ordinary continuation or mere temporal order."
         ),
-        citation=f"{_BOOK}, Ch. 10 (Linking Use Cases), Extension Use Cases at p.115",
-        evidence="cockburn-extrapolated",
-        caveat=(
-            "확장 유스케이스를 다루는 절과 페이지는 확인했다. 'optional·interrupting·"
-            "electively triggered에만 쓴다'는 좁힘은 우리가 세운 것이다."
-        ),
+        citation="OMG UML 2.5.1, §18.1.3 (Extend semantics)",
+        evidence="uml-spec",
         owner="relationships",
         judged_by=JUDGED_VALIDATOR,
-        pages=(115,),
-        probe=("extension use cases",),
     ),
     Rule(
         id="rel.generalization-keeps-meaning",

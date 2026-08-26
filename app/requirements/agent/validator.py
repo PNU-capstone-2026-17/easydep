@@ -157,6 +157,7 @@ def review(
     source: str,
     subject: str | None = None,
     rule_ids: tuple[str, ...] | None = None,
+    confirm_violations: bool = False,
 ) -> Review:
     """`stage`의 규칙으로 `artifact`를 판정한다.
 
@@ -165,6 +166,8 @@ def review(
     하는 것은 결과물이 규칙을 지켰는지다.
 
     prefix는 지적 문구의 머리표(`[semantic]`·`[rel]`), source는 저하 기록의 이름이다.
+    `confirm_violations`이면 첫 판정에서 위반한 규칙만 한 번 더 독립적으로 묻고, 두 판정이
+    모두 위반이라고 한 규칙만 지적으로 남긴다. 깨끗한 첫 판정에는 추가 호출하지 않는다.
     """
     if not settings.enable_semantic_validator:
         return Review(status=DISABLED)
@@ -206,4 +209,43 @@ def review(
     # 아무 규칙도 판정하지 않았거나, 낸 지적이 전부 근거 없어 버려졌다 → 판정을 못 얻었다.
     if not examined or (dropped and not findings):
         return Review(status=UNGROUNDED, unexamined=unexamined)
-    return Review(findings=findings, status=OK, unexamined=unexamined)
+    initial = Review(findings=findings, status=OK, unexamined=unexamined)
+    if not confirm_violations or not findings:
+        return initial
+
+    flagged_ids = tuple(dict.fromkeys(
+        rule_id
+        for finding in findings
+        if (rule_id := rules.rule_of(finding)) is not None
+    ))
+    confirmation = review(
+        stage,
+        artifact,
+        prefix=prefix,
+        source=source,
+        subject=subject,
+        rule_ids=flagged_ids,
+    )
+    combined_unexamined = tuple(dict.fromkeys(
+        (*initial.unexamined, *confirmation.unexamined)
+    ))
+    if confirmation.status != OK:
+        # 확인하지 못한 최초 지적을 결함으로 확정하지 않되, 실패를 깨끗함으로 바꾸지도 않는다.
+        return Review(
+            status=confirmation.status,
+            unexamined=tuple(dict.fromkeys((*combined_unexamined, *flagged_ids))),
+        )
+
+    confirmed_ids = {
+        rule_id
+        for finding in confirmation.findings
+        if (rule_id := rules.rule_of(finding)) is not None
+    }
+    return Review(
+        findings=[
+            finding for finding in initial.findings
+            if rules.rule_of(finding) in confirmed_ids
+        ],
+        status=OK,
+        unexamined=combined_unexamined,
+    )
