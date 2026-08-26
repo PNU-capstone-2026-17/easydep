@@ -49,6 +49,7 @@ from app.implementation.agents.provider import (
     provider_retry_delay,
 )
 from app.implementation.agents.verification.build import (
+    WorkspaceVerificationError,
     production_placeholder_markers,
     production_test_library_markers,
     persistence_reserved_identifier_markers,
@@ -1552,6 +1553,12 @@ TestRestTemplate http; CourseRepository courseRepository;
             ),
             "contracts",
             "sequence",
+            {
+                "createOrder": {
+                    "control": "RegistrationControl",
+                    "method": "register",
+                }
+            },
         )
 
         self.assertIn("POST /orders", prompt)
@@ -1560,6 +1567,18 @@ TestRestTemplate http; CourseRepository courseRepository;
         self.assertIn("every documented status", prompt)
         self.assertIn("Do not pass an API", prompt)
         self.assertIn("public no-argument constructor", prompt)
+        self.assertIn("com.example.demo.bce.RegistrationControl", prompt)
+        self.assertIn("Never derive a resource-named Control", prompt)
+
+    def test_workspace_verification_error_keeps_root_cause_and_tail(self) -> None:
+        error = WorkspaceVerificationError({
+            "testResults": "ROOT CAUSE: assertion failed\n" + ("trace line\n" * 300),
+        })
+
+        message = str(error)
+        self.assertIn("ROOT CAUSE: assertion failed", message)
+        self.assertIn("verification output truncated", message)
+        self.assertTrue(message.endswith("trace line\ntrace line"))
 
     def test_production_placeholder_gate_ignores_tests_and_rejects_main_java(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

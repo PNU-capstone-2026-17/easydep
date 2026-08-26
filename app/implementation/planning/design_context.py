@@ -1051,6 +1051,16 @@ def render_api_adapter_prompt(
     sequence: str,
     control_bindings: dict[str | None, dict[str, object]] | None = None,
 ) -> str:
+    bound_controls = sorted(
+        {
+            str(binding.get("control")).strip()
+            for binding in (control_bindings or {}).values()
+            if isinstance(binding, dict) and str(binding.get("control") or "").strip()
+        }
+    )
+    control_imports = "\n".join(
+        f"- `{spec.base_package}.bce.{name}`" for name in bound_controls
+    ) or "- No reviewed Control binding is available; do not invent one."
     operations = "\n".join(
         f"- {operation.method} {operation.path}: "
         + ", ".join(
@@ -1082,6 +1092,9 @@ Rules:
 - Follow the reviewed API-to-Control binding below when one is supplied. Its `arguments` map
   is the only permitted HTTP-to-Control value flow and its `outcomes` map is the required
   Control-result-to-HTTP-status mapping. Do not replace it with a resource-name guess.
+- Use only the exact Control collaborators listed below and import them from the shown BCE
+  package. Never derive a resource-named Control from the API name. If no reviewed binding
+  exists, report the design gap instead of guessing a collaborator.
 - Map every documented OpenAPI response status below to an explicit, observable Control outcome.
   A null result must not be assigned an arbitrary status. If the generated contracts cannot
   represent a documented response, fail compilation rather than concealing the design gap.
@@ -1107,6 +1120,10 @@ Rules:
 ```json
 {json.dumps(control_bindings or {}, ensure_ascii=False, indent=2)}
 ```
+
+## Exact permitted Control collaborators
+
+{control_imports}
 
 ## Exact generated API and BCE contracts
 

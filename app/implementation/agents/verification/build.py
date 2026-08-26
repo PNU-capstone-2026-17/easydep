@@ -142,7 +142,15 @@ class WorkspaceVerificationError(RuntimeError):
         )
         if output == "No verification output was captured" and evidence.get("command"):
             output = f"command={evidence['command']}; {output}"
-        super().__init__("Agent workspace verification failed: " + output[-1000:])
+        if len(output) > 1000:
+            # The beginning normally contains the assertion/root exception,
+            # while the tail contains the final stack frames. Preserve both.
+            output = (
+                output[:600]
+                + "\n... [verification output truncated] ...\n"
+                + output[-350:]
+            )
+        super().__init__("Agent workspace verification failed: " + output)
 
 
 def verification_timeout_seconds() -> int:
