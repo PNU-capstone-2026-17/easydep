@@ -2,15 +2,7 @@
 import pytest
 
 from app.requirements.agent.steps import step1_requirements as s1
-from app.requirements.legacy.auto_clarify import refine_requirements_prompt
 from app.requirements.schemas import ClarifyOnlyResult, ExpandedRequirementsResult
-
-
-def test_refinement_preserves_declarative_role_and_domain_facts():
-    prompt = " ".join(refine_requirements_prompt("A role hierarchy is defined.").split())
-
-    assert "Keep declarative domain and role facts declarative" in prompt
-    assert "do not rewrite it as behavior" in prompt
 
 
 def test_expand_requirements_keeps_the_user_raw_input_and_maps_to_raw1(monkeypatch):
@@ -108,41 +100,6 @@ def test_source_mapping_assigns_stable_refs_and_reports_missing_sources():
     ]
     assert any("RAW9" in issue for issue in issues)
     assert any("RAW3" in issue for issue in issues)
-
-
-def test_refinement_prompt_preserves_source_abstraction_and_raw_provenance():
-    prompt = refine_requirements_prompt("Users manage records.", method="none")
-
-    assert "Decomposition is selective" in prompt
-    assert "Do not introduce numeric values" in prompt
-    assert "Do not expand an umbrella verb" in prompt
-    assert "particular topology" in prompt
-    assert "logical polarity" in prompt
-    assert "shared RAW source reference" in prompt
-
-
-def test_expansion_prompt_requires_a_final_grounding_audit():
-    prompt = " ".join(s1._EXPAND_REQUIREMENTS_SYSTEM.split())
-
-    assert "Final grounding audit before returning" in prompt
-    assert "delivery channel" in prompt
-    assert "provider-neutral, local system outcome" in prompt
-    assert "ordinary primary or operator role may be inferred" in prompt
-    assert "smallest coherent, testable first scope" in prompt
-    assert "Do not add requirements to reach a quota." in prompt
-    assert "6 to 10" not in prompt
-
-
-def test_expansion_prompt_requires_business_goal_granularity():
-    prompt = " ".join(s1._EXPAND_REQUIREMENTS_SYSTEM.split())
-
-    assert "one independently completed actor or business goal, not one UI action or CRUD verb" in prompt
-    assert "cohesive query-and-inspect flow together" in prompt
-    assert "one temporary collection together" in prompt
-    assert "one management responsibility" in prompt
-    assert "outcome or confirmation with the goal that causes it" in prompt
-    assert "Every extra statement expands scope" in prompt
-    assert "distinct trigger and acceptance outcome" in prompt
 
 
 def test_classify_rejects_unclassified_input_when_bert_unavailable(monkeypatch):

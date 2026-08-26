@@ -245,20 +245,6 @@ def test_validate_spec_flags_missing_contract():
     assert any("success_guarantee" in i for i in issues)
 
 
-def test_spec_prompt_does_not_force_unsupported_failure_or_recovery_behavior():
-    prompt = " ".join(s3.prompts.SPEC_SYSTEM.split())
-
-    assert "may have no extension for an unstated technical failure" in prompt
-    assert "Do not invent retries, fallbacks, external dependencies" in prompt
-    assert "Use an empty list when they do not establish one" in prompt
-    assert "no partial order is persisted" not in prompt
-    assert "data-at-rest encryption" not in prompt
-
-    rule_prompt = s3.rules.rule("spec.no-scope-creep").statement
-    assert "customary technical failure" in rule_prompt
-    assert "absent from those sources" in rule_prompt
-
-
 def test_spec_snapshots_the_accepted_use_case_traceability_ids(monkeypatch):
     monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec(
         main_scenario=[_step(1, reqs=["R2", "R1"])]

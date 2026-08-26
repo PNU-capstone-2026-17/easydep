@@ -391,21 +391,56 @@ class UseCaseSpec(BaseModel):
 # The relationship projection keeps display names for consumers, but every
 # relationship join is made through a stable ``use_case_id``.
 # ----------------------------------------------------------------------------
-class RelationshipCandidateDecision(BaseModel):
-    """The sole model-controlled relationship operation: approve or reject one candidate."""
+class IncludeSelection(BaseModel):
+    """Semantic decision for one evidence-bounded shared-step candidate."""
 
     model_config = ConfigDict(extra="forbid")
 
-    candidate_id: str = Field(description="ID copied exactly from the provided candidate list.")
+    candidate_id: str = Field(description="ID copied exactly from the supplied candidates.")
     decision: Literal["approve", "reject"]
+    included_use_case_name: str = Field(
+        default="",
+        max_length=60,
+        description="Concise shared behavior name; required only when approved.",
+    )
+
+
+class ExtendSelection(BaseModel):
+    """One semantic ``extend`` selection inside the supplied use-case/step space."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_use_case_id: str = Field(
+        description="Stable ID of the existing use case that owns the extension point."
+    )
+    extending_use_case_id: str = Field(
+        description="Stable ID of the existing optional use case."
+    )
+    extension_point: str = Field(
+        description="Exact supplied base step reference, formatted as main:<step number>."
+    )
+    extension_point_name: str = Field(
+        min_length=1,
+        max_length=60,
+        description=(
+            "Short natural-language location in the base behavior, such as 'after schedule "
+            "presented'; never a code identifier or the extending action name."
+        ),
+    )
+    condition: str = Field(
+        min_length=1,
+        max_length=60,
+        description="Concise observable condition that activates the optional use case.",
+    )
 
 
 class RelationshipModel(BaseModel):
-    """Model output for Step 4; it can decide candidates but cannot create relationships."""
+    """Bounded semantic choices for shared ``include`` and existing-UC ``extend``."""
 
     model_config = ConfigDict(extra="forbid")
 
-    candidate_decisions: list[RelationshipCandidateDecision] = Field(default_factory=list)
+    includes: list[IncludeSelection] = Field(default_factory=list)
+    extends: list[ExtendSelection] = Field(default_factory=list)
 
 
 # ----------------------------------------------------------------------------

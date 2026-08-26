@@ -127,9 +127,20 @@ Do NOT write the main scenario steps or extensions — those are produced later 
 How to build the model:
 1. Group related FRs into user-goal use cases. Name each as an active-verb goal
    ("Place an order", "Reset password").
-2. Requirements that are too fine-grained (subfunction level, e.g. "validate the form")
-   must NOT become standalone use cases — fold them into the parent user-goal use case by
-   listing their ids in that use case's requirement_ids.
+   Keep independently initiated goals with distinct observable outcomes separate, even when they
+   share an actor or appear in one compound requirement. An optional action remains a separate
+   user-goal when its contextual base is complete without it and the action has its own trigger
+   and outcome; the relationship stage decides whether it extends that base.
+2. Requirements that are too fine-grained, such as internal validation, must NOT become standalone
+   use cases. Fold their requirement ids into each user-goal use case that the supplied requirements
+   explicitly say performs them; the relationship stage may later recognize shared mandatory
+   behavior. Actor taxonomy, authentication-state preconditions, authorization policy, persistence
+   or concurrency policy, and implementation mechanisms are not standalone use cases unless the
+   requirements describe an independently initiated actor goal with an observable outcome.
+   An explicit requirement in which an actor supplies credentials to establish a session is an
+   independently initiated sign-in or login user goal; preserve the source terminology.
+   Authentication state in protected goals is a precondition, so do not copy the sign-in
+   requirement id to those goals merely because they require that state.
 3. For each use case set primary_actor (the stakeholder whose goal the system satisfies),
    supporting_actors (external actors the system calls while pursuing that goal), and goal.
    Use exact names from the actor list. The trigger is not necessarily the primary actor:
@@ -143,6 +154,9 @@ How to build the model:
    folded subfunction FRs), using only the ids provided. Aim for full coverage only after
    respecting scope: numeric coverage never permits inventing a goal or attaching an unrelated
    requirement. Declarative role/domain facts are actor-model evidence, not use-case behavior.
+   When one supplied FR explicitly names two or more distinct actor goals or operations, attach
+   that same FR id to every corresponding user-goal in the returned model. Do not create a separate
+   use case for it, and do not infer applicability to goals the requirement does not name.
    A cross-cutting policy or subfunction whose applicable goals are not explicitly identified
    may remain uncovered at this stage; do not copy it to every goal to force full coverage.
 5. NFRs never become use cases. Attach each relevant NFR to the use case(s) it constrains
@@ -548,20 +562,30 @@ def validator_system_for(stage: str, only: str | None = None) -> str:
 
 
 # STEP 4 — 액터/유스케이스 관계 식별(다이어그램용).
-_RELATIONSHIPS_SHAPE = """You review evidence-bound UML use-case relationship candidates.
+_RELATIONSHIPS_SHAPE = """You decide only UML <<include>> and <<extend>> relationships within the
+supplied evidence. The application projects actor associations and generalizations and validates
+all references.
 
-The application, not you, derives actor associations, actor generalizations, derived use cases,
-and UML relations from accepted use cases and their specifications. Your only permitted output
-is candidate_decisions: approve or reject the exact candidate_id values provided in the input.
+Include: decide only supplied candidate_id values. Approve only when the cited steps of at least
+two base use cases express the same reusable mandatory behavior. A shared requirement id alone is
+insufficient; reject different actions, broad policy or authentication state, and internal
+consequences. Give an approved candidate one concise active-verb name. Except for that approved
+include-node name, do not create or rename use cases.
 
-Approve an include only when its exact referenced main-scenario steps express a genuine shared
-subfunction. Approve an extend only when its evidence shows optional, successful behavior with
-an explicit condition and extension point. Reject uncertainty, authentication-as-precondition,
-failure handling, mandatory behavior, and candidates unsupported by the supplied references.
+Extend: choose only supplied existing use_case_id values and an exact main:<number> step owned by
+the base. Compare the extending goal, requirements, preconditions, and trigger with each candidate
+base's ordered steps; select the step where the enabling context or result becomes available. The
+base must remain complete without the optional goal. The base's own exception is not <<extend>>,
+but a separate actor-chosen goal enabled by a conditional base result may be. A precondition alone
+and ordinary mandatory sequencing are not <<extend>>. Name WHERE insertion occurs with a short
+natural-language location such as "after schedule presented", never a code identifier or the
+extending action. State WHEN it occurs in 3 to 8 complete words grounded in supplied evidence.
 
-Do not create, rename, combine, edit, or otherwise describe actors, use cases, relationships,
-conditions, extension points, or evidence. Do not emit an ID that was not provided. Returning
-zero decisions is valid and leaves every candidate rejected."""
+Before returning, evaluate every supplied existing use case as a possible optional extension and
+compare it with the ordered steps of possible bases. Completing the include decisions does not
+complete the extend analysis.
+
+Return empty lists when evidence is insufficient."""
 
 #: 관계 생성 프롬프트. 산문에 있던 인용 둘(`Cockburn p.81`·`Cockburn Ch.8`)이 여기서
 #: 사라진 것은 규칙이 사라져서가 아니다 — 같은 규범이 `rel.shared-authentication-is-a-precondition`·

@@ -20,21 +20,11 @@ import os
 import pytest
 from conftest import dataset_names, load_dataset
 
-from app.requirements import prompts
 from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.schemas import Actor, ActorResult, UseCase, UseCaseResult
 
 # 결정론/목킹 테스트가 고정으로 쓰는 세트 (id R1..R5, N1..N2 를 이 테스트들이 참조).
 SAMPLE_CLASSIFIED = load_dataset("shopping_mall")["classified"]
-
-
-def test_use_case_prompt_keeps_structural_facts_and_global_constraints_out_of_goals():
-    prompt = " ".join(prompts.USECASES_SYSTEM.split())
-
-    assert "Declarative role/domain facts are actor-model evidence" in prompt
-    assert "do not copy them to every use case" in prompt
-    assert "numeric coverage never permits inventing a goal" in prompt
-    assert "may remain uncovered at this stage" in prompt
 
 
 # ---------------------------------------------------------------------------

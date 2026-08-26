@@ -48,9 +48,8 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
     try:
         result = subprocess.run(
             plantuml_command("-syntax", "-pipe"),
-            input=puml_text,
+            input=puml_text.encode("utf-8"),
             capture_output=True,
-            text=True,
             stdin=None,
             timeout=30,
             check=False,
@@ -60,14 +59,16 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
     except subprocess.TimeoutExpired:
         return ["PlantUML syntax check timed out."]
 
-    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    stderr = result.stderr.decode("utf-8", errors="replace")
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
     if lines and lines[0].upper() == "ERROR":
         location = f"line {lines[1]}" if len(lines) > 1 else "unknown line"
         message = " ".join(lines[2:]) or "Syntax error"
         return [f"{location}: {message}"]
 
     if result.returncode != 0:
-        detail = f"{result.stdout}\n{result.stderr}".strip()
+        detail = f"{stdout}\n{stderr}".strip()
         return [detail or "PlantUML syntax check failed."]
 
     return []

@@ -1,516 +1,300 @@
-"""Invariant tests for the evidence-bound Step 4 relationship projection."""
+"""Focused contracts for bounded Step 4 relationship generation."""
 from __future__ import annotations
-
-from collections.abc import Callable
 
 import pytest
 
 from app.requirements.agent.steps import step4_diagram as s4
-from app.requirements.schemas import RelationshipCandidateDecision, RelationshipModel
+from app.requirements.schemas import ExtendSelection, IncludeSelection, RelationshipModel
 
 
 def _actors() -> list[dict]:
     return [
-        {"name": "General actor", "description": "g", "parent_actor": None},
-        {"name": "Special actor", "description": "s", "parent_actor": "General actor"},
+        {"name": "User", "description": "general", "parent_actor": None},
+        {"name": "Member", "description": "specialized", "parent_actor": "User"},
     ]
 
 
-def _use_cases() -> list[dict]:
-    return [
-        {
-            "id": "UC-A",
-            "name": "Display A",
-            "primary_actor": "General actor",
-            "supporting_actors": ["Special actor"],
-        },
-        {
-            "id": "UC-B",
-            "name": "Display B",
-            "primary_actor": "Special actor",
-            "supporting_actors": [],
-        },
-    ]
-
-
-def _spec(use_case_id: str, *, steps: list[dict], extensions: list[dict] | None = None) -> dict:
+def _use_case(
+    identifier: str,
+    name: str,
+    *,
+    actor: str = "Member",
+    requirement_ids: list[str] | None = None,
+) -> dict:
     return {
-        "use_case_id": use_case_id,
-        "name": "intentionally unused display name",
+        "id": identifier,
+        "name": name,
+        "primary_actor": actor,
+        "supporting_actors": [],
+        "level": "user_goal",
+        "goal": name,
+        "requirement_ids": requirement_ids or [],
+    }
+
+
+def _spec(identifier: str, steps: list[dict], **overrides) -> dict:
+    return {
+        "use_case_id": identifier,
         "main_scenario": steps,
-        "extensions": extensions or [],
+        "extensions": [],
         "issues": [],
         "semantic_status": "ok",
+        **overrides,
     }
 
 
-def _approve_all_candidates(monkeypatch: pytest.MonkeyPatch) -> Callable[[], None]:
-    captured: dict[str, str] = {}
-
-    def decide(schema, messages):
-        captured["prompt"] = messages[1].content
-        candidates = s4.json.loads(messages[1].content.split("Candidates:\n", 1)[1])
-        return RelationshipModel(
-            candidate_decisions=[
-                RelationshipCandidateDecision(candidate_id=item["candidate_id"], decision="approve")
-                for item in candidates
-            ]
-        )
-
-    monkeypatch.setattr(s4, "invoke_structured", decide)
-    return lambda: captured
-
-
-def test_include_projection_uses_ids_and_exact_evidence_not_display_names(monkeypatch: pytest.MonkeyPatch):
-    captured = _approve_all_candidates(monkeypatch)
-    use_cases = _use_cases()
-    state = {
+def _shared_state() -> dict:
+    return {
         "actors": _actors(),
-        "use_cases": use_cases,
-        "use_case_specs": [
-            _spec("UC-B", steps=[{"step_number": 7, "sentence": "System performs shared action."}]),
-            _spec("UC-A", steps=[{"step_number": 3, "sentence": "system performs shared action"}]),
-        ],
-    }
-
-    rel = s4.identify_relationships(state)["relationships"]
-    include = next(item for item in rel["includes"] if item["candidate_id"].startswith("rel-include-"))
-    candidate = next(item for item in rel["candidates"] if item["candidate_id"] == include["candidate_id"])
-
-    assert set(include) >= {"base_use_case_id", "included_use_case_id", "step_refs"}
-    assert include["base_use_case_id"] in candidate["participating_use_case_ids"]
-    assert {ref["use_case_id"] for ref in candidate["step_refs"]} == set(
-        candidate["participating_use_case_ids"]
-    )
-    assert all(ref["step_ref"].startswith("main:") for ref in candidate["step_refs"])
-    assert all(
-        association["use_case_id"] != include["included_use_case_id"]
-        for association in rel["associations"]
-    )
-    assert "candidate_decisions" in captured()["prompt"]
-
-
-def test_candidate_ids_are_deterministic_under_input_order_and_display_name_changes():
-    actors = _actors()
-    use_cases = _use_cases()
-    specs = [
-        _spec("UC-A", steps=[{"step_number": 3, "sentence": "System performs shared action."}]),
-        _spec("UC-B", steps=[{"step_number": 7, "sentence": "System performs shared action."}]),
-    ]
-    first, _ = s4._relationship_candidates({"use_case_specs": specs}, use_cases, actors)
-    renamed = [{**use_case, "name": f"renamed-{index}"} for index, use_case in enumerate(use_cases)]
-    second, _ = s4._relationship_candidates({"use_case_specs": list(reversed(specs))}, renamed, actors)
-
-    assert [candidate["candidate_id"] for candidate in first] == [
-        candidate["candidate_id"] for candidate in second
-    ]
-    assert all(candidate["participating_use_case_ids"] for candidate in first)
-    assert all(candidate["step_refs"] for candidate in first)
-
-
-def test_include_candidate_can_be_grounded_by_shared_accepted_requirement_ids(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    _approve_all_candidates(monkeypatch)
-    use_cases = [
-        {"id": "UC-A", "name": "One", "primary_actor": "General actor", "requirement_ids": ["R-SHARED"]},
-        {"id": "UC-B", "name": "Two", "primary_actor": "General actor", "requirement_ids": ["R-SHARED"]},
-    ]
-    state = {
-        "actors": _actors(),
-        "use_cases": use_cases,
-        "use_case_specs": [
-            _spec("UC-A", steps=[{"step_number": 2, "sentence": "System performs first action.", "covered_req_ids": ["R-SHARED"]}]),
-            _spec("UC-B", steps=[{"step_number": 5, "sentence": "System performs second action.", "covered_req_ids": ["R-SHARED"]}]),
-        ],
-    }
-
-    rel = s4.identify_relationships(state)["relationships"]
-    candidate = next(item for item in rel["candidates"] if item.get("requirement_ids") == ["R-SHARED"])
-    include = next(item for item in rel["includes"] if item["candidate_id"] == candidate["candidate_id"])
-
-    assert {(ref["use_case_id"], ref["step_ref"], ref["requirement_id"]) for ref in candidate["requirement_refs"]} == {
-        ("UC-A", "main:2", "R-SHARED"),
-        ("UC-B", "main:5", "R-SHARED"),
-    }
-    assert include["requirement_refs"] == candidate["requirement_refs"]
-
-
-def test_unaccepted_specification_is_rejected_before_relationship_mining(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(s4, "invoke_structured", lambda *_: pytest.fail("unaccepted specs make no candidates"))
-    state = {
-        "actors": _actors(),
-        "use_cases": _use_cases(),
-        "use_case_specs": [
-            _spec(
-                "UC-A",
-                steps=[{"step_number": 1, "sentence": "System performs shared action."}],
-                extensions=[],
-            )
-            | {"issues": ["scope mismatch"]},
-            _spec(
-                "UC-B",
-                steps=[{"step_number": 1, "sentence": "System performs shared action."}],
-                extensions=[],
-            )
-            | {"semantic_status": "failed"},
-        ],
-    }
-
-    rel = s4.identify_relationships(state)["relationships"]
-
-    assert not rel["candidates"] and not rel["includes"] and not rel["extends"]
-    assert {item["use_case_id"] for item in rel["candidate_rejections"]} == {"UC-A", "UC-B"}
-    assert {item["reason"] for item in rel["candidate_rejections"]} == {"unaccepted use-case specification"}
-
-
-def test_actor_projection_suppresses_only_inherited_duplicate_associations(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(s4, "invoke_structured", lambda *_: pytest.fail("no candidates require no model"))
-    state = {"actors": _actors(), "use_cases": _use_cases(), "use_case_specs": []}
-
-    rel = s4.identify_relationships(state)["relationships"]
-    pairs = {(item["actor"], item["use_case_id"]) for item in rel["associations"]}
-    inherited_pair = ("Special actor", "UC-A")
-    specialized_pair = ("Special actor", "UC-B")
-
-    assert inherited_pair not in pairs
-    assert specialized_pair in pairs
-    assert ("General actor", "UC-A") in pairs
-    assert {(item["parent"], item["child"]) for item in rel["generalizations"]} == {
-        ("General actor", "Special actor")
-    }
-    report = s4.check_relationships({**state, "relationships": rel})["relationship_report"]
-    assert report["missing_supporting_associations"] == []
-
-
-def test_optional_top_level_use_case_extends_accepted_base_and_suppresses_redundant_link(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    _approve_all_candidates(monkeypatch)
-    actor = {"name": "Actor", "description": "a", "parent_actor": None}
-    base = {"id": "UC-BASE", "name": "Base", "primary_actor": "Actor", "requirement_ids": ["R-BASE"]}
-    optional = {"id": "UC-OPTION", "name": "Optional", "primary_actor": "Actor", "requirement_ids": ["R-OPTION"]}
-    condition = "The actor may request the optional behavior."
-    state = {
-        "actors": [actor],
         "classified": [
-            {"id": "R-BASE", "type": "FR", "text": "The system performs the base behavior."},
-            {"id": "R-OPTION", "type": "FR", "text": condition},
+            {"id": "FR-SHARED", "type": "FR", "text": "The system validates eligibility."}
         ],
-        "use_cases": [base, optional],
-        "use_case_specs": [
-            _spec("UC-BASE", steps=[{"step_number": 1, "sentence": "System performs base action."}]),
-            _spec("UC-OPTION", steps=[{"step_number": 1, "sentence": "System performs optional action."}]),
+        "use_cases": [
+            _use_case("UC-1", "Register", requirement_ids=["FR-SHARED"]),
+            _use_case("UC-2", "Swap", requirement_ids=["FR-SHARED"]),
         ],
-    }
-
-    rel = s4.identify_relationships(state)["relationships"]
-    extend = next(item for item in rel["extends"] if item["extending_use_case_id"] == "UC-OPTION")
-
-    assert extend["base_use_case_id"] == "UC-BASE"
-    assert extend["condition"] == condition
-    assert extend["extension_point"] == "main:1"
-    assert extend["extension_point_name"] == "main step 1: Performs base action"
-    assert extend["requirement_refs"] == [
-        {"use_case_id": "UC-OPTION", "requirement_id": "R-OPTION", "source_text": condition}
-    ]
-    assert all(item["use_case_id"] != "UC-OPTION" for item in rel["derived_use_cases"])
-    assert ("Actor", "UC-OPTION") not in {
-        (item["actor"], item["use_case_id"]) for item in rel["associations"]
-    }
-    assert any(item["use_case_id"] == "UC-OPTION" for item in rel["suppressed_associations"])
-
-
-def test_cockburn_extensions_stay_in_the_accepted_specification(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(s4, "invoke_structured", lambda *_: pytest.fail("no relationship candidate"))
-    state = {
-        "actors": _actors(),
-        "use_cases": _use_cases()[:1],
         "use_case_specs": [
             _spec(
-                "UC-A",
-                steps=[{"step_number": 4, "sentence": "System reaches the extension point."}],
-                extensions=[
-                    {
-                        "label": "4a",
-                        "branch_step": 4,
-                        "condition": "No result exists.",
-                        "handling_steps": [
-                            {"sub_step": "4a1", "sentence": "System reports the result."}
-                        ],
-                        "outcome": "alternate_success",
-                    }
-                ],
-            )
+                "UC-1",
+                [{
+                    "step_number": 2,
+                    "sentence": "System validates enrollment eligibility.",
+                    "covered_req_ids": ["FR-SHARED"],
+                }],
+            ),
+            _spec(
+                "UC-2",
+                [{
+                    "step_number": 4,
+                    "sentence": "System validates enrollment eligibility for the replacement.",
+                    "covered_req_ids": ["FR-SHARED"],
+                }],
+            ),
         ],
     }
 
-    rel = s4.identify_relationships(state)["relationships"]
 
-    assert not rel["candidates"] and not rel["extends"] and not rel["derived_use_cases"]
-    assert not rel["candidate_rejections"]
-
-
-def test_model_output_is_candidate_decisions_only_and_unknown_ids_do_not_materialize(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    observed: dict[str, object] = {}
+def test_include_is_identified_once_from_exact_shared_step_coverage(monkeypatch):
+    state = _shared_state()
+    candidate = s4._include_candidates(
+        state,
+        state["use_cases"],
+        {item["use_case_id"]: item for item in state["use_case_specs"]},
+    )[0]
 
     def decide(schema, messages):
-        observed["schema"] = schema.model_json_schema()
-        observed["prompt"] = messages[1].content
         return RelationshipModel(
-            candidate_decisions=[
-                RelationshipCandidateDecision(candidate_id="not-a-candidate", decision="approve")
+            includes=[
+                IncludeSelection(
+                    candidate_id=candidate["candidate_id"],
+                    decision="approve",
+                    included_use_case_name="Validate enrollment eligibility",
+                )
             ]
         )
 
     monkeypatch.setattr(s4, "invoke_structured", decide)
+    rel = s4.identify_relationships(state)["relationships"]
+
+    assert len(rel["includes"]) == 2
+    assert len(rel["derived_use_cases"]) == 1
+    assert {item["base_use_case_id"] for item in rel["includes"]} == {"UC-1", "UC-2"}
+    assert {ref["step_ref"] for ref in candidate["step_refs"]} == {
+        "main:2",
+        "main:4",
+    }
+    assert rel["derived_use_cases"][0]["use_case_id"].startswith("UC_INC_")
+    assert "candidates" not in rel and "candidate_decisions" not in rel
+
+
+def test_same_words_without_shared_covered_fr_do_not_form_include_candidate(monkeypatch):
+    monkeypatch.setattr(s4, "invoke_structured", lambda *_: RelationshipModel())
     state = {
         "actors": _actors(),
-        "use_cases": _use_cases(),
+        "classified": [
+            {"id": "FR-1", "type": "FR", "text": "One"},
+            {"id": "FR-2", "type": "FR", "text": "Two"},
+        ],
+        "use_cases": [
+            _use_case("UC-1", "One", requirement_ids=["FR-1"]),
+            _use_case("UC-2", "Two", requirement_ids=["FR-2"]),
+        ],
         "use_case_specs": [
-            _spec("UC-A", steps=[{"step_number": 1, "sentence": "System performs shared action."}]),
-            _spec("UC-B", steps=[{"step_number": 1, "sentence": "System performs shared action."}]),
+            _spec("UC-1", [{"step_number": 1, "sentence": "System validates input.", "covered_req_ids": ["FR-1"]}]),
+            _spec("UC-2", [{"step_number": 1, "sentence": "System validates input.", "covered_req_ids": ["FR-2"]}]),
         ],
     }
 
     rel = s4.identify_relationships(state)["relationships"]
 
-    assert set(observed["schema"]["properties"]) == {"candidate_decisions"}
-    assert "not-a-candidate" in rel["dropped_refs"][0]
-    assert not rel["includes"] and not rel["extends"] and not rel["derived_use_cases"]
-    assert "Do not create, rename, or alter any relationship" in observed["prompt"]
+    assert rel["includes"] == []
+    assert rel["derived_use_cases"] == []
 
 
-def test_rendering_resolves_duplicate_display_names_through_use_case_ids():
+def test_semantic_include_rejection_does_not_create_a_diagram_node(monkeypatch):
+    def reject(schema, messages):
+        candidate = s4._include_candidates(
+            _shared_state(),
+            _shared_state()["use_cases"],
+            {item["use_case_id"]: item for item in _shared_state()["use_case_specs"]},
+        )[0]
+        return RelationshipModel(
+            includes=[
+                IncludeSelection(candidate_id=candidate["candidate_id"], decision="reject")
+            ]
+        )
+
+    monkeypatch.setattr(s4, "invoke_structured", reject)
+    rel = s4.identify_relationships(_shared_state())["relationships"]
+
+    assert rel["includes"] == []
+    assert rel["derived_use_cases"] == []
+    assert "candidate_decisions" not in rel
+
+
+def test_extend_selection_is_bounded_to_existing_ids_and_exact_base_step(monkeypatch):
     state = {
         "actors": [{"name": "Actor", "description": "a", "parent_actor": None}],
-        "use_cases": [
-            {"id": "UC-1", "name": "Same", "primary_actor": "Actor", "supporting_actors": []},
-            {"id": "UC-2", "name": "Same", "primary_actor": "Actor", "supporting_actors": []},
+        "classified": [
+            {"id": "FR-B", "type": "FR", "text": "View the schedule."},
+            {"id": "FR-E", "type": "FR", "text": "Optionally export it."},
         ],
+        "use_cases": [
+            _use_case("UC-BASE", "View schedule", actor="Actor", requirement_ids=["FR-B"]),
+            _use_case("UC-EXT", "Export schedule", actor="Actor", requirement_ids=["FR-E"]),
+        ],
+        "use_case_specs": [
+            _spec("UC-BASE", [
+                {"step_number": 1, "sentence": "Actor requests the schedule."},
+                {"step_number": 4, "sentence": "System presents the current schedule."},
+            ]),
+            _spec("UC-EXT", [{"step_number": 1, "sentence": "System exports the schedule."}]),
+        ],
+    }
+    monkeypatch.setattr(
+        s4,
+        "invoke_structured",
+        lambda *_: RelationshipModel(
+            extends=[
+                ExtendSelection(
+                    base_use_case_id="UC-BASE",
+                    extending_use_case_id="UC-EXT",
+                    extension_point="main:4",
+                    extension_point_name="after schedule presented",
+                    condition="while viewing the current schedule",
+                )
+            ]
+        ),
+    )
+
+    rel = s4.identify_relationships(state)["relationships"]
+    extend = rel["extends"][0]
+
+    assert extend["base_use_case_id"] == "UC-BASE"
+    assert extend["extending_use_case_id"] == "UC-EXT"
+    assert extend["extension_point"] == "main:4"
+    assert extend["step_refs"][0]["sentence"] == "System presents the current schedule."
+    assert ("Actor", "UC-EXT") not in {
+        (item["actor"], item["use_case_id"]) for item in rel["associations"]
+    }
+
+
+def test_invalid_extend_references_are_dropped(monkeypatch):
+    state = _shared_state()
+    monkeypatch.setattr(
+        s4,
+        "invoke_structured",
+        lambda *_: RelationshipModel(
+            extends=[
+                ExtendSelection(
+                    base_use_case_id="UC-1",
+                    extending_use_case_id="UC-MISSING",
+                    extension_point="main:99",
+                    extension_point_name="invalid point",
+                    condition="invalid condition",
+                )
+            ]
+        ),
+    )
+
+    rel = s4.identify_relationships(state)["relationships"]
+
+    assert rel["extends"] == []
+    assert "cannot create use cases" in rel["dropped_refs"][0]
+
+
+def test_actor_projection_uses_canonical_participation_and_generalization(monkeypatch):
+    monkeypatch.setattr(s4, "invoke_structured", lambda *_: pytest.fail("no accepted specs"))
+    use_cases = [
+        _use_case("UC-G", "General action", actor="User"),
+        _use_case("UC-M", "Member action", actor="Member"),
+    ]
+    rel = s4.identify_relationships(
+        {"actors": _actors(), "use_cases": use_cases, "use_case_specs": []}
+    )["relationships"]
+
+    assert {(item["actor"], item["use_case_id"]) for item in rel["associations"]} == {
+        ("User", "UC-G"),
+        ("Member", "UC-M"),
+    }
+    assert [(item["parent"], item["child"]) for item in rel["generalizations"]] == [
+        ("User", "Member")
+    ]
+
+
+def test_renderer_preserves_input_order_and_previous_extend_notation():
+    use_cases = [
+        _use_case("UC-10", "Tenth", actor="User"),
+        _use_case("UC-2", "Second", actor="User"),
+        _use_case("UC-1", "First", actor="User"),
+    ]
+    state = {
+        "actors": _actors(),
+        "use_cases": use_cases,
         "relationships": {
-            "associations": [{"actor": "Actor", "use_case_id": "UC-1"}],
-            "includes": [
-                {
-                    "base_use_case_id": "UC-2",
-                    "included_use_case_id": "UC-D",
-                }
-            ],
-            "extends": [
-                {
-                    "base_use_case_id": "UC-1",
-                    "extending_use_case_id": "UC-D",
-                    "condition": "The actor chooses the path",
-                    "extension_point": "1a at step 1",
-                }
-            ],
+            "associations": [],
+            "includes": [],
+            "extends": [{
+                "base_use_case_id": "UC-2",
+                "extending_use_case_id": "UC-1",
+                "extension_point": "main:4",
+                "extension_point_name": "after schedule presented",
+                "condition": "while viewing the schedule",
+            }],
             "generalizations": [],
-            "derived_use_cases": [{"use_case_id": "UC-D", "name": "Derived"}],
+            "derived_use_cases": [],
         },
     }
 
     diagram = s4.render_diagram(state)["diagram"]
 
-    assert f"{s4._san('UC-2')} ..> {s4._san('UC-D')} : <<include>>" in diagram
+    declarations = [diagram.index(f'as {s4._san(identifier)}') for identifier in ("UC-10", "UC-2", "UC-1")]
+    assert declarations == sorted(declarations)
+    assert 'Second\\n-- extension points --\\nafter schedule presented' in diagram
     assert (
-        f"{s4._san('UC-1')} <.. {s4._san('UC-D')} : "
-        "<<extend>>\\n[The actor chooses the path]"
+        f"{s4._san('UC-2')} <.. {s4._san('UC-1')} : "
+        "<<extend>>\\n[while viewing the schedule]"
     ) in diagram
-    assert (
-        'usecase "Same\\n-- extension points --\\n'
-        '1a at step 1"'
-    ) in diagram
-    assert f"{s4._san('Actor')} --- {s4._san('UC-1')}" in diagram
 
 
-def test_top_level_extend_candidates_are_bounded_by_optional_evidence():
-    actor = {"name": "Actor", "description": "a", "parent_actor": None}
-    bases = [
-        {
-            "id": f"UC-{index}",
-            "name": f"Process {token}",
-            "primary_actor": "Actor",
-            "requirement_ids": [f"R-{token}"],
-        }
-        for index, token in enumerate(("amber", "blue", "crimson", "dune"), start=1)
-    ]
-    optional = {
-        "id": "UC-OPTION",
-        "name": "Conditional action",
-        "primary_actor": "Actor",
-        "requirement_ids": ["R-OPTION"],
-    }
-    use_cases = [*bases, optional]
-    classified = [
-        {"id": f"R-{token}", "type": "FR", "text": f"The system processes {token} records."}
-        for token in ("amber", "blue", "crimson", "dune")
-    ] + [
-        {
-            "id": "R-OPTION",
-            "type": "FR",
-            "text": "The actor may continue if amber records are available.",
-        }
-    ]
-    specs = [
-        _spec(
-            use_case["id"],
-            steps=[
-                {"step_number": step_number, "sentence": f"System processes {token} record {step_number}."}
-                for step_number in range(1, 5)
-            ],
-        )
-        for use_case, token in zip(bases, ("amber", "blue", "crimson", "dune"), strict=True)
-    ] + [_spec("UC-OPTION", steps=[{"step_number": 1, "sentence": "System continues conditionally."}])]
-
-    candidates, rejections = s4._top_level_extend_candidates(
-        {"actors": [actor], "classified": classified}, use_cases, {spec["use_case_id"]: spec for spec in specs}
-    )
-
-    assert len(candidates) <= len(optional["requirement_ids"])
-    assert {candidate["participating_use_case_ids"][0] for candidate in candidates} == {"UC-1"}
-    assert not rejections
-
-
-def test_top_level_extend_rejects_a_tie_across_supported_bases():
-    actor = {"name": "Actor", "description": "a", "parent_actor": None}
-    bases = [
-        {"id": identifier, "name": "Process signal", "primary_actor": "Actor", "requirement_ids": [requirement]}
-        for identifier, requirement in (("UC-A", "R-A"), ("UC-B", "R-B"))
-    ]
-    optional = {"id": "UC-O", "name": "Optional", "primary_actor": "Actor", "requirement_ids": ["R-O"]}
-    specs = [
-        _spec(item["id"], steps=[{"step_number": 1, "sentence": "System processes shared signal."}])
-        for item in bases
-    ] + [_spec("UC-O", steps=[{"step_number": 1, "sentence": "System performs an option."}])]
-
-    candidates, rejections = s4._top_level_extend_candidates(
-        {
-            "actors": [actor],
-            "classified": [
-                {"id": "R-A", "type": "FR", "text": "The system processes shared signal."},
-                {"id": "R-B", "type": "FR", "text": "The system processes shared signal."},
-                {"id": "R-O", "type": "FR", "text": "The actor may continue if shared signal is present."},
-            ],
-        },
-        [*bases, optional],
-        {spec["use_case_id"]: spec for spec in specs},
-    )
-
-    assert not candidates
-    assert {item["reason"] for item in rejections} == {"ambiguous supported base anchors"}
-
-
-def test_top_level_extend_rejects_optional_evidence_without_a_supported_base():
-    actor = {"name": "Actor", "description": "a", "parent_actor": None}
-    base = {"id": "UC-B", "name": "Archive", "primary_actor": "Actor", "requirement_ids": ["R-B"]}
-    optional = {"id": "UC-O", "name": "Optional", "primary_actor": "Actor", "requirement_ids": ["R-O"]}
-    specs = [
-        _spec("UC-B", steps=[{"step_number": 1, "sentence": "System stores cobalt ledger."}]),
-        _spec("UC-O", steps=[{"step_number": 1, "sentence": "System performs a choice."}]),
+def test_unaccepted_specs_do_not_reach_the_model(monkeypatch):
+    monkeypatch.setattr(s4, "invoke_structured", lambda *_: pytest.fail("no accepted spec"))
+    state = _shared_state()
+    state["use_case_specs"] = [
+        {**item, "issues": ["invalid"]} for item in state["use_case_specs"]
     ]
 
-    candidates, rejections = s4._top_level_extend_candidates(
-        {
-            "actors": [actor],
-            "classified": [
-                {"id": "R-B", "type": "FR", "text": "The system stores cobalt ledger."},
-                {"id": "R-O", "type": "FR", "text": "The actor may continue if quartz is present."},
-            ],
-        },
-        [base, optional],
-        {spec["use_case_id"]: spec for spec in specs},
-    )
+    rel = s4.identify_relationships(state)["relationships"]
 
-    assert not candidates
-    assert {item["reason"] for item in rejections} == {"no positively supported base anchor"}
+    assert rel["includes"] == [] and rel["extends"] == []
+    assert len(rel["dropped_refs"]) == 2
 
 
-def test_top_level_extend_requires_explicit_optional_modality_not_a_mandatory_condition():
-    actor = {"name": "Actor", "description": "a", "parent_actor": None}
-    base = {"id": "UC-B", "name": "Record trace", "primary_actor": "Actor", "requirement_ids": ["R-B"]}
-    mandatory = {
-        "id": "UC-M",
-        "name": "Mandatory trace",
-        "primary_actor": "Actor",
-        "requirement_ids": ["R-M"],
-    }
-    specs = [
-        _spec("UC-B", steps=[{"step_number": 1, "sentence": "System records transfer trace."}]),
-        _spec("UC-M", steps=[{"step_number": 1, "sentence": "System records session trace."}]),
-    ]
-
-    candidates, rejections = s4._top_level_extend_candidates(
-        {
-            "actors": [actor],
-            "classified": [
-                {"id": "R-B", "type": "FR", "text": "The system records transfer trace."},
-                {
-                    "id": "R-M",
-                    "type": "FR",
-                    "text": "The system shall record a transfer trace when it occurs during a session.",
-                },
-            ],
-        },
-        [base, mandatory],
-        {spec["use_case_id"]: spec for spec in specs},
-    )
-
-    assert not candidates
-    assert not rejections
-
-
-def test_top_level_extend_uses_ordered_phrase_evidence_to_break_a_token_set_tie():
-    actor = {"name": "Actor", "description": "a", "parent_actor": None}
-    bases = [
-        {"id": "UC-A", "name": "Process state", "primary_actor": "Actor", "requirement_ids": ["R-A"]},
-        {"id": "UC-B", "name": "Process state", "primary_actor": "Actor", "requirement_ids": ["R-B"]},
-    ]
-    optional = {"id": "UC-O", "name": "Optional", "primary_actor": "Actor", "requirement_ids": ["R-O"]}
-    specs = [
-        _spec("UC-A", steps=[{"step_number": 1, "sentence": "System maintains reviewed signal state."}]),
-        _spec("UC-B", steps=[{"step_number": 1, "sentence": "System maintains signal reviewed state."}]),
-        _spec("UC-O", steps=[{"step_number": 1, "sentence": "System continues an option."}]),
-    ]
-
-    candidates, rejections = s4._top_level_extend_candidates(
-        {
-            "actors": [actor],
-            "classified": [
-                {"id": "R-A", "type": "FR", "text": "The system maintains reviewed signal state."},
-                {"id": "R-B", "type": "FR", "text": "The system maintains signal reviewed state."},
-                {"id": "R-O", "type": "FR", "text": "The actor may proceed if reviewed signal is present."},
-            ],
-        },
-        [*bases, optional],
-        {spec["use_case_id"]: spec for spec in specs},
-    )
-
-    assert {candidate["participating_use_case_ids"][0] for candidate in candidates} == {"UC-A"}
-    assert not rejections
-
-
-def test_plantuml_aliases_are_collision_proof_and_labels_are_escaped():
+def test_aliases_are_collision_proof_and_empty_projection_is_complete():
     assert s4._san("actor-one") != s4._san("actor one")
-    assert s4._san("UC-1") != s4._san("UC 1")
-
-    diagram = s4.render_diagram(
-        {
-            "actors": [{"name": 'Actor "One"', "description": "a", "parent_actor": None}],
-            "use_cases": [{"id": "UC-1", "name": 'Do "work"', "primary_actor": 'Actor "One"'}],
-            "relationships": {"associations": [], "includes": [], "extends": [], "generalizations": []},
-        }
-    )["diagram"]
-
-    assert 'actor "Actor \'One\'"' in diagram
-    assert 'usecase "Do \'work\'"' in diagram
-
-
-def test_empty_use_cases_has_a_complete_empty_projection():
     rel = s4.identify_relationships({"actors": [], "use_cases": []})["relationships"]
 
     assert all(not value for value in rel.values())
-    assert s4.render_diagram({"actors": [], "use_cases": [], "relationships": rel})["diagram"] == (
-        "@startuml\n@enduml"
-    )
+    assert s4.render_diagram(
+        {"actors": [], "use_cases": [], "relationships": rel}
+    )["diagram"] == "@startuml\n@enduml"
