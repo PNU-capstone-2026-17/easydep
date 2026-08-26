@@ -1566,6 +1566,29 @@ def test_flow_order_reports_extension_when_branch_main_step_is_missing():
     assert "주 흐름 단계 2가 없어" in findings[0].message
 
 
+def test_flow_order_ignores_returns_that_retain_their_call_step_id():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1}, {"step_number": 2}],
+                "extensions": [],
+            }]
+        }
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [
+            {"source": "A", "target": "B", "type": "sync", "label": "start()", "step_ids": ["UC1:main:1"]},
+            {"source": "B", "target": "C", "type": "sync", "label": "load()", "step_ids": ["UC1:main:2"]},
+            {"source": "C", "target": "B", "type": "return", "label": "Result", "reply_to": "call-2", "step_ids": ["UC1:main:2"]},
+            {"source": "B", "target": "A", "type": "return", "label": "Result", "reply_to": "call-1", "step_ids": ["UC1:main:1"]},
+        ],
+    }
+
+    assert detectors.sequence_flow_order(model, state) == []
+
+
 def test_fragment_reports_one_root_finding_for_one_sided_alt():
     fragment = {"id": "failure", "type": "alt", "branch": "else", "condition": "failed"}
     model = {

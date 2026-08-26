@@ -2730,6 +2730,12 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
     last_main = -1
     main_positions: dict[int, list[int]] = {}
     for index, message in enumerate(messages):
+        # Return messages are rendered after nested calls but intentionally
+        # retain the originating call's step id for traceability.  They do not
+        # establish a new main-flow position and must not make a valid nested
+        # call chain look reversed.
+        if str(message.get("type", "sync")).lower() == "return":
+            continue
         numbers = sorted([
             number
             for step_id in message.get("step_ids") or []
@@ -2773,6 +2779,7 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
         positions = [
             index
             for index, message in enumerate(messages)
+            if str(message.get("type", "sync")).lower() != "return"
             if any(
                 str(step_id).startswith(f"{use_case_id}:extension:{label}:")
                 for step_id in message.get("step_ids") or []

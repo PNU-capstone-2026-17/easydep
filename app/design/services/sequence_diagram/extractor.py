@@ -1971,7 +1971,7 @@ def _assemble_deterministic_diagrams(
                 messages.append(_return_message(call, return_type))
             return True
 
-        for plan in use_case_plans:
+        for plan_index, plan in enumerate(use_case_plans):
             boundary = plan["boundary"]
             control = plan["control"]
             participants.setdefault(_alias(boundary["name"]), _participant(boundary))
@@ -2037,6 +2037,43 @@ def _assemble_deterministic_diagrams(
                         control.get("method_returns", {}).get(entry_method),
                     )
                     reached.add(control_alias)
+                elif control is not None:
+                    # The public Boundary operation and its Control operation
+                    # often have different names (for example
+                    # ``browseCatalog`` -> ``getCourses``).  The old assembler
+                    # only forwarded when the names were identical, leaving a
+                    # valid API endpoint with no Control call in the sequence.
+                    # A single method on the selected Control is structurally
+                    # unambiguous; forward to it without asking the LLM to
+                    # invent another interaction.  Multiple methods remain an
+                    # explicit unresolved choice.
+                    control_methods = list(control.get("methods") or [])
+                    later_control_call = any(
+                        (
+                            selections.get(
+                                later_plan["step_id"],
+                                (
+                                    later_plan["selected_class"]["name"],
+                                    later_plan["selected_method"],
+                                )
+                                if later_plan["selected_class"] is not None
+                                else ("", ""),
+                            )
+                            == (control["name"], control_methods[0])
+                        )
+                        for later_plan in use_case_plans[plan_index + 1 :]
+                    ) if control_methods else False
+                    if len(control_methods) == 1 and not later_control_call:
+                        control_alias = _alias(control["name"])
+                        control_method = control_methods[0]
+                        emit_message(
+                            boundary_alias,
+                            control_alias,
+                            control_method,
+                            plan,
+                            control.get("method_returns", {}).get(control_method),
+                        )
+                        reached.add(control_alias)
                 continue
 
             b_alias = _alias(boundary["name"])

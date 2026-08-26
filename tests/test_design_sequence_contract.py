@@ -29,6 +29,7 @@ from app.design.services.sequence_diagram.extractor import (
     reassemble_sequence_diagrams,
     normalize_sequence_message_order,
     _only_callable_class,
+    _assemble_deterministic_diagrams,
     _recover_explicit_actor_retries,
     _supplementary_actor_selection_routes,
 )
@@ -699,6 +700,37 @@ SectionBoundary ..> SectionControl
     assert result["Diagrams"][0]["UnresolvedSteps"] == []
     assert result["Diagrams"][0]["Messages"][0]["source"] == "Registrar_Staff"
     assert result["Diagrams"][0]["Messages"][0]["target"] == "SectionBoundary"
+
+
+def test_boundary_forwards_to_single_control_method_when_names_differ() -> None:
+    boundary = {
+        "name": "BrowseBoundary", "kind": "boundary",
+        "methods": ["browseCatalog(department:String)"],
+        "method_returns": {"browseCatalog(department:String)": "List<Course>"},
+    }
+    control = {
+        "name": "BrowseControl", "kind": "control",
+        "methods": ["getCourses(department:String)"],
+        "method_returns": {"getCourses(department:String)": "List<Course>"},
+    }
+    plan = {
+        "use_case_id": "UC1", "use_case_name": "Browse courses", "actor": "Student",
+        "step_id": "UC1:main:1", "sentence": "Student starts browsing courses",
+        "fragment": {}, "actor_led": True, "boundary": boundary, "control": control,
+        "selected_class": boundary, "selected_method": "browseCatalog(department:String)",
+        "candidates": [],
+    }
+    result = {"Diagrams": _assemble_deterministic_diagrams([plan], {}, {
+        item["name"]: item for item in (boundary, control)
+    })}
+    calls = [
+        (message["source"], message["target"], message["label"])
+        for message in result["Diagrams"][0]["Messages"]
+        if message.get("type") != "return"
+    ]
+
+    assert ("BrowseBoundary", "BrowseControl", "getCourses(department:String)") in calls
+    assert result["Diagrams"][0]["UnresolvedSteps"] == []
 
 
 def test_repeated_control_operation_is_not_rejected_as_distinct_actor_inputs() -> None:
