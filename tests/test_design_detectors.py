@@ -30,6 +30,7 @@ from app.design.evaluation.seeded import (
 )
 from app.design.knowledge import basis, detectors, rules
 from app.design.graphs.subgraphs import DESIGN_STAGES
+from app.design.validation import design_readiness_report
 
 
 @dataclass(frozen=True)
@@ -156,6 +157,33 @@ def test_an_empty_model_is_not_an_error():
     """
     assert detectors.class_diagram_findings({}, {}) == []
     assert detectors.class_diagram_findings({"Classes": [], "Relationships": []}, {}) == []
+
+
+def test_class_contract_types_must_be_declared_or_explicit_java_types():
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [
+                {
+                    "className": "CourseCatalogController",
+                    "stereotype": "Control",
+                    "methods": [
+                        "+ browseCourses(filter : CourseFilter): List<Course>",
+                        "+ findCourse(): MissingResult",
+                    ],
+                },
+                {"className": "Course", "stereotype": "Entity", "fields": ["- title : String"]},
+            ],
+            "Relationships": [],
+        }
+    }
+
+    report = design_readiness_report(state)
+
+    assert report["status"] == "NEEDS_INPUT"
+    assert {item["finding"] for item in report["findings"]} == {
+        "CourseFilter: BCE method/field signatures reference undeclared type 'CourseFilter' — declare it in the class diagram [class.contract-types-exist · app/design/validation.py (BCE contract type validation)]",
+        "MissingResult: BCE method/field signatures reference undeclared type 'MissingResult' — declare it in the class diagram [class.contract-types-exist · app/design/validation.py (BCE contract type validation)]",
+    }
 
 
 def test_usecase_checks_stay_quiet_when_there_is_no_upstream_to_compare_against():

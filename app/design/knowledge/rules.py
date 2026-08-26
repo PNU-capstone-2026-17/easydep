@@ -374,6 +374,22 @@ RULES: tuple[Rule, ...] = (
         ),
     ),
     Rule(
+        id="class.contract-types-exist",
+        stage=CLASS_DIAGRAM,
+        severity=GUIDANCE,
+        statement=(
+            "Every BCE field, parameter, and return type must be either an explicitly "
+            "supported Java type or a class declared in the BCE diagram."
+        ),
+        citation="app/design/validation.py (BCE contract type validation)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        generation_note=(
+            "Declare request/response DTOs such as CourseFilter in the class diagram; "
+            "do not leave a custom signature type implicit."
+        ),
+    ),
+    Rule(
         id="class.operation-inputs-explicit",
         stage=CLASS_DIAGRAM,
         severity=GUIDANCE,
