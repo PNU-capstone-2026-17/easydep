@@ -1322,8 +1322,12 @@ class WorkspaceService:
                 task_statuses = {
                     str(task.get("status") or "") for task in display_tasks
                 }
-                all_succeeded = all(
-                    phase_statuses.get(phase_id) == "SUCCEEDED"
+                has_phase_work = bool(display_tasks) or any(
+                    phase_statuses.get(phase_id) not in {None, "UNPLANNED"}
+                    for phase_id in display_phases
+                )
+                all_succeeded = has_phase_work and all(
+                    phase_statuses.get(phase_id) in {"SUCCEEDED", "UNPLANNED"}
                     or (
                         any(
                             str(task.get("phase") or "") == phase_id

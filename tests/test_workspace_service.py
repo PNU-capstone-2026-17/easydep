@@ -948,6 +948,47 @@ def test_implementation_progress_snapshot_collapses_backend_tasks_by_phase(
     assert subtasks[0]["status"] == "running"
 
 
+def test_implementation_progress_snapshot_keeps_backend_parent_after_backend_finishes(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "currentPhase": "frontend",
+                "phases": [
+                    {"phaseId": "control", "status": "SUCCEEDED"},
+                    {"phaseId": "persistence", "status": "SUCCEEDED"},
+                    {"phaseId": "api-adapters", "status": "SUCCEEDED"},
+                    {"phaseId": "boundary-adapters", "status": "SUCCEEDED"},
+                    {"phaseId": "outbound-adapters", "status": "UNPLANNED"},
+                    {"phaseId": "wiring", "status": "SUCCEEDED"},
+                    {"phaseId": "frontend", "status": "RUNNING"},
+                ],
+                "tasks": [
+                    {"taskId": "control-1", "phase": "control", "status": "SUCCEEDED"},
+                    {"taskId": "frontend-1", "phase": "frontend", "status": "RUNNING"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {"run_root": str(run), "status": "RUNNING"}
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["phase-backend"]["status"] == "completed"
+    assert not [item for item in progress["updates"] if item["step"].startswith("sub-backend-")]
+
+
 def test_implementation_progress_snapshot_hides_pending_backend_tasks(
     tmp_path: Path,
 ) -> None:
