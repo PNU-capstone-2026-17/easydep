@@ -121,6 +121,11 @@ def classify(state: AgentState, feedback: str = "") -> dict:
             or []
         )
 
+    existing = _reuse_classification(state.get("classified") or [], drafts, refined)
+    if existing is not None:
+        _apply_constraint_links(existing, state.get("constraint_links") or [])
+        return {"classified": existing, "phase": "classify"}
+
     if not bert_available():
         raise RuntimeError(
             "FR/NFR classification requires the BERT classifier. "
@@ -150,6 +155,43 @@ def classify(state: AgentState, feedback: str = "") -> dict:
 
     _apply_constraint_links(classified, state.get("constraint_links") or [])
     return {"classified": classified, "phase": "classify"}
+
+
+def _reuse_classification(
+    existing: list[RequirementItem], drafts: list[dict], refined: list[str]
+) -> list[RequirementItem] | None:
+    """Reuse BERT labels when the classified requirement identities and text did not change.
+
+    Feedback and downstream retries frequently revisit the classification node with the same
+    refinement checkpoint.  Loading the model bundle is cached, but inference still costs one
+    pass per sentence.  The classified requirements are the checkpoint for that work: only an
+    actual RR identity/text change invalidates it.  Constraint links are recalculated by the
+    caller because they can change without requiring another FR/NFR prediction.
+    """
+    if len(existing) != len(refined) or not existing:
+        return None
+
+    expected_ids = [
+        str(drafts[index].get("ref") or f"RR{index + 1}") if drafts else f"RR{index + 1}"
+        for index in range(len(refined))
+    ]
+    if any(
+        item.get("id") != expected_id
+        or item.get("text") != text
+        or item.get("type") not in ("FR", "NFR")
+        for item, expected_id, text in zip(existing, expected_ids, refined, strict=True)
+    ):
+        return None
+
+    reused: list[RequirementItem] = []
+    for index, item in enumerate(existing):
+        copy: RequirementItem = dict(item)  # type: ignore[assignment]
+        copy.pop("qualifies", None)
+        if drafts:
+            copy["draft_ref"] = expected_ids[index]
+            copy["source_refs"] = list(drafts[index].get("sourceRefs") or [])
+        reused.append(copy)
+    return reused
 
 
 def _norm(s: str) -> str:

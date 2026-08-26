@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,10 @@ import hcl2
 from app.core.orchestration.iac_renderer import render_open_tofu
 from app.design.services.common.plantuml import render_plantuml
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
+from evaluation.easydep.requirements.evaluate import (
+    preclassified_errors,
+    requirements_semantic_oracle,
+)
 
 from .catalog import digest, write_json
 
@@ -28,12 +33,11 @@ def _ids(items: Any, *keys: str) -> list[str]:
 def semantic_signature(checkpoint: str, state: dict[str, Any]) -> dict[str, Any]:
     if checkpoint == "requirements":
         requirements = state.get("classified") or state.get("refined_requirements") or []
+        contract = state.get("capability_contract") or {}
+        capabilities = contract.get("capabilities") or contract.get("decisions") or []
         return {
-            "requirementIds": _ids(requirements, "id"),
-            "types": sorted(str(item.get("type")) for item in requirements),
-            "capabilityIds": _ids(
-                (state.get("capability_contract") or {}).get("decisions"), "id", "key"
-            ),
+            "requirements": requirements_semantic_oracle(requirements),
+            "capabilityCount": len(capabilities) if isinstance(capabilities, list) else 0,
             "resourceSpecSchema": (state.get("resource_spec") or {}).get("schemaVersion"),
         }
     if checkpoint in {"use_cases", "specifications", "usecase_diagram"}:
@@ -103,6 +107,26 @@ def _finding_rule(value: Any) -> str:
     return match.group(1) if match else text
 
 
+def blocking_issues(state: dict[str, Any], *, through: str = "relationships") -> list[str]:
+    """Read the shared requirements/design gate when the production hook exists.
+
+    Keeping the import lazy preserves standalone evaluation and lets a checkpoint
+    record a meaningful failure while the shared gate itself is being developed.
+    """
+    try:
+        supervisor = import_module("app.requirements.agent.supervisor")
+        checker = getattr(supervisor, "blocking_issues")
+    except (ImportError, AttributeError):
+        return []
+    try:
+        issues = checker(state, through=through)
+    except Exception as error:  # a broken gate must block promotion, not disappear
+        return [f"shared blocking gate failed: {type(error).__name__}: {error}"]
+    if not isinstance(issues, list):
+        return ["shared blocking gate returned a non-list result"]
+    return [str(issue) for issue in issues if str(issue).strip()]
+
+
 def validate_state(checkpoint: str, state: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -120,6 +144,8 @@ def validate_state(checkpoint: str, state: dict[str, Any]) -> dict[str, Any]:
     for key in required:
         if not state.get(key):
             errors.append(f"missing required output: {key}")
+    if checkpoint == "requirements":
+        errors.extend(preclassified_errors(state.get("classified")))
     errors_key = f"{checkpoint}_syntax_errors"
     errors.extend(str(item) for item in state.get(errors_key) or [])
     if checkpoint == "deployment_diagram" and state.get("deployment_diagram_bundle"):
@@ -129,6 +155,8 @@ def validate_state(checkpoint: str, state: dict[str, Any]) -> dict[str, Any]:
         projection = (bundle.get("projections") or [{}])[0]
         if projection.get("status") != "completed":
             errors.append("deployment provider projection is not completed")
+    if checkpoint == "usecase_diagram":
+        errors.extend(blocking_issues(state, through="relationships"))
     return {"status": "failed" if errors else "passed", "errors": errors, "warnings": warnings}
 
 

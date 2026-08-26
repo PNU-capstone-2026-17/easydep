@@ -77,6 +77,15 @@ def test_handoff_allows_unattached_global_nfr_and_empty_preconditions():
     assert state["usecase_spec"]["use_case_specs"][0]["preconditions"] == []
 
 
+def test_handoff_rejects_existing_requirements_report_blockers():
+    source = _requirements_result(
+        spec_report={"total_issues": 1, "failed_ucs": [], "unvalidated_ucs": []}
+    )
+
+    with pytest.raises(DesignContractError, match="specification report"):
+        DesignAdapter._state(source)
+
+
 @pytest.mark.parametrize(
     ("update", "message"),
     [

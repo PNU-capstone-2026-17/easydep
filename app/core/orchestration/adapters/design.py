@@ -12,6 +12,7 @@ from app.core.orchestration.checkpoint import (
     DEFAULT_CHECKPOINT_PATH,
     SqliteMemorySaver,
 )
+from app.requirements.agent.supervisor import blocking_issues
 
 
 class DesignContractError(RuntimeError):
@@ -181,9 +182,12 @@ class DesignAdapter:
 
     @staticmethod
     def _state(requirements_result: dict[str, Any]) -> dict[str, Any]:
-        errors = _handoff_errors(requirements_result)
+        errors = [
+            *blocking_issues(requirements_result),
+            *_handoff_errors(requirements_result),
+        ]
         if errors:
-            raise DesignContractError("; ".join(errors))
+            raise DesignContractError("; ".join(dict.fromkeys(errors)))
         requirements = requirements_result.get("requirements") or []
         relationships = requirements_result.get("relationships") or {}
         return {

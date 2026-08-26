@@ -126,6 +126,36 @@ def test_classify_uses_bert_labels_and_numbers_per_type(monkeypatch):
     assert [it["type"] for it in items] == ["FR", "NFR", "FR", "NFR"]
 
 
+def test_classify_reuses_current_labels_without_bert_inference(monkeypatch):
+    def unexpected():
+        raise AssertionError("BERT availability should not be checked for a current checkpoint")
+
+    monkeypatch.setattr(s1, "bert_available", unexpected)
+    monkeypatch.setattr(
+        s1,
+        "classify_bert",
+        lambda _text: (_ for _ in ()).throw(AssertionError("BERT inference was repeated")),
+    )
+
+    result = s1.classify({
+        "requirement_drafts": [
+            {"ref": "RR1", "text": "Users shall submit requests.", "sourceRefs": ["RAW1"]},
+            {"ref": "RR2", "text": "Responses shall be timely.", "sourceRefs": ["RAW1"]},
+        ],
+        "classified": [
+            {"id": "RR1", "text": "Users shall submit requests.", "type": "FR"},
+            {"id": "RR2", "text": "Responses shall be timely.", "type": "NFR"},
+        ],
+        "constraint_links": [{
+            "constraint": "Responses shall be timely.",
+            "qualifies": "Users shall submit requests.",
+        }],
+    })
+
+    assert [item["type"] for item in result["classified"]] == ["FR", "NFR"]
+    assert result["classified"][1]["qualifies"] == ["RR1"]
+
+
 def test_classified_requirements_keep_draft_sources_and_constraint_links(monkeypatch):
     monkeypatch.setattr(s1, "bert_available", lambda: True)
     monkeypatch.setattr(

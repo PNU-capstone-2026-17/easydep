@@ -211,7 +211,9 @@ RULES: tuple[Rule, ...] = (
         stage=MODEL_USE_CASES,
         severity=GUIDANCE,
         statement=(
-            "Cluster use cases at the user-goal (elementary business process) level; "
+            "Cluster use cases at the user-goal (elementary business process) level; keep "
+            "lifecycle operations with the same actor, business object, and responsibility "
+            "together unless the requirements establish distinct triggers or outcomes, and "
             "absorb subfunction requirements into the use case that covers them."
         ),
         citation=f"{_BOOK}, p.62 (Ch. 5, Three Named Goal Levels)",
@@ -252,14 +254,17 @@ RULES: tuple[Rule, ...] = (
         stage=MODEL_USE_CASES,
         severity=DEFECT,
         statement=(
-            "Every functional requirement must be covered by at least one use case, "
-            "and every requirement id referenced must exist."
+            "Every functional requirement that explicitly states an independently initiated "
+            "actor goal must be covered by a use case, and every requirement id referenced "
+            "must exist. A requirement that only states a policy, invariant, or execution "
+            "constraint must remain traceable without becoming a source or derived use case, "
+            "regardless of its classifier label."
         ),
         citation="easydep convention (traceability)",
         evidence="project-convention",
-        caveat="추적성을 위해 우리가 정한 규칙이다. 판정은 `step2_usecases.check_coverage`가 한다.",
+        caveat="추적성을 위해 우리가 정한 규칙이다. 실제 actor goal 여부는 모델 검토가 판단한다.",
         owner="use_cases",
-        judged_by=JUDGED_STAGE,
+        judged_by=JUDGED_VALIDATOR,
     ),
     Rule(
         id="deployment-needs.grounded-without-design-inference",
@@ -652,8 +657,9 @@ RULES: tuple[Rule, ...] = (
         stage=DRAW_DIAGRAM,
         severity=GUIDANCE,
         statement=(
-            "<<include>> is the first rule of thumb for a genuine shared sub-goal; use "
-            "extend and generalization sparingly."
+            "Use <<include>> only for a genuine shared, reusable mandatory interaction with "
+            "its own observable result; never factor a rule, invariant, or postcondition. "
+            "Use extend and generalization sparingly."
         ),
         # ⚠ 2026-07-26 정정: 예전 인용 `p.207`은 틀렸다. 그 페이지는 Reminder 5
         # ("Who Has the Ball?")이고, 거기 있는 "rule of thumb"은 다른 이야기다 —

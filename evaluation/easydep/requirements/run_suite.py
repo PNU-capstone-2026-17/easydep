@@ -12,7 +12,12 @@ from pathlib import Path
 
 from app.requirements.common import telemetry
 from app.requirements.runner import ARTIFACTS_DIR, load_input, persist_run, run_pipeline
-from evaluation.easydep.requirements.evaluate import ROOT, score, verify_holdout_hashes
+from evaluation.easydep.requirements.evaluate import (
+    ROOT,
+    require_preclassified,
+    score,
+    verify_holdout_hashes,
+)
 
 
 def main() -> int:
@@ -42,10 +47,11 @@ def main() -> int:
         path = ROOT / relative
         obj = load_input(str(path))
         dataset = obj["name"]
+        classified = require_preclassified(obj.get("classified"))
         print(f"[run] {dataset}")
         with telemetry.run_scope(f"benchmark:{args.split}:{dataset}") as stats:
             state = run_pipeline(
-                obj.get("classified") or [],
+                classified,
                 resource_constraints_text=str(obj.get("resource_constraints_text") or ""),
                 resource_answers=obj.get("resource_answers") or {},
             )

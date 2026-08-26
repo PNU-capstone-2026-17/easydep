@@ -46,6 +46,78 @@ from app.requirements.knowledge import rules
 ADVANCE = "advance"
 REDO = "redo"
 
+
+def blocking_issues(state: dict, through: str = "relationships") -> list[str]:
+    """Return the unresolved findings that make a requirements handoff unsafe.
+
+    ``through`` names the last completed review boundary: ``model`` checks the
+    model review and coverage, ``specs`` also checks the specification report,
+    and ``relationships`` checks the complete requirements output.  The helper
+    deliberately reads the existing reports instead of creating a separate
+    readiness result, so callers can make the same handoff decision without
+    changing the persisted requirements state.
+
+    Missing legacy reports are not treated as clean or as a new failure here;
+    the reports that are present remain the source of the finding.  Structural
+    requirements for the design boundary continue to be checked by its adapter.
+    """
+    scopes = ("model", "specs", "relationships")
+    if through not in scopes:
+        raise ValueError(f"Unknown requirements handoff scope: {through!r}")
+
+    issues: list[str] = []
+    review = state.get("model_review") or {}
+    if isinstance(review, dict):
+        issues.extend(f"model review: {issue}" for issue in review.get("issues") or [])
+        unexamined = review.get("unexamined_rules") or []
+        if unexamined:
+            issues.append(f"model review left rules unexamined: {', '.join(map(str, unexamined))}")
+        if review.get("semantic_status") in {"failed", "ungrounded"}:
+            issues.append(f"model review was not validated: {review['semantic_status']}")
+
+    coverage = state.get("coverage") or {}
+    if isinstance(coverage, dict):
+        # An FR label does not prove that the sentence is an independently initiated user goal.
+        # Cross-cutting policy and integrity statements remain intentionally unattached unless
+        # model review identifies a genuinely missing goal. Unknown references, in contrast,
+        # can never be joined safely downstream.
+        unknown_refs = coverage.get("unknown_requirement_refs") or []
+        if unknown_refs:
+            issues.append(
+                f"coverage has unknown requirement references: {', '.join(map(str, unknown_refs))}"
+            )
+
+    if through == "model":
+        return list(dict.fromkeys(issues))
+
+    specs = state.get("spec_report") or {}
+    if isinstance(specs, dict):
+        total = specs.get("total_issues", 0) or 0
+        if total:
+            issues.append(f"specification report has {total} unresolved issue(s)")
+        failed = specs.get("failed_ucs") or []
+        if failed:
+            issues.append(f"specification generation failed for: {', '.join(map(str, failed))}")
+        unvalidated = specs.get("unvalidated_ucs") or []
+        if unvalidated:
+            issues.append(f"specifications were not validated for: {', '.join(map(str, unvalidated))}")
+
+    if through == "specs":
+        return list(dict.fromkeys(issues))
+
+    relationships = state.get("relationship_report") or {}
+    if isinstance(relationships, dict):
+        for field, label in (
+            ("relationship_issues", "relationship report"),
+            ("missing_supporting_associations", "relationship report is missing supporting associations"),
+            ("orphan_actors", "relationship report has orphan actors"),
+            ("dropped_refs", "relationship report dropped references"),
+        ):
+            findings = relationships.get(field) or []
+            if findings:
+                issues.append(f"{label}: {', '.join(map(str, findings))}")
+    return list(dict.fromkeys(issues))
+
 # `stages`는 **함수 안에서** import한다. 단계 함수들이 이 모듈의 `feedback_for`를 쓰는데
 # (steps → supervisor), `stages`는 그 단계 함수들을 import한다(stages → steps). 모듈 상단에서
 # 끌어오면 순환이 된다 — `feedback_gates.py`가 `feedback`을 지연 import하는 것과 같은 이유다.

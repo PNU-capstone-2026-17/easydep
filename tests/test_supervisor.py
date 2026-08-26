@@ -139,6 +139,29 @@ def test_an_untagged_issue_has_nowhere_to_go():
     assert decision.action == supervisor.ADVANCE
 
 
+def test_handoff_blockers_expand_only_as_reports_become_available():
+    state = _state(
+        model_review={
+            "issues": ["model issue"],
+            "semantic_status": "ok",
+            "unexamined_rules": [],
+        },
+        coverage={"orphan_fr_ids": ["FR1"], "unknown_requirement_refs": []},
+        spec_report={"total_issues": 1, "failed_ucs": [], "unvalidated_ucs": []},
+        relationship_report={"missing_supporting_associations": ["Member -> UC1"]},
+    )
+
+    model = supervisor.blocking_issues(state, through="model")
+    specs = supervisor.blocking_issues(state, through="specs")
+    relationships = supervisor.blocking_issues(state)
+
+    assert any("model issue" in issue for issue in model)
+    assert not any("orphaned" in issue for issue in model)
+    assert any("specification report" in issue for issue in specs)
+    assert not any("supporting associations" in issue for issue in specs)
+    assert any("supporting associations" in issue for issue in relationships)
+
+
 # ---------------------------------------------------------------------------
 # 3. 그래프 노드
 # ---------------------------------------------------------------------------

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from evaluation.checkpoint_e2e import catalog
 from evaluation.checkpoint_e2e.catalog import CHECKPOINTS, digest, write_json
-from evaluation.checkpoint_e2e.evidence import semantic_signature
+from evaluation.checkpoint_e2e.evidence import semantic_signature, validate_state
 from evaluation.checkpoint_e2e.graph import (
     generate_candidate,
     promote_candidate,
@@ -15,6 +16,10 @@ from evaluation.checkpoint_e2e.graph import (
     validate_candidate,
 )
 from evaluation.checkpoint_e2e.transitions import run_transition
+from evaluation.easydep.requirements.evaluate import (
+    preclassified_errors,
+    requirements_semantic_oracle,
+)
 
 
 class _FakeGraph:
@@ -68,6 +73,77 @@ def test_design_transition_calls_only_selected_generation_graph(monkeypatch) -> 
     assert len(selected.calls) == 1
     assert forbidden.calls == []
     assert records[0][0] == "deployment_diagram.extract_deployment_diagram"
+
+
+def test_requirements_oracle_is_order_independent_but_keeps_stable_identity() -> None:
+    first = [
+        {"id": "one", "type": "FR", "text": "A member starts a workflow."},
+        {"id": "two", "type": "NFR", "text": "The workflow preserves state."},
+    ]
+    second = list(reversed(first))
+
+    assert requirements_semantic_oracle(first) == requirements_semantic_oracle(second)
+    assert semantic_signature("requirements", {"classified": first}) == semantic_signature(
+        "requirements", {"classified": second}
+    )
+    changed = [{**first[0], "id": "different"}, first[1]]
+    assert requirements_semantic_oracle(first) != requirements_semantic_oracle(changed)
+
+
+def test_classified_checkpoint_validates_without_running_downstream_gate(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "evaluation.checkpoint_e2e.evidence.blocking_issues",
+        lambda *_args, **_kwargs: pytest.fail("requirements checkpoint must not run design gate"),
+    )
+    state = {
+        "classified": [{"id": "R1", "type": "FR", "text": "A user completes a task."}],
+        "capability_contract": {"schemaVersion": "test"},
+        "resource_spec": {"schemaVersion": "test"},
+    }
+
+    report = validate_state("requirements", state)
+
+    assert report["status"] == "passed"
+    assert not report["warnings"]
+
+
+def test_design_transition_does_not_generate_after_blocking_gate(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "evaluation.checkpoint_e2e.evidence.blocking_issues",
+        lambda *_args, **_kwargs: ["unresolved policy invariant"],
+    )
+    monkeypatch.setattr(
+        "evaluation.checkpoint_e2e.transitions.DESIGN_SUBGRAPHS",
+        {"class_diagram": {"generate": pytest.fail}},
+    )
+
+    with pytest.raises(ValueError, match="blocked"):
+        run_transition("usecase_diagram", {"diagram": "@startuml\n@enduml"}, lambda *_: None)
+
+
+def test_design_checkpoint_consumes_shared_blocking_gate(monkeypatch) -> None:
+    calls = []
+
+    def gate(state, *, through):
+        calls.append((state, through))
+        return ["unresolved invariant"]
+
+    monkeypatch.setattr(
+        "evaluation.checkpoint_e2e.evidence.import_module",
+        lambda _name: SimpleNamespace(blocking_issues=gate),
+    )
+
+    report = validate_state("usecase_diagram", {"diagram": "@startuml\n@enduml"})
+
+    assert report["status"] == "failed"
+    assert report["errors"] == ["unresolved invariant"]
+    assert calls and calls[0][1] == "relationships"
+
+
+def test_preclassified_validation_rejects_malformed_checkpoint() -> None:
+    errors = preclassified_errors([{"id": "", "type": "unknown", "text": ""}])
+
+    assert errors
 
 
 def _gold(root: Path, source: str, target: str, source_state: dict, target_state: dict) -> None:

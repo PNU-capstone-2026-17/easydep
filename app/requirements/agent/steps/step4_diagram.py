@@ -72,7 +72,7 @@ def _include_candidates(
     use_cases: list[dict],
     specs_by_id: dict[str, dict],
 ) -> list[dict]:
-    """Bound include discovery by shared accepted-FR coverage in exact main steps."""
+    """Bound include discovery by RTM-backed shared behavior; semantics choose reuse."""
     accepted_fr_ids = {
         str(item["id"])
         for item in state.get("classified") or []
@@ -234,6 +234,7 @@ def _relationship_prompt(
                 ],
                 "preconditions": spec.get("preconditions") or [],
                 "trigger": spec.get("trigger") or "",
+                "success_guarantee": spec.get("success_guarantee") or [],
                 "main_scenario_steps": [
                     {
                         "step_ref": f"main:{step.get('step_number')}",

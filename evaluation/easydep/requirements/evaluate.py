@@ -17,6 +17,67 @@ def _load(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def preclassified_errors(classified: object) -> list[str]:
+    """Validate the portable, preclassified requirements checkpoint.
+
+    Evaluation runs deliberately begin after classification.  Keeping this check
+    here makes that boundary explicit without importing the production classifier
+    (or its BERT runtime).
+    """
+    if not isinstance(classified, list) or not classified:
+        return ["classified requirements must be a non-empty list"]
+
+    errors: list[str] = []
+    identifiers: set[str] = set()
+    for index, item in enumerate(classified, start=1):
+        label = f"classified[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        identifier = item.get("id")
+        if not isinstance(identifier, str) or not identifier.strip():
+            errors.append(f"{label}.id must be a non-empty string")
+        elif identifier in identifiers:
+            errors.append(f"duplicate classified requirement id: {identifier}")
+        else:
+            identifiers.add(identifier)
+        if not isinstance(item.get("text"), str) or not item["text"].strip():
+            errors.append(f"{label}.text must be a non-empty string")
+        if item.get("type") not in {"FR", "NFR"}:
+            errors.append(f"{label}.type must be FR or NFR")
+    return errors
+
+
+def requirements_semantic_oracle(classified: object) -> dict:
+    """Return an order-independent signature of the persisted BERT checkpoint."""
+    errors = preclassified_errors(classified)
+    items = classified if isinstance(classified, list) else []
+    signature = sorted(
+        (
+            {
+                "id": str(item.get("id") or ""),
+                "type": str(item.get("type") or ""),
+                "text": " ".join(str(item.get("text") or "").split()),
+                "qualifies": sorted(str(value) for value in item.get("qualifies") or []),
+            }
+            for item in items
+            if isinstance(item, dict)
+        ),
+        key=lambda item: item["id"],
+    )
+    return {
+        "valid": not errors,
+        "requirements": signature,
+    }
+
+
+def require_preclassified(classified: object) -> list[dict]:
+    errors = preclassified_errors(classified)
+    if errors:
+        raise ValueError("Invalid preclassified requirements checkpoint: " + "; ".join(errors))
+    return list(classified)
+
+
 def _norm(value: str) -> str:
     words = re.findall(r"[a-z0-9]+", value.lower())
     return " ".join(word[:-1] if word.endswith("s") and len(word) > 3 else word for word in words)
@@ -40,6 +101,7 @@ def verify_holdout_hashes() -> list[str]:
 
 def score(run_dir: Path) -> dict:
     manifest = _load(run_dir / "manifest.json")
+    input_obj = _load(run_dir / "input.json")
     actors = _load(run_dir / "actors.json")
     use_cases = _load(run_dir / "use_cases.json")
     relationships = _load(run_dir / "relationships.json")
@@ -83,6 +145,9 @@ def score(run_dir: Path) -> dict:
     spec_issues = manifest.get("summary", {}).get("spec_issues", {})
     return {
         "dataset": manifest["dataset"],
+        "requirementsCheckpoint": requirements_semantic_oracle(
+            input_obj.get("classified")
+        ),
         "actorRecall": len(found_required) / len(required) if required else 1.0,
         "roleAccuracy": sum(row["matched"] for row in fact_results) / len(fact_results) if fact_results else 1.0,
         "unsupportedActors": unsupported,

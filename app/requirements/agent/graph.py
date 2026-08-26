@@ -29,23 +29,70 @@ from typing import cast
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Command
+from langgraph.types import Command, interrupt
 
 from app.requirements import session_store
 from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.feedback_gates import (
+    apply_feedback_upto,
     gate_relationships,
     gate_requirements,
     gate_specs,
     gate_use_cases,
     route_gate,
 )
+from app.requirements.agent.steps.step2_usecases import review_model
+from app.requirements.agent.steps.step3_specifications import check_specs
+from app.requirements.agent.steps.step4_diagram import check_relationships
 from app.requirements.agent.subgraphs import build_stage_subgraphs
-from app.requirements.agent.supervisor import route_redo, supervise_for
+from app.requirements.agent.supervisor import blocking_issues, route_redo, supervise_for
 from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.schemas import DeploymentPreferences, FeedbackEdit, ResourceAnswer
 from app.requirements.session_store import SqlCheckpointSaver
+
+
+def _handoff_gate(state: AgentState) -> dict:
+    """Require feedback when completed requirements still cannot be handed off.
+
+    This uses the ordinary feedback interrupt rather than adding a second public
+    completion state.  A reply is applied through the final requirements stage,
+    then the existing reports are recomputed before this gate checks again.
+    """
+    issues = blocking_issues(state)
+    if not issues:
+        return {"gate_route": "advance"}
+
+    answer = interrupt({
+        "stage": "requirements_handoff",
+        "status": "need_feedback",
+        "prompt": (
+            "[requirements_handoff] Design handoff is blocked by unresolved "
+            "requirements findings. Provide feedback to repair them."
+        ),
+        "summary": issues,
+        # The blocker may belong to use cases, specifications, or relationships. Do not make the
+        # UI fabricate a relationship edit target; free-form feedback is routed by the existing
+        # feedback classifier to the owning stage.
+        "edit_stage": None,
+        "edit_targets": [],
+        "resource_questions": [],
+    })
+    if isinstance(answer, FeedbackEdit):
+        empty = not answer.instruction.strip()
+    else:
+        empty = not isinstance(answer, str) or not answer.strip()
+    if empty:
+        # Unlike an ordinary review acknowledgement, a blank answer cannot
+        # waive an unsafe downstream handoff.
+        return {"gate_route": "loop"}
+
+    updated = dict(state)
+    apply_feedback_upto(updated, answer, up_to="diagram")
+    updated.update(review_model(cast(AgentState, updated)))
+    updated.update(check_specs(cast(AgentState, updated)))
+    updated.update(check_relationships(cast(AgentState, updated)))
+    return {**updated, "gate_route": "loop"}
 
 
 def _build_plain_graph(saver):
@@ -81,6 +128,7 @@ def _build_plain_graph(saver):
         "supervise_diagram",
         supervise_for("model_use_cases", "write_specifications", "draw_diagram"),
     )
+    builder.add_node("gate_handoff", _handoff_gate)
 
     builder.add_edge(START, "refine_requirements")
     # 배포 필요사항은 `classified`에서 파생되는 인계 산출물이라 되돌아가기 대상이 아니다.
@@ -112,11 +160,14 @@ def _build_plain_graph(saver):
         "supervise_diagram",
         route_redo,
         {
-            "advance": END,
+            "advance": "gate_handoff",
             "model_use_cases": "model_use_cases",
             "write_specifications": "write_specifications",
             "draw_diagram": "draw_diagram",
         },
+    )
+    builder.add_conditional_edges(
+        "gate_handoff", route_gate, {"advance": END, "loop": "gate_handoff"}
     )
 
     # 체크포인터는 상위 그래프에만 둔다 — 서브그래프의 interrupt도 상위로 전파돼 상위
@@ -142,6 +193,7 @@ def _build_gated_graph(saver):
     builder.add_node("gate_use_cases", gate_use_cases)
     builder.add_node("gate_specs", gate_specs)
     builder.add_node("gate_relationships", gate_relationships)
+    builder.add_node("gate_handoff", _handoff_gate)
 
     builder.add_edge(START, "refine_requirements")
     # 게이트 앞에 둬 사용자가 요구사항과 배포 필요사항을 함께 확인하게 한다.
@@ -179,7 +231,10 @@ def _build_gated_graph(saver):
     builder.add_conditional_edges(
         "gate_relationships",
         route_gate,
-        {"advance": END, "loop": "gate_relationships"},
+        {"advance": "gate_handoff", "loop": "gate_relationships"},
+    )
+    builder.add_conditional_edges(
+        "gate_handoff", route_gate, {"advance": END, "loop": "gate_handoff"}
     )
 
     return builder.compile(checkpointer=saver)

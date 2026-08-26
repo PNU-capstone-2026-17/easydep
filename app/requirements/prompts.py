@@ -130,17 +130,19 @@ Do NOT write the main scenario steps or extensions — those are produced later 
 
 How to build the model:
 1. Group related FRs into user-goal use cases. Name each as an active-verb goal
-   ("Place an order", "Reset password").
-   Keep independently initiated goals with distinct observable outcomes separate, even when they
-   share an actor or appear in one compound requirement. An optional action remains a separate
-   user-goal when its contextual base is complete without it and the action has its own trigger
-   and outcome; the relationship stage decides whether it extends that base.
+   ("Place an order", "Reset password"). Treat lifecycle operations as one goal when the same
+   actor manages the same business object with the same responsibility; a list of verbs alone
+   does not create several use cases. Keep goals separate only when the requirements establish
+   distinct triggers or observable outcomes. An optional action remains a separate user-goal when
+   its contextual base is complete without it and the action has its own trigger and outcome; the
+   relationship stage decides whether it extends that base.
 2. Requirements that are too fine-grained, such as internal validation, must NOT become standalone
    use cases. Fold their requirement ids into each user-goal use case that the supplied requirements
    explicitly say performs them; the relationship stage may later recognize shared mandatory
-   behavior. Actor taxonomy, authentication-state preconditions, authorization policy, persistence
-   or concurrency policy, and implementation mechanisms are not standalone use cases unless the
-   requirements describe an independently initiated actor goal with an observable outcome.
+   behavior. Actor taxonomy, authentication-state preconditions, policy or invariant constraints,
+   persistence or concurrency constraints, and implementation mechanisms are not standalone use
+   cases even when their classifier label is FR, unless the requirements describe an independently
+   initiated actor goal with an observable outcome.
    An explicit requirement in which an actor supplies credentials to establish a session is an
    independently initiated sign-in or login user goal; preserve the source terminology.
    Authentication state in protected goals is a precondition, so do not copy the sign-in
@@ -161,8 +163,8 @@ How to build the model:
    When one supplied FR explicitly names two or more distinct actor goals or operations, attach
    that same FR id to every corresponding user-goal in the returned model. Do not create a separate
    use case for it, and do not infer applicability to goals the requirement does not name.
-   A cross-cutting policy or subfunction whose applicable goals are not explicitly identified
-   may remain uncovered at this stage; do not copy it to every goal to force full coverage.
+   A cross-cutting policy, invariant, or subfunction whose applicable goals are not explicitly
+   identified may remain unattached at this stage; do not copy it to every goal to force coverage.
 5. NFRs never become use cases. Attach each relevant NFR to the use case(s) it constrains
    via nfr_ids only when the requirement explicitly singles out that goal or operation.
    System-wide persistence, security, availability, and deployment constraints may be left
@@ -174,11 +176,13 @@ from accepted functional requirements and an exact actor list. Return only the s
 UseCaseResult schema.
 
 This task owns only actor-goal boundaries. A use case is one independently initiated task that
-one primary actor completes in one sitting with one observable outcome. Split independently
-initiated actions with distinct outcomes even when one requirement joins them with "and" or
-"or". Keep one genuinely atomic goal together; do not split its validations or internal steps.
-Do not create use cases for authorization, persistence, concurrency, internal validation, or
-other policy/subfunction requirements.
+one primary actor completes in one sitting with one observable outcome. Keep lifecycle operations
+inside one use case when they give the same actor responsibility for the same business object;
+split only when the requirements establish distinct triggers or outcomes, not merely because they
+list several verbs. Keep one genuinely atomic goal together; do not split its validations or
+internal steps. Do not create use cases for authorization, persistence, concurrency, internal
+validation, policy, invariant, or other constraint/subfunction requirements, regardless of a
+functional classifier label.
 
 Use exact actor names. Give every candidate an active-verb name and one-sentence goal. Put only
 the FR ids that directly evidence that goal in requirement_ids; those links are provisional and
@@ -191,28 +195,32 @@ requirement against a fixed list of proposed user-goal use cases. Return only th
 schema.
 
 The proposal is immutable: never rename, remove, regroup, or rewrite an existing use case.
-List an existing use-case name only when the audited requirement explicitly describes that
-goal or individually identifies that operation. A category or property such as "protected",
-"relevant", "eligible", "sensitive", or "all data operations" does not identify which use
-cases have that property unless another accepted requirement explicitly makes the assignment.
-Do not infer applicability from normal domain practice or numeric coverage.
+First decide whether the audited FR actually expresses an independently initiated actor goal.
+List an existing use-case name only when it explicitly describes that goal or individually
+identifies that operation. A category or property such as "protected", "relevant", "eligible",
+"sensitive", or "all data operations" does not identify which use cases have that property
+unless another accepted requirement explicitly makes the assignment. Do not infer applicability
+from normal domain practice or numeric coverage.
 
 If the requirement explicitly names several existing operations, list every matching exact
 use-case name. If it is a subfunction explicitly shared by named goals, list those goals. If
 it states one independently initiated actor goal absent from the proposal, return that one goal
-as missing_use_case. Otherwise leave both use_case_names and missing_use_case empty. Never turn
-authentication state, authorization policy, persistence, concurrency policy, or an internal
-validation into a new actor goal. Preserve the supplied requirement_id exactly."""
+as missing_use_case. A rule, invariant, concurrency condition, postcondition, or other constraint
+may validly leave both use_case_names and missing_use_case empty even when labeled FR; it remains
+traceable without becoming a use case. Never turn authentication state, authorization policy,
+persistence, concurrency policy, or an internal validation into a new actor goal. Preserve the
+supplied requirement_id exactly."""
 
 CONSTRAINT_TRACE_SLICE_SYSTEM = """You finalize traceability for exactly one non-functional
 constraint against a fixed list of proposed user-goal use cases. Return only the supplied schema.
 
-The proposal is immutable. List an exact existing use-case name only when the constraint or
-another accepted requirement explicitly singles out that goal or operation. Leave
-use_case_names empty for a system-wide constraint or when applicability is ambiguous; never
-copy a constraint to every use case merely to improve coverage. Always leave missing_use_case
-empty because a non-functional constraint never creates an actor goal. Preserve the supplied
-requirement_id exactly."""
+The proposal is immutable. An explicit [qualifies: ...] link is trace evidence for the named
+functional requirement, not permission to attach the constraint anywhere else. List an exact
+existing use-case name only when that link, the constraint, or another accepted requirement
+explicitly singles out the goal or operation. Leave use_case_names empty for a system-wide
+constraint or when applicability is ambiguous; never copy a constraint to every use case merely
+to improve coverage. Always leave missing_use_case empty because a non-functional constraint never
+creates an actor goal. Preserve the supplied requirement_id exactly."""
 
 # 피드백 의도 분류 — 자연어 피드백을 {stage, scope, target_ids, instruction}로 분류.
 FEEDBACK_CLASSIFY_SYSTEM = """You classify a user's natural-language feedback about a generated
@@ -624,10 +632,11 @@ supplied evidence. The application projects actor associations and generalizatio
 all references.
 
 Include: decide only supplied candidate_id values. Approve only when the cited steps of at least
-two base use cases express the same reusable mandatory behavior. A shared requirement id alone is
-insufficient; reject different actions, broad policy or authentication state, and internal
-consequences. Give an approved candidate one concise active-verb name. Except for that approved
-include-node name, do not create or rename use cases.
+two base use cases express the same reusable mandatory interaction with its own observable result.
+A shared requirement id alone is insufficient; reject different actions, rules, invariants,
+broad policy or authentication state, and internal consequences or postconditions. Give an
+approved candidate one concise active-verb name. Except for that approved include-node name, do
+not create or rename use cases.
 
 Extend: choose only supplied existing use_case_id values and copy an exact main:<number> value
 into base_step_ref from a step owned by the base. Compare the extending goal, requirements,

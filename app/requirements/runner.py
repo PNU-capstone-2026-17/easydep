@@ -48,6 +48,7 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
 )
 from app.requirements.agent.steps.step_cloud_inputs import analyze_cloud_inputs  # noqa: F401
 from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
+from app.requirements.common import telemetry
 from app.requirements.config import settings
 
 # app/requirements/runner.py 에서 저장소 루트까지는 세 단계 위다.
@@ -162,6 +163,13 @@ def run_pipeline(
         })
         state["redo_history"] = history
         state["stage_feedback"] = {}   # 낡은 지시를 다음 라운드로 넘기지 않는다
+    blockers = supervisor.blocking_issues(state)
+    if blockers:
+        # The automatic artifacts remain available for inspection and
+        # persistence. The design boundary makes the actual handoff refusal.
+        telemetry.record_degradation(
+            "requirements.handoff_blocked", "; ".join(blockers)
+        )
     return state
 
 

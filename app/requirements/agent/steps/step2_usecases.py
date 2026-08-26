@@ -50,7 +50,14 @@ def _split_fr_nfr(
 
 
 def _listing(items: list[RequirementItem]) -> str:
-    return "\n".join(f"- {item['id']}: {item['text']}" for item in items)
+    return "\n".join(_requirement_line(item) for item in items)
+
+
+def _requirement_line(item: RequirementItem) -> str:
+    """Keep the existing constraint-to-behavior RTM edge visible to later decisions."""
+    qualified = [str(value) for value in item.get("qualifies") or [] if str(value)]
+    qualifier = f" [qualifies: {', '.join(qualified)}]" if qualified else ""
+    return f"- {item['id']}: {item['text']}{qualifier}"
 
 
 def _accepted_source_refs(values: list[str], accepted_ids: set[str]) -> list[str]:
@@ -214,7 +221,7 @@ def _trace_slice(
         for use_case in raw_use_cases
     ) or "- (none)"
     context = "\n".join(
-        f"- {item['id']}: {item['text']}"
+        _requirement_line(item)
         for item in accepted_requirements
         if item["id"] != requirement["id"]
     ) or "- (none)"
@@ -231,7 +238,7 @@ def _trace_slice(
                 f"[FIXED PROPOSED USE CASES]\n{proposed}\n\n"
                 f"[{'FUNCTIONAL REQUIREMENT' if functional else 'NON-FUNCTIONAL CONSTRAINT'} "
                 f"UNDER AUDIT]\n"
-                f"- {requirement['id']}: {requirement['text']}\n\n"
+                f"{_requirement_line(requirement)}\n\n"
                 f"[OTHER ACCEPTED REQUIREMENTS — CONTEXT ONLY]\n{context}"
             )),
         ],
@@ -330,6 +337,10 @@ def _audit_requirement_traceability(
             "nfr_ids": list(dict.fromkeys(nfr_ids)),
         }))
 
+    # An accepted empty FR decision means the requirement is a tracked constraint rather
+    # than a user goal. Remove a skeleton-only use case once it has no realized FR left;
+    # the requirement itself stays in ``classified`` and therefore in the RTM.
+    updated = [use_case for use_case in updated if use_case.requirement_ids]
     existing_names = {_actor_key(use_case.name) for use_case in updated}
     for requirement_id in functional_audit_ids:
         decision = accepted.get(requirement_id)
@@ -484,9 +495,7 @@ def identify_use_cases(
         if claim_counts[requirement["id"]] != 1
     )
     if audit_ids or nfr:
-        raw_use_cases = _audit_requirement_traceability(
-            fr, nfr, raw_use_cases, audit_ids
-        )
+        raw_use_cases = _audit_requirement_traceability(fr, nfr, raw_use_cases, audit_ids)
     use_cases = _retry_dangling_actor_refs(
         schema=UseCaseResult,
         raw_items=raw_use_cases,
@@ -510,7 +519,7 @@ def review_model(state: AgentState) -> dict:
     _ = settings.enable_semantic_validator
     payload = {
         "requirements": [
-            {key: requirement.get(key) for key in ("id", "text", "type")}
+            {key: requirement.get(key) for key in ("id", "text", "type", "qualifies")}
             for requirement in (state.get("classified") or [])
         ],
         "deployment_needs": state.get("deployment_needs") or {},

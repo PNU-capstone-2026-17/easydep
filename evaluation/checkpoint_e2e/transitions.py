@@ -8,6 +8,7 @@ from app.design.graphs.subgraphs import DESIGN_SUBGRAPHS
 from app.requirements.agent.subgraphs import build_stage_subgraphs
 
 from .catalog import checkpoint_after, jsonable
+from .evidence import validate_state
 
 TaskRecorder = Callable[[str, dict[str, Any], dict[str, Any], float], None]
 
@@ -88,6 +89,18 @@ def run_transition(
 ) -> tuple[str, dict[str, Any]]:
     target = checkpoint_after(source_checkpoint)
     current = dict(state)
+    if source_checkpoint == "requirements":
+        report = validate_state("requirements", current)
+        if report["status"] == "failed":
+            raise ValueError(
+                "Requirements checkpoint is invalid: " + "; ".join(report["errors"])
+            )
+    if source_checkpoint == "usecase_diagram":
+        report = validate_state("usecase_diagram", current)
+        if report["status"] == "failed":
+            raise ValueError(
+                "Design checkpoint is blocked: " + "; ".join(report["errors"])
+            )
     if target in REQUIREMENT_GROUPS:
         subgraphs = build_stage_subgraphs()
         for group in REQUIREMENT_GROUPS[target]:

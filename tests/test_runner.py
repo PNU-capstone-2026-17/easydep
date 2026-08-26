@@ -15,6 +15,7 @@ from app.requirements import runner
 # ---------------------------------------------------------------------------
 def test_run_pipeline_calls_stages_in_order(monkeypatch):
     calls = []
+    handoff_checks = []
 
     def stage(name, key, value=None):
         def fn(state):
@@ -50,6 +51,11 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
     monkeypatch.setattr(runner, "identify_relationships", stage("rel", "relationships", empty_rel))
     monkeypatch.setattr(runner, "check_relationships", stage("check_rel", "relationship_report"))
     monkeypatch.setattr(runner, "render_diagram", stage("diagram", "diagram"))
+    monkeypatch.setattr(
+        runner.supervisor,
+        "blocking_issues",
+        lambda state: handoff_checks.append(state) or [],
+    )
 
     state = runner.run_pipeline([{"id": "R1", "text": "x", "type": "FR"}])
 
@@ -69,6 +75,7 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
     assert state["classified"][0]["id"] == "R1"  # 원본 입력 유지
     assert state["actors"] == "<actors>"
     assert state["diagram"] == "<diagram>"
+    assert handoff_checks == [state]
 
 
 def test_batch_runner_goes_back_when_a_stage_could_not_repair_itself(monkeypatch):
