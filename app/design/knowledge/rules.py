@@ -152,6 +152,25 @@ RULES: tuple[Rule, ...] = (
         ),
     ),
     Rule(
+        id="class.no-isolated-class",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "In a model with multiple classes, every declared BCE class must appear in at "
+            "least one relationship. Remove a request-only DTO after expanding its scalar "
+            "inputs into a method signature; otherwise add only a relationship grounded in "
+            "the use-case specification."
+        ),
+        citation="app/design/services/class_diagram/extractor.py (BCE relationship derivation)",
+        evidence="project-convention",
+        caveat=(
+            "A class may be intentionally independent only when it is the sole class in "
+            "the model; the detector excludes that case."
+        ),
+        judged_by=JUDGED_DETECTOR,
+        detector="isolated_classes",
+    ),
+    Rule(
         id="class.usecase-ids-exist",
         stage=CLASS_DIAGRAM,
         severity=DEFECT,

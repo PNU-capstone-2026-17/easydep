@@ -123,6 +123,16 @@ def _dangling_endpoint() -> dict[str, Any]:
     return model
 
 
+def _isolated_class() -> dict[str, Any]:
+    model = _clean_model()
+    model["Relationships"] = [
+        relationship
+        for relationship in model["Relationships"]
+        if relationship["target"] != "Order"
+    ]
+    return model
+
+
 def _invented_usecase_id() -> dict[str, Any]:
     # Order 만 없는 id를 가리킨다. UC1은 나머지 둘이 여전히 가리키므로 커버리지는 성립하고,
     # 그래야 이 케이스가 `class.covers-use-cases`를 함께 어기지 않는다.
@@ -261,6 +271,12 @@ SEEDED: tuple[Seeded, ...] = (
         "class.relationship-endpoints-exist",
         "관계가 선언되지 않은 GhostEntity를 가리킨다",
         _dangling_endpoint(),
+        _clean_state(),
+    ),
+    Seeded(
+        "class.no-isolated-class",
+        "Order가 어느 관계의 끝에도 나타나지 않는다",
+        _isolated_class(),
         _clean_state(),
     ),
     Seeded(

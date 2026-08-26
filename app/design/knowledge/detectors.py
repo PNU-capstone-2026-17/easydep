@@ -159,6 +159,35 @@ def relationship_endpoints(model: dict, state: dict) -> list[Finding]:
     )
 
 
+def isolated_classes(model: dict, state: dict) -> list[Finding]:
+    """Find BCE classes that have no diagram-level interaction or data link.
+
+    A type name in a method signature is not a replacement for a relationship:
+    it neither renders a connection nor gives the ERD mapper a structural fact.
+    The one-class case is excluded because a relationship cannot be derived
+    there without inventing another class.
+    """
+    rule_id = "class.no-isolated-class"
+    classes = _classes(model)
+    if len(classes) <= 1:
+        return []
+    connected = {
+        str(relationship.get(end) or "").strip()
+        for relationship in _relationships(model)
+        for end in ("source", "target")
+    }
+    return [
+        Finding(
+            rule_id,
+            "관계가 전혀 없음 — 요청 전용 DTO면 명시적 메서드 매개변수로 전개해 제거하고, "
+            "그 외에는 유스케이스 근거가 있는 관계를 선언해야 함",
+            name,
+        )
+        for class_item in classes
+        if (name := str(class_item.get("className") or "").strip()) and name not in connected
+    ]
+
+
 def usecase_ids(model: dict, state: dict) -> list[Finding]:
     """`use_case_ids`가 입력 유스케이스의 실제 id인가 (환각 참조).
 
@@ -986,6 +1015,7 @@ def erd_findings(model: dict, state: dict) -> list[Finding]:
 #: 어느 지적이 살아남는가다.
 CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "relationship_endpoints": relationship_endpoints,
+    "isolated_classes": isolated_classes,
     "usecase_ids": usecase_ids,
     "stereotype_is_bce": stereotype_is_bce,
     "communication_rules": communication_rules,

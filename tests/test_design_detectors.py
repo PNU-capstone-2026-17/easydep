@@ -180,10 +180,30 @@ def test_class_contract_types_must_be_declared_or_explicit_java_types():
     report = design_readiness_report(state)
 
     assert report["status"] == "NEEDS_INPUT"
-    assert {item["finding"] for item in report["findings"]} == {
+    contract_findings = {
+        item["finding"]
+        for item in report["findings"]
+        if "[class.contract-types-exist" in item["finding"]
+    }
+    assert contract_findings == {
         "CourseFilter: BCE method/field signatures reference undeclared type 'CourseFilter' — declare it in the class diagram [class.contract-types-exist · app/design/validation.py (BCE contract type validation)]",
         "MissingResult: BCE method/field signatures reference undeclared type 'MissingResult' — declare it in the class diagram [class.contract-types-exist · app/design/validation.py (BCE contract type validation)]",
     }
+
+
+def test_isolated_classes_are_reported_but_a_single_class_model_is_allowed():
+    isolated = {
+        "Classes": [
+            {"className": "CatalogControl", "stereotype": "Control", "methods": []},
+            {"className": "Course", "stereotype": "Entity", "fields": []},
+        ],
+        "Relationships": [],
+    }
+
+    assert [finding.location for finding in detectors.isolated_classes(isolated, {})] == [
+        "CatalogControl", "Course"
+    ]
+    assert detectors.isolated_classes({"Classes": isolated["Classes"][:1]}, {}) == []
 
 
 def test_usecase_checks_stay_quiet_when_there_is_no_upstream_to_compare_against():
