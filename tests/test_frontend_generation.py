@@ -13,6 +13,7 @@ from app.implementation.agents.verification.build import verify_frontend_workspa
 from app.implementation.agents.verification.frontend import (
     frontend_contract_violations,
     repair_frontend_accessibility_contract,
+    run_frontend_verification,
 )
 from app.implementation.agents.verification.frontend import repair_responsive_table_styles
 from app.implementation.planning.design_context import generate_frontend_tasks
@@ -505,14 +506,40 @@ def test_frontend_verification_runs_install_then_production_build(
         return subprocess.CompletedProcess(command, 0, "ok", "")
 
     monkeypatch.setattr(
-        "app.implementation.agents.verification.build.subprocess.run", completed
+        "app.implementation.agents.verification.build.run_frontend_command", completed
     )
 
     result = verify_frontend_workspace(tmp_path)
 
     assert result["exitCode"] == 0
     assert commands[0][1] == "ci"
+    assert "--prefer-offline" in commands[0]
     assert commands[1][1:] == ["run", "build"]
+
+
+def test_frontend_verification_keeps_timeout_diagnostics(tmp_path: Path) -> None:
+    frontend = tmp_path / "application/frontend"
+    frontend.mkdir(parents=True)
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "src").mkdir()
+    (frontend / "src/main.tsx").write_text(
+        "import { HashRouter } from 'react-router-dom'; const app=<HashRouter />;",
+        encoding="utf-8",
+    )
+
+    def timeout(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        raise subprocess.TimeoutExpired(
+            command, 300, output=b"fetching packages", stderr=b"registry stalled"
+        )
+
+    result = run_frontend_verification(tmp_path, timeout, timeout_seconds=300)
+
+    assert result["exitCode"] == 1
+    assert result["command"][1] == "ci"
+    assert "Frontend command timed out after 300 seconds" in result["stderr"]
+    assert "registry stalled" in result["stderr"]
+    assert "fetching packages" in result["stdout"]
 
 
 def test_frontend_contract_checks_jsx_expression_aria_references(

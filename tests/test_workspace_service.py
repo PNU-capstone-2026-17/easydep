@@ -879,6 +879,56 @@ def test_implementation_progress_snapshot_exposes_workflow_phase_and_verificatio
     assert "activity-backend" not in updates
 
 
+def test_implementation_progress_snapshot_prefers_terminal_job_failure(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "currentPhase": "persistence",
+                "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
+                "tasks": [
+                    {
+                        "taskId": "persistence-1",
+                        "phase": "persistence",
+                        "status": "SUCCEEDED",
+                    }
+                ],
+                "currentActivity": {
+                    "id": "verify-persistence",
+                    "status": "RUNNING",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {
+                "status": "FAILED",
+                "run_root": str(run),
+                "error": "npm ci timed out",
+            }
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["phase-backend"]["status"] == "failed"
+    assert updates["implementation-result"] == {
+        "step": "implementation-result",
+        "label": "구현 작업 실패",
+        "status": "failed",
+        "detail": "npm ci timed out",
+    }
+    assert progress["progress_status"] == "failed"
+
+
 def test_implementation_progress_snapshot_nests_backend_tasks_and_hides_duplicate_activity(
     tmp_path: Path,
 ) -> None:

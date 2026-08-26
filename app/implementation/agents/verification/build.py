@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ..workspace import prepare_agent_workspace
-from .frontend import run_frontend_verification
+from .frontend import run_frontend_command, run_frontend_verification
 
 
 SQL_RESERVED_IDENTIFIERS = (
@@ -154,16 +154,28 @@ def verification_timeout_seconds() -> int:
 
 
 def verify_run_workspace(
-    run_root: Path, report_name: str = "final-verification.json"
+    run_root: Path,
+    report_name: str = "final-verification.json",
+    *,
+    verify_frontend: bool = True,
 ) -> dict[str, object]:
-    """Verify all promoted sources from a short ASCII-safe workspace."""
+    """Verify promoted sources from a short ASCII-safe workspace.
+
+    Frontend dependencies are intentionally installed only for the frontend
+    phase and the final release gate.  Running ``npm ci`` after every backend
+    phase creates an unrelated network-dependent bottleneck and can mask a
+    successful backend build.
+    """
     sandbox = prepare_agent_workspace(
         run_root,
         {"task_id": "final-verification", "allowed_write_paths": []},
     )
     verification = verify_agent_workspace(sandbox)
     frontend_verification = None
-    if (sandbox / "application" / "frontend" / "package.json").is_file():
+    if (
+        verify_frontend
+        and (sandbox / "application" / "frontend" / "package.json").is_file()
+    ):
         frontend_verification = verify_frontend_workspace(sandbox)
     result = {
         "status": "SUCCEEDED",
@@ -248,7 +260,7 @@ def task_verification_command(
 
 
 def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
-    evidence = run_frontend_verification(sandbox, subprocess.run)
+    evidence = run_frontend_verification(sandbox, run_frontend_command)
     if evidence["exitCode"] != 0:
         raise WorkspaceVerificationError(evidence)
     return evidence

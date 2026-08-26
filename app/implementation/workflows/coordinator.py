@@ -401,8 +401,12 @@ def _run_workflow(
             "detail": "생성된 소스를 빌드하고 테스트하고 있습니다.",
         }
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-        verification = verifier(run_root)
-        audit = auditor(run_root)
+        try:
+            verification = verifier(run_root)
+            audit = auditor(run_root)
+        except Exception as error:
+            _record_workflow_failure(run_root, state, error)
+            raise
         state = reconcile_workflow_state(run_root)
         if audit.get("status") == "COMPLETE":
             state["currentActivity"] = {
@@ -501,7 +505,11 @@ def _run_workflow(
         }
         state["updatedAt"] = _now()
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-        _verify_phase(run_root, phase_id, verifier)
+        try:
+            _verify_phase(run_root, phase_id, verifier)
+        except Exception as error:
+            _record_workflow_failure(run_root, state, error)
+            raise
         state["currentActivity"] = {
             "id": f"audit-{phase_id}",
             "label": f"{PHASE_LABELS[phase_id]} 구현 결과 확인",
@@ -510,7 +518,11 @@ def _run_workflow(
         }
         state["updatedAt"] = _now()
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-        auditor(run_root)
+        try:
+            auditor(run_root)
+        except Exception as error:
+            _record_workflow_failure(run_root, state, error)
+            raise
         next(
             phase for phase in state["phases"] if phase["phaseId"] == phase_id
         )["status"] = "SUCCEEDED"
@@ -528,7 +540,11 @@ def _run_workflow(
         "detail": "전체 구현 결과를 빌드하고 테스트하고 있습니다.",
     }
     _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
-    audit = auditor(run_root)
+    try:
+        audit = auditor(run_root)
+    except Exception as error:
+        _record_workflow_failure(run_root, final_state, error)
+        raise
     if audit.get("status") == "COMPLETE":
         final_state["currentActivity"] = {
             "id": "release-verification",
@@ -537,7 +553,11 @@ def _run_workflow(
             "detail": "설계 정합성과 실행 가능 여부를 확인하고 있습니다.",
         }
         _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
-        verification = verifier(run_root)
+        try:
+            verification = verifier(run_root)
+        except Exception as error:
+            _record_workflow_failure(run_root, final_state, error)
+            raise
         try:
             conformance = verify_source_design_conformance(run_root, spec)
         except SourceDesignConformanceError as error:
@@ -692,9 +712,42 @@ def _verify_phase(
 ) -> dict[str, object]:
     if verifier is verify_run_workspace:
         return verify_run_workspace(
-            run_root, report_name=f"phase-{phase_id}-verification.json"
+            run_root,
+            report_name=f"phase-{phase_id}-verification.json",
+            verify_frontend=phase_id == "frontend",
         )
     return verifier(run_root)
+
+
+def _record_workflow_failure(
+    run_root: Path, state: dict[str, object], error: Exception
+) -> None:
+    """Persist a verifier/auditor failure before propagating it to the job."""
+    activity = state.get("currentActivity")
+    failed_activity = dict(activity) if isinstance(activity, dict) else {}
+    activity_id = str(failed_activity.get("id") or "")
+    phase_id = activity_id.removeprefix("verify-").removeprefix("audit-")
+    if phase_id in PHASE_LABELS:
+        for phase in state.get("phases", []):
+            if isinstance(phase, dict) and phase.get("phaseId") == phase_id:
+                phase["status"] = "FAILED"
+                break
+
+    detail = (str(error).strip() or type(error).__name__)[-1000:]
+    label = str(failed_activity.get("label") or "구현 결과 확인")
+    failed_activity.update(
+        {
+            "id": activity_id or "workflow-verification",
+            "label": label,
+            "status": "FAILED",
+            "detail": f"{label} 실패: {detail}",
+        }
+    )
+    state["currentActivity"] = failed_activity
+    state["status"] = "FAILED"
+    state["blockingReason"] = failed_activity["detail"]
+    state["updatedAt"] = _now()
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
 
 
 def workflow_status(run_root: Path) -> dict[str, object]:

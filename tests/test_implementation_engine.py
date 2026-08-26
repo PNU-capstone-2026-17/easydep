@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -3933,6 +3934,144 @@ class ApplicationConfiguration {
             self.assertTrue(
                 (run / "reports/phase-control-verification.json").is_file()
             )
+
+    def test_phase_verification_skips_frontend_install_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = root / "generated" / "runs" / "run_abcdef1234567890"
+            source = run / "application" / "src" / "Main.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("class Main {}", encoding="utf-8")
+            frontend = run / "application" / "frontend"
+            frontend.mkdir()
+            (frontend / "package.json").write_text("{}", encoding="utf-8")
+            temp_root = root / "ascii-temp"
+            verification = {"exitCode": 0, "testResults": ""}
+
+            with (
+                patch(
+                    "app.implementation.agents.workspace.tempfile.gettempdir",
+                    return_value=str(temp_root),
+                ),
+                patch(
+                    "app.implementation.agents.verification.build.verify_agent_workspace",
+                    return_value=verification,
+                ),
+                patch(
+                    "app.implementation.agents.verification.build.verify_frontend_workspace"
+                ) as verify_frontend,
+            ):
+                result = verify_run_workspace(run, verify_frontend=False)
+
+            self.assertEqual("SUCCEEDED", result["status"])
+            self.assertIsNone(result["frontendVerification"])
+            verify_frontend.assert_not_called()
+
+    def test_verification_failure_is_persisted_in_workflow_state(self) -> None:
+        from app.implementation.workflows.coordinator import _record_workflow_failure
+
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            state = {
+                "status": "RUNNING",
+                "currentPhase": "persistence",
+                "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
+                "currentActivity": {
+                    "id": "verify-persistence",
+                    "label": "Repository 빌드 및 Unit Test",
+                    "status": "RUNNING",
+                },
+            }
+
+            _record_workflow_failure(run, state, RuntimeError("npm ci timed out"))
+
+            persisted = json.loads(
+                (run / "reports" / "workflow-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("FAILED", persisted["status"])
+            self.assertEqual("FAILED", persisted["phases"][0]["status"])
+            self.assertEqual("FAILED", persisted["currentActivity"]["status"])
+            self.assertIn("npm ci timed out", persisted["blockingReason"])
+
+    def test_frontend_timeout_retains_npm_diagnostics(self) -> None:
+        from app.implementation.agents.verification.frontend import (
+            run_frontend_verification,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            frontend = root / "application" / "frontend"
+            frontend.mkdir(parents=True)
+            (frontend / "package.json").write_text("{}", encoding="utf-8")
+            (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+            source = frontend / "src" / "main.tsx"
+            source.parent.mkdir()
+            source.write_text(
+                "import { HashRouter } from 'react-router-dom'; const app=<HashRouter />;",
+                encoding="utf-8",
+            )
+
+            def timeout(command: list[str], **_kwargs: object) -> object:
+                raise subprocess.TimeoutExpired(
+                    command,
+                    300,
+                    output=b"fetching packages",
+                    stderr=b"registry stalled",
+                )
+
+            result = run_frontend_verification(root, timeout, timeout_seconds=300)
+
+            self.assertEqual(1, result["exitCode"])
+            self.assertEqual("ci", result["command"][1])
+            self.assertIn("registry stalled", str(result["stderr"]))
+            self.assertIn("fetching packages", str(result["stdout"]))
+
+    def test_failed_job_overrides_stale_running_workflow_progress(self) -> None:
+        from app.workspace.service import WorkspaceService
+
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            (reports / "workflow-state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "RUNNING",
+                        "currentPhase": "persistence",
+                        "phases": [
+                            {"phaseId": "persistence", "status": "RUNNING"}
+                        ],
+                        "tasks": [
+                            {
+                                "taskId": "persistence-1",
+                                "phase": "persistence",
+                                "status": "SUCCEEDED",
+                            }
+                        ],
+                        "currentActivity": {
+                            "id": "verify-persistence",
+                            "status": "RUNNING",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            service = WorkspaceService()
+            try:
+                progress = service._implementation_progress_snapshot(
+                    {
+                        "status": "FAILED",
+                        "run_root": str(run),
+                        "error": "npm ci timed out",
+                    }
+                )
+            finally:
+                service.shutdown()
+
+            updates = {item["step"]: item for item in progress["updates"]}
+            self.assertEqual("failed", updates["phase-backend"]["status"])
+            self.assertEqual("failed", updates["implementation-result"]["status"])
+            self.assertEqual("failed", progress["progress_status"])
 
     def test_agent_workspace_uses_sibling_when_previous_workspace_is_locked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
