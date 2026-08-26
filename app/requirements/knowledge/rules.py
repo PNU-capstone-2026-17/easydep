@@ -220,6 +220,22 @@ RULES: tuple[Rule, ...] = (
         probe=("user goal",),
     ),
     Rule(
+        id="usecases.goal-source-grounded",
+        stage=MODEL_USE_CASES,
+        severity=DEFECT,
+        statement=(
+            "Every use-case name, goal qualifier, and actor-goal boundary must be supported "
+            "by its linked functional requirements and accepted actor facts. Do not add a "
+            "lifecycle state, prerequisite, outcome, or domain convention merely because it "
+            "would be plausible for that operation."
+        ),
+        citation="easydep convention (source-grounded use-case projection)",
+        evidence="project-convention",
+        caveat="요구사항에서 유스케이스 경계를 투영할 때 환각을 막기 위한 우리 규약이다.",
+        owner="use_cases",
+        judged_by=JUDGED_VALIDATOR,
+    ),
+    Rule(
         id="usecases.nfr-is-a-constraint",
         stage=MODEL_USE_CASES,
         severity=GUIDANCE,

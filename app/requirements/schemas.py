@@ -416,8 +416,8 @@ class ExtendSelection(BaseModel):
     extending_use_case_id: str = Field(
         description="Stable ID of the existing optional use case."
     )
-    extension_point: str = Field(
-        description="Exact supplied base step reference, formatted as main:<step number>."
+    base_step_ref: str = Field(
+        description="Exact supplied base main-scenario step reference, formatted as main:<number>."
     )
     extension_point_name: str = Field(
         min_length=1,

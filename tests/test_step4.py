@@ -179,7 +179,7 @@ def test_extend_selection_is_bounded_to_existing_ids_and_exact_base_step(monkeyp
                 ExtendSelection(
                     base_use_case_id="UC-BASE",
                     extending_use_case_id="UC-EXT",
-                    extension_point="main:4",
+                    base_step_ref="main:4",
                     extension_point_name="after schedule presented",
                     condition="while viewing the current schedule",
                 )
@@ -209,7 +209,7 @@ def test_invalid_extend_references_are_dropped(monkeypatch):
                 ExtendSelection(
                     base_use_case_id="UC-1",
                     extending_use_case_id="UC-MISSING",
-                    extension_point="main:99",
+                    base_step_ref="main:99",
                     extension_point_name="invalid point",
                     condition="invalid condition",
                 )

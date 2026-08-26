@@ -355,7 +355,7 @@ def _materialize_extends(
     for selection in model.extends:
         base_id = selection.base_use_case_id
         extending_id = selection.extending_use_case_id
-        step_ref = _normalize_step_ref(selection.extension_point)
+        step_ref = _normalize_step_ref(selection.base_step_ref)
         label = f"extend {base_id} / {extending_id}"
         if base_id not in names_by_id or extending_id not in names_by_id:
             dropped.append(f"{label}: relationship stage cannot create use cases")
@@ -364,7 +364,10 @@ def _materialize_extends(
             dropped.append(f"{label}: endpoints must be distinct")
             continue
         if step_ref is None or step_ref not in valid_steps.get(base_id, {}):
-            dropped.append(f"{label}: extension point must identify a base main-scenario step")
+            dropped.append(
+                f"{label}: base step ref {selection.base_step_ref!r} is not one of "
+                f"{sorted(valid_steps.get(base_id, {}))}"
+            )
             continue
         identity = (base_id, extending_id, step_ref)
         if identity in seen:

@@ -241,6 +241,9 @@ CLEAN_RELATIONSHIPS: dict = {
 
 #: 2단계의 깨끗한 산출물(`step2.review_model`의 payload 모양).
 CLEAN_MODEL: dict = {
+    "requirements": [
+        {"id": "FR1", "text": "A member shall place an order.", "type": "FR"},
+    ],
     "actors": [
         {"name": "Member", "description": "A signed-in customer who orders items",
          "kind": "primary", "parent_actor": None},
@@ -351,6 +354,22 @@ SEEDED_SEMANTIC: tuple[SeededSemantic, ...] = (
                  "kind": "primary", "parent_actor": None},
             ],
             "use_cases": CLEAN_MODEL["use_cases"],
+        },
+    ),
+    SeededSemantic(
+        "usecases.goal-source-grounded", rules.MODEL_USE_CASES,
+        "연결된 요구사항에 없는 승인 수명주기를 유스케이스 goal에 추가했다",
+        {
+            **copy.deepcopy(CLEAN_MODEL),
+            "use_cases": [
+                {
+                    "name": "Place an approved order",
+                    "primary_actor": "Member",
+                    "level": "user_goal",
+                    "goal": "Place an order that was previously approved",
+                    "requirement_ids": ["FR1"],
+                }
+            ],
         },
     ),
 )

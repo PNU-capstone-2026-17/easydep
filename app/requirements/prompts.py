@@ -182,7 +182,9 @@ other policy/subfunction requirements.
 
 Use exact actor names. Give every candidate an active-verb name and one-sentence goal. Put only
 the FR ids that directly evidence that goal in requirement_ids; those links are provisional and
-will be audited independently. Leave nfr_ids empty. Do not write scenarios or relationships."""
+will be audited independently. Keep every qualifier in the name and goal inside what those FRs
+actually state; do not add plausible lifecycle states, prerequisites, or outcomes. Leave nfr_ids
+empty. Do not write scenarios or relationships."""
 
 FUNCTIONAL_TRACE_SLICE_SYSTEM = """You finalize traceability for exactly one functional
 requirement against a fixed list of proposed user-goal use cases. Return only the supplied
@@ -627,8 +629,9 @@ insufficient; reject different actions, broad policy or authentication state, an
 consequences. Give an approved candidate one concise active-verb name. Except for that approved
 include-node name, do not create or rename use cases.
 
-Extend: choose only supplied existing use_case_id values and an exact main:<number> step owned by
-the base. Compare the extending goal, requirements, preconditions, and trigger with each candidate
+Extend: choose only supplied existing use_case_id values and copy an exact main:<number> value
+into base_step_ref from a step owned by the base. Compare the extending goal, requirements,
+preconditions, and trigger with each candidate
 base's ordered steps; select the step where the enabling context or result becomes available. The
 base must remain complete without the optional goal. The base's own exception is not <<extend>>,
 but a separate actor-chosen goal enabled by a conditional base result may be. A precondition alone
