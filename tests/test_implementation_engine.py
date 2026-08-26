@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.design.services.deployment_diagram.bundle import build_deployment_diagram_bundle
 from app.implementation.generation.orchestrator import (
     PrototypeOrchestrator,
     find_undefined_bce_types,
@@ -109,6 +110,11 @@ from app.implementation.delivery.kubernetes import (
     validate_intent,
 )
 from app.implementation.delivery.terraform import render_iac, validate_terraform
+from scripts.generate_deployment_diagram_examples import (
+    DEPLOYMENT_CASES,
+    _graph as deployment_graph,
+    _resource_spec as deployment_resource_spec,
+)
 from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
     _implemented_interfaces,
@@ -362,6 +368,64 @@ class ImplementationParallelismTest(unittest.TestCase):
                 ]}),
                 encoding="utf-8",
             )
+            observed: list[tuple[str, list[str], str]] = []
+
+            def execute(root: Path, task_id: str) -> dict[str, object]:
+                persisted = json.loads(
+                    (root / "reports" / "workflow-state.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                durable_task = next(
+                    item for item in persisted["tasks"] if item["taskId"] == task_id
+                )
+                observed.append(
+                    (task_id, [str(task["status"]) for task in tasks], str(durable_task["status"]))
+                )
+                output = root / f"application/{task_id}.java"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("class Generated {}", encoding="utf-8")
+                return {"status": "SUCCEEDED"}
+
+            state: dict[str, object] = {"tasks": tasks, "status": "RUNNING"}
+            self.assertEqual([], _execute_task_batch(run, state, tasks, execute, max_workers=2))
+            self.assertTrue(observed)
+            self.assertTrue(
+                all(
+                    statuses[next(index for index, task in enumerate(tasks) if task["taskId"] == task_id)]
+                    == "RUNNING"
+                    and durable_status == "RUNNING"
+                    for task_id, statuses, durable_status in observed
+                )
+            )
+            self.assertTrue(
+                all(
+                    sum(status == "RUNNING" for status in statuses) <= 2
+                    for _, statuses, _ in observed
+                )
+            )
+
+    def test_sequential_batch_checkpoints_completion_before_next_task_starts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            tasks = [
+                self._task(f"task-{index}", "api-adapter", f"application/{index}.java")
+                for index in range(2)
+            ]
+            (reports / "run-manifest.json").write_text(
+                json.dumps({
+                    "implementation_tasks": [
+                        {
+                            "task_id": task["taskId"],
+                            "allowed_write_paths": task["allowedWritePaths"],
+                        }
+                        for task in tasks
+                    ]
+                }),
+                encoding="utf-8",
+            )
             observed: list[list[str]] = []
 
             def execute(root: Path, task_id: str) -> dict[str, object]:
@@ -372,9 +436,12 @@ class ImplementationParallelismTest(unittest.TestCase):
                 return {"status": "SUCCEEDED"}
 
             state: dict[str, object] = {"tasks": tasks, "status": "RUNNING"}
-            self.assertEqual([], _execute_task_batch(run, state, tasks, execute, max_workers=2))
-            self.assertTrue(observed)
-            self.assertLessEqual(sum(status == "RUNNING" for status in observed[0]), 2)
+            self.assertEqual(
+                [], _execute_task_batch(run, state, tasks, execute, max_workers=1)
+            )
+            self.assertEqual(
+                [["RUNNING", "PENDING"], ["SUCCEEDED", "RUNNING"]], observed
+            )
 
     def test_persistence_entities_finish_before_parallel_dependents(self) -> None:
         tasks = [
@@ -2978,7 +3045,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             )
 
             spec = load_job(job)
-            self.assertEqual([], generate_e2e_tasks(spec, run))
+            tasks = generate_e2e_tasks(spec, run)
+            self.assertEqual(["implement-end-to-end-flow"], [task.task_id for task in tasks])
             gaps = detect_e2e_design_gaps(spec, run)
             self.assertEqual(
                 {"OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED"},
@@ -2989,7 +3057,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                     encoding="utf-8"
                 )
             )
-            self.assertEqual("NEEDS_INPUT", report["status"])
+            self.assertEqual("WARNING", report["status"])
 
     def test_e2e_planner_emits_bounded_real_integration_test_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3224,6 +3292,39 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             )
             self.assertIn("verify-deployment.py", deploy)
 
+    def test_implementation_release_can_skip_kubernetes_manifests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            intent_path = root / "deployment-intent.json"
+            intent_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-deployment-intent/v1alpha1",
+                        "namespace": "demo",
+                        "workloads": [
+                            {
+                                "name": "demo-api",
+                                "kind": "Deployment",
+                                "image": "example/demo:1",
+                                "capabilities": {},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            run = root / "run"
+            report = render_deployment(
+                run,
+                SimpleNamespace(name="demo", inputs={"deploymentIntent": intent_path}),
+                include_kubernetes=False,
+            )
+
+            self.assertFalse(report["kubernetesManifests"])
+            self.assertIn("application/Dockerfile", report["renderedFiles"])
+            self.assertFalse((run / "application/k8s").exists())
+            self.assertTrue((run / "reports/deployment-intent.json").is_file())
+
     @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_deterministic_iac_renderer_matches_deployment_intent(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3249,6 +3350,101 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn('resource "azurerm_kubernetes_cluster"', source)
             self.assertIn('resource "azurerm_container_registry"', source)
             self.assertIn('resource "azurerm_key_vault"', source)
+
+    @patch(
+        "app.implementation.delivery.terraform.render_open_tofu",
+        return_value={
+            "easydep-provider.tf": 'terraform {}',
+            "main.tf": 'resource "azurerm_container_registry" "demoacr" {}',
+        },
+    )
+    @patch("app.implementation.delivery.terraform.validate_provider_resource_plan")
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_iac_renderer_uses_completed_deployment_bundle_resource_plan(
+        self,
+        _validation: object,
+        validate_resource_plan: object,
+        render_resource_plan: object,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource_spec = {
+                "provider": "azure",
+                "region": "koreacentral",
+            }
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps(resource_spec), encoding="utf-8")
+            bundle = root / "deployment-bundle.json"
+            bundle.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-deployment-diagram",
+                        "status": "completed",
+                        "resourceSpec": resource_spec,
+                        "projections": [
+                            {
+                                "status": "completed",
+                                "provider": "azure",
+                                "region": "koreacentral",
+                                "resourcePlanStructureDigest": "reviewed-plan",
+                                "resourcePlan": {"structureDigest": "reviewed-plan"},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = render_iac(
+                root / "run",
+                SimpleNamespace(
+                    inputs={"cloud": cloud, "deploymentBundle": bundle}
+                ),
+                include_kubernetes=False,
+            )
+
+            self.assertEqual(
+                "deployment_diagram_resource_plan",
+                report["sourceEvidence"]["resourceSpecSource"],
+            )
+            self.assertEqual(
+                "reviewed-plan",
+                report["sourceEvidence"]["deploymentDiagramResourcePlanDigest"],
+            )
+            self.assertTrue((root / "run/application/terraform/main.tf").is_file())
+            assert hasattr(validate_resource_plan, "assert_called_once_with")
+            validate_resource_plan.assert_called_once_with({"structureDigest": "reviewed-plan"})
+            assert hasattr(render_resource_plan, "assert_called_once_with")
+            render_resource_plan.assert_called_once_with({"structureDigest": "reviewed-plan"})
+
+    @patch(
+        "app.implementation.delivery.terraform.validate_terraform",
+        return_value={"status": "SUCCEEDED"},
+    )
+    def test_iac_renderer_renders_real_deployment_resource_plan(
+        self, _validation: object
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource_spec = deployment_resource_spec("aws")
+            self.assertNotIn("resources", resource_spec)
+            diagram = build_deployment_diagram_bundle(
+                deployment_graph(DEPLOYMENT_CASES[0]), resource_spec
+            )
+            cloud = root / "cloud.json"
+            bundle = root / "deployment-diagram-bundle.json"
+            cloud.write_text(json.dumps(resource_spec), encoding="utf-8")
+            bundle.write_text(json.dumps(diagram), encoding="utf-8")
+
+            report = render_iac(
+                root / "run",
+                SimpleNamespace(inputs={"cloud": cloud, "deploymentBundle": bundle}),
+                include_kubernetes=False,
+            )
+
+            self.assertEqual("resource_plan_exact_rendering", report["sourceConformance"]["mode"])
+            self.assertIn("application/terraform/easydep-provider.tf", report["renderedFiles"])
+            self.assertTrue((root / "run/application/terraform/bootstrap_compute_1.sh.tftpl").is_file())
 
     @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_deterministic_iac_renderer_supports_aws_and_gcp(self, _validation: object) -> None:

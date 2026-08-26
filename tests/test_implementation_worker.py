@@ -434,6 +434,12 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
             "api_spec": {"openapi": "3.0.3", "paths": {}},
             "erd_puml": "@startuml\nentity orders\n@enduml",
             "deployment_diagram_puml": "@startuml\nnode app\n@enduml",
+            "deployment_diagram_bundle": {
+                "schemaVersion": "easydep-deployment-diagram",
+                "status": "completed",
+                "resourceSpec": {"provider": "azure", "resources": []},
+                "projections": [],
+            },
             "resource_spec": {"cloud": "azure"},
         },
         "com.example.orders",
@@ -441,7 +447,8 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     )
     job = json.loads(path.read_text(encoding="utf-8"))
     assert set(job["inputs"]) == {
-        "bceClass", "sequence", "openapi", "erd", "deployment", "cloud",
+        "bceClass", "sequence", "openapi", "erd", "deployment",
+        "deploymentBundle", "cloud",
     }
     assert job["generation"]["basePackage"] == "com.example.orders"
     assert job["requiredInputs"] == ["bceClass", "sequence", "openapi"]
