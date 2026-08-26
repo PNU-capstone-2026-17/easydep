@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -66,6 +67,7 @@ from app.design.knowledge.detectors import (
     _known_flow_step_ids,
     _known_use_case_ids,
 )
+from app.design.observability import log_design_timing
 from app.design.schemas.architecture_state import ArchitectureState
 
 #: 왜 재생성을 멈췄는가. **"위반 0건"과 "예산이 끝났다"를 같은 값으로 두지 않기 위해 있다.**
@@ -596,6 +598,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     """
 
     def node(state: ArchitectureState) -> dict:
+        started = time.perf_counter()
         model = state.get(spec.model_key) or {}
         findings = _dedupe_findings(spec.check(model, state))
         iterations = 0
@@ -621,6 +624,15 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         else:
             budget = repair_budget()
 
+        log_design_timing(
+            "design.model_check.started",
+            stage=spec.stage,
+            findings_count=len(findings),
+            repairable_findings_count=len(repairable),
+            repair_budget=budget,
+            diagram_count=len(diagrams) if isinstance(diagrams, list) else None,
+        )
+
         for _ in range(budget):
             if not findings:
                 break
@@ -638,6 +650,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 stopped = NO_IMPROVEMENT
                 break
             iterations += 1
+            repair_started = time.perf_counter()
             try:
                 targets = _sequence_repair_targets(spec, model, state, batch)
                 if len(targets) > 1:
@@ -664,6 +677,14 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                         if _finding_key(finding) in local_keys
                     ]
                     targets = {target}
+                log_design_timing(
+                    "design.auto_repair.started",
+                    stage=spec.stage,
+                    iteration=iterations,
+                    rule_ids=sorted({finding.rule_id for finding in batch}),
+                    target_use_case_ids=sorted(targets),
+                    findings_count=len(findings),
+                )
                 revised = spec.revise(model, repair_directive(batch), state, targets)
                 # 컬렉션이면 finding이 속한 유스케이스만 LLM 출력을 받아들인다. 대상
                 # 추론이 불가능한 컬렉션 수준 결함만 기존처럼 전체 수정한다.
@@ -671,24 +692,57 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             except Exception as exc:  # noqa: BLE001 - 검증 실패가 스테이지를 죽이면 안 된다
                 error = f"{type(exc).__name__}: {exc}"
                 stopped = ERROR
+                log_design_timing(
+                    "design.auto_repair.failed",
+                    stage=spec.stage,
+                    iteration=iterations,
+                    elapsed_ms=round((time.perf_counter() - repair_started) * 1000, 1),
+                    error_type=type(exc).__name__,
+                )
                 break
             candidate_findings = _dedupe_findings(spec.check(candidate or {}, state))
             if _is_degenerate(spec, model, candidate) or _loses_sequence_traceability(
                 spec, model, candidate, state
             ):
                 stopped = NO_IMPROVEMENT
+                log_design_timing(
+                    "design.auto_repair.completed",
+                    stage=spec.stage,
+                    iteration=iterations,
+                    elapsed_ms=round((time.perf_counter() - repair_started) * 1000, 1),
+                    accepted=False,
+                    reason="degenerate_or_lost_traceability",
+                    candidate_findings_count=len(candidate_findings),
+                )
                 if spec.stage == "sequence_diagram":
                     skipped_findings.update(_finding_key(finding) for finding in batch)
                     continue
                 break
             if not _repair_is_improvement(spec, findings, candidate_findings):
                 stopped = NO_IMPROVEMENT
+                log_design_timing(
+                    "design.auto_repair.completed",
+                    stage=spec.stage,
+                    iteration=iterations,
+                    elapsed_ms=round((time.perf_counter() - repair_started) * 1000, 1),
+                    accepted=False,
+                    reason="no_improvement",
+                    candidate_findings_count=len(candidate_findings),
+                )
                 if spec.stage == "sequence_diagram":
                     skipped_findings.update(_finding_key(finding) for finding in batch)
                     continue
                 break
             model, findings = candidate, candidate_findings
             skipped_findings.clear()
+            log_design_timing(
+                "design.auto_repair.completed",
+                stage=spec.stage,
+                iteration=iterations,
+                elapsed_ms=round((time.perf_counter() - repair_started) * 1000, 1),
+                accepted=True,
+                candidate_findings_count=len(candidate_findings),
+            )
             remaining_repairable = _repairable_findings(findings)
             stopped = (
                 CLEAN if not findings else (BUDGET if remaining_repairable else NEEDS_INPUT)
@@ -710,6 +764,14 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 report["stopped"] = NEEDS_INPUT
         if error:
             report["error"] = error
+        log_design_timing(
+            "design.model_check.completed",
+            stage=spec.stage,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+            findings_count=len(findings),
+            repair_iters=iterations,
+            stopped=stopped,
+        )
         return {spec.model_key: model, spec.check_key: report}
 
     return node
@@ -728,12 +790,22 @@ def render_and_validate(
     순수 함수인 이유는 부르는 곳이 둘이라서다 — 그래프의 `render_node`와 지목 수정
     (`cascade.py`). 예전에는 이 네 줄이 세 곳에 흩어져 있었다.
     """
+    started = time.perf_counter()
     content = (
         spec.render_with_state(model or {}, state)
         if spec.render_with_state is not None and state is not None
         else spec.render(model or {})
     )
+    rendered_at = time.perf_counter()
     validation = spec.validate(content)
+    log_design_timing(
+        "design.render_validate.completed",
+        stage=spec.stage,
+        render_ms=round((rendered_at - started) * 1000, 1),
+        validation_ms=round((time.perf_counter() - rendered_at) * 1000, 1),
+        content_chars=len(str(content or "")),
+        syntax_valid=validation["syntax_valid"],
+    )
     return {
         spec.content_key: content,
         spec.valid_key: validation["syntax_valid"],

@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from typing import Any
 
 from app.design.knowledge.detectors import (
     sequence_diagram_findings,
     sequence_return_values_match_methods,
 )
+from app.design.observability import log_design_timing
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.reviser import revise_bce_classes
@@ -537,11 +539,19 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
         sequence, str(state.get("sequence_diagram_feedback") or "")
     )
     if approved_ids:
+        approval_started = time.perf_counter()
+        log_design_timing(
+            "sequence.method_approval.started",
+            approved_method_proposal_ids=sorted(approved_ids),
+            pending_proposals_count=len(pending_proposals),
+        )
         revised_bce = _apply_approved_method_proposals(
             bce, pending_proposals, approved_ids
         )
         if revised_bce != bce:
+            class_patch_started = time.perf_counter()
             result.update(_class_patch(revised_bce))
+            class_patch_ms = round((time.perf_counter() - class_patch_started) * 1000, 1)
             approved_use_cases = {
                 str(use_case_id).strip()
                 for proposal in pending_proposals
@@ -551,11 +561,22 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
             }
             refreshed_targets = reassembly_targets | approved_use_cases
             if isinstance(working_sequence.get("Diagrams"), list) and refreshed_targets:
+                reassembly_started = time.perf_counter()
+                log_design_timing(
+                    "sequence.method_approval.reassembly_started",
+                    target_use_case_ids=sorted(refreshed_targets),
+                    target_count=len(refreshed_targets),
+                )
                 working_sequence = reassemble_sequence_diagrams(
                     working_sequence,
                     state.get("usecase_spec"),
                     str(result["class_diagram_puml"]),
                     refreshed_targets,
+                )
+                log_design_timing(
+                    "sequence.method_approval.reassembly_completed",
+                    elapsed_ms=round((time.perf_counter() - reassembly_started) * 1000, 1),
+                    target_use_case_ids=sorted(refreshed_targets),
                 )
                 working_sequence = {
                     **working_sequence,
@@ -576,7 +597,19 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
                 }
             result["sequence_diagram_model"] = working_sequence
             _persist_class_diagram(state, result)
+            log_design_timing(
+                "sequence.method_approval.completed",
+                elapsed_ms=round((time.perf_counter() - approval_started) * 1000, 1),
+                class_patch_ms=class_patch_ms,
+                reassembly_target_use_case_ids=sorted(refreshed_targets),
+                status="applied",
+            )
             return result
+        log_design_timing(
+            "sequence.method_approval.completed",
+            elapsed_ms=round((time.perf_counter() - approval_started) * 1000, 1),
+            status="no_class_change",
+        )
 
     if isinstance(sequence.get("Diagrams"), list) and reassembly_targets:
         working_sequence = reassemble_sequence_diagrams(

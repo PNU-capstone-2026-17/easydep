@@ -27,6 +27,7 @@ from app.design.api import (
 )
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
+from app.design.observability import design_timing_context, log_design_timing
 from app.implementation.application.jobs import worker as implementation_worker
 from app.implementation.interfaces.http import (
     approve_job,
@@ -793,32 +794,48 @@ class WorkspaceService:
                 },
             )
 
-        record("running", "Started")
-        try:
-            response = operation()
-        except Exception as error:
+        with design_timing_context(
+            app_id=app_id,
+            command_id=command_id,
+            requested_stage=stage,
+        ):
+            record("running", "Started")
+            log_design_timing("workspace.design_operation.started", label=label)
+            try:
+                response = operation()
+            except Exception as error:
+                elapsed = time.perf_counter() - started
+                log_design_timing(
+                    "workspace.design_operation.failed",
+                    elapsed_ms=round(elapsed * 1000, 1),
+                    error_type=type(error).__name__,
+                )
+                record(
+                    "failed",
+                    f"Failed after {elapsed:.1f}s: {WorkspaceService._error_text(error)}",
+                )
+                raise
             elapsed = time.perf_counter() - started
-            record(
-                "failed",
-                f"Failed after {elapsed:.1f}s: {WorkspaceService._error_text(error)}",
+            payload = _json_response(response) if isinstance(response, JSONResponse) else {}
+            validation = payload.get("validation") or {}
+            stage_validation = validation.get(stage) or {}
+            findings = [
+                *list(stage_validation.get("errors") or []),
+                *list(stage_validation.get("findings") or []),
+            ]
+            log_design_timing(
+                "workspace.design_operation.completed",
+                elapsed_ms=round(elapsed * 1000, 1),
+                findings_count=len(findings),
             )
-            raise
-        elapsed = time.perf_counter() - started
-        payload = _json_response(response) if isinstance(response, JSONResponse) else {}
-        validation = payload.get("validation") or {}
-        stage_validation = validation.get(stage) or {}
-        findings = [
-            *list(stage_validation.get("errors") or []),
-            *list(stage_validation.get("findings") or []),
-        ]
-        if findings:
-            record(
-                "needs_review",
-                f"Draft generated in {elapsed:.1f}s; {len(findings)} findings require revision",
-            )
-        else:
-            record("completed", f"Completed in {elapsed:.1f}s")
-        return response
+            if findings:
+                record(
+                    "needs_review",
+                    f"Draft generated in {elapsed:.1f}s; {len(findings)} findings require revision",
+                )
+            else:
+                record("completed", f"Completed in {elapsed:.1f}s")
+            return response
 
     @staticmethod
     def _requirements_progress_reporter(app_id: str, command_id: str):
@@ -1232,6 +1249,18 @@ class WorkspaceService:
             )
 
         job_status = str(job.get("status") or private_job.get("status") or "")
+        terminal_failure = job_status in {"FAILED", "CANCELLED", "REJECTED"}
+        failure_error = str(
+            private_job.get("error") or job.get("error") or ""
+        ).strip()
+        failure_lines = [
+            line.strip() for line in failure_error.splitlines() if line.strip()
+        ]
+        failure_detail = (
+            failure_lines[-1][-500:]
+            if failure_lines
+            else "구현 작업이 완료되지 않았습니다."
+        )
         live_progress = job.get("progress")
         progress_status = (
             str(live_progress.get("status") or "")
@@ -1343,11 +1372,20 @@ class WorkspaceService:
                 )
                 if all_succeeded:
                     add_update(f"phase-{display_id}", label, "completed")
-                elif "FAILED" in task_statuses or any(
-                    phase_statuses.get(phase_id) == "FAILED"
-                    for phase_id in display_phases
+                elif (
+                    "FAILED" in task_statuses
+                    or any(
+                        phase_statuses.get(phase_id) == "FAILED"
+                        for phase_id in display_phases
+                    )
+                    or (terminal_failure and current_phase in phase_ids)
                 ):
-                    add_update(f"phase-{display_id}", label, "failed")
+                    add_update(
+                        f"phase-{display_id}",
+                        label,
+                        "failed",
+                        failure_detail if terminal_failure else "",
+                    )
                 elif (
                     workflow_status == "RUNNING"
                     and current_phase in phase_ids
@@ -1414,7 +1452,8 @@ class WorkspaceService:
             )
             activity = workflow.get("currentActivity")
             if (
-                not workflow_complete
+                not terminal_failure
+                and not workflow_complete
                 and isinstance(activity, dict)
                 and str(activity.get("id") or "")
             ):
@@ -1444,6 +1483,14 @@ class WorkspaceService:
                     )
             elif workflow_complete:
                 add_update("release-verification", "최종 릴리스 검증", "completed")
+
+        if terminal_failure:
+            add_update(
+                "implementation-result",
+                "구현 작업 실패",
+                "failed",
+                failure_detail,
+            )
 
         current_file: str | None = None
         if workflow_complete or job_status in TERMINAL_JOB_STATUSES:
