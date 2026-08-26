@@ -529,6 +529,35 @@ def normalize_sequence_contracts(
         if not isinstance(diagram, dict):
             continue
         messages = [item for item in diagram.get("Messages") or [] if isinstance(item, dict)]
+        # A provider can emit the same call more than once while combining the
+        # main path and its response.  If the trace and fragment path are
+        # identical, it is not a user retry: it is one deterministic scenario
+        # step duplicated in the model.  Remove only this mechanically certain
+        # case; calls with different step ids or an explicit loop remain intact.
+        seen_traced_calls: set[tuple[str, str, str, tuple[str, ...]]] = set()
+        deduplicated: list[dict[str, Any]] = []
+        for message in messages:
+            if str(message.get("type") or "").lower() in {"sync", "async", "self"}:
+                step_ids = tuple(
+                    sorted(
+                        str(step_id).strip()
+                        for step_id in message.get("step_ids") or []
+                        if str(step_id).strip()
+                    )
+                )
+                fragments = message.get("fragments") or []
+                key = (
+                    str(message.get("source") or "").strip(),
+                    str(message.get("target") or "").strip(),
+                    str(message.get("label") or "").strip(),
+                    step_ids,
+                )
+                if step_ids and not fragments and key in seen_traced_calls:
+                    continue
+                if step_ids and not fragments:
+                    seen_traced_calls.add(key)
+            deduplicated.append(message)
+        messages = deduplicated
         participants = {
             _alias(str(item.get("alias") or item.get("name") or "")): item
             for item in diagram.get("Participants") or []
@@ -597,6 +626,34 @@ def normalize_sequence_contracts(
         # An extension has one conditional path.  A lone ``else`` or ``alt``
         # is a rendering-model error, not evidence for an invented main path.
         fragment_branches: dict[str, set[str]] = {}
+        fragment_conditions: dict[str, set[str]] = {}
+        fragment_types: dict[str, set[str]] = {}
+        for message in messages:
+            for fragment in message.get("fragments") or []:
+                if not isinstance(fragment, dict):
+                    continue
+                fragment_id = str(fragment.get("id") or "").strip()
+                if not fragment_id:
+                    continue
+                fragment_conditions.setdefault(fragment_id, set()).add(
+                    " ".join(str(fragment.get("condition") or "").lower().split())
+                )
+                fragment_types.setdefault(fragment_id, set()).add(
+                    str(fragment.get("type") or "").lower()
+                )
+        for message in messages:
+            for fragment in message.get("fragments") or []:
+                if not isinstance(fragment, dict):
+                    continue
+                fragment_id = str(fragment.get("id") or "").strip()
+                conditions = fragment_conditions.get(fragment_id, set())
+                types = fragment_types.get(fragment_id, set())
+                if len(conditions) > 1 and types <= {"loop", "opt"}:
+                    condition = str(fragment.get("condition") or "").strip()
+                    fragment["id"] = (
+                        f"{fragment_id}__{_alias(condition)[:48]}"
+                    )
+
         for message in messages:
             for fragment in message.get("fragments") or []:
                 if isinstance(fragment, dict):
@@ -693,6 +750,13 @@ def normalize_sequence_contracts(
                 expected_return = declared_return_type(calls[reply_to])
                 if expected_return and expected_return.lower() != "void":
                     message["label"] = expected_return
+                    # A return has no independent scenario step.  Carry the
+                    # linked call's trace so an extension reply cannot be
+                    # sorted/validated as a stale main-path message.
+                    message["step_ids"] = list(calls[reply_to].get("step_ids") or [])
+                    message["use_case_ids"] = list(
+                        calls[reply_to].get("use_case_ids") or []
+                    )
                     used_replies.add(reply_to)
                 else:
                     # A void method cannot have a return message.  Removing it
