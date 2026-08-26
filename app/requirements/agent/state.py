@@ -133,7 +133,12 @@ class AgentState(TypedDict):
     # 2단계 — 액터/유스케이스 도출 + FR 커버리지 점검
     actors: list[ActorItem]
     use_cases: list[UseCaseItem]
+    # 요구사항 분류와 독립적인 RTM 제약 간선: requirement id -> 적용 UC ids.
+    # `requirement_ids`는 실현 주장이고, 이 맵은 기능형 정책/불변조건까지 포함한 제약이다.
+    constraint_applicability: NotRequired[dict[str, list[str]]]
     coverage: dict  # check_coverage의 결정론적 커버리지 결과
+    # 요구사항 id 중심 RTM. actor/UC/capability 근거와 realizes/constrains를 구분한다.
+    traceability: NotRequired[dict]
     # review_model(독립 의미 검증자)의 판정. {issues, semantic_status, unexamined_rules}.
     # 커버리지와 나란히 두는 이유: 하나는 "빠진 게 없나"(결정론), 다른 하나는 "모델이
     # 규칙을 지켰나"(의미)이고 둘은 서로를 대신하지 못한다.

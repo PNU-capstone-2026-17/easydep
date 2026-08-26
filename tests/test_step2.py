@@ -331,7 +331,7 @@ def test_orphan_audit_maps_an_explicit_cross_cutting_fr_without_adding_a_use_cas
         if schema is UseCaseResult:
             return _uc_result(["R1"], ["R2"])
         return s2._RequirementTraceSlice(
-            requirement_id="R3", use_case_names=["UC1", "UC2"]
+            requirement_id="R3", constrains_use_case_names=["UC1", "UC2"]
         )
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
@@ -351,7 +351,8 @@ def test_orphan_audit_maps_an_explicit_cross_cutting_fr_without_adding_a_use_cas
     )
 
     assert len(out["use_cases"]) == 2
-    assert all("R3" in use_case["requirement_ids"] for use_case in out["use_cases"])
+    assert all("R3" not in use_case["requirement_ids"] for use_case in out["use_cases"])
+    assert out["constraint_applicability"] == {"R3": ["UC1", "UC2"]}
     assert calls["n"] == 2
 
 
@@ -389,7 +390,7 @@ def test_constraint_slices_attach_only_explicitly_scoped_nfrs(monkeypatch):
         requirement_id = "N1" if "- N1:" in audited else "N2"
         return s2._RequirementTraceSlice(
             requirement_id=requirement_id,
-            use_case_names=["UC1"] if requirement_id == "N1" else [],
+            constrains_use_case_names=["UC1"] if requirement_id == "N1" else [],
         )
 
     monkeypatch.setattr(s2, "invoke_structured", fake)

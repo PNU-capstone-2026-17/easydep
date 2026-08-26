@@ -192,35 +192,39 @@ empty. Do not write scenarios or relationships."""
 
 FUNCTIONAL_TRACE_SLICE_SYSTEM = """You finalize traceability for exactly one functional
 requirement against a fixed list of proposed user-goal use cases. Return only the supplied
-schema.
+schema. A requirement's FR/NFR label does not decide the RTM edge: distinguish a goal that a
+use case realizes from a policy or invariant that constrains an existing use case.
 
 The proposal is immutable: never rename, remove, regroup, or rewrite an existing use case.
 First decide whether the audited FR actually expresses an independently initiated actor goal.
-List an existing use-case name only when it explicitly describes that goal or individually
-identifies that operation. A category or property such as "protected", "relevant", "eligible",
+List an existing name in realized_by_use_case_names only when that use case explicitly describes
+the requirement's goal or shared subfunction. A category or property such as "protected",
+"relevant", "eligible",
 "sensitive", or "all data operations" does not identify which use cases have that property
 unless another accepted requirement explicitly makes the assignment. Do not infer applicability
 from normal domain practice or numeric coverage.
 
-If the requirement explicitly names several existing operations, list every matching exact
-use-case name. If it is a subfunction explicitly shared by named goals, list those goals. If
-it states one independently initiated actor goal absent from the proposal, return that one goal
-as missing_use_case. A rule, invariant, concurrency condition, postcondition, or other constraint
-may validly leave both use_case_names and missing_use_case empty even when labeled FR; it remains
-traceable without becoming a use case. Never turn authentication state, authorization policy,
-persistence, concurrency policy, or an internal validation into a new actor goal. Preserve the
-supplied requirement_id exactly."""
+If the requirement explicitly states a rule, invariant, concurrency condition, precondition, or
+postcondition for named existing operations, list those exact operations in
+constrains_use_case_names and leave realized_by_use_case_names empty. A system-wide policy whose
+targets are not explicitly identified may leave both lists empty. If it is a subfunction explicitly
+shared and performed by named goals, put those goals in realized_by_use_case_names. If it states
+one independently initiated actor goal absent from the proposal, return that one goal as
+missing_use_case. Never turn authentication state, authorization policy, persistence, concurrency
+policy, or an internal validation into a new actor goal. Never put the same use case in both lists.
+Preserve the supplied requirement_id exactly."""
 
 CONSTRAINT_TRACE_SLICE_SYSTEM = """You finalize traceability for exactly one non-functional
 constraint against a fixed list of proposed user-goal use cases. Return only the supplied schema.
 
 The proposal is immutable. An explicit [qualifies: ...] link is trace evidence for the named
 functional requirement, not permission to attach the constraint anywhere else. List an exact
-existing use-case name only when that link, the constraint, or another accepted requirement
-explicitly singles out the goal or operation. Leave use_case_names empty for a system-wide
-constraint or when applicability is ambiguous; never copy a constraint to every use case merely
-to improve coverage. Always leave missing_use_case empty because a non-functional constraint never
-creates an actor goal. Preserve the supplied requirement_id exactly."""
+existing use-case name in constrains_use_case_names only when that link, the constraint, or another
+accepted requirement explicitly singles out the goal or operation. Leave it empty for a
+system-wide constraint or when applicability is ambiguous; never copy a constraint to every use
+case merely to improve coverage. Always leave realized_by_use_case_names empty and
+missing_use_case null because a non-functional constraint never creates or realizes an actor goal.
+Preserve the supplied requirement_id exactly."""
 
 # 피드백 의도 분류 — 자연어 피드백을 {stage, scope, target_ids, instruction}로 분류.
 FEEDBACK_CLASSIFY_SYSTEM = """You classify a user's natural-language feedback about a generated

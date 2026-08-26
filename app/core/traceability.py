@@ -3,9 +3,11 @@
 집계는 여기서만 한다. 파이프라인 커버리지와 저장되는 추적 스냅샷도 여기서 파생한다.
 표나 문서를 렌더링하지 않고, 요구사항 ID가 어느 산출물에 연결되는지만 구조화해 제공한다.
 
-**링크 종류를 뭉개지 않는다.** `requirement_ids`(실현 주장)와 `nfr_ids`(제약 부착)는 뜻이
-달라 따로 센다. 환각 판정만 둘을 합쳐서 본다 — "이 id가 존재하는가"는 어느 칸에 적혔든
-같은 질문이라서다.
+**링크 종류를 뭉개지 않는다.** `requirement_ids`(실현 주장)와 UC 제약 링크는 뜻이
+달라 따로 센다. 기존 `nfr_ids`와 요구사항 분석기가 만든 `constraint_applicability`는 모두
+제약 링크이지만, FR/NFR 분류와 관계 의미를 동일시하지 않는다. 기능 요구사항도 불변조건이나
+정책으로 기존 UC를 제약할 수 있기 때문이다. 환각 판정만 모든 링크를 합쳐서 본다 —
+"이 id가 존재하는가"는 어느 산출물에 적혔든 같은 질문이라서다.
 
 ## 왜 `app/core`에 있나
 
@@ -25,6 +27,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+def constraints_for_use_case(requirement_trace: dict, use_case_id: str) -> list[dict]:
+    """Project one RTM's constraint edges into one downstream design scope."""
+    result: list[dict] = []
+    for requirement_id, item in (requirement_trace.get("requirements") or {}).items():
+        if use_case_id not in (item.get("constrains_use_cases") or []):
+            continue
+        result.append({
+            "id": requirement_id,
+            "type": item.get("type"),
+            "text": item.get("text", ""),
+        })
+    return result
+
+
 @dataclass(frozen=True)
 class Traceability:
     """한 실행 상태의 추적 링크를 되읽기 좋게 뒤집어 둔 것."""
@@ -33,12 +49,19 @@ class Traceability:
     by_id: dict[str, dict] = field(default_factory=dict)
     fr_ids: frozenset[str] = frozenset()
     nfr_ids: frozenset[str] = frozenset()
+    use_case_ids: frozenset[str] = frozenset()
+    #: FR/NFR 라벨과 무관하게 분석기가 정책·불변조건으로 판정한 요구 id.
+    constraint_ids: frozenset[str] = frozenset()
     #: 요구 id → 그것을 **실현한다고 주장하는** UC id들(`requirement_ids`).
     ucs_claiming: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: 요구 id → 그것을 **제약으로 붙인** UC id들(`nfr_ids`).
     ucs_constrained_by: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: 요구 id → 그것에서 파생된 배포 필요사항 id들.
     deployment_needs_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: 요구 id → 그것을 근거로 도출된 액터 역할들.
+    actors_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: 요구 id → 그것에서 파생된 capability id들.
+    capabilities_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: 요구 id → 그것을 커버한다고 적힌 명세 스텝들(`"UC1.3"`). UC보다 정밀한 추적.
     steps_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
@@ -51,8 +74,15 @@ class Traceability:
 
     @property
     def referenced_ids(self) -> frozenset[str]:
-        """UC가 어느 칸으로든 참조한 id 전부."""
-        return frozenset(self.ucs_claiming) | frozenset(self.ucs_constrained_by)
+        """요구사항 산출물이 어느 관계로든 참조한 id 전부."""
+        return frozenset().union(
+            self.ucs_claiming,
+            self.ucs_constrained_by,
+            self.deployment_needs_of,
+            self.actors_of,
+            self.capabilities_of,
+            self.constraint_ids,
+        )
 
     @property
     def unknown_refs(self) -> tuple[str, ...]:
@@ -62,6 +92,17 @@ class Traceability:
         요구 전체**다. 둘 중 하나라도 빠뜨리면 오탐이나 미탐이 생긴다(모듈 docstring).
         """
         return tuple(sorted(self.referenced_ids - frozenset(self.by_id)))
+
+    @property
+    def unknown_use_case_refs(self) -> tuple[str, ...]:
+        """RTM 간선이 가리키지만 현재 UC 집합에는 없는 id."""
+        referenced = {
+            use_case_id
+            for mapping in (self.ucs_claiming, self.ucs_constrained_by)
+            for use_case_ids in mapping.values()
+            for use_case_id in use_case_ids
+        }
+        return tuple(sorted(referenced - self.use_case_ids))
 
     @property
     def covered_fr_ids(self) -> tuple[str, ...]:
@@ -75,8 +116,12 @@ class Traceability:
 
     @property
     def attached_nfr_ids(self) -> tuple[str, ...]:
-        """Use Case 또는 배포 필요사항에 연결된 NFR."""
-        attached = frozenset(self.ucs_constrained_by) | frozenset(self.deployment_needs_of)
+        """UC·배포 필요사항에 연결됐거나 전역 제약으로 판정된 NFR."""
+        attached = (
+            frozenset(self.ucs_constrained_by)
+            | frozenset(self.deployment_needs_of)
+            | self.constraint_ids
+        )
         return tuple(sorted(self.nfr_ids & attached))
 
     @property
@@ -86,10 +131,46 @@ class Traceability:
 
     @property
     def coverage_ratio(self) -> float:
-        """FR 중 커버된 비율. FR이 없으면 1.0(빈 입력을 실패로 읽지 않는다)."""
+        """UC가 실현한 FR 비율(호환 필드). FR이 없으면 1.0이다."""
         if not self.fr_ids:
             return 1.0
         return round(len(self.covered_fr_ids) / len(self.fr_ids), 4)
+
+    @property
+    def goal_ids(self) -> tuple[str, ...]:
+        """FR 중 정책·불변조건이 아니라 사용자 목표 후보인 id."""
+        return tuple(sorted(self.fr_ids - self.constraint_ids))
+
+    @property
+    def covered_goal_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(frozenset(self.goal_ids) & frozenset(self.ucs_claiming)))
+
+    @property
+    def missing_goal_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(frozenset(self.goal_ids) - frozenset(self.ucs_claiming)))
+
+    @property
+    def goal_coverage_ratio(self) -> float:
+        if not self.goal_ids:
+            return 1.0
+        return round(len(self.covered_goal_ids) / len(self.goal_ids), 4)
+
+    @property
+    def accounted_ids(self) -> tuple[str, ...]:
+        """액터·UC·capability 중 하나에 근거 있게 반영된 요구사항."""
+        return tuple(sorted(frozenset(self.by_id) & self.referenced_ids))
+
+    @property
+    def unaccounted_ids(self) -> tuple[str, ...]:
+        """어느 요구사항 산출물에도 연결되지 않은 진짜 추적 공백."""
+        return tuple(sorted(frozenset(self.by_id) - self.referenced_ids))
+
+    @property
+    def accounted_ratio(self) -> float:
+        """전체 요구사항 중 어느 산출물에든 반영된 비율."""
+        if not self.by_id:
+            return 1.0
+        return round(len(self.accounted_ids) / len(self.by_id), 4)
 
 
 def index(state: dict) -> Traceability:
@@ -106,6 +187,14 @@ def index(state: dict) -> Traceability:
         for nid in uc.get("nfr_ids", []) or []:
             constrained.setdefault(nid, []).append(uc_id)
 
+    # FR/NFR은 문장 분류이고 realizes/constrains는 RTM 간선 의미다. 기능형 정책이나
+    # 불변조건은 requirement_ids에 거짓 실현 주장으로 넣지 않고 이 맵에 보존한다.
+    for requirement_id, use_case_ids in (state.get("constraint_applicability") or {}).items():
+        for use_case_id in use_case_ids or []:
+            values = constrained.setdefault(str(requirement_id), [])
+            if str(use_case_id) not in values:
+                values.append(str(use_case_id))
+
     steps: dict[str, list[str]] = {}
     for spec in state.get("use_case_specs") or []:
         uc_id = spec.get("use_case_id", "?")
@@ -118,13 +207,36 @@ def index(state: dict) -> Traceability:
         for requirement_id in need.get("requirementIds", []) or []:
             deployment.setdefault(requirement_id, []).append(need_id)
 
+    actors: dict[str, list[str]] = {}
+    for actor in state.get("actors") or []:
+        actor_name = str(actor.get("name") or "").strip()
+        for requirement_id in actor.get("source_refs") or []:
+            actors.setdefault(str(requirement_id), []).append(actor_name)
+
+    capabilities: dict[str, list[str]] = {}
+    for capability in (state.get("capability_contract") or {}).get("capabilities") or []:
+        capability_id = str(capability.get("id") or "").strip()
+        for requirement_id in capability.get("requirementIds") or []:
+            capabilities.setdefault(str(requirement_id), []).append(capability_id)
+
     return Traceability(
         by_id=by_id,
         fr_ids=frozenset(r["id"] for r in classified if r.get("type") == "FR"),
         nfr_ids=frozenset(r["id"] for r in classified if r.get("type") == "NFR"),
+        use_case_ids=frozenset(
+            str(use_case.get("id") or "")
+            for use_case in state.get("use_cases") or []
+            if str(use_case.get("id") or "")
+        ),
+        constraint_ids=frozenset(
+            str(requirement_id)
+            for requirement_id in (state.get("constraint_applicability") or {})
+        ),
         ucs_claiming={k: tuple(v) for k, v in claiming.items()},
         ucs_constrained_by={k: tuple(v) for k, v in constrained.items()},
         deployment_needs_of={k: tuple(v) for k, v in deployment.items()},
+        actors_of={k: tuple(v) for k, v in actors.items()},
+        capabilities_of={k: tuple(v) for k, v in capabilities.items()},
         steps_of={k: tuple(v) for k, v in steps.items()},
     )
 
@@ -159,27 +271,30 @@ def build_requirement_trace(state: dict, verdicts: list[dict] | None = None) -> 
             "type": requirement_type,
             "text": requirement.get("text", ""),
             "use_cases": list(trace.ucs_of(requirement_id)),
+            "realized_by_use_cases": list(trace.ucs_claiming.get(requirement_id, ())),
+            "constrains_use_cases": list(trace.ucs_constrained_by.get(requirement_id, ())),
+            "modeled_as_constraint": requirement_id in trace.constraint_ids,
             "scenario_steps": list(trace.steps_of.get(requirement_id, ())),
+            "actor_roles": list(trace.actors_of.get(requirement_id, ())),
             "deployment_needs": sorted(needs_by_req.get(requirement_id, [])),
+            "capabilities": list(trace.capabilities_of.get(requirement_id, ())),
             "qualifies": list(requirement.get("qualifies", [])),
             "realized": any(verdict_values) if verdict_values else None,
         }
 
-    use_cases = {
-        use_case["id"]: {
+    use_cases = {}
+    for use_case in state.get("use_cases") or []:
+        use_case_id = use_case.get("id")
+        if not use_case_id:
+            continue
+        use_cases[use_case_id] = {
             "name": use_case.get("name", ""),
             "requirements": [
                 requirement_id
-                for requirement_id in (
-                    list(use_case.get("requirement_ids", []))
-                    + list(use_case.get("nfr_ids", []))
-                )
-                if requirement_id in trace.by_id
+                for requirement_id in trace.by_id
+                if use_case_id in trace.ucs_of(requirement_id)
             ],
         }
-        for use_case in state.get("use_cases") or []
-        if use_case.get("id")
-    }
     unknown_refs = sorted(
         set(trace.unknown_refs) | (referenced_by_needs - frozenset(trace.by_id))
     )
@@ -188,12 +303,21 @@ def build_requirement_trace(state: dict, verdicts: list[dict] | None = None) -> 
         "use_cases": use_cases,
         "deployment_needs": deployment_needs,
         "unknown_refs": unknown_refs,
+        "unknown_use_case_refs": list(trace.unknown_use_case_refs),
         "summary": {
             "requirements": len(requirements),
             "covered_functional_requirements": len(trace.covered_fr_ids),
-            "orphan_functional_requirements": list(trace.orphan_fr_ids),
+            "unrealized_functional_requirements": list(trace.orphan_fr_ids),
+            "orphan_functional_requirements": list(trace.missing_goal_ids),
             "attached_nonfunctional_requirements": len(trace.attached_nfr_ids),
             "unattached_nonfunctional_requirements": list(trace.unattached_nfr_ids),
+            "accounted_requirements": len(trace.accounted_ids),
+            "unaccounted_requirements": list(trace.unaccounted_ids),
+            "goal_requirements": len(trace.goal_ids),
+            "covered_goal_requirements": len(trace.covered_goal_ids),
+            "missing_goal_requirements": list(trace.missing_goal_ids),
+            "goal_coverage_ratio": trace.goal_coverage_ratio,
+            "accounted_coverage_ratio": trace.accounted_ratio,
             "deployment_needs": len(deployment_needs),
         },
     }

@@ -95,6 +95,87 @@ def test_deployment_linked_nfr_is_not_reported_as_unattached():
     assert check_coverage(state)["coverage"]["unattached_nfr_ids"] == []
 
 
+def test_functional_constraint_is_not_counted_as_a_realized_goal():
+    state = _state(
+        classified=[
+            {"id": "FR1", "text": "A user submits a request.", "type": "FR"},
+            {"id": "FR2", "text": "Concurrent requests preserve order.", "type": "FR"},
+        ],
+        use_cases=[
+            {"id": "UC1", "name": "Submit request", "requirement_ids": ["FR1"], "nfr_ids": []},
+        ],
+        constraint_applicability={"FR2": ["UC1"]},
+    )
+
+    trace = traceability.index(state)
+
+    assert trace.covered_fr_ids == ("FR1",)
+    assert trace.orphan_fr_ids == ("FR2",)
+    assert trace.ucs_constrained_by["FR2"] == ("UC1",)
+    assert trace.accounted_ids == ("FR1", "FR2")
+    assert trace.coverage_ratio == 0.5
+    assert trace.accounted_ratio == 1.0
+    coverage = check_coverage(state)["coverage"]
+    assert coverage["unrealized_fr_ids"] == ["FR2"]
+    assert coverage["orphan_fr_ids"] == []
+    assert coverage["fr_realization_ratio"] == 0.5
+    assert coverage["coverage_ratio"] == coverage["goal_coverage_ratio"] == 1.0
+
+
+def test_constraint_edge_to_an_unknown_use_case_is_visible():
+    state = _state(constraint_applicability={"FR1": ["UC9"]})
+
+    coverage = check_coverage(state)["coverage"]
+
+    assert coverage["unknown_use_case_refs"] == ["UC9"]
+
+
+def test_explicit_global_constraint_is_accounted_without_being_forced_onto_a_use_case():
+    state = _state(
+        use_cases=[
+            {"id": "UC1", "name": "x", "requirement_ids": ["FR1"], "nfr_ids": []}
+        ],
+        constraint_applicability={"NFR1": []},
+    )
+
+    trace = build_requirement_trace(state)
+
+    assert check_coverage(state)["coverage"]["unattached_nfr_ids"] == []
+    assert trace["requirements"]["NFR1"]["modeled_as_constraint"] is True
+    assert trace["requirements"]["NFR1"]["constrains_use_cases"] == []
+
+
+def test_use_case_trace_view_includes_functional_constraint_edges():
+    state = _state(constraint_applicability={"FR1": ["UC1"]})
+
+    trace = build_requirement_trace(state)
+
+    assert trace["use_cases"]["UC1"]["requirements"] == ["FR1", "NFR1"]
+
+
+def test_whole_model_accounting_includes_actor_and_capability_evidence():
+    state = _state(
+        classified=[
+            {"id": "R1", "text": "A student is a university user.", "type": "NFR"},
+            {"id": "R2", "text": "The system authorizes protected operations.", "type": "FR"},
+        ],
+        use_cases=[],
+        actors=[{"name": "Student", "source_refs": ["R1"]}],
+        capability_contract={
+            "capabilities": [
+                {"id": "authorization", "requirementIds": ["R2"], "decision": "accepted"}
+            ]
+        },
+    )
+
+    coverage = check_coverage(state)["coverage"]
+
+    assert coverage["coverage_ratio"] == 0.0
+    assert coverage["goal_coverage_ratio"] == 0.0
+    assert coverage["accounted_coverage_ratio"] == 1.0
+    assert coverage["unaccounted_requirement_ids"] == []
+
+
 def test_spec_steps_are_traced_per_step_not_just_per_use_case():
     """스텝 단위 추적이 UC 단위보다 정밀하다 — 매트릭스가 그걸 싣는다."""
     trace = traceability.index(_state(use_case_specs=[{

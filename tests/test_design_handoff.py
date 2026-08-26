@@ -63,12 +63,21 @@ def _requirements_result(**overrides):
 
 def test_handoff_preserves_global_requirements_and_relationships():
     source = _requirements_result()
+    source["traceability"] = {
+        "requirements": {
+            "NFR1": {
+                "text": "Order data shall survive restarts.",
+                "constrains_use_cases": ["UC1"],
+            }
+        }
+    }
 
     state = DesignAdapter._state(source)
 
     assert state["refined_requirements"] == source["requirements"]
     assert state["relationships"] == source["relationships"]
     assert state["usecase_spec"]["relationships"] == source["relationships"]
+    assert state["usecase_spec"]["traceability"] == source["traceability"]
 
 
 def test_handoff_allows_unattached_global_nfr_and_empty_preconditions():

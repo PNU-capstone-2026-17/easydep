@@ -74,6 +74,12 @@ def load_state(run_dir: str | Path) -> dict:
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else default
 
     diagram_path = run_dir / "diagram.puml"
+    requirement_trace = _j("traceability.json", {})
+    constraint_applicability = {
+        requirement_id: list(item.get("constrains_use_cases") or [])
+        for requirement_id, item in (requirement_trace.get("requirements") or {}).items()
+        if item.get("modeled_as_constraint") or item.get("constrains_use_cases")
+    }
     return {
         "classified": _j("input.json", {}).get("classified", []),
         "actors": _j("actors.json", []),
@@ -84,7 +90,8 @@ def load_state(run_dir: str | Path) -> dict:
         "capability_contract": _j("capability_contract.json", {}),
         "resource_spec": _j("resource_spec.json", {}),
         "resource_intake": _j("resource_intake.json", {}),
-        "traceability": _j("traceability.json", {}),
+        "traceability": requirement_trace,
+        "constraint_applicability": constraint_applicability,
         **_j("redo.json", {"redo_rounds": 0, "redo_history": []}),
         "use_case_specs": _j("use_case_specs.json", []),
         "relationships": _j("relationships.json", {}),

@@ -180,7 +180,12 @@ def gate_use_cases(state: AgentState) -> dict:
         return {"gate_route": "advance"}
     st = dict(state)
     apply_feedback_upto(st, answer, up_to="coverage")
-    return {**_pick(st, ("actors", "use_cases", "coverage")), "gate_route": "loop"}
+    return {
+        **_pick(st, (
+            "actors", "use_cases", "constraint_applicability", "coverage", "traceability"
+        )),
+        "gate_route": "loop",
+    }
 
 
 def gate_specs(state: AgentState) -> dict:
@@ -197,7 +202,10 @@ def gate_specs(state: AgentState) -> dict:
     st = dict(state)
     apply_feedback_upto(st, answer, up_to="specs")
     st.update(check_specs(cast(AgentState, st)))  # spec_report 갱신
-    upd = _pick(st, ("actors", "use_cases", "coverage", "use_case_specs", "spec_report"))
+    upd = _pick(st, (
+        "actors", "use_cases", "constraint_applicability", "coverage", "traceability",
+        "use_case_specs", "spec_report",
+    ))
     return {**upd, "gate_route": "loop"}
 
 
@@ -214,7 +222,8 @@ def gate_relationships(state: AgentState) -> dict:
     st.update(check_specs(cast(AgentState, st)))          # 상위 stage 편집 시 명세도 바뀔 수 있어 갱신
     st.update(check_relationships(cast(AgentState, st)))  # relationship_report 갱신
     upd = _pick(st, (
-        "actors", "use_cases", "coverage", "use_case_specs", "spec_report",
+        "actors", "use_cases", "constraint_applicability", "coverage", "traceability",
+        "use_case_specs", "spec_report",
         "relationships", "relationship_report", "diagram",
     ))
     return {**upd, "gate_route": "loop"}

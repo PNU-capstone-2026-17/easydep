@@ -238,16 +238,18 @@ RULES: tuple[Rule, ...] = (
         judged_by=JUDGED_VALIDATOR,
     ),
     Rule(
-        id="usecases.nfr-is-a-constraint",
+        id="usecases.constraint-is-not-a-goal",
         stage=MODEL_USE_CASES,
         severity=GUIDANCE,
         statement=(
-            "A non-functional requirement is not a use case. Attach it as a constraint "
-            "on the use cases it qualifies."
+            "A policy, invariant, precondition, postcondition, or quality constraint is not "
+            "an independently initiated actor goal, regardless of its FR/NFR classifier label. "
+            "Record it as a constrains edge only for explicitly identified existing operations; "
+            "a system-wide or ambiguous constraint may remain global."
         ),
         citation="easydep convention",
         evidence="project-convention",
-        caveat="우리 규약이다. NFR을 어디에 붙일지는 책이 정하지 않는다.",
+        caveat="우리 규약이다. 제약의 적용 범위를 FR/NFR 분류로 정하지 않는다.",
     ),
     Rule(
         id="usecases.every-functional-requirement-covered",

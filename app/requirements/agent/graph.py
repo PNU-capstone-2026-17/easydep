@@ -324,6 +324,7 @@ _ARTIFACT_KEYS = (
     "use_cases",
     "model_review",
     "coverage",
+    "traceability",
     "use_case_specs",
     "spec_report",
     "relationships",

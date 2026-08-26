@@ -62,18 +62,18 @@ def persist_analysis(app_id: str, payload: dict) -> list[str]:
     actors = payload.get("actors") or []
     use_cases = payload.get("use_cases") or []
     use_case_specs = payload.get("use_case_specs") or []
+    traceability = payload.get("traceability") or {}
     if actors or use_cases or use_case_specs:
         # 이 객체는 유스케이스 분석과 상세 명세의 누적 산출물이다. 먼저 분석 결과를
         # 리뷰하고, 다음 게이트에서는 상세 명세가 더해진 같은 객체를 리뷰한다.
-        save(
-            "usecase_spec",
-            "usecase_spec",
-            {
-                "actors": actors,
-                "use_cases": use_cases,
-                "use_case_specs": use_case_specs,
-            },
-        )
+        usecase_artifact = {
+            "actors": actors,
+            "use_cases": use_cases,
+            "use_case_specs": use_case_specs,
+        }
+        if traceability:
+            usecase_artifact["traceability"] = traceability
+        save("usecase_spec", "usecase_spec", usecase_artifact)
 
     save("usecase_diagram", "usecase_diagram_puml", payload.get("diagram"))
     # `RESOURCE_SPEC`. **계약을 만족한 것만 온다** — `build_resource_spec`이 통과하지

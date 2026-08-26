@@ -258,6 +258,24 @@ def test_load_state_restores_cloud_requirement_artifacts(tmp_path):
     assert restored["traceability"]["requirements"]["R1"]["deployment_needs"] == ["https_ingress"]
 
 
+def test_load_state_preserves_an_explicit_global_constraint(tmp_path):
+    input_obj = {
+        "name": "demo",
+        "classified": [
+            {"id": "R1", "text": "The service preserves audit records.", "type": "NFR"}
+        ],
+    }
+    state = _sample_state() | {
+        "classified": input_obj["classified"],
+        "constraint_applicability": {"R1": []},
+    }
+    run_dir = runner.persist_run(input_obj, state, artifact_root=tmp_path)
+
+    restored = runner.load_state(run_dir)
+
+    assert restored["constraint_applicability"] == {"R1": []}
+
+
 # ---------------------------------------------------------------------------
 # 3. load_input
 # ---------------------------------------------------------------------------

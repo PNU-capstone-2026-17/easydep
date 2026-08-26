@@ -789,6 +789,7 @@ class AnalyzeResponse(BaseModel):
     actors: list[dict] | None = None  # ActorItem
     use_cases: list[dict] | None = None  # UseCaseItem
     coverage: dict | None = None  # check_coverage 결과
+    traceability: dict | None = None  # requirement id 중심 realizes/constrains RTM
     model_review: dict | None = None  # review_model(독립 의미 검증자)의 판정
     use_case_specs: list[dict] | None = None  # UseCaseSpecItem (Cockburn 명세)
     spec_report: dict | None = None  # check_specs 검증 집계

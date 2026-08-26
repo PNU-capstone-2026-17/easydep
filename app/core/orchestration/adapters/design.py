@@ -142,6 +142,11 @@ def _handoff_errors(requirements_result: dict[str, Any]) -> list[str]:
     ) or []
     for requirement_id in reported_unknown:
         errors.append(f"coverage reports unknown requirement: {requirement_id}")
+    reported_unknown_use_cases = (requirements_result.get("coverage") or {}).get(
+        "unknown_use_case_refs"
+    ) or []
+    for use_case_id in reported_unknown_use_cases:
+        errors.append(f"coverage reports unknown use case: {use_case_id}")
     return list(dict.fromkeys(errors))
 
 
@@ -190,6 +195,7 @@ class DesignAdapter:
             raise DesignContractError("; ".join(dict.fromkeys(errors)))
         requirements = requirements_result.get("requirements") or []
         relationships = requirements_result.get("relationships") or {}
+        requirement_trace = requirements_result.get("traceability") or {}
         return {
             "refined_requirements": requirements,
             "capability_contract": requirements_result.get("capability_contract") or {},
@@ -199,6 +205,7 @@ class DesignAdapter:
                 "use_cases": requirements_result.get("use_cases") or [],
                 "use_case_specs": requirements_result.get("use_case_specs") or [],
                 "relationships": relationships,
+                "traceability": requirement_trace,
             },
             "relationships": relationships,
             "usecase_diagram_puml": requirements_result.get("diagram") or "",

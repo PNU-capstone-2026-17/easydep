@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import settings
+from app.core.traceability import constraints_for_use_case
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
 from app.design.services.common.structured import parse_structured
 
@@ -80,6 +81,11 @@ You add executable behaviour to an existing BCE skeleton.  Return only the
 given schema.  The skeleton is fixed: use only supplied className values and
 never create, delete, rename, or edit a class, field, identifier, trace tag, or
 relationship.  Propose operations only; do not provide input bindings.
+
+The payload may contain constraintRequirements from the requirements RTM. They apply to this
+use case but are not additional actor goals or scenario steps. Use them only to refine the
+contract of operations already justified by the supplied steps. Do not create an operation merely
+to restate a policy, and do not invent a class, parameter, or flow step from a global constraint.
 
 Work on one execution group.  For an actor-associated group, emit exactly one
 actorEntry operation on a supplied Boundary and at least one supplied Control
@@ -666,6 +672,15 @@ def _group_payload(skeleton: dict[str, Any], group: _Group, scenario: dict[str, 
         for entity in entities
         if _reachable(dependencies, control, entity)
     ]
+    evidence = {
+        "sourceStepRefs": specification.get("source_step_refs") or [],
+        "requirementIds": specification.get("requirement_ids") or [],
+    }
+    constraint_requirements = constraints_for_use_case(
+        scenario.get("traceability") or {}, group.use_case_id
+    )
+    if constraint_requirements:
+        evidence["constraintRequirements"] = constraint_requirements
     return {
         "useCaseId": group.use_case_id,
         "groupId": group.id,
@@ -675,10 +690,7 @@ def _group_payload(skeleton: dict[str, Any], group: _Group, scenario: dict[str, 
             {"id": ref, "sentence": by_id[ref].sentence}
             for ref in group.step_ids if ref in by_id
         ],
-        "evidence": {
-            "sourceStepRefs": specification.get("source_step_refs") or [],
-            "requirementIds": specification.get("requirement_ids") or [],
-        },
+        "evidence": evidence,
         "classes": [
             {"className": _class_name(item), "stereotype": item.get("stereotype"), "fields": item.get("fields") or []}
             for item in classes

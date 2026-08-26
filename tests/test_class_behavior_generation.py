@@ -56,6 +56,35 @@ def _root_proposal() -> dict:
     ]}
 
 
+def test_behavior_slice_receives_only_constraints_for_its_use_case():
+    scenario = _scenario()
+    scenario["traceability"] = {
+        "requirements": {
+            "R1": {
+                "type": "FR",
+                "text": "Concurrent order placement preserves uniqueness.",
+                "constrains_use_cases": ["UC1"],
+            },
+            "R2": {
+                "type": "NFR",
+                "text": "Reports complete within one second.",
+                "constrains_use_cases": ["UC2"],
+            },
+        }
+    }
+
+    group = behavior.execution_groups(scenario)[0]
+    payload = behavior._group_payload(_skeleton(), group, scenario)
+
+    assert payload["evidence"]["constraintRequirements"] == [
+        {
+            "id": "R1",
+            "type": "FR",
+            "text": "Concurrent order placement preserves uniqueness.",
+        }
+    ]
+
+
 def test_class_graph_passes_the_separate_relationship_artifact(monkeypatch):
     captured: dict = {}
 

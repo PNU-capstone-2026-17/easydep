@@ -138,7 +138,7 @@ def semantic_coverage(state: dict) -> dict:
     """
     classified = state.get("classified") or []
     by_id = {r["id"]: r for r in classified}
-    fr_ids = {r["id"] for r in classified if r.get("type") == "FR"}
+    goal_ids = set(check_coverage(state)["coverage"]["goal_requirement_ids"])
     use_cases = state.get("use_cases") or []
     specs_by_id = {s["use_case_id"]: s for s in (state.get("use_case_specs") or [])}
 
@@ -149,12 +149,14 @@ def semantic_coverage(state: dict) -> dict:
             verdicts.extend(res)
 
     false = [(u, r, reason) for (u, r, real, reason) in verdicts if not real]
-    verified_frs = {r for (u, r, real, _) in verdicts if real and r in fr_ids}
+    verified_goals = {r for (u, r, real, _) in verdicts if real and r in goal_ids}
     return {
         "claimed_coverage_pairs": len(verdicts),
         "false_coverage_claims": len(false),
         "false_coverage_detail": [f"{u} claims {r}: {reason}" for (u, r, reason) in false],
-        "semantic_coverage_ratio": round(len(verified_frs) / len(fr_ids), 4) if fr_ids else 1.0,
+        "semantic_coverage_ratio": (
+            round(len(verified_goals) / len(goal_ids), 4) if goal_ids else 1.0
+        ),
         # Phase 3(RTM): 판정 원본(uc,req,realized)을 RTM realized 컬럼용으로 노출.
         "coverage_verdicts": [
             {"use_case_id": u, "requirement_id": r, "realized": bool(real)}
@@ -187,6 +189,7 @@ def score_run(state: dict, semantic: bool = False) -> dict:
         "n_use_cases": len(use_cases),
         "n_specs": len(specs),
         "fr_total": coverage["fr_total"],
+        "goal_total": len(coverage["goal_requirement_ids"]),
         "coverage_ratio": coverage["coverage_ratio"],
         "orphan_fr_ids": coverage["orphan_fr_ids"],
         "unknown_requirement_refs": coverage["unknown_requirement_refs"],

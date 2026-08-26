@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.traceability import constraints_for_use_case
 from app.design.services.common.structured import StructuredLlmError, parse_structured
 from app.design.services.sequence_diagram.methods import (
     is_complete_method_call,
@@ -25,7 +26,6 @@ from app.design.services.sequence_diagram.methods import (
     method_return_type,
     normalize_return_type,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +283,9 @@ Extensions, ...) and an accepted Boundary-Control-Entity (BCE) class contract.
 The preferred input is structured classes, operations, and relationships; legacy
 callers may provide a PlantUML projection. Ignore absent fields. Do not invent
 participants or messages that the inputs do not support.
+`constraint_requirements`, when present, are RTM policies or invariants that apply
+to this use case. Respect them when choosing among existing class operations, but
+do not turn them into an actor message or invent a method, participant, or step.
 
 ## Participants
 - Derive participants from the supplied class contract, not from imagination. Every
@@ -2761,8 +2764,15 @@ def extract_sequence_diagrams(
         for item in usecase_spec.get("use_cases") or []
         if isinstance(item, dict) and item.get("id")
     }
+    def with_constraints(item: dict[str, Any]) -> dict[str, Any]:
+        constraints = constraints_for_use_case(
+            usecase_spec.get("traceability") or {},
+            str(item.get("use_case_id") or "").strip(),
+        )
+        return {**item, "constraint_requirements": constraints} if constraints else item
+
     specifications = [
-        item
+        with_constraints(item)
         for item in usecase_spec.get("use_case_specs") or []
         if isinstance(item, dict) and item.get("use_case_id")
     ]

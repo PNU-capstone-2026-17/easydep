@@ -31,7 +31,9 @@ class diagram elements from it.
 ## Input
 The use-case specification may include fields such as UseCaseName, \
 PrimaryActor, Stakeholders, Preconditions, MainSuccessScenario, Extensions, \
-and Postconditions. Ignore fields that are absent. Do not fabricate content \
+Postconditions, and a traceability matrix. A traceability constraint refines only \
+the use cases named by its constrains_use_cases edge; it is not an additional actor \
+goal or permission to invent a class. Ignore fields that are absent. Do not fabricate content \
 for missing fields, and do not add any class, field, method, or relationship \
 that is not grounded in the given text.
 

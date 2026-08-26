@@ -37,7 +37,8 @@ class _RequirementTraceSlice(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     requirement_id: str = Field(min_length=1)
-    use_case_names: list[str] = Field(default_factory=list)
+    realized_by_use_case_names: list[str] = Field(default_factory=list)
+    constrains_use_case_names: list[str] = Field(default_factory=list)
     missing_use_case: _MissingUseCaseCandidate | None = None
 
 
@@ -257,8 +258,8 @@ def _audit_requirement_traceability(
     constraints: list[RequirementItem],
     raw_use_cases: list[UseCase],
     functional_audit_ids: list[str],
-) -> list[UseCase]:
-    """Review each ambiguous FR and each NFR independently, then merge RTM edges."""
+) -> tuple[list[UseCase], dict[str, set[str]]]:
+    """Review ambiguous requirements and keep realization and constraint edges separate."""
     accepted_requirements = functional_requirements + constraints
     by_id = {requirement["id"]: requirement for requirement in accepted_requirements}
     constraint_ids = [constraint["id"] for constraint in constraints]
@@ -296,8 +297,13 @@ def _audit_requirement_traceability(
                 subject=requirement_id,
             )
             continue
-        target_keys = {_actor_key(name) for name in decision.use_case_names}
-        unknown = sorted(target_keys - known_names)
+        realized_keys = {
+            _actor_key(name) for name in decision.realized_by_use_case_names
+        }
+        constrained_keys = {
+            _actor_key(name) for name in decision.constrains_use_case_names
+        }
+        unknown = sorted((realized_keys | constrained_keys) - known_names)
         if unknown:
             telemetry.record_degradation(
                 "use_cases.traceability_slice",
@@ -305,13 +311,36 @@ def _audit_requirement_traceability(
                 subject=requirement_id,
             )
             continue
+        if realized_keys and constrained_keys:
+            telemetry.record_degradation(
+                "use_cases.traceability_slice",
+                "one requirement returned both realization and constraint edges",
+                subject=requirement_id,
+            )
+            continue
+        if requirement_id in constraint_ids and realized_keys:
+            telemetry.record_degradation(
+                "use_cases.traceability_slice",
+                "a non-functional constraint claimed realization by a use case",
+                subject=requirement_id,
+            )
+            continue
         accepted[requirement_id] = decision
 
     functional_ids = set(functional_audit_ids)
     nfr_ids_to_audit = set(constraint_ids)
-    target_keys = {
-        requirement_id: {_actor_key(name) for name in decision.use_case_names}
+    realization_targets = {
+        requirement_id: {
+            _actor_key(name) for name in decision.realized_by_use_case_names
+        }
         for requirement_id, decision in accepted.items()
+    }
+    constraint_targets = {
+        requirement_id: {
+            _actor_key(name) for name in decision.constrains_use_case_names
+        }
+        for requirement_id, decision in accepted.items()
+        if not decision.realized_by_use_case_names and decision.missing_use_case is None
     }
     updated: list[UseCase] = []
     for use_case in raw_use_cases:
@@ -327,10 +356,10 @@ def _audit_requirement_traceability(
         ]
         use_case_key = _actor_key(use_case.name)
         for requirement_id in functional_audit_ids:
-            if use_case_key in target_keys.get(requirement_id, set()):
+            if use_case_key in realization_targets.get(requirement_id, set()):
                 requirement_ids.append(requirement_id)
         for requirement_id in constraint_ids:
-            if use_case_key in target_keys.get(requirement_id, set()):
+            if use_case_key in constraint_targets.get(requirement_id, set()):
                 nfr_ids.append(requirement_id)
         updated.append(use_case.model_copy(update={
             "requirement_ids": list(dict.fromkeys(requirement_ids)),
@@ -356,7 +385,7 @@ def _audit_requirement_traceability(
             nfr_ids=[],
         ))
         existing_names.add(_actor_key(candidate.name))
-    return updated
+    return updated, constraint_targets
 
 
 @contract("identify_actors", requires=("classified",), produces=("actors",))
@@ -415,6 +444,7 @@ def _local_edit_use_cases(
     actors: list[ActorItem],
     functional_ids: set[str],
     constraint_ids: set[str],
+    constraint_applicability: dict[str, list[str]],
 ) -> dict:
     target_set = {target.strip() for target in target_ids if target and target.strip()}
     current_listing = "\n".join(
@@ -442,8 +472,17 @@ def _local_edit_use_cases(
     ids = [item["id"] for item in existing] if len(use_cases) == len(existing) else [
         f"UC{index}" for index in range(1, len(use_cases) + 1)
     ]
+    use_case_items = [_uc_dict(use_case, ids[index]) for index, use_case in enumerate(use_cases)]
+    preserved_ids = {item["id"] for item in use_case_items}
     return {
-        "use_cases": [_uc_dict(use_case, ids[index]) for index, use_case in enumerate(use_cases)],
+        "use_cases": use_case_items,
+        "constraint_applicability": {
+            requirement_id: [
+                use_case_id for use_case_id in use_case_ids if use_case_id in preserved_ids
+            ]
+            for requirement_id, use_case_ids in constraint_applicability.items()
+            if not use_case_ids or any(use_case_id in preserved_ids for use_case_id in use_case_ids)
+        },
         "phase": "use_cases",
     }
 
@@ -458,7 +497,7 @@ def identify_use_cases(
     fr, nfr = _split_fr_nfr(classified)
     actors = state.get("actors") or []
     if not fr:
-        return {"use_cases": [], "phase": "use_cases"}
+        return {"use_cases": [], "constraint_applicability": {}, "phase": "use_cases"}
 
     actor_listing = "\n".join(
         f"- {actor['name']}: {actor['description']}" for actor in actors
@@ -474,6 +513,7 @@ def identify_use_cases(
             existing, human, target_ids, feedback, actors,
             {requirement["id"] for requirement in fr},
             {requirement["id"] for requirement in nfr},
+            dict(state.get("constraint_applicability") or {}),
         )
 
     result: UseCaseResult = invoke_structured(
@@ -495,7 +535,11 @@ def identify_use_cases(
         if claim_counts[requirement["id"]] != 1
     )
     if audit_ids or nfr:
-        raw_use_cases = _audit_requirement_traceability(fr, nfr, raw_use_cases, audit_ids)
+        raw_use_cases, constraint_targets = _audit_requirement_traceability(
+            fr, nfr, raw_use_cases, audit_ids
+        )
+    else:
+        constraint_targets = {}
     use_cases = _retry_dangling_actor_refs(
         schema=UseCaseResult,
         raw_items=raw_use_cases,
@@ -508,8 +552,24 @@ def identify_use_cases(
         repair_prompt=_use_case_repair_prompt(human, raw_use_cases, actors),
         extract=lambda repaired: repaired.use_cases,
     )
+    use_case_items = [
+        _uc_dict(use_case, f"UC{index}") for index, use_case in enumerate(use_cases, 1)
+    ]
+    ids_by_name: dict[str, list[str]] = {}
+    for item in use_case_items:
+        ids_by_name.setdefault(_actor_key(item["name"]), []).append(item["id"])
+    constraint_applicability = {
+        requirement_id: [
+            item["id"]
+            for item in use_case_items
+            if _actor_key(item["name"]) in targets
+        ]
+        for requirement_id, targets in constraint_targets.items()
+        if not targets or any(target in ids_by_name for target in targets)
+    }
     return {
-        "use_cases": [_uc_dict(use_case, f"UC{index}") for index, use_case in enumerate(use_cases, 1)],
+        "use_cases": use_case_items,
+        "constraint_applicability": constraint_applicability,
         "phase": "use_cases",
     }
 
@@ -533,6 +593,7 @@ def _model_review(state: AgentState) -> dict:
             )}
             for use_case in (state.get("use_cases") or [])
         ],
+        "constraint_applicability": state.get("constraint_applicability") or {},
     }
     result = validator.review(
         rules.MODEL_USE_CASES, payload, prefix="model", source="use_cases.semantic_validator"
@@ -636,6 +697,7 @@ def review_model(state: AgentState) -> dict:
 
     return {
         "use_cases": candidate_update["use_cases"],
+        "constraint_applicability": candidate_update.get("constraint_applicability") or {},
         "model_review": candidate_review,
         "phase": "model_review",
     }
@@ -643,14 +705,28 @@ def review_model(state: AgentState) -> dict:
 
 @contract("check_coverage", requires=("classified", "use_cases"), produces=("coverage",))
 def check_coverage(state: AgentState) -> dict:
-    """Keep the legacy claim gate while exposing step-backed effective coverage."""
+    """Expose user-goal coverage and whole-model accounting without conflating them."""
     trace = traceability.index(state)
+    requirement_trace = traceability.build_requirement_trace(state)
     coverage = {
         "fr_total": len(trace.fr_ids),
         "covered_fr_ids": list(trace.covered_fr_ids),
-        "orphan_fr_ids": list(trace.orphan_fr_ids),
+        "unrealized_fr_ids": list(trace.orphan_fr_ids),
+        "orphan_fr_ids": list(trace.missing_goal_ids),
         "unattached_nfr_ids": list(trace.unattached_nfr_ids),
         "unknown_requirement_refs": list(trace.unknown_refs),
-        "coverage_ratio": trace.coverage_ratio,
+        "unknown_use_case_refs": list(trace.unknown_use_case_refs),
+        "unaccounted_requirement_ids": list(trace.unaccounted_ids),
+        "goal_requirement_ids": list(trace.goal_ids),
+        "covered_goal_requirement_ids": list(trace.covered_goal_ids),
+        "missing_goal_requirement_ids": list(trace.missing_goal_ids),
+        "goal_coverage_ratio": trace.goal_coverage_ratio,
+        "accounted_coverage_ratio": trace.accounted_ratio,
+        "fr_realization_ratio": trace.coverage_ratio,
+        "coverage_ratio": trace.goal_coverage_ratio,
     }
-    return {"coverage": coverage, "phase": "coverage"}
+    return {
+        "coverage": coverage,
+        "traceability": requirement_trace,
+        "phase": "coverage",
+    }

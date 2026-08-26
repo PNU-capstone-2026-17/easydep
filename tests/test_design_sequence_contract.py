@@ -8,6 +8,7 @@ import pytest
 from app.design.services.common.structured import StructuredLlmError
 
 import app.design.graphs.subgraphs as sequence_subgraphs
+import app.design.services.sequence_diagram.extractor as sequence_extractor
 from app.design.graphs.subgraphs import SEQUENCE_DIAGRAM_SPEC, _sequence_revision_context
 from app.design.knowledge.detectors import (
     Finding,
@@ -767,6 +768,54 @@ def test_boundary_forwards_to_single_control_method_when_names_differ():
 
     assert ("BrowseBoundary", "BrowseControl", "getCourses(department:String)") in calls
     assert result[0]["UnresolvedSteps"] == []
+
+
+def test_sequence_scope_receives_only_its_rtm_constraints(monkeypatch):
+    captured: dict = {}
+
+    def generate(specification, summaries, classes, dependencies, class_puml, class_model):
+        captured.update(specification)
+        return {
+            "use_case_id": "UC1",
+            "use_case_name": "Place order",
+            "Participants": [],
+            "Messages": [],
+            "UnresolvedSteps": [],
+            "NarrativeSteps": [],
+        }
+
+    monkeypatch.setattr(sequence_extractor, "_generate_use_case_diagram", generate)
+    result = extract_sequence_diagrams(
+        {
+            "use_cases": [{"id": "UC1", "name": "Place order"}],
+            "use_case_specs": [{"use_case_id": "UC1", "name": "Place order"}],
+            "traceability": {
+                "requirements": {
+                    "R1": {
+                        "type": "FR",
+                        "text": "Concurrent orders preserve uniqueness.",
+                        "constrains_use_cases": ["UC1"],
+                    },
+                    "R2": {
+                        "type": "NFR",
+                        "text": "Reports complete quickly.",
+                        "constrains_use_cases": ["UC2"],
+                    },
+                }
+            },
+        },
+        "@startuml\n@enduml",
+        class_model={"Classes": [], "Relationships": []},
+    )
+
+    assert result["Diagrams"][0]["use_case_id"] == "UC1"
+    assert captured["constraint_requirements"] == [
+        {
+            "id": "R1",
+            "type": "FR",
+            "text": "Concurrent orders preserve uniqueness.",
+        }
+    ]
 
 
 def test_normalization_removes_inactive_llm_participants():

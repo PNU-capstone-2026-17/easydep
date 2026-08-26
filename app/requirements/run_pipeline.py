@@ -99,9 +99,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         # 실행끼리 산출물을 비교할 때 지문이 다르면 그 차이를 코드 탓으로 돌릴 수 없다.
         print(f"    backend={','.join(summary['model_fingerprints']) or '(미제공)'}")
-        orphans = cov.get("orphan_fr_ids")
-        if orphans:
-            print(f"    [WARN] 고아 FR: {orphans}")
+        missing_goals = cov.get("missing_goal_requirement_ids")
+        if missing_goals:
+            print(f"    [WARN] 미실현 사용자 목표: {missing_goals}")
         # 저하가 있으면 위 숫자들을 액면가로 읽으면 안 된다. 예를 들어 의미 검증이
         # 죽은 채 돈 실행은 "결함 0"이 아니라 "결함을 안 본 것"이다.
         for entry in summary["degradations"]:
