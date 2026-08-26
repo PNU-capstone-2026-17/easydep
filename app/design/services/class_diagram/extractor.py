@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -102,8 +103,11 @@ _PROCEDURE = """
    branch as a coordination unit. Converge to the smallest number of \
    Controls that still respects single responsibility.
 4. Entity derivation: promote a noun to Entity only if it is created, read, \
-   updated, deleted, or otherwise persists beyond the use case. Do not \
-   promote one-off values or pure modifiers.
+updated, deleted, or otherwise persists beyond the use case. Do not \
+promote one-off values or pure modifiers. In particular, do not create an \
+Entity solely for an HTTP/request DTO, search criteria, filter, command, or \
+input payload. Expand its scalar fields into explicit typed parameters on the \
+Boundary and Control methods instead; OpenAPI creates the HTTP request DTO later.
 5. Method signature derivation: write every operation as either `methodName()` or \
    `methodName(parameterName : Type, ...)`; the literal `...` is not a parameter. \
    Derive parameters from values the scenario says a caller submits, selects, \
@@ -288,6 +292,209 @@ def _normalize_field_types(result: dict[str, Any]) -> dict[str, Any]:
             fields.normalize_java_method(str(method))
             for method in class_item.get("methods") or []
         ]
+    return _normalize_request_dto_classes(result)
+
+
+_DTO_NAME_SUFFIXES = (
+    "command", "criteria", "dto", "filter", "input", "payload", "request",
+)
+_METHOD_SIGNATURE = re.compile(
+    r"^(?P<prefix>[+\-#~]?\s*[A-Za-z_][A-Za-z0-9_]*)"
+    r"\((?P<parameters>[^()]*)\)(?P<return>\s*:\s*.+)?$"
+)
+
+
+def _split_parameters(value: str) -> list[str]:
+    """Split method parameters without splitting generic type arguments."""
+    parameters: list[str] = []
+    start = 0
+    depth = 0
+    for index, character in enumerate(value):
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth = max(0, depth - 1)
+        elif character == "," and depth == 0:
+            parameters.append(value[start:index].strip())
+            start = index + 1
+    tail = value[start:].strip()
+    if tail:
+        parameters.append(tail)
+    return parameters
+
+
+def _parameter_type(value: str) -> str | None:
+    _, separator, raw_type = value.partition(":")
+    return raw_type.strip() if separator and raw_type.strip() else None
+
+
+def _is_dto_name(name: str) -> bool:
+    lowered = name.lower()
+    return any(lowered.endswith(suffix) for suffix in _DTO_NAME_SUFFIXES)
+
+
+def _contains_type_name(value: str, type_name: str) -> bool:
+    """Match a declared type as a token, including inside generic types."""
+    return type_name in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", value)
+
+
+def _normalize_request_dto_classes(result: dict[str, Any]) -> dict[str, Any]:
+    """Expand isolated request-DTO classes into explicit BCE method parameters.
+
+    BCE has no non-persistent DTO stereotype.  Leaving a request object as an
+    ``Entity`` makes it look persistent to the ERD mapper, while leaving it
+    disconnected makes the class diagram misleading.  Only a deliberately
+    narrow DTO shape is transformed: a DTO-named, relationship-free class with
+    scalar fields that is used exclusively as a method parameter.
+    """
+    classes = [item for item in result.get("Classes") or [] if isinstance(item, dict)]
+    relationships = [item for item in result.get("Relationships") or [] if isinstance(item, dict)]
+    by_name = {
+        str(item.get("className") or "").strip(): item
+        for item in classes
+        if str(item.get("className") or "").strip()
+    }
+    relationship_names = {
+        str(relationship.get(end) or "").strip()
+        for relationship in relationships
+        for end in ("source", "target")
+    }
+    replacements: dict[str, list[tuple[str, str]]] = {}
+    for name, item in by_name.items():
+        stereotype = (
+            str(item.get("stereotype") or "")
+            .replace("<", "")
+            .replace(">", "")
+            .strip()
+            .lower()
+        )
+        if (
+            not _is_dto_name(name)
+            or stereotype != "entity"
+            or name in relationship_names
+            or item.get("identifier")
+        ):
+            continue
+        dto_fields: list[tuple[str, str]] = []
+        for raw_field in item.get("fields") or []:
+            field_name, field_type = fields.split_field(str(raw_field))
+            if not field_name or not field_type:
+                dto_fields = []
+                break
+            # A DTO that itself holds a domain object is not safely expandable.
+            if any(_contains_type_name(field_type, class_name) for class_name in by_name):
+                dto_fields = []
+                break
+            dto_fields.append((field_name, field_type.strip()))
+        if dto_fields:
+            replacements[name] = dto_fields
+
+    if not replacements:
+        return result
+
+    referenced_as_parameter: dict[str, int] = {name: 0 for name in replacements}
+    referenced_elsewhere: set[str] = set()
+    for item in classes:
+        for raw_field in item.get("fields") or []:
+            _, field_type = fields.split_field(str(raw_field))
+            referenced_elsewhere.update(
+                name
+                for name in replacements
+                if _contains_type_name(str(field_type or ""), name)
+            )
+    rewritten_methods: dict[int, list[str]] = {}
+    owners: dict[str, set[int]] = {name: set() for name in replacements}
+    for index, item in enumerate(classes):
+        methods: list[str] = []
+        for raw_method in item.get("methods") or []:
+            method = str(raw_method)
+            match = _METHOD_SIGNATURE.fullmatch(method.strip())
+            if not match:
+                methods.append(method)
+                continue
+            parameters = _split_parameters(match.group("parameters"))
+            names = {
+                parameter.partition(":")[0].strip()
+                for parameter in parameters
+                if ":" in parameter
+            }
+            rendered: list[str] = []
+            for parameter in parameters:
+                parameter_type = _parameter_type(parameter)
+                if parameter_type not in replacements:
+                    rendered.append(parameter)
+                    continue
+                expanded = replacements[parameter_type]
+                expanded_names = [field_name for field_name, _ in expanded]
+                if any(name in names - {parameter.partition(":")[0].strip()} for name in expanded_names):
+                    referenced_elsewhere.add(parameter_type)
+                    rendered.append(parameter)
+                    continue
+                rendered.extend(f"{field_name} : {field_type}" for field_name, field_type in expanded)
+                referenced_as_parameter[parameter_type] += 1
+                owners[parameter_type].add(index)
+            return_type = (match.group("return") or "").partition(":")[2].strip()
+            referenced_elsewhere.update(
+                name for name in replacements if _contains_type_name(return_type, name)
+            )
+            methods.append(
+                f"{match.group('prefix').strip()}({', '.join(rendered)})"
+                + (f": {return_type}" if return_type else "")
+            )
+        rewritten_methods[index] = methods
+
+    removable = {
+        name
+        for name in replacements
+        if referenced_as_parameter[name] and name not in referenced_elsewhere
+    }
+    if not removable:
+        return result
+    # A candidate can be retained because it is also returned or stored elsewhere.
+    # Rebuild from the original methods so only DTOs that will actually disappear
+    # are expanded at their call sites.
+    rewritten_methods = {}
+    for index, item in enumerate(classes):
+        methods: list[str] = []
+        for raw_method in item.get("methods") or []:
+            method = str(raw_method)
+            match = _METHOD_SIGNATURE.fullmatch(method.strip())
+            if not match:
+                methods.append(method)
+                continue
+            parameters = _split_parameters(match.group("parameters"))
+            names = {
+                parameter.partition(":")[0].strip()
+                for parameter in parameters
+                if ":" in parameter
+            }
+            rendered: list[str] = []
+            for parameter in parameters:
+                parameter_type = _parameter_type(parameter)
+                if parameter_type not in removable:
+                    rendered.append(parameter)
+                    continue
+                expanded = replacements[parameter_type]
+                expanded_names = [field_name for field_name, _ in expanded]
+                if any(name in names - {parameter.partition(":")[0].strip()} for name in expanded_names):
+                    rendered.append(parameter)
+                    continue
+                rendered.extend(f"{field_name} : {field_type}" for field_name, field_type in expanded)
+            return_type = (match.group("return") or "").partition(":")[2].strip()
+            methods.append(
+                f"{match.group('prefix').strip()}({', '.join(rendered)})"
+                + (f": {return_type}" if return_type else "")
+            )
+        rewritten_methods[index] = methods
+    for index, methods in rewritten_methods.items():
+        classes[index]["methods"] = methods
+    for name in removable:
+        dto_use_cases = set(by_name[name].get("use_case_ids") or [])
+        for owner_index in owners[name]:
+            owner_ids = set(classes[owner_index].get("use_case_ids") or [])
+            classes[owner_index]["use_case_ids"] = sorted(owner_ids | dto_use_cases)
+    result["Classes"] = [item for item in classes if str(item.get("className") or "") not in removable]
+    result["Relationships"] = relationships
     return result
 
 

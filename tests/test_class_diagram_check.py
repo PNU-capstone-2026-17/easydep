@@ -21,6 +21,7 @@ import pytest
 from app.design.evaluation.seeded import CLEAN, CLEAN_STATE, SEEDED
 from app.design.graphs.subgraphs import CLASS_DIAGRAM_SPEC
 from app.design.knowledge.detectors import Finding
+from app.design.services.class_diagram.extractor import _normalize_request_dto_classes
 from app.design.nodes.artifact import (
     BUDGET,
     CLEAN as STOPPED_CLEAN,
@@ -65,6 +66,158 @@ def test_a_clean_model_is_not_sent_to_the_llm_at_all():
     out = _run(_spec_with(never), CLEAN)
     assert calls == []
     assert out[CHECK_KEY] == {"findings": [], "repair_iters": 0, "stopped": STOPPED_CLEAN}
+
+
+def test_isolated_request_dto_is_expanded_into_explicit_control_parameters():
+    model = {
+        "Classes": [
+            {
+                "className": "CourseSearchCriteria",
+                "stereotype": "Entity",
+                "fields": [
+                    "department : String",
+                    "keyword : String",
+                    "creditHours : Integer",
+                    "timeSlot : String",
+                ],
+                "methods": [],
+                "identifier": [],
+                "use_case_ids": ["UC2"],
+            },
+            {
+                "className": "ExploreCoursesControl",
+                "stereotype": "Control",
+                "fields": [],
+                "methods": [
+                    "+ searchCourses(criteria : CourseSearchCriteria): List<Course>"
+                ],
+                "identifier": [],
+                "use_case_ids": ["UC2"],
+            },
+            {
+                "className": "Course",
+                "stereotype": "Entity",
+                "fields": ["courseId : String"],
+                "methods": [],
+                "identifier": ["courseId"],
+                "use_case_ids": ["UC2"],
+            },
+        ],
+        "Relationships": [
+            {"source": "ExploreCoursesControl", "target": "Course", "type": "Dependency"}
+        ],
+    }
+
+    normalized = _normalize_request_dto_classes(model)
+
+    assert [item["className"] for item in normalized["Classes"]] == [
+        "ExploreCoursesControl", "Course"
+    ]
+    assert normalized["Classes"][0]["methods"] == [
+        "+ searchCourses(department : String, keyword : String, creditHours : Integer, timeSlot : String): List<Course>"
+    ]
+
+
+def test_related_or_identified_entity_is_not_treated_as_a_request_dto():
+    model = {
+        "Classes": [
+            {
+                "className": "SearchRequest",
+                "stereotype": "Entity",
+                "fields": ["requestId : String"],
+                "methods": [],
+                "identifier": ["requestId"],
+                "use_case_ids": ["UC1"],
+            },
+            {
+                "className": "SearchControl",
+                "stereotype": "Control",
+                "fields": [],
+                "methods": ["+ search(request : SearchRequest): void"],
+                "identifier": [],
+                "use_case_ids": ["UC1"],
+            },
+        ],
+        "Relationships": [
+            {"source": "SearchControl", "target": "SearchRequest", "type": "Dependency"}
+        ],
+    }
+
+    assert _normalize_request_dto_classes(model)["Classes"][0]["className"] == "SearchRequest"
+
+
+def test_request_dto_with_a_domain_object_field_is_not_expanded():
+    model = {
+        "Classes": [
+            {
+                "className": "CourseSearchCriteria",
+                "stereotype": "<<Entity>>",
+                "fields": ["course : Course", "keyword : String"],
+                "methods": [],
+            },
+            {
+                "className": "Course",
+                "stereotype": "<<Entity>>",
+                "fields": ["title : String"],
+                "methods": [],
+            },
+            {
+                "className": "ExploreCoursesControl",
+                "stereotype": "<<Control>>",
+                "fields": [],
+                "methods": ["search(criteria : CourseSearchCriteria): List<Course>"],
+            },
+        ],
+        "Relationships": [],
+    }
+
+    normalized = _normalize_request_dto_classes(model)
+
+    assert [item["className"] for item in normalized["Classes"]] == [
+        "CourseSearchCriteria", "Course", "ExploreCoursesControl"
+    ]
+    assert normalized["Classes"][2]["methods"] == [
+        "search(criteria : CourseSearchCriteria): List<Course>"
+    ]
+
+
+def test_retained_dto_parameter_is_not_partially_expanded_with_another_dto():
+    model = {
+        "Classes": [
+            {
+                "className": "SearchCriteria",
+                "stereotype": "Entity",
+                "fields": ["keyword : String"],
+                "methods": [],
+            },
+            {
+                "className": "ExportRequest",
+                "stereotype": "Entity",
+                "fields": ["format : String"],
+                "methods": [],
+            },
+            {
+                "className": "CatalogControl",
+                "stereotype": "Control",
+                "fields": [],
+                "methods": [
+                    "search(criteria : SearchCriteria): List<Course>",
+                    "prepare(request : ExportRequest): ExportRequest",
+                ],
+            },
+        ],
+        "Relationships": [],
+    }
+
+    normalized = _normalize_request_dto_classes(model)
+
+    assert [item["className"] for item in normalized["Classes"]] == [
+        "ExportRequest", "CatalogControl"
+    ]
+    assert normalized["Classes"][1]["methods"] == [
+        "search(keyword : String): List<Course>",
+        "prepare(request : ExportRequest): ExportRequest",
+    ]
 
 
 # ---------------------------------------------------------------------------
