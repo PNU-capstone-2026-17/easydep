@@ -969,8 +969,9 @@ RULES: tuple[Rule, ...] = (
         stage=API_SPEC,
         severity=DEFECT,
         statement=(
-            "The Control method bound to an API endpoint must occur in the matching "
-            "sequence flow so the endpoint has an executable interaction path."
+            "The Control method bound to an API endpoint, or a grounded internal "
+            "call on the same Control, must occur in the matching sequence flow so "
+            "the endpoint has an executable interaction path."
         ),
         citation="app/design/services/sequence_diagram/reconcile.py (call contracts)",
         evidence="pipeline-invariant",

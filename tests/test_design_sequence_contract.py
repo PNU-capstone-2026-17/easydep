@@ -31,6 +31,7 @@ from app.design.services.sequence_diagram.extractor import (
     _only_callable_class,
     _assemble_deterministic_diagrams,
     _recover_explicit_actor_retries,
+    _drop_unknown_flow_messages,
     _supplementary_actor_selection_routes,
 )
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
@@ -511,6 +512,65 @@ DepartmentBoundary ..> DepartmentController
     assert not [message for message in normalized["Messages"] if message["type"] == "return"]
 
 
+def test_normalizer_swaps_reversed_alt_branch_labels_without_reordering_messages() -> None:
+    class_diagram = """@startuml
+class CourseBoundary <<Boundary>> {
+  +showMissing(courseId : String): void
+  +showCourse(courseId : String): void
+}
+class CourseController <<Control>> {
+  +showMissing(courseId : String): void
+  +showCourse(courseId : String): void
+}
+@enduml"""
+    model = {
+        "Participants": [
+            _participant("CourseBoundary", "boundary", "CourseBoundary"),
+            _participant("CourseController", "control", "CourseController"),
+        ],
+        "Messages": [
+            {
+                **_message(
+                    "CourseController",
+                    "CourseBoundary",
+                    "showMissing(courseId:String)",
+                    call_id="missing",
+                    reply_to="",
+                ),
+                "fragments": [{
+                    "id": "f1",
+                    "type": "alt",
+                    "branch": "else",
+                    "condition": "course exists",
+                }],
+            },
+            {
+                **_message(
+                    "CourseController",
+                    "CourseBoundary",
+                    "showCourse(courseId:String)",
+                    call_id="course",
+                    reply_to="",
+                ),
+                "fragments": [{
+                    "id": "f1",
+                    "type": "alt",
+                    "branch": "main",
+                    "condition": "course does not exist",
+                }],
+            },
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, class_diagram)
+
+    branches = [
+        message["fragments"][0]["branch"]
+        for message in normalized["Messages"]
+    ]
+    assert branches == ["main", "else"]
+
+
 def test_llm_extraction_receives_the_allowed_interaction_routes() -> None:
     model = {"Participants": [], "Messages": []}
     with patch(
@@ -975,6 +1035,31 @@ EnrollmentApi ..> EnrollmentController
     extract.assert_called_once()
     assert result["Diagrams"][0]["Messages"] == []
     assert result["Diagrams"][0]["UnresolvedSteps"]
+
+
+def test_llm_sequence_output_drops_messages_with_unknown_flow_step_ids():
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Browse courses", "primary_actor": "Student"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Browse courses",
+            "primary_actor": "Student",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Student requests the catalog"},
+            ],
+            "extensions": [],
+        }],
+    }
+    extracted = {
+        "Messages": [
+            {**_message("Student", "CatalogBoundary", "requestCatalog()"), "step_ids": ["UC1:main:1"]},
+            {**_message("CatalogBoundary", "CatalogController", "getCatalog()"), "step_ids": ["UC1:main:5"]},
+        ]
+    }
+
+    _drop_unknown_flow_messages(extracted, specification["use_case_specs"][0])
+
+    assert [message["step_ids"] for message in extracted["Messages"]] == [["UC1:main:1"]]
 
 
 def test_unique_element_selection_is_not_sent_to_llm():

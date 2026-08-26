@@ -671,6 +671,34 @@ def normalize_sequence_contracts(
                 elif fragment.get("type") in {"opt", "loop"} and fragment.get("branch") == "else":
                     fragment["branch"] = "main"
 
+        # PlantUML requires the first arm of an ``alt`` to be the main branch.
+        # LLM output occasionally labels the first (usually failure) arm as
+        # ``else`` and a later success message as ``main``.  Swapping only the
+        # branch labels is mechanically safe: it preserves every participant,
+        # condition, call, and step trace while restoring the already implied
+        # source order.  Do not reorder messages or invent a missing branch.
+        first_alt_branch: dict[str, str] = {}
+        for message in messages:
+            for fragment in message.get("fragments") or []:
+                if not isinstance(fragment, dict) or fragment.get("type") != "alt":
+                    continue
+                fragment_id = str(fragment.get("id") or "").strip()
+                branch = str(fragment.get("branch") or "").strip()
+                if fragment_id and branch in {"main", "else"}:
+                    first_alt_branch.setdefault(fragment_id, branch)
+        for message in messages:
+            for fragment in message.get("fragments") or []:
+                if not isinstance(fragment, dict) or fragment.get("type") != "alt":
+                    continue
+                fragment_id = str(fragment.get("id") or "").strip()
+                if first_alt_branch.get(fragment_id) != "else":
+                    continue
+                branch = str(fragment.get("branch") or "").strip()
+                if branch == "else":
+                    fragment["branch"] = "main"
+                elif branch == "main":
+                    fragment["branch"] = "else"
+
         calls: dict[str, dict[str, Any]] = {}
         call_order: list[str] = []
         call_positions: dict[str, int] = {}
@@ -2423,6 +2451,7 @@ def _generate_llm_use_case_diagram(
             "Sequence planning failed before a grounded interaction could be assembled.",
             route_candidates,
         )
+    _drop_unknown_flow_messages(extracted, specification)
     if not extracted.get("Messages") and _flow_records(specification):
         return _unresolved_use_case_diagram(
             specification,
@@ -2484,6 +2513,37 @@ def _generate_llm_use_case_diagram(
         "UnresolvedSteps": unresolved,
         "NarrativeSteps": narrative,
     }
+
+
+def _drop_unknown_flow_messages(
+    extracted: dict[str, Any], specification: dict[str, Any]
+) -> None:
+    """Remove LLM messages whose trace points outside the use-case spec.
+
+    A real class method is not sufficient evidence for an interaction: a
+    message must also belong to a declared main/extension step.  Keeping an
+    invented step id lets a valid method (for example ``viewCourseDetails``)
+    leak from a neighbouring use case into the current diagram.
+    """
+    known_step_ids = {
+        str(record.get("step_id") or "").strip()
+        for record in _flow_records(specification)
+        if str(record.get("step_id") or "").strip()
+    }
+    if not known_step_ids or not isinstance(extracted, dict):
+        return
+    filtered: list[dict[str, Any]] = []
+    for message in extracted.get("Messages") or []:
+        if not isinstance(message, dict):
+            continue
+        message_steps = {
+            str(step_id).strip()
+            for step_id in message.get("step_ids") or []
+            if str(step_id).strip()
+        }
+        if not message_steps or message_steps <= known_step_ids:
+            filtered.append(message)
+    extracted["Messages"] = filtered
 
 
 _ACTOR_RETRY_PATTERN = re.compile(
