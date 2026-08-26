@@ -31,13 +31,27 @@ from .prototype import PrototypeClient
 # repair the result without inventing a persistence decision.
 _IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
     "api.operations-present",
-    "api.error-outcomes-representable",
+    # API traceability/type/outcome findings remain visible in the design
+    # report, but implementation may proceed so its bounded agents can expose
+    # the concrete repair evidence. Only an API with no operation at all is
+    # impossible to hand off to an implementation task.
     "erd.surrogate-key-collides",
     "class.contract-types-exist",
 })
 _OPENAPI_HTTP_METHODS = frozenset({
     "delete", "get", "head", "options", "patch", "post", "put", "trace",
 })
+# A ``void`` Control call can still surface transport-level outcomes through
+# request validation, security, a repository miss, or the application's global
+# exception handler.  Only these statuses require a domain decision from the
+# Control itself, so only they need an explicit return/error outcome in BCE.
+# These statuses represent a domain decision (for example, a duplicate
+# enrollment or an invalid business command).  They cannot be inferred from a
+# void command or a persistence exception and therefore require an explicit
+# BCE result/outcome contract.  Transport-level statuses are intentionally not
+# included: Spring/global exception handling can produce them without changing
+# the Control signature.
+_BCE_RESULT_REQUIRED_HTTP_STATUSES = frozenset({409, 422})
 _JAVA_CONTRACT_TYPES = frozenset({
     "String", "Object", "boolean", "Boolean", "byte", "Byte", "char", "Character",
     "short", "Short", "int", "Integer", "long", "Long", "float", "Float", "double",
@@ -176,17 +190,26 @@ def _missing_openapi_operation_report(readiness: dict[str, Any]) -> dict[str, An
 def _unrepresentable_openapi_error_outcomes(
     class_diagram: object, api_spec: object
 ) -> list[str]:
-    """Find API error outcomes a ``void`` BCE Control cannot communicate.
+    """Find domain error outcomes that the BCE contract cannot communicate.
 
-    A controller cannot distinguish success from a documented error when its
-    only Control call returns ``void`` and the BCE contract declares no outcome.
-    Letting an implementation agent guess an exception or always return an
-    error status produces a compilable but false API.  This check is limited to
-    the deterministic case: a mapped Control method explicitly returning void.
+    A controller cannot distinguish a *domain decision* from success when its
+    Control returns ``void``, an entity/value, or a collection and the BCE
+    contract declares no dedicated result/outcome type. Letting an
+    implementation agent guess that decision produces a compilable but false
+    API. Transport-level responses (for example validation 400,
+    authorization 401/403, repository-miss 404, and unexpected 5xx) remain
+    representable by the web and persistence layers, so they must not block a
+    valid implementation plan.
     """
     if not isinstance(api_spec, dict):
         return []
     control_returns: dict[tuple[str, str], str] = {}
+    entity_names: set[str] = set()
+    for entity in re.findall(
+        r"(?im)^\s*(?:class|interface)\s+([A-Za-z_]\w*)\s+<<\s*[Ee]ntity\s*>>",
+        str(class_diagram or ""),
+    ):
+        entity_names.add(entity)
     for class_name, body in re.findall(
         r"(?ms)^\s*class\s+([A-Za-z_]\w*)\s+<<[^>]*[Cc]ontrol[^>]*>>\s*\{(.*?)\}",
         str(class_diagram or ""),
@@ -209,17 +232,30 @@ def _unrepresentable_openapi_error_outcomes(
                 continue
             control = str(binding.get("control") or "").strip()
             method = str(binding.get("method") or "").strip()
-            if control_returns.get((control, method), "").strip().lower() != "void":
-                continue
             responses = operation.get("responses") or {}
             error_statuses = sorted(
                 str(status)
                 for status in responses
-                if str(status).isdigit() and int(str(status)) >= 400
+                if (
+                    str(status).isdigit()
+                    and int(str(status)) in _BCE_RESULT_REQUIRED_HTTP_STATUSES
+                )
             )
-            if error_statuses:
+            if not error_statuses:
+                continue
+            return_type = control_returns.get((control, method), "").strip()
+            normalized_return = return_type.lower()
+            # A domain error cannot be derived from a command that returns
+            # nothing, an entity/value, or a collection.  Accept a dedicated
+            # result/outcome type so the adapter has an honest discriminator.
+            result_like = normalized_return.endswith(("result", "outcome", "response"))
+            if normalized_return in {"void", "", "object", "any", "map", "dict"} \
+                    or return_type in entity_names \
+                    or normalized_return.startswith(("list<", "set<", "collection<", "optional<")) \
+                    or not result_like:
                 findings.append(
-                    f"{str(http_method).upper()} {path}: {control}.{method} returns void "
+                    f"{str(http_method).upper()} {path}: {control}.{method} returns "
+                    f"{return_type or '<none>'} "
                     f"but OpenAPI declares error response(s) {', '.join(error_statuses)}"
                 )
     return findings

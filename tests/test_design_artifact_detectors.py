@@ -96,6 +96,38 @@ def test_void_command_can_document_error_statuses_without_result_contract() -> N
     assert detectors.api_control_outcomes(model, state) == []
 
 
+def test_api_control_outcomes_rejects_success_schema_different_from_control_return() -> None:
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [{
+                "className": "SignInController",
+                "stereotype": "Control",
+                "methods": [
+                    "authenticate(username : String, password : String): boolean"
+                ],
+            }],
+        },
+    }
+    model = {
+        "Endpoints": [{
+            "path": "/sessions",
+            "method": "post",
+            "responses": [{"status": 200, "schema_name": "Session"}],
+            "control_binding": {
+                "control": "SignInController",
+                "method": "authenticate",
+                "arguments": [],
+                "outcomes": [{"status": 200, "outcome": "authenticated"}],
+            },
+        }],
+    }
+
+    findings = detectors.api_control_outcomes(model, state)
+
+    assert len(findings) == 1
+    assert "성공 응답 schema" in findings[0].message
+
+
 def test_sequence_detector_rejects_dangling_and_invalid_bce_messages():
     model = {
         "Participants": [
@@ -1576,6 +1608,39 @@ def test_flow_order_ignores_returns_that_retain_their_call_step_id():
             }]
         }
     }
+
+
+def test_api_control_sequence_accepts_decomposed_calls_on_same_control():
+    """An API aggregate operation may be decomposed in the sequence diagram."""
+    state, model = _cart_contract_state(
+        {
+            "control": "ShoppingCartController",
+            "method": "getCart",
+            "arguments": [{"name": "cartId", "source": "$path.cartId"}],
+            "outcomes": [
+                {"status": 200, "outcome": "found"},
+                {"status": 404, "outcome": "not_found"},
+            ],
+        }
+    )
+    state["extracted_bce_classes"]["Classes"][1]["methods"].append(
+        "loadCartItems(cartId: String): CartLookupResult"
+    )
+    state["class_diagram_puml"] = (
+        "class CartPage <<Boundary>>\n"
+        "class ShoppingCartController <<Control>> {\n"
+        "  + getCart(cartId: String): CartLookupResult\n"
+        "  + loadCartItems(cartId: String): CartLookupResult\n"
+        "}\n"
+    )
+    state["sequence_diagram_model"]["Messages"][0]["label"] = (
+        "loadCartItems(cartId: String)"
+    )
+
+    assert not any(
+        finding.rule_id == "api.control-call-in-sequence"
+        for finding in detectors.api_spec_findings(model, state)
+    )
     model = {
         "use_case_id": "UC1",
         "Messages": [

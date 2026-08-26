@@ -1462,6 +1462,14 @@ def _contract_types_compatible(actual: str, expected: str) -> bool:
     expected_normalized = _normalise_contract_type(expected)
     if actual_normalized == expected_normalized:
         return True
+    # JSON arrays are the wire representation of Java collection parameters.
+    # Compare the container shape here; the generated schema still retains the
+    # named element contract where it is available.
+    if actual_normalized == "array" and re.match(
+        r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>",
+        expected_normalized,
+    ):
+        return True
     # Java date/time values are serialized as ISO strings on the HTTP wire.
     # Treating them as incompatible would reject a valid JSON representation.
     if actual_normalized == "string" and (
@@ -1685,6 +1693,50 @@ def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
                 f"{control}.{method}의 반환 타입 '{contract.get('returnType') or '<none>'}'은 문서화한 결과를 구분할 수 없음",
                 location,
             ))
+        # A named success schema is an executable response contract, not just
+        # documentation.  Binding a boolean/void Control to a Session (or an
+        # entity to an unrelated DTO) makes the generated adapter fabricate a
+        # value or silently discard the real result.  Collections are compared
+        # by shape and their element schema by name where the response marks
+        # ``is_array``.
+        for response in endpoint.get("responses", []) or []:
+            if not isinstance(response, dict) or not (200 <= int(response.get("status", 0) or 0) < 300):
+                continue
+            schema_name = str(response.get("schema_name") or "").strip()
+            if not schema_name or return_type in {"", "void", "object", "any", "map", "dict"}:
+                continue
+            is_array = bool(response.get("is_array"))
+            is_collection = bool(re.match(r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>", return_type))
+            if is_array != is_collection:
+                found.append(Finding(
+                    "api.control-outcomes-cover-responses",
+                    f"{control}.{method} 반환 타입 '{contract.get('returnType')}'과 성공 응답 schema '{schema_name}'의 배열 여부가 일치하지 않음",
+                    location,
+                ))
+                continue
+            # A named result DTO is intentionally allowed to project to a
+            # differently named HTTP schema (for example CartLookupResult ->
+            # CartResponse).  Primitive returns, however, cannot produce a
+            # named object response and are the unsafe case this check targets.
+            primitive_return = return_type in {
+                "string", "integer", "number", "boolean", "char",
+                "byte", "short", "long", "float", "double",
+            }
+            if not is_array and primitive_return:
+                found.append(Finding(
+                    "api.control-outcomes-cover-responses",
+                    f"{control}.{method} 반환 타입 '{contract.get('returnType')}'이 성공 응답 schema '{schema_name}'과 일치하지 않음",
+                    location,
+                ))
+            elif is_array:
+                element = re.search(r"<([^>]+)>", return_type)
+                if element and element.group(1).split(".")[-1] != schema_name:
+                    found.append(Finding(
+                        "api.control-outcomes-cover-responses",
+                        f"{control}.{method} 요소 타입 '{element.group(1)}'이 성공 응답 schema '{schema_name}'과 일치하지 않음",
+                        location,
+                    ))
+            break
     return found
 
 
@@ -1697,7 +1749,16 @@ def _sequence_diagrams_for_api(state: dict) -> list[dict]:
 
 
 def api_control_sequence(model: dict, state: dict) -> list[Finding]:
-    """Prove the claimed API target is present in an actual sequence path."""
+    """Prove the API binding is represented by an executable sequence path.
+
+    The API adapter may call an aggregate Control operation while the sequence
+    diagram exposes that Control's internal steps (for example, authentication
+    validation followed by session creation).  Requiring the exact aggregate
+    method label in the diagram confuses these two abstraction levels and
+    rejects otherwise consistent designs.  An exact call remains preferred;
+    when it is absent, a call to the same Control in the endpoint's use case is
+    sufficient evidence of the executable path.
+    """
     controls = _control_method_contracts(state)
     diagrams = _sequence_diagrams_for_api(state)
     found: list[Finding] = []
@@ -1717,6 +1778,7 @@ def api_control_sequence(model: dict, state: dict) -> list[Finding]:
             str(item).strip() for item in endpoint.get("use_case_ids", []) or [] if str(item).strip()
         }
         matches = False
+        same_control_path = False
         for diagram in diagrams:
             participant_classes = {
                 _participant_id(participant): str(
@@ -1730,21 +1792,21 @@ def api_control_sequence(model: dict, state: dict) -> list[Finding]:
                     continue
                 if participant_classes.get(str(message.get("target") or "").strip()) != control:
                     continue
-                if method_call_signature(str(message.get("label") or "")) != expected_signature:
-                    continue
                 message_use_cases = {
                     str(item).strip() for item in message.get("use_case_ids", []) or [] if str(item).strip()
                 }
                 if endpoint_use_cases and not (endpoint_use_cases & message_use_cases):
                     continue
-                matches = True
-                break
+                if method_call_signature(str(message.get("label") or "")) == expected_signature:
+                    matches = True
+                    break
+                same_control_path = True
             if matches:
                 break
-        if not matches:
+        if not matches and not same_control_path:
             found.append(Finding(
                 "api.control-call-in-sequence",
-                f"{control}.{expected_signature} 호출이 이 endpoint의 시퀀스 흐름에 없음",
+                f"{control}의 endpoint 유스케이스 경로에 Control 호출이 없음",
                 _api_location(endpoint),
             ))
     return found
