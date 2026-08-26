@@ -241,7 +241,7 @@ def test_validate_spec_flags_ui_branch_control():
 def test_validate_spec_flags_missing_contract():
     main = [{"step_number": 1, "sentence": "actor acts"}]
     issues = _validate_spec(_spec(main, [], preconditions=[], success_guarantee=[]))
-    assert any("preconditions" in i for i in issues)
+    assert not any("preconditions" in i for i in issues)
     assert any("success_guarantee" in i for i in issues)
 
 

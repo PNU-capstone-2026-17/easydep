@@ -139,8 +139,8 @@ SEEDED: tuple[Seeded, ...] = (
     ),
     Seeded(
         "spec.contract-completeness",
-        "preconditions를 비웠다",
-        _variant(preconditions=[]),
+        "success guarantee를 비웠다",
+        _variant(success_guarantee=[]),
     ),
     Seeded(
         "spec.scenario-requirement-reference-integrity",

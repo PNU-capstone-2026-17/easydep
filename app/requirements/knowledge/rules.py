@@ -565,12 +565,17 @@ RULES: tuple[Rule, ...] = (
         stage=WRITE_SPECIFICATIONS,
         severity=DEFECT,
         statement=(
-            "A specification states its preconditions and its success guarantee; an "
-            "empty contract is not a specification."
+            "A specification states its success guarantee. Preconditions describe only "
+            "states actually established before the use case; an empty precondition list "
+            "is valid when the supplied goal and requirements establish none."
         ),
         citation="easydep convention (fully-dressed template)",
         evidence="project-convention",
-        caveat="풀 템플릿의 어느 칸을 필수로 볼지는 우리가 정했다.",
+        caveat=(
+            "풀 템플릿의 어느 칸을 필수로 볼지는 우리가 정했다. 빈 전제조건을 결함으로 "
+            "취급하면 생성기가 인증·권한·수명주기 상태를 지어내는 것이 실험에서 확인되어, "
+            "명시할 전제조건이 없는 것과 계약 누락을 구분한다."
+        ),
         owner="specs",
         judged_by=JUDGED_DETECTOR,
         detector="contract_fields",

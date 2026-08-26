@@ -125,11 +125,13 @@ def ui_terms(spec: dict, _context: object | None = None) -> list[Finding]:
 
 
 def contract_fields(spec: dict, _context: object | None = None) -> list[Finding]:
-    """계약(전제조건·성공보장)이 비어 있는지."""
+    """계약의 성공보장이 비어 있는지.
+
+    구조화 스키마에는 전제조건 필드가 항상 존재한다. 빈 목록은 누락이 아니라 이 유스케이스가
+    가정할 근거 있는 사전 상태가 없다는 표현일 수 있으므로 결함으로 판정하지 않는다.
+    """
     rule_id = "spec.contract-completeness"
     found: list[Finding] = []
-    if not spec.get("preconditions"):
-        found.append(Finding(rule_id, "preconditions are missing"))
     if not spec.get("success_guarantee"):
         found.append(Finding(rule_id, "success_guarantee is missing"))
     return found
