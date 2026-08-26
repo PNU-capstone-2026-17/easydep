@@ -13,6 +13,7 @@ python -m evaluation.checkpoint_e2e run --case e1-aws --from erd
 python -m evaluation.checkpoint_e2e run-all --case e1-aws
 python -m evaluation.checkpoint_e2e run-all --case e1-aws --run-id <run-id> --resume
 python -m evaluation.checkpoint_e2e gold-candidate --case e1-aws
+python -m evaluation.checkpoint_e2e gold-candidate --case e1-aws --through sequence_diagram
 python -m evaluation.checkpoint_e2e gold-candidate --case e1-aws --output <candidate> --resume
 python -m evaluation.checkpoint_e2e gold-seed <candidate> --output <rebased-candidate> --through erd
 python -m evaluation.checkpoint_e2e gold-validate <candidate-directory>

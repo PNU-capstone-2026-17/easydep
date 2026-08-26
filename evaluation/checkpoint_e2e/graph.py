@@ -251,8 +251,14 @@ def git_revision() -> str:
 
 
 def generate_candidate(
-    case_id: str, destination: Path, *, resume: bool = False
+    case_id: str,
+    destination: Path,
+    *,
+    resume: bool = False,
+    through: str = CHECKPOINTS[-1],
 ) -> dict[str, Any]:
+    if through not in CHECKPOINTS[1:]:
+        raise ValueError(f"Candidate target is invalid: {through}")
     if destination.exists() and not resume:
         raise FileExistsError(f"Candidate already exists: {destination}")
     case = case_definition(case_id)
@@ -301,7 +307,8 @@ def generate_candidate(
     if not checkpoints:
         save("input", state)
         write_manifest("in_progress")
-    for source in CHECKPOINTS[start_index:-1]:
+    target_index = CHECKPOINTS.index(through)
+    for source in CHECKPOINTS[start_index:target_index]:
         target = checkpoint_after(source)
         records: list[dict[str, Any]] = []
 
@@ -331,7 +338,9 @@ def generate_candidate(
         except Exception as error:
             write_manifest("failed", f"{type(error).__name__}: {error}")
             raise
-    return write_manifest("complete")
+    return write_manifest(
+        "complete" if through == CHECKPOINTS[-1] else "in_progress"
+    )
 
 
 def initial_candidate_state(case: dict[str, Any]) -> dict[str, Any]:

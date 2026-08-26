@@ -42,6 +42,7 @@ def main() -> None:
     candidate.add_argument("--case", choices=sorted(CASES), default="e1-aws")
     candidate.add_argument("--output", type=Path)
     candidate.add_argument("--resume", action="store_true")
+    candidate.add_argument("--through", choices=CHECKPOINTS[1:], default=CHECKPOINTS[-1])
 
     seed = sub.add_parser("gold-seed")
     seed.add_argument("source", type=Path)
@@ -77,7 +78,12 @@ def main() -> None:
         _print(
             {
                 "path": str(destination),
-                **generate_candidate(args.case, destination, resume=args.resume),
+                **generate_candidate(
+                    args.case,
+                    destination,
+                    resume=args.resume,
+                    through=args.through,
+                ),
             }
         )
     elif args.command == "gold-seed":

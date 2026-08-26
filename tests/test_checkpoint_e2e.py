@@ -8,6 +8,7 @@ from evaluation.checkpoint_e2e import catalog
 from evaluation.checkpoint_e2e.catalog import CHECKPOINTS, digest, write_json
 from evaluation.checkpoint_e2e.evidence import semantic_signature
 from evaluation.checkpoint_e2e.graph import (
+    generate_candidate,
     promote_candidate,
     run_all,
     run_one,
@@ -151,6 +152,49 @@ def test_candidate_validation_rejects_missing_checkpoint_sequence(tmp_path) -> N
     result = validate_candidate(tmp_path)
     assert result["status"] == "failed"
     assert "checkpoint order differs" in result["errors"][0]
+
+
+def test_candidate_can_stop_at_an_intermediate_checkpoint(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "evaluation.checkpoint_e2e.graph.CHECKPOINTS",
+        ("input", "requirements", "use_cases"),
+    )
+    monkeypatch.setattr(
+        "evaluation.checkpoint_e2e.graph.case_definition",
+        lambda _case_id: {
+            "caseId": "test",
+            "requirements": ["A requirement"],
+            "resourceConstraintsText": "",
+            "initialCloudConstraints": {},
+            "deploymentPlanningFacts": [],
+            "inputPath": "input.json",
+        },
+    )
+    calls = []
+
+    def transition(source, state, _record):
+        calls.append(source)
+        target = "requirements" if source == "input" else "use_cases"
+        return target, {**state, target: True}
+
+    monkeypatch.setattr(
+        "evaluation.checkpoint_e2e.graph.run_transition", transition
+    )
+    monkeypatch.setattr(
+        "evaluation.checkpoint_e2e.graph.validate_state",
+        lambda _checkpoint, _state: {"status": "passed", "errors": []},
+    )
+
+    manifest = generate_candidate(
+        "test", tmp_path / "candidate", through="requirements"
+    )
+
+    assert calls == ["input"]
+    assert manifest["status"] == "in_progress"
+    assert [item["id"] for item in manifest["checkpoints"]] == [
+        "input",
+        "requirements",
+    ]
 
 
 def test_run_all_resume_reuses_matching_completed_job(tmp_path, monkeypatch) -> None:
