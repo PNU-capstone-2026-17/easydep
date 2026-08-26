@@ -210,6 +210,7 @@ def test_optional_top_level_use_case_extends_accepted_base_and_suppresses_redund
     assert extend["base_use_case_id"] == "UC-BASE"
     assert extend["condition"] == condition
     assert extend["extension_point"] == "main:1"
+    assert extend["extension_point_name"] == "main step 1: Performs base action"
     assert extend["requirement_refs"] == [
         {"use_case_id": "UC-OPTION", "requirement_id": "R-OPTION", "source_text": condition}
     ]
@@ -313,7 +314,14 @@ def test_rendering_resolves_duplicate_display_names_through_use_case_ids():
     diagram = s4.render_diagram(state)["diagram"]
 
     assert f"{s4._san('UC-2')} ..> {s4._san('UC-D')} : <<include>>" in diagram
-    assert f"{s4._san('UC-D')} ..> {s4._san('UC-1')} : <<extend>>" in diagram
+    assert (
+        f"{s4._san('UC-1')} <.. {s4._san('UC-D')} : "
+        "<<extend>>\\n[The actor chooses the path]"
+    ) in diagram
+    assert (
+        'usecase "Same\\n-- extension points --\\n'
+        '1a at step 1"'
+    ) in diagram
     assert f"{s4._san('Actor')} --- {s4._san('UC-1')}" in diagram
 
 

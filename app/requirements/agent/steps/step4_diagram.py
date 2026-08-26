@@ -448,6 +448,10 @@ def _top_level_extend_candidates(
                     "requirement_refs": requirement_refs,
                     "condition": _display_condition(condition),
                     "extension_point": f"main:{number}",
+                    "extension_point_name": (
+                        f"main step {number}: "
+                        f"{_display_name(str(anchor['sentence']), actor_names)}"
+                    ),
                 }
             )
     return candidates, sorted(rejections, key=lambda item: (item["use_case_id"], item["step_ref"]))
@@ -597,6 +601,7 @@ def _materialize_candidates(candidates: list[dict], approved_ids: set[str], use_
                 "extending_use_case": candidate["derived_use_case_name"],
                 "condition": candidate["condition"],
                 "extension_point": candidate["extension_point"],
+                "extension_point_name": candidate["extension_point_name"],
                 "step_refs": candidate["step_refs"],
                 "requirement_ids": candidate.get("requirement_ids", []),
                 "requirement_refs": candidate.get("requirement_refs", []),
@@ -671,6 +676,7 @@ def _candidate_prompt(candidates: list[dict], feedback: str) -> str:
             "derived_use_case_name": candidate["derived_use_case_name"],
             "condition": candidate["condition"],
             "extension_point": candidate["extension_point"],
+            "extension_point_name": candidate.get("extension_point_name"),
         }
         for candidate in candidates
     ]
@@ -840,17 +846,8 @@ def _extend_label(relation: dict) -> str:
     lines = ["<<extend>>"]
     condition_lines = _label_lines(relation.get("condition"))
     if condition_lines:
-        if not re.match(
-            r"^(?:only\s+if|if|when|while|after|before|unless|provided\b)",
-            condition_lines[0],
-            re.IGNORECASE,
-        ):
-            condition_lines[0] = f"when {condition_lines[0]}"
-        lines.extend(condition_lines)
-    extension_point = _plantuml_label(relation.get("extension_point"))
-    if extension_point:
-        extension_point = re.sub(r"^main:(\d+)$", r"main step \1", extension_point)
-        lines.append(f"at {extension_point}")
+        rendered_condition = "\\n".join(condition_lines)
+        lines.append(f"[{rendered_condition}]")
     return "\\n".join(lines)
 
 
@@ -870,6 +867,14 @@ def render_diagram(state: AgentState) -> dict:
         str(derived["use_case_id"]): derived for derived in rel.get("derived_use_cases", [])
     }
     uc_alias.update({use_case_id: _san(use_case_id) for use_case_id in derived_by_id})
+    extension_points_by_base: dict[str, list[str]] = defaultdict(list)
+    for extension in rel.get("extends", []):
+        base_id = str(extension.get("base_use_case_id") or "")
+        point_name = _plantuml_label(
+            extension.get("extension_point_name") or extension.get("extension_point")
+        )
+        if base_id in use_cases_by_id and point_name:
+            extension_points_by_base[base_id].append(point_name)
 
     primary_names = {str(use_case.get("primary_actor") or "") for use_case in use_cases}
     supporting_names = {
@@ -894,8 +899,16 @@ def render_diagram(state: AgentState) -> dict:
         lines.append(f'actor "{_plantuml_label(name)}" as {actor_alias[name]}')
     lines.append("rectangle System {")
     for use_case_id, use_case in sorted(use_cases_by_id.items()):
+        label = _plantuml_label(use_case.get("name", ""))
+        point_lines = [
+            line
+            for point in dict.fromkeys(extension_points_by_base.get(use_case_id, []))
+            for line in _label_lines(point, width=40)
+        ]
+        if point_lines:
+            label += "\\n-- extension points --\\n" + "\\n".join(point_lines)
         lines.append(
-            f'  usecase "{_plantuml_label(use_case.get("name", ""))}" as {uc_alias[use_case_id]}'
+            f'  usecase "{label}" as {uc_alias[use_case_id]}'
         )
     for use_case_id, derived in sorted(derived_by_id.items()):
         lines.append(
@@ -925,7 +938,12 @@ def render_diagram(state: AgentState) -> dict:
         base_id = str(extend.get("base_use_case_id") or "")
         extending_id = str(extend.get("extending_use_case_id") or "")
         if base_id in uc_alias and extending_id in uc_alias:
-            lines.append(f"{uc_alias[extending_id]} ..> {uc_alias[base_id]} : {_extend_label(extend)}")
+            # UML dependency points from the extending UC to the extended/base UC.
+            # The left-arrow form preserves that semantics and the layout used by
+            # the earlier, more readable use-case renderer.
+            lines.append(
+                f"{uc_alias[base_id]} <.. {uc_alias[extending_id]} : {_extend_label(extend)}"
+            )
     for generalization in rel.get("generalizations", []):
         if generalization.get("kind") != "actor":
             continue
