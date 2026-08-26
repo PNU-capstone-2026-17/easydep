@@ -31,6 +31,7 @@ from .prototype import PrototypeClient
 # repair the result without inventing a persistence decision.
 _IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
     "api.operations-present",
+    "api.error-outcomes-representable",
     "erd.surrogate-key-collides",
     "class.contract-types-exist",
 })
@@ -172,6 +173,92 @@ def _missing_openapi_operation_report(readiness: dict[str, Any]) -> dict[str, An
     return result
 
 
+def _unrepresentable_openapi_error_outcomes(
+    class_diagram: object, api_spec: object
+) -> list[str]:
+    """Find API error outcomes a ``void`` BCE Control cannot communicate.
+
+    A controller cannot distinguish success from a documented error when its
+    only Control call returns ``void`` and the BCE contract declares no outcome.
+    Letting an implementation agent guess an exception or always return an
+    error status produces a compilable but false API.  This check is limited to
+    the deterministic case: a mapped Control method explicitly returning void.
+    """
+    if not isinstance(api_spec, dict):
+        return []
+    control_returns: dict[tuple[str, str], str] = {}
+    for class_name, body in re.findall(
+        r"(?ms)^\s*class\s+([A-Za-z_]\w*)\s+<<[^>]*[Cc]ontrol[^>]*>>\s*\{(.*?)\}",
+        str(class_diagram or ""),
+    ):
+        for method, return_type in re.findall(
+            r"(?m)^\s*[+#~-]\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*:\s*([^\s{]+)",
+            body,
+        ):
+            control_returns[(class_name, method)] = return_type
+
+    findings: list[str] = []
+    for path, path_item in (api_spec.get("paths") or {}).items():
+        if not isinstance(path_item, dict):
+            continue
+        for http_method, operation in path_item.items():
+            if str(http_method).lower() not in _OPENAPI_HTTP_METHODS or not isinstance(operation, dict):
+                continue
+            binding = operation.get("x-easydep-control")
+            if not isinstance(binding, dict):
+                continue
+            control = str(binding.get("control") or "").strip()
+            method = str(binding.get("method") or "").strip()
+            if control_returns.get((control, method), "").strip().lower() != "void":
+                continue
+            responses = operation.get("responses") or {}
+            error_statuses = sorted(
+                str(status)
+                for status in responses
+                if str(status).isdigit() and int(str(status)) >= 400
+            )
+            if error_statuses:
+                findings.append(
+                    f"{str(http_method).upper()} {path}: {control}.{method} returns void "
+                    f"but OpenAPI declares error response(s) {', '.join(error_statuses)}"
+                )
+    return findings
+
+
+def _append_api_error_outcome_report(
+    readiness: dict[str, Any], class_diagram: object, api_spec: object
+) -> dict[str, Any]:
+    findings = _unrepresentable_openapi_error_outcomes(class_diagram, api_spec)
+    if not findings:
+        return readiness
+    rule = "api.error-outcomes-representable"
+    if any(
+        rule in str(item.get("finding") or "")
+        for item in readiness.get("findings") or []
+        if isinstance(item, dict)
+    ):
+        return readiness
+    finding = (
+        "OpenAPI error outcome cannot be represented by its BCE Control: "
+        + "; ".join(findings)
+        + " — model an explicit BCE result/error outcome or remove the unsupported API response "
+        f"[{rule}]"
+    )
+    result = {**readiness, "status": "NEEDS_INPUT"}
+    result["findings"] = [*list(readiness.get("findings") or []), {
+        "stage": "api_spec", "finding": finding,
+    }]
+    stages = [dict(item) for item in readiness.get("stages") or [] if isinstance(item, dict)]
+    stage = next((item for item in stages if item.get("stage") == "api_spec"), None)
+    if stage is None:
+        stages.append({"stage": "api_spec", "status": "NEEDS_INPUT", "findings": [finding]})
+    else:
+        stage["status"] = "NEEDS_INPUT"
+        stage["findings"] = [*list(stage.get("findings") or []), finding]
+    result["stages"] = stages
+    return result
+
+
 class JobNotFound(KeyError):
     pass
 
@@ -206,6 +293,11 @@ class ImplementationWorker:
         ]
         readiness = _append_bce_contract_type_report(
             design_readiness_report(design), design.get("class_diagram_puml")
+        )
+        readiness = _append_api_error_outcome_report(
+            readiness,
+            design.get("class_diagram_puml"),
+            design.get("api_spec"),
         )
         # Prefer the concrete rendered-contract defect over a generic missing
         # model report: this is the exact reason both OpenAPI generators would

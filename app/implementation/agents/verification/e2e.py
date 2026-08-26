@@ -155,8 +155,10 @@ def _java_test_method_bodies(source: str) -> list[str]:
     """Return complete Java ``@Test`` bodies without assuming their formatting."""
     declaration = re.compile(
         r"(?ms)@Test(?:\s*\([^)]*\))?\s*"
+        r"(?:(?:@[A-Za-z_$][\w$]*(?:\([^)]*\))?\s*)*)"
         r"(?:(?:public|protected|private)\s+)?void\s+"
-        r"[A-Za-z_$][\w$]*\s*\([^)]*\)\s*\{"
+        r"[A-Za-z_$][\w$]*\s*\([^)]*\)"
+        r"(?:\s+throws\s+[^{]+)?\s*\{"
     )
     bodies: list[str] = []
     for match in declaration.finditer(source):
@@ -248,6 +250,21 @@ def _status_assertion_pattern(status: object) -> re.Pattern[str]:
     symbolic_name = _STATUS_ENUMS.get(value)
     if symbolic_name:
         alternatives.append(rf"(?:HttpStatus\.)?{symbolic_name}")
+    mockmvc_matcher = {
+        "200": "isOk",
+        "201": "isCreated",
+        "202": "isAccepted",
+        "204": "isNoContent",
+        "400": "isBadRequest",
+        "401": "isUnauthorized",
+        "403": "isForbidden",
+        "404": "isNotFound",
+        "409": "isConflict",
+        "422": "isUnprocessableEntity",
+        "500": "isInternalServerError",
+    }.get(value)
+    if mockmvc_matcher:
+        alternatives.append(mockmvc_matcher)
     return re.compile(
         rf"(?im)^.*(?:assert|expect|status).*\b(?:{'|'.join(alternatives)})\b.*$"
     )
@@ -261,7 +278,25 @@ def _http_method_evidence(method: str, source: str) -> bool:
         "PATCH": r"\bpatchForObject\s*\(|HttpMethod\.PATCH",
         "DELETE": r"\bdelete\s*\(|HttpMethod\.DELETE",
     }
-    pattern = verbs.get(method.upper(), rf"HttpMethod\.{re.escape(method.upper())}")
+    verb = method.upper()
+    pattern = verbs.get(verb, rf"HttpMethod\.{re.escape(verb)}")
+    # MockMvc tests commonly use a static wildcard import and invoke
+    # ``mockMvc.perform(post(...))`` directly.  Treat only calls inside a
+    # ``perform`` expression as evidence so unrelated methods such as
+    # ``repository.delete(...)`` cannot satisfy an HTTP scenario.
+    if verb in {"GET", "POST", "PUT", "DELETE", "PATCH"}:
+        builder = verb.lower()
+        mockmvc_pattern = rf"(?:MockMvcRequestBuilders\.)?{builder}\s*\("
+        if re.search(
+            rf"mockMvc\s*\.\s*perform\s*\(\s*(?:MockMvcRequestBuilders\.)?{builder}\s*\(",
+            source,
+        ):
+            return True
+        if re.search(
+            rf"import\s+static\s+org\.springframework\.test\.web\.servlet\.request\.MockMvcRequestBuilders\.(?:\*|{builder})\s*;",
+            source,
+        ) and re.search(mockmvc_pattern, source):
+            return True
     return bool(re.search(pattern, source))
 
 

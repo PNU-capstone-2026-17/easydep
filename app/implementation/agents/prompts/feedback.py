@@ -10,6 +10,8 @@ def render_verification_feedback(
     repair_targets: list[str] | None = None,
     semantic_contract: dict[str, object] | None = None,
     api_controls: list[str] | None = None,
+    api_contracts: str = "",
+    generated_contracts: str = "",
 ) -> str:
     output = (
         str(evidence.get("stdout", ""))
@@ -40,6 +42,26 @@ Import them from the package shown in the embedded contracts. Do not derive a
 resource-named substitute such as `StudentsControl`, and do not leave TODO or
 placeholder code in the controller.
 """
+    api_contract_text = ""
+    if api_contracts:
+        api_contract_text = f"""
+Exact generated API/BCE contracts for this repair (immutable):
+```java
+{api_contracts}
+```
+Use only these declarations. If they cannot express a documented response,
+do not invent an exception, DTO, package, or Control method.
+"""
+    generated_contract_text = ""
+    if generated_contracts:
+        generated_contract_text = f"""
+Exact generated contracts for this repair (immutable):
+```text
+{generated_contracts}
+```
+Use only declarations that appear above. Do not invent a package, type, method,
+or accessor when the contract does not provide one.
+"""
     return f"""The orchestrator compiled and tested your files, and verification failed.
 Fix every reported error in the existing allowed files, including test compilation errors.
 Generated contracts are authoritative: never assume a return value or method that is absent from their exact signatures.
@@ -60,6 +82,10 @@ Failure-specific guidance:
 
 {api_control_text}
 
+{api_contract_text}
+
+{generated_contract_text}
+
 Gradle output:
 ```text
 {output}
@@ -74,6 +100,7 @@ def render_frontend_verification_feedback(
     evidence: dict[str, object],
     current_sources: str = "",
     repair_targets: list[str] | None = None,
+    generated_contracts: str = "",
 ) -> str:
     output = (
         str(evidence.get("stdout", ""))
@@ -81,6 +108,13 @@ def render_frontend_verification_feedback(
         + str(evidence.get("stderr", ""))
     )[-20000:]
     targets = "\n".join(f"- `{path}`" for path in (repair_targets or []))
+    contracts = (
+        "\nGenerated TypeScript client contracts (immutable):\n```text\n"
+        + generated_contracts
+        + "\n```\n"
+        if generated_contracts
+        else ""
+    )
     return f"""The TypeScript frontend contract gate or npm production build failed.
 Fix every reported error using only the repair targets below. Preserve project configuration
 and all files under src/generated. Use exact generated API/model exports; do not replace them
@@ -92,7 +126,8 @@ Repair targets:
 Marker-specific rule:
 - Remove every TODO, FIXME, or PLACEHOLDER token from the repair targets, including
   prose comments. Replace placeholder values or branches with the actual contracted UI
-  behavior; do not merely rename the marker or leave a hard-coded demo fallback.
+behavior; do not merely rename the marker or leave a hard-coded demo fallback.
+{contracts}
 
 Verification output:
 ```text
@@ -162,6 +197,12 @@ def verification_failure_hints(output: str) -> str:
                 "exact BCE input using its public constructor/accessors; for an empty BCE DTO use "
                 "its public no-argument constructor, and map every shared field for non-empty DTOs."
             )
+    if re.search(r"package\s+[\w.]+\s+does not exist|cannot find symbol", output):
+        hints.append(
+            "- Project contract import: remove invented project packages or types. Inspect the "
+            "generated BCE and API sources and import only the exact interfaces/models that exist "
+            "there; do not create aliases such as bce.control or web.dto."
+        )
     if "TooManyActualInvocations" in output:
         hints.append(
             "- TooManyActualInvocations: do not verify a broad matcher once when the "

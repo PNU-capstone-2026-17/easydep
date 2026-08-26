@@ -20,6 +20,7 @@ from app.implementation.generation.orchestrator import (
 )
 from app.implementation.agents.runtime import (
     EventJournal,
+    _api_adapter_repair_contract,
     _requires_cross_phase_repair,
     _repair_missing_generated_model_imports,
     _render_missing_output_repair_prompt,
@@ -53,6 +54,7 @@ from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
     production_placeholder_markers,
     production_test_library_markers,
+    api_adapter_contract_violations,
     persistence_reserved_identifier_markers,
     ensure_persistence_schema_test,
     repair_persistence_schema_table_quoting,
@@ -62,6 +64,7 @@ from app.implementation.agents.verification.build import (
     verify_run_workspace,
 )
 from app.implementation.agents.prompts.feedback import (
+    render_frontend_verification_feedback,
     render_verification_feedback,
     verification_failure_hints,
 )
@@ -1129,6 +1132,14 @@ class LoadJobTest(unittest.TestCase):
         self.assertNotIn("inspect", prompt)
         self.assertNotIn("generatedJavaContracts", prompt)
 
+        contract_prompt = _render_missing_output_repair_prompt(
+            "control",
+            ["C:/agent/application/src/main/java/example/ControlService.java"],
+            "interface Control { String execute(String value); }",
+        )
+        self.assertIn("Exact generated contracts", contract_prompt)
+        self.assertIn("String execute(String value)", contract_prompt)
+
     def test_task_verification_avoids_full_packaging_and_targets_owned_tests(self) -> None:
         command = task_verification_command(
             ["gradlew"],
@@ -1347,6 +1358,57 @@ void use(String value) {}
             self.assertTrue(any("422" in item for item in violations))
             self.assertFalse(any("OrderRepository" in item for item in violations))
 
+    def test_api_adapter_gate_requires_generated_openapi_interface(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            relative = "application/src/main/java/com/example/StudentsApiController.java"
+            path = sandbox / relative
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                "public class StudentsApiController { }", encoding="utf-8"
+            )
+            violations = api_adapter_contract_violations(sandbox, [relative])
+            self.assertIn("must implement generated StudentsApi", violations[0])
+
+            path.write_text(
+                "public class StudentsApiController implements StudentsApi { }",
+                encoding="utf-8",
+            )
+            self.assertEqual([], api_adapter_contract_violations(sandbox, [relative]))
+
+            path.write_text(
+                "package com.example.adapter.in.web;\n"
+                "import com.example.bce.control.StudentsControl;\n"
+                "public class StudentsApiController implements StudentsApi { }",
+                encoding="utf-8",
+            )
+            violations = api_adapter_contract_violations(sandbox, [relative])
+            self.assertTrue(
+                any("imported project type does not exist" in item for item in violations)
+            )
+
+            api = sandbox / "application/src/main/java/com/example/StudentsApi.java"
+            api.write_text(
+                '@ApiResponse(responseCode = "204")\n'
+                '@ApiResponse(responseCode = "404")\n'
+                '@ApiResponse(responseCode = "409")\n'
+                'interface StudentsApi {}',
+                encoding="utf-8",
+            )
+            violations = api_adapter_contract_violations(sandbox, [relative])
+            self.assertTrue(any("HTTP 204" in item for item in violations))
+            self.assertTrue(any("HTTP 404" in item for item in violations))
+            self.assertTrue(any("HTTP 409" in item for item in violations))
+
+            path.write_text(
+                "public class StudentsApiController implements StudentsApi { "
+                "ResponseEntity<Void> drop() { return ResponseEntity.noContent().build(); } "
+                "ResponseEntity<Void> missing() { return ResponseEntity.notFound().build(); } "
+                "ResponseEntity<Void> conflict() { return ResponseEntity.status(HttpStatus.CONFLICT).build(); } }",
+                encoding="utf-8",
+            )
+            self.assertEqual([], api_adapter_contract_violations(sandbox, [relative]))
+
     def test_workspace_verification_error_preserves_causal_output_edges(self) -> None:
         error = WorkspaceVerificationError({
             "command": ["gradlew", "test"],
@@ -1458,6 +1520,37 @@ TestRestTemplate http; CourseRepository repository;
                     {"method": "GET", "path": "/courses/{courseId}", "status": 200},
                     {"method": "DELETE", "path": "/enrollments/{courseId}", "status": 204},
                     {"method": "GET", "path": "/students/{studentId}/schedule", "status": 200},
+                ],
+            }
+
+            self.assertEqual([], e2e_contract_violations(path, contract))
+
+    def test_semantic_gate_accepts_static_mockmvc_request_builders(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CourseFlowTest.java"
+            path.write_text(
+                """import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+class CourseFlowTest {
+MockMvc mockMvc;
+@Test
+@Transactional
+void create() throws Exception {
+  mockMvc.perform(post("/courses")).andExpect(status().isCreated());
+}
+@Test
+@Transactional
+void list() throws Exception {
+  mockMvc.perform(get("/courses")).andExpect(status().isOk());
+}
+}""",
+                encoding="utf-8",
+            )
+            contract = {
+                "minimumTests": 2,
+                "scenarios": [
+                    {"method": "POST", "path": "/courses", "status": 201},
+                    {"method": "GET", "path": "/courses", "status": 200},
                 ],
             }
 
@@ -3780,6 +3873,35 @@ components: {}
         self.assertIn("void type not allowed here", feedback)
         self.assertIn("doAnswer", feedback)
 
+    def test_api_adapter_repair_feedback_includes_exact_contract_subset(self) -> None:
+        contracts = """// application/src/main/java/com/example/api/AuthApi.java
+interface AuthApi { }
+// application/src/main/java/com/example/api/model/LoginRequest.java
+class LoginRequest { }
+// application/src/main/java/com/example/bce/AuthControl.java
+interface AuthControl { String authenticate(String username, String password); }
+// application/src/main/java/com/example/bce/CatalogControl.java
+interface CatalogControl { }
+"""
+        context = {
+            "api": "Auth",
+            "operations": [{"controlBinding": {"control": "AuthControl"}}],
+            "generatedJavaContracts": contracts,
+        }
+        subset = _api_adapter_repair_contract(context)
+        self.assertIn("AuthApi", subset)
+        self.assertIn("LoginRequest", subset)
+        self.assertIn("AuthControl", subset)
+        self.assertNotIn("CatalogControl", subset)
+
+        feedback = render_verification_feedback(
+            {"stderr": "package com.example.bce.control does not exist"},
+            api_controls=["AuthControl"],
+            api_contracts=subset,
+        )
+        self.assertIn("Exact generated API/BCE contracts", feedback)
+        self.assertIn("authenticate(String username, String password)", feedback)
+
     def test_repair_feedback_includes_current_allowlisted_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)
@@ -3798,6 +3920,24 @@ components: {}
             self.assertIn("class Service {}", feedback)
             self.assertIn("class ServiceTest {}", feedback)
             self.assertIn("Do not call view or str_replace", feedback)
+
+    def test_repair_feedback_includes_generated_contracts_for_non_api_tasks(self) -> None:
+        feedback = render_verification_feedback(
+            {"stderr": "cannot find symbol"},
+            generated_contracts="interface CatalogControl { List<Course> getCourseCatalog(); }",
+        )
+
+        self.assertIn("Exact generated contracts for this repair", feedback)
+        self.assertIn("getCourseCatalog", feedback)
+
+    def test_frontend_repair_feedback_includes_generated_client_contracts(self) -> None:
+        feedback = render_frontend_verification_feedback(
+            {"stderr": "TypeScript error"},
+            generated_contracts="export type Course = { courseId: string };",
+        )
+
+        self.assertIn("Generated TypeScript client contracts", feedback)
+        self.assertIn("courseId", feedback)
 
     def test_reads_failed_gradle_test_xml(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3895,6 +4035,7 @@ class ApplicationConfiguration {
             "testStartPurchase_ConnectionFails_HandlesFailure(): Wanted but not invoked\n"
             'expected "identifier"; SQL statement:\n'
             "error: incompatible types: java.util.Date cannot be converted to com.easydep.app.bce.Date"
+            "package com.easydep.app.bce.control does not exist\n"
         )
         self.assertIn("exact argument", hints)
         self.assertIn("exact observed count", hints)
@@ -3907,6 +4048,7 @@ class ApplicationConfiguration {
         self.assertIn("SQL Syntax / Reserved Keyword", hints)
         self.assertIn("Incompatible types", hints)
         self.assertIn("API/BCE request conversion", hints)
+        self.assertIn("Project contract import", hints)
 
     def test_runtime_failure_hints_preserve_exact_e2e_http_contract(self) -> None:
         hints = verification_failure_hints(

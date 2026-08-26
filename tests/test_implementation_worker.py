@@ -24,6 +24,7 @@ from app.implementation.interfaces.schemas import (
 from app.implementation.application.jobs import (
     ImplementationWorker,
     InvalidJobState,
+    _unrepresentable_openapi_error_outcomes,
     _missing_bce_contract_types,
 )
 
@@ -46,6 +47,85 @@ def test_missing_bce_signature_type_is_detected_before_implementation() -> None:
     """
 
     assert _missing_bce_contract_types(puml) == ["CourseFilter", "MissingResult"]
+
+
+def test_void_control_cannot_represent_documented_openapi_error_outcomes() -> None:
+    class_diagram = """
+    @startuml
+    class DropControl <<Control>> {
+      + drop(studentId : String, courseId : String): void
+    }
+    @enduml
+    """
+    api_spec = {
+        "paths": {
+            "/students/{studentId}/enrollments/{courseId}": {
+                "delete": {
+                    "responses": {"204": {}, "404": {}, "403": {}},
+                    "x-easydep-control": {
+                        "control": "DropControl",
+                        "method": "drop",
+                    },
+                }
+            }
+        }
+    }
+
+    findings = _unrepresentable_openapi_error_outcomes(class_diagram, api_spec)
+
+    assert findings == [
+        "DELETE /students/{studentId}/enrollments/{courseId}: DropControl.drop "
+        "returns void but OpenAPI declares error response(s) 403, 404"
+    ]
+
+
+def test_initial_job_blocks_unrepresentable_api_error_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = ImplementationWorker(settings(tmp_path))
+    worker.client.prepare_job = lambda *_args, **_kwargs: pytest.fail(
+        "An unrepresentable API outcome must not reach implementation"
+    )
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.design_readiness_report",
+        lambda _design: {"status": "READY", "findings": [], "stages": []},
+    )
+    try:
+        record = worker.create_job(
+            "app-1",
+            {
+                "class_diagram_puml": """
+                @startuml
+                class DropControl <<Control>> {
+                  + drop(studentId : String, courseId : String): void
+                }
+                @enduml
+                """,
+                "api_spec": {
+                    "openapi": "3.1.0",
+                    "paths": {
+                        "/students/{studentId}/enrollments/{courseId}": {
+                            "delete": {
+                                "responses": {"204": {}, "404": {}},
+                                "x-easydep-control": {
+                                    "control": "DropControl", "method": "drop"
+                                },
+                            }
+                        }
+                    },
+                },
+                "extracted_bce_classes": {"Classes": [{"className": "DropControl"}]},
+                "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
+                "api_spec_model": {"Endpoints": [{"path": "/students"}]},
+            },
+            "com.example",
+            False,
+        )
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "NEEDS_INPUT"
+    assert "api.error-outcomes-representable" in record["error"]
 
 
 def test_needs_input_workflow_exposes_the_design_blocker_in_job_error(tmp_path: Path) -> None:

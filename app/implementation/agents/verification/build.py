@@ -272,6 +272,134 @@ def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
     return evidence
 
 
+def api_adapter_contract_violations(
+    sandbox: Path, allowed_write_paths: list[str]
+) -> list[str]:
+    """Reject compilable web adapters that never implement their OpenAPI port.
+
+    Java permits a plain class with no mappings to compile, but Spring then
+    exposes no routes and every E2E request returns 404.  The generated
+    interface is the authoritative route contract, so require the adapter to
+    implement it before the task can be promoted.
+    """
+    violations: list[str] = []
+    for relative in allowed_write_paths:
+        normalized = relative.replace("\\", "/")
+        if "/src/main/" not in normalized or not normalized.endswith("Controller.java"):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        adapter = path.stem
+        api_name = adapter.removesuffix("Controller")
+        source = path.read_text(encoding="utf-8")
+        if not re.search(
+            rf"\bclass\s+{re.escape(adapter)}\b[^{{]*\bimplements\s+"
+            rf"{re.escape(api_name)}\b",
+            source,
+            flags=re.DOTALL,
+        ):
+            violations.append(
+                f"{normalized}: controller must implement generated {api_name}"
+            )
+            continue
+        # A compilable adapter can still hallucinate a project-local package
+        # (for example ``bce.control`` or ``web.dto``) that is not part of the
+        # generated contracts.  Resolve imports against the copied source tree
+        # before invoking Gradle so the agent receives a precise contract
+        # failure instead of spending a build/retry on invented types.
+        package_match = re.search(r"\bpackage\s+([\w.]+)\s*;", source)
+        package_root = package_match.group(1).split(".adapter.", 1)[0] if package_match else ""
+        if package_root:
+            source_root = sandbox / "application" / "src" / "main" / "java"
+            for imported in re.findall(
+                rf"\bimport\s+({re.escape(package_root)}\.[\w.]+)\s*;", source
+            ):
+                imported_path = source_root / Path(*imported.split(".")).with_suffix(".java")
+                if not imported_path.is_file():
+                    violations.append(
+                        f"{normalized}: imported project type does not exist: {imported}"
+                    )
+        api_sources = list(
+            (sandbox / "application" / "src" / "main" / "java").rglob(
+                f"{api_name}.java"
+            )
+        )
+        if not api_sources:
+            continue
+        api_contract = api_sources[0].read_text(encoding="utf-8")
+        statuses = sorted(
+            {
+                int(value)
+                for value in re.findall(
+                    r'@ApiResponse\s*\(\s*responseCode\s*=\s*"(\d{3})"',
+                    api_contract,
+                )
+            }
+        )
+        status_tokens = {
+            200: ("ResponseEntity.ok", "HttpStatus.OK", "status(200)"),
+            201: ("ResponseEntity.created", "HttpStatus.CREATED", "status(201)"),
+            202: (
+                "ResponseEntity.accepted",
+                "HttpStatus.ACCEPTED",
+                "status(202)",
+            ),
+            204: (
+                "ResponseEntity.noContent",
+                "HttpStatus.NO_CONTENT",
+                "status(204)",
+            ),
+            400: (
+                "ResponseEntity.badRequest",
+                "HttpStatus.BAD_REQUEST",
+                "status(400)",
+            ),
+            401: (
+                "ResponseEntity.status(HttpStatus.UNAUTHORIZED",
+                "HttpStatus.UNAUTHORIZED",
+                "status(401)",
+            ),
+            403: (
+                "ResponseEntity.status(HttpStatus.FORBIDDEN",
+                "HttpStatus.FORBIDDEN",
+                "status(403)",
+            ),
+            404: (
+                "ResponseEntity.notFound",
+                "HttpStatus.NOT_FOUND",
+                "status(404)",
+            ),
+            409: (
+                "ResponseEntity.status(HttpStatus.CONFLICT",
+                "HttpStatus.CONFLICT",
+                "status(409)",
+            ),
+            422: (
+                "ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY",
+                "HttpStatus.UNPROCESSABLE_ENTITY",
+                "status(422)",
+            ),
+            500: (
+                "ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR",
+                "HttpStatus.INTERNAL_SERVER_ERROR",
+                "status(500)",
+            ),
+            503: (
+                "ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE",
+                "HttpStatus.SERVICE_UNAVAILABLE",
+                "status(503)",
+            ),
+        }
+        for status in statuses:
+            tokens = status_tokens.get(status)
+            if tokens and not any(token in source for token in tokens):
+                violations.append(
+                    f"{normalized}: missing explicit HTTP {status} mapping from {api_name}"
+                )
+    return violations
+
+
 def production_placeholder_markers(
     sandbox: Path, relative_paths: list[str]
 ) -> list[str]:

@@ -29,6 +29,7 @@ from .verification.build import (
     repair_persistence_schema_table_quoting,
     production_placeholder_markers,
     production_test_library_markers,
+    api_adapter_contract_violations,
     verify_agent_workspace,
 )
 from .verification.e2e import (
@@ -124,6 +125,54 @@ def _repair_missing_generated_model_imports(
     return repaired
 
 
+def _api_adapter_repair_contract(context: dict[str, object]) -> str:
+    """Return the small, exact contract subset an API-adapter repair needs.
+
+    Repair conversations intentionally omit the original task prompt to keep
+    token use bounded.  Without the generated API signature and its permitted
+    BCE Controls, however, a repair agent has to guess imports and tends to
+    invent resource-named ports.  Keep just the API interface, generated API
+    models, and Controls selected by the reviewed operation bindings.
+    """
+    contracts = str(context.get("generatedJavaContracts") or "")
+    if not contracts:
+        return ""
+    api_name = str(context.get("api") or "").strip()
+    operations = context.get("operations")
+    controls = {
+        str(binding.get("control") or "").strip()
+        for operation in (operations if isinstance(operations, list) else [])
+        if isinstance(operation, dict)
+        for binding in [operation.get("controlBinding") or {}]
+        if isinstance(binding, dict) and str(binding.get("control") or "").strip()
+    }
+    sections = re.split(r"(?=^// application/src/main/java/)", contracts, flags=re.MULTILINE)
+    selected = [
+        section
+        for section in sections
+        if (
+            f"/api/{api_name}Api.java" in section
+            or "/api/model/" in section
+            or any(f"/bce/{control}.java" in section for control in controls)
+        )
+    ]
+    compact = "".join(selected).strip()
+    # Preserve the beginning because it contains the API method signatures;
+    # the bounded tail keeps a repair prompt from becoming a full re-send of
+    # every generated design artifact.
+    return compact[:16000]
+
+
+def _repair_contract_context(context: dict[str, object]) -> str:
+    """Return a bounded generated-contract excerpt for any repair task."""
+    contracts = context.get("generatedJavaContracts")
+    if not isinstance(contracts, str) or not contracts.strip():
+        contracts = context.get("generatedTypescriptContracts")
+    if not isinstance(contracts, str):
+        return ""
+    return contracts[:16000]
+
+
 def _configure_openhands_profile_store() -> None:
     """Keep OpenHands' implicit profile lock out of the user's home directory.
 
@@ -213,7 +262,7 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
 
 
 def _render_missing_output_repair_prompt(
-    task_type: str, missing_outputs: list[str]
+    task_type: str, missing_outputs: list[str], contract_context: str = ""
 ) -> str:
     """Keep missing-output retries small enough for agents that stopped silently."""
     task_hint = (
@@ -223,6 +272,13 @@ def _render_missing_output_repair_prompt(
         else "Use the existing generated application contract; do not inspect or list directories."
     )
     files = "\n".join(f"- `{path}`" for path in missing_outputs)
+    contracts = (
+        "\n\nExact generated contracts (immutable):\n```text\n"
+        + contract_context
+        + "\n```"
+        if contract_context
+        else ""
+    )
     return (
         "The previous agent round did not create the required output files. "
         "Use the file editor's create operation now with the exact absolute paths below; "
@@ -233,6 +289,7 @@ def _render_missing_output_repair_prompt(
         + task_hint
         + "\n\nRequired missing outputs (absolute paths):\n"
         + files
+        + contracts
     )
 
 
@@ -480,7 +537,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 ]
                 round_iteration_limit = MAX_REPAIR_ITERATIONS
                 round_prompt = _render_missing_output_repair_prompt(
-                    task_type, round_allowed
+                    task_type,
+                    round_allowed,
+                    _repair_contract_context(context),
                 )
                 continue
 
@@ -520,6 +579,21 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 _repair_missing_generated_model_imports(
                     sandbox, list(task["allowed_write_paths"])
                 )
+                if task_type == "api-adapter":
+                    adapter_violations = api_adapter_contract_violations(
+                        sandbox, list(task["allowed_write_paths"])
+                    )
+                    if adapter_violations:
+                        raise WorkspaceVerificationError(
+                            {
+                                "command": ["api-adapter-contract-gate"],
+                                "exitCode": 1,
+                                "durationMs": 0,
+                                "stdout": "",
+                                "stderr": "\n".join(adapter_violations),
+                                "testResults": "",
+                            }
+                        )
                 placeholders = production_placeholder_markers(
                     sandbox, task["allowed_write_paths"]
                 )
@@ -661,6 +735,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 # conversation.  The diagnostic plus the files selected by the
                 # verifier are sufficient for a bounded local correction.
                 feedback_kwargs = {}
+                repair_contract = _repair_contract_context(context)
                 if task_type == "api-adapter":
                     feedback_kwargs["api_controls"] = sorted(
                         {
@@ -672,6 +747,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             and str(binding.get("control") or "").strip()
                         }
                     )
+                    feedback_kwargs["api_contracts"] = _api_adapter_repair_contract(
+                        context
+                    )
+                elif repair_contract:
+                    feedback_kwargs["generated_contracts"] = repair_contract
                 if task_type == "integration-test":
                     semantic_contract = context.get("semanticContract")
                     if isinstance(semantic_contract, dict):
