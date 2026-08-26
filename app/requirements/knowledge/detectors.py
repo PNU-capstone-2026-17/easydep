@@ -135,6 +135,35 @@ def contract_fields(spec: dict, _context: object | None = None) -> list[Finding]
     return found
 
 
+def scenario_requirement_refs(spec: dict, _context: object | None = None) -> list[Finding]:
+    """Keep scenario coverage exactly aligned with accepted functional requirements."""
+    rule_id = "spec.scenario-requirement-reference-integrity"
+    accepted = set(spec.get("requirement_ids") or [])
+    found: list[Finding] = []
+    covered: set[str] = set()
+    for step in spec.get("main_scenario", []):
+        location = f"step {step.get('step_number', '?')}"
+        for requirement_id in step.get("covered_req_ids", []) or []:
+            covered.add(requirement_id)
+            if requirement_id not in accepted:
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"covered_req_id {requirement_id!r} is not an accepted functional requirement",
+                        location,
+                    )
+                )
+    for requirement_id in spec.get("requirement_ids") or []:
+        if requirement_id not in covered:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"accepted functional requirement {requirement_id!r} is not covered by the main scenario",
+                )
+            )
+    return found
+
+
 #: Runtime validation uses the direct registry below.  It follows the legacy
 #: detector order exactly so existing text output remains stable.
 SPEC_CHECKS: tuple[CheckSpec[dict, object | None], ...] = (
@@ -143,6 +172,7 @@ SPEC_CHECKS: tuple[CheckSpec[dict, object | None], ...] = (
     CheckSpec("spec.no-control-tokens-in-prose", control_tokens),
     CheckSpec("spec.black-box-no-ui-mechanics", ui_terms),
     CheckSpec("spec.contract-completeness", contract_fields),
+    CheckSpec("spec.scenario-requirement-reference-integrity", scenario_requirement_refs),
 )
 
 #: Legacy name-to-callable catalog retained for rule-audit and external callers.
@@ -152,6 +182,7 @@ SPEC_DETECTORS: dict[str, Callable[[dict], list[Finding]]] = {
     "control_tokens": control_tokens,
     "ui_terms": ui_terms,
     "contract_fields": contract_fields,
+    "scenario_requirement_refs": scenario_requirement_refs,
 }
 
 

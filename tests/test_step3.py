@@ -245,6 +245,102 @@ def test_validate_spec_flags_missing_contract():
     assert any("success_guarantee" in i for i in issues)
 
 
+def test_spec_prompt_does_not_force_unsupported_failure_or_recovery_behavior():
+    prompt = " ".join(s3.prompts.SPEC_SYSTEM.split())
+
+    assert "may have no extension for an unstated technical failure" in prompt
+    assert "Do not invent retries, fallbacks, external dependencies" in prompt
+    assert "Use an empty list when they do not establish one" in prompt
+    assert "no partial order is persisted" not in prompt
+    assert "data-at-rest encryption" not in prompt
+
+    rule_prompt = s3.rules.rule("spec.no-scope-creep").statement
+    assert "customary technical failure" in rule_prompt
+    assert "absent from those sources" in rule_prompt
+
+
+def test_spec_snapshots_the_accepted_use_case_traceability_ids(monkeypatch):
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec(
+        main_scenario=[_step(1, reqs=["R2", "R1"])]
+    ))
+    accepted = _uc("UC1", reqs=["R2", "R1"], nfrs=["N1"])
+
+    item = s3.generate_specs(
+        {"use_cases": [accepted], "classified": _CLASSIFIED, "actors": []}
+    )["use_case_specs"][0]
+
+    assert item["use_case_id"] == accepted["id"]
+    assert item["requirement_ids"] == accepted["requirement_ids"]
+    assert item["nfr_ids"] == accepted["nfr_ids"]
+    assert item["requirement_ids"] is not accepted["requirement_ids"]
+    assert item["nfr_ids"] is not accepted["nfr_ids"]
+
+
+def test_every_accepted_functional_requirement_must_be_covered_by_a_scenario_step(monkeypatch):
+    accepted = _uc("UC1", reqs=["R1", "R2"], nfrs=["N1"])
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec(
+        main_scenario=[_step(1, reqs=["R1"])]
+    ))
+
+    item = s3.generate_specs(
+        {"use_cases": [accepted], "classified": _CLASSIFIED, "actors": []}
+    )["use_case_specs"][0]
+
+    assert any(
+        "accepted functional requirement 'R2' is not covered" in issue
+        for issue in item["issues"]
+    )
+    assert not any("'N1' is not covered" in issue for issue in item["issues"])
+
+
+def test_empty_minimal_guarantee_is_preserved_in_the_validator_payload():
+    item = {
+        "trigger": "start",
+        "preconditions": ["ready"],
+        "main_scenario": [],
+        "extensions": [],
+        "success_guarantee": ["complete"],
+        "minimal_guarantee": [],
+    }
+
+    payload = s3.spec_review_payload(item)
+
+    assert payload["minimal_guarantee"] == []
+
+
+def test_scenario_refs_are_retained_and_must_belong_to_the_owning_use_case(monkeypatch):
+    source = _uc("UC1", reqs=["R1"], nfrs=["N1"])
+    generated = _clean_spec(main_scenario=[_step(1, reqs=["R2", "N1"])])
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: generated)
+
+    item = s3.generate_specs(
+        {"use_cases": [source], "classified": _CLASSIFIED, "actors": []}
+    )["use_case_specs"][0]
+
+    assert item["main_scenario"][0]["covered_req_ids"] == ["R2", "N1"]
+    assert any(
+        "spec.scenario-requirement-reference-integrity" in issue
+        for issue in item["issues"]
+    )
+
+
+def test_specs_do_not_collide_when_use_case_names_are_the_same(monkeypatch):
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec())
+    use_cases = [
+        _uc("UC1", name="same"),
+        _uc("UC2", name="same"),
+    ]
+
+    specs = s3.generate_specs(
+        {"use_cases": use_cases, "classified": _CLASSIFIED, "actors": []}
+    )["use_case_specs"]
+
+    assert [item["use_case_id"] for item in specs] == [item["id"] for item in use_cases]
+    assert [item["requirement_ids"] for item in specs] == [
+        item["requirement_ids"] for item in use_cases
+    ]
+
+
 # ---------------------------------------------------------------------------
 # T2-1 반성 루프 (정적 driven) + 의미 검증 병합
 # ---------------------------------------------------------------------------
@@ -284,7 +380,7 @@ def test_reflection_loop_gives_up_when_regeneration_does_not_help(monkeypatch):
     spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
 
     assert spec["issues"]                        # 여전히 위반 → 표면화
-    assert spec["repair_stopped"] == "no_improvement"
+    assert spec["repair_stopped"] == "repeated_fingerprint"
     assert spec["repair_iters"] == 1             # 시도는 1회에서 멈춘다
     assert calls["n"] == 2                       # 최초 생성 + 재생성 1회뿐
 
@@ -315,6 +411,63 @@ def test_reflection_loop_stops_at_repair_budget(monkeypatch):
     assert spec["repair_stopped"] == "budget"
     assert spec["repair_iters"] == 2     # 예산 소진
     assert spec["issues"]                # 줄었지만 남아 있다 → 표면화
+
+
+def test_reflection_rejects_a_smaller_issue_list_with_new_keys(monkeypatch):
+    initial = _clean_spec(main_scenario=[
+        _step(1, "User clicks the button"),
+        _step(2, "User clicks the button"),
+    ])
+    replacement = _clean_spec(main_scenario=[
+        _step(1, "System proceeds if the request is valid"),
+    ])
+    results = iter([initial, replacement])
+    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: next(results))
+
+    item = s3.generate_specs(
+        {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
+    )["use_case_specs"][0]
+
+    assert item["repair_stopped"] == "no_improvement"
+    assert all("spec.black-box-no-ui-mechanics" in issue for issue in item["issues"])
+
+
+def test_issue_keys_distinguish_two_findings_from_the_same_semantic_rule():
+    tag = s3.rules.tag_of("spec.no-scope-creep")
+
+    keys = s3._issue_keys([
+        f"[semantic] first scope finding {tag}",
+        f"[semantic] second scope finding {tag}",
+    ])
+
+    assert len(keys) == 2
+
+
+def test_reflection_enforces_the_local_two_attempt_cap(monkeypatch):
+    rounds = [
+        _clean_spec(main_scenario=[_step(index, "User clicks the button") for index in range(1, 4)]),
+        _clean_spec(main_scenario=[_step(index, "User clicks the button") for index in range(1, 3)]),
+        _clean_spec(main_scenario=[_step(1, "User clicks the button")]),
+        _clean_spec(),
+    ]
+    calls = {"n": 0}
+
+    def fake(schema, messages):
+        result = rounds[min(calls["n"], len(rounds) - 1)]
+        calls["n"] += 1
+        return result
+
+    monkeypatch.setattr(s3.settings, "max_repair_iters", 99)
+    monkeypatch.setattr(s3, "invoke_structured", fake)
+
+    item = s3.generate_specs(
+        {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
+    )["use_case_specs"][0]
+
+    assert item["repair_iters"] == 2
+    assert item["repair_stopped"] == "budget"
+    assert calls["n"] == 3
 
 
 def test_repair_stopped_is_aggregated_in_the_report(monkeypatch):

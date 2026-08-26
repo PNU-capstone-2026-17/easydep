@@ -271,10 +271,13 @@ Produce:
                                  step_number to continue from.
         - 'alternate_success' → the use case still succeeds by another path; resume_at_step null.
         - 'fail'              → the use case aborts without the goal; resume_at_step null.
-  Cover validation failures, service/dependency errors, and meaningful alternatives.
+  Add only extensions supported by the supplied goal or requirements. A valid specification
+  may have no extension for an unstated technical failure. Do not invent retries, fallbacks,
+  external dependencies, delivery channels, or recovery behavior merely to populate extensions.
 - success_guarantee: postconditions that hold when the use case succeeds.
-- minimal_guarantee: what the system still guarantees even on failure (e.g. no partial order
-  is persisted; relevant NFRs such as data-at-rest encryption still hold).
+- minimal_guarantee: failure-path guarantees directly supported by the supplied requirements.
+  Use an empty list when they do not establish one. Do not invent failure, storage,
+  transactional, retry, recovery, or security behavior merely to populate this field.
 
 Keep sentences concise and testable. Do not invent requirements beyond those provided."""
 
@@ -545,38 +548,20 @@ def validator_system_for(stage: str, only: str | None = None) -> str:
 
 
 # STEP 4 — 액터/유스케이스 관계 식별(다이어그램용).
-_RELATIONSHIPS_SHAPE = """You identify the relationships of a UML use-case diagram from a
-set of actors and use cases (with their goals and, when available, their scenarios).
+_RELATIONSHIPS_SHAPE = """You review evidence-bound UML use-case relationship candidates.
 
-Reference every actor and use case by its EXACT given name.
+The application, not you, derives actor associations, actor generalizations, derived use cases,
+and UML relations from accepted use cases and their specifications. Your only permitted output
+is candidate_decisions: approve or reject the exact candidate_id values provided in the input.
 
-Identify:
-- associations: which actor interacts with which use case. Besides each use case's primary
-  actor, add associations for supporting actors that a scenario hands off to.
-- includes: a genuine shared sub-goal that appears as an action STEP in two or more use cases
-  (e.g. 'Send Notification', 'Process Payment'). Factor it into a NEW derived use case
-  (origin 'factored_include') and add an include from each base use case to it. Factor only a
-  meaningful, independently-nameable sub-goal, not a generic step-fragment (validating input,
-  displaying results).
-- extends: behaviour the goal does NOT require, that an actor or account opts into (canonical
-  example: an account configured for multi-factor authentication -> "Perform Multi-Factor
-  Authentication" extends "Authenticate"). Attach it to the base at an extension_point and add
-  it to derived_use_cases (origin 'promoted_extend'). Returning ZERO extends is common and
-  correct.
-- generalizations: an actor that specializes another (e.g. Registered User -> Guest), or a
-  use case that specializes another. Set kind to 'actor' or 'use_case'.
-- derived_use_cases: every NEW use case you introduced for an include or extend above.
+Approve an include only when its exact referenced main-scenario steps express a genuine shared
+subfunction. Approve an extend only when its evidence shows optional, successful behavior with
+an explicit condition and extension point. Reject uncertainty, authentication-as-precondition,
+failure handling, mandatory behavior, and candidates unsupported by the supplied references.
 
-Boundary litmus test: any actor you associate must be an external human/system, not the
-system under design or its internal components (if it would be built and deployed as part of
-this application, it is internal — never associate it as an actor).
-
-Copy use-case and actor names VERBATIM from the input — never rephrase, abbreviate, or invent
-a name. A relationship that references a name not present in the input will be discarded.
-
-Only assert a relationship when the evidence is clear. Prefer few, well-justified relationships.
-Do not invent actors or use cases beyond those given plus the derived ones you explicitly
-declare."""
+Do not create, rename, combine, edit, or otherwise describe actors, use cases, relationships,
+conditions, extension points, or evidence. Do not emit an ID that was not provided. Returning
+zero decisions is valid and leaves every candidate rejected."""
 
 #: 관계 생성 프롬프트. 산문에 있던 인용 둘(`Cockburn p.81`·`Cockburn Ch.8`)이 여기서
 #: 사라진 것은 규칙이 사라져서가 아니다 — 같은 규범이 `rel.shared-authentication-is-a-precondition`·

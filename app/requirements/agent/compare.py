@@ -77,18 +77,24 @@ def score_relationships(rel: dict, actors: list, use_cases: list) -> dict:
     - dangling_refs: 존재하지 않는 UC/액터를 참조하는 관계(우리 파이프라인은 드롭·표면화함)
     - orphan_actors: 어떤 association에도 안 걸린 액터
     """
-    known_uc = {uc["name"] for uc in use_cases} | {d["name"] for d in rel.get("derived_use_cases", [])}
+    known_uc = {uc["id"] for uc in use_cases} | {
+        d["use_case_id"] for d in rel.get("derived_use_cases", [])
+    }
     known_actor = {a["name"] for a in actors}
     dangling: list[str] = []
     for a in rel.get("associations", []):
-        if a["actor"] not in known_actor or a["use_case"] not in known_uc:
-            dangling.append(f"association {a['actor']} -> {a['use_case']}")
+        if a["actor"] not in known_actor or a["use_case_id"] not in known_uc:
+            dangling.append(f"association {a['actor']} -> {a['use_case_id']}")
     for r in rel.get("includes", []):
-        if r["base_use_case"] not in known_uc or r["included_use_case"] not in known_uc:
-            dangling.append(f"include {r['base_use_case']} / {r['included_use_case']}")
+        if r["base_use_case_id"] not in known_uc or r["included_use_case_id"] not in known_uc:
+            dangling.append(
+                f"include {r['base_use_case_id']} / {r['included_use_case_id']}"
+            )
     for r in rel.get("extends", []):
-        if r["base_use_case"] not in known_uc or r["extending_use_case"] not in known_uc:
-            dangling.append(f"extend {r['base_use_case']} / {r['extending_use_case']}")
+        if r["base_use_case_id"] not in known_uc or r["extending_use_case_id"] not in known_uc:
+            dangling.append(
+                f"extend {r['base_use_case_id']} / {r['extending_use_case_id']}"
+            )
     for g in rel.get("generalizations", []):
         pool = known_actor if g.get("kind") == "actor" else known_uc
         if g["parent"] not in pool or g["child"] not in pool:

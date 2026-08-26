@@ -19,7 +19,9 @@ LLM 출력을 그대로 믿지 않고 검증·반성한다:
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import cast
@@ -43,6 +45,9 @@ _REPLACEMENTS = {
     "‘": "'", "’": "'", "“": '"', "”": '"',  # smart quotes
     "**": "", "__": "", "`": "",                       # bold/code 마크업
 }
+
+_LOCAL_REPAIR_LIMIT = 2
+_RULE_TAG = re.compile(r"\[([a-z][a-z0-9_.-]*)\s")
 
 
 def _clean(text: str) -> str:
@@ -89,6 +94,8 @@ def _assemble(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecItem:
     return {
         "use_case_id": uc["id"],
         "name": uc["name"],
+        "requirement_ids": list(uc["requirement_ids"]),
+        "nfr_ids": list(uc["nfr_ids"]),
         "preconditions": [_clean(p) for p in spec.preconditions],
         "trigger": _clean(spec.trigger),
         "main_scenario": [
@@ -115,7 +122,7 @@ def _assemble(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecItem:
 
 #: 검증자에게 보여줄 명세의 칸들. 여기 없는 것은 검증자가 못 본다.
 _REVIEWED_FIELDS = ("trigger", "preconditions", "main_scenario", "extensions",
-                    "success_guarantee")
+                    "success_guarantee", "minimal_guarantee")
 
 
 def spec_review_payload(item: dict, requirements: list[dict] | None = None) -> dict:
@@ -177,6 +184,33 @@ def _check(
     return findings, status
 
 
+def _issue_keys(issues: list[str]) -> set[str]:
+    """Return stable keys for deterministic findings and semantic rule verdicts."""
+    keys: set[str] = set()
+    known_rule_ids = rules.known_ids()
+    for issue in issues:
+        rule_id = next(
+            (
+                match.group(1)
+                for match in reversed(list(_RULE_TAG.finditer(issue)))
+                if match.group(1) in known_rule_ids
+            ),
+            None,
+        )
+        if rule_id is None:
+            keys.add(f"raw:{issue}")
+        else:
+            finding = " ".join(issue.rsplit("[", 1)[0].split()).casefold()
+            origin = "semantic" if issue.startswith("[semantic]") else "deterministic"
+            keys.add(f"{origin}:{rule_id}:{finding}")
+    return keys
+
+
+def _issue_fingerprint(issue_keys: set[str]) -> str:
+    payload = "\n".join(sorted(issue_keys)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _spec_for(
     uc: UseCaseItem,
     by_id: dict[str, RequirementItem],
@@ -196,6 +230,8 @@ def _spec_for(
 
     멈춘 이유는 `repair_stopped`에 남긴다. 수술적(부분) 수정으로 바꿀 값어치가 있는지는
     이 값의 분포를 봐야 알 수 있고, 지금은 그 근거가 없다.
+    A repair is accepted only when its stable issue-key set is a strict subset of
+    the current set.  The loop stops when a previously seen key fingerprint recurs.
     """
     base_user = _spec_human(uc, by_id, actors, feedback)
     # 검증자에게 줄 잣대. 생성 프롬프트와 달리 **요구사항만** 담는다(지시는 담지 않는다).
@@ -213,9 +249,11 @@ def _spec_for(
 
     item = _generate([SystemMessage(content=system), HumanMessage(content=base_user)])
 
+    unresolved_keys = _issue_keys(item["issues"])
+    fingerprints = [_issue_fingerprint(unresolved_keys)]
     attempts = 0
     stopped = "budget"
-    for _ in range(settings.max_repair_iters):
+    for _ in range(min(_LOCAL_REPAIR_LIMIT, max(0, settings.max_repair_iters))):
         if not item["issues"]:
             stopped = "clean"
             break
@@ -243,11 +281,18 @@ def _spec_for(
             )
             stopped = "error"
             break
-        if len(candidate["issues"]) >= len(item["issues"]):
-            # 줄지 않았다 — 같은 개수의 다른 결함으로 바뀐 것도 개선이 아니다.
+        candidate_keys = _issue_keys(candidate["issues"])
+        candidate_fingerprint = _issue_fingerprint(candidate_keys)
+        if candidate_fingerprint in fingerprints:
+            stopped = "repeated_fingerprint"
+            break
+        if not candidate_keys < unresolved_keys:
+            # A repair must remove keys without adding or replacing any finding.
             stopped = "no_improvement"
             break
         item = candidate
+        unresolved_keys = candidate_keys
+        fingerprints.append(candidate_fingerprint)
     else:
         # 예산을 다 쓰고 나왔다. 마지막 반복이 결함을 없앴을 수도 있다.
         stopped = "clean" if not item["issues"] else "budget"
@@ -288,6 +333,8 @@ def _failed_spec(uc: UseCaseItem, exc: BaseException) -> UseCaseSpecItem:
     return {
         "use_case_id": uc["id"],
         "name": uc.get("name", ""),
+        "requirement_ids": list(uc["requirement_ids"]),
+        "nfr_ids": list(uc["nfr_ids"]),
         "preconditions": [],
         "trigger": "",
         "main_scenario": [],

@@ -378,75 +378,99 @@ class UseCaseSpec(BaseModel):
     )
     minimal_guarantee: list[str] = Field(
         default_factory=list,
-        description="What the system guarantees even if the use case fails.",
+        description=(
+            "Failure-path guarantees directly supported by the supplied requirements. "
+            "Use an empty list when no such guarantee is supported."
+        ),
     )
 
 
 # ----------------------------------------------------------------------------
 # STEP 4 — 액터/유스케이스 관계(다이어그램용) 구조화 출력
 # 관계 식별은 LLM(의미 판단), 다이어그램 텍스트 렌더링은 결정론적으로 분리한다.
-# 유스케이스/액터는 이름(name)으로 참조한다.
+# The relationship projection keeps display names for consumers, but every
+# relationship join is made through a stable ``use_case_id``.
 # ----------------------------------------------------------------------------
-class Association(BaseModel):
-    """액터 ↔ 유스케이스 연결."""
+class RelationshipCandidateDecision(BaseModel):
+    """The sole model-controlled relationship operation: approve or reject one candidate."""
 
-    actor: str = Field(description="Actor name (must match a given actor).")
-    use_case: str = Field(description="Use case name (must match a given use case).")
+    model_config = ConfigDict(extra="forbid")
 
-
-class IncludeRelation(BaseModel):
-    """공통 하위 행위를 별도 유스케이스로 추출한 include 관계."""
-
-    base_use_case: str = Field(description="Use case that includes the shared behavior.")
-    included_use_case: str = Field(description="Factored-out common sub use case.")
-    rationale: str = Field(default="", description="Why this shared behavior was factored out.")
-
-
-class ExtendRelation(BaseModel):
-    """선택/조건부 행위를 나타내는 extend 관계."""
-
-    base_use_case: str = Field(description="Use case being extended.")
-    extending_use_case: str = Field(description="Optional/conditional behavior use case.")
-    extension_point: str = Field(default="", description="Step/condition where it attaches.")
-    rationale: str = Field(default="")
-
-
-class GeneralizationRelation(BaseModel):
-    """액터 또는 유스케이스 일반화(상속)."""
-
-    parent: str = Field(description="General actor or use case name.")
-    child: str = Field(description="Specialized actor or use case name.")
-    kind: Literal["actor", "use_case"] = Field(
-        description="Whether this generalizes actors or use cases."
-    )
-    rationale: str = Field(default="")
-
-
-class DerivedUseCase(BaseModel):
-    """관계 도출 중 새로 등장한 유스케이스(예: 추출된 include 'Authenticate')."""
-
-    name: str = Field(description="Name of the derived use case.")
-    origin: Literal["factored_include", "promoted_extend"] = Field(
-        description="factored_include = extracted as a shared include; "
-        "promoted_extend = introduced as an extending behavior."
-    )
-    rationale: str = Field(default="")
+    candidate_id: str = Field(description="ID copied exactly from the provided candidate list.")
+    decision: Literal["approve", "reject"]
 
 
 class RelationshipModel(BaseModel):
-    """identify_relationships 노드의 구조화 출력."""
+    """Model output for Step 4; it can decide candidates but cannot create relationships."""
 
-    associations: list[Association] = Field(default_factory=list)
-    includes: list[IncludeRelation] = Field(default_factory=list)
-    extends: list[ExtendRelation] = Field(default_factory=list)
-    generalizations: list[GeneralizationRelation] = Field(default_factory=list)
-    derived_use_cases: list[DerivedUseCase] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_decisions: list[RelationshipCandidateDecision] = Field(default_factory=list)
 
 
 # ----------------------------------------------------------------------------
 # BASELINE — 다단계 파이프라인의 대조군(순진한 2콜: 명세 원샷 + 다이어그램 원샷)
 # 우리 시스템의 "단계 분해 + 검증/반성" 가치를 정량 비교하기 위한 최소 프롬프트 구조.
 # ----------------------------------------------------------------------------
+class BaselineActor(BaseModel):
+    """Baseline actor without the production source-evidence requirement."""
+
+    name: str
+    description: str
+    parent_actor: str | None = None
+
+
+class BaselineAssociation(BaseModel):
+    """Free-form baseline actor-to-use-case association."""
+
+    actor: str = Field(description="Actor name supplied to the baseline call.")
+    use_case: str = Field(description="Use-case name supplied to the baseline call.")
+
+
+class BaselineIncludeRelation(BaseModel):
+    """Free-form baseline include relation, expressed by display names."""
+
+    base_use_case: str
+    included_use_case: str
+    rationale: str = ""
+
+
+class BaselineExtendRelation(BaseModel):
+    """Free-form baseline extend relation, expressed by display names."""
+
+    base_use_case: str
+    extending_use_case: str
+    extension_point: str = ""
+    rationale: str = ""
+
+
+class BaselineGeneralizationRelation(BaseModel):
+    """Free-form baseline actor or use-case generalization."""
+
+    parent: str
+    child: str
+    kind: Literal["actor", "use_case"]
+    rationale: str = ""
+
+
+class BaselineDerivedUseCase(BaseModel):
+    """A use case introduced freely by the baseline relationship call."""
+
+    name: str
+    origin: Literal["factored_include", "promoted_extend"]
+    rationale: str = ""
+
+
+class BaselineRelationshipModel(BaseModel):
+    """One-shot baseline relationship output; deliberately not candidate decisions."""
+
+    associations: list[BaselineAssociation] = Field(default_factory=list)
+    includes: list[BaselineIncludeRelation] = Field(default_factory=list)
+    extends: list[BaselineExtendRelation] = Field(default_factory=list)
+    generalizations: list[BaselineGeneralizationRelation] = Field(default_factory=list)
+    derived_use_cases: list[BaselineDerivedUseCase] = Field(default_factory=list)
+
+
 class BaselineSpec(UseCaseSpec):
     """baseline 원샷 명세: UseCaseSpec 필드 + 어느 유스케이스에 속하는지."""
 
@@ -459,7 +483,7 @@ class BaselineSpec(UseCaseSpec):
 class BaselineModelResult(BaseModel):
     """baseline 1콜: 액터 + 유스케이스 + Cockburn 명세를 한 번에 생성."""
 
-    actors: list[Actor]
+    actors: list[BaselineActor]
     use_cases: list[UseCase]
     specs: list[BaselineSpec]
 

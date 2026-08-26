@@ -57,6 +57,8 @@ class UseCaseSpecItem(TypedDict):
 
     use_case_id: str
     name: str
+    requirement_ids: list[str]
+    nfr_ids: list[str]
     preconditions: list[str]
     trigger: str
     main_scenario: list[dict]  # {step_number, sentence, covered_req_ids}

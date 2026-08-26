@@ -484,8 +484,11 @@ RULES: tuple[Rule, ...] = (
         stage=WRITE_SPECIFICATIONS,
         severity=DEFECT,
         statement=(
-            "A step, condition, or handling must not invent a capability that is absent "
-            "from the given functional requirements."
+            "Every step, extension condition, handling action, and guarantee must be directly "
+            "supported by the supplied goal or requirements, or be a necessary consequence of "
+            "them. A customary technical failure, retry, fallback, recovery action, or error "
+            "notification is still invented behaviour when its triggering concern and response "
+            "are absent from those sources."
         ),
         citation="easydep convention (hallucination guard)",
         evidence="project-convention",
@@ -541,6 +544,21 @@ RULES: tuple[Rule, ...] = (
         owner="specs",
         judged_by=JUDGED_DETECTOR,
         detector="contract_fields",
+    ),
+    Rule(
+        id="spec.scenario-requirement-reference-integrity",
+        stage=WRITE_SPECIFICATIONS,
+        severity=DEFECT,
+        statement=(
+            "Every accepted functional requirement must be realized by at least one main-scenario "
+            "covered_req_id, and each covered_req_id must belong to that same use case. "
+            "Non-functional constraints are never scenario coverage."
+        ),
+        citation="easydep convention (use-case-local traceability)",
+        evidence="project-convention",
+        owner="specs",
+        judged_by=JUDGED_DETECTOR,
+        detector="scenario_requirement_refs",
     ),
     # --- 4단계: 관계 / 다이어그램 -----------------------------------------
     Rule(

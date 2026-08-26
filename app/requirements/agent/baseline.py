@@ -27,7 +27,75 @@ from app.requirements.agent.steps.step1_requirements import intake
 from app.requirements.agent.steps.step2_usecases import _uc_dict
 from app.requirements.agent.steps.step3_specifications import _assemble
 from app.requirements.agent.steps.step4_diagram import render_diagram
-from app.requirements.schemas import BaselineModelResult, RelationshipModel
+from app.requirements.schemas import BaselineModelResult, BaselineRelationshipModel
+
+
+def _unique_use_case_ids(use_cases: list[UseCaseItem]) -> dict[str, str]:
+    """Map only unambiguous baseline display names to their accepted stable IDs."""
+    by_name: dict[str, list[str]] = {}
+    for use_case in use_cases:
+        by_name.setdefault(use_case["name"], []).append(use_case["id"])
+    return {name: ids[0] for name, ids in by_name.items() if len(ids) == 1}
+
+
+def _baseline_relationship_artifact(
+    result: BaselineRelationshipModel,
+    actors: list[ActorItem],
+    use_cases: list[UseCaseItem],
+) -> dict:
+    """Project free-form baseline names into the stable-ID renderer contract.
+
+    This is an intentionally mechanical exact-name projection. It does not mine
+    candidates, judge the model's relationship choices, or repair missing names.
+    """
+    use_case_ids = _unique_use_case_ids(use_cases)
+    derived = [
+        {
+            "use_case_id": f"baseline-derived-{index}",
+            "name": item.name,
+            "origin": item.origin,
+            "rationale": item.rationale,
+        }
+        for index, item in enumerate(result.derived_use_cases, start=1)
+    ]
+    derived_name_ids: dict[str, list[str]] = {}
+    for item in derived:
+        derived_name_ids.setdefault(item["name"], []).append(item["use_case_id"])
+    derived_ids = {
+        name: ids[0]
+        for name, ids in derived_name_ids.items()
+        if len(ids) == 1 and name not in use_case_ids
+    }
+    endpoint_ids = {**derived_ids, **use_case_ids}
+    actor_names = {actor["name"] for actor in actors}
+
+    return {
+        "associations": [
+            {"actor": item.actor, "use_case_id": use_case_ids[item.use_case]}
+            for item in result.associations
+            if item.actor in actor_names and item.use_case in use_case_ids
+        ],
+        "includes": [
+            {"base_use_case_id": endpoint_ids[item.base_use_case],
+             "included_use_case_id": endpoint_ids[item.included_use_case],
+             "rationale": item.rationale}
+            for item in result.includes
+            if item.base_use_case in endpoint_ids and item.included_use_case in endpoint_ids
+        ],
+        "extends": [
+            {"base_use_case_id": endpoint_ids[item.base_use_case],
+             "extending_use_case_id": endpoint_ids[item.extending_use_case],
+             "extension_point": item.extension_point, "rationale": item.rationale}
+            for item in result.extends
+            if item.base_use_case in endpoint_ids and item.extending_use_case in endpoint_ids
+        ],
+        "generalizations": [
+            {"parent": item.parent, "child": item.child, "kind": item.kind,
+             "rationale": item.rationale}
+            for item in result.generalizations
+        ],
+        "derived_use_cases": derived,
+    }
 
 
 def baseline_generate(state: AgentState) -> dict:
@@ -47,23 +115,31 @@ def baseline_generate(state: AgentState) -> dict:
 
     actors: list[ActorItem] = [
         {"name": a.name, "description": a.description,
-         "parent_actor": a.parent_actor}
+         "parent_actor": a.parent_actor, "source_refs": []}
         for a in result.actors
     ]
     use_cases: list[UseCaseItem] = [
         _uc_dict(uc, f"UC{i}") for i, uc in enumerate(result.use_cases, start=1)
     ]
-    name_to_id = {uc["name"]: uc["id"] for uc in use_cases}
+    accepted_by_name: dict[str, UseCaseItem | None] = {}
+    for use_case in use_cases:
+        name = use_case["name"]
+        accepted_by_name[name] = use_case if name not in accepted_by_name else None
 
     # 명세를 UC에 이름으로 매칭해 상태 dict로 조립(_assemble 재사용). 매칭 실패 시 임시 id 부여.
     specs: list[UseCaseSpecItem] = []
     extra = len(use_cases)
     for spec in result.specs:
-        uid = name_to_id.get(spec.use_case_name)
-        if uid is None:
+        accepted = accepted_by_name.get(spec.use_case_name)
+        if accepted is None:
             extra += 1
-            uid = f"UC{extra}"
-        specs.append(_assemble(spec, {"id": uid, "name": spec.use_case_name}))  # type: ignore[arg-type]
+            accepted = {
+                "id": f"UC{extra}",
+                "name": spec.use_case_name,
+                "requirement_ids": [],
+                "nfr_ids": [],
+            }
+        specs.append(_assemble(spec, accepted))  # type: ignore[arg-type]
 
     return {"classified": classified, "actors": actors, "use_cases": use_cases,
             "use_case_specs": specs, "phase": "baseline_generate"}
@@ -79,25 +155,15 @@ def baseline_diagram(state: AgentState) -> dict:
         f"supporting: {', '.join(u.get('supporting_actors', [])) or 'none'}]"
         for u in use_cases
     )
-    result: RelationshipModel = invoke_structured(
-        RelationshipModel,
+    result: BaselineRelationshipModel = invoke_structured(
+        BaselineRelationshipModel,
         [SystemMessage(content=prompts.BASELINE_DIAGRAM_SYSTEM),
          HumanMessage(content=f"[ACTORS]\n{actor_listing}\n\n[USE CASES]\n{uc_listing}")],
     )
 
     # 원(raw) 관계를 그대로 상태에 둔다 — 우리 파이프라인과 달리 참조 가드/orphan 보강을 하지 않는다.
-    rel = {
-        "associations": [{"actor": a.actor, "use_case": a.use_case} for a in result.associations],
-        "includes": [{"base_use_case": r.base_use_case, "included_use_case": r.included_use_case,
-                      "rationale": r.rationale} for r in result.includes],
-        "extends": [{"base_use_case": r.base_use_case, "extending_use_case": r.extending_use_case,
-                     "extension_point": r.extension_point, "rationale": r.rationale}
-                    for r in result.extends],
-        "generalizations": [{"parent": g.parent, "child": g.child, "kind": g.kind,
-                             "rationale": g.rationale} for g in result.generalizations],
-        "derived_use_cases": [{"name": d.name, "origin": d.origin, "rationale": d.rationale}
-                              for d in result.derived_use_cases],
-    }
+    # Stable IDs are required only by the shared renderer; no candidate adjudication runs here.
+    rel = _baseline_relationship_artifact(result, actors, use_cases)
     # 렌더는 결정론 공유 인프라라 재사용(관계 내용은 baseline 그대로).
     render_state = {"actors": actors, "use_cases": use_cases, "relationships": rel}
     diagram = render_diagram(render_state)["diagram"]  # type: ignore[arg-type]

@@ -48,6 +48,8 @@ from app.requirements.knowledge import detectors, rules
 CLEAN: dict = {
     "use_case_id": "UC1",
     "name": "Place an order",
+    "requirement_ids": ["FR1", "FR2", "FR3"],
+    "nfr_ids": [],
     "preconditions": ["The member is signed in"],
     "trigger": "The member asks to place an order",
     "main_scenario": [
@@ -70,7 +72,7 @@ CLEAN: dict = {
          "outcome": "resume", "resume_at_step": 3},
     ],
     "success_guarantee": ["The order is recorded"],
-    "minimal_guarantee": ["No partial order is kept"],
+    "minimal_guarantee": [],
     "issues": [],
     "repair_iters": 0,
 }
@@ -140,6 +142,11 @@ SEEDED: tuple[Seeded, ...] = (
         "preconditions를 비웠다",
         _variant(preconditions=[]),
     ),
+    Seeded(
+        "spec.scenario-requirement-reference-integrity",
+        "accepted functional requirement is missing from the main scenario coverage",
+        _variant(requirement_ids=["FR1", "FR2", "FR3", "FR4"]),
+    ),
 )
 
 
@@ -178,7 +185,7 @@ _REQUIREMENTS = [
 
 #: 검증자가 받는 명세의 칸들. `step3._REVIEWED_FIELDS`와 같아야 한다.
 _REVIEWED_FIELDS = ("trigger", "preconditions", "main_scenario", "extensions",
-                    "success_guarantee")
+                    "success_guarantee", "minimal_guarantee")
 
 
 def _spec_payload(spec: dict) -> dict:
