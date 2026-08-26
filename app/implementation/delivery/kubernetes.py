@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Callable
 
@@ -232,7 +233,9 @@ def render_local_container(run_root: Path) -> dict[str, object]:
     }
 
 
-def render_deployment(run_root: Path, spec: Any) -> dict[str, object]:
+def render_deployment(
+    run_root: Path, spec: Any, *, include_kubernetes: bool = True
+) -> dict[str, object]:
     cloud_path = spec.inputs.get("cloud")
     deployment_path = spec.inputs.get("deployment")
     intent_path = spec.inputs.get("deploymentIntent")
@@ -324,6 +327,51 @@ deployment-bundle
         write("frontend/Dockerfile", frontend_dockerfile())
         write("frontend/nginx.conf", frontend_nginx_config())
         write("frontend/.dockerignore", "node_modules\ndist\n.env*\n")
+
+    # The implementation release currently exposes a Docker image and
+    # Terraform IaC as artifacts.  Kubernetes manifests are intentionally
+    # disabled for this path; keeping this switch at the renderer boundary
+    # also removes stale manifests recorded by a previous release.
+    if not include_kubernetes:
+        k8s_root = application / "k8s"
+        if k8s_root.is_dir():
+            # This is the generated application workspace, not a user source
+            # tree. Remove stale renderer output so a rerun cannot reactivate
+            # manifests from an earlier implementation.
+            shutil.rmtree(k8s_root)
+        report = {
+            "schemaVersion": "easydep-deployment-render/v1alpha1",
+            "intent": intent,
+            "renderedFiles": sorted(rendered),
+            "removedFiles": sorted(removed),
+            "renderer": "deterministic",
+            "kubernetesManifests": False,
+            "validation": {
+                "status": "SKIPPED",
+                "reason": "Kubernetes manifest generation is disabled for implementation releases.",
+            },
+            "sourceConformance": {
+                "status": "SKIPPED",
+                "reason": "Kubernetes manifest generation is disabled for implementation releases.",
+            },
+            "sourceEvidence": {
+                "deploymentDiagram": bool(deployment),
+                "cloudResourceSpecification": bool(cloud),
+                "explicitIntent": has_intent,
+            },
+            "intentSource": "explicit-input" if has_intent else "implementation-agent-inference",
+            "externalPrerequisites": external_prerequisites(intent),
+        }
+        reports = run_root / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "deployment-intent.json").write_text(
+            json.dumps(intent, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        (reports / "deployment-render.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return report
+
     if any("__EASYDEP_REGISTRY_" in str(workload.get("image", "")) for workload in intent["workloads"]):
         write(
             "k8s/render-images.sh",
@@ -528,6 +576,7 @@ python3 "$script_dir/verify-deployment.py" "$script_dir/deployment-intent.json" 
         "renderedFiles": sorted(rendered),
         "removedFiles": sorted(removed),
         "renderer": "deterministic",
+        "kubernetesManifests": True,
         "validation": validation,
         "sourceConformance": source_conformance,
         "sourceEvidence": {
