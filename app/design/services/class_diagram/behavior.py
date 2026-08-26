@@ -122,6 +122,11 @@ and later presentation/notification steps; that trace does not mean the call
 is repeated or its order is ambiguous.  Do not redesign or revalidate the
 upstream use-case specification, including its extension layout, in this
 review.
+
+Call order is preorder: a parent Control invocation starts before its child
+Entity checks or mutations and returns only after all children return.  Do not
+claim that the parent business operation completes before its prerequisite
+children merely because the parent call is listed first.
 """.strip()
 
 _PRIMITIVE_TYPES = frozenset({
@@ -170,6 +175,12 @@ class _BehaviorArtifact(dict):
 
 def group_outcomes(model: dict[str, Any]) -> tuple[_GroupOutcome, ...]:
     return tuple(getattr(model, "_behavior_group_outcomes", ()))
+
+
+def semantic_review_issues(model: dict[str, Any]) -> tuple[SemanticIssue, ...]:
+    """Return advisory model-review observations; they never mutate or block."""
+
+    return tuple(getattr(model, "_semantic_review_issues", ()))
 
 
 def _text(value: Any) -> str:
@@ -854,6 +865,7 @@ def enrich_bce_behavior(scenario: dict[str, Any], skeleton: dict[str, Any]) -> d
             result["Collaborations"].append(collaboration)
         outcomes.append(outcome)
     result["Relationships"] = project_call_dependencies(result)
+    semantic_issues: list[SemanticIssue] = []
     try:
         from app.design.services.class_diagram.validation import operation_contract_issues
 
@@ -861,33 +873,14 @@ def enrich_bce_behavior(scenario: dict[str, Any], skeleton: dict[str, Any]) -> d
             result, {"usecase_spec": scenario}
         )
         if not deterministic_issues and result.get("Collaborations"):
-            semantic = _semantic_review(result, scenario)
-            by_group: dict[str, list[SemanticIssue]] = defaultdict(list)
-            for issue in semantic:
-                by_group[issue.collaboration_id].append(issue)
-            refreshed: list[_GroupOutcome] = []
-            for outcome in outcomes:
-                issues = by_group.get(outcome.group_id, [])
-                if not issues:
-                    refreshed.append(outcome)
-                    continue
-                refreshed.append(_GroupOutcome(
-                    outcome.group_id,
-                    outcome.accepted_call_ids,
-                    tuple(issue.message for issue in issues),
-                    outcome.repaired,
-                    any(issue.needs_input for issue in issues),
-                ))
-            outcomes = refreshed
-    except Exception as error:  # noqa: BLE001 - review unavailability is a visible group-level finding
-        outcomes = [
-            _GroupOutcome(outcome.group_id, outcome.accepted_call_ids, (*outcome.issues, _text(error)), outcome.repaired)
-            for outcome in outcomes
-        ]
+            semantic_issues = _semantic_review(result, scenario)
+    except Exception:  # noqa: BLE001 - advisory review cannot invalidate accepted calls
+        semantic_issues = []
     # Canonicalize ids and reject accidental legacy fields at the persistence
     # boundary.  Do not write the transient outcomes into the JSON artifact.
     validated = BCEModel.model_validate(result).model_dump(by_alias=True)
     result.clear()
     result.update(validated)
     result._behavior_group_outcomes = tuple(outcomes)
+    result._semantic_review_issues = tuple(semantic_issues)
     return result

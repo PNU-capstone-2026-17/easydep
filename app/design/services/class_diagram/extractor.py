@@ -1,6 +1,7 @@
 """One global, structure-only proposal for the BCE class artifact."""
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Literal
 
@@ -337,10 +338,146 @@ def run_bce_skeleton_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
     return BCEModel.model_validate(parsed).model_dump(by_alias=True)
 
 
+def _scenario_structure_issues(
+    model: dict[str, Any], scenario: dict[str, Any],
+) -> list[str]:
+    """Check scenario-dependent structure facts that JSON Schema cannot express."""
+
+    specifications = {
+        str(item.get("use_case_id") or "").strip(): item
+        for item in scenario.get("use_case_specs") or []
+        if isinstance(item, dict) and str(item.get("use_case_id") or "").strip()
+    }
+    known_use_cases = set(specifications) | {
+        str(item.get("id") or "").strip()
+        for item in scenario.get("use_cases") or []
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    required_steps: set[str] = set()
+    for use_case_id, specification in specifications.items():
+        required_steps.update(
+            f"{use_case_id}:main:{step['step_number']}"
+            for step in specification.get("main_scenario") or []
+            if isinstance(step, dict) and step.get("step_number") is not None
+        )
+        for extension in specification.get("extensions") or []:
+            if not isinstance(extension, dict):
+                continue
+            label = str(extension.get("label") or "").strip()
+            required_steps.update(
+                f"{use_case_id}:extension:{label}:{step['sub_step']}"
+                for step in extension.get("handling_steps") or []
+                if label and isinstance(step, dict) and step.get("sub_step") is not None
+            )
+
+    issues: list[str] = []
+    covered_steps: set[str] = set()
+    classes = [item for item in model.get("Classes") or [] if isinstance(item, dict)]
+    for class_item in classes:
+        class_name = str(class_item.get("className") or "").strip()
+        use_case_ids = {
+            str(value).strip() for value in class_item.get("use_case_ids") or []
+            if str(value).strip()
+        }
+        unknown_use_cases = sorted(use_case_ids - known_use_cases)
+        if unknown_use_cases:
+            issues.append(f"{class_name} references unknown use cases: {unknown_use_cases}")
+        if str(class_item.get("stereotype") or "") == "Entity":
+            fields = [str(value) for value in class_item.get("fields") or []]
+            field_names = {value.partition(":")[0].strip() for value in fields}
+            if not fields:
+                issues.append(f"Entity {class_name} has no persistent fields")
+            if not class_item.get("operations"):
+                issues.append(f"Entity {class_name} has no state-bearing operations")
+            dangling_identifiers = sorted(
+                str(value).strip() for value in class_item.get("identifier") or []
+                if str(value).strip() not in field_names
+            )
+            if dangling_identifiers:
+                issues.append(
+                    f"Entity {class_name} identifiers are not typed fields: "
+                    f"{dangling_identifiers}"
+                )
+        for operation in class_item.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            step_refs = {
+                str(value).strip() for value in operation.get("stepRefs") or []
+                if str(value).strip()
+            }
+            covered_steps.update(step_refs)
+            unknown_steps = sorted(step_refs - required_steps)
+            if unknown_steps:
+                issues.append(
+                    f"{class_name}.{operation.get('name')} references unknown steps: "
+                    f"{unknown_steps}"
+                )
+
+    for use_case in scenario.get("use_cases") or []:
+        if not isinstance(use_case, dict):
+            continue
+        use_case_id = str(use_case.get("id") or "").strip()
+        primary_actor = str(use_case.get("primary_actor") or "").strip()
+        if not use_case_id or not primary_actor:
+            continue
+        stereotypes = {
+            str(item.get("stereotype") or "")
+            for item in classes
+            if use_case_id in {
+                str(value).strip() for value in item.get("use_case_ids") or []
+            }
+        }
+        for required in ("Boundary", "Control"):
+            if required not in stereotypes:
+                issues.append(
+                    f"actor-driven use case {use_case_id} has no {required} class"
+                )
+
+    missing_steps = sorted(required_steps - covered_steps)
+    if missing_steps:
+        issues.append(f"operation stepRefs do not cover scenario steps: {missing_steps}")
+    return issues
+
+
 def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
     if not scenario_text:
         return {}
-    return run_bce_skeleton_parse([
+    messages = [
         {"role": "system", "content": BCE_CLASS_EXTRACTION_SYSTEM_PROMPT},
         {"role": "user", "content": f"Requirement Specification Scenario:\n{scenario_text}"},
-    ])
+    ]
+    model = run_bce_skeleton_parse(messages)
+    try:
+        scenario = json.loads(scenario_text)
+    except (json.JSONDecodeError, TypeError):
+        return model
+    if not isinstance(scenario, dict) or not scenario.get("use_case_specs"):
+        return model
+    issues = _scenario_structure_issues(model, scenario)
+    if not issues:
+        return model
+    repaired = run_domain_structure_parse(
+        [
+            *messages,
+            {
+                "role": "user",
+                "content": (
+                    "The candidate below passed JSON Schema but failed deterministic "
+                    "scenario contracts. Regenerate the full structure and fix every "
+                    "finding without adding behavior outside the scenario.\n\n"
+                    "[Candidate]\n"
+                    + json.dumps(model, ensure_ascii=False)
+                    + "\n\n[Findings]\n"
+                    + json.dumps(issues, ensure_ascii=False)
+                ),
+            },
+        ],
+        operation="DomainStructureContractRepair",
+    )
+    remaining = _scenario_structure_issues(repaired, scenario)
+    if remaining:
+        raise ValueError(
+            "domain structure remains incomplete after bounded repair: "
+            + "; ".join(remaining)
+        )
+    return repaired

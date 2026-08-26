@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -159,3 +161,96 @@ def test_structure_projection_honors_explicit_value_object_marker(monkeypatch):
         "fields": ["accepted : boolean"],
         "values": [],
     }]
+
+
+def test_scenario_structure_contract_catches_missing_state_and_step_coverage():
+    scenario = {
+        "use_cases": [{"id": "UC1", "primary_actor": "Buyer"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "main_scenario": [
+                {"step_number": 1}, {"step_number": 2},
+            ],
+        }],
+    }
+    model = {
+        "Classes": [
+            {
+                "className": "OrderBoundary",
+                "stereotype": "Boundary",
+                "use_case_ids": ["UC1"],
+                "operations": [{"name": "submit", "stepRefs": ["UC1:main:1"]}],
+            },
+            {
+                "className": "Order",
+                "stereotype": "Entity",
+                "fields": [],
+                "use_case_ids": ["UC1"],
+                "operations": [],
+            },
+        ],
+    }
+
+    issues = extractor._scenario_structure_issues(model, scenario)
+
+    assert "Entity Order has no persistent fields" in issues
+    assert "Entity Order has no state-bearing operations" in issues
+    assert "actor-driven use case UC1 has no Control class" in issues
+    assert any("UC1:main:2" in issue for issue in issues)
+
+
+def test_extraction_repairs_only_scenario_dependent_structure_once(monkeypatch):
+    scenario = {
+        "use_cases": [{"id": "UC1", "primary_actor": "Buyer"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "main_scenario": [{"step_number": 1}, {"step_number": 2}],
+        }],
+    }
+    boundary = {
+        "className": "OrderBoundary",
+        "stereotype": "Boundary",
+        "fields": [],
+        "identifier": [],
+        "use_case_ids": ["UC1"],
+        "operations": [{"name": "submit", "stepRefs": ["UC1:main:1"]}],
+    }
+    initial = {
+        "Classes": [
+            boundary,
+            {
+                "className": "OrderControl",
+                "stereotype": "Control",
+                "fields": [],
+                "identifier": [],
+                "use_case_ids": ["UC1"],
+                "operations": [{"name": "place", "stepRefs": ["UC1:main:1"]}],
+            },
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+        "Collaborations": [],
+    }
+    repaired = {
+        **initial,
+        "Classes": [
+            boundary,
+            {
+                **initial["Classes"][1],
+                "operations": [{"name": "place", "stepRefs": ["UC1:main:2"]}],
+            },
+        ],
+    }
+    calls: list[str] = []
+    monkeypatch.setattr(extractor, "run_bce_skeleton_parse", lambda _messages: initial)
+
+    def repair(_messages, *, operation, **_kwargs):
+        calls.append(operation)
+        return repaired
+
+    monkeypatch.setattr(extractor, "run_domain_structure_parse", repair)
+
+    result = extractor.extract_bce_classes_from_scenario(json.dumps(scenario))
+
+    assert result is repaired
+    assert calls == ["DomainStructureContractRepair"]

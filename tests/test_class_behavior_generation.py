@@ -153,7 +153,12 @@ def test_enrichment_proposes_calls_then_selects_only_finite_sources(monkeypatch)
             payload = __import__("json").loads(messages[1]["content"])
             return {"sourceRef": payload["candidateSources"][0]["sourceRef"]}
         if schema is behavior.ClassSemanticReview:
-            return {"issues": []}
+            return {"issues": [{
+                "collaborationId": "UC1:main:1",
+                "className": "OrderControl",
+                "message": "Advisory semantic concern",
+                "needsInput": True,
+            }]}
         raise AssertionError(schema)
 
     monkeypatch.setattr(behavior, "parse_structured", structured)
@@ -168,6 +173,8 @@ def test_enrichment_proposes_calls_then_selects_only_finite_sources(monkeypatch)
         "source": "OrderForm", "target": "OrderControl", "type": "Dependency",
         "sourceMultiplicity": "", "targetMultiplicity": "", "description": "",
     }]
+    assert behavior.group_outcomes(enriched)[0].status == "accepted"
+    assert behavior.semantic_review_issues(enriched)[0].message == "Advisory semantic concern"
 
 
 def test_precondition_context_uses_stable_precondition_identity():
@@ -280,6 +287,7 @@ def test_invalid_future_cycle_and_unresolved_type_are_reported():
 
 def test_renderer_draws_data_types_but_not_collaboration_call_artifacts():
     model = _actor_model()
+    model["Classes"][0]["description"] = "Verbose responsibility prose"
     model["DataTypes"].append({"name": "OrderStatus", "kind": "enumeration", "fields": [], "values": ["PENDING", "PLACED"]})
     model["Classes"][1]["fields"] = ["status : OrderStatus"]
 
@@ -289,4 +297,5 @@ def test_renderer_draws_data_types_but_not_collaboration_call_artifacts():
     assert "class OrderRequest <<ValueObject>>" in puml
     assert "enum OrderStatus" in puml
     assert "UC1:main:1::call:1" not in puml
+    assert "Verbose responsibility prose" not in puml
     assert "OrderForm ..> OrderControl" in puml

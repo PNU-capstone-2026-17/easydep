@@ -84,7 +84,6 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
     for class_item in classes:
         raw_name = class_item.get("className", "UnknownClass")
         class_name = sanitize_class_name(raw_name)
-        description = class_item.get("description", "")
         stereotype_raw = class_item.get("stereotype", "")
 
         clean_stereotype = sanitize_stereotype(stereotype_raw)
@@ -119,11 +118,6 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
                 puml_lines.append(f"  + {clean_method}")
 
         puml_lines.append("}")
-
-        if description:
-            clean_description = sanitize_text(description)
-            if clean_description:
-                puml_lines.append(f"note top of {class_name} : {clean_description}")
 
         puml_lines.append("")
 
