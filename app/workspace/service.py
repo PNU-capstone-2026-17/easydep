@@ -1462,22 +1462,40 @@ class WorkspaceService:
                     activity_status = "completed"
                 activity_id = str(activity["id"])
                 activity_phase = activity_id.removeprefix("verify-").removeprefix("audit-")
-                display_id, display_label, _ = next(
-                    (
-                        item
-                        for item in _IMPLEMENTATION_DISPLAY_PHASES
-                        if activity_phase in item[2]
-                    ),
-                    ("implementation", "Backend 구현", frozenset()),
-                )
+                # Some workflow runners report the aggregate backend phase as
+                # ``verify-backend``/``audit-backend`` instead of naming one
+                # concrete backend phase.  Keep that activity attached to the
+                # single Backend row; otherwise the fallback display id makes
+                # the UI render a duplicate "Backend 구현 구현 결과 확인" row
+                # while backend work is still running.
+                if activity_phase == "backend":
+                    display_id, display_label = "backend", "Backend 구현"
+                else:
+                    display_id, display_label, _ = next(
+                        (
+                            item
+                            for item in _IMPLEMENTATION_DISPLAY_PHASES
+                            if activity_phase in item[2]
+                        ),
+                        ("implementation", "Backend 구현", frozenset()),
+                    )
                 activity_prefix = "빌드 및 Unit Test" if activity_id.startswith("verify-") else "구현 결과 확인"
+                activity_label = f"{display_label} {activity_prefix}"
+                if display_label.endswith(" 구현") and activity_prefix.startswith("구현 "):
+                    activity_label = f"{display_label} {activity_prefix.removeprefix('구현 ')}"
                 # Backend already exposes its concrete workflow tasks under
                 # the Backend row.  Adding a second "Backend 구현 결과 확인"
                 # row duplicates the same phase in the timeline.
-                if display_id != "backend":
+                # ``completion-audit`` is an internal checkpoint between
+                # workflow phases.  The parent phase row already communicates
+                # that Backend work is being reconciled, so exposing this
+                # aggregate activity as a second result row creates the
+                # misleading "Backend 구현 구현 결과 확인" message just as
+                # the next API Adapter task begins.
+                if activity_id != "completion-audit" and display_id != "backend":
                     add_update(
                         "activity-" + display_id,
-                        f"{display_label} {activity_prefix}",
+                        activity_label,
                         activity_status,
                         str(activity.get("detail") or ""),
                     )

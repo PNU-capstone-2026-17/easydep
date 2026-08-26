@@ -965,6 +965,120 @@ def test_implementation_progress_snapshot_nests_backend_tasks_and_hides_duplicat
     assert "activity-backend" not in updates
 
 
+def test_implementation_progress_snapshot_hides_aggregate_backend_activity_duplicate(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "currentPhase": "persistence",
+                "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
+                "tasks": [
+                    {"taskId": "persistence-1", "phase": "persistence", "status": "RUNNING"}
+                ],
+                "currentActivity": {
+                    "id": "verify-backend",
+                    "status": "RUNNING",
+                    "detail": "Running backend verification",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {"run_root": str(run), "status": "RUNNING"}
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["phase-backend"]["status"] == "running"
+    assert "activity-backend" not in updates
+
+
+def test_implementation_progress_snapshot_hides_between_phase_completion_audit(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "currentPhase": "api-adapters",
+                "phases": [
+                    {"phaseId": "control", "status": "SUCCEEDED"},
+                    {"phaseId": "api-adapters", "status": "RUNNING"},
+                ],
+                "tasks": [
+                    {"taskId": "control-1", "phase": "control", "status": "SUCCEEDED"},
+                    {"taskId": "api-adapter-1", "phase": "api-adapters", "status": "RUNNING"},
+                ],
+                "currentActivity": {
+                    "id": "completion-audit",
+                    "status": "RUNNING",
+                    "detail": "Checking the completed Control phase",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {"run_root": str(run), "status": "RUNNING"}
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["phase-backend"]["status"] == "running"
+    assert "activity-implementation" not in updates
+
+
+def test_implementation_progress_snapshot_deduplicates_activity_label_suffix(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "currentPhase": "api-adapters",
+                "phases": [{"phaseId": "api-adapters", "status": "RUNNING"}],
+                "tasks": [
+                    {"taskId": "api-adapter-1", "phase": "api-adapters", "status": "RUNNING"}
+                ],
+                "currentActivity": {
+                    "id": "release-verification",
+                    "status": "RUNNING",
+                    "detail": "Checking the implementation",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {"run_root": str(run), "status": "RUNNING"}
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["activity-implementation"]["label"] == "Backend 구현 결과 확인"
+
+
 def test_implementation_progress_snapshot_collapses_backend_tasks_by_phase(
     tmp_path: Path,
 ) -> None:
