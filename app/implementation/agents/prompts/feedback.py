@@ -9,6 +9,7 @@ def render_verification_feedback(
     current_sources: str = "",
     repair_targets: list[str] | None = None,
     semantic_contract: dict[str, object] | None = None,
+    api_controls: list[str] | None = None,
 ) -> str:
     output = (
         str(evidence.get("stdout", ""))
@@ -29,6 +30,15 @@ E2E semantic contract (immutable):
 For an E2E repair, preserve every existing passing test and append or correct the
 missing scenario tests. Do not replace the file with a smaller sample and do not
 remove scenarios that are not named in the current diagnostic.
+        """
+    api_control_text = ""
+    if api_controls:
+        api_control_text = f"""
+API adapter collaborator contract (immutable):
+Use only these exact BCE Control interfaces: {", ".join(api_controls)}.
+Import them from the package shown in the embedded contracts. Do not derive a
+resource-named substitute such as `StudentsControl`, and do not leave TODO or
+placeholder code in the controller.
 """
     return f"""The orchestrator compiled and tested your files, and verification failed.
 Fix every reported error in the existing allowed files, including test compilation errors.
@@ -47,6 +57,8 @@ Failure-specific guidance:
 {hints}
 
 {contract_text}
+
+{api_control_text}
 
 Gradle output:
 ```text

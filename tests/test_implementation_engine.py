@@ -1629,6 +1629,12 @@ TestRestTemplate http; CourseRepository courseRepository;
             ),
             "contracts",
             "sequence",
+            {
+                "createOrder": {
+                    "control": "RegistrationControl",
+                    "method": "register",
+                }
+            },
         )
 
         self.assertIn("POST /orders", prompt)
@@ -1637,6 +1643,8 @@ TestRestTemplate http; CourseRepository courseRepository;
         self.assertIn("every documented status", prompt)
         self.assertIn("Do not pass an API", prompt)
         self.assertIn("public no-argument constructor", prompt)
+        self.assertIn("com.example.demo.bce.RegistrationControl", prompt)
+        self.assertIn("resource-named substitute", prompt)
 
     def test_production_placeholder_gate_ignores_tests_and_rejects_main_java(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

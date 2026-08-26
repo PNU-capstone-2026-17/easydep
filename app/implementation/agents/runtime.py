@@ -661,6 +661,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 # conversation.  The diagnostic plus the files selected by the
                 # verifier are sufficient for a bounded local correction.
                 feedback_kwargs = {}
+                if task_type == "api-adapter":
+                    feedback_kwargs["api_controls"] = sorted(
+                        {
+                            str(binding.get("control")).strip()
+                            for operation in context.get("operations", [])
+                            if isinstance(operation, dict)
+                            for binding in [operation.get("controlBinding") or {}]
+                            if isinstance(binding, dict)
+                            and str(binding.get("control") or "").strip()
+                        }
+                    )
                 if task_type == "integration-test":
                     semantic_contract = context.get("semanticContract")
                     if isinstance(semantic_contract, dict):
