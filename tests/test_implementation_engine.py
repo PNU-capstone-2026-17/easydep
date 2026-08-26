@@ -90,7 +90,10 @@ from app.implementation.planning.design_context import (
 )
 from app.implementation.workflows.completion import audit_run_completion
 from app.implementation.agents.verification.e2e import e2e_contract_violations
-from app.implementation.agents.verification.e2e import repair_nested_e2e_members
+from app.implementation.agents.verification.e2e import (
+    repair_nested_e2e_members,
+    repair_spring_boot3_test_compatibility,
+)
 from app.implementation.agents.verification.e2e import repair_orphaned_java_test_statements
 from app.implementation.delivery.kubernetes import (
     infer_intent,
@@ -1506,6 +1509,32 @@ TestRestTemplate http; EnrollmentRepository repository;
             self.assertTrue(any("at least 4" in item for item in violations))
             self.assertTrue(any("weak dual-outcome" in item for item in violations))
             self.assertTrue(any("purchase persistence" in item for item in violations))
+
+    def test_e2e_repair_normalizes_spring_boot3_legacy_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "FlowTest.java"
+            path.write_text(
+                """import org.springframework.boot.web.server.LocalServerPort;
+import javax.persistence.Entity;
+import javax.validation.Valid;
+import javax.servlet.http.HttpServletRequest;
+import javax.annotation.Nullable;
+import javax.transaction.Transactional;
+// javax.persistence.Entity must remain unchanged in this comment.
+""",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(repair_spring_boot3_test_compatibility(path))
+            rewritten = path.read_text(encoding="utf-8")
+            self.assertIn("org.springframework.boot.test.web.server.LocalServerPort", rewritten)
+            self.assertIn("jakarta.persistence.Entity", rewritten)
+            self.assertIn("jakarta.validation.Valid", rewritten)
+            self.assertIn("jakarta.servlet.http.HttpServletRequest", rewritten)
+            self.assertIn("jakarta.annotation.Nullable", rewritten)
+            self.assertIn("jakarta.transaction.Transactional", rewritten)
+            self.assertIn("// javax.persistence.Entity", rewritten)
+            self.assertFalse(repair_spring_boot3_test_compatibility(path))
 
     def test_e2e_semantic_gate_accepts_real_http_and_persistence_scenarios(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
