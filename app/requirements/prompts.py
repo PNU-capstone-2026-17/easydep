@@ -25,7 +25,10 @@ from app.requirements.knowledge import rules as _rules
 
 
 def _validator_system(
-    stage: str, role: str, do_not_flag: str, only: str | None = None
+    stage: str,
+    role: str,
+    do_not_flag: str,
+    only: str | Sequence[str] | None = None,
 ) -> str:
     """의미 검증자 시스템 프롬프트를 규칙 지식베이스에서 조립한다.
 
@@ -41,13 +44,14 @@ def _validator_system(
     4번은 early victory 방어다. "깨끗하다" 한 줄로 끝낼 수 있으면 검증자는 그렇게 한다 —
     규칙마다 판정을 받으면 무엇을 안 봤는지가 응답에서 드러난다(`agent/validator.py`).
 
-    `only`를 주면 **그 규칙 하나만** 담는다. 6개를 한 번에 판정하게 하면 판정이 흔들린다는
+    `only`를 주면 **그 규칙 묶음만** 담는다. 6개를 한 번에 판정하게 하면 판정이 흔들린다는
     측정(흔들림 90%, `docs/requirements-agent-improvements.md` §7) 때문에 생긴 갈래다 —
     과제를 쪼개면 확률이 0.5에서 멀어지는지 보려는 것이다.
     """
     judged = _rules.judged_by(stage, _rules.JUDGED_VALIDATOR)
     if only is not None:
-        judged = tuple(r for r in judged if r.id == only)
+        selected = {only} if isinstance(only, str) else set(only)
+        judged = tuple(r for r in judged if r.id in selected)
         if not judged:
             raise KeyError(f"{stage}에 의미 검증 규칙 {only!r}이 없다")
     n = len(judged)
@@ -164,6 +168,49 @@ How to build the model:
    System-wide persistence, security, availability, and deployment constraints may be left
    unattached; do not copy them to every use case merely to improve numeric coverage.
 Do not invent requirements or ids that were not provided."""
+
+USECASE_GOAL_SKELETON_SYSTEM = """You identify a fixed skeleton of user-goal use cases
+from accepted functional requirements and an exact actor list. Return only the supplied
+UseCaseResult schema.
+
+This task owns only actor-goal boundaries. A use case is one independently initiated task that
+one primary actor completes in one sitting with one observable outcome. Split independently
+initiated actions with distinct outcomes even when one requirement joins them with "and" or
+"or". Keep one genuinely atomic goal together; do not split its validations or internal steps.
+Do not create use cases for authorization, persistence, concurrency, internal validation, or
+other policy/subfunction requirements.
+
+Use exact actor names. Give every candidate an active-verb name and one-sentence goal. Put only
+the FR ids that directly evidence that goal in requirement_ids; those links are provisional and
+will be audited independently. Leave nfr_ids empty. Do not write scenarios or relationships."""
+
+FUNCTIONAL_TRACE_SLICE_SYSTEM = """You finalize traceability for exactly one functional
+requirement against a fixed list of proposed user-goal use cases. Return only the supplied
+schema.
+
+The proposal is immutable: never rename, remove, regroup, or rewrite an existing use case.
+List an existing use-case name only when the audited requirement explicitly describes that
+goal or individually identifies that operation. A category or property such as "protected",
+"relevant", "eligible", "sensitive", or "all data operations" does not identify which use
+cases have that property unless another accepted requirement explicitly makes the assignment.
+Do not infer applicability from normal domain practice or numeric coverage.
+
+If the requirement explicitly names several existing operations, list every matching exact
+use-case name. If it is a subfunction explicitly shared by named goals, list those goals. If
+it states one independently initiated actor goal absent from the proposal, return that one goal
+as missing_use_case. Otherwise leave both use_case_names and missing_use_case empty. Never turn
+authentication state, authorization policy, persistence, concurrency policy, or an internal
+validation into a new actor goal. Preserve the supplied requirement_id exactly."""
+
+CONSTRAINT_TRACE_SLICE_SYSTEM = """You finalize traceability for exactly one non-functional
+constraint against a fixed list of proposed user-goal use cases. Return only the supplied schema.
+
+The proposal is immutable. List an exact existing use-case name only when the constraint or
+another accepted requirement explicitly singles out that goal or operation. Leave
+use_case_names empty for a system-wide constraint or when applicability is ambiguous; never
+copy a constraint to every use case merely to improve coverage. Always leave missing_use_case
+empty because a non-functional constraint never creates an actor goal. Preserve the supplied
+requirement_id exactly."""
 
 # 피드백 의도 분류 — 자연어 피드백을 {stage, scope, target_ids, instruction}로 분류.
 FEEDBACK_CLASSIFY_SYSTEM = """You classify a user's natural-language feedback about a generated
@@ -530,7 +577,13 @@ def fingerprint(paths: Sequence[str] | None = None) -> dict[str, str]:
     """
     builders = {
         GENERATION: lambda: _digest(
-            SPEC_SYSTEM, RELATIONSHIPS_SYSTEM, ACTORS_SYSTEM, USECASES_SYSTEM
+            SPEC_SYSTEM,
+            RELATIONSHIPS_SYSTEM,
+            ACTORS_SYSTEM,
+            USECASES_SYSTEM,
+            USECASE_GOAL_SKELETON_SYSTEM,
+            FUNCTIONAL_TRACE_SLICE_SYSTEM,
+            CONSTRAINT_TRACE_SLICE_SYSTEM,
         ),
         VALIDATION: lambda: _digest(*(_VALIDATOR_SYSTEMS[s] for s in sorted(_VALIDATOR_SYSTEMS))),
         PROBE: _probe_digest,
@@ -545,10 +598,12 @@ def fingerprint(paths: Sequence[str] | None = None) -> dict[str, str]:
     return {p: builders[p]() for p in wanted}
 
 
-def validator_system_for(stage: str, only: str | None = None) -> str:
+def validator_system_for(
+    stage: str, only: str | Sequence[str] | None = None
+) -> str:
     """단계의 검증 프롬프트. 없는 단계를 조용히 넘기지 않는다 — 검증 없는 실행이 된다.
 
-    `only`를 주면 **그 규칙 하나만** 담은 프롬프트를 만든다(`settings.validator_per_rule`).
+    `only`를 주면 **그 규칙 묶음만** 담은 프롬프트를 만든다.
     """
     if stage not in _VALIDATOR_SYSTEMS:  # pragma: no cover - 배선 오류
         raise KeyError(

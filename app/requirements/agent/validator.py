@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -59,7 +60,7 @@ class Review:
     unexamined: tuple[str, ...] = ()
 
 
-def _ask(stage: str, artifact: dict, only: str | None = None) -> Critique:
+def _ask(stage: str, artifact: dict, only: str | Sequence[str] | None = None) -> Critique:
     """검증자에게 한 번 묻는다. `only`면 그 규칙 하나만 묻는다."""
     return invoke_structured(
         Critique,
@@ -73,7 +74,12 @@ def _ask(stage: str, artifact: dict, only: str | None = None) -> Critique:
 
 
 def _collect_ballots(
-    stage: str, artifact: dict, *, source: str, subject: str | None
+    stage: str,
+    artifact: dict,
+    *,
+    source: str,
+    subject: str | None,
+    rule_ids: tuple[str, ...] | None = None,
 ) -> list[Critique]:
     """표를 모은다 — `settings.validator_votes`장. 하나도 못 받으면 빈 목록.
 
@@ -86,16 +92,20 @@ def _collect_ballots(
     그 규칙의 판정이 없고, 그건 `unexamined`로 드러난다.
     """
     per_rule = settings.validator_per_rule
-    rule_ids = [r.id for r in rules.judged_by(stage, rules.JUDGED_VALIDATOR)] if per_rule else []
+    selected_ids = [
+        rule.id
+        for rule in rules.judged_by(stage, rules.JUDGED_VALIDATOR)
+        if rule_ids is None or rule.id in rule_ids
+    ]
 
     ballots: list[Critique] = []
     for _ in range(max(1, settings.validator_votes)):
         try:
             if not per_rule:
-                ballots.append(_ask(stage, artifact))
+                ballots.append(_ask(stage, artifact, only=rule_ids))
                 continue
             verdicts: list[RuleVerdict] = []
-            for rule_id in rule_ids:
+            for rule_id in selected_ids:
                 try:
                     verdicts.extend(_ask(stage, artifact, only=rule_id).verdicts)
                 except Exception as exc:  # noqa: BLE001 - 규칙 하나 실패로 표를 버리지 않는다
@@ -110,7 +120,9 @@ def _collect_ballots(
     return ballots
 
 
-def _tally(ballots: list[Critique]) -> tuple[list[RuleVerdict], set[str]]:
+def _tally(
+    ballots: list[Critique], allowed: set[str] | None = None
+) -> tuple[list[RuleVerdict], set[str]]:
     """표를 모아 **과반으로 위반을 확정한다**. `(확정된 위반, 판정된 규칙 id)`.
 
     왜 과반인가: 같은 명세를 5번 물었을 때 판정 24건 중 4건만 안정적이었다(흔들림 83%,
@@ -124,6 +136,12 @@ def _tally(ballots: list[Critique]) -> tuple[list[RuleVerdict], set[str]]:
     examined: set[str] = set()
     for ballot in ballots:
         for verdict in ballot.verdicts:
+            if (
+                allowed is not None
+                and verdict.rule_id not in allowed
+                and verdict.rule_id in rules.known_ids()
+            ):
+                continue
             examined.add(verdict.rule_id)
             if verdict.violated:
                 votes.setdefault(verdict.rule_id, []).append(verdict)
@@ -138,6 +156,7 @@ def review(
     prefix: str,
     source: str,
     subject: str | None = None,
+    rule_ids: tuple[str, ...] | None = None,
 ) -> Review:
     """`stage`의 규칙으로 `artifact`를 판정한다.
 
@@ -150,16 +169,26 @@ def review(
     if not settings.enable_semantic_validator:
         return Review(status=DISABLED)
 
-    expected = [r.id for r in rules.judged_by(stage, rules.JUDGED_VALIDATOR)]
+    expected = [
+        rule.id
+        for rule in rules.judged_by(stage, rules.JUDGED_VALIDATOR)
+        if rule_ids is None or rule.id in rule_ids
+    ]
     if not expected:
         # 이 단계에 의미 검증자가 볼 규칙이 없다. 호출은 낭비이고, 통과라고 말하면 거짓이다.
         return Review(status=DISABLED)
 
-    ballots = _collect_ballots(stage, artifact, source=source, subject=subject)
+    ballots = _collect_ballots(
+        stage,
+        artifact,
+        source=source,
+        subject=subject,
+        rule_ids=rule_ids,
+    )
     if not ballots:
         return Review(status=FAILED)
 
-    violated, examined = _tally(ballots)
+    violated, examined = _tally(ballots, set(expected))
     findings, dropped = grounding.grounded_findings(
         violated, prefix=prefix, source=source, subject=subject
     )

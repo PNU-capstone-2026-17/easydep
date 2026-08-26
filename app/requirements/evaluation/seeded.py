@@ -200,6 +200,8 @@ def _spec_payload(spec: dict) -> dict:
     눈금이 파이프라인과 다른 것을 보여 주면 그 수치는 파이프라인에 대한 말이 아니다.
     """
     payload = {k: spec[k] for k in _REVIEWED_FIELDS}
+    if spec.get("name"):
+        payload["use_case_name"] = spec["name"]
     payload["requirements_it_must_cover"] = _REQUIREMENTS
     return payload
 

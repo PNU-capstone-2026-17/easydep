@@ -287,12 +287,29 @@ def _uc_result(*id_groups):
 
 
 def test_actor_goal_audit_can_restore_an_explicit_omitted_goal(monkeypatch):
-    # 1차엔 R1만 커버(R2~R5 고아) → 재생성이 나머지를 보충.
+    # 1차엔 R1만 커버(R2~R5 고아) → FR별 작업이 누락 목표를 각각 보충.
     calls = {"n": 0}
 
     def fake(schema, messages):
         calls["n"] += 1
-        return _uc_result(["R1"]) if calls["n"] == 1 else _uc_result(["R1"], ["R2", "R3", "R4", "R5"])
+        if schema is UseCaseResult:
+            return _uc_result(["R1"])
+        content = messages[-1].content
+        requirement_id = next(
+            requirement_id
+            for requirement_id in ("R2", "R3", "R4", "R5")
+            if f"- {requirement_id}:" in content.split(
+                "[FUNCTIONAL REQUIREMENT UNDER AUDIT]", 1
+            )[1].split("[OTHER ACCEPTED", 1)[0]
+        )
+        return s2._RequirementTraceSlice(
+            requirement_id=requirement_id,
+            missing_use_case=s2._MissingUseCaseCandidate(
+                name=f"Handle {requirement_id}",
+                primary_actor="U",
+                goal=f"complete {requirement_id}",
+            ),
+        )
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
     out = s2.identify_use_cases(
@@ -301,7 +318,101 @@ def test_actor_goal_audit_can_restore_an_explicit_omitted_goal(monkeypatch):
     covered = {rid for uc in out["use_cases"] for rid in uc["requirement_ids"]}
 
     assert {"R1", "R2", "R3", "R4", "R5"} <= covered   # 고아 해소
-    assert calls["n"] == 2                              # 1회 재생성으로 완료
+    assert calls["n"] == 7  # 최초 제안 + 고아 FR 4개 + NFR trace 2개
+
+
+def test_orphan_audit_maps_an_explicit_cross_cutting_fr_without_adding_a_use_case(
+    monkeypatch,
+):
+    calls = {"n": 0}
+
+    def fake(schema, messages):
+        calls["n"] += 1
+        if schema is UseCaseResult:
+            return _uc_result(["R1"], ["R2"])
+        return s2._RequirementTraceSlice(
+            requirement_id="R3", use_case_names=["UC1", "UC2"]
+        )
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases(
+        {
+            "classified": [
+                {"id": "R1", "text": "A user starts the first operation.", "type": "FR"},
+                {"id": "R2", "text": "A user starts the second operation.", "type": "FR"},
+                {
+                    "id": "R3",
+                    "text": "The first and second operations preserve a shared invariant.",
+                    "type": "FR",
+                },
+            ],
+            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+        }
+    )
+
+    assert len(out["use_cases"]) == 2
+    assert all("R3" in use_case["requirement_ids"] for use_case in out["use_cases"])
+    assert calls["n"] == 2
+
+
+def test_trace_slice_can_remove_an_unsupported_broad_multi_mapping(monkeypatch):
+    def fake(schema, messages):
+        if schema is UseCaseResult:
+            return _uc_result(["R1", "R3"], ["R2", "R3"])
+        return s2._RequirementTraceSlice(requirement_id="R3")
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases(
+        {
+            "classified": [
+                {"id": "R1", "text": "A user starts the first operation.", "type": "FR"},
+                {"id": "R2", "text": "A user starts the second operation.", "type": "FR"},
+                {
+                    "id": "R3",
+                    "text": "Every protected operation must be authorized.",
+                    "type": "FR",
+                },
+            ],
+            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+        }
+    )
+
+    assert all("R3" not in use_case["requirement_ids"] for use_case in out["use_cases"])
+
+
+def test_constraint_slices_attach_only_explicitly_scoped_nfrs(monkeypatch):
+    def fake(schema, messages):
+        if schema is UseCaseResult:
+            return _uc_result(["R1"])
+        content = messages[-1].content
+        audited = content.split("UNDER AUDIT]", 1)[1].split("[OTHER ACCEPTED", 1)[0]
+        requirement_id = "N1" if "- N1:" in audited else "N2"
+        return s2._RequirementTraceSlice(
+            requirement_id=requirement_id,
+            use_case_names=["UC1"] if requirement_id == "N1" else [],
+        )
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases(
+        {
+            "classified": [
+                {"id": "R1", "text": "A user searches the catalog.", "type": "FR"},
+                {
+                    "id": "N1",
+                    "text": "Catalog search completes within one second.",
+                    "type": "NFR",
+                },
+                {
+                    "id": "N2",
+                    "text": "All stored data is durable.",
+                    "type": "NFR",
+                },
+            ],
+            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+        }
+    )
+
+    assert out["use_cases"][0]["nfr_ids"] == ["N1"]
 
 
 def test_actor_goal_audit_runs_without_a_coverage_iteration_budget(monkeypatch):

@@ -485,16 +485,46 @@ RULES: tuple[Rule, ...] = (
         severity=DEFECT,
         statement=(
             "Every step, extension condition, handling action, and guarantee must be directly "
-            "supported by the supplied goal or requirements, or be a necessary consequence of "
-            "them. A customary technical failure, retry, fallback, recovery action, or error "
-            "notification is still invented behaviour when its triggering concern and response "
-            "are absent from those sources."
+            "supported by the current named actor goal and its requirements, or be a necessary "
+            "consequence of them. A requirement shared by several use cases is evidence for each "
+            "named goal, not permission to implement a neighbouring goal inside the current one. "
+            "Do not infer ordering or a lifecycle precondition between neighbouring goals unless "
+            "the supplied requirements state it. "
+            "Merely plausible domain convention or defensive behaviour is not a necessary "
+            "consequence. Do not invent auditing, logging, security, persistence, uniqueness, "
+            "technical failure, retry, fallback, recovery, or error handling just because similar "
+            "systems commonly have it."
         ),
         citation="easydep convention (hallucination guard)",
         evidence="project-convention",
         caveat="환각을 막기 위해 우리가 정한 규칙이다. 책의 규칙이 아니다.",
         owner="specs",
         judged_by=JUDGED_VALIDATOR,
+    ),
+    Rule(
+        id="spec.causal-flow-consistency",
+        stage=WRITE_SPECIFICATIONS,
+        severity=DEFECT,
+        statement=(
+            "The trigger is the event that starts this actor goal, not an earlier enabling state. "
+            "The main scenario and its extensions must form causally coherent paths: an extension "
+            "branches at the first main step where its condition can be known, and an alternate "
+            "operation branches before a mutually incompatible main-path choice."
+        ),
+        citation=(
+            f"{_BOOK}, Ch. 6 (Preconditions, Triggers, and Guarantees) and "
+            "Ch. 8 (Extensions)"
+        ),
+        evidence="cockburn-extrapolated",
+        caveat=(
+            "The source distinguishes preconditions, triggers, main success scenarios, and "
+            "extensions. The explicit causal-consistency test is EasyDep's operationalization "
+            "of those distinctions."
+        ),
+        owner="specs",
+        judged_by=JUDGED_VALIDATOR,
+        pages=(80, 81, 106),
+        probe=("trigger", "extension"),
     ),
     Rule(
         id="spec.remerge-re-establishes-state",

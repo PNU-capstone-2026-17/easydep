@@ -79,8 +79,24 @@ def _spec_human(uc: UseCaseItem, by_id: dict[str, RequirementItem], actors: list
     """명세 생성용 user 프롬프트(유스케이스 + FR/NFR). feedback 시 재생성 지시를 얹는다."""
     actor = next((a for a in actors if a.get("name") == uc.get("primary_actor")), None)
     actor_desc = f"{actor['name']} — {actor['description']}" if actor else uc.get("primary_actor", "")
+    neighbouring_goals = uc.get("_neighboring_goals") or []
+    scope = (
+        f"Current goal boundary: implement ONLY {uc['name']} — {uc.get('goal', '')}."
+    )
+    if neighbouring_goals:
+        listing = "\n".join(
+            f"- {item['id']}: {item['name']} — {item.get('goal', '')}"
+            for item in neighbouring_goals
+        )
+        scope += (
+            "\nNeighbouring goals share source requirements but are OUT OF SCOPE. Do not "
+            "include them as steps or extensions, and do not infer ordering, lifecycle state, "
+            "or preconditions between them unless a requirement states it explicitly:\n"
+            f"{listing}"
+        )
     base = (
         f"Use case: {uc['name']}\n"
+        f"{scope}\n"
         f"Primary actor: {actor_desc}\n"
         f"Goal: {uc.get('goal', '')}\n\n"
         f"Functional requirements it covers:\n{_resolve(uc.get('requirement_ids', []), by_id)}\n\n"
@@ -124,20 +140,37 @@ def _assemble(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecItem:
 _REVIEWED_FIELDS = ("trigger", "preconditions", "main_scenario", "extensions",
                     "success_guarantee", "minimal_guarantee")
 
+# Scope and causal flow depend on the use-case goal boundary and the full path at once.
+# Keep that judgement small instead of burying it in the complete semantic checklist.
+_FOCUSED_SEMANTIC_RULE_IDS = (
+    "spec.no-scope-creep",
+    "spec.causal-flow-consistency",
+)
 
-def spec_review_payload(item: dict, requirements: list[dict] | None = None) -> dict:
+
+def spec_review_payload(
+    item: dict,
+    requirements: list[dict] | None = None,
+    goal_context: dict | None = None,
+) -> dict:
     """검증자가 받는 모양. **공개 함수인 이유는 평가가 같은 모양을 써야 하기 때문**이다.
 
     평가(`evaluation/`)가 이 모양을 따로 알고 있으면, 파이프라인이 보여주는 것과 눈금이
     재는 것이 조용히 달라진다 — 그러면 눈금 수치가 파이프라인에 대한 말이 아니게 된다.
     """
     payload: dict = {k: item[k] for k in _REVIEWED_FIELDS}
+    if item.get("name"):
+        payload["use_case_name"] = item["name"]
+    if goal_context:
+        payload.update(goal_context)
     payload["requirements_it_must_cover"] = requirements or []
     return payload
 
 
 def _semantic_findings(
-    item: UseCaseSpecItem, requirements: list[dict] | None = None
+    item: UseCaseSpecItem,
+    requirements: list[dict] | None = None,
+    goal_context: dict | None = None,
 ) -> tuple[list[str], str]:
     """정적 체크가 못 잡는 의미 결함을 독립 검증자에게 묻는다.
 
@@ -156,15 +189,42 @@ def _semantic_findings(
     죽어도 빈 리스트를 돌려줬고, 그러면 NIM이 내려간 동안 생성된 모든 명세가 조용히
     '깨끗함'으로 통과했다.
     """
-    payload = spec_review_payload(item, requirements)
-    result = validator.review(
-        rules.WRITE_SPECIFICATIONS,
-        payload,
-        prefix="semantic",
-        source="spec.semantic_validator",
-        subject=item.get("use_case_id"),
+    payload = spec_review_payload(item, requirements, goal_context)
+    all_rule_ids = tuple(
+        rule.id
+        for rule in rules.judged_by(rules.WRITE_SPECIFICATIONS, rules.JUDGED_VALIDATOR)
     )
-    return result.findings, result.status
+    general_rule_ids = tuple(
+        rule_id for rule_id in all_rule_ids if rule_id not in _FOCUSED_SEMANTIC_RULE_IDS
+    )
+    reviews = []
+    rule_groups = (general_rule_ids,) + tuple(
+        (rule_id,) for rule_id in _FOCUSED_SEMANTIC_RULE_IDS
+    )
+    for group in rule_groups:
+        if not group:
+            continue
+        review = validator.review(
+            rules.WRITE_SPECIFICATIONS,
+            payload,
+            prefix="semantic",
+            source="spec.semantic_validator",
+            subject=item.get("use_case_id"),
+            rule_ids=group,
+        )
+        reviews.append(review)
+        if review.status in (validator.FAILED, validator.DISABLED):
+            break
+    findings = list(dict.fromkeys(finding for review in reviews for finding in review.findings))
+    status = next(
+        (review.status for review in reviews if review.status in validator.UNVALIDATED),
+        (
+            validator.DISABLED
+            if reviews and all(review.status == validator.DISABLED for review in reviews)
+            else validator.OK
+        ),
+    )
+    return findings, status
 
 
 def requirement_view(uc: UseCaseItem, by_id: dict[str, RequirementItem]) -> list[dict]:
@@ -174,13 +234,15 @@ def requirement_view(uc: UseCaseItem, by_id: dict[str, RequirementItem]) -> list
 
 
 def _check(
-    item: UseCaseSpecItem, requirements: list[dict] | None = None
+    item: UseCaseSpecItem,
+    requirements: list[dict] | None = None,
+    goal_context: dict | None = None,
 ) -> tuple[list[str], str]:
     """정적(결정론) + 의미(LLM) 검증을 병합한 (issues, 의미검증 상태)."""
     static_findings = _validate_spec(cast(dict, item))
     if static_findings:
         return static_findings, validator.PENDING
-    findings, status = _semantic_findings(item, requirements)
+    findings, status = _semantic_findings(item, requirements, goal_context)
     return findings, status
 
 
@@ -236,11 +298,17 @@ def _spec_for(
     base_user = _spec_human(uc, by_id, actors, feedback)
     # 검증자에게 줄 잣대. 생성 프롬프트와 달리 **요구사항만** 담는다(지시는 담지 않는다).
     requirements = requirement_view(uc, by_id)
+    goal_context = {
+        "use_case_goal": uc.get("goal", ""),
+        "neighbouring_goals_sharing_requirements": uc.get("_neighboring_goals") or [],
+    }
 
     def _generate(messages) -> UseCaseSpecItem:
         spec: UseCaseSpec = invoke_structured(UseCaseSpec, messages)
         item = _assemble(spec, uc)
-        item["issues"], item["semantic_status"] = _check(item, requirements)
+        item["issues"], item["semantic_status"] = _check(
+            item, requirements, goal_context
+        )
         return item
 
     # 명세 하나마다 **한 번** 조립한다(재생성에도 같은 것을 쓴다). 프롬프트가 재생성마다
@@ -370,7 +438,22 @@ def generate_specs(
 
     existing = {s["use_case_id"]: s for s in (state.get("use_case_specs") or [])}
     target_set = set(target_ids) if target_ids else None
-    to_gen = [uc for uc in use_cases if target_set is None or uc["id"] in target_set]
+    to_gen = []
+    for use_case in use_cases:
+        if target_set is not None and use_case["id"] not in target_set:
+            continue
+        requirement_ids = set(use_case.get("requirement_ids") or [])
+        neighbouring_goals = [
+            {
+                "id": other["id"],
+                "name": other.get("name", ""),
+                "goal": other.get("goal", ""),
+            }
+            for other in use_cases
+            if other["id"] != use_case["id"]
+            and requirement_ids.intersection(other.get("requirement_ids") or [])
+        ]
+        to_gen.append({**use_case, "_neighboring_goals": neighbouring_goals})
 
     workers = max(1, min(len(to_gen), settings.spec_concurrency)) if to_gen else 1
     results: dict[str, UseCaseSpecItem] = {}

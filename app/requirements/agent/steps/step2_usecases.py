@@ -1,9 +1,12 @@
 """Derive source-grounded actors and user-goal use cases."""
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core import traceability
 from app.requirements import prompts
@@ -14,7 +17,28 @@ from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings  # re-exported test/configuration seam
 from app.requirements.knowledge import rules
-from app.requirements.schemas import ActorResult, UseCaseResult
+from app.requirements.schemas import ActorResult, UseCase, UseCaseResult
+
+
+class _MissingUseCaseCandidate(BaseModel):
+    """One independently initiated goal absent from the fixed proposal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    primary_actor: str = Field(min_length=1)
+    supporting_actors: list[str] = Field(default_factory=list)
+    goal: str = Field(min_length=1)
+
+
+class _RequirementTraceSlice(BaseModel):
+    """The complete RTM decision for exactly one accepted requirement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    requirement_id: str = Field(min_length=1)
+    use_case_names: list[str] = Field(default_factory=list)
+    missing_use_case: _MissingUseCaseCandidate | None = None
 
 
 def _split_fr_nfr(
@@ -180,36 +204,148 @@ def _use_case_repair_prompt(base_human: str, raw_use_cases, actors: list[ActorIt
     return build
 
 
-def _audit_omitted_actor_goal(base_human: str, raw_use_cases, orphan_ids: list[str]):
-    """One bounded semantic audit replaces coverage-driven regeneration."""
+def _trace_slice(
+    requirement: RequirementItem,
+    accepted_requirements: list[RequirementItem],
+    raw_use_cases: list[UseCase],
+) -> _RequirementTraceSlice:
     proposed = "\n".join(
-        f"- {use_case.name}: {use_case.goal} [FR: {use_case.requirement_ids}; "
-        f"actors: {use_case.primary_actor}, {', '.join(use_case.supporting_actors) or 'none'}]"
+        f"- {use_case.name} [primary: {use_case.primary_actor}; goal: {use_case.goal}]"
         for use_case in raw_use_cases
     ) or "- (none)"
-    audit = (
-        f"{base_human}\n\n[OMITTED ACTOR-GOAL AUDIT]\n"
-        "Review the proposal once for an explicitly stated, independently initiated actor "
-        "goal that is absent from the proposed use cases. Return it unchanged unless such a "
-        "goal is actually omitted; then add or correct only the use case needed for that goal. "
-        "Do not add or alter a use case merely to improve numeric requirement coverage. Do not "
-        "create include or derived use cases. Authentication stated only as a precondition "
-        "remains a precondition, not fabricated behavior.\n\n"
-        f"[PROPOSED USE CASES]\n{proposed}\n\n"
-        f"[UNCLAIMED FUNCTIONAL REQUIREMENT IDS]\n{', '.join(orphan_ids)}"
+    context = "\n".join(
+        f"- {item['id']}: {item['text']}"
+        for item in accepted_requirements
+        if item["id"] != requirement["id"]
+    ) or "- (none)"
+    functional = requirement.get("type") == "FR"
+    result = invoke_structured(
+        _RequirementTraceSlice,
+        [
+            SystemMessage(content=(
+                prompts.FUNCTIONAL_TRACE_SLICE_SYSTEM
+                if functional
+                else prompts.CONSTRAINT_TRACE_SLICE_SYSTEM
+            )),
+            HumanMessage(content=(
+                f"[FIXED PROPOSED USE CASES]\n{proposed}\n\n"
+                f"[{'FUNCTIONAL REQUIREMENT' if functional else 'NON-FUNCTIONAL CONSTRAINT'} "
+                f"UNDER AUDIT]\n"
+                f"- {requirement['id']}: {requirement['text']}\n\n"
+                f"[OTHER ACCEPTED REQUIREMENTS — CONTEXT ONLY]\n{context}"
+            )),
+        ],
     )
-    try:
-        result: UseCaseResult = invoke_structured(
-            UseCaseResult,
-            [SystemMessage(content=prompts.USECASES_SYSTEM), HumanMessage(content=audit)],
+    if not isinstance(result, _RequirementTraceSlice):
+        raise TypeError(f"unexpected trace slice result {type(result).__name__}")
+    if result.requirement_id != requirement["id"]:
+        raise ValueError(
+            f"trace slice returned {result.requirement_id!r} for {requirement['id']!r}"
         )
-    except Exception as exc:  # noqa: BLE001 - preserve a usable proposal when an audit fails
-        telemetry.record_degradation(
-            "use_cases.actor_goal_audit", f"{type(exc).__name__}: {exc}",
-            subject=",".join(orphan_ids),
-        )
-        return raw_use_cases
-    return result.use_cases
+    return result
+
+
+def _audit_requirement_traceability(
+    functional_requirements: list[RequirementItem],
+    constraints: list[RequirementItem],
+    raw_use_cases: list[UseCase],
+    functional_audit_ids: list[str],
+) -> list[UseCase]:
+    """Review each ambiguous FR and each NFR independently, then merge RTM edges."""
+    accepted_requirements = functional_requirements + constraints
+    by_id = {requirement["id"]: requirement for requirement in accepted_requirements}
+    constraint_ids = [constraint["id"] for constraint in constraints]
+    task_ids = functional_audit_ids + constraint_ids
+    workers = max(1, min(4, len(task_ids)))
+    decisions: dict[str, _RequirementTraceSlice] = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(
+                telemetry.bind_context(_trace_slice),
+                by_id[requirement_id],
+                accepted_requirements,
+                raw_use_cases,
+            ): requirement_id
+            for requirement_id in task_ids
+        }
+        for future in as_completed(futures):
+            requirement_id = futures[future]
+            try:
+                decisions[requirement_id] = future.result()
+            except Exception as exc:  # noqa: BLE001 - preserve only this requirement's mapping
+                telemetry.record_degradation(
+                    "use_cases.traceability_slice",
+                    f"{type(exc).__name__}: {exc}",
+                    subject=requirement_id,
+                )
+
+    known_names = {_actor_key(use_case.name) for use_case in raw_use_cases}
+    accepted: dict[str, _RequirementTraceSlice] = {}
+    for requirement_id, decision in decisions.items():
+        if requirement_id in constraint_ids and decision.missing_use_case is not None:
+            telemetry.record_degradation(
+                "use_cases.traceability_slice",
+                "a non-functional constraint proposed a missing use case",
+                subject=requirement_id,
+            )
+            continue
+        target_keys = {_actor_key(name) for name in decision.use_case_names}
+        unknown = sorted(target_keys - known_names)
+        if unknown:
+            telemetry.record_degradation(
+                "use_cases.traceability_slice",
+                f"unknown use-case names: {unknown}",
+                subject=requirement_id,
+            )
+            continue
+        accepted[requirement_id] = decision
+
+    functional_ids = set(functional_audit_ids)
+    nfr_ids_to_audit = set(constraint_ids)
+    target_keys = {
+        requirement_id: {_actor_key(name) for name in decision.use_case_names}
+        for requirement_id, decision in accepted.items()
+    }
+    updated: list[UseCase] = []
+    for use_case in raw_use_cases:
+        requirement_ids = [
+            requirement_id
+            for requirement_id in use_case.requirement_ids
+            if requirement_id not in accepted or requirement_id not in functional_ids
+        ]
+        nfr_ids = [
+            requirement_id
+            for requirement_id in use_case.nfr_ids
+            if requirement_id not in accepted or requirement_id not in nfr_ids_to_audit
+        ]
+        use_case_key = _actor_key(use_case.name)
+        for requirement_id in functional_audit_ids:
+            if use_case_key in target_keys.get(requirement_id, set()):
+                requirement_ids.append(requirement_id)
+        for requirement_id in constraint_ids:
+            if use_case_key in target_keys.get(requirement_id, set()):
+                nfr_ids.append(requirement_id)
+        updated.append(use_case.model_copy(update={
+            "requirement_ids": list(dict.fromkeys(requirement_ids)),
+            "nfr_ids": list(dict.fromkeys(nfr_ids)),
+        }))
+
+    existing_names = {_actor_key(use_case.name) for use_case in updated}
+    for requirement_id in functional_audit_ids:
+        decision = accepted.get(requirement_id)
+        candidate = decision.missing_use_case if decision else None
+        if candidate is None or _actor_key(candidate.name) in existing_names:
+            continue
+        updated.append(UseCase(
+            name=candidate.name,
+            primary_actor=candidate.primary_actor,
+            supporting_actors=candidate.supporting_actors,
+            goal=candidate.goal,
+            requirement_ids=[requirement_id],
+            nfr_ids=[],
+        ))
+        existing_names.add(_actor_key(candidate.name))
+    return updated
 
 
 @contract("identify_actors", requires=("classified",), produces=("actors",))
@@ -332,16 +468,25 @@ def identify_use_cases(
     result: UseCaseResult = invoke_structured(
         UseCaseResult,
         [
-            SystemMessage(content=prompts.USECASES_SYSTEM),
+            SystemMessage(content=prompts.USECASE_GOAL_SKELETON_SYSTEM),
             HumanMessage(content=prompts.apply_user_feedback(human, feedback)),
         ],
     )
     raw_use_cases = result.use_cases
-    orphan_ids = sorted({requirement["id"] for requirement in fr} - {
-        requirement_id for use_case in raw_use_cases for requirement_id in use_case.requirement_ids
-    })
-    if orphan_ids:
-        raw_use_cases = _audit_omitted_actor_goal(human, raw_use_cases, orphan_ids)
+    claim_counts = Counter(
+        requirement_id
+        for use_case in raw_use_cases
+        for requirement_id in set(use_case.requirement_ids)
+    )
+    audit_ids = sorted(
+        requirement["id"]
+        for requirement in fr
+        if claim_counts[requirement["id"]] != 1
+    )
+    if audit_ids or nfr:
+        raw_use_cases = _audit_requirement_traceability(
+            fr, nfr, raw_use_cases, audit_ids
+        )
     use_cases = _retry_dangling_actor_refs(
         schema=UseCaseResult,
         raw_items=raw_use_cases,

@@ -148,6 +148,24 @@ def test_a_single_vote_keeps_the_old_behaviour(monkeypatch):
     assert captured and len(review.findings) == 1
 
 
+def test_review_can_limit_the_semantic_rule_group(monkeypatch):
+    selected = ("spec.no-scope-creep", "spec.causal-flow-consistency")
+    captured = _patch(monkeypatch, _all())
+
+    review = validator.review(
+        _STAGE,
+        {"name": "Do work", "trigger": "Actor requests work"},
+        prefix="semantic",
+        source="spec.semantic_validator",
+        rule_ids=selected,
+    )
+
+    assert review.status == validator.OK
+    assert review.unexamined == ()
+    assert all(rule_id in captured["system"] for rule_id in selected)
+    assert "spec.no-precondition-recheck" not in captured["system"]
+
+
 def test_skipped_rules_are_counted_not_assumed_clean(monkeypatch):
     """규칙 6개 중 2개만 판정하고 깨끗하다고 하면, 그건 리뷰가 끝난 것이 아니다.
 
@@ -263,7 +281,9 @@ def test_the_validator_is_given_the_requirements_it_must_judge_against(monkeypat
     """
     captured = _patch(monkeypatch, _all())
     monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
-    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _spec_stub())
+    monkeypatch.setattr(
+        s3, "invoke_structured", lambda schema, messages: _spec_stub(["FR1"])
+    )
 
     s3.generate_specs({
         "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "User",
@@ -323,15 +343,18 @@ def test_the_artifact_is_json_serialisable(monkeypatch):
     assert json.loads(body) == {"trigger": "t", "steps": [1, 2]}
 
 
-def _spec_stub():
+def _spec_stub(covered_req_ids: list[str] | None = None):
     """정적 검증을 통과하는 최소 명세(생성기 목킹용)."""
     from app.requirements.schemas import MainScenarioStep, UseCaseSpec
 
     return UseCaseSpec(
         preconditions=["the user is signed in"],
         trigger="The user asks to place an order",
-        main_scenario=[MainScenarioStep(step_number=1, sentence="System records the order",
-                                        covered_req_ids=[])],
+        main_scenario=[MainScenarioStep(
+            step_number=1,
+            sentence="System records the order",
+            covered_req_ids=covered_req_ids or [],
+        )],
         extensions=[],
         success_guarantee=["the order is recorded"],
         minimal_guarantee=["no partial order is kept"],
