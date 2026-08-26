@@ -221,7 +221,23 @@ def rules_section(stage: str = rules.CLASS_DIAGRAM) -> str:
 
 
 #: 생성 프롬프트. 규범은 지식베이스에서, 모양(절차·예시)은 산문에서 온다.
-BCE_CLASS_EXTRACTION_SYSTEM_PROMPT = _PREAMBLE + rules_section() + _PROCEDURE
+_SKELETON_PROCEDURE = """
+## Structural skeleton only
+Derive the fixed BCE structure: className, stereotype, description, fields,
+identifier, use_case_ids, and relationships.  Do not emit methods, operations,
+parameters, return types, actor entries, input bindings, or any executable
+behaviour.  A later pass owns behaviour and is not allowed to change this
+skeleton.  Keep Boundary-to-Control and Control-to-Entity dependency topology
+when the requirement supports it; record Entity structural relationships with
+their multiplicities.
+
+Return only the supplied JSON schema.
+"""
+
+# The first call deliberately has a much narrower remit than the historical
+# one-shot extractor.  ``_PROCEDURE`` remains as revision context, while new
+# generation is constrained to facts that behaviour enrichment must never edit.
+BCE_CLASS_EXTRACTION_SYSTEM_PROMPT = _PREAMBLE + rules_section() + _SKELETON_PROCEDURE
 
 
 def _normalize_field_types(result: dict[str, Any]) -> dict[str, Any]:
@@ -257,6 +273,21 @@ def run_bce_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
     return BCEModel.model_validate(normalized).model_dump(by_alias=True)
 
 
+def run_bce_skeleton_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
+    """Accept only the structural portion of the first class-generation pass.
+
+    Structured models from older prompts can still contain candidate methods.
+    They are not accepted as behaviour: clearing them here makes the immutable
+    skeleton boundary executable instead of relying solely on prompt wording.
+    """
+    parsed = run_bce_parse(messages)
+    for class_item in parsed.get("Classes") or []:
+        if isinstance(class_item, dict):
+            class_item["methods"] = []
+            class_item["operations"] = []
+    return BCEModel.model_validate(parsed).model_dump(by_alias=True)
+
+
 def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
     if not scenario_text:
         return {}
@@ -268,4 +299,4 @@ def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
             "content": f"Requirement Specification Scenario:\n{scenario_text}",
         },
     ]
-    return run_bce_parse(messages)
+    return run_bce_skeleton_parse(messages)

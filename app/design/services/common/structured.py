@@ -168,21 +168,18 @@ def _response_format(schema: type[BaseModel]) -> dict[str, Any]:
     }
 
 
-def _reasoning_effort(schema: type[BaseModel]) -> str | None:
-    """Use low effort for bounded choices and medium effort for model synthesis."""
-    if "gpt-oss" not in settings.model.lower():
-        return None
-    selector_schemas = {
-        "SequenceRouteSelection",
-        "SequenceElementSelections",
-    }
-    configured = (
-        settings.design_selector_reasoning_effort
-        if schema.__name__ in selector_schemas
-        else settings.design_reasoning_effort
-    ).strip().lower()
+def _reasoning_effort(reasoning_effort: str | None) -> str | None:
+    """Validate an explicit per-call policy and gate it to GPT-OSS providers.
+
+    NVIDIA NIM exposes ``reasoning_effort`` for GPT-OSS through its
+    OpenAI-compatible endpoint.  Other configured models retain the same
+    request shape they used before this policy was introduced.
+    """
+    configured = (reasoning_effort or settings.design_reasoning_effort).strip().lower()
     if configured not in {"low", "medium", "high"}:
         raise ValueError(f"unsupported reasoning effort: {configured}")
+    if "gpt-oss" not in settings.model.lower():
+        return None
     return configured
 
 
@@ -191,6 +188,8 @@ def _stream_structured(
     messages: list[dict[str, str]],
     schema: type[BaseModel],
     observation: dict[str, Any],
+    *,
+    reasoning_effort: str | None = None,
 ) -> BaseModel:
     """구조화 응답을 스트리밍으로 받아 진행 시간과 최종 스키마를 함께 검증한다."""
     started = perf_counter()
@@ -219,9 +218,9 @@ def _stream_structured(
     max_completion_tokens = settings.llm_max_completion_tokens
     if max_completion_tokens:
         request["max_completion_tokens"] = int(max_completion_tokens)
-    reasoning_effort = _reasoning_effort(schema)
-    if reasoning_effort:
-        request["reasoning_effort"] = reasoning_effort
+    provider_reasoning_effort = _reasoning_effort(reasoning_effort)
+    if provider_reasoning_effort:
+        request["reasoning_effort"] = provider_reasoning_effort
     stream = client.chat.completions.create(
         **request,
     )
@@ -325,6 +324,9 @@ def _observe_stream_usage(observation: dict[str, Any], usage: Any) -> None:
 def parse_structured(
     messages: list[dict[str, str]],
     schema: type[BaseModel],
+    *,
+    reasoning_effort: str | None = None,
+    repair_reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """LLM에게 schema를 강제해 구조화 결과를 받고 dict로 돌려준다.
 
@@ -343,7 +345,13 @@ def parse_structured(
         max_retries=settings.llm_max_retries,
     )
 
-    parsed = _parse_with_schema_repair(client, messages, schema)
+    parsed = _parse_with_schema_repair(
+        client,
+        messages,
+        schema,
+        reasoning_effort=reasoning_effort,
+        repair_reasoning_effort=repair_reasoning_effort,
+    )
     return parsed.model_dump()
 
 
@@ -351,12 +359,26 @@ def _parse_with_schema_repair(
     client,
     messages: list[dict[str, str]],
     schema: type[BaseModel],
+    *,
+    reasoning_effort: str | None = None,
+    repair_reasoning_effort: str | None = None,
 ) -> BaseModel:
-    """로컬 스키마 검증 실패만 한 번 보정하고 나머지 오류는 그대로 올린다."""
+    """Retry local schema validation once, retaining the declared effort policy.
+
+    Repairs inherit the original call's effort.  A caller may explicitly opt
+    into a different repair level (for example ``high``); no repair is silently
+    escalated.
+    """
     observation: dict[str, Any] = {"schemaRepairAttempt": 0}
     try:
         return run_with_wall_timeout(
-            lambda: _stream_structured(client, messages, schema, observation),
+            lambda: _stream_structured(
+                client,
+                messages,
+                schema,
+                observation,
+                reasoning_effort=reasoning_effort,
+            ),
             operation=schema.__name__,
             observation=observation,
         )
@@ -388,7 +410,11 @@ def _parse_with_schema_repair(
     repair_observation: dict[str, Any] = {"schemaRepairAttempt": 1}
     return run_with_wall_timeout(
         lambda: _stream_structured(
-            client, repair_messages, schema, repair_observation
+            client,
+            repair_messages,
+            schema,
+            repair_observation,
+            reasoning_effort=repair_reasoning_effort or reasoning_effort,
         ),
         operation=f"{schema.__name__}:schema-repair",
         observation=repair_observation,

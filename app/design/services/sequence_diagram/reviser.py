@@ -166,6 +166,7 @@ def revise_sequence_model(
     context_text: str = "",
     targets: set[str] | None = None,
     class_diagram_puml: str = "",
+    class_model: Any | None = None,
 ) -> dict[str, Any]:
     """현재 모델 + 피드백 → 수정된 모델. 피드백이 없으면 원본을 그대로 둔다."""
     if not current_model or not feedback:
@@ -199,7 +200,7 @@ def revise_sequence_model(
         schema,
     )
     return (
-        normalize_sequence_contracts(revised, class_diagram_puml)
-        if class_diagram_puml
+        normalize_sequence_contracts(revised, class_diagram_puml, class_model)
+        if class_diagram_puml or class_model is not None
         else revised
     )

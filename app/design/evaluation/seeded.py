@@ -254,6 +254,71 @@ def _uncovered_use_case() -> dict[str, Any]:
     return state
 
 
+def _operation_state() -> dict[str, Any]:
+    return {
+        "usecase_spec": {
+            "use_cases": [{"id": "UC1", "name": "Place an order", "primary_actor": "Member"}],
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [
+                    {"step_number": 1, "sentence": "Member submits the order."},
+                    {"step_number": 2, "sentence": "System records the order."},
+                ],
+            }],
+            "relationships": {"associations": [{"actor": "Member", "use_case": "Place an order"}]},
+        }
+    }
+
+
+def _operation_model() -> dict[str, Any]:
+    entry_id = "OrderForm::submitOrder(request:String)"
+    control_id = "OrderController::handleOrder(request:String)"
+    return {
+        "Classes": [
+            {
+                "className": "OrderForm", "stereotype": "Boundary", "fields": [],
+                "methods": ["submitOrder(request : String): void"], "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": entry_id, "name": "submitOrder",
+                    "parameters": [{"name": "request", "type": "String"}],
+                    "returnType": "void", "stepRefs": ["UC1:main:1"], "actorEntry": True,
+                    "inputBindings": [{"useCaseId": "UC1", "parameter": "request", "sourceRef": "UC1:main:1#request"}],
+                }],
+            },
+            {
+                "className": "OrderController", "stereotype": "Control", "fields": [],
+                "methods": ["handleOrder(request : String): void"], "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": control_id, "name": "handleOrder",
+                    "parameters": [{"name": "request", "type": "String"}],
+                    "returnType": "void", "stepRefs": ["UC1:main:2"], "actorEntry": False,
+                    "inputBindings": [{"useCaseId": "UC1", "parameter": "request", "sourceRef": f"{entry_id}#request"}],
+                }],
+            },
+        ],
+        "Relationships": [{"source": "OrderForm", "target": "OrderController", "type": "Dependency"}],
+    }
+
+
+def _noncanonical_operation_id() -> dict[str, Any]:
+    model = _operation_model()
+    model["Classes"][1]["operations"][0]["operationId"] = "wrong"
+    return model
+
+
+def _cyclic_operation_source() -> dict[str, Any]:
+    model = _operation_model()
+    operation = model["Classes"][1]["operations"][0]
+    operation["inputBindings"][0]["sourceRef"] = operation["operationId"] + "#request"
+    return model
+
+
+def _control_action_dispatcher() -> dict[str, Any]:
+    model = _clean_model()
+    model["Classes"][1]["methods"] = ["processOrder(orderId : String, action : String): void"]
+    return model
+
+
 #: 규칙마다 하나. **`knowledge/rules.py`의 DEFECT 규칙 전수를 덮어야 한다** —
 #: 빠진 규칙이 있으면 테스트가 실패한다(눈금 없는 규칙이 조용히 생기는 것을 막는다).
 SEEDED: tuple[Seeded, ...] = (
@@ -340,6 +405,24 @@ SEEDED: tuple[Seeded, ...] = (
         "결과를 확인하는 checkAvailability에 반환 계약이 없다",
         _control_outcome_without_return_contract(),
         _clean_state(),
+    ),
+    Seeded(
+        "class.control-action-dispatcher",
+        "processOrder가 action 매개변수로 여러 행위를 선택한다",
+        _control_action_dispatcher(),
+        _clean_state(),
+    ),
+    Seeded(
+        "class.operation-contract-canonical",
+        "Control operationId가 canonical class-qualified signature가 아니다",
+        _noncanonical_operation_id(),
+        _operation_state(),
+    ),
+    Seeded(
+        "class.operation-input-producers",
+        "Control parameter가 자기 자신이라는 순환 producer를 가리킨다",
+        _cyclic_operation_source(),
+        _operation_state(),
     ),
 )
 

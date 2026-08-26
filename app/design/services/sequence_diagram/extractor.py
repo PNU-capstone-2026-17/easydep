@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import re
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Literal
 
@@ -278,13 +279,14 @@ use-case specification and the analysis-level class diagram already derived from
 
 ## Input
 A use-case specification (UseCaseName, PrimaryActor, MainSuccessScenario,
-Extensions, ...) and a class diagram in PlantUML using the Boundary-Control-Entity
-(BCE) stereotypes. Ignore absent fields. Do not invent participants or messages
-that the inputs do not support.
+Extensions, ...) and an accepted Boundary-Control-Entity (BCE) class contract.
+The preferred input is structured classes, operations, and relationships; legacy
+callers may provide a PlantUML projection. Ignore absent fields. Do not invent
+participants or messages that the inputs do not support.
 
 ## Participants
-- Derive participants from the class diagram, not from imagination. Every
-  participant name must be a class that appears in the class diagram, except the
+- Derive participants from the supplied class contract, not from imagination. Every
+  participant name must be a class that appears in the class contract, except the
   PrimaryActor and other actors, which come from the specification.
 - Include only participants that send or receive at least one message justified
   by this use case. Do not copy every class into Participants "just in case".
@@ -334,7 +336,7 @@ that the inputs do not support.
   `reply_to` to "". A return sets `call_id` to "" and `reply_to` to the exact
   preceding call_id it answers.
 - For every sync, async, or self call, `label` MUST be a method that already exists
-  on the receiver's class in the provided class diagram. Copy its complete call
+  on the receiver's class in the provided class contract. Copy its complete call
   signature including the parameter declaration, but omit visibility and return type;
   NEVER invent a method and NEVER use a descriptive phrase in its place.
 - Format a call `label` as `methodName(...)`. It must start with
@@ -401,10 +403,10 @@ that the inputs do not support.
   a Boundary. A traceability id on an unrelated system call is not step coverage.
   Do not reuse a Boundary operation from an earlier, semantically different main
   actor action merely to fill a later step_id. If no existing receiver method
-  represents the later action, leave it uncovered for class-method reconciliation.
+  represents the later action, leave it uncovered for sequence review.
 
 ## Traceability
-- `source_class` on each participant: the class diagram class it stands for.
+- `source_class` on each participant: the class-contract class it stands for.
   Copy the class name exactly. Leave it empty for actors — they are not classes.
 - `use_case_ids` on each message: the id(s) of the use case whose step it came
   from, copied exactly from the specification (e.g. "UC1").
@@ -423,7 +425,7 @@ that the inputs do not support.
 (c) every represented main and extension handling step id is exact; use
     NarrativeSteps rather than reusing an unrelated method for a non-call step,
 (d) participants are ordered actor -> boundary -> control -> entity,
-(e) every `source_class` names a class in the given class diagram, and every
+(e) every `source_class` names a class in the given class contract, and every
     `use_case_ids` and `step_ids` entry appears in the given specification,
 (f) every call label already belongs to the receiver class; do not change or
     extend the class diagram to make a message valid,
@@ -482,6 +484,7 @@ def extract_sequence_model(
     scenario_text: str,
     class_diagram_puml: str,
     route_candidates: list[dict[str, str]] | None = None,
+    class_model: Any | None = None,
 ) -> dict[str, Any]:
     """유스케이스 명세 + 클래스 다이어그램 → 구조화된 시퀀스 상호작용 모델."""
     if not scenario_text:
@@ -493,23 +496,33 @@ def extract_sequence_model(
             "\n\n[Candidate interaction routes]\n"
             + json.dumps(route_candidates, ensure_ascii=False)
         )
+    class_context_label = "Class Diagram PlantUML"
+    class_context: Any = class_diagram_puml
+    if class_model is not None:
+        class_context_label = "Structured Class Model"
+        class_context = _class_model_payload(class_model)
     messages = [
         {"role": "system", "content": SEQUENCE_EXTRACTION_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
                 f"[Use Case Specification]\n{scenario_text}\n\n"
-                f"[Class Diagram PlantUML]\n{class_diagram_puml}"
-                f"{route_context}"
+                + f"[{class_context_label}]\n"
+                + (
+                    json.dumps(class_context, ensure_ascii=False, indent=2)
+                    if isinstance(class_context, (dict, list))
+                    else str(class_context or "")
+                )
+                + route_context
             ),
         },
     ]
     model = parse_sequence_structured(messages, SequenceModel)
-    return normalize_sequence_contracts(model, class_diagram_puml)
+    return normalize_sequence_contracts(model, class_diagram_puml, class_model)
 
 
 def normalize_sequence_contracts(
-    model: dict[str, Any], class_diagram_puml: str
+    model: dict[str, Any], class_diagram_puml: str, class_model: Any | None = None,
 ) -> dict[str, Any]:
     """Repair mechanical LLM output defects without changing its chosen behavior.
 
@@ -522,13 +535,40 @@ def normalize_sequence_contracts(
     """
     if not isinstance(model, dict):
         return model
-    classes, _ = _parse_class_catalog(class_diagram_puml)
+    classes, _ = _class_catalog(class_model, class_diagram_puml)
     diagrams = model.get("Diagrams")
     targets = diagrams if isinstance(diagrams, list) else [model]
     for diagram in targets:
         if not isinstance(diagram, dict):
             continue
         messages = [item for item in diagram.get("Messages") or [] if isinstance(item, dict)]
+        # A provider can repeat one traced main-path call while combining its
+        # request and response.  Only remove the mechanically identical case;
+        # a different trace or an explicit fragment may be a real retry.
+        seen_traced_calls: set[tuple[str, str, str, tuple[str, ...]]] = set()
+        deduplicated: list[dict[str, Any]] = []
+        for message in messages:
+            if str(message.get("type") or "").lower() in {"sync", "async", "self"}:
+                step_ids = tuple(
+                    sorted(
+                        str(step_id).strip()
+                        for step_id in message.get("step_ids") or []
+                        if str(step_id).strip()
+                    )
+                )
+                fragments = message.get("fragments") or []
+                key = (
+                    str(message.get("source") or "").strip(),
+                    str(message.get("target") or "").strip(),
+                    str(message.get("label") or "").strip(),
+                    step_ids,
+                )
+                if step_ids and not fragments and key in seen_traced_calls:
+                    continue
+                if step_ids and not fragments:
+                    seen_traced_calls.add(key)
+            deduplicated.append(message)
+        messages = deduplicated
         participants = {
             _alias(str(item.get("alias") or item.get("name") or "")): item
             for item in diagram.get("Participants") or []
@@ -597,6 +637,31 @@ def normalize_sequence_contracts(
         # An extension has one conditional path.  A lone ``else`` or ``alt``
         # is a rendering-model error, not evidence for an invented main path.
         fragment_branches: dict[str, set[str]] = {}
+        fragment_conditions: dict[str, set[str]] = {}
+        fragment_types: dict[str, set[str]] = {}
+        for message in messages:
+            for fragment in message.get("fragments") or []:
+                if not isinstance(fragment, dict):
+                    continue
+                fragment_id = str(fragment.get("id") or "").strip()
+                if not fragment_id:
+                    continue
+                fragment_conditions.setdefault(fragment_id, set()).add(
+                    " ".join(str(fragment.get("condition") or "").lower().split())
+                )
+                fragment_types.setdefault(fragment_id, set()).add(
+                    str(fragment.get("type") or "").lower()
+                )
+        for message in messages:
+            for fragment in message.get("fragments") or []:
+                if not isinstance(fragment, dict):
+                    continue
+                fragment_id = str(fragment.get("id") or "").strip()
+                conditions = fragment_conditions.get(fragment_id, set())
+                types = fragment_types.get(fragment_id, set())
+                if len(conditions) > 1 and types <= {"loop", "opt"}:
+                    condition = str(fragment.get("condition") or "").strip()
+                    fragment["id"] = f"{fragment_id}__{_alias(condition)[:48]}"
         for message in messages:
             for fragment in message.get("fragments") or []:
                 if isinstance(fragment, dict):
@@ -617,6 +682,9 @@ def normalize_sequence_contracts(
         calls: dict[str, dict[str, Any]] = {}
         call_order: list[str] = []
         call_positions: dict[str, int] = {}
+        available_parameters: dict[
+            str, dict[tuple[str, str], dict[str, str]]
+        ] = defaultdict(dict)
         for index, message in enumerate(messages, 1):
             message_type = str(message.get("type") or "").lower()
             if message_type not in {"sync", "async", "self"}:
@@ -633,6 +701,8 @@ def normalize_sequence_contracts(
             signature = method_call_signature(str(message.get("label") or ""))
             expected = _method_parameters(signature) if class_item and signature in class_item.get("methods", []) else {}
             first_step = next((str(value) for value in message.get("step_ids") or [] if str(value).strip()), "")
+            source_alias = _alias(str(message.get("source") or ""))
+            target_alias = _alias(str(message.get("target") or ""))
             bindings: list[dict[str, str]] = []
             for parameter, parameter_type in expected.items():
                 existing = next(
@@ -643,6 +713,9 @@ def normalize_sequence_contracts(
                 source_kind = str(existing.get("source_kind") or "")
                 source_ref = str(existing.get("source_ref") or "")
                 source_call = calls.get(source_ref)
+                propagated = available_parameters.get(source_alias, {}).get(
+                    (parameter, normalize_return_type(parameter_type))
+                )
                 if not (
                     source_kind == "call_result"
                     and source_call is not None
@@ -651,9 +724,14 @@ def normalize_sequence_contracts(
                     and normalize_return_type(str(declared_return_type(source_call)))
                     == normalize_return_type(parameter_type)
                 ):
-                    # Boundary forwards actor input; internal work consumes its
-                    # own state unless the model supplied a valid prior result.
-                    if participant_kinds.get(_alias(str(message.get("source") or ""))) in {"actor", "boundary"} and first_step:
+                    # A participant can forward a same-name, same-type value it
+                    # received through an earlier call.  Retain the original
+                    # evidence source instead of pretending that a later
+                    # system step introduced fresh input.
+                    if propagated:
+                        source_kind = propagated["source_kind"]
+                        source_ref = propagated["source_ref"]
+                    elif participant_kinds.get(source_alias) in {"actor", "boundary"} and first_step:
                         source_kind, source_ref = "input", first_step
                     else:
                         source_kind = "state"
@@ -665,6 +743,10 @@ def normalize_sequence_contracts(
                     "source_ref": source_ref,
                 })
             message["arguments"] = bindings
+            for binding in bindings:
+                available_parameters[target_alias][(
+                    binding["parameter"], normalize_return_type(binding["type"])
+                )] = dict(binding)
 
         used_replies: set[str] = set()
         for message_index, message in enumerate(messages):
@@ -693,6 +775,10 @@ def normalize_sequence_contracts(
                 expected_return = declared_return_type(calls[reply_to])
                 if expected_return and expected_return.lower() != "void":
                     message["label"] = expected_return
+                    message["step_ids"] = list(calls[reply_to].get("step_ids") or [])
+                    message["use_case_ids"] = list(
+                        calls[reply_to].get("use_case_ids") or []
+                    )
                     used_replies.add(reply_to)
                 else:
                     # A void method cannot have a return message.  Removing it
@@ -717,7 +803,7 @@ def normalize_sequence_contracts(
             normalize_sequence_message_order(normalized_messages), participant_kinds
         )
         diagram["Messages"] = normalize_sequence_return_order(ordered_messages)
-    return normalize_sequence_participants(model, class_diagram_puml)
+    return normalize_sequence_participants(model, class_diagram_puml, class_model)
 
 
 def normalize_sequence_message_order(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -925,7 +1011,7 @@ def normalize_sequence_return_order(messages: list[dict[str, Any]]) -> list[dict
 
 
 def normalize_sequence_participants(
-    model: dict[str, Any], class_diagram_puml: str
+    model: dict[str, Any], class_diagram_puml: str, class_model: Any | None = None,
 ) -> dict[str, Any]:
     """Align participant declarations with the messages that use them.
 
@@ -942,7 +1028,7 @@ def normalize_sequence_participants(
     """
     if not isinstance(model, dict):
         return model
-    classes, _ = _parse_class_catalog(class_diagram_puml)
+    classes, _ = _class_catalog(class_model, class_diagram_puml)
     diagrams = model.get("Diagrams")
     targets = diagrams if isinstance(diagrams, list) else [model]
     for diagram in targets:
@@ -1161,6 +1247,113 @@ _OUTPUT_METHOD_PREFIXES = (
 )
 
 
+def _class_model_payload(class_model: Any) -> Any:
+    """Return a JSON-compatible projection of the persisted class contract."""
+    if isinstance(class_model, BaseModel):
+        return class_model.model_dump(by_alias=True)
+    return class_model
+
+
+def _class_catalog_from_model(
+    class_model: Any,
+) -> tuple[dict[str, dict[str, Any]], dict[str, list[str]]] | None:
+    """Build the sequence contract catalog directly from ``BCEModel`` data.
+
+    ``methods`` is a legacy render projection.  When typed ``operations`` are
+    available, their parameter and return contracts are the single source for
+    sequence calls.  This deliberately does not inspect the PlantUML render.
+    """
+    payload = _class_model_payload(class_model)
+    if not isinstance(payload, dict) or not isinstance(payload.get("Classes"), list):
+        return None
+
+    classes: dict[str, dict[str, Any]] = {}
+    for raw_class in payload.get("Classes") or []:
+        if not isinstance(raw_class, dict):
+            continue
+        name = str(raw_class.get("className") or raw_class.get("class_name") or "").strip()
+        if not name:
+            continue
+        kind = (
+            str(raw_class.get("stereotype") or "entity")
+            .replace("<", "")
+            .replace(">", "")
+            .strip()
+            .lower()
+        )
+        if kind not in {"boundary", "control", "entity", "database"}:
+            kind = "entity"
+
+        methods: list[str] = []
+        method_returns: dict[str, str | None] = {}
+        operations = raw_class.get("operations")
+        if isinstance(operations, list) and operations:
+            for raw_operation in operations:
+                if not isinstance(raw_operation, dict):
+                    continue
+                operation_name = str(raw_operation.get("name") or "").strip()
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", operation_name):
+                    continue
+                parameters: list[str] = []
+                for raw_parameter in raw_operation.get("parameters") or []:
+                    if not isinstance(raw_parameter, dict):
+                        continue
+                    parameter_name = str(raw_parameter.get("name") or "").strip()
+                    parameter_type = str(raw_parameter.get("type") or "").strip()
+                    if (
+                        re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", parameter_name)
+                        and parameter_type
+                    ):
+                        parameters.append(f"{parameter_name}:{parameter_type}")
+                # Keep the catalog in the same canonical form returned by
+                # ``method_call_signature``.  A display-only space after a
+                # comma previously made every multi-parameter typed operation
+                # invisible to argument and return normalization.
+                signature = f"{operation_name}({','.join(parameters)})"
+                methods.append(signature)
+                method_returns[signature] = str(
+                    raw_operation.get("returnType")
+                    or raw_operation.get("return_type")
+                    or "void"
+                ).strip() or "void"
+        else:
+            # Persisted models from before typed operations retain their legacy
+            # method strings.  Keep them as a compatibility fallback only.
+            for raw_method in raw_class.get("methods") or []:
+                signature = method_call_signature(str(raw_method))
+                if signature:
+                    methods.append(signature)
+                    method_returns[signature] = method_return_type(str(raw_method))
+
+        classes[name] = {
+            "name": name,
+            "kind": kind,
+            "methods": list(dict.fromkeys(methods)),
+            "method_returns": method_returns,
+        }
+
+    dependencies: dict[str, list[str]] = {}
+    for raw_relationship in payload.get("Relationships") or []:
+        if not isinstance(raw_relationship, dict):
+            continue
+        source = str(raw_relationship.get("source") or "").strip()
+        target = str(raw_relationship.get("target") or "").strip()
+        if source in classes and target in classes:
+            dependencies.setdefault(source, []).append(target)
+    return classes, dependencies
+
+
+def _class_catalog(
+    class_model: Any | None, class_diagram_puml: str,
+) -> tuple[dict[str, dict[str, Any]], dict[str, list[str]]]:
+    """Prefer persisted structure; parse PlantUML only for legacy callers."""
+    if class_model is not None:
+        catalog = _class_catalog_from_model(class_model)
+        if catalog is not None:
+            return catalog
+    return _parse_class_catalog(class_diagram_puml)
+
+
 def _parse_class_catalog(
     class_diagram_puml: str,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, list[str]]]:
@@ -1354,7 +1547,9 @@ def _select_use_case_route(
         },
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
-    selected = parse_structured(messages, SequenceRouteSelection)
+    selected = parse_structured(
+        messages, SequenceRouteSelection, reasoning_effort="low"
+    )
     choice = (
         str(selected.get("boundary_class") or "").strip(),
         str(selected.get("control_class") or "").strip(),
@@ -1545,7 +1740,9 @@ def _select_uncertain_group(plans: list[dict[str, Any]]) -> dict[str, tuple[str,
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
     try:
-        selected = parse_structured(messages, SequenceElementSelections)
+        selected = parse_structured(
+            messages, SequenceElementSelections, reasoning_effort="low"
+        )
     except Exception:  # optional enrichment must never prevent deterministic generation
         logger.warning(
             "optional sequence element selection failed; leaving uncertain steps uncovered",
@@ -1907,7 +2104,7 @@ def _assemble_deterministic_diagrams(
                 messages.append(_return_message(call, return_type))
             return True
 
-        for plan in use_case_plans:
+        for plan_index, plan in enumerate(use_case_plans):
             boundary = plan["boundary"]
             control = plan["control"]
             participants.setdefault(_alias(boundary["name"]), _participant(boundary))
@@ -1973,6 +2170,36 @@ def _assemble_deterministic_diagrams(
                         control.get("method_returns", {}).get(entry_method),
                     )
                     reached.add(control_alias)
+                elif control is not None:
+                    # Different public Boundary and Control operation names are
+                    # common.  A Control with one operation is an unambiguous
+                    # structural hand-off; multiple operations still require
+                    # semantic selection instead of relying on list order.
+                    control_methods = list(control.get("methods") or [])
+                    later_control_call = bool(control_methods) and any(
+                        selections.get(
+                            later_plan["step_id"],
+                            (
+                                later_plan["selected_class"]["name"],
+                                later_plan["selected_method"],
+                            )
+                            if later_plan["selected_class"] is not None
+                            else ("", ""),
+                        )
+                        == (control["name"], control_methods[0])
+                        for later_plan in use_case_plans[plan_index + 1 :]
+                    )
+                    if len(control_methods) == 1 and not later_control_call:
+                        control_alias = _alias(control["name"])
+                        control_method = control_methods[0]
+                        emit_message(
+                            boundary_alias,
+                            control_alias,
+                            control_method,
+                            plan,
+                            control.get("method_returns", {}).get(control_method),
+                        )
+                        reached.add(control_alias)
                 continue
 
             b_alias = _alias(boundary["name"])
@@ -2100,6 +2327,7 @@ def _generate_use_case_diagram(
     classes: dict[str, dict[str, Any]],
     dependencies: dict[str, list[str]],
     class_diagram_puml: str,
+    class_model: Any | None = None,
 ) -> dict[str, Any]:
     """Generate one interaction with selective LLM semantics and deterministic contracts.
 
@@ -2121,6 +2349,7 @@ def _generate_use_case_diagram(
             summary,
             class_diagram_puml,
             classes,
+            class_model=class_model,
         )
     route_candidates = _route_candidates(classes, dependencies)
     # A short, constrained route decision prevents the richer interaction
@@ -2144,6 +2373,7 @@ def _generate_use_case_diagram(
             class_diagram_puml,
             classes,
             extraction_routes,
+            class_model,
         )
 
     boundary, control = _select_use_case_route(
@@ -2185,6 +2415,7 @@ def _generate_use_case_diagram(
             class_diagram_puml,
             classes,
             extraction_routes,
+            class_model,
         )
     selections = _select_uncertain_elements(plans)
     diagrams = _assemble_deterministic_diagrams(plans, selections, classes)
@@ -2291,6 +2522,7 @@ def _generate_llm_use_case_diagram(
     class_diagram_puml: str,
     classes: dict[str, dict[str, Any]],
     route_candidates: list[tuple[dict[str, Any], dict[str, Any] | None]] | None = None,
+    class_model: Any | None = None,
 ) -> dict[str, Any]:
     """Use full UC semantics only when the BCE structure itself is ambiguous."""
     use_case_id = str(specification.get("use_case_id") or "").strip()
@@ -2313,6 +2545,7 @@ def _generate_llm_use_case_diagram(
                 }
                 for index, (boundary, control) in enumerate(route_candidates or [])
             ] or None,
+            class_model,
         )
     except StructuredLlmError:
         return _unresolved_use_case_diagram(
@@ -2511,6 +2744,7 @@ def _recover_explicit_actor_retries(
 def extract_sequence_diagrams(
     usecase_spec: Any,
     class_diagram_puml: str,
+    class_model: Any | None = None,
 ) -> dict[str, Any]:
     """Generate exactly one visible result per use case.
 
@@ -2532,7 +2766,7 @@ def extract_sequence_diagrams(
         for item in usecase_spec.get("use_case_specs") or []
         if isinstance(item, dict) and item.get("use_case_id")
     ]
-    classes, dependencies = _parse_class_catalog(class_diagram_puml)
+    classes, dependencies = _class_catalog(class_model, class_diagram_puml)
     # Each use case is independent until the final collection assembly. A worker
     # may call the LLM when structural contracts cannot decide interaction
     # semantics; deterministic code keeps the per-UC input and validation bounded.
@@ -2549,6 +2783,7 @@ def extract_sequence_diagrams(
                 classes,
                 dependencies,
                 class_diagram_puml,
+                class_model,
             ): str(specification.get("use_case_id") or "").strip()
             for specification in specifications
         }
@@ -2622,6 +2857,7 @@ def reassemble_sequence_diagrams(
     usecase_spec: Any,
     class_diagram_puml: str,
     use_case_ids: set[str],
+    class_model: Any | None = None,
 ) -> dict[str, Any]:
     """Regenerate only the affected use-case diagrams from the class contract.
 
@@ -2656,7 +2892,7 @@ def reassemble_sequence_diagrams(
         ],
         "use_case_specs": specifications,
     }
-    regenerated = extract_sequence_diagrams(scoped_spec, class_diagram_puml)
+    regenerated = extract_sequence_diagrams(scoped_spec, class_diagram_puml, class_model)
 
     current_diagrams = (
         current_model.get("Diagrams")

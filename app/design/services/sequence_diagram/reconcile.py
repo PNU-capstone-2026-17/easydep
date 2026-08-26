@@ -518,8 +518,8 @@ def _apply_approved_method_proposals(
     return {**bce, "Classes": classes}
 
 
-def reconcile_class_methods(state: ArchitectureState) -> dict:
-    """Reassemble affected UCs and ask before extending the class contract."""
+def _legacy_reconcile_class_methods(state: ArchitectureState) -> dict:
+    """Former sequence-to-class method proposal workflow (not invoked)."""
     sequence = state.get("sequence_diagram_model") or {}
     bce = state.get("extracted_bce_classes") or {}
     if not bce.get("Classes"):
@@ -893,6 +893,17 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
         _persist_class_diagram(state, result)
 
     return result
+
+
+def reconcile_class_methods(state: ArchitectureState) -> dict:
+    """Compatibility entry point for explicit legacy reconciliation callers.
+
+    Generation graphs no longer register this function: sequence generation is
+    one-way from the accepted class model.  Retaining the callable avoids
+    breaking persisted-artifact maintenance paths while keeping that legacy
+    workflow out of normal generation and feedback execution.
+    """
+    return _legacy_reconcile_class_methods(state)
 
 
 def ensure_sequence_class_methods(state: ArchitectureState) -> dict:

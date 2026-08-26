@@ -109,7 +109,9 @@ def naughty_llm(monkeypatch):
             # member.jar 을 지워버렸다
         ], "Connections": []}
 
-    def wreck_sequence(current_model, feedback, context_text="", targets=None, *_args):
+    def wreck_sequence(
+        current_model, feedback, context_text="", targets=None, *_args, **_kwargs
+    ):
         calls.append("sequence_diagram")
         return {"Participants": [], "Messages": []}
 
@@ -328,7 +330,9 @@ def trace_linked_revisers(monkeypatch):
         candidate["Relationships"] = [{"source": "OrderController", "target": "Member"}]
         return candidate
 
-    def revise_sequence(current, feedback, context_text="", targets=None, *_args):
+    def revise_sequence(
+        current, feedback, context_text="", targets=None, *_args, **_kwargs
+    ):
         calls.append(("sequence_diagram", set(targets or set())))
         candidate = deepcopy(current)
         for diagram in candidate.get("Diagrams", []):

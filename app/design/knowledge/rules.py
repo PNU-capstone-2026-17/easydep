@@ -392,6 +392,34 @@ RULES: tuple[Rule, ...] = (
     ),
     # --- 형태 ---------------------------------------------------------------
     Rule(
+        id="class.operation-contract-canonical",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Accepted class operations must use their canonical operationId, mirror exactly "
+            "to methods, and form one valid Boundary-to-Control execution path for each "
+            "actor-associated root or a Control path for an internal flow."
+        ),
+        citation="app/design/services/class_diagram/validation.py (operation contract projection)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="operation_contract",
+    ),
+    Rule(
+        id="class.operation-input-producers",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Each bound operation parameter must name exactly one finite source: its actor "
+            "entry step, an earlier reachable operation parameter, or an earlier compatible "
+            "non-void operation result."
+        ),
+        citation="app/design/services/class_diagram/validation.py (finite source validation)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="operation_input_producers",
+    ),
+    Rule(
         id="class.names-unique",
         stage=CLASS_DIAGRAM,
         severity=DEFECT,
@@ -653,8 +681,9 @@ RULES: tuple[Rule, ...] = (
         severity=DEFECT,
         statement=(
             "Every main-scenario and extension handling step from the specification "
-            "must be referenced by at least one sequence call through step_ids. Legacy "
-            "specifications without step structure fall back to use_case_ids coverage."
+            "must be referenced by a sequence call or an explicit narrative/unresolved "
+            "record, and every class operation traced to that flow must be invoked. "
+            "Legacy specifications without step structure fall back to use_case_ids coverage."
         ),
         citation="app/design/rtm.py (traceability references)",
         evidence="pipeline-invariant",

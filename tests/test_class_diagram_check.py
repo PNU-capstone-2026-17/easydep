@@ -23,6 +23,7 @@ from app.design.graphs.subgraphs import CLASS_DIAGRAM_SPEC
 from app.design.knowledge.detectors import Finding
 from app.design.nodes.artifact import (
     BUDGET,
+    CHECKED_ONLY,
     CLEAN as STOPPED_CLEAN,
     ERROR,
     NO_IMPROVEMENT,
@@ -65,6 +66,35 @@ def test_a_clean_model_is_not_sent_to_the_llm_at_all():
     out = _run(_spec_with(never), CLEAN)
     assert calls == []
     assert out[CHECK_KEY] == {"findings": [], "repair_iters": 0, "stopped": STOPPED_CLEAN}
+
+
+def test_operation_contract_findings_are_not_sent_to_the_whole_model_reviser():
+    """Execution-group repair owns operation defects; the global reviser must not compete."""
+
+    calls = []
+
+    def never(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("operation defects must stay in the group-local repair path")
+
+    spec = dataclasses.replace(
+        CLASS_DIAGRAM_SPEC,
+        revise=never,
+        check=lambda model, state: [
+            Finding(
+                "class.operation-input-producers",
+                "parameter source is incomplete",
+                "ExampleControl::handle(value:String)#value",
+            )
+        ],
+    )
+
+    out = _run(spec, CLEAN)
+
+    assert calls == []
+    assert out[CHECK_KEY]["repair_iters"] == 0
+    assert out[CHECK_KEY]["stopped"] == CHECKED_ONLY
+    assert out[CHECK_KEY]["findings"]
 
 
 # ---------------------------------------------------------------------------

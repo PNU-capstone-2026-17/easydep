@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     design_max_repair_iters: int = 2
     design_max_sequence_repair_calls: int = 4
     design_sequence_parallelism: int = 4
+    # Behaviour proposals are independent per execution group.  Keep the
+    # default bounded so a larger scenario cannot fan out unbounded NIM calls.
+    design_class_behavior_parallelism: int = 4
     implementation_max_workers: int = 1
     implementation_task_parallelism: int = 2
     implementation_agent_model: str = "nvidia_nim/openai/gpt-oss-120b"

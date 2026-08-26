@@ -21,7 +21,7 @@ def test_local_schema_failure_gets_one_bounded_full_object_retry(monkeypatch):
 
     calls: list[list[dict[str, str]]] = []
 
-    def stream(_client, messages, schema, _observation):
+    def stream(_client, messages, schema, _observation, **_kwargs):
         calls.append(messages)
         if len(calls) == 1:
             return schema.model_validate({})
@@ -53,7 +53,7 @@ def test_value_error_context_is_serialized_for_schema_repair(monkeypatch):
 
     calls: list[list[dict[str, str]]] = []
 
-    def stream(_client, messages, schema, _observation):
+    def stream(_client, messages, schema, _observation, **_kwargs):
         calls.append(messages)
         if len(calls) == 1:
             return schema.model_validate({"answer": ""})
@@ -70,6 +70,34 @@ def test_value_error_context_is_serialized_for_schema_repair(monkeypatch):
     assert parsed.answer == "ok"
     assert len(calls) == 2
     assert "answer must not be empty" in calls[1][-1]["content"]
+
+
+def test_schema_repair_keeps_or_explicitly_overrides_call_reasoning_effort(monkeypatch):
+    class Result(BaseModel):
+        answer: str
+
+    efforts: list[str] = []
+
+    def stream(_client, _messages, schema, _observation, *, reasoning_effort):
+        efforts.append(reasoning_effort)
+        if len(efforts) == 1:
+            return schema.model_validate({})
+        return schema(answer="ok")
+
+    monkeypatch.setattr(
+        "app.design.services.common.structured._stream_structured", stream
+    )
+
+    parsed = _parse_with_schema_repair(
+        object(),
+        [{"role": "user", "content": "generate"}],
+        Result,
+        reasoning_effort="low",
+        repair_reasoning_effort="high",
+    )
+
+    assert parsed.answer == "ok"
+    assert efforts == ["low", "high"]
 
 
 def test_non_validation_failure_is_not_retried(monkeypatch):
@@ -178,9 +206,60 @@ def test_streaming_structured_output_accepts_an_explicit_completion_limit(monkey
 
     assert parsed.answer == "ok"
     assert captured["max_completion_tokens"] == 8192
-    assert captured["reasoning_effort"] == settings.design_reasoning_effort
+    assert captured["reasoning_effort"] == "medium"
     assert captured["temperature"] == settings.temperature
     assert captured["seed"] == settings.seed
+
+
+def test_streaming_structured_output_uses_explicit_effort_and_omits_it_for_non_gpt_oss(
+    monkeypatch,
+):
+    class Result(BaseModel):
+        answer: str
+
+    requests: list[dict] = []
+
+    class Completions:
+        def create(self, **kwargs):
+            requests.append(kwargs)
+            choice = type("Choice", (), {
+                "delta": type("Delta", (), {
+                    "content": '{"answer":"ok"}', "reasoning_content": ""
+                })(),
+                "finish_reason": "stop",
+            })()
+            return [type("Chunk", (), {"choices": [choice]})()]
+
+    client = type("Client", (), {
+        "chat": type("Chat", (), {"completions": Completions()})()
+    })()
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "model", "openai/gpt-oss-120b")
+    _stream_structured(
+        client, [{"role": "user", "content": "x"}], Result, {}, reasoning_effort="low"
+    )
+    monkeypatch.setattr(settings, "model", "meta/llama-3.1-8b-instruct")
+    _stream_structured(
+        client, [{"role": "user", "content": "x"}], Result, {}, reasoning_effort="high"
+    )
+
+    assert requests[0]["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in requests[1]
+
+
+def test_streaming_structured_output_rejects_unknown_reasoning_effort():
+    class Result(BaseModel):
+        answer: str
+
+    with pytest.raises(ValueError, match="unsupported reasoning effort"):
+        _stream_structured(
+            object(),
+            [{"role": "user", "content": "x"}],
+            Result,
+            {},
+            reasoning_effort="maximum",
+        )
 
 
 def test_timeout_retains_incremental_stream_progress_without_content(

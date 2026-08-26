@@ -43,6 +43,7 @@ from app.design.schemas.architecture_state import ArchitectureState, usecase_spe
 from app.design.services.api_spec.extractor import extract_api_spec_model
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.api_spec.reviser import revise_api_spec_model
+from app.design.services.class_diagram.behavior import enrich_bce_behavior
 from app.design.services.class_diagram.extractor import extract_bce_classes_from_scenario
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.reviser import revise_bce_classes
@@ -61,10 +62,7 @@ from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
 from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
-from app.design.services.sequence_diagram.reconcile import (
-    finalize_sequence_class_methods,
-    reconcile_class_methods,
-)
+from app.design.services.sequence_diagram.reconcile import finalize_sequence_class_methods
 from app.design.services.sequence_diagram.reviser import revise_sequence_model
 
 # 기존 테스트·확장 코드가 패치하는 이름을 유지하되 실제 동작은 복수 추출이다.
@@ -175,6 +173,26 @@ def _sequence_revision_context(
     )
 
 
+def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
+    """Build a fixed structural skeleton, then enrich only structured scenarios.
+
+    The empty-spec branch preserves compatibility with legacy callers that pass
+    presentation-only use-case summaries; there is no finite step graph from
+    which operation ownership or input provenance could honestly be derived.
+    """
+    scenario = state.get("usecase_spec") or {}
+    if not isinstance(scenario, dict):
+        return extract_bce_classes_from_scenario(usecase_spec_text(state))
+    # Relationship decisions are a separate persisted artifact.  Give the
+    # skeleton pass the same complete scenario that behaviour enrichment sees,
+    # so a derived internal include can receive its own explicit BCE scope.
+    scenario = {**scenario, "relationships": state.get("relationships") or {}}
+    skeleton = extract_bce_classes_from_scenario(json.dumps(scenario, ensure_ascii=False))
+    if not scenario.get("use_case_specs"):
+        return skeleton
+    return enrich_bce_behavior(scenario, skeleton)
+
+
 CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     stage="class_diagram",
     model_key="extracted_bce_classes",
@@ -183,7 +201,7 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     errors_key="class_diagram_syntax_errors",
     feedback_key="class_diagram_feedback",
     empty="",
-    extract=lambda state: extract_bce_classes_from_scenario(usecase_spec_text(state)),
+    extract=_extract_class_model,
     revise=lambda current, feedback, state, targets: revise_bce_classes(
         current_bce=current,
         feedback=feedback,
@@ -211,6 +229,7 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     extract=lambda state: extract_sequence_model(
         state.get("usecase_spec"),
         state.get("class_diagram_puml", ""),
+        class_model=state.get("extracted_bce_classes") or {},
     ),
     revise=lambda current, feedback, state, targets: revise_sequence_model(
         current,
@@ -218,6 +237,7 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
         _sequence_revision_context(state, targets),
         targets,
         state.get("class_diagram_puml", ""),
+        class_model=state.get("extracted_bce_classes") or {},
     ),
     render=generate_sequence_from_model,
     validate=validate_puml_artifact,
@@ -229,7 +249,6 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     },
     check=sequence_diagram_findings,
     check_key="sequence_diagram_check",
-    reconcile=reconcile_class_methods,
     finalize=finalize_sequence_class_methods,
 )
 

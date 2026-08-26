@@ -49,7 +49,24 @@ def test_accepted_class_operations_mirror_legacy_methods():
     ]
 
 
-@pytest.mark.parametrize("name", ["UnknownClass", "Unknown Class", "UnknownClass12"])
+def test_legacy_methods_survive_when_no_operation_contract_exists():
+    model = BCEModel.model_validate({
+        "Classes": [{
+            "className": "LegacyController",
+            "stereotype": "Control",
+            "methods": ["handle(request : String): void"],
+            "use_case_ids": ["UC1"],
+        }],
+        "Relationships": [],
+    })
+
+    assert model.Classes[0].methods == ["handle(request : String): void"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["UnknownClass", "Unknown Class", "UnknownClass12", "UnknownClassDraft", "Unknown-Class"],
+)
 def test_accepted_class_rejects_unknown_class_placeholders(name: str):
     with pytest.raises(ValidationError, match="concrete BCE class"):
         BCEModel.model_validate(

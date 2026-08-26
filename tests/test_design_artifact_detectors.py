@@ -814,6 +814,54 @@ def test_usecase_coverage_accepts_explicit_narrative_step_without_method_call():
     assert detectors.sequence_usecase_coverage(model, state) == []
 
 
+def test_usecase_coverage_requires_each_traced_operation_family():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [
+                    {"step_number": 1, "sentence": "User submits a request"},
+                    {"step_number": 2, "sentence": "System retrieves the record"},
+                ],
+                "extensions": [],
+            }],
+        },
+        "extracted_bce_classes": {"Classes": [
+            {"className": "RequestBoundary", "operations": [{
+                "name": "submit", "stepRefs": ["UC1:main:1"],
+            }]},
+            {"className": "RequestControl", "operations": [{
+                "name": "handle", "stepRefs": ["UC1:main:2"],
+            }]},
+            {"className": "Record", "operations": [{
+                "name": "find", "stepRefs": ["UC1:main:2"],
+            }]},
+        ]},
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Participants": [
+            {"name": "User", "alias": "actor", "kind": "actor"},
+            {"name": "RequestBoundary", "alias": "boundary", "kind": "boundary", "source_class": "RequestBoundary"},
+            {"name": "RequestControl", "alias": "control", "kind": "control", "source_class": "RequestControl"},
+            {"name": "Record", "alias": "record", "kind": "entity", "source_class": "Record"},
+        ],
+        "Messages": [
+            {"source": "actor", "target": "boundary", "type": "sync", "label": "submit()", "step_ids": ["UC1:main:1"]},
+            {"source": "boundary", "target": "control", "type": "sync", "label": "handle()", "step_ids": ["UC1:main:2"]},
+        ],
+    }
+
+    findings = detectors.sequence_usecase_coverage(model, state)
+
+    assert [finding.location for finding in findings] == ["Record::find"]
+    model["Messages"].append({
+        "source": "control", "target": "record", "type": "sync",
+        "label": "find()", "step_ids": ["UC1:main:2"],
+    })
+    assert detectors.sequence_usecase_coverage(model, state) == []
+
+
 def test_usecase_coverage_rejects_uncovered_usecase():
     """유스케이스 ID가 시퀀스에 매핑되지 않았으면 지적한다."""
     state_multi_uc = {
@@ -1534,6 +1582,36 @@ def test_flow_order_rejects_reversed_main_step_and_late_extension():
 
     assert any("단계 2가 단계 3 뒤" in finding.message for finding in findings)
     assert any("분기 단계 1 직후" in finding.message for finding in findings)
+
+
+def test_flow_order_allows_outer_return_after_nested_later_step():
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [
+            {
+                "source": "Actor", "target": "Boundary", "type": "sync",
+                "label": "request()", "call_id": "outer",
+                "step_ids": ["UC1:main:1"],
+            },
+            {
+                "source": "Boundary", "target": "Control", "type": "sync",
+                "label": "handle()", "call_id": "inner",
+                "step_ids": ["UC1:main:2"],
+            },
+            {
+                "source": "Control", "target": "Boundary", "type": "return",
+                "label": "Result", "reply_to": "inner",
+                "step_ids": ["UC1:main:2"],
+            },
+            {
+                "source": "Boundary", "target": "Actor", "type": "return",
+                "label": "Result", "reply_to": "outer",
+                "step_ids": ["UC1:main:1"],
+            },
+        ],
+    }
+
+    assert detectors.sequence_flow_order(model, STATE) == []
 
 
 def test_flow_order_reports_extension_when_branch_main_step_is_missing():

@@ -6,6 +6,36 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+def _parameter_value(parameter: object, name: str) -> str:
+    if isinstance(parameter, dict):
+        return str(parameter.get(name) or "")
+    return str(getattr(parameter, name, "") or "")
+
+
+def canonical_operation_id(
+    class_name: str, operation_name: str, parameters: list[object],
+) -> str:
+    """Render the single persisted operation-id form from typed parameters."""
+
+    signature = ",".join(
+        f"{_parameter_value(parameter, 'name')}:{_parameter_value(parameter, 'type')}"
+        for parameter in parameters
+    )
+    return f"{class_name}::{operation_name}({signature})"
+
+
+def operation_method_signature(
+    operation_name: str, parameters: list[object], return_type: str,
+) -> str:
+    """Render the legacy PlantUML method projection from an operation."""
+
+    arguments = ", ".join(
+        f"{_parameter_value(parameter, 'name')} : {_parameter_value(parameter, 'type')}"
+        for parameter in parameters
+    )
+    return f"{operation_name}({arguments}): {return_type}"
+
+
 class ClassModelBase(BaseModel):
     """Common strict configuration for persisted class-model records."""
 
@@ -37,10 +67,7 @@ class ClassOperation(ClassModelBase):
     def method_signature(self) -> str:
         """Render the legacy method string deterministically from this contract."""
 
-        parameters = ", ".join(
-            f"{parameter.name} : {parameter.type}" for parameter in self.parameters
-        )
-        return f"{self.name}({parameters}): {self.return_type}"
+        return operation_method_signature(self.name, self.parameters, self.return_type)
 
 
 class AcceptedBCEClass(ClassModelBase):
@@ -56,9 +83,8 @@ class AcceptedBCEClass(ClassModelBase):
     @field_validator("class_name")
     @classmethod
     def reject_unknown_class_placeholder(cls, value: str) -> str:
-        normalized = "".join(value.split()).casefold()
-        suffix = normalized.removeprefix("unknownclass")
-        if normalized.startswith("unknownclass") and (not suffix or suffix.isdigit()):
+        normalized = "".join(character for character in value.casefold() if character.isalnum())
+        if normalized.startswith("unknownclass"):
             raise ValueError("className must identify a concrete BCE class")
         return value
 
@@ -67,6 +93,10 @@ class AcceptedBCEClass(ClassModelBase):
         """Keep existing method-string consumers aligned with operation contracts."""
 
         if self.operations:
+            for operation in self.operations:
+                operation.operation_id = canonical_operation_id(
+                    self.class_name, operation.name, operation.parameters
+                )
             self.methods = [operation.method_signature() for operation in self.operations]
         return self
 

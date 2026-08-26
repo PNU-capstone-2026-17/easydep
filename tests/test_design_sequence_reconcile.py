@@ -36,7 +36,7 @@ def test_sequence_reconcile_proposes_grounded_receiver_method_for_user_approval(
         },
     }
 
-    assert SEQUENCE_DIAGRAM_SPEC.reconcile is reconcile_class_methods
+    assert SEQUENCE_DIAGRAM_SPEC.reconcile is None
     assert SEQUENCE_DIAGRAM_SPEC.finalize is finalize_sequence_class_methods
     revised_bce = {
         "Classes": [

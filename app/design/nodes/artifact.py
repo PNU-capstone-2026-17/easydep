@@ -91,6 +91,15 @@ NON_REPAIRABLE_RULES = {
     "sequence.class-diagram-version",
 }
 
+# These defects are owned by class behavior enrichment's execution-group repair.
+# Sending them through the legacy whole-model class reviser can rewrite an
+# accepted skeleton and unrelated groups while losing the original binding
+# failure.  Keep the findings visible, but do not start a second repair loop.
+LOCAL_REPAIR_ONLY_RULES = {
+    "class.operation-contract-canonical",
+    "class.operation-input-producers",
+}
+
 _SEQUENCE_REPAIR_RULE_GROUPS = (
     # 먼저 모델을 안전하게 읽고 호출 방향을 판정할 수 있는 토대를 고친다.
     {
@@ -476,7 +485,20 @@ def _dedupe_findings(findings: list[Finding]) -> list[Finding]:
 
 
 def _repairable_findings(findings: list[Finding]) -> list[Finding]:
-    return [finding for finding in findings if finding.rule_id not in NON_REPAIRABLE_RULES]
+    excluded = NON_REPAIRABLE_RULES | LOCAL_REPAIR_ONLY_RULES
+    return [finding for finding in findings if finding.rule_id not in excluded]
+
+
+def _unrepaired_stop(findings: list[Finding]) -> str:
+    """Classify findings which the generic artifact repair loop must not edit."""
+
+    if not findings:
+        return CLEAN
+    if any(finding.rule_id in NON_REPAIRABLE_RULES for finding in findings):
+        return NEEDS_INPUT
+    if all(finding.rule_id in LOCAL_REPAIR_ONLY_RULES for finding in findings):
+        return CHECKED_ONLY
+    return BUDGET
 
 
 def _repair_batch(
@@ -602,7 +624,9 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         error: str | None = None
         # 루프를 한 번도 안 돌 수 있다(위반이 없거나 예산이 0). 그때의 답을 먼저 적어 둔다.
         repairable = _repairable_findings(findings)
-        stopped = CLEAN if not findings else (BUDGET if repairable else NEEDS_INPUT)
+        stopped = CLEAN if not findings else (
+            BUDGET if repairable else _unrepaired_stop(findings)
+        )
         skipped_findings: set[tuple[str, str, str]] = set()
 
         # 생성은 유스케이스별인데 예전에는 수리 예산만 컬렉션 전체에 2회였다. 컬렉션
@@ -626,7 +650,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 break
             repairable = _repairable_findings(findings)
             if not repairable:
-                stopped = NEEDS_INPUT
+                stopped = _unrepaired_stop(findings)
                 break
             batch = _repair_batch(spec, repairable, skipped_findings)
             if not batch and spec.stage == "sequence_diagram" and skipped_findings:
@@ -691,7 +715,13 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             skipped_findings.clear()
             remaining_repairable = _repairable_findings(findings)
             stopped = (
-                CLEAN if not findings else (BUDGET if remaining_repairable else NEEDS_INPUT)
+                CLEAN
+                if not findings
+                else (
+                    BUDGET
+                    if remaining_repairable
+                    else _unrepaired_stop(findings)
+                )
             )
 
         report: dict[str, Any] = {

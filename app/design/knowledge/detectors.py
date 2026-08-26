@@ -50,6 +50,7 @@ from app.core.validation import Finding as ValidationFinding
 from app.design import rtm
 from app.design.knowledge import rules
 from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
+from app.design.services.class_diagram.validation import operation_contract_issues
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
 from app.design.services.sequence_diagram.methods import (
@@ -177,7 +178,17 @@ def usecase_ids(model: dict, state: dict) -> list[Finding]:
     없는데 전건 위반을 내면 재생성이 고칠 수 없는 지적으로 예산만 태운다.
     """
     rule_id = "class.usecase-ids-exist"
-    known = rtm.upstream_names(state).get("use_case") or set()
+    known = set(rtm.upstream_names(state).get("use_case") or set())
+    relationships = state.get("relationships")
+    if not isinstance(relationships, dict):
+        specification = state.get("usecase_spec") or {}
+        relationships = specification.get("relationships") if isinstance(specification, dict) else None
+    if isinstance(relationships, dict):
+        known.update(
+            str(item.get("use_case_id") or "").strip()
+            for item in relationships.get("derived_use_cases") or []
+            if isinstance(item, dict) and str(item.get("use_case_id") or "").strip()
+        )
     if not known:
         return []
 
@@ -504,6 +515,24 @@ def control_outcome_return_contract(model: dict, state: dict) -> list[Finding]:
                     )
                 )
     return found
+
+
+def operation_contract(model: dict, state: dict) -> list[Finding]:
+    """Validate canonical accepted operations and their BCE execution topology."""
+    return [
+        Finding("class.operation-contract-canonical", message, location)
+        for kind, message, location in operation_contract_issues(model, state)
+        if kind == "operation"
+    ]
+
+
+def operation_input_producers(model: dict, state: dict) -> list[Finding]:
+    """Validate each persisted finite input source and its producer ordering."""
+    return [
+        Finding("class.operation-input-producers", message, location)
+        for kind, message, location in operation_contract_issues(model, state)
+        if kind in {"input", "producer"}
+    ]
 
 
 def names_unique(model: dict, state: dict) -> list[Finding]:
@@ -1023,6 +1052,8 @@ CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "fields_typed": fields_typed,
     "control_outcome_return_contract": control_outcome_return_contract,
     "control_action_dispatch_contract": control_action_dispatch_contract,
+    "operation_contract": operation_contract,
+    "operation_input_producers": operation_input_producers,
     "names_unique": names_unique,
     "name_pascal_case": name_pascal_case,
     "usecase_coverage": usecase_coverage,
@@ -1065,6 +1096,8 @@ CLASS_DIAGRAM_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("class.fields-typed", fields_typed),
     CheckSpec("class.control-outcome-return-contract", control_outcome_return_contract),
     CheckSpec("class.control-action-dispatcher", control_action_dispatch_contract),
+    CheckSpec("class.operation-contract-canonical", operation_contract),
+    CheckSpec("class.operation-input-producers", operation_input_producers),
     CheckSpec("class.names-unique", names_unique),
     CheckSpec("class.name-pascal-case", name_pascal_case),
     CheckSpec("class.covers-use-cases", usecase_coverage),
@@ -2554,7 +2587,7 @@ def sequence_causal_call_chain(model: dict, state: dict) -> list[Finding]:
 
 
 def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
-    """가능하면 모든 주·확장 단계를, 옛 입력이면 유스케이스 단위 커버리지를 검사한다."""
+    """Check flow coverage and invocation of operations traced to this UC."""
     rule_id = "sequence.usecase-step-coverage"
     diagram_use_case_id = str(model.get("use_case_id") or "").strip()
     all_flow_steps = _known_flow_step_ids(state)
@@ -2595,10 +2628,55 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
             for item in model.get("NarrativeSteps", []) or []
             if isinstance(item, dict) and item.get("step_id")
         )
-        return [
+        found = [
             Finding(rule_id, f"시퀀스 다이어그램에 반영되지 않은 흐름 단계 id '{step_id}'", step_id)
             for step_id in sorted(flow_steps - covered_steps)
         ]
+        class_model = state.get("extracted_bce_classes") or {}
+        participant_classes = {
+            _participant_id(item): str(
+                item.get("source_class") or item.get("name") or ""
+            ).strip()
+            for item in model.get("Participants") or []
+            if isinstance(item, dict)
+        }
+        invoked_families = {
+            f"{participant_classes.get(str(message.get('target') or '').strip(), '').casefold()}::"
+            f"{method_name(method_call_signature(str(message.get('label') or '')))}"
+            for message in model.get("Messages") or []
+            if isinstance(message, dict)
+            and str(message.get("type") or "sync").casefold() in {"sync", "async", "self"}
+            and participant_classes.get(str(message.get("target") or "").strip())
+            and method_name(method_call_signature(str(message.get("label") or "")))
+        }
+        required_families = {
+            (
+                f"{str(class_item.get('className') or '').strip().casefold()}::"
+                f"{str(operation.get('name') or '').strip().casefold()}"
+            ): (
+                f"{str(class_item.get('className') or '').strip()}::"
+                f"{str(operation.get('name') or '').strip()}"
+            )
+            for class_item in class_model.get("Classes") or []
+            if isinstance(class_item, dict) and class_item.get("className")
+            for operation in class_item.get("operations") or []
+            if isinstance(operation, dict) and operation.get("name")
+            and any(
+                str(step_ref).strip() in flow_steps
+                for step_ref in (
+                    operation.get("stepRefs") or operation.get("step_refs") or []
+                )
+            )
+        }
+        found.extend(
+            Finding(
+                rule_id,
+                f"Class operation '{required_families[key]}' is traced to this use case but is not invoked",
+                required_families[key],
+            )
+            for key in sorted(set(required_families) - invoked_families)
+        )
+        return found
     if all_flow_steps:
         return []  # 이 다이어그램의 알려진 단계가 모두 unresolved인 경우다.
 
@@ -2772,6 +2850,7 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
     last_main = -1
     main_positions: dict[int, list[int]] = {}
     for index, message in enumerate(messages):
+        is_return = str(message.get("type") or "").casefold() == "return"
         numbers = sorted([
             number
             for step_id in message.get("step_ids") or []
@@ -2779,7 +2858,10 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
         ])
         for number in numbers:
             main_positions.setdefault(number, []).append(index)
-            if number < last_main:
+            # A reply completes an earlier nested call after its inner calls
+            # return.  Its trace belongs to that call, but it is not a new
+            # scenario action and therefore cannot reverse main-flow order.
+            if not is_return and number < last_main:
                 found.append(
                     Finding(
                         rule_id,
@@ -2787,7 +2869,8 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
                         f"{message.get('source', '')} -> {message.get('target', '')} : {message.get('label', '')}",
                     )
                 )
-            last_main = max(last_main, number)
+            if not is_return:
+                last_main = max(last_main, number)
 
     use_case = next(
         (

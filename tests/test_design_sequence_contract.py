@@ -7,6 +7,7 @@ import pytest
 
 from app.design.services.common.structured import StructuredLlmError
 
+import app.design.graphs.subgraphs as sequence_subgraphs
 from app.design.graphs.subgraphs import SEQUENCE_DIAGRAM_SPEC, _sequence_revision_context
 from app.design.knowledge.detectors import (
     Finding,
@@ -28,6 +29,7 @@ from app.design.services.sequence_diagram.extractor import (
     parse_sequence_structured,
     reassemble_sequence_diagrams,
     normalize_sequence_message_order,
+    _assemble_deterministic_diagrams,
     _only_callable_class,
     _recover_explicit_actor_retries,
     _supplementary_actor_selection_routes,
@@ -722,6 +724,49 @@ class ScheduleController <<Control>> {
         "CourseDetailsBoundary",
         "ScheduleController",
     ]
+
+
+def test_boundary_forwards_to_single_control_method_when_names_differ():
+    boundary = {
+        "name": "BrowseBoundary",
+        "kind": "boundary",
+        "methods": ["browseCatalog(department:String)"],
+        "method_returns": {"browseCatalog(department:String)": "List<Course>"},
+    }
+    control = {
+        "name": "BrowseControl",
+        "kind": "control",
+        "methods": ["getCourses(department:String)"],
+        "method_returns": {"getCourses(department:String)": "List<Course>"},
+    }
+    plan = {
+        "use_case_id": "UC1",
+        "use_case_name": "Browse courses",
+        "actor": "Student",
+        "step_id": "UC1:main:1",
+        "sentence": "Student starts browsing courses",
+        "fragment": {},
+        "actor_led": True,
+        "boundary": boundary,
+        "control": control,
+        "selected_class": boundary,
+        "selected_method": "browseCatalog(department:String)",
+        "candidates": [],
+    }
+
+    result = _assemble_deterministic_diagrams(
+        [plan],
+        {},
+        {item["name"]: item for item in (boundary, control)},
+    )
+    calls = [
+        (message["source"], message["target"], message["label"])
+        for message in result[0]["Messages"]
+        if message.get("type") != "return"
+    ]
+
+    assert ("BrowseBoundary", "BrowseControl", "getCourses(department:String)") in calls
+    assert result[0]["UnresolvedSteps"] == []
 
 
 def test_normalization_removes_inactive_llm_participants():
@@ -1513,7 +1558,7 @@ def test_targeted_sequence_revision_preserves_other_use_case_diagrams():
 
 
 def test_sequence_stage_asks_user_before_adding_receiver_method():
-    assert SEQUENCE_DIAGRAM_SPEC.reconcile is reconcile_class_methods
+    assert SEQUENCE_DIAGRAM_SPEC.reconcile is None
     state = {
         "app_id": "test-app-id",
         "extracted_bce_classes": {
@@ -2128,3 +2173,162 @@ def test_renderer_emits_an_independent_plantuml_document_per_use_case():
     assert "title UC2 - Cancel order" in rendered
     assert "createOrder()" in rendered
     assert "cancelOrder()" in rendered
+
+
+def test_sequence_spec_hands_the_typed_class_model_to_its_extractor(monkeypatch):
+    received = {}
+
+    def capture(usecase_spec, class_diagram_puml, *, class_model=None):
+        received.update(
+            usecase_spec=usecase_spec,
+            class_diagram_puml=class_diagram_puml,
+            class_model=class_model,
+        )
+        return {}
+
+    monkeypatch.setattr(sequence_subgraphs, "extract_sequence_model", capture)
+    class_model = {"Classes": [{"className": "OrderBoundary"}], "Relationships": []}
+
+    assert SEQUENCE_DIAGRAM_SPEC.extract({
+        "usecase_spec": {"use_cases": []},
+        "class_diagram_puml": "@startuml\n@enduml",
+        "extracted_bce_classes": class_model,
+    }) == {}
+    assert received["class_model"] is class_model
+    assert received["class_diagram_puml"] == "@startuml\n@enduml"
+
+
+def test_typed_class_model_bypasses_the_plantuml_parser(monkeypatch):
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Drop course", "primary_actor": "Student"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Drop course",
+            "primary_actor": "Student",
+            "trigger": "Student requests to drop a course",
+            "main_scenario": [{
+                "step_number": 1,
+                "sentence": "System receives the drop request for the course",
+            }],
+            "extensions": [],
+        }],
+    }
+    class_model = {
+        "Classes": [{
+            "className": "EnrollmentBoundary",
+            "stereotype": "Boundary",
+            "operations": [{
+                "operationId": "EnrollmentBoundary::dropCourse(courseId:String)",
+                "name": "dropCourse",
+                "parameters": [{"name": "courseId", "type": "String"}],
+                "returnType": "void",
+            }],
+        }],
+        "Relationships": [],
+    }
+
+    def parser_must_not_run(_puml):
+        raise AssertionError("typed class-model handoff must not parse PlantUML")
+
+    monkeypatch.setattr(
+        "app.design.services.sequence_diagram.extractor._parse_class_catalog",
+        parser_must_not_run,
+    )
+    generated = extract_sequence_diagrams(
+        specification,
+        "class WrongBoundary <<Boundary>> { + wrong(): void }",
+        class_model=class_model,
+    )
+
+    message = generated["Diagrams"][0]["Messages"][0]
+    assert message["target"] == "EnrollmentBoundary"
+    assert message["label"] == "dropCourse(courseId:String)"
+
+
+def test_typed_multi_parameter_contract_restores_arguments_and_return():
+    class_model = {
+        "Classes": [{
+            "className": "OrderBoundary",
+            "stereotype": "Boundary",
+            "operations": [{
+                "operationId": "OrderBoundary::submit(orderId:String,actorId:String)",
+                "name": "submit",
+                "parameters": [
+                    {"name": "orderId", "type": "String"},
+                    {"name": "actorId", "type": "String"},
+                ],
+                "returnType": "Receipt",
+            }],
+        }],
+        "Relationships": [],
+    }
+    model = {
+        "Participants": [
+            _participant("Buyer", "actor"),
+            _participant("OrderBoundary", "boundary", "OrderBoundary"),
+        ],
+        "Messages": [
+            _message(
+                "Buyer", "OrderBoundary", "submit(orderId:String, actorId:String)",
+                call_id="entry", reply_to="", arguments=[],
+            ),
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, "", class_model)
+
+    call = next(item for item in normalized["Messages"] if item["type"] == "sync")
+    assert call["label"] == "submit(orderId:String,actorId:String)"
+    assert [item["parameter"] for item in call["arguments"]] == ["orderId", "actorId"]
+    reply = next(item for item in normalized["Messages"] if item["type"] == "return")
+    assert reply["reply_to"] == call["call_id"]
+    assert reply["label"] == "Receipt"
+
+
+def test_parameter_origin_propagates_across_the_grounded_call_chain():
+    class_model = {
+        "Classes": [
+            {
+                "className": "OrderBoundary", "stereotype": "Boundary",
+                "operations": [{
+                    "name": "submit", "parameters": [{"name": "orderId", "type": "String"}],
+                    "returnType": "void",
+                }],
+            },
+            {
+                "className": "OrderControl", "stereotype": "Control",
+                "operations": [{
+                    "name": "handle", "parameters": [{"name": "orderId", "type": "String"}],
+                    "returnType": "void",
+                }],
+            },
+        ],
+        "Relationships": [{
+            "source": "OrderBoundary", "target": "OrderControl", "type": "Dependency",
+        }],
+    }
+    model = {
+        "Participants": [
+            _participant("Buyer", "actor"),
+            _participant("OrderBoundary", "boundary", "OrderBoundary"),
+            _participant("OrderControl", "control", "OrderControl"),
+        ],
+        "Messages": [
+            _message(
+                "Buyer", "OrderBoundary", "submit(orderId:String)",
+                call_id="entry", reply_to="", arguments=[],
+                step_ids=["UC1:main:1"],
+            ),
+            _message(
+                "OrderBoundary", "OrderControl", "handle(orderId:String)",
+                call_id="handle", reply_to="", arguments=[],
+                step_ids=["UC1:main:2"],
+            ),
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, "", class_model)
+    calls = [item for item in normalized["Messages"] if item["type"] == "sync"]
+
+    assert calls[0]["arguments"][0]["source_ref"] == "UC1:main:1"
+    assert calls[1]["arguments"][0]["source_ref"] == "UC1:main:1"
