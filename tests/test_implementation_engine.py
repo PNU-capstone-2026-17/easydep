@@ -50,6 +50,7 @@ from app.implementation.agents.provider import (
     provider_retry_delay,
 )
 from app.implementation.agents.verification.build import (
+    WorkspaceVerificationError,
     production_placeholder_markers,
     production_test_library_markers,
     persistence_reserved_identifier_markers,
@@ -88,6 +89,7 @@ from app.implementation.planning.design_context import (
     render_persistence_schema_prompt,
     render_prompt,
     slice_sequence,
+    _e2e_persistence_paths,
 )
 from app.implementation.workflows.completion import audit_run_completion
 from app.implementation.agents.verification.e2e import e2e_contract_violations
@@ -1345,6 +1347,16 @@ void use(String value) {}
             self.assertTrue(any("422" in item for item in violations))
             self.assertFalse(any("OrderRepository" in item for item in violations))
 
+    def test_workspace_verification_error_preserves_causal_output_edges(self) -> None:
+        error = WorkspaceVerificationError({
+            "command": ["gradlew", "test"],
+            "testResults": "ROOT CAUSE: assertion failed\n" + ("trace line\n" * 300),
+        })
+
+        message = str(error)
+        self.assertIn("ROOT CAUSE: assertion failed", message)
+        self.assertIn("verification output truncated", message)
+
     def test_semantic_gate_accepts_spring_http_status_enums(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "CourseFlowTest.java"
@@ -1364,6 +1376,29 @@ TestRestTemplate http; CourseRepository repository;
             }
 
             self.assertEqual([], e2e_contract_violations(path, contract))
+
+    def test_e2e_persistence_contract_requires_explicit_sequence_participant(self) -> None:
+        scenarios = [{"path": "/students/{studentId}/schedule"}]
+        self.assertEqual([], _e2e_persistence_paths("Student -> ScheduleBoundary: viewSchedule()", scenarios))
+        self.assertEqual(
+            ["/students/{studentId}/schedule"],
+            _e2e_persistence_paths("participant EnrollmentRepository\nScheduleControl -> EnrollmentRepository: find()", scenarios),
+        )
+
+    def test_e2e_persistence_contract_infers_repository_from_bce_erd_relation(self) -> None:
+        scenarios = [{"path": "/students/{studentId}/courses/{courseId}"}]
+        bce = """@startuml
+class RegistrationControl <<Control>> { registerStudent(courseId:String): Enrollment }
+class Enrollment <<Entity>> { enrollmentId:String }
+RegistrationControl ..> Enrollment
+@enduml"""
+        erd = 'entity "Enrollment" as Enrollment { enrollmentId : String }'
+        openapi = '{"Endpoints":[{"path":"/students/{studentId}/courses/{courseId}","control_binding":{"control":"RegistrationControl"}}]}'
+
+        self.assertEqual(
+            ["/students/{studentId}/courses/{courseId}"],
+            _e2e_persistence_paths("RegistrationControl -> Enrollment: registerStudent()", scenarios, bce=bce, erd=erd, openapi=openapi),
+        )
 
     def test_semantic_gate_pairs_dynamic_path_method_and_status_per_scenario(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

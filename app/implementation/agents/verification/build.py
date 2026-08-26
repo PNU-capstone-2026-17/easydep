@@ -142,7 +142,13 @@ class WorkspaceVerificationError(RuntimeError):
         )
         if output == "No verification output was captured" and evidence.get("command"):
             output = f"command={evidence['command']}; {output}"
-        super().__init__("Agent workspace verification failed: " + output[-1000:])
+        if len(output) > 1000:
+            # The tail of a Gradle/JUnit trace is usually framework plumbing
+            # and can hide the assertion or root exception at the beginning.
+            # Preserve both ends so the frontend error log identifies the real
+            # failure without requiring another retry just to recover evidence.
+            output = output[:600] + "\n... [verification output truncated] ...\n" + output[-350:]
+        super().__init__("Agent workspace verification failed: " + output)
 
 
 def verification_timeout_seconds() -> int:

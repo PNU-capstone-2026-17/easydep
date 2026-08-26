@@ -322,7 +322,8 @@ def e2e_contract_violations(
             # cannot truthfully exercise every persistence aggregate. Require
             # at least one concrete repository evidence and let scenario-level
             # HTTP assertions cover the remaining aggregates.
-            required_groups["repository evidence"] = repositories
+            if "persistencePaths" not in contract or contract.get("persistencePaths"):
+                required_groups["repository evidence"] = repositories
         for gateway in contract.get("gatewayAdapters", []):
             required_groups[f"concrete gateway {gateway}"] = (str(gateway),)
     else:

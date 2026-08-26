@@ -829,6 +829,10 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
         {"method": item.method, "path": item.path, "status": item.status, "label": item.label}
         for item in ir.e2e_scenarios
     ]
+    persistence_paths = _e2e_persistence_paths(
+        sequence, scenarios, bce=_read(spec.inputs.get("bceClass")),
+        erd=erd, openapi=openapi,
+    )
     semantic_contract = {
         "paths": sorted({item.path for item in ir.e2e_scenarios}),
         "statuses": sorted({item.status for item in ir.e2e_scenarios}),
@@ -836,6 +840,7 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
         "gatewayAdapters": gateway_adapters,
         "minimumTests": max(1, len(ir.e2e_scenarios)),
         "scenarios": scenarios,
+        "persistencePaths": persistence_paths,
     }
     flow_name = ir.application_class.removesuffix("Application") + "FlowTest"
     allowed = [
@@ -883,6 +888,64 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return [task]
+
+
+def _e2e_persistence_paths(
+    sequence: str,
+    scenarios: list[dict[str, object]],
+    *,
+    bce: str = "",
+    erd: str = "",
+    openapi: str = "",
+) -> list[str]:
+    """Infer persistence flows from BCE↔ERD relationships, not UML participants.
+
+    BCE sequence diagrams intentionally contain only actor/Boundary/Control/
+    Entity participants. A Control related to an ERD-backed Entity therefore
+    implies the generated ``<Entity>Repository`` implementation contract even
+    when a Repository is not drawable in the BCE sequence.
+    """
+    if re.search(
+        r"(?im)^\s*(?:database|participant\s+\S*(?:repository|persistence)\S*)",
+        str(sequence or ""),
+    ):
+        return sorted({str(item.get("path") or "") for item in scenarios if item.get("path")})
+    classes = parse_design_classes(bce)
+    persistent_entities = parse_erd_entities(erd)
+    entity_names = {
+        item.name for item in classes
+        if item.stereotype.lower() == "entity" and item.name in persistent_entities
+    }
+    if not entity_names:
+        return []
+    related_controls = {
+        left if right in entity_names else right
+        for left, right, _ in parse_relations(bce)
+        if (left in entity_names) ^ (right in entity_names)
+        and any(
+            item.name == (left if right in entity_names else right)
+            and item.stereotype.lower() == "control"
+            for item in classes
+        )
+    }
+    if not related_controls:
+        return []
+    try:
+        model = json.loads(openapi) if str(openapi).lstrip().startswith("{") else {}
+    except json.JSONDecodeError:
+        model = {}
+    paths_by_control: dict[str, set[str]] = {}
+    for endpoint in model.get("Endpoints", []) if isinstance(model, dict) else []:
+        if not isinstance(endpoint, dict):
+            continue
+        binding = endpoint.get("control_binding") or {}
+        control = str(binding.get("control") or "").strip()
+        path = str(endpoint.get("path") or "").strip()
+        if control in related_controls and path:
+            paths_by_control.setdefault(control, set()).add(path)
+    if paths_by_control:
+        return sorted({path for paths in paths_by_control.values() for path in paths})
+    return sorted({str(item.get("path") or "") for item in scenarios if item.get("path")})
 
 
 def detect_e2e_design_gaps(spec: JobSpec, run_root: Path) -> list[dict[str, str]]:
@@ -1248,10 +1311,22 @@ def render_e2e_prompt(
     repositories = ", ".join(semantic_contract.get("repositories", [])) or "none"
     gateways = ", ".join(semantic_contract.get("gatewayAdapters", [])) or "none"
     minimum_tests = semantic_contract.get("minimumTests", 1)
+    persistence_paths = [
+        str(path) for path in semantic_contract.get("persistencePaths", [])
+        if str(path).strip()
+    ]
+    persistence_rule = (
+        "- Assert repository-backed persistence only for these explicitly traced flows: "
+        + ", ".join(persistence_paths)
+        + ".\n"
+        if persistence_paths
+        else "- Do not assert repository side effects for these flows: the sequence has no explicit persistence participant. A global repository inventory is not evidence that this endpoint writes state.\n"
+    )
     return f"""# Implementation task: {application_name} end-to-end flow
 
 Create one Spring Boot integration test that verifies the real application graph across HTTP/API
-adapters, Control services, Boundary adapters, and persistence.
+adapters, Control services, and Boundary adapters, including persistence only where the explicit
+sequence contract below proves that the flow reaches it.
 
 Rules:
 - Use package `{spec.base_package}.integration` and `@SpringBootTest` with the real H2/Flyway configuration.
@@ -1284,9 +1359,11 @@ Rules:
   resolves exactly to the listed path template. A shared helper such as `performLogin()` is
   allowed when the calling `@Test` invokes that helper and the helper contains the exact HTTP
   request; do not omit the scenario because the request is factored into a helper.
-- Assert repository-backed persistence for the exercised flow. A test that only checks in-memory
-  UI state is invalid; unrelated repositories do not need to be injected into this single flow test.
-- Assert observable HTTP responses, Boundary state, and repository state; do not call private methods or reproduce service logic inside the test.
+{persistence_rule}- If a Boundary adapter exposes only an in-memory configured result, use its
+  public seam to configure a valid response or assert only the documented HTTP contract; never
+  invent identifiers, persistence side effects, or response fields that the implementation cannot
+  produce.
+- Assert observable HTTP responses and Boundary state; assert repository state only for the explicitly traced persistence flows above. Do not call private methods or reproduce service logic inside the test.
 - Before writing each scenario, inspect the generated API controller, Control, and concrete Boundary
   adapter used by that request.  Seed and call the exact identifiers and inputs that those contracts
   require; a repository seed is not visible to a Control that delegates to a Boundary adapter.
@@ -1298,6 +1375,10 @@ Rules:
 - When a request causes persistence with a foreign-key reference, seed the referenced record using the
   exact identifier that the request passes through the Control.  Do not substitute a display name,
   username, or unrelated fixture key.
+- Before asserting response JSON, inspect the concrete return object and its accessors. Assert a
+  response field only when the generated contract and implementation can populate it; an empty
+  DTO or configured prototype result must be validated by status/content type rather than a
+  fabricated non-null field.
 - For a generic/Object request body, send JSON compatible with the generated controller's conversion
   contract.  Do not assume Spring preserves a BCE input type placed inside `HttpEntity<Object>`.
 - Do not weaken or disable Flyway/JPA and do not modify production sources.
@@ -1651,6 +1732,7 @@ def render_prompt(spec: JobSpec, context: dict[str, object], allowed: list[str])
     control_rules = (
         "- Implement all public operations defined in the Control contract.\n"
         + repository_rule
+        + "- When this Control is related to an ERD-backed Entity, that relationship is an implicit persistence contract: use the corresponding Repository for the Entity-backed operation. Do not delegate the operation to a state-only Boundary adapter or return a fabricated in-memory value.\n"
         + "- Treat each repository's generic ID type and the corresponding Entity ID "
         "accessor type as authoritative. Preserve incoming BCE identifier types; "
         "never parse or coerce a String identifier to Long or another inferred type.\n"
