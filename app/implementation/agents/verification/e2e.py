@@ -4,6 +4,48 @@ import re
 from pathlib import Path
 
 
+_SPRING_BOOT3_LEGACY_IMPORTS = {
+    "org.springframework.boot.web.server.": "org.springframework.boot.test.web.server.",
+    "javax.persistence.": "jakarta.persistence.",
+    "javax.validation.": "jakarta.validation.",
+    "javax.servlet.": "jakarta.servlet.",
+    "javax.annotation.": "jakarta.annotation.",
+    "javax.transaction.": "jakarta.transaction.",
+}
+
+
+def repair_spring_boot3_test_compatibility(path: Path) -> bool:
+    """Normalize legacy framework imports in generated Spring Boot 3 tests.
+
+    The generated Gradle project is pinned to Spring Boot 3.3.x.  LLMs can
+    nevertheless copy Spring Boot 2 or pre-Jakarta examples, which makes an
+    otherwise valid E2E flow fail at compilation.  Restrict the rewrite to
+    Java import declarations so comments, strings, and application behavior
+    are never changed.  This is a bounded compatibility migration, not a
+    substitute for semantic repair.
+    """
+    if not path.is_file():
+        return False
+    source = path.read_text(encoding="utf-8")
+    rewritten = source
+    for old_prefix, new_prefix in _SPRING_BOOT3_LEGACY_IMPORTS.items():
+        rewritten = re.sub(
+            rf"(?m)^(\s*import\s+(?:static\s+)?){re.escape(old_prefix)}",
+            rf"\g<1>{new_prefix}",
+            rewritten,
+        )
+    if rewritten == source:
+        return False
+    path.write_text(rewritten, encoding="utf-8")
+    return True
+
+
+# Kept as a compatibility alias for callers and plugins using the old helper
+# name.  The implementation now covers the complete bounded Spring Boot 3
+# import migration rather than only LocalServerPort.
+repair_spring_boot_test_compatibility = repair_spring_boot3_test_compatibility
+
+
 def repair_nested_e2e_members(path: Path) -> bool:
     """Unwrap class members accidentally nested in a synthetic test method."""
     if not path.is_file():

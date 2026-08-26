@@ -35,6 +35,7 @@ from .verification.e2e import (
     e2e_contract_violations,
     repair_nested_e2e_members,
     repair_orphaned_java_test_statements,
+    repair_spring_boot3_test_compatibility,
 )
 from ..workflows.repair import referenced_source_paths
 from .provider import (
@@ -568,6 +569,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         )
                 if str(task.get("task_type", "")) == "integration-test":
                     e2e_path = sandbox / str(task["allowed_write_paths"][0])
+                    repair_spring_boot3_test_compatibility(e2e_path)
                     repair_nested_e2e_members(e2e_path)
                     repair_orphaned_java_test_statements(e2e_path)
                     context_path = run_root / str(task.get("context_file", ""))

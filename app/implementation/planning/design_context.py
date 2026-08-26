@@ -1255,6 +1255,16 @@ adapters, Control services, Boundary adapters, and persistence.
 
 Rules:
 - Use package `{spec.base_package}.integration` and `@SpringBootTest` with the real H2/Flyway configuration.
+- The generated build is pinned to Spring Boot 3.3.13 and Java 21. Inspect its
+  `build.gradle` before writing imports or APIs; do not copy framework examples from memory.
+- Prefer `MockMvc` with `@AutoConfigureMockMvc` for the real HTTP contract so the test does not
+  need a random embedded port. If `TestRestTemplate` with `RANDOM_PORT` is required, import
+  `org.springframework.boot.test.web.server.LocalServerPort` (never the removed
+  Spring Boot 2.x package `org.springframework.boot.web.server.LocalServerPort`).
+- Spring Boot 3 uses Jakarta APIs. Use `jakarta.persistence`, `jakarta.validation`,
+  `jakarta.servlet`, `jakarta.annotation`, and `jakarta.transaction`; never import their
+  legacy `javax.*` counterparts in the generated test or test configuration.
+- Do not add an ad-hoc dependency or downgrade the Spring Boot version to make a stale import compile.
 - Do not mock application Controls, Boundary adapters, repositories, or the Spring context.
 - Use the production application graph exactly as wired. Never declare `@TestConfiguration`,
   `@Bean`, `@MockBean`, `@MockitoBean`, `@Primary`, or enable bean-definition overriding.

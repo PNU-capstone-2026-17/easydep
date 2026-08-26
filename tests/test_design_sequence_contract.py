@@ -327,6 +327,78 @@ CatalogBoundary ..> CatalogControl
     assert replies[0]["reply_to"] == "call-1"
 
 
+def test_normalizer_removes_duplicate_traced_call_and_inherits_return_trace() -> None:
+    class_diagram = """@startuml
+class SignInBoundary <<Boundary>> { + submitCredentials(username:String,password:String): SessionToken }
+class SignInControl <<Control>> { + signIn(username:String,password:String): SessionToken }
+SignInBoundary ..> SignInControl
+@enduml"""
+    model = {
+        "Participants": [
+            _participant("Student", "actor"),
+            _participant("SignInBoundary", "boundary", "SignInBoundary"),
+            _participant("SignInControl", "control", "SignInControl"),
+        ],
+        "Messages": [
+            _message(
+                "Student", "SignInBoundary",
+                "submitCredentials(username:String,password:String)",
+                call_id="entry", reply_to="", step_ids=["UC1:main:1"],
+            ),
+            _message(
+                "SignInBoundary", "SignInControl",
+                "signIn(username:String,password:String)",
+                call_id="first", reply_to="", step_ids=["UC1:main:2"],
+            ),
+            _message(
+                "SignInBoundary", "SignInControl",
+                "signIn(username:String,password:String)",
+                call_id="duplicate", reply_to="", step_ids=["UC1:main:2"],
+            ),
+            {
+                **_message("SignInControl", "SignInBoundary", "SessionToken", type="return"),
+                "call_id": "", "reply_to": "first", "step_ids": ["UC1:main:4"],
+            },
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, class_diagram)
+    calls = [item for item in normalized["Messages"] if item["type"] == "sync"]
+    returns = [item for item in normalized["Messages"] if item["type"] == "return"]
+
+    assert len([item for item in calls if item["label"].startswith("signIn(")]) == 1
+    assert returns[0]["step_ids"] == ["UC1:main:2"]
+
+
+def test_normalizer_separates_different_loop_conditions_with_same_provider_id() -> None:
+    class_diagram = """@startuml
+class CatalogBoundary <<Boundary>> { + search(criteria:Criteria): List<Course> }
+@enduml"""
+    model = {
+        "Participants": [_participant("CatalogBoundary", "boundary", "CatalogBoundary")],
+        "Messages": [
+            {
+                **_message("CatalogBoundary", "CatalogBoundary", "search(criteria:Criteria)", call_id="a", reply_to=""),
+                "fragments": [{"id": "f3", "type": "loop", "branch": "main", "condition": "invalid criteria"}],
+                "step_ids": ["UC1:main:1"],
+            },
+            {
+                **_message("CatalogBoundary", "CatalogBoundary", "search(criteria:Criteria)", call_id="b", reply_to=""),
+                "fragments": [{"id": "f3", "type": "loop", "branch": "main", "condition": "corrected criteria"}],
+                "step_ids": ["UC1:extension:1a:1a1"],
+            },
+        ],
+    }
+
+    normalized = normalize_sequence_contracts(model, class_diagram)
+    ids = [
+        fragment["id"]
+        for message in normalized["Messages"]
+        for fragment in message.get("fragments") or []
+    ]
+    assert len(set(ids)) == 2
+
+
 def test_normalizer_defers_boundary_return_until_control_returns() -> None:
     class_diagram = """@startuml
 class AuthenticationBoundary <<Boundary>> {
