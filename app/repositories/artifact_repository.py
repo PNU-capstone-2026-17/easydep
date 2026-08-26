@@ -41,6 +41,7 @@ from app.design.services.deployment_diagram.provider_plantuml import (
 )
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
+from app.design.services.sequence_diagram.extractor import normalize_sequence_contracts
 from app.design.validation import rehydrated_check_state
 
 
@@ -285,6 +286,23 @@ def load_state(app_id: str) -> ArchitectureState:
             artifact_status[stage] = "implemented"
 
         state["artifact_status"] = artifact_status
+        # Older stored sequence models may predate mechanical contract
+        # normalization.  Rehydrate them through the same pure normalizer used
+        # after LLM extraction so stale return traces, duplicate traced calls,
+        # and merged fragment conditions do not keep resurfacing on every page
+        # refresh or implementation run.  No semantic method or participant is
+        # invented here, and the persisted source remains untouched until an
+        # explicit design revision is accepted.
+        sequence_model = state.get("sequence_diagram_model")
+        class_puml = str(state.get("class_diagram_puml") or "")
+        if isinstance(sequence_model, dict) and sequence_model and class_puml:
+            normalized_sequence = normalize_sequence_contracts(
+                sequence_model, class_puml
+            )
+            state["sequence_diagram_model"] = normalized_sequence
+            state["sequence_diagram_puml"] = generate_sequence_from_model(
+                normalized_sequence
+            )
         # Check reports are derived evidence, not a second source of truth.
         # Rebuild them from stored models so a page refresh cannot turn an
         # unresolved mismatch into a deceptively clean implementation hand-off.
