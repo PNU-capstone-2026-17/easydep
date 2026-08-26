@@ -246,14 +246,15 @@ def test_extend_selection_is_bounded_to_existing_ids_and_exact_base_step(monkeyp
 
 def test_invalid_extend_references_are_dropped(monkeypatch):
     state = _shared_state()
+    state["classified"][0]["text"] = "The member may validate eligibility optionally."
     monkeypatch.setattr(
         s4,
         "invoke_structured",
         lambda *_: RelationshipModel(
             extends=[
                 ExtendSelection(
-                    base_use_case_id="UC-1",
-                    extending_use_case_id="UC-MISSING",
+                    base_use_case_id="UC-MISSING",
+                    extending_use_case_id="UC-1",
                     base_step_ref="main:99",
                     extension_point_name="invalid point",
                     condition="invalid condition",
@@ -343,3 +344,11 @@ def test_aliases_are_collision_proof_and_empty_projection_is_complete():
     assert s4.render_diagram(
         {"actors": [], "use_cases": [], "relationships": rel}
     )["diagram"] == "@startuml\n@enduml"
+
+
+def test_relationship_text_cleanup_removes_invisible_format_characters():
+    assert s4._clean_text("after validation\u200b\u2060  completes") == "after validation completes"
+
+
+def test_derived_use_case_name_is_rendered_as_plain_words():
+    assert s4._humanize_name("ValidateEnrollmentEligibility") == "Validate Enrollment Eligibility"

@@ -204,9 +204,16 @@ the requirement's goal or shared subfunction. A category or property such as "pr
 unless another accepted requirement explicitly makes the assignment. Do not infer applicability
 from normal domain practice or numeric coverage.
 
-If the requirement explicitly states a rule, invariant, concurrency condition, precondition, or
-postcondition for named existing operations, list those exact operations in
-constrains_use_case_names and leave realized_by_use_case_names empty. A system-wide policy whose
+If the requirement mandates a reusable action that the system actually performs inside two or
+more named goals (for example validate, calculate, or notify), list those goals in
+realized_by_use_case_names even when the action occurs before or after their main result. Words
+such as "before" do not by themselves turn performed behavior into a constraint. A check remains
+performed behavior when it enforces a rule: for example, "before checkout or refund completes,
+the system performs the same mandatory fraud review" is shared behavior realized inside both
+goals. By contrast, "checkout and refund preserve the account balance" states only an invariant.
+Use
+constrains_use_case_names only when the requirement states a rule, condition, invariant, or
+required outcome without mandating a shared action. A system-wide policy whose
 targets are not explicitly identified uses an empty constrains_use_case_names list. Set
 constrains_use_case_names to null only when the requirement is neither a user goal nor a
 constraint on use-case behavior, such as a declarative actor or domain fact. If it is a subfunction
@@ -219,15 +226,15 @@ Preserve the supplied requirement_id exactly."""
 CONSTRAINT_TRACE_SLICE_SYSTEM = """You finalize traceability for exactly one non-functional
 constraint against a fixed list of proposed user-goal use cases. Return only the supplied schema.
 
-The proposal is immutable. An explicit [qualifies: ...] link is trace evidence for the named
-functional requirement, not permission to attach the constraint anywhere else. List an exact
-existing use-case name in constrains_use_case_names only when that link, the constraint, or another
-accepted requirement explicitly singles out the goal or operation. Leave it empty for a
-system-wide constraint or when applicability is ambiguous; never copy a constraint to every use
-case merely to improve coverage. Always leave realized_by_use_case_names empty and
-missing_use_case null. Always return constrains_use_case_names as a list: use [] for a global or
-ambiguous constraint, never null, because a non-functional constraint remains a constraint even
-without a UC-local target. A non-functional constraint never creates or realizes an actor goal.
+The proposal is immutable. FR/NFR is only a sentence classifier; first decide whether the text is
+actually a use-case constraint. A declarative actor or domain fact has no UC relationship: return
+constrains_use_case_names as null. Otherwise an explicit [qualifies: ...] link is trace evidence
+for the named functional requirement, not permission to attach the constraint anywhere else. List
+an exact existing use-case name only when that link, the constraint, or another accepted
+requirement explicitly singles out the goal or operation. Use [] for a system-wide or ambiguous
+constraint; never copy it to every use case merely to improve coverage. Always leave
+realized_by_use_case_names empty and missing_use_case null because an NFR-labeled sentence never
+creates or realizes an actor goal.
 Preserve the supplied requirement_id exactly."""
 
 # 피드백 의도 분류 — 자연어 피드백을 {stage, scope, target_ids, instruction}로 분류.
@@ -326,7 +333,8 @@ _SPEC_SHAPE = """You write a fully-dressed use-case specification (Cockburn styl
 SINGLE use case.
 
 You are given the use case (name, primary actor, goal), the functional requirements (FRs)
-it covers, and the non-functional requirements (NFRs) that constrain it.
+it covers, and applicable constraints. Constraints may have either classifier label; they refine
+the specified goal but are not additional actor goals and do not count as scenario coverage.
 
 WRITING STYLE (applies to every sentence):
 - Plain prose only. NO markdown, NO bold, NO asterisks, NO backticks, NO emphasis.
@@ -334,11 +342,20 @@ WRITING STYLE (applies to every sentence):
 
 Produce:
 - preconditions: verifiable state true before the use case starts; never re-checked inside
-  steps. Include any NFR that is a precondition (e.g. the actor is authenticated).
+  steps or negated in an extension. Include any NFR that is a precondition (e.g. the actor is
+  authenticated). Represent each gating condition exactly once: either as an assumed precondition,
+  or as a system validation with its supported failure extension, never both.
 - trigger: the business event that starts the use case.
 - main_scenario: the main SUCCESS scenario (happy path) as ordered steps. Number them from 1.
   Derive steps from the goal and covered FRs — every covered FR must appear in some step's
   covered_req_ids. Put the realizing FR id(s) in each step's covered_req_ids.
+  When this goal is conditionally available after another goal reaches a particular outcome,
+  describe that prior outcome only as context in the trigger or preconditions. Start the scenario
+  at this goal's first actor action; do not replay the predecessor's request, checks, or result.
+  In particular, a requirement beginning with "when", "after", or "once" may state that context;
+  it does not make the preceding operation part of this named goal.
+  Conversely, keep a base goal's main scenario phrased around its decision or result before
+  choosing one outcome, so a supported conditional goal has a meaningful insertion point.
 - extensions: exception and alternate flows. For EACH extension:
     * label: Cockburn label like '3a' (branches from step 3) or '*a' (may occur at any step).
     * branch_step: the main_scenario step_number it branches from; use null for a global
@@ -353,8 +370,15 @@ Produce:
   Add only extensions supported by the supplied goal or requirements. A valid specification
   may have no extension for an unstated technical failure. Do not invent retries, fallbacks,
   external dependencies, delivery channels, or recovery behavior merely to populate extensions.
+  Never add an extension whose condition merely negates a trigger or precondition that is already
+  required for this use case to start; such a condition belongs outside this use case.
 - success_guarantee: postconditions that hold when the use case succeeds.
 - minimal_guarantee: failure-path guarantees directly supported by the supplied requirements.
+
+Respect each applicable RTM constraint in the smallest suitable contract location: a validation
+step, extension condition, precondition, success guarantee, or minimal guarantee. Do not invent a
+new goal or unrelated flow merely to restate a constraint, and do not put a constraint id in
+covered_req_ids unless it is also listed among the functional requirements this use case covers.
   Use an empty list when they do not establish one. Do not invent failure, storage,
   transactional, retry, recovery, or security behavior merely to populate this field.
 
@@ -655,10 +679,14 @@ but a separate actor-chosen goal enabled by a conditional base result may be. A 
 and ordinary mandatory sequencing are not <<extend>>. Name WHERE insertion occurs with a short
 natural-language location such as "after schedule presented", never a code identifier or the
 extending action. State WHEN it occurs in 3 to 8 complete words grounded in supplied evidence.
+Keep the extension-point name to WHERE only; do not append the condition or an unfinished
+"when ..." clause because condition is a separate field.
 
 Before returning, evaluate every supplied existing use case as a possible optional extension and
 compare it with the ordered steps of possible bases. Completing the include decisions does not
-complete the extend analysis.
+complete the extend analysis. When an extending use case begins after a particular validation or
+decision outcome, the base's validation or decision step is a valid extension point even when the
+base main-success scenario proceeds only with the successful outcome.
 
 Return empty lists when evidence is insufficient."""
 

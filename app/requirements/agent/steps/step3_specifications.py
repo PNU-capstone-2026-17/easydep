@@ -19,7 +19,6 @@ LLM 출력을 그대로 믿지 않고 검증·반성한다:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections import Counter
@@ -28,6 +27,7 @@ from typing import cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.core.traceability import constraints_for_use_case
 from app.requirements import prompts
 from app.requirements.agent import supervisor, validator
 from app.requirements.agent.llm import invoke_structured
@@ -94,13 +94,21 @@ def _spec_human(uc: UseCaseItem, by_id: dict[str, RequirementItem], actors: list
             "or preconditions between them unless a requirement states it explicitly:\n"
             f"{listing}"
         )
+    applicable_constraints = list(uc.get("_constraint_requirements") or [])
+    constraint_listing = "\n".join(
+        f"- {item.get('id')}: {item.get('text', '')}"
+        for item in applicable_constraints
+        if item.get("id")
+    ) or "- (none)"
     base = (
         f"Use case: {uc['name']}\n"
         f"{scope}\n"
         f"Primary actor: {actor_desc}\n"
         f"Goal: {uc.get('goal', '')}\n\n"
         f"Functional requirements it covers:\n{_resolve(uc.get('requirement_ids', []), by_id)}\n\n"
-        f"Non-functional constraints:\n{_resolve(uc.get('nfr_ids', []), by_id)}"
+        f"Non-functional constraints:\n{_resolve(uc.get('nfr_ids', []), by_id)}\n\n"
+        "Applicable RTM constraints (refine this use case; they are not new goals or "
+        f"scenario coverage):\n{constraint_listing}"
     )
     return prompts.apply_user_feedback(base, feedback)
 
@@ -144,6 +152,7 @@ def spec_review_payload(
     item: dict,
     requirements: list[dict] | None = None,
     goal_context: dict | None = None,
+    constraints: list[dict] | None = None,
 ) -> dict:
     """검증자가 받는 모양. **공개 함수인 이유는 평가가 같은 모양을 써야 하기 때문**이다.
 
@@ -156,6 +165,8 @@ def spec_review_payload(
     if goal_context:
         payload.update(goal_context)
     payload["requirements_it_must_cover"] = requirements or []
+    if constraints:
+        payload["constraints_it_must_respect"] = constraints
     return payload
 
 
@@ -163,6 +174,7 @@ def _semantic_findings(
     item: UseCaseSpecItem,
     requirements: list[dict] | None = None,
     goal_context: dict | None = None,
+    constraints: list[dict] | None = None,
 ) -> tuple[list[str], str]:
     """정적 체크가 못 잡는 의미 결함을 독립 검증자에게 묻는다.
 
@@ -181,7 +193,7 @@ def _semantic_findings(
     죽어도 빈 리스트를 돌려줬고, 그러면 NIM이 내려간 동안 생성된 모든 명세가 조용히
     '깨끗함'으로 통과했다.
     """
-    payload = spec_review_payload(item, requirements, goal_context)
+    payload = spec_review_payload(item, requirements, goal_context, constraints)
     review = validator.review(
         rules.WRITE_SPECIFICATIONS,
         payload,
@@ -207,12 +219,13 @@ def _check(
     item: UseCaseSpecItem,
     requirements: list[dict] | None = None,
     goal_context: dict | None = None,
+    constraints: list[dict] | None = None,
 ) -> tuple[list[str], str]:
     """정적(결정론) + 의미(LLM) 검증을 병합한 (issues, 의미검증 상태)."""
     static_findings = _validate_spec(cast(dict, item))
     if static_findings:
         return static_findings, validator.PENDING
-    findings, status = _semantic_findings(item, requirements, goal_context)
+    findings, status = _semantic_findings(item, requirements, goal_context, constraints)
     return findings, status
 
 
@@ -238,11 +251,6 @@ def _issue_keys(issues: list[str]) -> set[str]:
     return keys
 
 
-def _issue_fingerprint(issue_keys: set[str]) -> str:
-    payload = "\n".join(sorted(issue_keys)).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
 def _spec_for(
     uc: UseCaseItem,
     by_id: dict[str, RequirementItem],
@@ -263,11 +271,14 @@ def _spec_for(
     멈춘 이유는 `repair_stopped`에 남긴다. 수술적(부분) 수정으로 바꿀 값어치가 있는지는
     이 값의 분포를 봐야 알 수 있고, 지금은 그 근거가 없다.
     A repair is accepted only when its stable issue-key set is a strict subset of
-    the current set.  The loop stops when a previously seen key fingerprint recurs.
+    the current set. A non-improving repair is discarded, but does not cancel the remaining local
+    attempt because model sampling is non-deterministic and the configured budget is already
+    bounded.
     """
     base_user = _spec_human(uc, by_id, actors, feedback)
     # 검증자에게 줄 잣대. 생성 프롬프트와 달리 **요구사항만** 담는다(지시는 담지 않는다).
     requirements = requirement_view(uc, by_id)
+    constraints = list(uc.get("_constraint_requirements") or [])
     goal_context = {
         "use_case_goal": uc.get("goal", ""),
         "neighbouring_goals_sharing_requirements": uc.get("_neighboring_goals") or [],
@@ -277,7 +288,7 @@ def _spec_for(
         spec: UseCaseSpec = invoke_structured(UseCaseSpec, messages)
         item = _assemble(spec, uc)
         item["issues"], item["semantic_status"] = _check(
-            item, requirements, goal_context
+            item, requirements, goal_context, constraints
         )
         return item
 
@@ -288,7 +299,6 @@ def _spec_for(
     item = _generate([SystemMessage(content=system), HumanMessage(content=base_user)])
 
     unresolved_keys = _issue_keys(item["issues"])
-    fingerprints = [_issue_fingerprint(unresolved_keys)]
     attempts = 0
     stopped = "budget"
     for _ in range(min(_LOCAL_REPAIR_LIMIT, max(0, settings.max_repair_iters))):
@@ -320,17 +330,11 @@ def _spec_for(
             stopped = "error"
             break
         candidate_keys = _issue_keys(candidate["issues"])
-        candidate_fingerprint = _issue_fingerprint(candidate_keys)
-        if candidate_fingerprint in fingerprints:
-            stopped = "repeated_fingerprint"
-            break
         if not candidate_keys < unresolved_keys:
-            # A repair must remove keys without adding or replacing any finding.
-            stopped = "no_improvement"
-            break
+            # Keep the better previous item, but use any remaining bounded attempt.
+            continue
         item = candidate
         unresolved_keys = candidate_keys
-        fingerprints.append(candidate_fingerprint)
     else:
         # 예산을 다 쓰고 나왔다. 마지막 반복이 결함을 없앴을 수도 있다.
         stopped = "clean" if not item["issues"] else "budget"
@@ -423,7 +427,23 @@ def generate_specs(
             if other["id"] != use_case["id"]
             and requirement_ids.intersection(other.get("requirement_ids") or [])
         ]
-        to_gen.append({**use_case, "_neighboring_goals": neighbouring_goals})
+        direct_ids = {
+            str(value)
+            for key in ("requirement_ids", "nfr_ids")
+            for value in (use_case.get(key) or [])
+        }
+        applicable_constraints = [
+            item
+            for item in constraints_for_use_case(
+                state.get("traceability") or {}, str(use_case["id"])
+            )
+            if str(item.get("id") or "") not in direct_ids
+        ]
+        to_gen.append({
+            **use_case,
+            "_neighboring_goals": neighbouring_goals,
+            "_constraint_requirements": applicable_constraints,
+        })
 
     workers = max(1, min(len(to_gen), settings.spec_concurrency)) if to_gen else 1
     results: dict[str, UseCaseSpecItem] = {}

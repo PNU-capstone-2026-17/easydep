@@ -176,6 +176,17 @@ def test_whole_model_accounting_includes_actor_and_capability_evidence():
     assert coverage["unaccounted_requirement_ids"] == []
 
 
+def test_nfr_actor_evidence_is_not_reported_as_an_unattached_constraint():
+    state = _state(
+        use_cases=[
+            {"id": "UC1", "name": "x", "requirement_ids": ["FR1"], "nfr_ids": []}
+        ],
+        actors=[{"name": "Student", "source_refs": ["NFR1"]}],
+    )
+
+    assert check_coverage(state)["coverage"]["unattached_nfr_ids"] == []
+
+
 def test_spec_steps_are_traced_per_step_not_just_per_use_case():
     """스텝 단위 추적이 UC 단위보다 정밀하다 — 매트릭스가 그걸 싣는다."""
     trace = traceability.index(_state(use_case_specs=[{

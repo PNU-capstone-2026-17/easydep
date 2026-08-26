@@ -293,6 +293,51 @@ def test_invalid_keys_and_unknown_requirement_references_are_dropped(monkeypatch
     assert result["deployment_needs"] == {}
 
 
+def test_application_behavior_without_deployment_evidence_is_not_accepted(monkeypatch):
+    classified = [{
+        "id": "NFR1",
+        "text": "Concurrent order operations shall preserve order uniqueness.",
+        "type": "NFR",
+    }]
+    monkeypatch.setattr(step_cloud, "invoke_structured", lambda *_args, **_kwargs: _result({
+        "transactional_consistency": DeploymentNeed(
+            role="Preserve order uniqueness during concurrent operations",
+            required=True,
+            requirementIds=["NFR1"],
+            evidenceSpans=[classified[0]["text"]],
+            origin="explicit",
+        )
+    }))
+
+    result = step_cloud.derive_deployment_needs({"classified": classified})
+
+    assert result["deployment_needs"]["transactional_consistency"]["decision"] == "abstained"
+    capability = result["capability_contract"]["capabilities"][0]
+    assert capability["decision"] == "abstained"
+    assert capability["decisionReason"] == "not-deployment-boundary"
+
+
+def test_restart_persistence_has_deployment_boundary_evidence(monkeypatch):
+    classified = [{
+        "id": "NFR1",
+        "text": "Order data shall survive application and server restarts.",
+        "type": "NFR",
+    }]
+    monkeypatch.setattr(step_cloud, "invoke_structured", lambda *_args, **_kwargs: _result({
+        "persistent_storage": DeploymentNeed(
+            role="Keep order data across restarts",
+            required=True,
+            requirementIds=["NFR1"],
+            evidenceSpans=[classified[0]["text"]],
+            origin="explicit",
+        )
+    }))
+
+    result = step_cloud.derive_deployment_needs({"classified": classified})
+
+    assert result["deployment_needs"]["persistent_storage"]["decision"] == "accepted"
+
+
 def test_duplicate_and_partially_unknown_requirement_ids_are_normalized(monkeypatch):
     monkeypatch.setattr(step_cloud, "invoke_structured", lambda *_args, **_kwargs: _result({
         "https_ingress": DeploymentNeed(

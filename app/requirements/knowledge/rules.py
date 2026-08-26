@@ -516,7 +516,8 @@ RULES: tuple[Rule, ...] = (
             "Merely plausible domain convention or defensive behaviour is not a necessary "
             "consequence. Do not invent auditing, logging, security, persistence, uniqueness, "
             "technical failure, retry, fallback, recovery, or error handling just because similar "
-            "systems commonly have it."
+            "systems commonly have it. A failure branch for an explicitly required validation "
+            "is directly supported, but it must not add an unstated retry or recovery policy."
         ),
         citation="easydep convention (hallucination guard)",
         evidence="project-convention",
@@ -530,6 +531,9 @@ RULES: tuple[Rule, ...] = (
         severity=DEFECT,
         statement=(
             "The trigger is the event that starts this actor goal, not an earlier enabling state. "
+            "When a conditional follow-on goal becomes available after another goal's result, "
+            "keep that prior operation and result in the trigger or preconditions; do not replay "
+            "them as steps of the follow-on goal. "
             "The main scenario and its extensions must form causally coherent paths: an extension "
             "branches at the first main step where its condition can be known, and an alternate "
             "operation branches before a mutually incompatible main-path choice."

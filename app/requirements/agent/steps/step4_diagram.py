@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import textwrap
+import unicodedata
 from collections import defaultdict
 from typing import Any, cast
 
@@ -24,9 +25,25 @@ from app.requirements.common.state_contract import contract
 from app.requirements.knowledge import rules
 from app.requirements.schemas import RelationshipModel
 
+_EXTEND_CUE = re.compile(r"\b(?:may|optionally|when|while|after|once|unless)\b", re.IGNORECASE)
+
 
 def _clean_text(value: object) -> str:
-    return " ".join(str(value or "").split())
+    visible = "".join(
+        character
+        for character in str(value or "")
+        if unicodedata.category(character) != "Cf"
+    )
+    return " ".join(visible.split())
+
+
+def _humanize_name(value: object) -> str:
+    words = re.sub(
+        r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])",
+        " ",
+        str(value or ""),
+    )
+    return _clean_text(words)
 
 
 def _stable_id(prefix: str, payload: dict[str, Any]) -> str:
@@ -36,6 +53,47 @@ def _stable_id(prefix: str, payload: dict[str, Any]) -> str:
 
 def _prompt_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _requirements_with_source_evidence(state: AgentState) -> dict[str, dict]:
+    raw = list(state.get("raw_requirements") or [])
+    result: dict[str, dict] = {}
+    for item in state.get("classified") or []:
+        requirement_id = str(item.get("id") or "")
+        if not requirement_id:
+            continue
+        source_evidence: list[str] = []
+        for source_ref in item.get("source_refs") or []:
+            match = re.fullmatch(r"RAW(\d+)", str(source_ref))
+            if match and 0 < int(match.group(1)) <= len(raw):
+                source_evidence.append(str(raw[int(match.group(1)) - 1]))
+        result[requirement_id] = {
+            "text": _clean_text(item.get("text")),
+            "source_evidence": list(dict.fromkeys(source_evidence)),
+        }
+    return result
+
+
+def _extend_candidate_ids(
+    state: AgentState,
+    use_cases: list[dict],
+    specs_by_id: dict[str, dict],
+) -> list[str]:
+    """Bound semantic extend work to goals with explicit conditional/optional evidence."""
+    evidence = _requirements_with_source_evidence(state)
+    candidates: list[str] = []
+    for use_case in use_cases:
+        use_case_id = str(use_case["id"])
+        if use_case_id not in specs_by_id:
+            continue
+        parts = [str(use_case.get("goal") or "")]
+        for requirement_id in use_case.get("requirement_ids") or []:
+            item = evidence.get(str(requirement_id), {})
+            parts.append(str(item.get("text") or ""))
+            parts.extend(str(value) for value in item.get("source_evidence") or [])
+        if _EXTEND_CUE.search(" ".join(parts)):
+            candidates.append(use_case_id)
+    return candidates
 
 
 def _accepted_specs_by_id(
@@ -211,11 +269,7 @@ def _relationship_prompt(
     feedback: str,
 ) -> str:
     """Serialize compact evidence; relationship semantics live in the system prompt."""
-    requirement_text = {
-        str(item.get("id")): _clean_text(item.get("text"))
-        for item in state.get("classified") or []
-        if item.get("id")
-    }
+    requirement_text = _requirements_with_source_evidence(state)
     bounded_artifact = []
     for use_case in use_cases:
         use_case_id = str(use_case["id"])
@@ -362,7 +416,7 @@ def _materialize_includes(
                 dropped.append(f"ambiguous relationship candidate decision {candidate_id}")
             continue
         selection = selections[0]
-        name = _clean_text(selection.included_use_case_name)
+        name = _humanize_name(selection.included_use_case_name)
         if selection.decision != "approve":
             continue
         if not name:
@@ -521,7 +575,7 @@ def _suppress_redundant_associations(
 
 @contract("identify_relationships", requires=("use_cases", "actors"), produces=("relationships",))
 def identify_relationships(state: AgentState, feedback: str = "") -> dict:
-    """Project include/actor facts and semantically select bounded extend relations."""
+    """Project actor facts and select bounded include/extend relations in focused calls."""
     feedback = supervisor.feedback_for(cast(dict, state), "relationships", feedback)
     use_cases = cast(list[dict], state.get("use_cases") or [])
     empty: dict[str, Any] = {
@@ -545,24 +599,57 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     accepted_ids = {str(use_case["id"]) for use_case in use_cases}
     specs_by_id, spec_rejections = _accepted_specs_by_id(state, accepted_ids)
     candidates = _include_candidates(state, use_cases, specs_by_id)
+    include_model = RelationshipModel()
+    extend_model = RelationshipModel()
     if specs_by_id:
-        model: RelationshipModel = invoke_structured(
-            RelationshipModel,
-            [
-                SystemMessage(content=prompts.generation_system_for(rules.DRAW_DIAGRAM)),
-                HumanMessage(
-                    content=_relationship_prompt(
-                        state, use_cases, specs_by_id, candidates, feedback
-                    )
-                ),
-            ],
+        relationship_prompt = _relationship_prompt(
+            state, use_cases, specs_by_id, candidates, feedback
         )
-    else:
-        model = RelationshipModel()
+        system = prompts.generation_system_for(rules.DRAW_DIAGRAM)
+        if candidates:
+            include_model = invoke_structured(
+                RelationshipModel,
+                [
+                    SystemMessage(content=system),
+                    HumanMessage(
+                        content=(
+                            f"{relationship_prompt}\n\n"
+                            "Task focus: decide include candidates only. Return extends as an "
+                            "empty list."
+                        )
+                    ),
+                ],
+            )
+        extend_selections = []
+        for extending_use_case_id in _extend_candidate_ids(
+            state, use_cases, specs_by_id
+        ):
+            focused_model = invoke_structured(
+                RelationshipModel,
+                [
+                    SystemMessage(content=system),
+                    HumanMessage(
+                        content=(
+                            f"{relationship_prompt}\n\n"
+                            "Task focus: decide extend relationships only for "
+                            f"extending_use_case_id={extending_use_case_id}. Return includes as "
+                            "an empty list. Every selected base must be directly named or "
+                            "unambiguously described by this use case's own requirement evidence; "
+                            "sharing a validation, actor, or business object is insufficient."
+                        )
+                    ),
+                ],
+            )
+            extend_selections.extend(
+                selection
+                for selection in focused_model.extends
+                if selection.extending_use_case_id == extending_use_case_id
+            )
+        extend_model = RelationshipModel(extends=extend_selections)
     includes, derived, include_drops = _materialize_includes(
-        model, candidates, use_cases
+        include_model, candidates, use_cases
     )
-    extends, extend_drops = _materialize_extends(model, use_cases, specs_by_id)
+    extends, extend_drops = _materialize_extends(extend_model, use_cases, specs_by_id)
     relation_parts = {"includes": includes, "extends": extends}
     projected_associations, suppressed = _suppress_redundant_associations(
         associations, relation_parts, actors

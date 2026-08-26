@@ -171,6 +171,40 @@ def test_generate_specs_reports_only_per_use_case_task_boundaries(monkeypatch):
     }
 
 
+def test_generate_specs_projects_only_the_constraints_for_each_use_case(monkeypatch):
+    seen = {}
+
+    def fake_spec_for(uc, _by_id, _actors, _feedback=""):
+        seen[uc["id"]] = list(uc.get("_constraint_requirements") or [])
+        return {"use_case_id": uc["id"], "name": uc["name"]}
+
+    monkeypatch.setattr(s3, "_spec_for", fake_spec_for)
+    state = {
+        "use_cases": [_uc("UC1"), _uc("UC2")],
+        "classified": [
+            *_CLASSIFIED,
+            {"id": "R3", "text": "The first operation preserves its balance.", "type": "FR"},
+        ],
+        "actors": [],
+        "traceability": {
+            "requirements": {
+                "R3": {
+                    "type": "FR",
+                    "text": "The first operation preserves its balance.",
+                    "constrains_use_cases": ["UC1"],
+                }
+            }
+        },
+    }
+
+    s3.generate_specs(state)
+
+    assert seen["UC1"] == [
+        {"id": "R3", "type": "FR", "text": "The first operation preserves its balance."}
+    ]
+    assert seen["UC2"] == []
+
+
 def test_generate_specs_respects_concurrency_cap(monkeypatch):
     monkeypatch.setattr(s3.settings, "spec_concurrency", 2)
     lock = threading.Lock()
@@ -238,6 +272,14 @@ def test_validate_spec_flags_ui_branch_control():
     assert "UI terms" in joined and "branch word" in joined and "control token" in joined
 
 
+def test_validate_spec_does_not_treat_a_domain_field_as_ui_mechanics():
+    main = [{"step_number": 1, "sentence": "The system modifies the requested record fields"}]
+
+    issues = _validate_spec(_spec(main, []))
+
+    assert not any("spec.black-box-no-ui-mechanics" in issue for issue in issues)
+
+
 def test_validate_spec_flags_missing_contract():
     main = [{"step_number": 1, "sentence": "actor acts"}]
     issues = _validate_spec(_spec(main, [], preconditions=[], success_guarantee=[]))
@@ -292,6 +334,23 @@ def test_empty_minimal_guarantee_is_preserved_in_the_validator_payload():
     payload = s3.spec_review_payload(item)
 
     assert payload["minimal_guarantee"] == []
+
+
+def test_spec_review_payload_keeps_constraints_separate_from_scenario_coverage():
+    item = {
+        "trigger": "start",
+        "preconditions": [],
+        "main_scenario": [],
+        "extensions": [],
+        "success_guarantee": ["complete"],
+        "minimal_guarantee": [],
+    }
+    constraints = [{"id": "R3", "text": "The operation preserves its balance.", "type": "FR"}]
+
+    payload = s3.spec_review_payload(item, constraints=constraints)
+
+    assert payload["constraints_it_must_respect"] == constraints
+    assert "requirements_it_must_cover" in payload
 
 
 def test_scenario_refs_are_retained_and_must_belong_to_the_owning_use_case(monkeypatch):
@@ -366,9 +425,23 @@ def test_reflection_loop_gives_up_when_regeneration_does_not_help(monkeypatch):
     spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
 
     assert spec["issues"]                        # 여전히 위반 → 표면화
-    assert spec["repair_stopped"] == "repeated_fingerprint"
-    assert spec["repair_iters"] == 1             # 시도는 1회에서 멈춘다
-    assert calls["n"] == 2                       # 최초 생성 + 재생성 1회뿐
+    assert spec["repair_stopped"] == "budget"
+    assert spec["repair_iters"] == 2             # 설정된 지역 예산까지만 시도한다
+    assert calls["n"] == 3                       # 최초 생성 + 재생성 2회
+
+
+def test_reflection_can_recover_after_one_repeated_sample(monkeypatch):
+    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
+    results = iter([_bad_spec(), _bad_spec(), _clean_spec()])
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: next(results))
+
+    spec = s3.generate_specs(
+        {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
+    )["use_case_specs"][0]
+
+    assert spec["issues"] == []
+    assert spec["repair_iters"] == 2
+    assert spec["repair_stopped"] == "clean"
 
 
 def test_reflection_loop_stops_at_repair_budget(monkeypatch):
@@ -407,7 +480,7 @@ def test_reflection_rejects_a_smaller_issue_list_with_new_keys(monkeypatch):
     replacement = _clean_spec(main_scenario=[
         _step(1, "System proceeds if the request is valid"),
     ])
-    results = iter([initial, replacement])
+    results = iter([initial, replacement, replacement])
     monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
     monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: next(results))
 
@@ -415,7 +488,8 @@ def test_reflection_rejects_a_smaller_issue_list_with_new_keys(monkeypatch):
         {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
     )["use_case_specs"][0]
 
-    assert item["repair_stopped"] == "no_improvement"
+    assert item["repair_stopped"] == "budget"
+    assert item["repair_iters"] == 2
     assert all("spec.black-box-no-ui-mechanics" in issue for issue in item["issues"])
 
 

@@ -85,6 +85,11 @@ def refine_requirements_prompt(
     - A refined statement may contain several cohesive steps from one user journey or lifecycle
       operations under one management responsibility. Do not merge a separate optional actor goal
       into its prerequisite goal merely because both were written in one source sentence.
+    - Preserve conditional and temporal context that explains when an optional goal becomes
+      available, and preserve an explicit statement that its prerequisite goal remains complete
+      without it. These clauses are relationship evidence for the optional goal, not independent
+      requirements: keep them in the same refined statement. Do not shorten them away or emit
+      them as separate requirementDrafts.
     - Separate every non-functional / quality constraint into its OWN statement. NEVER fuse a
       performance ("within 1 second", "within 500 ms"), load ("under 200 concurrent sessions"),
       security ("encrypted at rest"), reliability/atomicity ("recorded atomically"), or availability

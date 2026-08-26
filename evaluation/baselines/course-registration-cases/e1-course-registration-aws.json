@@ -10,7 +10,7 @@
     "A student shall view current registrations and the resulting class schedule.",
     "A student shall drop a selected registration during the allowed period and receive the result.",
     "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view. Viewing the schedule remains complete without an export.",
-    "When registration is rejected only because an offering is full and its waitlist is enabled, the student may join the waitlist. The rejected registration remains a complete result without joining.",
+    "When a student's request to register for a selected course offering is rejected only because that offering is full and its waitlist is enabled, the student may join the waitlist. The rejected registration request remains a complete result without joining.",
     "A student shall view and cancel their own waitlist entries.",
     "A professor shall review assigned course offerings and their current student rosters.",
     "An academic administrator shall create and update academic terms and their registration periods.",

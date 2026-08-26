@@ -116,11 +116,13 @@ class Traceability:
 
     @property
     def attached_nfr_ids(self) -> tuple[str, ...]:
-        """UC·배포 필요사항에 연결됐거나 전역 제약으로 판정된 NFR."""
+        """제약 또는 다른 요구사항 모델 요소로 근거 있게 반영된 NFR."""
         attached = (
             frozenset(self.ucs_constrained_by)
             | frozenset(self.deployment_needs_of)
             | self.constraint_ids
+            | frozenset(self.actors_of)
+            | frozenset(self.capabilities_of)
         )
         return tuple(sorted(self.nfr_ids & attached))
 

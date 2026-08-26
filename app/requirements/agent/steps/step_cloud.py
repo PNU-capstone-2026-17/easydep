@@ -25,6 +25,16 @@ from app.requirements.config import settings
 from app.requirements.schemas import CapabilityContract, DeploymentNeed, DeploymentNeedsResult
 
 _KEY = re.compile(r"^[a-z][a-z0-9_]*$")
+_DEPLOYMENT_BOUNDARY = re.compile(
+    r"\b(?:deploy(?:ment)?|infrastructure|server|virtual machine|vm|instance|"
+    r"region|zone|availability|failover|replica|restart|ingress|egress|network|"
+    r"https|tls|certificate|domain|container|runtime|environment variable|"
+    r"secret distribution|credential distribution|isolation|encrypt(?:ed|ion)? at rest|"
+    r"encrypt(?:ed|ion)? in transit|latency|response time|throughput|requests? per second|"
+    r"concurrent (?:users|sessions|requests)|cpu|memory|storage|disk|persist(?:ent|ence)?|"
+    r"durable|backup|observability|logging|metrics?|tracing)\b",
+    re.IGNORECASE,
+)
 _SYSTEM = """Derive deployment needs from the supplied software requirements.
 Return a generic deploymentNeeds dictionary. Each dictionary key is a concise,
 snake_case capability identifier chosen for this application. Keep product, language,
@@ -59,6 +69,12 @@ contain only constraints explicitly stated in the referenced requirements. Never
 defaults such as protocol versions, consistency levels, backup policies, replication, domain
 names, or certificate authorities. The `unresolved` list is only for a missing value clearly
 required to interpret an expressed constraint; it is not a generic deployment checklist.
+Authentication, authorization, validation, atomic transactions, concurrency handling, and
+business invariants are application behavior by default, not deployment capabilities. Include
+one only when the requirement explicitly changes the deployment boundary by naming an external
+dependency or a deploy-time concern such as credential or secret distribution, network access,
+runtime isolation, or infrastructure-managed protection. A security or reliability implication
+alone is not enough.
 When a requirement explicitly constrains application state, metadata may contain an
 `applicationState` object. Its optional keys are `durability`, `accessScope`, and `accessPath`.
 Use `accessScope: node-filesystem` only when the text explicitly says local, node, or VM
@@ -96,6 +112,16 @@ def _same_evidence(left: DeploymentNeed, right: DeploymentNeed) -> bool:
         first in second or second in first
         for first in left_spans for second in right_spans
     )
+
+
+def _has_deployment_boundary_evidence(
+    evidence_spans: list[str],
+    dependency_capability_ids: list[str],
+) -> bool:
+    """Accept only needs whose source text can affect deploy-time structure or binding."""
+    if dependency_capability_ids:
+        return True
+    return bool(_DEPLOYMENT_BOUNDARY.search(" ".join(evidence_spans)))
 
 
 def _ground_application_state_metadata(
@@ -326,6 +352,11 @@ def derive_deployment_needs(
             ),
             policy=policy,
         )
+        if decision == "accepted" and not _has_deployment_boundary_evidence(
+            spans, dependency_capability_ids
+        ):
+            decision = "abstained"
+            reason = "not-deployment-boundary"
         grounded_metadata, rejected_metadata = _ground_application_state_metadata(
             need.metadata, spans
         )

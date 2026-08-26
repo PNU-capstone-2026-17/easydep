@@ -327,16 +327,6 @@ def _audit_requirement_traceability(
                 subject=requirement_id,
             )
             continue
-        if (
-            requirement_id in constraint_ids
-            and decision.constrains_use_case_names is None
-        ):
-            telemetry.record_degradation(
-                "use_cases.traceability_slice",
-                "a non-functional constraint returned no constraint decision",
-                subject=requirement_id,
-            )
-            continue
         accepted[requirement_id] = decision
 
     functional_ids = set(functional_audit_ids)

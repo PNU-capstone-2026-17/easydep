@@ -356,6 +356,35 @@ def test_orphan_audit_maps_an_explicit_cross_cutting_fr_without_adding_a_use_cas
     assert calls["n"] == 2
 
 
+def test_a_shared_mandatory_action_is_realized_by_each_named_goal(monkeypatch):
+    def fake(schema, _messages):
+        if schema is UseCaseResult:
+            return _uc_result(["R1"], ["R2"])
+        return s2._RequirementTraceSlice(
+            requirement_id="R3",
+            realized_by_use_case_names=["UC1", "UC2"],
+        )
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases(
+        {
+            "classified": [
+                {"id": "R1", "text": "A user starts the first operation.", "type": "FR"},
+                {"id": "R2", "text": "A user starts the second operation.", "type": "FR"},
+                {
+                    "id": "R3",
+                    "text": "Both operations perform the same mandatory eligibility check.",
+                    "type": "FR",
+                },
+            ],
+            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+        }
+    )
+
+    assert all("R3" in use_case["requirement_ids"] for use_case in out["use_cases"])
+    assert out["constraint_applicability"] == {}
+
+
 def test_trace_slice_can_remove_an_unsupported_broad_multi_mapping(monkeypatch):
     def fake(schema, messages):
         if schema is UseCaseResult:
@@ -398,6 +427,26 @@ def test_actor_domain_fact_is_not_mislabeled_as_a_global_constraint(monkeypatch)
             "actors": [
                 {"name": "Student", "description": "member", "source_refs": ["R1", "R2"]}
             ],
+        }
+    )
+
+    assert out["constraint_applicability"] == {}
+
+
+def test_nfr_labeled_actor_fact_is_not_mislabeled_as_a_constraint(monkeypatch):
+    def fake(schema, _messages):
+        if schema is UseCaseResult:
+            return _uc_result(["R1"])
+        return s2._RequirementTraceSlice(requirement_id="N1")
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases(
+        {
+            "classified": [
+                {"id": "R1", "text": "A member views available courses.", "type": "FR"},
+                {"id": "N1", "text": "A student is a university member.", "type": "NFR"},
+            ],
+            "actors": [{"name": "Student", "description": "member", "source_refs": ["N1"]}],
         }
     )
 

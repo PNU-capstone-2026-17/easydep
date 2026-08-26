@@ -49,7 +49,10 @@ _CONTROL_TOKEN = re.compile(r"(success!|fail!)", re.IGNORECASE)
 # ⚠ 이 목록은 **완전목록이 아니다.** 그가 예로 든 단어(p.209·p.91-92)로만 한정한다 —
 # page/menu/form 등은 그의 예시에 없어 제외한다(form은 p.177에서 오히려 긍정적으로 등장).
 # 나머지 내부컴포넌트 누출 판단은 임의 사전이 아니라 LLM 검증자에 위임한다.
-_UI_TERMS = ("screen", "field", "fields", "button", "click", "clicks", "clicked", "tab")
+# ``field`` is also ordinary domain language (a record field, a field of study). A bare
+# occurrence therefore cannot prove a UI-mechanics violation. Explicit interaction terms stay
+# deterministic; ambiguous wording remains the semantic reviewer's responsibility.
+_UI_TERMS = ("screen", "button", "click", "clicks", "clicked", "tab")
 _UI_PATTERNS = {w: re.compile(rf"\b{re.escape(w)}\b", re.IGNORECASE) for w in _UI_TERMS}
 
 
