@@ -773,6 +773,17 @@ def _requires_cross_phase_repair(
             "no qualifying bean of type",
             "expected at least 1 bean which qualifies",
             "qualifies as autowire candidate",
+            # An HTTP-level E2E assertion is evidence that the test reached
+            # the real application graph.  The integration-test allowlist
+            # cannot repair a controller's Control/Boundary collaboration,
+            # so send it to cross-phase repair instead of consuming local
+            # test-only repair attempts.
+            "assertionfailederror",
+            "expected: <",
+            "but was: <",
+            "expected http ",
+            "data integrity violation",
+            "dataintegrityviolationexception",
         )
     )
 

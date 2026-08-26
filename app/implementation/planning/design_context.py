@@ -1277,6 +1277,19 @@ Rules:
 - Assert repository-backed persistence for the exercised flow. A test that only checks in-memory
   UI state is invalid; unrelated repositories do not need to be injected into this single flow test.
 - Assert observable HTTP responses, Boundary state, and repository state; do not call private methods or reproduce service logic inside the test.
+- Before writing each scenario, inspect the generated API controller, Control, and concrete Boundary
+  adapter used by that request.  Seed and call the exact identifiers and inputs that those contracts
+  require; a repository seed is not visible to a Control that delegates to a Boundary adapter.
+- Include every required path, query, header, and body parameter from the generated API signature.
+  Do not omit a required query parameter merely because its value also appears elsewhere in the test.
+- When a concrete stateful Boundary adapter exposes a public deterministic configuration or submission
+  seam, use that existing seam to configure the exact response consumed by the real Control.  Do not
+  assume a non-null return value, fabricate a second bean, or modify production sources.
+- When a request causes persistence with a foreign-key reference, seed the referenced record using the
+  exact identifier that the request passes through the Control.  Do not substitute a display name,
+  username, or unrelated fixture key.
+- For a generic/Object request body, send JSON compatible with the generated controller's conversion
+  contract.  Do not assume Spring preserves a BCE input type placed inside `HttpEntity<Object>`.
 - Do not weaken or disable Flyway/JPA and do not modify production sources.
 - Do not leave TODO, disabled tests, unconditional success assertions, or tests that merely check context loading.
 - Never accept multiple outcomes, omit a strict assertion, describe the test as simplified,

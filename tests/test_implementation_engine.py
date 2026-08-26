@@ -1685,6 +1685,25 @@ TestRestTemplate http; CourseRepository courseRepository;
                 },
             )
         )
+
+    def test_http_runtime_failure_in_integration_task_skips_local_llm_repair(self) -> None:
+        self.assertTrue(
+            _requires_cross_phase_repair(
+                "integration-test",
+                {
+                    "testResults": (
+                        "org.opentest4j.AssertionFailedError: expected: <201 CREATED> "
+                        "but was: <500 INTERNAL_SERVER_ERROR>"
+                    )
+                },
+            )
+        )
+        self.assertFalse(
+            _requires_cross_phase_repair(
+                "integration-test",
+                {"testResults": "error: cannot find symbol"},
+            )
+        )
         self.assertTrue(
             _requires_cross_phase_repair(
                 "integration-test",
