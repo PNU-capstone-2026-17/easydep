@@ -799,10 +799,19 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
     """Plan a domain-neutral real HTTP flow test or report executable gaps."""
     ir = build_implementation_ir(spec, run_root)
     gaps = detect_e2e_design_gaps(spec, run_root)
+    blocking_gaps = [
+        gap for gap in gaps
+        if str(gap.get("code") or "") != "OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED"
+    ]
     gap_report = {
         "schemaVersion": "implementation-design-gaps/v1alpha1",
         "phase": "end-to-end",
-        "status": "NEEDS_INPUT" if gaps else "READY",
+        # A missing executable error branch is retained as an audit warning.
+        # It must not prevent generation of the real HTTP test for the
+        # successful and already implemented paths. Structural gaps (missing
+        # production outputs or adapters) remain blocking because no test can
+        # be generated safely without those files.
+        "status": "NEEDS_INPUT" if blocking_gaps else ("WARNING" if gaps else "READY"),
         "gaps": gaps,
     }
     gap_path = run_root / "reports" / "design-gaps" / "end-to-end-flow.json"
@@ -813,7 +822,7 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
     # An integration test is immutable with respect to production sources.  It
     # cannot repair an unresolved API/controller implementation, so scheduling
     # it would only waste repair attempts and obscure the production defect.
-    if gaps:
+    if blocking_gaps:
         return []
     package_path = spec.base_package.replace(".", "/")
     package_root = run_root / "application" / "src" / "main" / "java" / package_path
