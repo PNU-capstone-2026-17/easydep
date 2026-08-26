@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import threading
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -612,9 +613,34 @@ class PrototypeOrchestrator:
             "message": message,
             "updatedAt": datetime.now(timezone.utc).isoformat(),
         }
-        temporary = progress_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(progress_path)
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=progress_path.parent,
+                prefix=f".{progress_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary_name = handle.name
+                json.dump(payload, handle, ensure_ascii=False)
+            temporary = Path(temporary_name)
+            for attempt in range(5):
+                try:
+                    os.replace(temporary, progress_path)
+                    temporary_name = None
+                    return
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
+        finally:
+            if temporary_name:
+                try:
+                    Path(temporary_name).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _ensure_puml2code_image(self) -> None:
         """Build the BCE generator image with its npm dependencies included.

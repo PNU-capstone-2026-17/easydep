@@ -132,6 +132,18 @@ from app.implementation.workflows.coordinator import (
 
 
 class ImplementationParallelismTest(unittest.TestCase):
+    def test_generation_progress_status_write_leaves_no_shared_temp_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            progress_path = Path(directory) / "generation-progress.json"
+            orchestrator = object.__new__(PrototypeOrchestrator)
+            orchestrator.spec = SimpleNamespace(progress_path=progress_path)
+            orchestrator.manifest = SimpleNamespace(status="")
+
+            orchestrator._set_status("RUNNING", "Generating sources")
+
+            self.assertEqual("RUNNING", json.loads(progress_path.read_text(encoding="utf-8"))["status"])
+            self.assertEqual(list(progress_path.parent.glob("*.tmp")), [])
+
     def test_atomic_state_write_uses_unique_temporary_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "reports" / "workflow-state.json"
