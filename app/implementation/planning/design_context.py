@@ -414,10 +414,27 @@ def generate_boundary_adapter_tasks(
     tasks: list[ImplementationTask] = []
     for boundary in boundaries:
         sequence_context = slice_sequence(sequence, {boundary.name})
+        # Messages are written with PlantUML aliases, so discover collaborating
+        # BCE contracts from the original participant declarations rather than
+        # searching the sliced text for canonical class names.
+        participant_aliases: dict[str, str] = {}
+        for raw in sequence.splitlines():
+            match = re.match(
+                r"^\s*(?:actor|boundary|control|entity|participant|database)\s+"
+                r"(?:\"(?P<quoted>[^\"]+)\"\s+as\s+(?P<quoted_alias>[A-Za-z_]\w*)|"
+                r"(?P<plain>[A-Za-z_]\w*)(?:\s+as\s+(?P<plain_alias>[A-Za-z_]\w*))?)",
+                raw,
+            )
+            if match:
+                display = match.group("quoted") or match.group("plain")
+                alias = match.group("quoted_alias") or match.group("plain_alias") or display
+                participant_aliases[alias] = display
         peers = {
-            name for name in class_names
-            if name != boundary.name
-            and re.search(rf"\b{re.escape(name)}\b", sequence_context)
+            participant_aliases[alias]
+            for alias in participant_aliases
+            if re.search(rf"\b{re.escape(alias)}\b", sequence_context)
+            and participant_aliases[alias] != boundary.name
+            and participant_aliases[alias] in class_names
         }
         contracts = read_generated_java_contracts(
             run_root, spec.base_package, {boundary.name, *peers}
@@ -1163,6 +1180,14 @@ Rules:
 - Map every documented OpenAPI response status below to an explicit, observable Control outcome.
   A null result must not be assigned an arbitrary status. If the generated contracts cannot
   represent a documented response, fail compilation rather than concealing the design gap.
+- Successful commands with no response body use `204` and may keep transport-level failures
+  (400/401/403/404/500/503) in the API contract for global validation, authorization, or
+  exception handling. Do not invent controller branches for those statuses. Domain decisions
+  such as `409` or `422` require a dedicated BCE result/outcome type; a `void`, entity, scalar,
+  or collection return cannot represent them.
+- `@ApiResponse` and `@ApiResponses` are documentation only. They never satisfy an executable
+  response mapping. Add a reachable `ResponseEntity` branch only for a status represented by
+  the exact Control contract; never add annotations as a substitute for missing behavior.
 - Map BCE return values into generated API DTOs field by field using exact public accessors.
 - Unit tests must cover every documented status and verify exact Control arguments.
 - Never leave placeholder, empty fallback, or speculative response comments in production code.
@@ -1218,6 +1243,7 @@ Rules:
 - Do not add REST mappings or edit generated BCE/API contracts. OpenAPI web adapters remain the HTTP boundary.
 - Do not annotate the adapter as a Spring bean yet; production bean ownership and cycle-free wiring are decided by the wiring phase.
 - Follow direction in the sequence: a Boundary-to-Control message delegates to that exact Control operation; a Control-to-Boundary message stores or exposes presentation/input state and must not call back into the Control.
+- Treat `->` as a request and `-->` as its return message. When the sequence contains a Boundary-to-Control request and the Boundary method returns a value, never implement it as `return null`; provide one minimal deterministic configuration/submission seam for the exact return value and delegate the request through the exact Control port.
 - Retain values received by `on*`, `show*`, or equivalent methods. Return the last submitted/configured value from matching `get*`, `ask*`, or `prompt*` methods.
 - When the interface has a return method but no submission method, accept the return value through a constructor or one explicit adapter-only submission method. Do not invent methods on BCE contracts.
 - Reject only clearly invalid null input needed to preserve adapter state; do not invent business validation absent from the contracts.
@@ -1700,7 +1726,32 @@ def select_openapi_operations(control: str, body: str, operations: list[str]) ->
 
 
 def slice_sequence(source: str, names: set[str]) -> str:
+    """Return messages involving the requested participants.
+
+    PlantUML sequence messages use aliases (``SignInB``), while the BCE
+    contract uses the participant's display name (``SignInBoundary``).  The
+    previous implementation only searched the raw message for the display
+    name, so a perfectly valid Boundary -> Control flow was reduced to
+    ``No directly matched sequence messages``.  That made the adapter prompt
+    explicitly forbid delegation and the generated adapter returned ``null``
+    at runtime.  Resolve participant aliases before selecting messages.
+    """
     lines = source.splitlines()
+    aliases: dict[str, set[str]] = {name: {name} for name in names}
+    participant_pattern = re.compile(
+        r"^\s*(?:actor|boundary|control|entity|participant|database)\s+"
+        r"(?:\"(?P<quoted>[^\"]+)\"\s+as\s+(?P<quoted_alias>[A-Za-z_]\w*)|"
+        r"(?P<plain>[A-Za-z_]\w*)(?:\s+as\s+(?P<plain_alias>[A-Za-z_]\w*))?)"
+    )
+    for raw in lines:
+        match = participant_pattern.match(raw)
+        if not match:
+            continue
+        display = match.group("quoted") or match.group("plain")
+        alias = match.group("quoted_alias") or match.group("plain_alias") or display
+        if display in aliases:
+            aliases[display].add(alias)
+    message_tokens = {alias for values in aliases.values() for alias in values}
     selected: list[str] = []
     active_blocks: list[str] = []
     emitted_blocks: set[str] = set()
@@ -1715,7 +1766,10 @@ def slice_sequence(source: str, names: set[str]) -> str:
         if stripped == "end" and active_blocks:
             active_blocks.pop()
             continue
-        if any(re.search(rf"\b{re.escape(name)}\b", raw) for name in names) and re.search(r"(?:->|-->)", raw):
+        if any(
+            re.search(rf"\b{re.escape(token)}\b", raw)
+            for token in message_tokens
+        ) and re.search(r"(?:->|-->)", raw):
             for block in active_blocks:
                 if block not in emitted_blocks:
                     selected.append(f"' enclosing branch: {block}")

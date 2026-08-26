@@ -337,6 +337,13 @@ def api_adapter_contract_violations(
                 )
             }
         )
+        # Only domain decisions must be observable in the adapter.  Validation,
+        # authorization, not-found, and infrastructure failures can be mapped
+        # by Spring's global exception handling; requiring a branch for each of
+        # them makes a void BCE command look like it can manufacture outcomes it
+        # does not actually expose.  409/422 remain strict because they are
+        # business outcomes and must be represented by the Control contract.
+        required_statuses = {409, 422}
         status_tokens = {
             200: ("ResponseEntity.ok", "HttpStatus.OK", "status(200)"),
             201: ("ResponseEntity.created", "HttpStatus.CREATED", "status(201)"),
@@ -392,11 +399,50 @@ def api_adapter_contract_violations(
             ),
         }
         for status in statuses:
+            if status not in required_statuses:
+                continue
             tokens = status_tokens.get(status)
             if tokens and not any(token in source for token in tokens):
                 violations.append(
-                    f"{normalized}: missing explicit HTTP {status} mapping from {api_name}"
+                    f"{normalized}: missing executable HTTP {status} mapping from {api_name}; "
+                    "@ApiResponse/@ApiResponses annotations are documentation only"
                 )
+    return violations
+
+
+def boundary_adapter_contract_violations(
+    sandbox: Path, allowed_write_paths: list[str], sequence: str = ""
+) -> list[str]:
+    """Reject a state adapter that discards a required Boundary -> Control flow.
+
+    A Boundary task may legitimately keep an optional value unset, but an
+    explicit request-to-Control message followed by a value response must not
+    be implemented as ``return null``.  That compiles and its focused adapter
+    test can still pass, only to make the first real E2E request return 401/404.
+    The sequence contract is used only to identify this required delegation;
+    no domain-specific method names are assumed.
+    """
+    if not sequence or "->" not in sequence:
+        return []
+    has_forward_flow = bool(
+        re.search(r"\b[A-Za-z_]\w*\s*->\s*[A-Za-z_]\w*\s*:", sequence)
+    )
+    if not has_forward_flow:
+        return []
+    violations: list[str] = []
+    for relative in allowed_write_paths:
+        normalized = relative.replace("\\", "/")
+        if "/src/main/" not in f"/{normalized}" or not normalized.endswith("Adapter.java"):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        source = path.read_text(encoding="utf-8")
+        if re.search(r"\breturn\s+null\s*;", source):
+            violations.append(
+                f"{normalized}: Boundary adapter discards a required sequence flow with `return null`; "
+                "delegate/configure the exact contract result instead"
+            )
     return violations
 
 

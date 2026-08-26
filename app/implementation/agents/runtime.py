@@ -30,6 +30,7 @@ from .verification.build import (
     production_placeholder_markers,
     production_test_library_markers,
     api_adapter_contract_violations,
+    boundary_adapter_contract_violations,
     verify_agent_workspace,
 )
 from .verification.e2e import (
@@ -262,21 +263,39 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
 
 
 def _render_missing_output_repair_prompt(
-    task_type: str, missing_outputs: list[str], contract_context: str = ""
+    task_type: str,
+    missing_outputs: list[str],
+    contract_context: str = "",
+    existing_outputs: str = "",
 ) -> str:
     """Keep missing-output retries small enough for agents that stopped silently."""
-    task_hint = (
-        "For this integration-test task, create a compiling real HTTP flow test. "
-        "Do not modify production code."
-        if task_type == "integration-test"
-        else "Use the existing generated application contract; do not inspect or list directories."
-    )
+    missing_test = any("/src/test/" in path.replace("\\", "/") for path in missing_outputs)
+    if task_type == "integration-test":
+        task_hint = (
+            "For this integration-test task, create a compiling real HTTP flow test. "
+            "Do not modify production code."
+        )
+    elif task_type == "api-adapter" and missing_test:
+        task_hint = (
+            "For this API-adapter task, create only the missing focused JUnit/Mockito "
+            "controller test. Instantiate the existing controller shown below, mock only "
+            "its injected BCE Controls, and cover its generated API operations. Do not "
+            "modify production code."
+        )
+    else:
+        task_hint = "Use the existing generated application contract; do not inspect or list directories."
     files = "\n".join(f"- `{path}`" for path in missing_outputs)
     contracts = (
         "\n\nExact generated contracts (immutable):\n```text\n"
         + contract_context
         + "\n```"
         if contract_context
+        else ""
+    )
+    existing = (
+        "\n\nExisting contracted source (read-only for this repair):\n"
+        + existing_outputs[:12000]
+        if existing_outputs
         else ""
     )
     return (
@@ -290,6 +309,7 @@ def _render_missing_output_repair_prompt(
         + "\n\nRequired missing outputs (absolute paths):\n"
         + files
         + contracts
+        + existing
     )
 
 
@@ -450,55 +470,79 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     )
                 ),
             )
-            conversation, agent = create_openhands_conversation(
-                sandbox,
-                round_allowed,
-                api_key,
-                task["llm"],
-                callbacks=[journal],
-                max_iterations=round_iteration_limit,
-                reasoning_effort=reasoning_effort,
-                system_prompt=(
-                    FRONTEND_SYSTEM_PROMPT
-                    if task_type == "frontend-implementation"
-                    else IMPLEMENTATION_SYSTEM_PROMPT
-                ),
-            )
-            conversation_error: Exception | None = None
-            with langsmith_metrics.trace_scope(
-                "easydep.implementation.openhands_conversation",
-                run_type="llm",
-                metadata={
-                    "agent": "implementation",
-                    "operation": "openhands_conversation",
-                    "run_id": run_root.name,
-                    "task_id": task_id,
-                    "app_id": app_id,
-                    "repair_attempt": repair_attempt,
-                    "ls_provider": "nvidia-nim",
-                    "ls_model_name": configured_model(str(task["llm"]["model"])),
-                },
-            ) as trace:
-                try:
-                    conversation.send_message(round_prompt)
-                    conversation.run()
-                except Exception as error:
-                    # A provider can reject the final turn after the agent has already
-                    # written every contracted output (for example, while emitting
-                    # `finish`). Treat the conversation as transport, then let the
-                    # output boundary and build verification decide whether the task
-                    # is usable. Never copy unverified files merely because they exist.
-                    conversation_error = error
-                    conversation_warning = (
-                        f"{error.__class__.__name__}: {error}"
-                    )
-                finally:
-                    usage = _conversation_token_usage(conversation)
-                    if usage is not None:
-                        trace.set_usage(
-                            input_tokens=usage[0], output_tokens=usage[1]
+            # A transient provider failure is a transport concern, not a source
+            # verification failure. Retry the same conversation round without
+            # consuming one of the bounded repair attempts; otherwise a NIM
+            # outage is reported misleadingly as missing files and the agent is
+            # sent an unnecessary (and expensive) repair prompt.
+            while True:
+                conversation, agent = create_openhands_conversation(
+                    sandbox,
+                    round_allowed,
+                    api_key,
+                    task["llm"],
+                    callbacks=[journal],
+                    max_iterations=round_iteration_limit,
+                    reasoning_effort=reasoning_effort,
+                    system_prompt=(
+                        FRONTEND_SYSTEM_PROMPT
+                        if task_type == "frontend-implementation"
+                        else IMPLEMENTATION_SYSTEM_PROMPT
+                    ),
+                )
+                conversation_error: Exception | None = None
+                with langsmith_metrics.trace_scope(
+                    "easydep.implementation.openhands_conversation",
+                    run_type="llm",
+                    metadata={
+                        "agent": "implementation",
+                        "operation": "openhands_conversation",
+                        "run_id": run_root.name,
+                        "task_id": task_id,
+                        "app_id": app_id,
+                        "repair_attempt": repair_attempt,
+                        "ls_provider": "nvidia-nim",
+                        "ls_model_name": configured_model(str(task["llm"]["model"])),
+                    },
+                ) as trace:
+                    try:
+                        conversation.send_message(round_prompt)
+                        conversation.run()
+                    except Exception as error:
+                        # A provider can reject the final turn after the agent has
+                        # already written every contracted output. Keep the warning
+                        # for the successful result, but retry transient failures
+                        # before consulting output or build verification.
+                        conversation_error = error
+                        conversation_warning = (
+                            f"{error.__class__.__name__}: {error}"
                         )
-                    conversation.close()
+                    finally:
+                        usage = _conversation_token_usage(conversation)
+                        if usage is not None:
+                            trace.set_usage(
+                                input_tokens=usage[0], output_tokens=usage[1]
+                            )
+                        conversation.close()
+                if conversation_error is None or not transient_provider_error(
+                    conversation_error
+                ):
+                    break
+                # A provider may fail while emitting its final response after
+                # the agent has already written every contracted file. In that
+                # case do not repeat the generation and risk overwriting valid
+                # work; continue to deterministic verification instead.
+                if not missing_required_outputs(
+                    sandbox, task["allowed_write_paths"]
+                ):
+                    break
+                provider_retries += 1
+                if provider_retries > MAX_PROVIDER_RETRIES:
+                    raise RuntimeError(
+                        "NVIDIA NIM remained unavailable after "
+                        f"{MAX_PROVIDER_RETRIES} transport retries"
+                    ) from conversation_error
+                time.sleep(provider_retry_delay(provider_retries))
 
             missing_outputs = missing_required_outputs(
                 sandbox, task["allowed_write_paths"]
@@ -511,14 +555,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     sandbox, task["allowed_write_paths"]
                 )
             if missing_outputs:
-                if conversation_error is not None and transient_provider_error(conversation_error):
-                    provider_retries += 1
-                    if provider_retries > MAX_PROVIDER_RETRIES:
-                        raise RuntimeError(
-                            "NVIDIA NIM remained unavailable after "
-                            f"{MAX_PROVIDER_RETRIES} transport retries"
-                        ) from conversation_error
-                    time.sleep(provider_retry_delay(provider_retries))
                 if repair_attempt >= MAX_VERIFICATION_REPAIRS:
                     missing_error = RuntimeError(
                         "Agent did not create required task outputs: "
@@ -540,6 +576,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     task_type,
                     round_allowed,
                     _repair_contract_context(context),
+                    read_allowed_sources(
+                        sandbox,
+                        [
+                            path
+                            for path in task["allowed_write_paths"]
+                            if path not in missing_outputs
+                        ],
+                    ),
                 )
                 continue
 
@@ -591,6 +635,31 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                                 "durationMs": 0,
                                 "stdout": "",
                                 "stderr": "\n".join(adapter_violations),
+                                "testResults": "",
+                            }
+                        )
+                if task_type == "boundary-adapter":
+                    sequence_context = ""
+                    context_file = task.get("context_file")
+                    if context_file:
+                        try:
+                            task_context = json.loads(
+                                (run_root / str(context_file)).read_text(encoding="utf-8")
+                            )
+                            sequence_context = str(task_context.get("sequence", ""))
+                        except (OSError, json.JSONDecodeError):
+                            sequence_context = ""
+                    boundary_violations = boundary_adapter_contract_violations(
+                        sandbox, list(task["allowed_write_paths"]), sequence_context
+                    )
+                    if boundary_violations:
+                        raise WorkspaceVerificationError(
+                            {
+                                "command": ["boundary-adapter-contract-gate"],
+                                "exitCode": 1,
+                                "durationMs": 0,
+                                "stdout": "",
+                                "stderr": "\n".join(boundary_violations),
                                 "testResults": "",
                             }
                         )

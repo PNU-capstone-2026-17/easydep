@@ -55,6 +55,7 @@ from app.implementation.agents.verification.build import (
     production_placeholder_markers,
     production_test_library_markers,
     api_adapter_contract_violations,
+    boundary_adapter_contract_violations,
     persistence_reserved_identifier_markers,
     ensure_persistence_schema_test,
     repair_persistence_schema_table_quoting,
@@ -94,6 +95,7 @@ from app.implementation.planning.design_context import (
     slice_sequence,
     _e2e_persistence_paths,
 )
+from app.implementation.application.jobs import _unrepresentable_openapi_error_outcomes
 from app.implementation.workflows.completion import audit_run_completion
 from app.implementation.agents.verification.e2e import e2e_contract_violations
 from app.implementation.agents.verification.e2e import (
@@ -1140,6 +1142,18 @@ class LoadJobTest(unittest.TestCase):
         self.assertIn("Exact generated contracts", contract_prompt)
         self.assertIn("String execute(String value)", contract_prompt)
 
+        api_test_prompt = _render_missing_output_repair_prompt(
+            "api-adapter",
+            ["C:/agent/application/src/test/java/example/OrdersApiControllerTest.java"],
+            "interface OrdersApi { ResponseEntity<Object> getOrder(String orderId); }",
+            "### application/src/main/java/example/OrdersApiController.java\n"
+            "```java\nclass OrdersApiController {}\n```",
+        )
+        self.assertIn("JUnit/Mockito controller test", api_test_prompt)
+        self.assertIn("Do not modify production code", api_test_prompt)
+        self.assertIn("Existing contracted source", api_test_prompt)
+        self.assertIn("OrdersApiController", api_test_prompt)
+
     def test_task_verification_avoids_full_packaging_and_targets_owned_tests(self) -> None:
         command = task_verification_command(
             ["gradlew"],
@@ -1396,8 +1410,10 @@ void use(String value) {}
                 encoding="utf-8",
             )
             violations = api_adapter_contract_violations(sandbox, [relative])
-            self.assertTrue(any("HTTP 204" in item for item in violations))
-            self.assertTrue(any("HTTP 404" in item for item in violations))
+            # 204/404 may be handled by the normal command/null-result path;
+            # only a domain conflict requires an executable adapter outcome.
+            self.assertFalse(any("HTTP 204" in item for item in violations))
+            self.assertFalse(any("HTTP 404" in item for item in violations))
             self.assertTrue(any("HTTP 409" in item for item in violations))
 
             path.write_text(
@@ -1405,6 +1421,20 @@ void use(String value) {}
                 "ResponseEntity<Void> drop() { return ResponseEntity.noContent().build(); } "
                 "ResponseEntity<Void> missing() { return ResponseEntity.notFound().build(); } "
                 "ResponseEntity<Void> conflict() { return ResponseEntity.status(HttpStatus.CONFLICT).build(); } }",
+                encoding="utf-8",
+            )
+            self.assertEqual([], api_adapter_contract_violations(sandbox, [relative]))
+
+            api.write_text(
+                '@ApiResponse(responseCode = "400")\n'
+                '@ApiResponse(responseCode = "403")\n'
+                '@ApiResponse(responseCode = "500")\n'
+                '@ApiResponse(responseCode = "503")\n'
+                'interface StudentsApi {}',
+                encoding="utf-8",
+            )
+            path.write_text(
+                "public class StudentsApiController implements StudentsApi { }",
                 encoding="utf-8",
             )
             self.assertEqual([], api_adapter_contract_violations(sandbox, [relative]))
@@ -1738,6 +1768,8 @@ TestRestTemplate http; CourseRepository courseRepository;
         self.assertIn("public no-argument constructor", prompt)
         self.assertIn("com.example.demo.bce.RegistrationControl", prompt)
         self.assertIn("resource-named substitute", prompt)
+        self.assertIn("transport-level failures", prompt)
+        self.assertIn("documentation only", prompt)
 
     def test_production_placeholder_gate_ignores_tests_and_rejects_main_java(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3794,6 +3826,33 @@ end
         self.assertIn("enclosing branch: alt valid", scoped)
         self.assertNotIn("ErrorScreen", scoped)
 
+    def test_scopes_sequence_messages_through_plantuml_aliases(self) -> None:
+        sequence = """@startuml UC1
+boundary "SignInBoundary" as SignInB
+control "SignInController" as SignInC
+StudentA -> SignInB : signIn(username:String,password:String)
+SignInB -> SignInC : authenticate(username:String,password:String)
+SignInC --> SignInB : AuthenticationToken
+@enduml
+"""
+        scoped = slice_sequence(sequence, {"SignInBoundary"})
+        self.assertIn("SignInB -> SignInC : authenticate", scoped)
+        self.assertNotIn("No directly matched sequence messages", scoped)
+
+    def test_boundary_gate_rejects_null_for_forward_sequence_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = "application/src/main/java/example/adapter/in/boundary/SignInBoundaryAdapter.java"
+            path = root / relative
+            path.parent.mkdir(parents=True)
+            path.write_text("class SignInBoundaryAdapter { Object signIn() { return null; } }", encoding="utf-8")
+            violations = boundary_adapter_contract_violations(
+                root,
+                [relative],
+                "boundary \"SignInBoundary\" as SignInB\ncontrol \"SignInController\" as SignInC\nSignInB -> SignInC : authenticate()",
+            )
+            self.assertEqual(1, len(violations))
+
     def test_parses_openapi_operations_without_yaml_dependency(self) -> None:
         source = """openapi: 3.0.3
 paths:
@@ -4058,6 +4117,51 @@ class ApplicationConfiguration {
         self.assertIn("resolve exactly", hints)
         self.assertIn("remove any extra suffix", hints)
         self.assertIn("exact HTTP verb", hints)
+
+    def test_runtime_failure_hints_explain_executable_api_status_gate(self) -> None:
+        hints = verification_failure_hints(
+            "missing executable HTTP 409 mapping from CoursesApi; "
+            "@ApiResponse/@ApiResponses annotations are documentation only"
+        )
+        self.assertIn("documentation only", hints)
+        self.assertIn("Transport-level statuses", hints)
+        self.assertIn("409/422", hints)
+
+    def test_void_or_entity_control_cannot_back_domain_error_response(self) -> None:
+        class_diagram = """
+class RegistrationController <<Control>> {
+  +removeEnrollment(studentId : String, courseId : String): void
+  +enrollStudent(studentId : String, courseId : String): Enrollment
+}
+class Enrollment <<Entity>> {
+}
+"""
+        api_spec = {
+            "paths": {
+                "/enrollments": {
+                    "post": {
+                        "x-easydep-control": {
+                            "control": "RegistrationController",
+                            "method": "enrollStudent",
+                        },
+                        "responses": {"201": {}, "409": {}},
+                    },
+                    "delete": {
+                        "x-easydep-control": {
+                            "control": "RegistrationController",
+                            "method": "removeEnrollment",
+                        },
+                        "responses": {"204": {}, "403": {}, "500": {}},
+                    },
+                }
+            }
+        }
+
+        findings = _unrepresentable_openapi_error_outcomes(class_diagram, api_spec)
+
+        self.assertEqual(1, len(findings))
+        self.assertIn("enrollStudent", findings[0])
+        self.assertIn("409", findings[0])
 
     def test_event_journal_writes_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

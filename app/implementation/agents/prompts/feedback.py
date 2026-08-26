@@ -197,6 +197,14 @@ def verification_failure_hints(output: str) -> str:
                 "exact BCE input using its public constructor/accessors; for an empty BCE DTO use "
                 "its public no-argument constructor, and map every shared field for non-empty DTOs."
             )
+    if "missing executable HTTP" in output or "missing explicit HTTP" in output:
+        hints.append(
+            "- API response contract: @ApiResponse/@ApiResponses annotations are documentation only. "
+            "Transport-level statuses (400/401/403/404/500/503) may be handled by global exception "
+            "mapping and do not need fabricated controller branches. For a reported 409/422, add a "
+            "reachable ResponseEntity branch only when the exact Control contract exposes a domain "
+            "result/outcome; do not guess an error condition from a void, entity, or collection return."
+        )
     if re.search(r"package\s+[\w.]+\s+does not exist|cannot find symbol", output):
         hints.append(
             "- Project contract import: remove invented project packages or types. Inspect the "
