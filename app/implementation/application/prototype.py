@@ -135,6 +135,14 @@ class PrototypeClient:
         write("openapi", "openapi.json", _normalize_openapi_path_parameters(design.get("api_spec")))
         write("erd", "erd.puml", design.get("erd_puml"))
         write("deployment", "deployment-diagram.puml", design.get("deployment_diagram_puml"))
+        # The PlantUML deployment diagram is a rendered view.  Preserve its
+        # structured bundle as an implementation input so deterministic IaC
+        # generation can use the same resource projection reviewed in design.
+        write(
+            "deploymentBundle",
+            "deployment-diagram-bundle.json",
+            design.get("deployment_diagram_bundle"),
+        )
         write("cloud", "resource-spec.json", design.get("resource_spec"))
         job = {
             "name": f"easydep-{app_id[:8]}",

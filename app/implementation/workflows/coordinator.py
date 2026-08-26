@@ -860,18 +860,24 @@ def _render_deployment_if_configured(
     intent = spec.inputs.get("deploymentIntent")
     cloud = spec.inputs.get("cloud")
     deployment = spec.inputs.get("deployment")
+    deployment_bundle = spec.inputs.get("deploymentBundle")
     if (intent and intent.is_file()) or (cloud and cloud.is_file()):
-        deployment_report = render_deployment(run_root, spec)
-        iac_report = None
-        if cloud and cloud.is_file():
-            iac_report = render_iac(run_root, spec)
-        return deployment_report, iac_report
-    elif deployment and deployment.is_file():
+        deployment_report = render_deployment(
+            run_root, spec, include_kubernetes=False
+        )
+    elif deployment and deployment.is_file() and not (
+        deployment_bundle and deployment_bundle.is_file()
+    ):
         raise ValueError(
             "Deployment rendering requires deploymentIntent or a cloud resource "
             "specification"
         )
-    return None, None
+    else:
+        deployment_report = None
+    iac_report = None
+    if (cloud and cloud.is_file()) or (deployment_bundle and deployment_bundle.is_file()):
+        iac_report = render_iac(run_root, spec, include_kubernetes=False)
+    return deployment_report, iac_report
 
 
 def _complete_release(
