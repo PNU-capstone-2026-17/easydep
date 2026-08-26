@@ -18,6 +18,7 @@ class ArchitectureState(TypedDict, total=False):
     capability_contract: dict[str, Any]
     resource_intake: dict[str, Any]
     usecase_spec: dict[str, Any]
+    relationships: dict[str, Any]
     usecase_diagram_puml: str
     usecase_diagram_syntax_valid: bool
     usecase_diagram_syntax_errors: list[str]
