@@ -207,9 +207,11 @@ from normal domain practice or numeric coverage.
 If the requirement explicitly states a rule, invariant, concurrency condition, precondition, or
 postcondition for named existing operations, list those exact operations in
 constrains_use_case_names and leave realized_by_use_case_names empty. A system-wide policy whose
-targets are not explicitly identified may leave both lists empty. If it is a subfunction explicitly
-shared and performed by named goals, put those goals in realized_by_use_case_names. If it states
-one independently initiated actor goal absent from the proposal, return that one goal as
+targets are not explicitly identified uses an empty constrains_use_case_names list. Set
+constrains_use_case_names to null only when the requirement is neither a user goal nor a
+constraint on use-case behavior, such as a declarative actor or domain fact. If it is a subfunction
+explicitly shared and performed by named goals, put those goals in realized_by_use_case_names. If
+it states one independently initiated actor goal absent from the proposal, return that one goal as
 missing_use_case. Never turn authentication state, authorization policy, persistence, concurrency
 policy, or an internal validation into a new actor goal. Never put the same use case in both lists.
 Preserve the supplied requirement_id exactly."""
@@ -223,7 +225,9 @@ existing use-case name in constrains_use_case_names only when that link, the con
 accepted requirement explicitly singles out the goal or operation. Leave it empty for a
 system-wide constraint or when applicability is ambiguous; never copy a constraint to every use
 case merely to improve coverage. Always leave realized_by_use_case_names empty and
-missing_use_case null because a non-functional constraint never creates or realizes an actor goal.
+missing_use_case null. Always return constrains_use_case_names as a list: use [] for a global or
+ambiguous constraint, never null, because a non-functional constraint remains a constraint even
+without a UC-local target. A non-functional constraint never creates or realizes an actor goal.
 Preserve the supplied requirement_id exactly."""
 
 # 피드백 의도 분류 — 자연어 피드백을 {stage, scope, target_ids, instruction}로 분류.

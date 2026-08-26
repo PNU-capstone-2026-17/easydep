@@ -379,6 +379,29 @@ def test_trace_slice_can_remove_an_unsupported_broad_multi_mapping(monkeypatch):
     )
 
     assert all("R3" not in use_case["requirement_ids"] for use_case in out["use_cases"])
+    assert out["constraint_applicability"] == {}
+
+
+def test_actor_domain_fact_is_not_mislabeled_as_a_global_constraint(monkeypatch):
+    def fake(schema, _messages):
+        if schema is UseCaseResult:
+            return _uc_result(["R1"])
+        return s2._RequirementTraceSlice(requirement_id="R2")
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases(
+        {
+            "classified": [
+                {"id": "R1", "text": "A student views available courses.", "type": "FR"},
+                {"id": "R2", "text": "A student is a university member.", "type": "FR"},
+            ],
+            "actors": [
+                {"name": "Student", "description": "member", "source_refs": ["R1", "R2"]}
+            ],
+        }
+    )
+
+    assert out["constraint_applicability"] == {}
 
 
 def test_constraint_slices_attach_only_explicitly_scoped_nfrs(monkeypatch):

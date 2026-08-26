@@ -38,7 +38,9 @@ class _RequirementTraceSlice(BaseModel):
 
     requirement_id: str = Field(min_length=1)
     realized_by_use_case_names: list[str] = Field(default_factory=list)
-    constrains_use_case_names: list[str] = Field(default_factory=list)
+    # None means this requirement has no UC relationship (for example an actor/domain fact).
+    # [] means it is explicitly a system-wide constraint with no justified UC-local target.
+    constrains_use_case_names: list[str] | None = None
     missing_use_case: _MissingUseCaseCandidate | None = None
 
 
@@ -301,7 +303,7 @@ def _audit_requirement_traceability(
             _actor_key(name) for name in decision.realized_by_use_case_names
         }
         constrained_keys = {
-            _actor_key(name) for name in decision.constrains_use_case_names
+            _actor_key(name) for name in (decision.constrains_use_case_names or [])
         }
         unknown = sorted((realized_keys | constrained_keys) - known_names)
         if unknown:
@@ -325,6 +327,16 @@ def _audit_requirement_traceability(
                 subject=requirement_id,
             )
             continue
+        if (
+            requirement_id in constraint_ids
+            and decision.constrains_use_case_names is None
+        ):
+            telemetry.record_degradation(
+                "use_cases.traceability_slice",
+                "a non-functional constraint returned no constraint decision",
+                subject=requirement_id,
+            )
+            continue
         accepted[requirement_id] = decision
 
     functional_ids = set(functional_audit_ids)
@@ -337,10 +349,14 @@ def _audit_requirement_traceability(
     }
     constraint_targets = {
         requirement_id: {
-            _actor_key(name) for name in decision.constrains_use_case_names
+            _actor_key(name) for name in (decision.constrains_use_case_names or [])
         }
         for requirement_id, decision in accepted.items()
-        if not decision.realized_by_use_case_names and decision.missing_use_case is None
+        if (
+            decision.constrains_use_case_names is not None
+            and not decision.realized_by_use_case_names
+            and decision.missing_use_case is None
+        )
     }
     updated: list[UseCase] = []
     for use_case in raw_use_cases:
@@ -366,9 +382,9 @@ def _audit_requirement_traceability(
             "nfr_ids": list(dict.fromkeys(nfr_ids)),
         }))
 
-    # An accepted empty FR decision means the requirement is a tracked constraint rather
-    # than a user goal. Remove a skeleton-only use case once it has no realized FR left;
-    # the requirement itself stays in ``classified`` and therefore in the RTM.
+    # A functional decision with no realization is not an actor goal. Remove a skeleton-only
+    # use case once it has no realized FR left; the requirement itself stays in ``classified``
+    # and therefore remains traceable as a constraint or other model evidence.
     updated = [use_case for use_case in updated if use_case.requirement_ids]
     existing_names = {_actor_key(use_case.name) for use_case in updated}
     for requirement_id in functional_audit_ids:
