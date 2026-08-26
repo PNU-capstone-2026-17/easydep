@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -641,11 +641,10 @@ def _execute_task_batch(
     state_path = run_root / "reports" / "workflow-state.json"
     workers = min(max(1, max_workers), len(tasks))
     for task in tasks:
-        # Only worker slots are active at once.  Remaining tasks are submitted
-        # to the pool but stay pending in the durable state so the UI does not
-        # claim that the entire batch is executing concurrently.
-        task["status"] = "RUNNING" if tasks.index(task) < workers else "PENDING"
-        task["attempts"] = int(task.get("attempts", 0)) + 1
+        # A task is marked RUNNING only immediately before it is submitted to
+        # an available worker.  In particular, do not increment attempts for
+        # queued tasks: a pending task has not started yet.
+        task["status"] = "PENDING"
     state["updatedAt"] = _now()
     _write_json_atomic(state_path, state)
 
@@ -657,27 +656,17 @@ def _execute_task_batch(
             )
         return result
 
-    futures: list[Future[dict[str, object]]] = []
-    if workers == 1:
-        # Preserve the original calling-thread behavior when parallelism is
-        # disabled or a dependency/overlap reduced this to a singleton batch.
-        for task in tasks:
-            future: Future[dict[str, object]] = Future()
-            try:
-                future.set_result(run(task))
-            except Exception as error:
-                future.set_exception(error)
-            futures.append(future)
-    else:
-        with ThreadPoolExecutor(
-            max_workers=workers, thread_name_prefix="easydep-implementation-task"
-        ) as pool:
-            futures = [pool.submit(run, task) for task in tasks]
+    def mark_started(task: dict[str, object]) -> None:
+        task["status"] = "RUNNING"
+        task["attempts"] = int(task.get("attempts", 0)) + 1
+        state["updatedAt"] = _now()
+        _write_json_atomic(state_path, state)
 
     failures: list[tuple[dict[str, object], Exception]] = []
-    # Futures are consumed in manifest order, not completion order, so state and
-    # error selection remain deterministic even though the work runs in parallel.
-    for task, future in zip(tasks, futures):
+
+    def record_completion(
+        task: dict[str, object], future: Future[dict[str, object]]
+    ) -> None:
         try:
             future.result()
         except Exception as error:
@@ -695,6 +684,57 @@ def _execute_task_batch(
             task["lastError"] = None
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
+
+    if workers == 1:
+        # Preserve the original calling-thread behavior when parallelism is
+        # disabled or a dependency/overlap reduced this to a singleton batch.
+        for task in tasks:
+            mark_started(task)
+            future: Future[dict[str, object]] = Future()
+            try:
+                future.set_result(run(task))
+            except Exception as error:
+                future.set_exception(error)
+            record_completion(task, future)
+    else:
+        next_index = 0
+        active: dict[Future[dict[str, object]], dict[str, object]] = {}
+
+        def submit_next(pool: ThreadPoolExecutor) -> None:
+            nonlocal next_index
+            if next_index >= len(tasks):
+                return
+            task = tasks[next_index]
+            next_index += 1
+            mark_started(task)
+            active[pool.submit(run, task)] = task
+
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="easydep-implementation-task"
+        ) as pool:
+            # Keep no more than ``workers`` futures submitted at once.  This
+            # makes the durable PENDING/RUNNING state reflect actual execution
+            # instead of the executor's private unbounded queue.
+            for _ in range(workers):
+                submit_next(pool)
+            while active:
+                completed, _ = wait(active, return_when=FIRST_COMPLETED)
+                # Completion order is nondeterministic; process a group in
+                # manifest order so the checkpoint and selected error remain
+                # stable across runs.
+                done_tasks = sorted(
+                    ((future, active[future]) for future in completed),
+                    key=lambda item: tasks.index(item[1]),
+                )
+                for future, task in done_tasks:
+                    active.pop(future, None)
+                    record_completion(task, future)
+                # Refill only after every completed task in this checkpoint
+                # group has transitioned out of RUNNING.  Otherwise a fast
+                # completion group could briefly show a finished task and its
+                # replacement as RUNNING at the same time in the UI.
+                for _ in done_tasks:
+                    submit_next(pool)
 
     if failures:
         failed_task, _ = failures[0]

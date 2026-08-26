@@ -37,6 +37,16 @@
       (event) => event.stage === 'implementation' && event.kind === 'error'
     )?.event_id
   );
+  let implementationCompletionEventId = $derived(
+    [...events]
+      .reverse()
+      .find(
+        (event) =>
+          event.stage === 'implementation' &&
+          event.kind === 'status' &&
+          String(event.metadata?.status ?? '') === 'COMPLETED'
+      )?.event_id ?? 0
+  );
   let implementationTimelineResetId = $derived(
     [...events]
       .reverse()
@@ -120,6 +130,12 @@
         ) &&
         !(
           event.stage === 'implementation' &&
+          event.kind === 'progress' &&
+          implementationCompletionEventId > 0 &&
+          event.event_id < implementationCompletionEventId
+        ) &&
+        !(
+          event.stage === 'implementation' &&
           event.metadata?.reset_implementation_timeline === true
         ) &&
         (event.kind !== 'status' || eventArtifactStages(event).length > 0) &&
@@ -164,6 +180,8 @@
     if (
       event.stage === 'implementation' &&
       (event.kind === 'progress' ||
+        (event.kind === 'status' &&
+          String(event.metadata?.status ?? '') === 'COMPLETED') ||
         (event.actor === 'assistant' &&
           String(event.metadata?.status ?? '') === 'COMPLETED'))
     ) {
