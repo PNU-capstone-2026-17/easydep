@@ -225,3 +225,35 @@ class TermController <<Control>> {
     }
 
     assert fields == {"year": "integer", "openDate": "string"}
+
+
+def test_body_collection_field_is_normalized_to_json_array() -> None:
+    model = {
+        "Endpoints": [{
+            "request_schema": "ScheduleFormatRequest",
+            "control_binding": {
+                "control": "ScheduleController",
+                "method": "formatSchedule",
+                "arguments": [
+                    {"name": "schedule", "source": "$body.schedule"},
+                    {"name": "format", "source": "$body.format"},
+                ],
+            },
+        }],
+        "Schemas": [{
+            "name": "ScheduleFormatRequest",
+            "fields": [
+                {"name": "schedule", "type": "string"},
+                {"name": "format", "type": "string"},
+            ],
+        }],
+    }
+    class_diagram = """@startuml
+class ScheduleController <<Control>> {
+  + formatSchedule(schedule : List<Enrollment>, format : String): String
+}
+@enduml"""
+
+    normalized = normalize_api_spec_model(model, class_diagram)
+
+    assert normalized["Schemas"][0]["fields"][0]["type"] == "array"

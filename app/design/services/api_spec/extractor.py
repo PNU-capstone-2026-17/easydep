@@ -255,6 +255,14 @@ def _control_parameter_types(
 
 def _api_field_type_for_control(type_name: str) -> str:
     token = re.sub(r"\s+", "", type_name).lower()
+    # Collection-valued Control parameters are JSON arrays on the wire.  The
+    # previous fallback treated ``List<Enrollment>`` as a string, producing a
+    # syntactically valid OpenAPI document that could never satisfy the BCE
+    # binding validator.
+    if re.match(r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>", token):
+        return "array"
+    if token.endswith("[]"):
+        return "array"
     if token in {"byte", "short", "int", "integer", "long"}:
         return "integer"
     if token in {"float", "double", "bigdecimal", "number"}:
