@@ -21,11 +21,31 @@ from app.implementation.interfaces.schemas import (
     CreateImplementationFeedbackJobRequest,
     CreateImplementationJobRequest,
 )
-from app.implementation.application.jobs import ImplementationWorker, InvalidJobState
+from app.implementation.application.jobs import (
+    ImplementationWorker,
+    InvalidJobState,
+    _missing_bce_contract_types,
+)
 
 
 def test_job_contract_preserves_automated_placeholder_policy() -> None:
     assert CreateImplementationJobRequest().allow_assumptions is True
+
+
+def test_missing_bce_signature_type_is_detected_before_implementation() -> None:
+    puml = """
+    @startuml
+    class CourseCatalogController <<Control>> {
+      + browseCourses(filter : CourseFilter): List<Course>
+      + findCourse(): MissingResult
+    }
+    class Course <<Entity>> {
+      - filter : CourseFilter
+    }
+    @enduml
+    """
+
+    assert _missing_bce_contract_types(puml) == ["CourseFilter", "MissingResult"]
 
 
 def test_needs_input_workflow_exposes_the_design_blocker_in_job_error(tmp_path: Path) -> None:

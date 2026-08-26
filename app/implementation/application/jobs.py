@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -31,9 +32,17 @@ from .prototype import PrototypeClient
 _IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
     "api.operations-present",
     "erd.surrogate-key-collides",
+    "class.contract-types-exist",
 })
 _OPENAPI_HTTP_METHODS = frozenset({
     "delete", "get", "head", "options", "patch", "post", "put", "trace",
+})
+_JAVA_CONTRACT_TYPES = frozenset({
+    "String", "Object", "boolean", "Boolean", "byte", "Byte", "char", "Character",
+    "short", "Short", "int", "Integer", "long", "Long", "float", "Float", "double",
+    "Double", "void", "Void", "List", "Set", "Map", "Collection", "Iterable",
+    "Optional", "Page", "UUID", "Date", "LocalDate", "LocalDateTime", "OffsetDateTime",
+    "Instant", "BigDecimal",
 })
 
 
@@ -55,6 +64,67 @@ def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bo
         if isinstance(finding, dict)
         for rule_id in _IMPLEMENTATION_BLOCKING_DESIGN_RULES
     )
+
+
+def _missing_bce_contract_types(class_diagram: object) -> list[str]:
+    """Find custom Java types used by BCE signatures but not declared in the BCE diagram.
+
+    A missing request type is otherwise silently downgraded by OpenAPI generation to
+    ``Object``.  The API adapter cannot then convert the request to the Control input
+    without inventing a contract, so this must be reported before any LLM task starts.
+    """
+    source = str(class_diagram or "")
+    declarations = set(re.findall(
+        r"(?im)^\s*(?:class|interface|entity)\s+(?:\"[^\"]+\"\s+as\s+)?([A-Za-z_]\w*)",
+        source,
+    ))
+    if not declarations:
+        return []
+    missing: set[str] = set()
+    in_class = False
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if line.startswith(("class ", "interface ", "entity ")):
+            in_class = True
+            continue
+        if in_class and line == "}":
+            in_class = False
+            continue
+        if not in_class or not line.startswith(("+", "-", "#", "~")) or ":" not in line:
+            continue
+        # Only inspect the declared type portions of fields, parameters, and returns.
+        type_text = line.split(":", 1)[1]
+        for token in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", type_text):
+            if token not in declarations and token not in _JAVA_CONTRACT_TYPES:
+                missing.add(token)
+    return sorted(missing)
+
+
+def _append_bce_contract_type_report(
+    readiness: dict[str, Any], class_diagram: object
+) -> dict[str, Any]:
+    missing = _missing_bce_contract_types(class_diagram)
+    if not missing:
+        return readiness
+    finding = (
+        "BCE method signatures reference undeclared type(s): "
+        + ", ".join(missing)
+        + " — declare the type in the class diagram before implementation "
+        "[class.contract-types-exist]"
+    )
+    result = {**readiness, "status": "NEEDS_INPUT"}
+    result["findings"] = [*list(readiness.get("findings") or []), {
+        "stage": "class_diagram", "finding": finding,
+    }]
+    stages = [dict(item) for item in readiness.get("stages") or [] if isinstance(item, dict)]
+    stage = next((item for item in stages if item.get("stage") == "class_diagram"), None)
+    if stage is None:
+        stages.append({"stage": "class_diagram", "status": "NEEDS_INPUT", "findings": [finding]})
+    else:
+        stage["status"] = "NEEDS_INPUT"
+        stage["findings"] = [*list(stage.get("findings") or []), finding]
+    result["stages"] = stages
+    return result
 
 
 def _has_rendered_openapi_operation(api_spec: object) -> bool:
@@ -134,7 +204,9 @@ class ImplementationWorker:
             )
             if not isinstance(design.get(key), dict) or not design[key]
         ]
-        readiness = design_readiness_report(design)
+        readiness = _append_bce_contract_type_report(
+            design_readiness_report(design), design.get("class_diagram_puml")
+        )
         # Prefer the concrete rendered-contract defect over a generic missing
         # model report: this is the exact reason both OpenAPI generators would
         # reject the hand-off.
