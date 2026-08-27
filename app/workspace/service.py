@@ -1333,7 +1333,7 @@ class WorkspaceService:
             current_phase = str(workflow.get("currentPhase") or "")
             tasks = [item for item in workflow.get("tasks", []) if isinstance(item, dict)]
             phase_statuses = {
-                str(phase.get("phaseId") or ""): str(phase.get("status") or "")
+                str(phase.get("phaseId") or ""): str(phase.get("status") or "").upper()
                 for phase in workflow.get("phases", [])
                 if isinstance(phase, dict)
             }
@@ -1349,21 +1349,21 @@ class WorkspaceService:
                     if str(task.get("phase") or "") in phase_ids
                 ]
                 task_statuses = {
-                    str(task.get("status") or "") for task in display_tasks
+                    str(task.get("status") or "").upper() for task in display_tasks
                 }
                 has_phase_work = bool(display_tasks) or any(
                     phase_statuses.get(phase_id) not in {None, "UNPLANNED"}
                     for phase_id in display_phases
                 )
                 all_succeeded = has_phase_work and all(
-                    phase_statuses.get(phase_id) in {"SUCCEEDED", "UNPLANNED"}
+                    phase_statuses.get(phase_id) in {"SUCCEEDED", "COMPLETED", "UNPLANNED"}
                     or (
                         any(
                             str(task.get("phase") or "") == phase_id
                             for task in display_tasks
                         )
                         and all(
-                            str(task.get("status") or "") == "SUCCEEDED"
+                            str(task.get("status") or "").upper() in {"SUCCEEDED", "COMPLETED"}
                             for task in display_tasks
                             if str(task.get("phase") or "") == phase_id
                         )
@@ -1375,7 +1375,7 @@ class WorkspaceService:
                 elif (
                     "FAILED" in task_statuses
                     or any(
-                        phase_statuses.get(phase_id) == "FAILED"
+                        phase_statuses.get(phase_id) in {"FAILED", "TIMEOUT"}
                         for phase_id in display_phases
                     )
                     or (terminal_failure and current_phase in phase_ids)
@@ -1387,7 +1387,7 @@ class WorkspaceService:
                         failure_detail if terminal_failure else "",
                     )
                 elif (
-                    workflow_status == "RUNNING"
+                    workflow_status.upper() == "RUNNING"
                     and current_phase in phase_ids
                 ) or "RUNNING" in task_statuses:
                     add_update(
