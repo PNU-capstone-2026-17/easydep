@@ -250,6 +250,14 @@ def verification_failure_hints(output: str) -> str:
                 "exact BCE input using its public constructor/accessors; for an empty BCE DTO use "
                 "its public no-argument constructor, and map every shared field for non-empty DTOs."
             )
+    if re.search(r"expected:\s*<\d+>\s+but\s+was:\s*<\d+>", output, re.IGNORECASE):
+        hints.append(
+            "- HTTP status assertion mismatch: inspect the exact OpenAPI response contract and "
+            "the controller's Control-result mapping before changing production code. In the "
+            "success test, stub the exact Control method with exact converted arguments and its "
+            "success value (for boolean results, `true`); reserve `false` for the documented "
+            "conflict/failure scenario. Assert the contract's status, not a generic 200."
+        )
     if "missing executable HTTP" in output or "missing explicit HTTP" in output:
         hints.append(
             "- API response contract: @ApiResponse/@ApiResponses annotations are documentation only. "

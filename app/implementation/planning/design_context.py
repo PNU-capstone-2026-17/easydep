@@ -1196,6 +1196,11 @@ Rules:
   A null result must not be assigned an arbitrary status. If the generated contracts cannot
   represent a documented response, report the design gap and keep every generated source and
   test compilable; never manufacture a failing or contradictory implementation to expose it.
+- Make the focused test arrangement match the executable binding exactly: when a boolean
+  Control result maps to a success status, stub the exact method and exact converted request
+  arguments to return `true`; when the same result maps to a conflict status, use `false`.
+  Do not rely on Mockito's default `false`, and do not assert success after arranging the
+  conflict value. Assert the status declared by this operation's OpenAPI contract.
 - Successful commands with no response body use `204` and may keep transport-level failures
   (400/401/403/404/500/503) in the API contract for global validation, authorization, or
   exception handling. Do not invent controller branches for those statuses. Domain decisions

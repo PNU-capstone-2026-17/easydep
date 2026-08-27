@@ -1983,6 +1983,7 @@ TestRestTemplate http; CourseRepository courseRepository;
         self.assertIn("documentation only", prompt)
         self.assertIn("exception expectation in a test", prompt)
         self.assertIn("keep every generated source and\n  test compilable", prompt)
+        self.assertIn("Do not rely on Mockito's default `false`", prompt)
 
     def test_production_placeholder_gate_ignores_tests_and_rejects_main_java(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -4615,6 +4616,16 @@ class ApplicationConfiguration {
         self.assertIn("documentation only", hints)
         self.assertIn("Transport-level statuses", hints)
         self.assertIn("409/422", hints)
+
+    def test_runtime_failure_hints_align_boolean_control_status_assertions(self) -> None:
+        hints = verification_failure_hints(
+            "StudentsApiControllerTest.registerStudentForCourse_success(): "
+            "AssertionFailedError: expected: <200> but was: <409>"
+        )
+
+        self.assertIn("HTTP status assertion mismatch", hints)
+        self.assertIn("stub the exact Control method", hints)
+        self.assertIn("success value", hints)
 
     def test_control_return_does_not_reject_domain_error_response(self) -> None:
         class_diagram = """
