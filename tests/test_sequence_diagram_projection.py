@@ -137,6 +137,24 @@ def test_collection_validation_rejects_bce_handoff_and_main_flow_reordering(
     assert "sequence.flow-order" in rules
 
 
+def test_collection_validation_requires_boundary_to_control_handoff(monkeypatch):
+    sequence, state = _projected_contract(monkeypatch)
+    messages = sequence["Diagrams"][0]["Messages"]
+    outer_call = messages[0]
+    outer_return = messages[-1]
+    outer_call["step_ids"] = ["UC1:main:1", "UC1:main:2"]
+    outer_return["step_ids"] = ["UC1:main:1", "UC1:main:2"]
+    sequence["Diagrams"][0]["Messages"] = [outer_call, outer_return]
+
+    report = validate_sequence_model(sequence, state)
+
+    assert any(
+        finding.rule_id == "sequence.message-bce-flow"
+        and "hand off to a Control" in finding.message
+        for finding in report.findings
+    )
+
+
 def test_collection_validation_rejects_return_before_its_call(monkeypatch):
     sequence, state = _projected_contract(monkeypatch)
     messages = sequence["Diagrams"][0]["Messages"]

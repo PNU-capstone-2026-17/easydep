@@ -2321,6 +2321,58 @@ def _collection_diagram_rule(
     return check
 
 
+def _collection_bce_flow(model: dict, state: dict) -> list[Finding]:
+    """Validate BCE direction and the actor-facing Boundary-to-Control handoff."""
+
+    findings: list[Finding] = []
+    for diagram in model.get("Diagrams") or []:
+        if not isinstance(diagram, dict):
+            continue
+        findings.extend(sequence_bce_flow(diagram, state))
+        participants = {
+            _participant_id(item): str(item.get("kind") or "").strip().lower()
+            for item in diagram.get("Participants") or []
+            if isinstance(item, dict)
+        }
+        messages = diagram.get("Messages") or []
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict):
+                continue
+            source = str(message.get("source") or "").strip()
+            boundary = str(message.get("target") or "").strip()
+            if (
+                str(message.get("type") or "sync").strip().lower() != "sync"
+                or participants.get(source) != "actor"
+                or participants.get(boundary) != "boundary"
+            ):
+                continue
+            call_id = str(message.get("call_id") or "").strip()
+            closing = next((
+                position
+                for position in range(index + 1, len(messages))
+                if isinstance(messages[position], dict)
+                and str(messages[position].get("type") or "").strip().lower()
+                == "return"
+                and str(messages[position].get("reply_to") or "").strip() == call_id
+            ), len(messages))
+            handed_off = any(
+                isinstance(candidate, dict)
+                and str(candidate.get("type") or "sync").strip().lower()
+                in {"sync", "async"}
+                and str(candidate.get("source") or "").strip() == boundary
+                and participants.get(str(candidate.get("target") or "").strip())
+                == "control"
+                for candidate in messages[index + 1:closing]
+            )
+            if not handed_off:
+                findings.append(Finding(
+                    "sequence.message-bce-flow",
+                    "actor-facing Boundary call must hand off to a Control before returning",
+                    f"{source} -> {boundary} : {message.get('label', '')}",
+                ))
+    return findings
+
+
 # Projection output is deterministic, but persisted/checkpoint state is still an external
 # boundary. Re-run the focused interaction invariants which can be broken by stale or
 # manually edited JSON without invoking repair or reconstructing calls from PlantUML.
@@ -2328,7 +2380,7 @@ SEQUENCE_COLLECTION_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("sequence.call-return-links", _collection_contract),
     CheckSpec(
         "sequence.message-bce-flow",
-        _collection_diagram_rule("sequence.message-bce-flow", sequence_bce_flow),
+        _collection_bce_flow,
     ),
     CheckSpec(
         "sequence.initial-message-entry",

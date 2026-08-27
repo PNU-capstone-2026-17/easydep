@@ -30,6 +30,7 @@
 | `cloud-native-extension.md` | 과거 링크 호환 안내의 역할이 끝나 보관 |
 | `resource-plan-experiment-reflection.md` | 2026-08-15~17 E1~E3 반영 판단과 3사 IaC 실험 결과를 기록한 시점 보고서 |
 | `managed-l4-ingress-experiment-20260817.md` | 2026-08-17 AWS·Azure·GCP 관리형 L4 실험의 완료 결과 |
+| `origin-main-integration-20260828.md` | typed 설계 기준에 고정한 origin/main hash와 의미 parity 통합 기록 |
 
 현재 기준은 상위의 [문서 안내](../README.md), [현재 시스템 상태](../current-system-status.md),
 [논리 배포 토폴로지와 CSP 의존성](../logical-deployment-topology-decisions.md),
