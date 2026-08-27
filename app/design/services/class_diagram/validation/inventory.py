@@ -146,7 +146,7 @@ def _inventory_relationships(
 def _inventory_scope(
     inventory: dict[str, Any], index: ScenarioIndex,
 ) -> list[Finding]:
-    """Keep each operation prompt inside an inventory-declared UC slice."""
+    """각 operation prompt가 inventory에 선언된 유스케이스 범위를 넘지 않는지 검사한다."""
 
     known = {use_case.id for use_case in index.use_cases}
     findings: list[Finding] = []
@@ -185,6 +185,8 @@ def _inventory_scope(
     return findings
 
 
+# 값싼 이름·타입 검사부터 관계·유스케이스 범위 순서로 실행한다. 각 함수는 등록된
+# rule_id 하나만 발생시키며 proposal을 정규화하거나 수정하지 않는다.
 INVENTORY_CHECKS = (
     CheckSpec("class.inventory.names", _inventory_names),
     CheckSpec("class.inventory.types", _inventory_types),
@@ -204,6 +206,10 @@ def validate_inventory(
 
     Returns:
         이름, 타입, 관계, 범위 규칙을 등록 순서로 담은 보고서다.
+
+    Notes:
+        finding은 inventory service가 최대 한 번의 전체 교체 repair 입력으로 바꾼다.
+        이 함수 자체는 LLM 호출이나 repair 예산을 소유하지 않는다.
     """
     return run_checks(INVENTORY_CHECKS, inventory or {}, index)
 

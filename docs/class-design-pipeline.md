@@ -4,6 +4,12 @@
 구조, 메서드 계약, 호출 트리와 값 출처를 함께 확정하고, 시퀀스 단계는 승인된 호출 트리를
 결정론적으로 투영한다.
 
+코드 위치, 실제 LLM payload·응답 예제와 finding 전달 방식은
+[`class_diagram/README.md`](../app/design/services/class_diagram/README.md), 시퀀스 모델과
+피드백 재투영은 [`sequence_diagram/README.md`](../app/design/services/sequence_diagram/README.md),
+검사 실행 계약은 [`validation/README.md`](../app/design/services/class_diagram/validation/README.md)에
+설명한다. 이 문서는 두 산출물의 도메인 흐름과 운영 원칙을 기준으로 유지한다.
+
 ```text
 동결 요구사항·유스케이스 명세·관계
 → 시나리오 인덱스와 실행 슬라이스

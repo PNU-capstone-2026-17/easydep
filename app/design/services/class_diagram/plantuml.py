@@ -63,6 +63,18 @@ def sanitize_text(text: str) -> str:
 
 
 def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
+    """저장 BCE JSON을 구조 관계와 투영 dependency가 포함된 PlantUML로 만든다.
+
+    Args:
+        json_data: 기존 alias의 ``BCEModel`` JSON 또는 호환 저장본이다.
+
+    Returns:
+        빈 모델이면 빈 문자열, 아니면 문법 문자를 중화한 PlantUML 문서다.
+
+    Notes:
+        collaboration 호출 dependency는 표시할 때만 투영하며 저장 ``Relationships``를
+        수정하지 않는다. renderer는 의미 검증이나 LLM repair를 수행하지 않는다.
+    """
     if not json_data:
         return ""
 
@@ -144,9 +156,8 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
         puml_lines.append("")
 
     if json_data.get("Collaborations"):
-        # Call dependencies have one owner: the persisted Collaboration tree.
-        # Project them alongside, rather than instead of, the inventory's
-        # structural Entity relationships.
+        # 호출 dependency의 단일 원천은 저장 Collaboration tree다. inventory의 구조 Entity
+        # 관계를 대체하지 않고 화면에서만 나란히 투영한다.
         from app.design.services.class_diagram.projections import project_call_dependencies
 
         relationships = [

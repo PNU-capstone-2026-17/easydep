@@ -1,7 +1,13 @@
-"""클래스 설계 산출물의 엄격한 영속 계약.
+"""클래스·시퀀스 상호작용 설계가 공유하는 엄격한 영속 계약.
 
 연산은 클래스 수준 시그니처다. 협업은 그 시그니처의 구체적인 실행을 기록하며,
-argument provenance와 호출 순서를 저장하는 유일한 위치다.
+argument provenance와 호출 순서를 저장하는 유일한 위치다. graph adapter는 raw JSON을 이
+모델로 검증하고 service 결과를 ``model_dump(by_alias=True)``로 기존 state에 되돌린다.
+
+이 schema는 LLM 응답 계약이 아니다. 제안·repair용 일시 모델은
+``services.class_diagram.proposals``에 있으며 prompt나 telemetry field는 여기에 추가하지
+않는다. validator는 canonical operation/call ID와 이름 유일성을 보장하지만 LLM을 호출하지
+않는다.
 """
 from __future__ import annotations
 
@@ -20,7 +26,11 @@ def _parameter_value(parameter: object, name: str) -> str:
 def canonical_operation_id(
     class_name: str, operation_name: str, parameters: Sequence[object],
 ) -> str:
-    """타입이 지정된 시그니처의 안정적인 연산 식별자를 반환한다."""
+    """owner·이름·parameter 순서와 타입으로 안정적인 operation 식별자를 반환한다.
+
+    반환 타입은 overload 선택에 쓰지 않으므로 ID에 넣지 않는다. 예를 들어
+    ``OrderService::place(orderId:UUID)``는 renderer와 collaboration이 공유하는 참조다.
+    """
 
     signature = ",".join(
         f"{_parameter_value(parameter, 'name')}:{_parameter_value(parameter, 'type')}"
@@ -54,11 +64,13 @@ class ClassModelBase(BaseModel):
 
 
 class ClassParameter(ClassModelBase):
+    """operation signature의 이름 있는 입력 하나다."""
     name: str = Field(min_length=1, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     type: str = Field(min_length=1)
 
 
 class ClassOperation(ClassModelBase):
+    """BCE class가 소유하며 use-case step을 추적하는 수락 operation이다."""
     operation_id: str = Field(alias="operationId", min_length=1)
     name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     parameters: list[ClassParameter] = Field(default_factory=list)
@@ -75,6 +87,7 @@ class ClassOperation(ClassModelBase):
 
 
 class AcceptedBCEClass(ClassModelBase):
+    """구조 inventory와 operation fragment가 합쳐진 영속 BCE class다."""
     class_name: str = Field(alias="className", min_length=1)
     stereotype: Literal["Boundary", "Control", "Entity"]
     description: str = ""
@@ -93,6 +106,7 @@ class AcceptedBCEClass(ClassModelBase):
 
     @model_validator(mode="after")
     def canonicalize_operations(self) -> AcceptedBCEClass:
+        """중복 method를 거부하고 owner가 포함된 canonical operation ID를 덮어쓴다."""
         names = [operation.name for operation in self.operations]
         if len(names) != len(set(names)):
             raise ValueError("operation names must be unique within a class")
@@ -107,6 +121,7 @@ class AcceptedBCEClass(ClassModelBase):
 
 
 class DataType(ClassModelBase):
+    """구조 또는 operation signature가 참조하는 valueObject/enum 선언이다."""
     name: str = Field(min_length=1)
     kind: Literal["valueObject", "enumeration"]
     fields: list[str] = Field(default_factory=list)
@@ -132,6 +147,7 @@ class DataType(ClassModelBase):
 
 
 class AcceptedBCERelationship(ClassModelBase):
+    """inventory가 승인한 구조 관계다. 호출 dependency는 저장하지 않는다."""
     source: str = Field(min_length=1)
     target: str = Field(min_length=1)
     type: str = "Association"
@@ -141,11 +157,13 @@ class AcceptedBCERelationship(ClassModelBase):
 
 
 class ArgumentBinding(ClassModelBase):
+    """receiver parameter를 유한 provenance 문법의 source 하나에 연결한다."""
     parameter: str = Field(min_length=1)
     source_ref: str = Field(alias="sourceRef", min_length=1)
 
 
 class CollaborationCall(ClassModelBase):
+    """한 execution group call tree의 canonical call node다."""
     call_id: str = Field(alias="callId", min_length=1)
     parent_call_id: str | None = Field(default=None, alias="parentCallId")
     receiver_operation_id: str = Field(alias="receiverOperationId", min_length=1)
@@ -161,6 +179,7 @@ class CollaborationCall(ClassModelBase):
 
 
 class Collaboration(ClassModelBase):
+    """한 execution group이 소유하는 순서 있는 call tree다."""
     collaboration_id: str = Field(alias="collaborationId", min_length=1)
     use_case_ids: list[str] = Field(alias="useCaseIds", min_length=1)
     entry_actor: str | None = Field(default=None, alias="entryActor")
@@ -168,12 +187,14 @@ class Collaboration(ClassModelBase):
 
     @model_validator(mode="after")
     def canonicalize_call_ids(self) -> Collaboration:
+        """저장 배열 위치를 기준으로 call ID를 canonical form으로 고정한다."""
         for position, call in enumerate(self.calls, start=1):
             call.call_id = canonical_call_id(self.collaboration_id, position)
         return self
 
 
 class BCEModel(ClassModelBase):
+    """graph state와 API에 저장되는 클래스 상호작용 설계 최상위 모델이다."""
     Classes: list[AcceptedBCEClass] = Field(default_factory=list)
     DataTypes: list[DataType] = Field(default_factory=list)
     Relationships: list[AcceptedBCERelationship] = Field(default_factory=list)

@@ -32,3 +32,18 @@
 - 계약 형태, 왕복 직렬화, 식별자·참조 무결성, 결정론적 시퀀스 투영을 테스트한다. 프롬프트
   문구나 비공개 도우미 이름을 단정하지 말고 작은 `ScenarioIndex`, `BCEModel`,
   `SequenceCollection` 값으로 테스트한다.
+
+## 문서와 주석
+
+- `services/README.md`는 전체 설계 서비스 지도를, 각 산출물 README는 그 디렉터리의 파일,
+  입출력, LLM 호출, 검증·repair와 실패 조건을 설명한다.
+- README의 JSON은 계약을 보여 주는 작은 합성 예제다. system prompt 전문은 복제하지 않고
+  실제 상수와 응답 Pydantic schema를 진실 공급원으로 연결한다.
+- 모듈 docstring은 책임, 입력, 출력, 부작용과 금지 의존성을 설명한다. 공개 함수는
+  Google-style `Args`, `Returns`, `Raises`, `Notes`를 사용한다.
+- 주요 함수 내부에는 후보 축소 → 외부 호출 → 정규화 → 검사 → 국소 repair의 단계 전환을
+  주석으로 표시한다. 대입이나 반복문의 문법을 그대로 읽어 주는 주석은 남기지 않는다.
+- provenance, 실행 순서, include/extend 삽입처럼 코드만으로 이유가 드러나지 않는 규칙에는
+  정상·실패 예제를 둔다.
+- prompt, schema, operation 이름, validation rule 또는 repair 예산을 바꾸면 같은 커밋에서
+  해당 README를 갱신한다.

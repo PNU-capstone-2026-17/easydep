@@ -22,6 +22,7 @@ from app.design.services.class_diagram.validation.model import (
 
 @dataclass(frozen=True)
 class CollaborationContext:
+    """call tree 검사를 정확히 한 execution group과 수락 model에 고정한다."""
     index: ScenarioIndex
     model: dict[str, Any]
     group: ExecutionGroup
@@ -131,7 +132,7 @@ def _collaboration_contract(
 def _collaboration_order(
     collaboration: dict[str, Any], context: CollaborationContext,
 ) -> list[Finding]:
-    """Require one depth-first call tree whose main-flow calls stay ordered."""
+    """call이 깊이 우선 tree 순서이며 main-flow 순서를 보존하는지 검사한다."""
 
     calls = [item for item in collaboration.get("calls") or [] if isinstance(item, dict)]
     children: dict[str, list[str]] = {}
@@ -287,6 +288,8 @@ def _collaboration_bindings(
     return findings
 
 
+# 구조 계약이 맞아야 순서와 provenance를 해석할 수 있다. run_checks는 등록 순서를
+# 보존하며 각 함수는 자신의 rule_id만 반환한다.
 COLLABORATION_CHECKS = (
     CheckSpec("class.collaboration.contract", _collaboration_contract),
     CheckSpec("class.collaboration.order", _collaboration_order),
@@ -305,6 +308,10 @@ def validate_collaboration(
 
     Returns:
         호출 계약, 순서와 binding 규칙의 finding을 담은 보고서다.
+
+    Notes:
+        materialize 단계가 이 보고서를 한 문자열로 만들어 같은 group의 call plan을 최대
+        한 번 전체 교체한다. 검사 함수는 새 sourceRef를 발명하지 않는다.
     """
     return run_checks(COLLABORATION_CHECKS, collaboration or {}, context)
 

@@ -1,4 +1,12 @@
-"""수락된 인벤토리에서 BCE 연산 조각을 생성하고 조립한다."""
+"""수락된 inventory에서 실행 슬라이스별 BCE 연산 조각을 생성하고 조립한다.
+
+LLM에는 한 ``OperationUnit``의 단계, 고정 클래스·구조 타입과 앞선 wave가 예약한 이름만
+전달한다. ``OperationFragment`` 응답은 actor-entry 소유권과 타입을 정규화하고
+``OPERATION_CHECKS``를 통과한 뒤에만 ``AcceptedFragment``가 된다.
+
+이 모듈의 부작용은 제한된 LLM 호출, 최대 병렬도 2의 wave 실행과 클래스 미리보기 이벤트
+발행이다. collaboration을 만들거나 graph state·저장소를 직접 읽지 않는다.
+"""
 from __future__ import annotations
 
 import json
@@ -134,6 +142,12 @@ def _operation_payload(
     allowed_step_ids: tuple[str, ...] = (),
     execution_group_id: str = "",
 ) -> dict[str, Any]:
+    """한 실행 슬라이스의 유한한 연산 선택 공간을 JSON payload로 만든다.
+
+    ``fixedClasses``와 ``fixedDataTypes``는 inventory가 수락한 후보만 담고,
+    ``allowedStepRefs``는 현재 unit이 소유할 수 있는 단계만 담는다. ``previousFragment``와
+    ``findings``는 최초 실패 뒤 full replacement를 요청할 때만 추가한다.
+    """
     summary = next((
         item for item in index.raw.get("use_cases") or []
         if isinstance(item, dict) and text(item.get("id")) == use_case.id
@@ -194,7 +208,7 @@ def _operation_payload(
 def _canonicalize_downstream_input_types(
     candidate: dict[str, Any], inventory: dict[str, Any],
 ) -> dict[str, Any]:
-    """Reuse one grounded upstream DTO instead of an uncallable layer DTO."""
+    """호출할 수 없는 layer별 DTO 대신 근거 있는 upstream DTO를 재사용하도록 정규화한다."""
 
     for class_set in candidate.get("Classes") or []:
         if not isinstance(class_set, dict):
@@ -329,7 +343,7 @@ def _canonicalize_step_ownership(
     inventory: dict[str, Any],
     actor_entry_refs: set[str],
 ) -> dict[str, Any]:
-    """Project the fixed actor-entry ownership rule without another LLM call."""
+    """추가 LLM 호출 없이 actor-entry step의 고정 Boundary 소유 규칙을 투영한다."""
 
     normalized = deepcopy(candidate)
     stereotypes = {
@@ -372,6 +386,14 @@ def _propose_fragment(
     execution_group_id: str = "",
     operation: str = "InteractionOperations",
 ) -> dict[str, Any]:
+    """한 연산 unit을 LLM에 요청하고 저장 직전 fragment shape로 정규화한다.
+
+    응답은 ``OperationFragment``로 제한된다. 이 함수는 규칙 finding을 판단하지 않으며,
+    deterministic normalization까지만 소유한다. 검사와 한 번의 replacement는
+    ``_checked_fragment``가 담당한다.
+    """
+    # 1. 허용 step, 고정 타입과 예약 이름을 먼저 payload로 좁힌다. LLM이 전체 모델을
+    # 보지 않으므로 다른 use case의 성공한 연산을 임의로 다시 작성할 수 없다.
     parsed = parse_structured(
         [
             {"role": "system", "content": _OPERATION_PROMPT},
@@ -396,6 +418,7 @@ def _propose_fragment(
         operation=operation,
         metadata={"useCaseId": use_case.id},
     )
+    # 2. 설명문이나 임의 필드를 거부하고 일시적 proposal schema만 수락한다.
     candidate = OperationFragment.model_validate(parsed).model_dump(by_alias=True)
     fixed_names = {
         class_name(item) for item in inventory.get("Classes") or []
@@ -407,6 +430,8 @@ def _propose_fragment(
         text(item.get("name")) for item in reserved_types or []
         if isinstance(item, dict)
     }
+    # 3. 전역·앞선 wave가 이미 소유한 타입은 지역 선언에서 제거한다. 같은 이름의 다른
+    # 정의는 compose 시 충돌로 드러나며 조용히 덮어쓰지 않는다.
     candidate["DataTypes"] = [
         {
             **item,
@@ -418,6 +443,8 @@ def _propose_fragment(
         for item in candidate.get("DataTypes") or []
         if text(item.get("name")) not in fixed_names
     ]
+    # 4. 하류 DTO가 실제 상류 값에서 만들어질 수 있는지 보고 불필요한 layer DTO를
+    # 재사용 가능한 입력 타입으로 정규화한다. 새 LLM 호출은 발생하지 않는다.
     candidate = _canonicalize_downstream_input_types(candidate, inventory)
     actor_entry_refs = {
         group.actor_step
@@ -426,6 +453,8 @@ def _propose_fragment(
         and group.actor_step
         and (not execution_group_id or group.id == execution_group_id)
     }
+    # 5. actor entry는 Boundary만 소유한다. Control/Entity의 중복 stepRef를 제거한 뒤
+    # 근거가 사라진 placeholder operation도 함께 제외한다.
     return _canonicalize_step_ownership(
         candidate, inventory, actor_entry_refs,
     )
@@ -444,6 +473,12 @@ def _checked_fragment(
     execution_group_id: str = "",
     operation: str = "InteractionOperations",
 ) -> dict[str, Any]:
+    """연산 fragment를 제안·검사하고 현재 unit만 최대 한 번 교체한다.
+
+    첫 보고서의 finding은 ``previousFragment``와 함께 repair 호출에 전달한다. 두 번째
+    보고서가 깨끗하지 않으면 더 넓은 재생성으로 승격하지 않고 명시적으로 실패한다.
+    """
+    # 최초 후보에는 caller가 전달한 피드백이나 collision finding만 포함된다.
     candidate = _propose_fragment(
         index,
         inventory,
@@ -471,6 +506,8 @@ def _checked_fragment(
             ),
         ],
     }
+    # 검증 context는 다른 wave의 예약 타입까지 포함한다. 그렇지 않으면 유효한 재사용
+    # 타입을 "존재하지 않음"으로 오판한다.
     context = OperationContext(
         index,
         validation_inventory,
@@ -482,6 +519,7 @@ def _checked_fragment(
     if report.errors:
         raise RuntimeError("; ".join(report.errors))
     if report.findings:
+        # 같은 입력 범위와 같은 rule set으로 full replacement를 한 번만 요청한다.
         candidate = _propose_fragment(
             index,
             inventory,
@@ -531,6 +569,12 @@ def _compose(
     *,
     final: bool = False,
 ) -> dict[str, Any]:
+    """Inventory와 수락 fragment를 canonical ``BCEModel`` skeleton으로 합친다.
+
+    동일 이름·동일 시그니처는 step provenance를 합치고, 동일 이름·다른 정의는
+    ``Collision``로 현재 fragment repair를 요구한다. ``final=True``이면 operation에서
+    도달할 수 없는 클래스·관계·지역 타입을 제거한다.
+    """
     classes = {
         class_name(item): {
             **{
@@ -549,6 +593,8 @@ def _compose(
         }
         for item in inventory.get("DataTypes") or [] if isinstance(item, dict)
     }
+    # 입력 순서가 곧 충돌 소유권이다. 앞서 수락된 fragment는 고정하고 현재 fragment가
+    # 충돌을 해결해야 병렬 완료 순서와 무관한 모델을 얻는다.
     for use_case_id, fragment in fragments:
         for proposed_type in fragment.get("DataTypes") or []:
             if not isinstance(proposed_type, dict):
@@ -595,6 +641,8 @@ def _compose(
     relationships = deepcopy(inventory.get("Relationships") or [])
     data_types = list(data_type_index.values())
     if final:
+        # 화면을 단순화하기 위한 임의 삭제가 아니다. 실제 operation 계약에서 도달할 수
+        # 없는 구조만 제거해 API/sequence 소비자가 쓸 수 없는 타입을 저장하지 않는다.
         retained = {
             class_name(item) for item in result_classes if item.get("operations")
         }
@@ -619,6 +667,11 @@ def _compose(
 def emit_preview(
     model: dict[str, Any], phase: str, unit: str, completed: int, total: int,
 ) -> None:
+    """한 수락 경계의 BCE skeleton을 UI 진행 스냅샷으로 발행한다.
+
+    빈 PlantUML은 이벤트를 만들지 않는다. 이 함수가 operations 모듈의 유일한 UI 부작용이며
+    이벤트 실패를 validation 결과로 위장하지 않는다.
+    """
     puml = generate_plantuml_from_bce_json(model)
     if puml:
         design_progress.emit_progress(
@@ -642,6 +695,11 @@ def _build_fragments(
     *,
     reconstruct_fragments: Callable[[ScenarioIndex, dict[str, Any]], dict[str, dict[str, Any]]],
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """Operation unit을 안정적인 wave로 실행하고 수락 순서대로 조립한다.
+
+    같은 wave는 동일한 reserved catalog를 보므로 독립적으로 병렬 실행할 수 있다. wave가
+    끝나면 결과를 unit ID 순서로 commit하고 다음 wave에 새 이름을 예약한다.
+    """
     groups_by_use_case: dict[str, list[ExecutionGroup]] = {}
     for group in index.groups:
         groups_by_use_case.setdefault(group.use_case_id, []).append(group)
@@ -664,6 +722,7 @@ def _build_fragments(
         if not groups_by_use_case.get(use_case.id)
     ]
     units.sort(key=lambda unit: id_key(unit.id))
+    # 설정값이 커도 현재 unit 수를 넘지 않는다. 기본값 2가 긴 LLM 호출의 동시성 경계다.
     workers = max(1, min(
         len(units) or 1,
         int(getattr(settings, "design_class_behavior_parallelism", 2)),
@@ -672,6 +731,8 @@ def _build_fragments(
     position = 0
     for offset in range(0, len(units), workers):
         wave = units[offset:offset + workers]
+        # wave 시작 시점의 snapshot을 모든 worker가 공유한다. worker별로 서로 다른 예약
+        # 목록을 주면 완료 순서에 따라 이름 충돌 결과가 달라진다.
         current = _compose(inventory, committed)
         reserved = _reserved_operations(current)
         reserved_types = list(current.get("DataTypes") or [])
@@ -709,6 +770,8 @@ def _build_fragments(
                     inventory, [*committed, (unit.use_case.id, fragment)],
                 )
             except (_Collision, _DataTypeCollision) as collision:
+                # 충돌의 후발 소유자인 현재 unit만 한 번 교체한다. 이미 committed된 형제
+                # fragment를 다시 호출하지 않는 것이 국소성 보장의 핵심이다.
                 current = _compose(inventory, committed)
                 fragment = _checked_fragment(
                     index,
@@ -750,6 +813,12 @@ def _repair_failed_operations(
     *,
     operation: str = "InteractionOperationHandoff",
 ) -> set[str]:
+    """협업 실패가 가리킨 execution slice의 연산 부분만 보완한다.
+
+    같은 use case 안에서도 실패 group의 ``step_ids``와 겹치지 않는 연산은 preserved로
+    분리한다. LLM은 실패 slice의 이전 연산과 issue만 받고, 결과를 preserved 부분에 다시
+    합친다. 반환값은 service가 collaboration을 재계획할 use-case ID 집합이다.
+    """
     group_by_id = {group.id: group for group in index.groups}
     repaired: set[str] = set()
     for result in sorted(failures, key=lambda item: id_key(item.group_id)):
@@ -758,6 +827,8 @@ def _repair_failed_operations(
         use_case = index.use_case(use_case_id)
         existing = fragments[use_case_id]
         group_steps = set(group.step_ids)
+        # 하나의 use case가 여러 actor entry group을 가질 수 있다. 실패 group과 겹치지
+        # 않는 operation은 prompt와 replacement 대상에서 모두 분리해 보존한다.
         preserved_classes = []
         previous_classes = []
         for class_set in existing.get("Classes") or []:
@@ -794,6 +865,8 @@ def _repair_failed_operations(
             **({use_case_id: preserved} if preserved_classes else {}),
         }
         base = _compose_fragments(inventory, base_fragments)
+        # Collaboration의 구체적 failure text를 finding으로 전달해 "필요한 operation 없음"
+        # 같은 handoff 원인을 현재 slice 안에서 해결하게 한다.
         candidate = _checked_fragment(
             index,
             inventory,
@@ -840,7 +913,14 @@ def _repair_failed_operations(
 
 
 def reserved_operations(model: BCEModel) -> list[dict[str, Any]]:
-    """수락된 모델에서 이후 조각 생성에 예약할 연산을 읽는다."""
+    """수락 모델에서 이후 조각 생성에 예약할 연산 catalog를 읽는다.
+
+    Args:
+        model: 앞선 unit까지 조립된 BCE skeleton이다.
+
+    Returns:
+        class 이름과 수락 operation 목록만 포함하는 LLM payload 조각이다.
+    """
     return _reserved_operations(model.model_dump(by_alias=True))
 
 
@@ -857,7 +937,23 @@ def propose_fragment(
     execution_group_id: str = "",
     operation: str = "InteractionOperation",
 ) -> AcceptedFragment:
-    """고정 인벤토리 안에서 한 유스케이스 연산 조각을 제안한다."""
+    """고정 inventory 안에서 한 use-case 연산 fragment를 제안한다.
+
+    Args:
+        index: 단계와 실행 그룹의 정규화된 입력이다.
+        inventory: LLM이 변경할 수 없는 전역 구조다.
+        use_case: 이번 fragment가 소유할 유스케이스다.
+        previous: repair에서 참고할 이전 수락 후보다.
+        findings: replacement가 해결해야 할 검증·충돌 근거다.
+        reserved: 앞선 unit이 이미 소유한 operation 목록이다.
+        reserved_types: 앞선 unit이 이미 소유한 지역 타입 목록이다.
+        allowed_step_ids: 현재 실행 slice가 소유할 수 있는 단계다.
+        execution_group_id: use case보다 작은 실행 단위의 식별자다.
+        operation: 관측과 재개에 사용하는 영어 LLM operation 이름이다.
+
+    Returns:
+        정규화됐지만 별도 검사 budget은 적용하지 않은 ``AcceptedFragment``다.
+    """
     candidate = _propose_fragment(
         index,
         inventory.as_payload(),
@@ -879,7 +975,21 @@ def checked_fragment(
     use_case: UseCase,
     **kwargs: Any,
 ) -> AcceptedFragment:
-    """검사와 수리를 거친 수락 연산 조각을 생성한다."""
+    """검사와 최대 한 번의 replacement를 거친 연산 fragment를 생성한다.
+
+    Args:
+        index: 시나리오와 허용 단계의 기준이다.
+        inventory: 고정된 전역 BCE 구조다.
+        use_case: fragment 소유 유스케이스다.
+        **kwargs: 이전 후보, finding, 예약 catalog와 operation 이름이다.
+
+    Returns:
+        모든 ``OPERATION_CHECKS``를 통과한 ``AcceptedFragment``다.
+
+    Raises:
+        RuntimeError: 검사기 자체가 완료되지 못한 경우다.
+        ValueError: 최초 후보와 한 번의 replacement가 모두 유효하지 않은 경우다.
+    """
     previous = kwargs.pop("previous", None)
     candidate = _checked_fragment(
         index,
@@ -897,7 +1007,19 @@ def build_fragments(
     *,
     reconstruct_fragments: Callable[[ScenarioIndex, BCEModel], Mapping[str, AcceptedFragment]],
 ) -> tuple[BCEModel, dict[str, AcceptedFragment]]:
-    """유스케이스 조각을 병렬 생성하고 불변 모델 경계로 수락한다."""
+    """실행 unit fragment를 bounded wave로 생성하고 BCE skeleton으로 수락한다.
+
+    Args:
+        index: unit과 안정적인 실행 순서를 제공하는 시나리오 인덱스다.
+        inventory: 모든 worker가 공유하는 고정 구조다.
+        reconstruct_fragments: 최종 skeleton에서 소유 fragment를 복원하는 typed adapter다.
+
+    Returns:
+        도달 가능한 연산·타입만 담은 skeleton과 use-case별 수락 fragment다.
+
+    Notes:
+        병렬 완료 순서가 아니라 unit ID 순서로 commit한다. 충돌 시 현재 unit만 교체한다.
+    """
     def reconstruct_raw(
         scenario_index: ScenarioIndex, skeleton: dict[str, Any],
     ) -> dict[str, dict[str, Any]]:
@@ -924,7 +1046,15 @@ def compose_fragments(
     inventory: AcceptedInventory,
     fragments: Mapping[str, AcceptedFragment],
 ) -> BCEModel:
-    """수락된 조각을 하나의 BCE 모델로 조립한다."""
+    """수락된 fragment를 하나의 canonical BCE skeleton으로 조립한다.
+
+    Args:
+        inventory: 클래스·구조 타입·관계의 고정 원본이다.
+        fragments: use-case ID로 소유권이 지정된 수락 연산 조각이다.
+
+    Returns:
+        collaboration이 비어 있고 도달 가능한 계약만 남은 ``BCEModel``이다.
+    """
     return BCEModel.model_validate(_compose_fragments(
         inventory.as_payload(),
         {key: value.as_payload() for key, value in fragments.items()},
@@ -939,7 +1069,22 @@ def repair_failed_operations(
     *,
     operation: str = "InteractionOperationHandoff",
 ) -> set[str]:
-    """협업 실패 그룹만 재생성하고 수락 조각을 제자리에서 갱신한다."""
+    """협업 실패 group의 연산 slice만 보완하고 수락 fragment를 갱신한다.
+
+    Args:
+        index: 실패 group과 use case의 대응을 제공한다.
+        inventory: 변경하지 않는 전역 구조다.
+        fragments: 성공한 형제 조각을 포함한 mutable 소유 mapping이다.
+        failures: collaboration이 없는 명시적 실패 결과다.
+        operation: 호출 목적을 구분하는 LLM operation 이름이다.
+
+    Returns:
+        연산이 바뀌어 collaboration 재계획이 필요한 use-case ID 집합이다.
+
+    Notes:
+        ``fragments``는 승인 작업 단위의 commit map이므로 의도적으로 제자리 갱신한다.
+        raw 후보는 내부에서만 사용하고 완료 후 다시 ``AcceptedFragment``로 감싼다.
+    """
     raw_fragments = {key: value.as_payload() for key, value in fragments.items()}
     repaired = _repair_failed_operations(
         index,

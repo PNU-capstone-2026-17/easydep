@@ -22,10 +22,8 @@ _PARTICIPANT_KEYWORD = {
     "database": "database",
 }
 
-# Class-diagram rendering has a stable visual vocabulary.  Sequence diagrams
-# use the same idea: the lifeline order is architectural rather than whatever
-# order a model/LLM happened to emit.  A use case may omit unused roles, but a
-# role that is present always occupies the same left-to-right band.
+# lifeline은 입력 배열 순서가 아니라 architecture 역할 순서로 배치한다. 사용하지 않는
+# 역할은 생략해도, 존재하는 역할은 항상 같은 좌→우 영역에 있어 실행 간 시각 diff가 작다.
 _PARTICIPANT_ORDER = {
     "actor": 0,
     "boundary": 1,
@@ -64,7 +62,7 @@ def sanitize_text(text: str) -> str:
 
 
 def _display_message_label(label: str, message_type: str) -> str:
-    """Keep the exact model signature while rendering a compact call label."""
+    """모델 시그니처의 이름은 보존하면서 긴 parameter 목록만 여러 줄로 표시한다."""
 
     safe = sanitize_text(label)
     if message_type not in {"sync", "self"}:
@@ -94,8 +92,16 @@ def _display_message_label(label: str, message_type: str) -> str:
 def generate_sequence_from_model(model: dict[str, Any]) -> str:
     """상호작용 모델을 시퀀스 다이어그램 PlantUML로 변환한다.
 
-    A UC that has unresolved steps is still rendered as a reviewable diagram.
-    Only a genuinely empty model returns an empty string.
+    Args:
+        model: 현재 컬렉션 또는 유스케이스 하나의 시퀀스 JSON이다.
+
+    Returns:
+        컬렉션이면 다이어그램별 문서, 단일 모델이면 한 PlantUML 문서다. 완전히 빈
+        모델만 빈 문자열이고 unresolved step은 검토 가능한 note로 그린다.
+
+    Notes:
+        이 함수는 renderer다. 의미를 수리하거나 LLM을 호출하지 않으며 미선언 participant를
+        자동 생성하지 않는다.
     """
     if not model:
         return ""
@@ -158,10 +164,8 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
         display = sanitize_text(participant.get("name", "")) or alias
         lines.append(f'{keyword} "{display}" as {alias}')
 
-    # A failed semantic mapping still gets one PlantUML document and one gallery
-    # card.  The fallback alias is intentionally not a class participant; it is
-    # only an anchor for the explanatory note when a malformed import supplied
-    # no actor or Boundary at all.
+    # 의미 매핑이 실패해도 review용 문서와 gallery card는 남긴다. fallback은 실제 class
+    # participant가 아니라 actor/Boundary조차 없는 잘못된 import에 note를 붙일 anchor다.
     if unresolved_steps and not declared:
         declared.add("Unresolved")
         lines.append('participant "Unresolved interaction" as Unresolved')
@@ -227,10 +231,8 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
             continue
 
         message_type = str(message.get("type", "sync")).strip().lower()
-        # Activation bars are intentionally excluded from the shared template.
-        # Existing persisted models can still contain lifecycle events, so drop
-        # them before fragment handling rather than rendering a visual outlier
-        # (or leaving an empty fragment behind).
+        # 공통 템플릿은 activation bar를 사용하지 않는다. 과거 모델의 lifecycle event는
+        # fragment 전환 전에 버려 빈 fragment나 다른 그림과 다른 시각 문법을 남기지 않는다.
         if message_type in {"activate", "deactivate"}:
             continue
 
@@ -248,7 +250,7 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
     close_to(0)
 
     if unresolved_steps:
-        anchor = sorted(declared)[0] if declared else "Unresolved"
+        anchor = min(declared) if declared else "Unresolved"
         lines.append("")
         lines.append(f"note over {anchor}")
         lines.append("  Needs review: no grounded class method was selected.")

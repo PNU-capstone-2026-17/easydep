@@ -1,4 +1,14 @@
-"""시퀀스 다이어그램 의미 검증기와 타입이 지정된 검증 리포트."""
+"""현재 시퀀스 컬렉션과 legacy 단일 다이어그램을 같은 보고서 계약으로 검증한다.
+
+입력은 저장 시퀀스 JSON과 use-case/class 산출물이 든 read-only state다. 출력은
+``app.core.validation.ValidationReport``이며 검사 함수는 모델을 수정하거나 LLM을 호출하지
+않는다. 등록된 ``CheckSpec`` 순서가 finding 순서이므로 병렬 실행 여부와 무관하게 UI와
+repair 입력이 안정적이다.
+
+새 deterministic projection은 ``SEQUENCE_COLLECTION_CHECKS``의 작고 엄격한 계약을 쓴다.
+``SEQUENCE_CHECKS``는 이전 단일 다이어그램 체크포인트와 downstream API 검증을 위한
+호환 lane이다. 어느 lane도 service나 renderer를 역참조해 재생성을 시작하지 않는다.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -20,17 +30,6 @@ from app.design.services.class_diagram.type_system import (
     types_compatible,
 )
 from app.design.services.class_diagram.validation.diagram import _class_method_signatures
-
-
-def _known_use_case_ids_from_state(state: dict[str, Any]) -> set[str]:
-    scenario = state.get("usecase_spec") or {}
-    if not isinstance(scenario, dict):
-        return set()
-    return {
-        str(item.get("id")).strip()
-        for item in scenario.get("use_cases") or []
-        if isinstance(item, dict) and str(item.get("id") or "").strip()
-    }
 from app.design.services.sequence_diagram.methods import (
     method_call_signature,
     method_name,
@@ -42,8 +41,17 @@ from app.design.services.sequence_diagram.projection import (
 )
 
 
+def _known_use_case_ids_from_state(state: dict[str, Any]) -> set[str]:
+    scenario = state.get("usecase_spec") or {}
+    if not isinstance(scenario, dict):
+        return set()
+    return {
+        str(item.get("id")).strip()
+        for item in scenario.get("use_cases") or []
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
 class Finding(ValidationFinding):
-    """Legacy design finding with a rule tag for user-facing output."""
+    """기존 UI가 요구하는 rule tag 표시를 보존한 typed finding이다."""
 
     def __init__(
         self,
@@ -74,9 +82,8 @@ def _findings_from_report(report: ValidationReport) -> list[Finding]:
     return [Finding.model_validate(finding) for finding in report.findings]
 
 
-# ---------------------------------------------------------------------------
-# Sequence diagram and API specification detectors
-# ---------------------------------------------------------------------------
+# 아래 detector는 legacy 단일 다이어그램과 API downstream이 공유한다. 함수마다 자기
+# rule_id의 finding만 만들고 mutation/repair는 수행하지 않는다.
 def _class_names_from_puml(state: dict) -> set[str]:
     return set(re.findall(r"(?m)^\s*class\s+([A-Za-z_]\w*)\b", state.get("class_diagram_puml", "")))
 
@@ -459,13 +466,12 @@ def sequence_call_return_links(model: dict, state: dict) -> list[Finding]:
 
 
 def _declared_control_boundary_gateways(state: dict) -> set[tuple[str, str]]:
-    """Return Control -> external-Boundary dependencies from the BCE contract.
+    """BCE 계약에서 Control → 외부 Boundary dependency를 가져온다.
 
-    A Boundary is not always a presentation endpoint.  An external API, identity
-    provider, or device adapter is also a Boundary, and its operation is
-    correctly invoked by a Control when the class diagram declares that
-    dependency.  Treating all Boundary methods as actor input made those valid
-    integration calls indistinguishable from a Control trying to invoke a UI.
+    Boundary가 항상 presentation endpoint인 것은 아니다. 외부 API, identity provider,
+    device adapter도 Boundary이며 class diagram이 dependency를 선언했다면 Control이 그
+    operation을 호출하는 것이 맞다. 모든 Boundary method를 actor input으로 보면 이 유효한
+    integration call과 Control이 UI를 역호출하는 오류를 구분할 수 없다.
     """
     pairs = {
         (str(item.get("source") or "").strip(), str(item.get("target") or "").strip())
@@ -476,7 +482,7 @@ def _declared_control_boundary_gateways(state: dict) -> set[tuple[str, str]]:
     }
     if pairs:
         return pairs
-    # Older persisted designs may only retain the rendered class diagram.
+    # 과거 저장본은 구조 모델 없이 렌더된 클래스 다이어그램만 남아 있을 수 있다.
     return {
         (match.group(1), match.group(2))
         for match in re.finditer(
@@ -491,8 +497,8 @@ def sequence_boundary_operation_direction(model: dict, state: dict) -> list[Find
     if isinstance(
         (state.get("extracted_bce_classes") or {}).get("Collaborations"), list,
     ) and (state.get("extracted_bce_classes") or {}).get("Collaborations"):
-        # Persisted collaborations explicitly define actor-entry and delegation
-        # direction. Method-name prefixes are only a legacy heuristic.
+        # 저장 collaboration이 actor entry와 위임 방향을 명시하면 그것이 진실 원천이다.
+        # method 이름 prefix 판정은 collaboration이 없는 과거 모델에만 적용한다.
         return []
     rule_id = "sequence.boundary-operation-direction"
     kinds = {
@@ -735,7 +741,7 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
 
 
 def sequence_calls_have_returns(model: dict, state: dict) -> list[Finding]:
-    """Every synchronous/self call has exactly one explicit return message."""
+    """모든 sync/self call에 정확히 하나의 명시적 return message가 있는지 검사한다."""
     rule_id = "sequence.call-requires-return"
     explicit = _uses_explicit_call_links(model)
     if explicit:
@@ -1079,7 +1085,7 @@ def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
             and str(message.get("type", "sync")).lower() in {"sync", "async", "self"}
         ]
         if not indexed_messages:
-            continue  # coverage detector owns an entirely absent step.
+            continue  # 단계가 완전히 없는 경우는 coverage 규칙 하나만 보고한다.
         actor_messages = [
             (index, message)
             for index, message in indexed_messages
@@ -1104,15 +1110,15 @@ def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
             )
             if key[1]:
                 call_keys.setdefault(key, set()).add(index)
-        # One interaction may intentionally trace to multiple adjacent specification
-        # steps. Only separate messages that reuse the same operation are suspicious.
+        # 한 interaction이 인접한 여러 명세 단계를 함께 추적하는 것은 정상이다. 서로 다른
+        # message가 같은 operation을 재사용할 때만 허위 중복 추적 후보로 본다.
         reused_by_distinct_messages = call_keys and all(
             key in claimed_main_calls
             and claimed_main_calls[key][2].isdisjoint(indexes)
             for key, indexes in call_keys.items()
         )
-        # Reusing the only operation exposed by a Boundary is not evidence of a
-        # fabricated trace. Health probes and metric collection are common examples.
+        # Boundary가 operation 하나만 제공한다면 재사용만으로 허위 추적이라 할 수 없다.
+        # health probe나 metric 수집처럼 같은 gateway가 반복되는 경우가 있기 때문이다.
         has_alternative_operation = any(
             class_method_counts.get(participant_classes.get(target, ""), 0) > 1
             for target, _ in call_keys
@@ -1168,7 +1174,7 @@ def sequence_causal_call_chain(model: dict, state: dict) -> list[Finding]:
 
 
 def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
-    """Check flow coverage and invocation of operations traced to this UC."""
+    """flow coverage와 이 use case를 추적하는 operation 호출 여부를 검사한다."""
     rule_id = "sequence.usecase-step-coverage"
     diagram_use_case_id = str(model.get("use_case_id") or "").strip()
     all_flow_steps = _known_flow_step_ids(state)
@@ -1193,18 +1199,15 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
             for step_id in message.get("step_ids", [])
             if step_id
         }
-        # A step that is explicitly retained as unresolved is not silently
-        # missing.  It remains a review finding below, but must not also make
-        # the entire UC look as though no diagram was generated.
+        # 명시적으로 unresolved로 보존한 단계는 누락된 것이 아니다. 아래에서 review finding은
+        # 남기되 다이어그램 전체가 생성되지 않은 것처럼 coverage를 이중 보고하지 않는다.
         covered_steps.update(
             str(item.get("step_id") or "").strip()
             for item in model.get("UnresolvedSteps", []) or []
             if isinstance(item, dict) and item.get("step_id")
         )
-        # A requirement condition or outcome can be part of an interaction's
-        # meaning without becoming a distinct receiver method.  It remains
-        # explicitly traceable in NarrativeSteps, rather than being converted
-        # into a fabricated call or a false unresolved-method defect.
+        # 조건·결과 문장은 별도 receiver method가 아니어도 interaction 의미에 포함될 수 있다.
+        # 가짜 call이나 unresolved method로 바꾸지 않고 NarrativeSteps에서 명시적으로 추적한다.
         covered_steps.update(
             str(item.get("step_id") or "").strip()
             for item in model.get("NarrativeSteps", []) or []
@@ -1268,9 +1271,8 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
                 if operation_id in operations
             }
         else:
-            # Legacy class models have no collaboration graph and may also lack
-            # operation ids.  Preserve their step-trace coverage check without
-            # weakening the collaboration-authoritative path above.
+            # 과거 class 모델은 collaboration graph와 operation ID가 없을 수 있다. 위의
+            # collaboration 진실 원천 경로를 약화하지 않으면서 과거 step trace 검사는 보존한다.
             required_families = {
                 (
                     f"{str(class_item.get('className') or '').strip().casefold()}::"
@@ -1331,18 +1333,14 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
 
 
 def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Finding]:
-    """Reject one Boundary input being used for distinct actor actions.
+    """서로 다른 actor 행동을 Boundary input 하나로 표현한 경우를 거부한다.
 
-    ``step_ids`` are traceability references, not proof that a call explains the
-    step.  Reusing the same receiver operation for the actor request, a seat
-    check, persistence and a response lets a minimal diagram pass structural
-    coverage while saying almost nothing about the workflow. System-internal
-    steps are different: one Control operation may validly validate, persist,
-    and return a result as part of one command. Their method name alone cannot
-    prove that they are separate user-visible operations. Restrict this rule to
-    Actor -> Boundary input calls; the actor-step detector supplies the same
-    semantic guard and prevents a repeated generic entry operation from hiding
-    distinct user requests.
+    ``step_ids``는 추적 참조이지 call이 그 단계를 충분히 설명한다는 증거가 아니다. actor
+    요청, 확인, 저장, 응답을 같은 receiver operation으로 재사용하면 workflow를 거의
+    표현하지 않고도 구조 coverage를 통과한다. 반면 내부 단계는 Control operation 하나가
+    한 command 안에서 검증·저장·반환을 함께 수행할 수 있다. 따라서 이 규칙은 Actor →
+    Boundary input call에만 적용해 반복 generic entry가 서로 다른 사용자 요청을 숨기지
+    못하게 한다.
     """
     rule_id = "sequence.step-operation-distinctness"
     use_case_id = str(model.get("use_case_id") or "").strip()
@@ -1376,13 +1374,12 @@ def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Findi
         )
 
     def is_single_submission(step_ids: set[str]) -> bool:
-        """Allow an intent followed by its entered data to share one command.
+        """의도와 바로 뒤의 입력 data가 command 하나를 공유하는 경우를 허용한다.
 
-        Fully dressed use-case specifications commonly split a user submission
-        into "starts creation" and "provides attributes".  Those are not two
-        independent Boundary operations unless the specification identifies a
-        second command; requiring one method per prose sentence caused false
-        class-method proposals for maintenance use cases.
+        상세 use-case 명세는 한 사용자 제출을 "생성을 시작한다"와 "속성을 제공한다"로
+        나누곤 한다. 명세가 두 번째 command를 식별하지 않는다면 독립 Boundary operation
+        둘이 아니다. 문장마다 method 하나를 강제하면 유지보수 use case에 가짜 class method
+        제안이 생긴다.
         """
         ordered = sorted(step_ids, key=lambda value: int(value.rsplit(":", 1)[-1]))
         if len(ordered) != 2:
@@ -1437,7 +1434,7 @@ def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Findi
 
 
 def sequence_unresolved_steps(model: dict, state: dict) -> list[Finding]:
-    """Keep unresolved requirement or method-mapping steps visible for review."""
+    """미결 요구사항 또는 method mapping 단계를 review finding으로 유지한다."""
     rule_id = "sequence.unresolved-usecase-step"
     diagram_use_case_id = str(model.get("use_case_id") or "").strip()
     unresolved = _unresolved_flow_step_ids(state)
@@ -1494,13 +1491,11 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
             for step_id in message.get("step_ids") or []
             if (number := _main_step_number(str(step_id), use_case_id)) is not None
         ])
-        # One synchronous call may start at an input step and complete at a
-        # later output step after nested calls. Only its earliest trace advances
-        # the preorder call position; coverage still retains every step id.
+        # sync call 하나가 입력 단계에서 시작해 중첩 call 뒤의 출력 단계에서 끝날 수 있다.
+        # preorder 위치는 가장 이른 trace만 전진시키되 coverage에는 모든 step ID를 남긴다.
         for number in numbers[:1]:
-            # A reply completes an earlier nested call after its inner calls
-            # return.  Its trace belongs to that call, but it is not a new
-            # scenario action and therefore cannot reverse main-flow order.
+            # reply는 내부 call이 끝난 뒤 앞선 중첩 call을 닫는다. trace는 그 call의 근거지만
+            # 새 시나리오 행동은 아니므로 main flow 순서를 역전시킬 수 없다.
             if is_return:
                 continue
             main_positions.setdefault(number, []).append(index)
@@ -1558,8 +1553,8 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
             )
             for position in positions
         ):
-            # A Control call may own both the main outcome and the extension
-            # result. The call itself is not a later duplicate scenario action.
+            # Control call 하나가 main outcome과 extension result를 함께 소유할 수 있다.
+            # 이 call 자체는 뒤에서 반복된 별도 시나리오 행동이 아니다.
             continue
         if branch_step not in main_positions:
             found.append(
@@ -1808,9 +1803,8 @@ def sequence_orphan_participant_detection(model: dict, state: dict) -> list[Find
     Participants 목록에는 선언되어 있으나 전체 Messages 중 단 한 번도 source 나 target으로
     참여하지 않는 불필요한 유령 참가자를 탐지한다.
     """
-    # A review-only UC intentionally retains its actor/Boundary so the rendered
-    # note has real design context.  Those declarations are not ghost
-    # participants and must not turn the explanatory diagram into a hidden one.
+    # review-only use case는 note에 실제 설계 문맥을 주기 위해 actor/Boundary를 유지한다.
+    # 이 선언은 ghost participant가 아니며 설명용 다이어그램을 숨기게 해서는 안 된다.
     if any(
         isinstance(item, dict)
         for item in model.get("UnresolvedSteps", []) or []
@@ -1858,7 +1852,7 @@ def sequence_duplicate_consecutive_messages(model: dict, state: dict) -> list[Fi
     duplicate_run_key: tuple[str, str, str, str, str] | None = None
 
     def report_run(end_index: int) -> None:
-        """Report one run with its size so repair scoring cannot hide growth."""
+        """repair 점수가 중복 증가를 숨기지 못하도록 연속 구간과 크기를 함께 보고한다."""
         nonlocal duplicate_run_start, duplicate_run_key
         if duplicate_run_start is None or duplicate_run_key is None:
             return
@@ -1909,12 +1903,11 @@ def sequence_duplicate_consecutive_messages(model: dict, state: dict) -> list[Fi
 def sequence_extension_replays_anchor_operation(
     model: dict, state: dict
 ) -> list[Finding]:
-    """Detect an error branch that replays the operation it is handling.
+    """처리 중인 operation을 다시 실행하는 error branch를 검출한다.
 
-    An extension is the conditional outcome of its ``branch_step``.  Repeating
-    the same call in an ``opt``/``alt`` branch makes a failed validation or
-    persistence operation look like a second request.  A genuine retry is
-    distinguishable because it must be represented explicitly as a loop.
+    extension은 ``branch_step``의 조건부 결과다. ``opt``/``alt`` branch에서 같은 call을
+    반복하면 실패한 validation/persistence operation이 두 번째 요청처럼 보인다. 실제 retry는
+    명시적인 loop로 표현해야 하므로 구분할 수 있다.
     """
 
     rule_id = "sequence.extension-replays-anchor-operation"
@@ -1953,12 +1946,11 @@ def sequence_extension_replays_anchor_operation(
     }
 
     def is_command_or_input(message: dict) -> bool:
-        """Only treat a repeated input/command as a second execution.
+        """반복된 input/command만 두 번째 실행으로 판정한다.
 
-        Different extension outcomes legitimately reuse one Control-to-Boundary
-        display operation.  Those presentation calls do not rerun the branch
-        anchor, whereas Actor-to-Boundary input and calls into Control/Entity
-        do represent a command that may have been executed twice.
+        서로 다른 extension 결과가 Control→Boundary 표시 operation 하나를 재사용하는 것은
+        정상이다. 이 presentation call은 branch anchor를 다시 실행하지 않는다. 반면
+        Actor→Boundary input과 Control/Entity로 향하는 call은 두 번 실행될 수 있는 command다.
         """
         source_kind = participant_kinds.get(
             str(message.get("source") or "").strip(), ""
@@ -2001,8 +1993,8 @@ def sequence_extension_replays_anchor_operation(
             if anchor_step_id in {
                 str(step_id) for step_id in message.get("step_ids") or []
             }:
-                # One call carrying both refs is the shared branch anchor, not
-                # a second execution of that operation.
+                # 두 ref를 함께 가진 call은 공유 branch anchor이지 같은 operation의 두 번째
+                # 실행이 아니다.
                 continue
             if any(
                 str(fragment.get("type") or "").lower() == "loop"
@@ -2127,7 +2119,7 @@ def sequence_message_type_validity(model: dict, state: dict) -> list[Finding]:
 
 
 def sequence_no_lifecycle_events(model: dict, state: dict) -> list[Finding]:
-    """Keep every generated sequence within the fixed no-activation template."""
+    """모든 생성 sequence가 activation 없는 고정 template을 따르는지 검사한다."""
     rule_id = "sequence.no-lifecycle-events"
     return [
         Finding(
@@ -2143,11 +2135,11 @@ def sequence_no_lifecycle_events(model: dict, state: dict) -> list[Finding]:
 
 
 def sequence_class_diagram_version(model: dict, state: dict) -> list[Finding]:
-    """Reject a collection validated against a different class-method contract."""
+    """다른 class method 계약에서 투영된 컬렉션을 version hash로 거부한다."""
     rule_id = "sequence.class-diagram-version"
     expected = str(model.get("class_diagram_hash") or "").strip()
     if not expected:
-        return []  # legacy single-diagram models predate the version contract.
+        return []  # 과거 단일 다이어그램은 version 계약 도입 전 산출물이다.
     actual = hashlib.sha256(
         str(state.get("class_diagram_puml") or "").encode("utf-8")
     ).hexdigest()
@@ -2196,6 +2188,8 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
 }
 
 
+# Legacy lane은 메시지 구조에서 의미·coverage 순으로 싼 검사를 먼저 실행한다. 등록 순서는
+# 사용자에게 보이는 finding 순서이므로 set/dict 순회 결과로 재정렬하지 않는다.
 SEQUENCE_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("sequence.message-participants-exist", sequence_participants),
     CheckSpec("sequence.message-bce-flow", sequence_bce_flow),
@@ -2233,6 +2227,7 @@ SEQUENCE_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
 )
 
 def _sequence_rule_findings(model: dict, state: dict) -> list[Finding]:
+    """legacy detector registry를 실행하고 기존 finding 목록으로 변환한다."""
     return _findings_from_report(run_checks(SEQUENCE_CHECKS, model or {}, state or {}))
 
 
@@ -2301,6 +2296,8 @@ def _collection_references(model: dict, state: dict) -> list[Finding]:
     ]
 
 
+# 현재 projection은 이미 typed call tree에서 나왔으므로 전체 legacy 의미 검사를 반복하지
+# 않는다. 저장 경계에서 깨질 수 있는 call/return, class hash, coverage, reference만 확인한다.
 SEQUENCE_COLLECTION_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("sequence.call-return-links", _collection_contract),
     CheckSpec("sequence.class-diagram-version", _collection_class_version),

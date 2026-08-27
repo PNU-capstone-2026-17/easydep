@@ -29,6 +29,7 @@ from app.design.services.class_diagram.validation.model import (
 
 @dataclass(frozen=True)
 class OperationContext:
+    """한 fragment 검사가 읽을 수 있는 시나리오·inventory·소유 범위다."""
     index: ScenarioIndex
     inventory: dict[str, Any]
     use_case: UseCase
@@ -457,6 +458,8 @@ def _operation_value_flow(
     return findings
 
 
+# 선언 해소와 coverage를 먼저 확인한 뒤 결과/값 흐름처럼 앞선 구조가 필요한 규칙을
+# 실행한다. finding 순서는 repair prompt와 테스트에서 안정적인 계약이다.
 OPERATION_CHECKS = (
     CheckSpec("class.operation.data-types", _operation_data_types),
     CheckSpec("class.operation.references", _operation_references),
@@ -478,6 +481,10 @@ def validate_operations(
 
     Returns:
         참조, 커버리지, 결과와 provenance finding을 담은 보고서다.
+
+    Notes:
+        service는 이 보고서를 영어 finding 문장으로 직렬화해 같은 유스케이스의 전체
+        fragment replacement에만 전달한다. validator는 후보를 고치지 않는다.
     """
     return run_checks(OPERATION_CHECKS, fragment or {}, context)
 

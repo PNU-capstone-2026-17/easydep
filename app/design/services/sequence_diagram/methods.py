@@ -5,7 +5,6 @@ import re
 
 from app.design.services.class_diagram.type_system import type_expression_is_well_formed
 
-
 _METHOD_CALL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\([^()\r\n]*\)$")
 _METHOD_NAME = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)")
 _RETURN_LABEL = re.compile(
@@ -17,6 +16,7 @@ _RETURN_LABEL = re.compile(
 
 
 def is_complete_method_call(label: str) -> bool:
+    """라벨이 이름과 닫힌 괄호를 모두 가진 호출 시그니처인지 검사한다."""
     return bool(_METHOD_CALL.fullmatch(label.strip()))
 
 
@@ -28,6 +28,7 @@ def method_call_signature(raw: str) -> str:
 
 
 def method_name(raw: str) -> str:
+    """가시성 기호를 제외한 method 이름을 대소문자 무관 비교용으로 반환한다."""
     raw = re.sub(r"^[+\-#~]\s*", "", raw.strip())
     match = _METHOD_NAME.match(raw)
     return match.group(1).lower() if match else ""
@@ -46,4 +47,5 @@ def is_return_value_label(label: str) -> bool:
 
 
 def normalize_return_type(raw: str) -> str:
+    """표시 공백과 대소문자 차이를 제거한 반환 타입 비교 키를 만든다."""
     return re.sub(r"\s+", "", raw).lower()

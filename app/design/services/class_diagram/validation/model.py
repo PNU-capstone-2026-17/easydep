@@ -193,6 +193,8 @@ def _collaboration_rule(
     return CheckSpec(rule_id=rule_id, run=check)
 
 
+# schema에서 시작해 canonical ID와 coverage를 확인한 뒤 각 execution group에 collaboration
+# 규칙을 투영한다. 이 순서 덕분에 후속 검사가 깨진 shape를 의미 있는 모델로 가정하지 않는다.
 CLASS_MODEL_CHECKS: tuple[CheckSpec[dict[str, Any], ScenarioIndex], ...] = (
     CheckSpec("class.model.schema", _model_schema),
     CheckSpec("class.model.operation-ids", _operation_ids),

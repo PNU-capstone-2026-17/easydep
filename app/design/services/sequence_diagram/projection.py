@@ -1,4 +1,14 @@
-"""수락된 BCE 협업을 결정론적 시퀀스 모델로 투영한다."""
+"""수락된 BCE collaboration을 결정론적 시퀀스 저장 모델로 투영한다.
+
+입력은 ``ScenarioIndex``, operation·call tree·argument provenance가 검증된 ``BCEModel``과
+선택적 class PlantUML이다. 출력은 유스케이스별 participant, call/return, fragment를 가진
+``SequenceCollection``이다. class PlantUML은 내용 hash만 저장해 어느 클래스 다이어그램
+버전에서 투영했는지 검증할 수 있게 한다.
+
+이 모듈은 LLM, 설정, 저장소, graph state에 의존하지 않는다. operation 선택이나 repair를
+하지 않으며 입력에 모순이 있으면 ``ValueError``로 실패한다. 같은 입력은 participant 별칭,
+message 순서와 hash까지 같은 결과를 만든다.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -27,10 +37,12 @@ from app.design.services.sequence_diagram.methods import (
 
 
 class SequenceRecord(BaseModel):
+    """추가 필드를 저장하지 않는 현재 시퀀스 JSON 레코드의 기반 계약이다."""
     model_config = ConfigDict(extra="forbid")
 
 
 class SequenceParticipant(SequenceRecord):
+    """다이어그램 lifeline 하나와 원본 BCE class 연결 정보다."""
     name: str = Field(min_length=1)
     alias: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     kind: Literal["actor", "boundary", "control", "entity", "database"]
@@ -39,6 +51,7 @@ class SequenceParticipant(SequenceRecord):
 
 
 class SequenceFragment(SequenceRecord):
+    """메시지를 감싸는 조건/반복 경로의 한 수준이다."""
     id: str = Field(min_length=1)
     type: Literal["alt", "opt", "loop"]
     branch: Literal["main", "else"] = "main"
@@ -46,6 +59,7 @@ class SequenceFragment(SequenceRecord):
 
 
 class SequenceArgument(SequenceRecord):
+    """호출 parameter가 어느 승인 provenance에서 왔는지 표시하는 투영이다."""
     parameter: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     type: str = Field(min_length=1)
     source_kind: Literal[
@@ -55,6 +69,7 @@ class SequenceArgument(SequenceRecord):
 
 
 class SequenceMessage(SequenceRecord):
+    """승인 call 하나 또는 그 call과 짝을 이루는 return 메시지다."""
     source: str
     target: str
     label: str
@@ -82,6 +97,7 @@ class SequenceMessage(SequenceRecord):
 
 
 class UseCaseSequence(SequenceRecord):
+    """유스케이스 하나가 소유하는 participant와 순서 있는 메시지다."""
     use_case_id: str = Field(min_length=1)
     use_case_name: str = ""
     Participants: list[SequenceParticipant]
@@ -98,6 +114,7 @@ class UseCaseSequence(SequenceRecord):
 
 
 class SequenceCollection(SequenceRecord):
+    """현재 시퀀스 영속 계약의 최상위 컬렉션이다."""
     Diagrams: list[UseCaseSequence]
     class_diagram_hash: str = ""
     MethodProposals: list[dict[str, Any]] = Field(default_factory=list)
@@ -146,6 +163,7 @@ def _argument_kind(source_ref: str, call_ids: set[str], step_ids: set[str]) -> s
 
 
 def _extension_fragments(index: ScenarioIndex) -> dict[str, dict[str, dict[str, str]]]:
+    """조건이 있는 extension step을 재사용 가능한 ``opt`` 경로로 만든다."""
     result: dict[str, dict[str, dict[str, str]]] = defaultdict(dict)
     for use_case in index.use_cases:
         for step in use_case.steps:
@@ -177,6 +195,11 @@ def _project_collaboration(
     use_case_id: str,
     fragments: dict[str, dict[str, str]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """call tree 하나를 깊이 우선 call/return 메시지와 participant로 펼친다.
+
+    자식 call은 부모 call 뒤, 부모 return 앞에 위치한다. 따라서 ``A→B, B→C, C⇢B,
+    B⇢A`` 순서가 입력 call tree만으로 정해지고 LLM 문장이나 renderer가 순서를 고르지 않는다.
+    """
     calls = [item for item in collaboration.get("calls") or [] if isinstance(item, dict)]
     if not calls:
         raise ValueError("accepted collaboration cannot be empty")
@@ -186,6 +209,8 @@ def _project_collaboration(
     children: dict[str, list[str]] = defaultdict(list)
     roots: list[str] = []
     seen: set[str] = set()
+    # parent는 반드시 앞에 있어야 한다. 이 제약은 순환을 별도 탐색하지 않고도 차단하며
+    # roots가 정확히 하나인지 확인해 execution group 하나가 한 call tree임을 보장한다.
     for call in calls:
         call_id = text(call.get("callId"))
         parent_id = text(call.get("parentCallId"))
@@ -216,6 +241,7 @@ def _project_collaboration(
         }
 
     def participant(operation: dict[str, Any]) -> str:
+        """BCE owner를 충돌 없는 안정적 lifeline alias에 한 번만 연결한다."""
         owner = operation["className"]
         if owner in class_aliases:
             return class_aliases[owner]
@@ -243,6 +269,7 @@ def _project_collaboration(
     }
 
     def append(call_id: str, caller: str) -> None:
+        """한 call과 모든 자식을 기록한 다음 정확히 한 return을 닫는다."""
         call = call_by_id[call_id]
         operation = operations[text(call.get("receiverOperationId"))]
         callee = participant(operation)
@@ -261,6 +288,8 @@ def _project_collaboration(
             if isinstance(binding, dict)
         ]
         actual_caller = caller or callee
+        # 승인 operation signature와 binding provenance를 표시 형식으로만 투영한다.
+        # source_kind는 sourceRef 문법에서 파생하며 새로운 값을 만들지 않는다.
         messages.append({
             "source": actual_caller,
             "target": callee,
@@ -273,6 +302,7 @@ def _project_collaboration(
             "reply_to": "",
             "arguments": arguments,
         })
+        # 깊이 우선 순회는 activation stack과 같은 call/return 중첩을 자연스럽게 만든다.
         for child_id in children.get(call_id, []):
             append(child_id, callee)
         messages.append({
@@ -321,6 +351,12 @@ def _scoped_include_collaboration(
     owner: str,
     collaboration: dict[str, Any],
 ) -> dict[str, Any] | None:
+    """부모 collaboration에 내장된 include 단계만 child 다이어그램용으로 잘라낸다.
+
+    child가 actor 없는 내부 include이면 독립 collaboration이 없다. 이때 child step을 가진
+    call만 선택하고 call ID와 외부 sourceRef를 child 범위로 재매핑한다. 승인 모델 자체는
+    수정하지 않는다.
+    """
     selected = [
         call for call in collaboration.get("calls") or []
         if isinstance(call, dict)
@@ -328,6 +364,8 @@ def _scoped_include_collaboration(
     ]
     if not selected:
         return None
+    # 원본 call 위치에 의존하지 않는 child 전용 canonical ID를 만든다. 선택하지 않은
+    # 부모 call을 가리키는 provenance는 child 첫 step 입력으로 바꾼다.
     id_map = {
         text(call.get("callId")): f"{owner}:scoped::call:{position}"
         for position, call in enumerate(selected, start=1)
@@ -397,6 +435,7 @@ def _embed_extending_use_cases(
     index: ScenarioIndex,
     diagrams: dict[str, dict[str, Any]],
 ) -> None:
+    """extend 다이어그램 메시지를 base의 anchor 뒤 ``opt`` fragment로 복사한다."""
     for relationship in index.relationships:
         if relationship.kind != "extend":
             continue
@@ -424,6 +463,8 @@ def _embed_extending_use_cases(
             "branch": "main",
             "condition": condition,
         }
+        # extension 자체 다이어그램은 유지한다. base에는 깊은 복사본만 삽입해 두
+        # projection의 use_case_ids와 fragment path가 서로 영향을 주지 않게 한다.
         messages = deepcopy(extension["Messages"])
         for message in messages:
             message["fragments"] = [fragment, *(message.get("fragments") or [])]
@@ -463,6 +504,8 @@ def project_sequence_model(
         ``class_diagram_hash``까지 동일한 결과를 반환한다.
     """
 
+    # 1. 저장 alias로 한 번 투영하고 operation ID catalog를 만든다. 이후 모든 message
+    # label과 participant owner는 이 승인 catalog에서만 나온다.
     model_payload = class_model.model_dump(by_alias=True)
     operations = operation_catalog(model_payload)
     collaborations = [
@@ -474,6 +517,8 @@ def project_sequence_model(
     step_positions = {
         step.id: step.order for use_case in index.use_cases for step in use_case.steps
     }
+    # 2. 병렬 생성 완료 순서가 저장 message 순서에 새어 나오지 않도록 use case,
+    # earliest step, collaboration ID 순으로 고정한다.
     collaborations.sort(key=lambda collaboration: (
         id_key(text((collaboration.get("useCaseIds") or [""])[0])),
         min(
@@ -487,6 +532,8 @@ def project_sequence_model(
         id_key(text(collaboration.get("collaborationId"))),
     ))
     diagrams: dict[str, dict[str, Any]] = {}
+    # 3. collaboration의 첫 useCaseId가 다이어그램 소유자다. 같은 owner의 여러 actor
+    # slice는 participant를 deduplicate하고 message를 정렬된 순서로 이어 붙인다.
     for collaboration in collaborations:
         scope = [text(value) for value in collaboration.get("useCaseIds") or []]
         if not scope:
@@ -498,6 +545,8 @@ def project_sequence_model(
         _merge_diagram(
             diagrams, owner, index.use_case(owner).name, messages, participants,
         )
+    # 4. actor 없는 include는 부모 collaboration에 내장되어 있으므로 child step 범위만
+    # 잘라 독립 child 다이어그램을 복원한다.
     for use_case in index.use_cases:
         if use_case.id in diagrams:
             continue
@@ -514,6 +563,8 @@ def project_sequence_model(
     missing = [use_case.id for use_case in index.use_cases if use_case.id not in diagrams]
     if missing:
         raise ValueError("missing accepted collaboration projection for " + ", ".join(missing))
+    # 5. 모든 use case가 투영된 뒤 extend를 base anchor에 삽입한다. 먼저 합치면 아직 없는
+    # participant나 child diagram 때문에 입력 순서에 따라 결과가 달라질 수 있다.
     _embed_extending_use_cases(index, diagrams)
     ordered = [diagrams[use_case.id] for use_case in index.use_cases]
     return SequenceCollection(
@@ -524,7 +575,18 @@ def project_sequence_model(
 
 
 def sequence_findings(model: SequenceCollection | dict[str, Any]) -> list[str]:
-    """repair를 시작하지 않고 시퀀스의 호출·반환 계약 위반을 반환한다."""
+    """repair를 시작하지 않고 현재 컬렉션의 최소 참조 계약 위반을 반환한다.
+
+    Args:
+        model: typed 컬렉션 또는 같은 JSON 모양이다.
+
+    Returns:
+        schema 오류, call/return 불일치와 미선언 participant 참조 메시지 목록이다.
+
+    Notes:
+        이 함수는 projection 직후의 값싼 검사다. graph readiness가 소비하는 rule ID 기반
+        전체 보고서는 ``validation.validate_sequence_model``이 만든다.
+    """
 
     try:
         parsed = model if isinstance(model, SequenceCollection) else SequenceCollection.model_validate(model)
@@ -549,8 +611,21 @@ def sequence_findings(model: SequenceCollection | dict[str, Any]) -> list[str]:
 
 
 def normalize_sequence_model(model: dict[str, Any]) -> dict[str, Any]:
-    """이전 시퀀스 JSON도 현재 저장 alias로 검증해 직렬화한다."""
-    """Validate the current persisted contract without legacy reconstruction."""
+    """현재 시퀀스 저장 계약을 검증하고 canonical JSON으로 직렬화한다.
+
+    Args:
+        model: ``SequenceCollection`` 모양의 raw JSON이다.
+
+    Returns:
+        Pydantic 기본 alias와 field 순서를 적용한 JSON object다.
+
+    Raises:
+        ValidationError: 현재 계약에 없는 field나 잘못된 call/return 레코드가 있는 경우다.
+
+    Notes:
+        legacy 단일 다이어그램 복원은 수행하지 않는다. 호환 detector는 validation 모듈의
+        별도 lane에 남아 있으며 새 projection은 언제나 컬렉션 계약을 쓴다.
+    """
 
     return SequenceCollection.model_validate(model).model_dump()
 

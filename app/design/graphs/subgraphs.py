@@ -123,11 +123,11 @@ def _endpoint_key(endpoint: dict) -> str:
 
 
 def _design_context(state: ArchitectureState, stage: str) -> str:
-    """Return only upstream context needed to revise one design artifact.
+    """한 설계 산출물을 수정하는 데 필요한 상류 문맥만 직렬화한다.
 
-    The current artifact is already serialized separately by ``revision_messages``.
-    Including it here duplicated the largest document in every repair request and
-    made sequence/API revisions retransmit unrelated downstream artifacts.
+    현재 산출물은 ``revision_messages``가 별도로 넣는다. 여기에도 포함하면 모든 repair
+    요청에서 가장 큰 문서를 중복 전송하고 sequence/API 수정에 무관한 하류 산출물까지
+    다시 보내게 된다.
     """
     sections = ["[Use Case Specification]\n" + usecase_spec_text(state)]
     if stage in {"sequence_diagram", "api_spec", "deployment_diagram"}:
@@ -147,14 +147,12 @@ def _design_context(state: ArchitectureState, stage: str) -> str:
 def _sequence_revision_context(
     state: ArchitectureState, targets: set[str] | None
 ) -> str:
-    """Build sequence-repair context without retransmitting unrelated use cases.
+    """관련 없는 유스케이스를 재전송하지 않는 sequence repair 문맥을 만든다.
 
-    Automatic validation repair has a concrete affected use-case id. The full
-    requirements specification can be much larger than that diagram, and was
-    previously included unchanged for every single-use-case repair. Keep all
-    actors (they define valid participants), but restrict use cases and detailed
-    scenarios to the selected ids. User feedback revisions still pass no target
-    and retain the full context.
+    자동 validation repair에는 구체적인 영향 use-case ID가 있다. 전체 요구사항은 대상
+    다이어그램보다 훨씬 클 수 있으므로 actor는 유효 participant 정의를 위해 모두 유지하되
+    use case와 상세 scenario는 선택 ID로 좁힌다. target이 없는 사용자 feedback 수정은
+    전체 문맥을 유지한다.
     """
     specification = state.get("usecase_spec")
     if not targets or not isinstance(specification, dict):
@@ -199,7 +197,12 @@ def _stored_class_model(value: object) -> BCEModel:
 
 
 def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
-    """클래스 설계의 단일 실행 경로를 typed 서비스에 연결한다."""
+    """raw graph state를 클래스 typed service에 연결하고 기존 JSON shape로 반환한다.
+
+    유효한 기존 model이 있으면 resume, 없으면 generate를 호출한다. raw use-case JSON 해석과
+    ``model_dump(by_alias=True)``는 이 adapter에만 있어 service 내부 타입이 체크포인트에
+    노출되지 않는다.
+    """
 
     scenario = _class_scenario(state)
     if not scenario.get("use_case_specs"):
@@ -217,7 +220,10 @@ def _revise_class_state(
     state: ArchitectureState,
     targets: set[str],
 ) -> dict[str, Any]:
-    """그래프의 원시 상태만 typed 클래스 설계 API에 맞춰 변환한다."""
+    """그래프의 raw 현재값·피드백·target을 typed revise API에 맞춰 변환한다.
+
+    반환 직전 기존 alias JSON으로 직렬화하므로 UI/API가 보던 key는 변경되지 않는다.
+    """
     return revise_class_model(
         _stored_class_model(current),
         _class_index(state),
@@ -229,6 +235,7 @@ def _revise_class_state(
 def _class_model_findings(
     model: dict[str, Any], state: ArchitectureState,
 ) -> list[ArtifactFinding]:
+    """typed 클래스 검증 보고서를 graph artifact finding 계약으로 투영한다."""
     index = _class_index(state)
     accepted = _stored_class_model(model)
     report = validate_class_model(accepted, index)
@@ -249,6 +256,7 @@ def _class_model_findings(
 def _sequence_model_findings(
     model: dict[str, Any], _state: ArchitectureState,
 ) -> list[ArtifactFinding]:
+    """현재 시퀀스 컬렉션의 값싼 call/return finding을 graph 계약으로 투영한다."""
     accepted = SequenceCollection.model_validate(model)
     return [
         ArtifactFinding(
@@ -266,7 +274,12 @@ def _revise_sequence_state(
     state: ArchitectureState,
     targets: set[str],
 ) -> dict[str, Any]:
-    """클래스 모델의 상호작용 원본을 수정한 뒤 시퀀스를 다시 투영한다."""
+    """상호작용 원본인 클래스 모델을 국소 수정한 뒤 시퀀스를 다시 투영한다.
+
+    시퀀스에는 독립 LLM 편집 경로가 없다. feedback은 class inventory/operation/collaboration
+    소유 단위에 적용되고 class validation과 PlantUML 검증을 통과한 뒤 결정론적으로 새
+    ``SequenceCollection``을 만든다.
+    """
 
     revised_class = revise_class_model(
         _stored_class_model(state.get("extracted_bce_classes") or {}),
@@ -299,7 +312,11 @@ def _revise_sequence_state(
 
 
 def _project_sequence_state(state: ArchitectureState) -> dict[str, Any]:
-    """그래프 상태의 두 원시 산출물을 typed 시퀀스 투영으로 연결한다."""
+    """graph의 use-case/class JSON과 PlantUML 버전을 typed 시퀀스 투영에 연결한다.
+
+    이 adapter는 LLM을 호출하지 않으며 ``SequenceCollection.model_dump`` 결과만 state에
+    기록한다.
+    """
     return project_sequence_model(
         _class_index(state),
         _stored_class_model(state.get("extracted_bce_classes") or {}),
@@ -334,9 +351,8 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
         "DataTypes": lambda item: item.get("name", ""),
         "Collaborations": lambda item: item.get("collaborationId", ""),
     },
-    # 규칙 지식베이스를 가진 두 스테이지 중 하나다(다른 하나는 ERD). 시퀀스·API·배포는
-    # 아직 `check_key`가 없고, 그래서 검사 노드도 생기지 않는다 — 검사하지 않는다는
-    # 사실이 그래프에 그대로 보인다.
+    # typed ValidationReport를 artifact finding으로 바꾼 뒤 기존 check node가 소비한다.
+    # repair 여부와 예산은 validator가 아니라 graph/service orchestration이 결정한다.
     check=_class_model_findings,
     check_key="class_diagram_check",
 )

@@ -1,4 +1,12 @@
-"""실행 그룹의 호출 계획과 협업 결과를 수락하는 단계다."""
+"""한 실행 그룹의 유한 호출 계획과 parameter provenance를 수락한다.
+
+입력은 ``ScenarioIndex``, 연산이 확정된 ``BCEModel``과 정확히 한 ``ExecutionGroup``이다.
+LLM은 현재 범위의 operation ID와 앞선 부모 index만 선택한다. 코드는 canonical call ID,
+step provenance와 parameter source 후보를 투영하고 ``Collaboration``을 검증한다.
+
+부작용은 호출 계획 LLM과, 후보가 복수일 때만 실행되는 binding 선택 LLM이다. 새 클래스,
+operation 또는 타입을 만들지 않으며 저장소·graph state를 직접 읽지 않는다.
+"""
 from __future__ import annotations
 
 import json
@@ -79,6 +87,7 @@ def _finding_text(findings: tuple[Finding, ...]) -> list[str]:
 def _group_operations(
     model: dict[str, Any], group: ExecutionGroup,
 ) -> dict[str, dict[str, Any]]:
+    """실행 그룹이 추적하는 유스케이스에 허용된 operation만 catalog로 좁힌다."""
     allowed = set(group.trace_use_case_ids)
     return {
         operation_id: operation
@@ -95,6 +104,11 @@ def _group_operations(
 def _group_payload(
     index: ScenarioIndex, model: dict[str, Any], group: ExecutionGroup,
 ) -> dict[str, Any]:
+    """LLM이 호출 순서만 고를 수 있는 execution-group payload를 만든다.
+
+    ``receiverOperations``에 없는 ID는 동적 응답 schema에도 들어가지 않는다. 단계 문장은
+    판단 근거로 제공하지만 ``stepRefs``는 응답에서 받지 않고 선택된 operation에서 투영한다.
+    """
     operations = _group_operations(model, group)
     steps = {
         step.id: step for use_case_id in group.trace_use_case_ids
@@ -132,6 +146,12 @@ def _propose_call_plan(
     previous: CallPlanProposal | None = None,
     finding: str = "",
 ) -> CallPlanProposal:
+    """유한 operation ID enum으로 한 execution group의 호출 계획을 요청한다.
+
+    최초 호출은 ``previous``와 ``finding``이 없다. materialize 또는 validation 실패 뒤에는
+    이전 전체 계획과 오류를 함께 보내 같은 group의 full replacement를 한 번 요청한다.
+    """
+    # 1. 현재 group의 단계와 수락 operation만 payload에 포함한다.
     payload = _group_payload(index, model, group)
     if previous is not None:
         payload["previousPlan"] = previous.model_dump(by_alias=True)
@@ -141,6 +161,8 @@ def _propose_call_plan(
     operation_ids = tuple(item["operationId"] for item in payload["receiverOperations"])
     if not operation_ids:
         raise ValueError(f"execution group has no receiver operations: {group.id}")
+    # 2. receiverOperationId를 실제 후보 Literal로 만든다. 자연어 prompt만으로 목록 밖
+    # 선택을 막지 않고 구조화 응답 파싱 단계에서 거부한다.
     finite_call = _finite_schema(
         "FiniteProposedCall",
         __base__=ProposedCall,
@@ -154,6 +176,8 @@ def _propose_call_plan(
         __base__=CallPlanProposal,
         calls=(list[finite_call], Field(min_length=1, max_length=len(operation_ids))),  # type: ignore[valid-type]
     )
+    # 3. LLM은 operation과 earlier parent index만 반환한다. call ID, binding과 stepRefs는
+    # materialize 단계의 결정론적 책임이다.
     parsed = parse_structured(
         [
             {"role": "system", "content": CALL_PLAN_PROMPT},
@@ -276,6 +300,22 @@ def select_ambiguous_bindings(
     group: ExecutionGroup,
     ambiguous: dict[str, list[str]],
 ) -> dict[str, str]:
+    """복수의 타입 호환 source가 있는 parameter만 LLM 선택으로 해소한다.
+
+    Args:
+        group: 관측 metadata와 collaboration ID를 제공하는 실행 그룹이다.
+        ambiguous: ``callId#parameter``별 실제 유한 source 후보 목록이다.
+
+    Returns:
+        각 parameter 위치를 schema가 허용한 정확한 source 문자열에 연결한 mapping이다.
+
+    Raises:
+        ValueError: 후보 목록이 비어 동적 Literal schema를 만들 수 없는 경우다.
+
+    Notes:
+        후보가 0개면 상위 materialize가 실패하고, 1개면 코드가 직접 선택한다. 따라서 이
+        함수는 후보가 2개 이상인 field에 대해서만 호출되어 불필요한 LLM 판단을 만들지 않는다.
+    """
     fields: dict[str, tuple[Any, Any]] = {}
     choices: list[dict[str, Any]] = []
     locations: dict[str, str] = {}
@@ -289,6 +329,8 @@ def select_ambiguous_bindings(
         )
         choices.append({"choice": field_name, "parameter": parameter, "candidates": list(finite_values)})
         locations[field_name] = parameter
+    # 각 응답 field의 Literal이 서로 다르다. 한 parameter의 유효 source를 다른 parameter에
+    # 복사하는 응답도 Pydantic 단계에서 거부된다.
     selection_schema = _finite_schema(
         "FiniteBindingChoices", __config__=ConfigDict(extra="forbid"), **fields,
     )
@@ -315,9 +357,16 @@ def _materialize(
     group: ExecutionGroup,
     plan: CallPlanProposal,
 ) -> dict[str, Any]:
+    """LLM call plan을 canonical 호출·binding이 포함된 collaboration으로 만든다.
+
+    정상 예에서 두 번째 call의 ``parentCallIndex=1``은 첫 call의 canonical ID로 바뀐다.
+    실패 예에서 현재보다 뒤의 index, Boundary→Entity 직접 호출, 빈 source 후보는 즉시
+    ``ValueError``가 되며 임의 fallback call이나 literal을 만들지 않는다.
+    """
     operations = _group_operations(model, group)
     calls: list[dict[str, Any]] = []
     allowed = set(group.required_step_ids)
+    # 1. 응답 index를 안정적인 call ID와 step provenance로 투영한다.
     for position, proposed in enumerate(plan.calls, start=1):
         operation_id = text(proposed.receiver_operation_id)
         if operation_id not in operations:
@@ -341,6 +390,8 @@ def _materialize(
             "stepRefs": refs,
             "argumentBindings": [],
         })
+    # 2. binding 후보를 계산하기 전에 호출 방향 자체가 BCE 규칙을 지키는지 확인한다.
+    # 잘못된 트리를 값 후보 선택으로 덮으려 하면 provenance 오류가 연쇄적으로 늘어난다.
     for call in calls[1:]:
         parent = next(item for item in calls if item["callId"] == call["parentCallId"])
         source = operations[parent["receiverOperationId"]]["stereotype"]
@@ -350,6 +401,8 @@ def _materialize(
             ("entity", "boundary"), ("entity", "control"),
         }:
             raise ValueError(f"BCE communication is invalid: {source} -> {target}")
+    # 3. 각 parameter의 source 후보를 이전 call과 ancestor 범위에서만 계산한다. 미래 call의
+    # return은 타입이 맞아도 인과적으로 사용할 수 없다.
     ambiguous: dict[str, list[str]] = {}
     for call_index, call in enumerate(calls):
         operation = operations[call["receiverOperationId"]]
@@ -366,6 +419,7 @@ def _materialize(
                 call["argumentBindings"].append({
                     "parameter": text(parameter.get("name")), "sourceRef": candidates[0],
                 })
+    # 4. 유일 후보는 코드가 이미 기록했고 복수 후보만 한 번의 저비용 LLM 호출로 선택한다.
     selected = select_ambiguous_bindings(group, ambiguous) if ambiguous else {}
     for call in calls:
         operation = operations[call["receiverOperationId"]]
@@ -376,6 +430,8 @@ def _materialize(
                 call["argumentBindings"].append({
                     "parameter": name, "sourceRef": selected[f"{call['callId']}#{name}"],
                 })
+    # 5. 모든 deterministic field를 합친 뒤 collaboration rule 전체를 통과해야 typed
+    # service 경계로 나갈 수 있다.
     collaboration = {
         "collaborationId": group.id,
         "useCaseIds": list(group.trace_use_case_ids),
@@ -398,7 +454,18 @@ def propose_call_plan(
     previous: CallPlanProposal | None = None,
     finding: str = "",
 ) -> CallPlanProposal:
-    """수락된 BCE 모델로부터 한 실행 그룹의 호출 계획을 제안한다."""
+    """수락된 BCE 모델에서 한 실행 그룹의 유한 호출 계획을 제안한다.
+
+    Args:
+        index: 단계·include 범위와 값 원천을 제공하는 시나리오 인덱스다.
+        model: receiver operation이 모두 수락된 BCE skeleton이다.
+        group: 이번 계획이 정확히 커버할 execution group이다.
+        previous: 한정 repair가 참고할 이전 전체 계획이다.
+        finding: 이전 계획·materialize 실패를 설명하는 영어 런타임 메시지다.
+
+    Returns:
+        실제 operation ID와 부모 index만 포함한 ``CallPlanProposal``이다.
+    """
     return _propose_call_plan(
         index,
         model.model_dump(by_alias=True),
@@ -414,7 +481,17 @@ def materialize(
     group: ExecutionGroup,
     plan: CallPlanProposal,
 ) -> Collaboration:
-    """호출 계획을 검증된 협업 객체로 구체화한다."""
+    """호출 계획을 canonical ID·binding이 포함된 검증된 협업으로 구체화한다.
+
+    Args:
+        index: 단계와 provenance 원천의 기준이다.
+        model: operation과 구조 타입 catalog의 기준이다.
+        group: collaboration의 정확한 소유 실행 그룹이다.
+        plan: 유한 schema를 통과한 호출 계획이다.
+
+    Returns:
+        모든 collaboration rule을 통과한 저장 ``Collaboration``이다.
+    """
     return Collaboration.model_validate(_materialize(
         index, model.model_dump(by_alias=True), group, plan,
     ))
@@ -426,13 +503,29 @@ def process_group(
     group: ExecutionGroup,
     directive: str = "",
 ) -> CollaborationResult:
-    """한 실행 그룹을 제안·검사·국소 수리해 협업 결과로 수락한다."""
+    """한 실행 그룹을 제안·materialize하고 최대 한 번 국소 교체한다.
+
+    Args:
+        index: 실행 그룹의 단계와 추적 범위를 제공한다.
+        model: 호출 가능한 operation이 수락된 BCE skeleton이다.
+        group: 현재 worker가 독점하는 실행 그룹이다.
+        directive: collaboration 피드백 또는 상위 repair 지시다.
+
+    Returns:
+        수락된 ``Collaboration`` 또는 두 번째 실패의 명시적 issue를 담은 결과다.
+
+    Notes:
+        예외를 전역으로 전파하지 않고 실패 결과로 바꾸는 이유는 형제 worker의 성공을
+        보존하고 service가 필요한 operation slice만 handoff repair할 수 있게 하기 위해서다.
+    """
     plan: CallPlanProposal | None = None
     try:
         plan = propose_call_plan(index, model, group, finding=directive)
         return CollaborationResult(group.id, materialize(index, model, group, plan))
-    except Exception as first_error:  # one local replacement, never a global loop
+    except Exception as first_error:  # 현재 group의 한 번 교체이며 전역 반복으로 승격하지 않는다.
         try:
+            # 이전 계획이 parse되었다면 함께 제공한다. 최초 호출 자체가 실패했으면 None이며,
+            # 오류 text만으로 같은 유한 후보 범위에서 새 전체 계획을 요청한다.
             repaired = propose_call_plan(index, model, group, previous=plan, finding=str(first_error))
             return CollaborationResult(group.id, materialize(index, model, group, repaired))
         except Exception as second_error:

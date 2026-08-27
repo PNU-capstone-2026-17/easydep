@@ -1,4 +1,10 @@
-"""클래스 제안과 저장 모델이 공유하는 타입 참조 규칙을 제공한다."""
+"""LLM 제안, 저장 모델과 provenance 검사가 공유하는 설계 타입 규칙이다.
+
+입력은 문자열 타입 표현과 수락된 class/DataType catalog이고 출력은 구문·참조 해석 결과다.
+primitive와 generic container의 닫힌 vocabulary를 한 곳에서 제공하여 prompt와 validator가
+서로 다른 타입을 허용하지 않게 한다. 이 모듈은 순수 함수만 제공하며 LLM이나 state를
+참조하지 않는다.
+"""
 from __future__ import annotations
 
 import re
@@ -18,7 +24,7 @@ TYPE_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def type_expression_is_well_formed(type_name: str) -> bool:
-    """Recognize nested generic, array, and optional design type syntax."""
+    """중첩 generic, 배열과 optional suffix를 가진 설계 타입 구문인지 검사한다."""
 
     value = re.sub(r"\s+", "", str(type_name or ""))
     if not value:
@@ -51,7 +57,7 @@ def type_expression_is_well_formed(type_name: str) -> bool:
 
 
 def structure_type_inventory() -> dict[str, tuple[str, ...] | str]:
-    """The closed vocabulary supplied to structure proposals and their validator."""
+    """구조 proposal prompt와 validator가 함께 쓰는 닫힌 타입 vocabulary를 반환한다."""
     return {
         "primitives": tuple(sorted(PRIMITIVES)),
         "genericContainers": tuple(sorted(GENERIC_CONTAINERS)),
@@ -60,7 +66,7 @@ def structure_type_inventory() -> dict[str, tuple[str, ...] | str]:
 
 
 def structure_type_contract() -> str:
-    """Render the shared closed vocabulary for the BCE structure-generation prompt."""
+    """닫힌 vocabulary를 BCE 구조 생성 prompt에 넣을 영어 계약 문장으로 만든다."""
     inventory = structure_type_inventory()
     primitives = ", ".join(inventory["primitives"])
     containers = ", ".join(inventory["genericContainers"])
@@ -74,6 +80,7 @@ def structure_type_contract() -> str:
 
 
 def referenced_type_names(type_name: str) -> set[str]:
+    """primitive/container를 제외하고 선언 해소가 필요한 타입 이름만 반환한다."""
     return {
         token for token in TYPE_TOKEN.findall(type_name)
         if token.casefold() not in PRIMITIVES | GENERIC_CONTAINERS
@@ -83,12 +90,11 @@ def referenced_type_names(type_name: str) -> set[str]:
 def reachable_data_type_names(
     classes: list[dict[str, Any]], data_types: list[dict[str, Any]],
 ) -> set[str]:
-    """Return DataTypes transitively reachable from a class contract.
+    """class contract에서 전이적으로 도달 가능한 DataType 이름을 반환한다.
 
-    Class fields and operation signatures are the roots.  A reachable value
-    object may in turn reference another DataType through one of its fields.
-    Declarations that are only self-referential, or form an otherwise isolated
-    cycle, are not part of the executable class contract.
+    class field와 operation signature가 root다. 도달한 valueObject의 field가 다른
+    DataType을 가리키면 계속 따라간다. 자기 참조뿐이거나 다른 root와 연결되지 않은 순환
+    선언은 실행 가능한 class contract의 일부가 아니다.
     """
 
     declared = {
@@ -134,6 +140,7 @@ def reachable_data_type_names(
 
 
 def type_is_resolved(type_name: str, names: set[str], *, allow_void: bool) -> bool:
+    """타입 구문이 유효하고 모든 사용자 정의 token이 허용 이름으로 해소되는지 검사한다."""
     normalized = " ".join(str(type_name or "").split())
     if not normalized or not type_expression_is_well_formed(normalized):
         return False
@@ -145,24 +152,24 @@ def type_is_resolved(type_name: str, names: set[str], *, allow_void: bool) -> bo
 
 
 def field_type(field: object) -> str:
+    """영속 ``name : Type`` field에서 타입 부분을 가져온다."""
     text = " ".join(str(field or "").split())
     return text.rpartition(":")[2].strip() if ":" in text else ""
 
 
 def field_name(field: object) -> str:
-    """Return the declared name from a persisted ``name : Type`` field."""
+    """영속 ``name : Type`` field에서 선언 이름을 가져온다."""
 
     text = " ".join(str(field or "").split())
     return text.partition(":")[0].strip() if ":" in text else ""
 
 
 def structured_field_types(model: dict[str, Any]) -> dict[str, dict[str, str]]:
-    """Index accessible fields of declared Classes and value objects by type.
+    """선언 class와 valueObject의 접근 가능한 field를 타입별로 인덱싱한다.
 
-    A collaboration can pass a field of an already available structured value
-    without inventing a new producer.  Keeping the index derived from the
-    accepted class model makes that provenance finite and independently
-    checkable.
+    collaboration은 이미 가진 구조 값의 field를 새 producer 없이 전달할 수 있다. 이
+    인덱스를 수락 모델에서만 파생해 provenance 후보를 유한하고 독립적으로 검증 가능하게
+    유지한다.
     """
 
     result: dict[str, dict[str, str]] = {}
@@ -183,7 +190,7 @@ def structured_field_types(model: dict[str, Any]) -> dict[str, dict[str, str]]:
 
 
 def types_compatible(left: str, right: str) -> bool:
-    """Compare design types without treating spelling case as new semantics."""
+    """공백과 표기 대소문자를 새 의미로 취급하지 않고 설계 타입을 비교한다."""
 
     def normalize(value: str) -> str:
         return re.sub(r"\s+", "", str(value or "")).casefold()
@@ -194,7 +201,7 @@ def types_compatible(left: str, right: str) -> bool:
 def projected_field_type(
     root_type: str, path: str, fields_by_type: dict[str, dict[str, str]],
 ) -> str:
-    """Resolve a dotted field projection such as ``details.offeringId``."""
+    """``details.offeringId`` 같은 점 경로가 가리키는 최종 field 타입을 해소한다."""
 
     current_type = str(root_type or "").strip()
     for component in (part.strip() for part in str(path or "").split(".")):

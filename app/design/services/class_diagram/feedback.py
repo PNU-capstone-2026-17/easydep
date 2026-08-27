@@ -1,4 +1,14 @@
-"""피드백 범위와 수락 모델 재구성·부분 협업 교체를 담당한다."""
+"""피드백을 가장 작은 설계 소유 단위에 배정하고 그 단위만 교체한다.
+
+입력은 현재 ``BCEModel``, 이를 만든 ``ScenarioIndex``, 사용자 피드백과 선택적 target
+ID다. 출력은 inventory·operation·collaboration 중 하나로 좁혀진 ``FeedbackScope``와
+해당 단계의 수락 결과다. 명시 target과 로컬 타입 이름은 코드가 먼저 해석하고, 어느
+후보인지 결정할 수 없을 때만 LLM에 유한 후보 분류를 요청한다.
+
+이 모듈의 LLM 부작용은 scope fallback, inventory 교체, 선택된 collaboration 교체다.
+저장소나 graph state를 읽지 않으며, 선택되지 않은 소유자의 내용을 LLM 응답으로
+덮어쓰지 않는다. 공개 서비스의 전체 generate/resume 흐름도 이 모듈에서 시작하지 않는다.
+"""
 from __future__ import annotations
 
 import json
@@ -37,7 +47,12 @@ from app.design.services.common.structured import parse_structured
 
 
 def _inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
-    """Reconstruct the fixed inventory without operation-local declaration noise."""
+    """영속 BCE 모델에서 operation-local 선언을 제외한 구조 inventory를 복원한다.
+
+    Entity field에서 도달 가능한 DataType만 구조 소유로 간주한다. operation signature에만
+    등장하는 DTO는 operation fragment의 소유이므로 여기 포함하면 inventory 피드백이
+    의도하지 않은 유스케이스 계약까지 바꾸게 된다.
+    """
 
     all_data_types = {
         text(item.get("name")): deepcopy(item)
@@ -53,6 +68,8 @@ def _inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
         for name in referenced_type_names(field_type(value))
         if name in all_data_types
     }
+    # Entity가 직접 참조한 타입에서 시작해 중첩 valueObject까지 고정점으로 따라간다.
+    # 예: Order -> Address -> PostalCode는 세 타입 모두 구조 inventory에 속한다.
     while pending:
         name = pending.pop()
         if name in structural_names:
@@ -84,6 +101,8 @@ def _inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
         }
         for name in referenced & type_scopes.keys():
             type_scopes[name].update(scope)
+    # 타입 자신은 useCaseIds를 저장하지 않으므로 그 타입을 소유한 클래스의 범위를
+    # 참조 그래프를 따라 전파해 proposal 계약을 다시 만든다.
     changed = True
     while changed:
         changed = False
@@ -112,7 +131,12 @@ def _inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
 
 
 def _inventory_as_proposal(inventory_model: dict[str, Any]) -> dict[str, Any]:
-    """Rehydrate a persisted inventory into the LLM proposal contract."""
+    """영속 inventory alias를 ``InventoryProposal`` 입력 모양으로 되돌린다.
+
+    저장 모델은 BCE class와 DataType을 분리하지만 LLM 계약은 ``items`` 한 목록이다.
+    이 변환은 feedback 요청에 현재 상태를 제공하기 위한 것으로 operation과 dependency는
+    포함하지 않는다.
+    """
 
     items: list[dict[str, Any]] = []
     for item in inventory_model.get("Classes") or []:
@@ -154,7 +178,12 @@ def _inventory_as_proposal(inventory_model: dict[str, Any]) -> dict[str, Any]:
 def _fragments_from_model(
     index: ScenarioIndex, model: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    """Recover each operation-local fragment from the persisted BCE model."""
+    """영속 BCE 모델을 유스케이스별 operation-local fragment로 역투영한다.
+
+    ``stepRefs``가 소유 유스케이스를 결정하고, signature에서 도달하는 비-inventory
+    DataType을 함께 복원한다. 이 역투영 덕분에 resume/revise가 기존 체크포인트를 별도
+    내부 포맷으로 마이그레이션하지 않고도 국소 교체할 수 있다.
+    """
 
     inventory_type_names = {
         text(item.get("name"))
@@ -220,7 +249,11 @@ def _feedback_scope(
     feedback: str,
     targets: set[str],
 ) -> FeedbackScope:
-    """Resolve the smallest mutable owner before asking an LLM when necessary."""
+    """결정론적 단서를 우선 사용해 가장 작은 수정 소유자를 선택한다.
+
+    판정 순서는 명시 target, 로컬 DataType 이름 언급, 유한 후보 LLM 분류다. 서로 다른
+    종류의 target이 섞인 경우 한 종류라고 추측하지 않고 fallback 분류로 보낸다.
+    """
 
     inventory_ids = {
         class_name(item) for item in model.get("Classes") or [] if isinstance(item, dict)
@@ -237,6 +270,8 @@ def _feedback_scope(
                 local_type_owners.setdefault(text(item.get("name")), set()).add(use_case_id)
     use_case_ids = {use_case.id for use_case in index.use_cases}
     group_ids = {group.id for group in index.groups}
+    # 1. UI나 finding이 정확한 ID를 보냈다면 LLM을 호출하지 않는다. target 전체가 한
+    # 소유 집합에 포함될 때만 확정해 부분적으로 잘못 해석된 ID를 조용히 버리지 않는다.
     if targets:
         if targets <= group_ids:
             return FeedbackScope(kind="collaboration", ids=sorted(targets, key=id_key))
@@ -249,6 +284,8 @@ def _feedback_scope(
                 use_case_id for target in targets for use_case_id in local_type_owners[target]
             }
             return FeedbackScope(kind="operation", ids=sorted(owners, key=id_key))
+    # 2. 저장 모델에는 local type의 owner가 없으므로 복원 fragment에서 역으로 찾는다.
+    # 사용자가 DTO 이름을 말한 경우 inventory가 아니라 그 DTO를 선언한 operation만 바뀐다.
     mentioned_local_owners = {
         use_case_id
         for name, owners in local_type_owners.items()
@@ -257,6 +294,8 @@ def _feedback_scope(
     }
     if mentioned_local_owners:
         return FeedbackScope(kind="operation", ids=sorted(mentioned_local_owners, key=id_key))
+    # 3. 결정론적 단서가 없을 때만 LLM이 종류와 ID를 고른다. 아래 candidates 밖의 ID는
+    # 응답 검증 직후 거부되며, 이 호출 자체가 설계 내용을 생성하지는 않는다.
     parsed = parse_structured(
         [
             {
@@ -299,9 +338,16 @@ def _propose_inventory_revision(
     feedback: str,
     target_ids: set[str],
 ) -> dict[str, Any]:
-    """Request and validate a full inventory replacement, retaining untargeted owners."""
+    """전체 inventory 제안을 요청하되 지정하지 않은 소유자는 원본으로 되돌린다.
+
+    LLM 입력은 feedback, target ID, 현재 inventory, 원시 scenario다. 출력은 기존
+    ``InventoryProposal``과 같은 전체 교체안이다. target이 있으면 해당 item과 그 item이
+    닿는 구조 관계만 취하고, 나머지는 원본을 보존한 뒤 inventory 검사를 실행한다.
+    """
 
     current = _inventory_as_proposal(inventory_model)
+    # 전체 모양을 받는 이유는 구조 관계와 타입 참조를 한 번에 schema 검증하기 위해서다.
+    # 실제 수정 권한은 아래 merge에서 target_ids로 다시 축소된다.
     parsed = parse_structured(
         [
             {"role": "system", "content": inventory.INVENTORY_PROMPT},
@@ -320,6 +366,8 @@ def _propose_inventory_revision(
     )
     proposal = InventoryProposal.model_validate(parsed)
     if target_ids:
+        # 정상: target A의 새 정의와 A-B 관계는 수용한다.
+        # 실패: 응답이 target 밖 B도 바꿔도 B의 원본을 유지한다.
         replacement = {item.name: item for item in proposal.items}
         original = InventoryProposal.model_validate(current)
         if not target_ids <= {item.name for item in original.items}:
@@ -337,6 +385,8 @@ def _propose_inventory_revision(
                 ) else original.Relationships
             ),
         )
+    # LLM 제안을 저장 모양으로 정규화한 뒤 같은 INVENTORY_CHECKS를 재사용한다. 검증
+    # finding을 다시 LLM에 보내는 추가 loop는 만들지 않고 서비스 경계에 실패를 알린다.
     candidate = inventory._normalize_inventory(proposal)
     report = run_checks(INVENTORY_CHECKS, candidate, index)
     if report.errors or report.findings:
@@ -354,7 +404,11 @@ def _replace_selected_groups(
     feedback: str = "",
     workers: int | None = None,
 ) -> list[CollaborationResult]:
-    """Replan only selected groups while preserving bounded parallelism and repair."""
+    """선택한 실행 그룹만 기존 collaboration 수리 규약으로 재계획한다.
+
+    ``workers``는 설정값과 그룹 수 중 작은 값으로 제한한다. 결과 목록은 병렬 완료 순서가
+    아니라 입력 그룹 순서이므로 직렬 실행과 JSON 순서가 같다.
+    """
 
     workers = max(1, min(
         workers if workers is not None else int(
@@ -365,6 +419,8 @@ def _replace_selected_groups(
     directive = f"Apply this user feedback to this call plan only: {feedback}" if feedback else ""
     if workers == 1 or len(groups) <= 1:
         return [collaboration.process_group(index, model, group, directive) for group in groups]
+    # 각 worker는 한 group만 소유한다. process_group의 한정 repair도 같은 group 안에서만
+    # 일어나므로 형제 결과를 공유하거나 덮어쓰지 않는다.
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
             executor.submit(collaboration.process_group, index, model, group, directive)
@@ -374,19 +430,41 @@ def _replace_selected_groups(
 
 
 def inventory_from_model(model: BCEModel) -> AcceptedInventory:
-    """수락된 모델에서 구조 인벤토리를 불변 경계로 재구성한다."""
+    """수락된 모델에서 구조 inventory를 불변 경계로 재구성한다.
+
+    Args:
+        model: 영속 schema로 검증된 현재 BCE 모델이다.
+
+    Returns:
+        operation-local 선언을 제외한 ``AcceptedInventory``다.
+    """
     return AcceptedInventory.from_payload(_inventory_from_model(model.model_dump(by_alias=True)))
 
 
 def inventory_as_proposal(inventory_model: AcceptedInventory) -> dict[str, Any]:
-    """수락된 인벤토리를 LLM 제안 계약으로 되살린다."""
+    """수락된 inventory를 LLM 제안 계약으로 되살린다.
+
+    Args:
+        inventory_model: 구조 단계의 불변 수락 단위다.
+
+    Returns:
+        ``InventoryProposal``로 검증 가능한 별칭 JSON이다.
+    """
     return _inventory_as_proposal(inventory_model.as_payload())
 
 
 def fragments_from_model(
     index: ScenarioIndex, model: BCEModel,
 ) -> dict[str, AcceptedFragment]:
-    """수락된 BCE 모델에서 유스케이스별 연산 조각을 복원한다."""
+    """수락된 BCE 모델에서 유스케이스별 연산 조각을 복원한다.
+
+    Args:
+        index: step ID와 유스케이스 소유권의 기준이다.
+        model: operation과 DataType이 합쳐진 영속 모델이다.
+
+    Returns:
+        유스케이스 ID를 수락된 operation fragment에 연결한 mapping이다.
+    """
     fragments = _fragments_from_model(index, model.model_dump(by_alias=True))
     return {
         use_case_id: AcceptedFragment(use_case_id=use_case_id, payload=fragment)
@@ -400,7 +478,20 @@ def feedback_scope(
     feedback: str,
     targets: AbstractSet[str],
 ) -> FeedbackScope:
-    """피드백이 수정할 가장 작은 수락 경계를 결정한다."""
+    """피드백이 수정할 가장 작은 수락 경계를 결정한다.
+
+    Args:
+        index: 허용된 유스케이스·실행 그룹 ID 집합이다.
+        model: 현재 수락된 BCE 모델이다.
+        feedback: 사용자의 자연어 수정 요청이다.
+        targets: UI 또는 finding이 이미 알고 있는 소유 ID다.
+
+    Returns:
+        종류 하나와 그 종류에 속하는 유한 ID 목록이다.
+
+    Notes:
+        명시 target이나 로컬 타입 언급으로 확정할 수 있으면 LLM 호출은 발생하지 않는다.
+    """
     return _feedback_scope(
         index, model.model_dump(by_alias=True), feedback, set(targets),
     )
@@ -412,7 +503,23 @@ def propose_inventory_revision(
     feedback: str,
     target_ids: AbstractSet[str],
 ) -> AcceptedInventory:
-    """피드백을 반영한 전체 인벤토리를 검사해 수락한다."""
+    """피드백을 반영한 inventory 교체안을 검사해 수락한다.
+
+    Args:
+        index: inventory 규칙이 참조할 시나리오 인덱스다.
+        inventory_model: 현재 수락된 구조 inventory다.
+        feedback: LLM에 전달할 사용자 수정 요청이다.
+        target_ids: 실제로 변경을 허용할 inventory item 이름이다.
+
+    Returns:
+        정규화와 ``INVENTORY_CHECKS``를 통과한 새 수락 단위다.
+
+    Raises:
+        ValueError: target이 없거나 교체안이 inventory 불변식을 위반한 경우다.
+
+    Notes:
+        LLM은 전체 교체안을 반환하지만 target 밖 item은 코드가 원본으로 복원한다.
+    """
     candidate = _propose_inventory_revision(
         index,
         inventory_model.as_payload(),
@@ -430,7 +537,21 @@ def replace_selected_groups(
     feedback: str = "",
     workers: int | None = None,
 ) -> list[CollaborationResult]:
-    """선택한 실행 그룹의 협업만 재계획한다."""
+    """선택한 실행 그룹의 협업만 재계획한다.
+
+    Args:
+        index: 실행 그룹과 provenance의 기준이다.
+        model: receiver operation이 수락된 BCE skeleton이다.
+        groups: 교체 권한을 가진 실행 그룹 목록이다.
+        feedback: collaboration 범위에서만 LLM에 전달할 피드백이다.
+        workers: 선택적 동시 실행 상한이다.
+
+    Returns:
+        입력 그룹 순서의 수락 collaboration 또는 명시적 실패 결과다.
+
+    Notes:
+        각 그룹의 최초 제안과 최대 한 번 repair 규약은 ``process_group``이 소유한다.
+    """
     return _replace_selected_groups(
         index, model, groups, feedback=feedback, workers=workers,
     )

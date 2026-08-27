@@ -1,4 +1,12 @@
-"""클래스 설계 단계 사이에서 교환하는 수락된 불변 경계다."""
+"""클래스 설계 단계 사이에서만 교환하는 수락된 불변 작업 단위다.
+
+``AcceptedInventory``와 ``AcceptedFragment``는 LLM 제안을 정규화·검증한 뒤 다음 단계로
+넘기는 경계다. frozen dataclass와 방어적 복사로 worker가 형제 작업의 입력을 바꾸지 못하게
+한다. ``CollaborationResult``는 병렬 그룹 하나의 성공 또는 명시적 실패를 표현한다.
+
+이 타입들은 영속 JSON schema가 아니다. 외부 저장 계약은 ``schemas.class_model.BCEModel``이
+소유하며, 여기에는 repair 횟수·prompt·telemetry 같은 실행 정보가 들어가지 않는다.
+"""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -33,7 +41,11 @@ class DataTypeCollision(Exception):
 
 @dataclass(frozen=True)
 class AcceptedInventory:
-    """구조 단계가 연산 단계에 넘기는 고정 BCE 인벤토리다."""
+    """구조 단계가 연산 worker 모두에 넘기는 고정 BCE inventory다.
+
+    ``Mapping`` tuple로 보관하고 입출력마다 깊은 복사하여 병렬 fragment 생성 중 구조
+    기준이 변하지 않게 한다.
+    """
 
     classes: tuple[Mapping[str, Any], ...]
     data_types: tuple[Mapping[str, Any], ...]
@@ -59,7 +71,7 @@ class AcceptedInventory:
 
 @dataclass(frozen=True)
 class AcceptedFragment:
-    """한 유스케이스가 소유한 수락된 연산·로컬 타입 조각이다."""
+    """한 유스케이스만 교체 권한을 가진 수락 operation·local type 조각이다."""
 
     use_case_id: str
     payload: Mapping[str, Any]
@@ -70,7 +82,11 @@ class AcceptedFragment:
 
 @dataclass(frozen=True)
 class CollaborationResult:
-    """한 실행 그룹의 수락된 협업 또는 국소 수리 실패다."""
+    """한 실행 그룹의 수락된 collaboration 또는 국소 수리 실패다.
+
+    예외를 worker 밖으로 던지는 대신 issue를 보존하여 service가 성공한 형제 결과는
+    유지하고 실패 그룹이 추적한 operation만 handoff repair할 수 있게 한다.
+    """
 
     group_id: str
     collaboration: Collaboration | None
@@ -83,7 +99,11 @@ class CollaborationResult:
 
 @dataclass(frozen=True)
 class CallDependency:
-    """호출 트리에서 파생된 한 클래스 간 의존선이다."""
+    """호출 트리에서 class PlantUML에만 파생하는 한 클래스 간 의존선이다.
+
+    저장 ``Relationships``에 추가하지 않으므로 renderer용 정보가 도메인 구조 계약을
+    오염시키지 않는다.
+    """
 
     source: str
     target: str
@@ -99,7 +119,7 @@ class CallDependency:
 
 @dataclass(frozen=True)
 class OperationUnit:
-    """동시 생성할 수 있는 하나의 유스케이스 실행 슬라이스다."""
+    """다른 worker와 독립적으로 생성할 수 있는 하나의 operation 실행 슬라이스다."""
 
     id: str
     use_case: UseCase

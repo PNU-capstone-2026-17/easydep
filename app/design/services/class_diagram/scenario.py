@@ -1,4 +1,12 @@
-"""원시 유스케이스에서 실행 그룹과 추적 식별자의 단일 인덱스를 만든다."""
+"""원시 유스케이스 JSON을 모든 클래스·시퀀스 단계가 공유하는 인덱스로 정규화한다.
+
+입력은 graph adapter가 전달한 기존 use-case JSON이고 출력은 frozen ``ScenarioIndex``다.
+main/extension/precondition을 안정적인 provenance ID로 바꾸며 include·extend 관계와 actor
+entry 단위의 ``ExecutionGroup``을 한 번 계산한다. 이후 단계가 각자 raw JSON을 해석하지
+않게 해 같은 단계가 operation, collaboration, sequence에서 다른 ID를 갖는 일을 막는다.
+
+이 모듈은 순수 변환만 수행한다. LLM, 설정, 저장소, graph state에 의존하지 않는다.
+"""
 from __future__ import annotations
 
 import re
@@ -19,6 +27,7 @@ def id_key(value: str) -> tuple[Any, ...]:
 
 @dataclass(frozen=True)
 class Step:
+    """한 유스케이스 흐름 문장과 안정적인 provenance 식별자다."""
     id: str
     use_case_id: str
     subject: str
@@ -30,6 +39,7 @@ class Step:
 
 @dataclass(frozen=True)
 class UseCase:
+    """정규화한 한 유스케이스와 그 단계·precondition 원천이다."""
     id: str
     name: str
     primary_actor: str
@@ -40,6 +50,7 @@ class UseCase:
 
 @dataclass(frozen=True)
 class Relationship:
+    """별칭을 실제 ID로 해소한 include 또는 extend 관계다."""
     kind: str
     base_id: str
     child_id: str
@@ -48,6 +59,7 @@ class Relationship:
 
 @dataclass(frozen=True)
 class ExecutionGroup:
+    """독립적으로 operation/collaboration을 생성할 수 있는 actor-entry 실행 슬라이스다."""
     id: str
     use_case_id: str
     step_ids: tuple[str, ...]
@@ -59,6 +71,7 @@ class ExecutionGroup:
 
 @dataclass(frozen=True)
 class ScenarioIndex:
+    """설계 단계 전체에서 공유하는 불변 시나리오 조회 모델이다."""
     raw: dict[str, Any]
     use_cases: tuple[UseCase, ...]
     relationships: tuple[Relationship, ...]
@@ -187,6 +200,8 @@ def _groups(
     use_cases: tuple[UseCase, ...], relationships: tuple[Relationship, ...],
 ) -> tuple[ExecutionGroup, ...]:
     by_id = {use_case.id: use_case for use_case in use_cases}
+    # actor가 없는 included use case는 호출자의 한 execution group 안에서 실행된다. 별도
+    # root group까지 만들면 같은 step을 두 collaboration이 중복 소유하게 된다.
     internal_includes = {
         relation.child_id for relation in relationships
         if relation.kind == "include" and not _actor_steps(by_id[relation.child_id])
@@ -200,6 +215,8 @@ def _groups(
         active: str | None = None
         grouped: dict[str, list[str]] = {}
         owner_by_step: dict[str, str] = {}
+        # actor 입력 하나부터 다음 actor 입력 직전까지가 하나의 독립 실행 슬라이스다.
+        # actor step이 전혀 없는 use case는 root 그룹 하나로 다룬다.
         for step in main_steps:
             if step.id in actor_steps:
                 active = step.id
@@ -209,6 +226,8 @@ def _groups(
                 owner_by_step[step.id] = active
         if not grouped:
             grouped[f"{use_case.id}:root"] = [step.id for step in main_steps]
+        # extension handling은 branch_step을 포함하는 actor slice에 붙인다. 별도 group으로
+        # 떼면 조건 분기의 call/return이 주 흐름과 인과적으로 분리된다.
         for extension in use_case.specification.get("extensions") or []:
             if not isinstance(extension, dict):
                 continue
@@ -223,6 +242,8 @@ def _groups(
             actor_step = group_id if group_id in actor_steps else None
             trace_ids = [use_case.id]
             required = list(base_steps)
+            # include의 anchor가 현재 slice에 있을 때만 child 단계를 required set으로 합친다.
+            # anchor 없는 include는 use case 전역 관계이므로 모든 해당 slice에서 추적한다.
             for relation in relationships:
                 if relation.kind != "include" or relation.base_id != use_case.id:
                     continue
@@ -245,6 +266,22 @@ def _groups(
 
 
 def build_scenario_index(raw: dict[str, Any]) -> ScenarioIndex:
+    """기존 use-case JSON을 정렬되고 불변인 설계 입력으로 검증·정규화한다.
+
+    Args:
+        raw: ``use_cases``, ``use_case_specs``와 선택적 ``relationships``를 포함한 JSON이다.
+
+    Returns:
+        canonical step ID, 해소된 관계와 execution group을 가진 ``ScenarioIndex``다.
+
+    Raises:
+        TypeError: 최상위 입력이 JSON object가 아닌 경우다.
+        ValueError: 같은 use-case specification ID가 중복된 경우다.
+
+    Notes:
+        main 단계 ``UC1:main:2``와 extension 단계 ``UC1:extension:2a:1``처럼 ID를
+        만든다. 입력 배열 순서가 달라도 use-case ID의 자연 정렬 순서로 결과가 고정된다.
+    """
     if not isinstance(raw, dict):
         raise TypeError("use-case specification must be an object")
     summaries = {
@@ -277,6 +314,8 @@ def build_scenario_index(raw: dict[str, Any]) -> ScenarioIndex:
             steps=_steps(use_case_id, specification),
             precondition_refs=_preconditions(use_case_id, specification),
         ))
+    # raw relationship은 이름 또는 ID를 사용할 수 있다. 모든 use case를 수락한 뒤에만
+    # alias를 해소해야 중복 이름을 임의의 ID에 연결하지 않는다.
     accepted = tuple(use_cases)
     relationships = _relationships(raw, accepted)
     return ScenarioIndex(raw, accepted, relationships, _groups(accepted, relationships))

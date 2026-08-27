@@ -1,4 +1,9 @@
-"""클래스 다이어그램 의미 검증기와 레거시 표시 어댑터."""
+"""typed 클래스 모델 검증 보고서를 legacy UI·downstream detector에 연결한다.
+
+현재 클래스 생성 경로의 최종 계약은 ``validation.model.validate_class_model``이 소유한다.
+이 모듈에는 이전 저장본과 API·ERD readiness가 소비하는 표시용 detector도 남아 있다.
+검사는 read-only이며 LLM이나 service repair를 시작하지 않는다.
+"""
 from __future__ import annotations
 
 import re
@@ -36,7 +41,7 @@ def _known_use_case_ids(state: dict[str, Any]) -> set[str]:
 
 
 class Finding(ValidationFinding):
-    """Legacy design finding with a rule tag for user-facing output."""
+    """기존 UI 표시용 rule tag 동작을 보존한 typed finding이다."""
 
     def __init__(
         self,
@@ -75,7 +80,7 @@ def _classes(model: dict[str, Any]) -> list[dict]:
 
 
 def _class_method_signatures(class_item: dict[str, Any]) -> list[str]:
-    """Project typed operations; read legacy method strings only for old artifacts."""
+    """typed operation을 표시 시그니처로 투영하고 과거 산출물만 methods를 읽는다."""
 
     operations = class_item.get("operations")
     if isinstance(operations, list):
@@ -340,11 +345,11 @@ def entity_association_multiplicity(model: dict, state: dict) -> list[Finding]:
 
 
 def fields_typed(model: dict, state: dict) -> list[Finding]:
-    """Require a Java type on every declared BCE field.
+    """선언된 모든 BCE field에 Java로 표현 가능한 타입이 있는지 검사한다.
 
-    The downstream BCE generator cannot represent an untyped PlantUML
-    attribute as valid Java (its legacy parser turns it into ``void``), and an
-    untyped field also cannot be mapped consistently to persistence code.
+    downstream BCE generator는 타입 없는 PlantUML attribute를 유효한 Java로 표현할 수
+    없고 legacy parser는 이를 ``void``로 바꾼다. 타입 없는 field는 persistence code에도
+    일관되게 mapping할 수 없다.
     """
     rule_id = "class.fields-typed"
     found: list[Finding] = []
@@ -364,8 +369,8 @@ def fields_typed(model: dict, state: dict) -> list[Finding]:
 
 
 def _interaction_contract_findings(model: dict, state: dict) -> list[ValidationFinding]:
-    # Historical structure-only BCE artifacts remain viewable. New class
-    # artifacts always persist the Collaborations key, even while incomplete.
+    # 과거 구조-only BCE 산출물은 계속 표시한다. 새 class 산출물은 미완성이어도 항상
+    # Collaborations key를 저장하므로 그 key가 있을 때만 현재 interaction 계약을 적용한다.
     if "Collaborations" not in (model or {}):
         return []
     scenario = state.get("usecase_spec") if isinstance(state, dict) else None
@@ -379,7 +384,7 @@ def _interaction_contract_findings(model: dict, state: dict) -> list[ValidationF
 
 
 def operation_contract(model: dict, state: dict) -> list[Finding]:
-    """Validate the current operation and call-tree contract."""
+    """현재 operation과 call-tree 저장 계약을 typed 보고서로 검증한다."""
     if (
         stereotype_is_bce(model, state)
         or names_unique(model, state)
@@ -399,7 +404,7 @@ def operation_contract(model: dict, state: dict) -> list[Finding]:
 
 
 def operation_input_producers(model: dict, state: dict) -> list[Finding]:
-    """Validate each persisted finite input source and its producer ordering."""
+    """저장된 유한 input source와 producer 선행 순서를 검사한다."""
     return [
         Finding(
             "class.operation-input-producers",
@@ -499,7 +504,7 @@ CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
 def _communication_rule_findings(
     model: dict, state: dict, rule_id: str
 ) -> list[Finding]:
-    """Project the legacy multi-rule detector onto its owning rule."""
+    """여러 rule을 반환하는 legacy detector를 지정한 소유 rule 하나로 투영한다."""
     return [
         finding
         for finding in communication_rules(model, state)
@@ -538,7 +543,7 @@ CLASS_DIAGRAM_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
 
 
 def class_diagram_validation_report(model: dict, state: dict) -> ValidationReport:
-    """Return shared validation evidence for one BCE class model."""
+    """BCE class 모델 하나에 대한 공통 검증 근거를 typed 보고서로 반환한다."""
     return run_checks(CLASS_DIAGRAM_CHECKS, model or {}, state or {})
 
 

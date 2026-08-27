@@ -14,6 +14,9 @@
 코드와 함께 갱신되는 실행 상세는 문서 수에 포함하지 않는다.
 
 - [클래스·시퀀스 설계 생성 로직](class-design-pipeline.md): 현재 생성 계약과 단계별 책임
+- `app/design/services/README.md`: 설계 서비스 디렉터리 지도와 경계 규칙
+- `app/design/services/class_diagram/README.md`: LLM 입출력, 검증, repair와 typed 클래스 계약
+- `app/design/services/sequence_diagram/README.md`: 결정론적 시퀀스 투영과 피드백 경로
 - [상호작용 설계 개선과 LLM 호출 최적화](interaction-design-improvements.md): 남은 개선,
   호출 운영 원칙과 측정 항목
 - `app/core/orchestration/README.md`: 오케스트레이터 명령과 provider 계약
@@ -30,3 +33,5 @@
 - 사례·비교군·측정 결과와 주장 한계는 평가 문서에만 기록한다.
 - 특정 시점 보고서와 완료된 결정은 `archive/`로 이동하고 다시 갱신하지 않는다.
 - 사람용 문서는 한국어로 쓰고 시스템 식별자와 필드 이름만 영어로 유지한다.
+- 중앙 문서는 도메인 개념을, 코드 옆 README는 파일·입출력·실패 경계를 설명한다.
+  동일한 prompt 전문이나 규칙 목록을 두 위치에 복제하지 않는다.
