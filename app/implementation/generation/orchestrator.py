@@ -882,6 +882,7 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
                 "gradle",
                 "compileJava",
                 "--no-daemon",
+                "-Dorg.gradle.vfs.watch=false",
                 "--build-cache",
             ],
             application,

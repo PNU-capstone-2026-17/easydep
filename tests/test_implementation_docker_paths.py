@@ -94,6 +94,7 @@ def test_gradle_compile_uses_posix_workdir_and_workspace_volume(tmp_path: Path) 
         "gradle",
         "compileJava",
         "--no-daemon",
+        "-Dorg.gradle.vfs.watch=false",
         "--build-cache",
     ]
     assert jar.read_bytes() == b"boot jar"
