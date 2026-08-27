@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.core.validation import CheckSpec, Finding, run_checks
+from app.validation import CheckSpec, Finding, run_checks
 
 
 def test_runner_keeps_registry_order_when_checks_finish_in_parallel() -> None:

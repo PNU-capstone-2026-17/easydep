@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.cloudkb.depkb.provider_realizations import capability_realizations
-from app.core.infra_planning import plan_for_anchors
+from app.cloudkb.depkb.provider_realizations import capability_realizations
+from app.cloudkb.infra_planning import plan_for_anchors
 
 
 @pytest.mark.parametrize("provider,count,composition", [

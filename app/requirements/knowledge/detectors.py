@@ -24,8 +24,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterator
 
-from app.core.validation import CheckSpec, ValidationReport, run_checks
-from app.core.validation import Finding as ValidationFinding
+from app.validation import CheckSpec, ValidationReport, run_checks
+from app.validation import Finding as ValidationFinding
 from app.requirements.knowledge import rules
 
 

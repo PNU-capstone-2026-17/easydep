@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.core.config import settings
-from app.core.validation import Finding, run_checks
+from app.config import settings
+from app.validation import Finding, run_checks
 from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram.models import AcceptedInventory
 from app.design.services.class_diagram.proposals import InventoryProposal

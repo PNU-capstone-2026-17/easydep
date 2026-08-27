@@ -9,7 +9,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.artifacts_api import require_app, to_web_response, validate_app_id
-from app.core import region_catalog
+from app.cloudkb import region_catalog
 from app.design.services.common.plantuml import render_plantuml
 from app.repositories import artifact_repository
 from app.requirements.schemas import DeploymentPreferences

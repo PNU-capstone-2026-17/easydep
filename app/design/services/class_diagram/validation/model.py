@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.core.validation import CheckSpec, Finding, ValidationReport, run_checks
+from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
 from app.design.services.class_diagram.scenario import ScenarioIndex, text
 from app.design.services.class_diagram.type_system import types_compatible

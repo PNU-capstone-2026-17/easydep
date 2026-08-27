@@ -35,9 +35,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from app.core.config import settings
+from app.config import settings
 from app.metrics import langsmith as langsmith_metrics
-from app.requirements.common.llm_stall_probe import start_stall_probe
+from app.metrics.llm_stall_probe import start_stall_probe
 
 LOGGER_NAME = "easydep.agent"
 

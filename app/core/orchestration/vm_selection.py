@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.cloudkb.costkb.agent_api import HOURS_PER_MONTH
-from app.core.cloudkb.costkb.dataset import filter_specs, load_warning, resolve_region
-from app.core.cloudkb.perfkb.agent_api import NOTE_OK, recommend_note
+from app.cloudkb.costkb.agent_api import HOURS_PER_MONTH
+from app.cloudkb.costkb.dataset import filter_specs, load_warning, resolve_region
+from app.cloudkb.perfkb.agent_api import NOTE_OK, recommend_note
 
 SUPPORTED_PROVIDERS = {"aws", "azure", "gcp"}
 

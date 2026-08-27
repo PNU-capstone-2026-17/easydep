@@ -7,7 +7,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.core.cloudkb.depkb.provider_cache import (
+from app.cloudkb.depkb.provider_cache import (
     PINNED_PROVIDERS,
     PLUGIN_CACHE,
     audit_provider_cache,

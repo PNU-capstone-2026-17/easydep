@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-from app.core.config import settings
+from app.config import settings
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (

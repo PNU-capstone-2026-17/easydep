@@ -6,7 +6,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.core.config import settings
+from app.config import settings
 
 from .frontend_contracts import GeneratedClientContracts
 from ..domain.implementation_ir import (

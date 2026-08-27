@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.core.cloudkb.depkb.native import study
+from app.cloudkb.depkb.native import study
 
 
 def _inventory(provider: str) -> dict:

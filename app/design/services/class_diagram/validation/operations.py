@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.validation import CheckSpec, Finding, ValidationReport, run_checks
+from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 from app.design.services.class_diagram.scenario import (
     ScenarioIndex,
     UseCase,

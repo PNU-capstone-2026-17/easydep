@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.core.config import settings
+from app.config import settings
 from app.design.services.deployment_diagram import extractor as deployment_extractor
 from app.implementation.generation.orchestrator import load_job
 

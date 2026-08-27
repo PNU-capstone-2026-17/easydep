@@ -1,10 +1,10 @@
-﻿"""Design-readiness checks shared by design hand-off and implementation entry."""
+"""Design-readiness checks shared by design hand-off and implementation entry."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from app.core.validation import ValidationReport
+from app.validation import ValidationReport
 from app.design.knowledge.detectors import (
     Finding,
     api_spec_validation_report,

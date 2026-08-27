@@ -22,8 +22,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from app.core.run_identity import identity_manifest, make_run_id
-from app.core.traceability import build_requirement_trace
+from app.orchestration.run_identity import identity_manifest, make_run_id
+from app.requirements.traceability import build_requirement_trace
 from app.requirements.agent import stages, supervisor
 from app.requirements.agent.state import AgentState
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.validation import ValidationReport
+from app.validation import ValidationReport
 from app.design import validation
 from app.design.knowledge import detectors, rules
 from app.design.services.class_diagram.validation import diagram as class_validation

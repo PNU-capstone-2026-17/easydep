@@ -33,7 +33,7 @@ import json
 
 from langchain_core.tools import tool
 
-from app.core import regions
+from app.cloudkb import regions
 
 #: 환율 출처. ECB 기준환율을 그대로 서빙하는 공개 API(키 없음).
 #:
@@ -75,7 +75,7 @@ def list_workload_kinds(provider: str) -> str:
     Args:
         provider: a provider id from `list_cloud_providers`.
     """
-    from app.core import input_registry
+    from app.requirements.resources import input_registry
 
     kinds = input_registry.anchors_for((provider or "").strip().lower())
     if not kinds:

@@ -6,5 +6,6 @@ or the observability service is unavailable.
 """
 
 from app.metrics.langsmith import TraceRun, trace_metadata, trace_scope
+from app.metrics.llm_stall_probe import start_stall_probe
 
-__all__ = ["TraceRun", "trace_metadata", "trace_scope"]
+__all__ = ["TraceRun", "start_stall_probe", "trace_metadata", "trace_scope"]

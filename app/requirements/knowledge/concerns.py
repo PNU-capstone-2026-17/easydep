@@ -10,7 +10,7 @@
 
 한 파일에 두면 심각도 어휘가 곧 갈린다. "위반했다"와 "안 적혔다"를 같은 목록에 두면
 검증 프롬프트가 후자를 지적으로 바꾼다 — 그러면 사용자가 안 쓴 것이 전부 결함이 되고
-오탐이 대부분이 된다(`app/core/cloudkb/document/archive/cloud-native-requirements.md` §6의 판단).
+오탐이 대부분이 된다(`app/cloudkb/document/archive/cloud-native-requirements.md` §6의 판단).
 
 형식은 checklist-based reading(CBR)이다 — 질문 목록을 들고 요구사항을 읽어 **누락**을
 찾는다. 그래서 항목이 규범문이 아니라 질문문이고, 미충족이 결함이 아니라 인계다.
@@ -66,13 +66,13 @@
 
 `spec.black-box-no-internal-components`·`spec.no-protocol-mechanics`가 명세에 내부
 컴포넌트·프로토콜을 금지한다. 관심사는 NFR 층과 나란한 별도 산출물에 살고
-유스케이스 명세는 손대지 않는다(`app/core/cloudkb/document/archive/cloud-native-requirements.md` §5).
+유스케이스 명세는 손대지 않는다(`app/cloudkb/document/archive/cloud-native-requirements.md` §5).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.core import advisory
+from app.requirements.knowledge import advisory
 from app.requirements.knowledge import basis
 
 #: **메타 특성** — 무엇이 관심사가 될 수 있는지를 정하는 단일 기준(Nickerson 외 2013).

@@ -26,8 +26,8 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from app.core.config import settings
-from app.core.llm_stall_probe import start_stall_probe
+from app.config import settings
+from app.metrics.llm_stall_probe import start_stall_probe
 from app.metrics import langsmith as langsmith_metrics
 
 

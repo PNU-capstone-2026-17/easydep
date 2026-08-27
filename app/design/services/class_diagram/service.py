@@ -14,8 +14,8 @@ import logging
 from collections.abc import Set as AbstractSet
 from typing import Any
 
-from app.core.config import settings
-from app.core.validation import run_checks
+from app.config import settings
+from app.validation import run_checks
 from app.design.schemas.class_model import BCEModel, Collaboration
 from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram import inventory, operations

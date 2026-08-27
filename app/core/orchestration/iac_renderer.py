@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.cloudkb.depkb.provider_cache import PINNED_PROVIDERS
+from app.cloudkb.depkb.provider_cache import PINNED_PROVIDERS
 
 RESOURCE_PLAN_SCHEMA = "easydep-resource-plan"
 

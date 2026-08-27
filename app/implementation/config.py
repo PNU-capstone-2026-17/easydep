@@ -4,7 +4,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.core.config import settings
+from app.config import settings
 
 
 @dataclass(frozen=True)

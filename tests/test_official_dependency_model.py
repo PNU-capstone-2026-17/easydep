@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.core.cloudkb.depkb.official_dependency_model import (
+from app.cloudkb.depkb.official_dependency_model import (
     dependencies_for,
     load_official_dependencies,
 )

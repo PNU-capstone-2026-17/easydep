@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.core.cloudkb.depkb.evidence_model import validate_frozen_model
+from app.cloudkb.depkb.evidence_model import validate_frozen_model
 from evaluation.research_protocol.commands.build_evidence_models import build
 
 

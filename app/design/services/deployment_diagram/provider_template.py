@@ -15,10 +15,10 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from app.core.orchestration.provider_primitives import (
+from app.cloudkb.provider_primitives import (
     _PROVIDER_MODELS as PROVIDER_CATALOG,
 )
-from app.core.orchestration.provider_primitives import (
+from app.cloudkb.provider_primitives import (
     _TERRAFORM_TYPES as TERRAFORM_TYPES,
 )
 

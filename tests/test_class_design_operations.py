@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.validation import run_checks
+from app.validation import run_checks
 from app.design.services.class_diagram import service
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,

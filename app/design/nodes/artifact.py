@@ -151,7 +151,7 @@ _SEQUENCE_REPAIR_RULE_GROUPS = (
 
 def repair_budget() -> int:
     """재생성을 몇 번까지 시도하는가. 0이면 검사만 하고 고치지 않는다."""
-    from app.core.config import settings
+    from app.config import settings
     return max(0, settings.design_max_repair_iters)
 
 
@@ -667,7 +667,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         elif spec.stage == "sequence_diagram" and isinstance(diagrams, list):
             # Bound the collection as a whole. Multiplying the per-use-case
             # budget can turn a large model into dozens of serial LLM calls.
-            from app.core.config import settings
+            from app.config import settings
 
             budget = min(
                 repair_budget() * max(1, len(diagrams)),

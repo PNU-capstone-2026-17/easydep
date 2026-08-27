@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.core.cloudkb.kbcommon import artifact
+from app.cloudkb.kbcommon import artifact
 
 
 def test_committed_bundle_wins_over_stale_default_output(tmp_path, monkeypatch):

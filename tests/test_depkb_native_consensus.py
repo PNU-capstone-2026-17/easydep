@@ -4,9 +4,9 @@ import copy
 
 import pytest
 
-from app.core.cloudkb.depkb.native.consensus import reconcile_reviews
-from app.core.cloudkb.depkb.native.freeze import freeze_native_graph
-from app.core.cloudkb.depkb.native.review import make_review_packet
+from app.cloudkb.depkb.native.consensus import reconcile_reviews
+from app.cloudkb.depkb.native.freeze import freeze_native_graph
+from app.cloudkb.depkb.native.review import make_review_packet
 
 
 def _inventory() -> dict:

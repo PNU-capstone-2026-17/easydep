@@ -14,8 +14,8 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-from app.core.config import settings
-from app.core.validation import Finding, run_checks
+from app.config import settings
+from app.validation import Finding, run_checks
 from app.design.schemas.class_model import BCEModel, Collaboration, canonical_call_id
 from app.design.services.class_diagram.models import CollaborationResult
 from app.design.services.class_diagram.proposals import (

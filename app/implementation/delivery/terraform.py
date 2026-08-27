@@ -14,7 +14,7 @@ from app.implementation.config import (
     DEFAULT_AWS_LOG_RETENTION_DAYS,
     DEFAULT_AZURE_MYSQL_BACKUP_RETENTION_DAYS,
 )
-from app.design.services.deployment_diagram.planner import (
+from app.design.contracts.deployment import (
     validate_provider_resource_plan,
 )
 from app.core.orchestration.iac_renderer import render_open_tofu
@@ -27,7 +27,7 @@ DEPLOYMENT_BUNDLE_SCHEMA = "easydep-deployment-diagram"
 
 
 def _find_terraform() -> str | None:
-    from app.core.config import settings
+    from app.config import settings
     configured = settings.easydep_terraform_path
     return configured if configured and Path(configured).is_file() else shutil.which("terraform")
 

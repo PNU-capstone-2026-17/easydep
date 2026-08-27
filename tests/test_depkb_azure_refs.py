@@ -1,4 +1,4 @@
-from app.core.cloudkb.depkb.native.azure_refs import extract_reference_candidates
+from app.cloudkb.depkb.native.azure_refs import extract_reference_candidates
 
 
 def _documents():

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.core.cloudkb.depkb.reliability import (
+from app.cloudkb.depkb.reliability import (
     cohen_kappa,
     krippendorff_alpha_nominal,
     percent_agreement,

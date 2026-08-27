@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.core.cloudkb.depkb.knowledge_access import query_knowledge
+from app.cloudkb.depkb.knowledge_access import query_knowledge
 
 
 def test_query_is_deterministic_and_carries_frozen_snapshot():

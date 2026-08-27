@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.core.cloudkb.depkb.reliability import cohen_kappa, percent_agreement
+from app.cloudkb.depkb.reliability import cohen_kappa, percent_agreement
 from app.requirements.capability_contract import calibrated_score
 
 PROPOSAL_SCHEMA = "easydep-capability-proposals/v1"

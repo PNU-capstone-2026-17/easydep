@@ -1,7 +1,7 @@
 """현재 시퀀스 컬렉션과 legacy 단일 다이어그램을 같은 보고서 계약으로 검증한다.
 
 입력은 저장 시퀀스 JSON과 use-case/class 산출물이 든 read-only state다. 출력은
-``app.core.validation.ValidationReport``이며 검사 함수는 모델을 수정하거나 LLM을 호출하지
+``app.validation.ValidationReport``이며 검사 함수는 모델을 수정하거나 LLM을 호출하지
 않는다. 등록된 ``CheckSpec`` 순서가 finding 순서이므로 병렬 실행 여부와 무관하게 UI와
 repair 입력이 안정적이다.
 
@@ -16,13 +16,13 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from app.core.validation import (
+from app.validation import (
     CheckSpec,
     FindingOrigin,
     ValidationReport,
     run_checks,
 )
-from app.core.validation import Finding as ValidationFinding
+from app.validation import Finding as ValidationFinding
 from app.design.knowledge import rules
 from app.design.services.class_diagram.type_system import (
     projected_field_type,

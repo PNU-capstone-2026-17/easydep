@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.cloudkb.depkb.evidence_model import freeze_model, validate_frozen_model
+from app.cloudkb.depkb.evidence_model import freeze_model, validate_frozen_model
 
 
 def _claim():

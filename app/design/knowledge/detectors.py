@@ -1,4 +1,4 @@
-﻿"""결정론 검출기 — 규칙 하나에 검출기 하나.
+"""결정론 검출기 — 규칙 하나에 검출기 하나.
 
 ## 무엇을 보는가: 그림이 아니라 모델
 
@@ -43,7 +43,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from app.core.validation import CheckSpec, ValidationReport, run_checks
+from app.validation import CheckSpec, ValidationReport, run_checks
 from app.design.services.class_diagram.validation.diagram import (
     Finding,
     _broken_stereotypes,

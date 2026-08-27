@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.core.cloudkb.depkb.provider_cache import (  # noqa: E402
+from app.cloudkb.depkb.provider_cache import (  # noqa: E402
     provider_cache_environment,
 )
 from app.core.orchestration.iac_renderer import render_open_tofu  # noqa: E402

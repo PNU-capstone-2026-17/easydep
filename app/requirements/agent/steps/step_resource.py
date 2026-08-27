@@ -12,7 +12,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
-from app.core import cloud_contract, input_registry, regions
+from app.cloudkb import regions
+from app.requirements.resources import cloud_contract, input_registry
 from app.requirements import prompts
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState

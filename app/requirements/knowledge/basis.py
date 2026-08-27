@@ -9,14 +9,14 @@
 실리지 않았다.** 사용자는 두 지적을 같은 무게로 읽는다.
 
 그래서 규칙마다 출처의 성격을 달아 두고, 짐작인 것은 답에 유보를 붙인다.
-`app/core/cloudkb/kbcommon/basis.py`가 클라우드 사실에 세운 규율과 같다.
+`app/cloudkb/kbcommon/basis.py`가 클라우드 사실에 세운 규율과 같다.
 
 ## 왜 그 파일을 import하지 않고 어휘를 다시 쓰는가
 
 어휘는 공유하고 코드는 공유하지 않는다. 라벨 표는 각 축이 무엇을 근거로 삼는지에 대한
 그 축의 선언이라, 한쪽이 라벨을 늘릴 때 다른 쪽이 따라 늘어나면 안 된다.
 
-**의존 규약은 2026-07-28에 바뀌었다.** 예전에는 *"`app/requirements`는 `app/core/cloudkb`
+**의존 규약은 2026-07-28에 바뀌었다.** 예전에는 *"`app/requirements`는 `app/cloudkb`
 없이 돌아야 한다(데이터셋 수백 MB)"*였는데, 좁은 표면에서는 그 근거가 성립하지 않았다 —
 `appkb.contract` + `envkb.regions`는 446ms · 모듈 168개이고 import 시점에 데이터셋을
 읽지 않는다(실측). 지금 규약은 **문을 하나로 둔다**이다: 런타임 경로는 `app/core/`를
@@ -85,7 +85,7 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     # 설계 산문(12-factor · Azure 패턴 · Well-Architected)에서 나온 것. **영원히
     # `inferred`다** — 다른 라벨은 페이지를 확인하면 `stated`로 오를 길이 있지만 이건
     # 없다. 산문 지침은 사람이 검수해도 클라우드 사실이 되지 않는다
-    # (`app/core/cloudkb/patternkb/model.py`가 자기 축에 세운 규율과 같다).
+    # (`app/cloudkb/patternkb/model.py`가 자기 축에 세운 규율과 같다).
     "pattern-advisory": INFERRED,
 }
 

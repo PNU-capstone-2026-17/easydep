@@ -14,7 +14,7 @@ from typing import Any
 import hcl2
 from lark.exceptions import LarkError
 
-from app.core.cloudkb.depkb.provider_realizations import capability_realizations
+from app.cloudkb.depkb.provider_realizations import capability_realizations
 from evaluation.component_projection import analyze_component_projections
 
 TYPE_TO_CONCEPT = {

@@ -10,7 +10,7 @@ import time
 import warnings
 from pathlib import Path
 
-from app.core.config import settings
+from app.config import settings
 from app.metrics import langsmith as langsmith_metrics
 from ..planning.design_context import (
     read_generated_java_contracts,

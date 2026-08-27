@@ -8,17 +8,17 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.core.cloudkb.depkb.control_plane_collect import (
+from app.cloudkb.depkb.control_plane_collect import (
     collect_aws,
     collect_azure,
     collect_gcp,
 )
-from app.core.cloudkb.depkb.native_v2 import boundary_sample, make_review, review_scope
+from app.cloudkb.depkb.native_v2 import boundary_sample, make_review, review_scope
 from evaluation.research_protocol.core.paths import DEFINITION_ROOT, PROTOCOL_ROOT
 
 HERE = PROTOCOL_ROOT
 ANCHORS = DEFINITION_ROOT / "decision-anchors.json"
-AZURE_CACHE = Path("app/core/cloudkb/depkb/cache/azure")
+AZURE_CACHE = Path("app/cloudkb/depkb/cache/azure")
 
 
 def _read_json(path: Path) -> dict[str, Any]:

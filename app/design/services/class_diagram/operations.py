@@ -17,8 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import Any
 
-from app.core.config import settings
-from app.core.validation import run_checks
+from app.config import settings
+from app.validation import run_checks
 from app.design import progress as design_progress
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
 from app.design.services.class_diagram.inventory import finding_text

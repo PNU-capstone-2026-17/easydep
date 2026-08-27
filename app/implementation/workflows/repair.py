@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.core.config import settings
+from app.config import settings
 
 
 REPAIR_SCHEMA = "implementation-repair-plan/v1alpha1"

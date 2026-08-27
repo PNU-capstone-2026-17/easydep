@@ -6,10 +6,10 @@ import gzip
 import json
 from pathlib import Path
 
-from app.core.cloudkb.costkb.parsers.tumblebug import project_row
+from app.cloudkb.costkb.parsers.tumblebug import project_row
 
 
-ROOT = Path(__file__).parents[1] / "app" / "core" / "cloudkb"
+ROOT = Path(__file__).parents[1] / "app" / "cloudkb"
 SUPPORTED = {"aws", "azure", "gcp"}
 
 

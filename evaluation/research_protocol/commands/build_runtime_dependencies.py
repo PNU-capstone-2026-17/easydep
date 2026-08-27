@@ -12,7 +12,7 @@ from evaluation.research_protocol.core.paths import PROTOCOL_ROOT, REPOSITORY_RO
 
 HERE = PROTOCOL_ROOT
 NATIVE = HERE / "native-v2"
-OUTPUT = REPOSITORY_ROOT / "app/core/cloudkb/depkb/official-dependencies.json"
+OUTPUT = REPOSITORY_ROOT / "app/cloudkb/depkb/official-dependencies.json"
 
 
 def _canonical(value: Any) -> bytes:

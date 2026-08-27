@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from app.core.config import settings
+from app.config import settings
 from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import execute_openhands_task

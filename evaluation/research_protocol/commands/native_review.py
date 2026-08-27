@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.core.cloudkb.depkb.native_v2 import freeze
+from app.cloudkb.depkb.native_v2 import freeze
 
 
 def _read(path: Path) -> dict[str, Any]:

@@ -27,7 +27,7 @@ from typing import cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.core.traceability import constraints_for_use_case
+from app.requirements.traceability import constraints_for_use_case
 from app.requirements import prompts
 from app.requirements.agent import supervisor, validator
 from app.requirements.agent.llm import invoke_structured

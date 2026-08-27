@@ -6,8 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
-from app.core.infra_planning import plan_for_anchors
-from app.core.run_identity import identity_manifest, make_run_id
+from app.cloudkb.infra_planning import plan_for_anchors
+from app.orchestration.run_identity import identity_manifest, make_run_id
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS = ROOT.parents[2] / "artifacts" / "runs"

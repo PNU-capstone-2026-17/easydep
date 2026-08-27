@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.core.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
+from app.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
 
-MODEL = Path("app/core/cloudkb/depkb/provider-realizations.json")
+MODEL = Path("app/cloudkb/depkb/provider-realizations.json")
 
 
 def _load():

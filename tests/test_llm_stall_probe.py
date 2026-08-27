@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from app.requirements.common import llm_stall_probe
+from app.metrics import llm_stall_probe
 
 
 def test_stall_probe_runs_once_after_the_configured_delay(monkeypatch):

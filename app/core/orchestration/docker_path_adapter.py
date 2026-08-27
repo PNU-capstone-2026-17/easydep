@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from app.core.config import settings
+from app.config import settings
 
 CONTAINER_WORKSPACE = "/easydep-workspace"
 

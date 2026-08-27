@@ -4,10 +4,10 @@ import copy
 
 import pytest
 
-from app.core.cloudkb.depkb.native.consensus import reconcile_reviews
-from app.core.cloudkb.depkb.native.discovery import discover_aws
-from app.core.cloudkb.depkb.native.freeze import freeze_native_graph, validate_frozen_graph
-from app.core.cloudkb.depkb.native.review import make_review_packet, validate_review
+from app.cloudkb.depkb.native.consensus import reconcile_reviews
+from app.cloudkb.depkb.native.discovery import discover_aws
+from app.cloudkb.depkb.native.freeze import freeze_native_graph, validate_frozen_graph
+from app.cloudkb.depkb.native.review import make_review_packet, validate_review
 
 
 def test_review_packet_covers_every_native_element_without_cross_provider_fields():

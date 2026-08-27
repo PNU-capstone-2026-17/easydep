@@ -13,7 +13,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from app.core.config import settings
+from app.config import settings
 
 from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
 from app.core.orchestration.adapters.design import DesignAdapter

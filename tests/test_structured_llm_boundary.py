@@ -251,7 +251,7 @@ def test_streaming_structured_output_accepts_an_explicit_completion_limit(monkey
     client = type("Client", (), {
         "chat": type("Chat", (), {"completions": Completions()})()
     })()
-    from app.core.config import settings
+    from app.config import settings
     monkeypatch.setattr(settings, "llm_max_completion_tokens", 8192)
 
     parsed = _stream_structured(
@@ -291,7 +291,7 @@ def test_streaming_structured_output_uses_explicit_effort_and_omits_it_for_non_g
     client = type("Client", (), {
         "chat": type("Chat", (), {"completions": Completions()})()
     })()
-    from app.core.config import settings
+    from app.config import settings
 
     monkeypatch.setattr(settings, "model", "openai/gpt-oss-120b")
     _stream_structured(
@@ -355,7 +355,7 @@ def test_timeout_retains_incremental_stream_progress_without_content(
         "Client", (), {"chat": type("Chat", (), {"completions": completions})()}
     )()
     observation = {}
-    from app.core.config import settings
+    from app.config import settings
     monkeypatch.setattr(settings, "llm_wall_timeout_seconds", 0.05)
     monkeypatch.setattr(settings, "easydep_experiment_session", "test-session")
 
@@ -412,7 +412,7 @@ def test_invalid_structured_output_records_bounded_content_samples_only_in_exper
         "Client", (), {"chat": type("Chat", (), {"completions": completions})()}
     )()
     observation = {}
-    from app.core.config import settings
+    from app.config import settings
     monkeypatch.setattr(settings, "easydep_experiment_session", "diagnostic")
     monkeypatch.setattr(settings, "llm_failure_response_sample_chars", 16)
 

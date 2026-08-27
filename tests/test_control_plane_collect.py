@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.cloudkb.depkb.control_plane_collect import (
+from app.cloudkb.depkb.control_plane_collect import (
     collect_aws,
     collect_gcp,
 )

@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.core.cloudkb.depkb.provider_cache import (
+from app.cloudkb.depkb.provider_cache import (
     provider_cache_environment,
     provider_mirror_configuration,
 )

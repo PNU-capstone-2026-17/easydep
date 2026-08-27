@@ -1325,7 +1325,7 @@ class LoadJobTest(unittest.TestCase):
         self.assertTrue(transient_provider_error(RuntimeError("429 rate limit")))
         self.assertTrue(transient_provider_error(TimeoutError("timed out")))
         self.assertFalse(transient_provider_error(ValueError("invalid model name")))
-        from app.core.config import settings
+        from app.config import settings
         with patch.object(settings, "openhands_provider_retry_base_seconds", 2), \
              patch.object(settings, "openhands_provider_retry_max_seconds", 5):
             self.assertEqual(2, provider_retry_delay(1))

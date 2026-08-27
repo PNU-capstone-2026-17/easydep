@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.cloudkb.depkb.research_model import (
+from app.cloudkb.depkb.research_model import (
     Realization,
     minimum_realizations,
     validate_observation,

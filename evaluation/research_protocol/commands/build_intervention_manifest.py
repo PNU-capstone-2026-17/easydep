@@ -6,14 +6,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.core.cloudkb.depkb.evidence_model import validate_frozen_model
-from app.core.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
+from app.cloudkb.depkb.evidence_model import validate_frozen_model
+from app.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
 from evaluation.research_protocol.core.paths import DEFINITION_ROOT, PROTOCOL_ROOT, REPOSITORY_ROOT
 
 HERE = PROTOCOL_ROOT
 NATIVE = HERE / "native-v2"
 PLAN = DEFINITION_ROOT / "dependency-experiment-plan.json"
-REALIZATIONS = REPOSITORY_ROOT / "app/core/cloudkb/depkb/provider-realizations.json"
+REALIZATIONS = REPOSITORY_ROOT / "app/cloudkb/depkb/provider-realizations.json"
 RESULTS = HERE / "intervention-results"
 
 

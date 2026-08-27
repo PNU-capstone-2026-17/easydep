@@ -13,7 +13,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from app.core.run_identity import identity_manifest, make_run_id
+from app.orchestration.run_identity import identity_manifest, make_run_id
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "runs"

@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.core.cloudkb.depkb.evidence_capture import capture_digest
-from app.core.cloudkb.depkb.evidence_model import freeze_model
+from app.cloudkb.depkb.evidence_capture import capture_digest
+from app.cloudkb.depkb.evidence_model import freeze_model
 from evaluation.dependency_audit.intervention_results import adjudicate_result
 from evaluation.research_protocol.core.paths import DEFINITION_ROOT, PROTOCOL_ROOT, REPOSITORY_ROOT
 

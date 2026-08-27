@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.core.cloudkb.depkb.evidence_policy import adjudicate
+from app.cloudkb.depkb.evidence_policy import adjudicate
 
 
 def _evidence(role, **values):

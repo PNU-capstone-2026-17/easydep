@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core import traceability
+from app.requirements import traceability
 from app.requirements import prompts
 from app.requirements.agent import supervisor, validator
 from app.requirements.agent.llm import invoke_structured

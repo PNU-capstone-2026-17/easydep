@@ -2,7 +2,7 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
-from app.core.cloudkb.depkb import remeasure
+from app.cloudkb.depkb import remeasure
 
 
 def _empty_snapshot():
@@ -153,7 +153,7 @@ def test_gcp_cleanup_preserves_preexisting_prefixed_resources(monkeypatch):
 def test_gcp_default_route_match_ignores_api_hostname() -> None:
     path = (
         Path(__file__).parents[1]
-        / "app/core/cloudkb/depkb/experiments/gcp-func2-2026-07-31/run.py"
+        / "app/cloudkb/depkb/experiments/gcp-func2-2026-07-31/run.py"
     )
     spec = importlib.util.spec_from_file_location("gcp_func2_experiment", path)
     assert spec and spec.loader

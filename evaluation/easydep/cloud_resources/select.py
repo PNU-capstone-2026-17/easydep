@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from app.core.orchestration.vm_selection import select_vm_candidates
-from app.core.run_identity import identity_manifest, make_run_id
+from app.orchestration.run_identity import identity_manifest, make_run_id
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS = ROOT.parents[2] / "artifacts" / "runs"

@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from app.core.config import settings
+from app.config import settings
 
 from ..config import ImplementationSettings
 

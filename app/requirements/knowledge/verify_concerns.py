@@ -12,9 +12,9 @@
      구 판 doc_id 유일성의 계승).
   3. claims가 빈 관심사는 `kb_ref`가 실재하는 실측 KB인가.
 
-## 왜 여기서만 `app/core/cloudkb`를 import하는가
+## 왜 여기서만 `app/cloudkb`를 import하는가
 
-`app/requirements`는 `app/core/cloudkb` 없이 돌아야 한다(`knowledge/basis.py`). 그
+`app/requirements`는 `app/cloudkb` 없이 돌아야 한다(`knowledge/basis.py`). 그
 규약이 지키는 것은 **런타임 경로**다. 이 모듈은 파이프라인이 아니라 개발·CI 도구이고,
 어디에서도 import되지 않는다(격리 검사가 지킨다).
 """
@@ -74,7 +74,7 @@ def verify(claim_keys: set[str] | None = None) -> list[Verdict]:
                 kb_problem = "claims도 kb_ref도 없다"
             else:
                 try:
-                    importlib.import_module(f"app.core.cloudkb.{concern.kb_ref}")
+                    importlib.import_module(f"app.cloudkb.{concern.kb_ref}")
                 except ImportError as exc:
                     kb_problem = f"kb_ref {concern.kb_ref!r}: {exc}"
         verdicts.append(Verdict(concern.id, missing=missing, shared=shared,

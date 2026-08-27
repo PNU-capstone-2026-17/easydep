@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.core.config import settings
+from app.config import settings
 from app.design.knowledge import rules
 from app.design.schemas.class_model import BCEModel
 from app.design.services.common import fields

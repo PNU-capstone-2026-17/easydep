@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.core.cloudkb.depkb.evidence_model import validate_frozen_model
-from app.core.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
+from app.cloudkb.depkb.evidence_model import validate_frozen_model
+from app.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
 from app.requirements.capability_contract import DEFAULT_POLICY, load_policy
 from evaluation.dependency_audit.intervention_results import adjudicate_result
 from evaluation.research_protocol.commands.build_intervention_manifest import build as build_interventions
@@ -19,11 +19,11 @@ HERE = PROTOCOL_ROOT
 PROTOCOL = DEFINITION_ROOT / "protocol.json"
 ANCHORS = DEFINITION_ROOT / "decision-anchors.json"
 NATIVE_DIR = HERE / "native-v2"
-REALIZATIONS = REPOSITORY_ROOT / "app/core/cloudkb/depkb/provider-realizations.json"
+REALIZATIONS = REPOSITORY_ROOT / "app/cloudkb/depkb/provider-realizations.json"
 INTERVENTIONS = DEFINITION_ROOT / "dependency-interventions.json"
 INTERVENTION_RESULTS = HERE / "intervention-results"
 RUNTIME_DEPENDENCIES = (
-    REPOSITORY_ROOT / "app/core/cloudkb/depkb/official-dependencies.json"
+    REPOSITORY_ROOT / "app/cloudkb/depkb/official-dependencies.json"
 )
 
 

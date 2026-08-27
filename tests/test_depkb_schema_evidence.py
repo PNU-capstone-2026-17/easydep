@@ -1,7 +1,7 @@
 import pytest
 
-from app.core.cloudkb.depkb import schema_evidence
-from app.core.cloudkb.depkb.fetch_vendors import is_cached
+from app.cloudkb.depkb import schema_evidence
+from app.cloudkb.depkb.fetch_vendors import is_cached
 
 
 def test_every_unique_schema_locator_resolves_against_its_pinned_source():

@@ -10,8 +10,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from app.core.validation import CheckSpec, FindingOrigin, ValidationReport, run_checks
-from app.core.validation import Finding as ValidationFinding
+from app.validation import CheckSpec, FindingOrigin, ValidationReport, run_checks
+from app.validation import Finding as ValidationFinding
 from app.design.knowledge import rules
 from app.design.schemas.class_model import operation_method_signature
 from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name

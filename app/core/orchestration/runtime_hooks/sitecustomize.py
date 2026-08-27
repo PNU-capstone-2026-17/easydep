@@ -2,7 +2,7 @@
 
 import os
 
-from app.core.config import settings
+from app.config import settings
 from app.core.orchestration.docker_path_adapter import install as install_docker_paths
 
 install_docker_paths()

@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.core.run_identity import identity_manifest, make_run_id
+from app.orchestration.run_identity import identity_manifest, make_run_id
 from evaluation.baselines import chatdev, cot, metagpt
 
 CASE = Path("evaluation/baselines/cases/p1-stateless-aws.json")

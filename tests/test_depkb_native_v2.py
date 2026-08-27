@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from app.core.cloudkb.depkb.native_v2 import (
+from app.cloudkb.depkb.native_v2 import (
     boundary_sample,
     freeze,
     make_review,

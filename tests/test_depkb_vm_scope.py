@@ -3,12 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from app.core.cloudkb.depkb.closure import closure
-from app.core.cloudkb.depkb.scope import VM_ANCHOR_TYPES, is_vm_claim
+from app.cloudkb.depkb.closure import closure
+from app.cloudkb.depkb.scope import VM_ANCHOR_TYPES, is_vm_claim
 
 
 def test_generated_claims_are_strictly_vm_scoped():
-    artifact = Path("app/core/cloudkb/depkb/claims.json")
+    artifact = Path("app/cloudkb/depkb/claims.json")
     claims = json.loads(artifact.read_text(encoding="utf-8"))["claims"]
 
     assert claims
@@ -18,7 +18,7 @@ def test_generated_claims_are_strictly_vm_scoped():
 
 def test_every_dynamic_observation_has_a_valid_local_evidence_coordinate():
     claims = json.loads(
-        Path("app/core/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
+        Path("app/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
     )["claims"]
     assert len(claims) == 44
     for claim in claims:
@@ -27,12 +27,12 @@ def test_every_dynamic_observation_has_a_valid_local_evidence_coordinate():
             result_file = observation.get("resultFile")
             if experiment:
                 assert result_file == f"experiments/{experiment}/results.json"
-                assert (Path("app/core/cloudkb/depkb") / result_file).is_file()
+                assert (Path("app/cloudkb/depkb") / result_file).is_file()
 
 
 def test_product_kb_contains_only_creation_and_runtime_dependencies():
     claims = json.loads(
-        Path("app/core/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
+        Path("app/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
     )["claims"]
 
     assert {claim["relationFamily"] for claim in claims} == {
@@ -43,7 +43,7 @@ def test_product_kb_contains_only_creation_and_runtime_dependencies():
 
 def test_exclusive_choice_uses_cardinality_not_borrowed_idl_labels():
     claims = json.loads(
-        Path("app/core/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
+        Path("app/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
     )["claims"]
     choice = next(c for c in claims if c["condition"]["kind"] == "exclusiveChoice")
     assert choice["condition"]["machine"] == {"cardinality": {"min": 1, "max": 1}}
@@ -61,7 +61,7 @@ def test_product_anchors_have_a_plan_for_each_csp(csp, anchor):
 
 def test_claims_use_only_relation_specific_findings():
     artifact = json.loads(
-        Path("app/core/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
+        Path("app/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
     )
     claims = artifact["claims"]
     forbidden_fields = {"question", "verdict", "predicate", "oracle", "evidence"}
@@ -95,7 +95,7 @@ def test_out_of_scope_resources_are_rejected(resource):
 
 
 def test_retained_experiment_evidence_contains_no_private_keys():
-    experiments = Path("app/core/cloudkb/depkb/experiments")
+    experiments = Path("app/cloudkb/depkb/experiments")
     marker = "PRIVATE KEY-----"
 
     contaminated = [

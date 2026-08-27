@@ -39,7 +39,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from app.core import cloud_contract
+from app.requirements.resources import cloud_contract
 from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.knowledge import rules

@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from app.core.run_identity import identity_manifest
+from app.orchestration.run_identity import identity_manifest
 
 DEFAULT_ARTIFACT_ROOT = Path("artifacts/runs")
 

@@ -1,4 +1,4 @@
-from app.core.cloudkb.depkb.native.gcp_refs import extract_gcp_reference_candidates
+from app.cloudkb.depkb.native.gcp_refs import extract_gcp_reference_candidates
 
 
 def _document():
