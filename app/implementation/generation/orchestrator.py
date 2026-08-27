@@ -868,15 +868,17 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             )
 
     def _compile(self, application: Path) -> None:
-        # This cache must outlive individual jobs.  A per-job Gradle home made
-        # every new implementation request redownload the same Spring stack.
-        gradle_home = (self.spec.workspace_root / ".easydep" / "gradle-cache").resolve()
+        # Do not mount the Windows-host Gradle cache into the container. Gradle's
+        # FileAccessTimeJournal is lock-sensitive and can fail before compilation
+        # with WinError 5/I/O errors when the host cache is shared by jobs. The
+        # generator image keeps its own dependency layers; an isolated container
+        # home trades cache reuse for a reliable pre-approval compile gate.
         self._run_command(
             "gradle-compile",
             [
                 "docker", "run", "--rm",
                 "-v", self._workspace_volume(),
-                "-v", f"{gradle_home}:/home/gradle/.gradle",
+                "-e", "GRADLE_USER_HOME=/tmp/easydep-gradle-home",
                 "-w", self._container_path(application),
                 GRADLE_GENERATOR_IMAGE,
                 "gradle",

@@ -1211,6 +1211,10 @@ Rules:
   the exact Control contract; never add annotations as a substitute for missing behavior.
 - Map BCE return values into generated API DTOs field by field using exact public accessors.
 - Unit tests must cover every documented status and verify exact Control arguments.
+- Do not manufacture a `500` test that expects the Control not to be called. A 500
+  response is transport/global exception handling unless the reviewed BCE contract
+  exposes an explicit error outcome; keep such handling out of focused controller
+  tests and test only executable statuses represented by the binding.
 - Never leave placeholder, empty fallback, or speculative response comments in production code.
   If a Control cannot supply the documented response or error outcome, report the design gap in
   the task completion message. Do not fabricate a response, throw a placeholder exception, or
@@ -1567,6 +1571,11 @@ Rules:
   only when required by H2/SQL and use the same normalized name in the migration.
 - Implement relationship ownership from the ERD cardinality and foreign-key direction. Add a
   bidirectional helper only when both navigation directions are represented in the contracts.
+- Keep the public constructor that accepts the entity's scalar ERD/BCE fields stable. When a
+  relationship, audit flag, or other persistence-only field is added, add an overloaded
+  constructor (or use the no-argument constructor plus setters) instead of replacing the
+  existing scalar constructor. Sibling Control tests, mappers, and schema tests may already
+  instantiate that constructor; never make their source incompatible by changing its arity.
 - A collection annotated with `@OneToMany(mappedBy = "property")` is valid only when the target
   entity declares that exact Java property as the owning `@ManyToOne` or `@OneToOne` association.
   Never use a scalar foreign-key column as the `mappedBy` target. If this entity cannot declare or

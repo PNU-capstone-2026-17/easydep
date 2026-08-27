@@ -87,6 +87,7 @@ def test_gradle_compile_uses_posix_workdir_and_workspace_volume(tmp_path: Path) 
     command = commands[0]
     volume_indices = [index for index, value in enumerate(command) if value == "-v"]
     assert command[volume_indices[0] + 1] == f"{tmp_path.resolve()}:/workspace"
+    assert command[command.index("-e") + 1] == "GRADLE_USER_HOME=/tmp/easydep-gradle-home"
     assert command[command.index("-w") + 1] == "/workspace/.easydep/implementation-runs/orders/application"
     # `bootJar` is deliberately absent: this pre-approval gate only proves the
     # generated scaffold compiles, and packaging happens after approval.

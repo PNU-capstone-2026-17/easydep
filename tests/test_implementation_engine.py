@@ -4627,6 +4627,15 @@ class ApplicationConfiguration {
         self.assertIn("stub the exact Control method", hints)
         self.assertIn("success value", hints)
 
+    def test_runtime_failure_hints_reject_unexecutable_500_controller_tests(self) -> None:
+        hints = verification_failure_hints(
+            "RegistrationsApiControllerTest.registerCourse_returns500_andDoesNotInvokeControl(): "
+            "expected: <500> but was: <201>"
+        )
+
+        self.assertIn("Do not add a direct 500 test", hints)
+        self.assertIn("transport/global exception", hints)
+
     def test_control_return_does_not_reject_domain_error_response(self) -> None:
         class_diagram = """
 class RegistrationController <<Control>> {

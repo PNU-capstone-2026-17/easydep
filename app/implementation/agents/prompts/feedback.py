@@ -258,6 +258,13 @@ def verification_failure_hints(output: str) -> str:
             "success value (for boolean results, `true`); reserve `false` for the documented "
             "conflict/failure scenario. Assert the contract's status, not a generic 200."
         )
+    if "returns500" in output or "expected: <500>" in output:
+        hints.append(
+            "- Do not add a direct 500 test that expects a Control not to be invoked. "
+            "HTTP 500 is a transport/global exception outcome unless the reviewed BCE "
+            "contract exposes an explicit error result. Test only executable statuses "
+            "from the API binding and invoke the exact Control for the happy path."
+        )
     if "missing executable HTTP" in output or "missing explicit HTTP" in output:
         hints.append(
             "- API response contract: @ApiResponse/@ApiResponses annotations are documentation only. "
