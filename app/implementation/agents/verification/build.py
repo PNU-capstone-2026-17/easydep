@@ -27,6 +27,80 @@ SQL_RESERVED_IDENTIFIERS = (
 )
 
 
+def persistence_entity_schema_violations(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Detect persistence entities that omit columns required by the migration.
+
+    Compilation does not prove that a JPA entity can persist an ERD row.  A
+    generated entity can expose only its id/status fields while the migration
+    correctly declares non-null foreign keys; the first E2E insert then fails
+    with a misleading database ``NULL not allowed`` error.  Compare the
+    already-generated migration with the entity's explicit ``@Column`` names
+    while the entity task still owns the files, so repair is directed to the
+    source contract rather than an unrelated E2E fixture.
+    """
+    normalized = [path.replace("\\", "/") for path in relative_paths]
+    entity_paths = [
+        path for path in normalized
+        if "/persistence/entity/" in path and path.endswith("Entity.java")
+    ]
+    migration_candidates = list(
+        (sandbox / "application" / "src" / "main" / "resources").rglob(
+            "V1__initial_schema.sql"
+        )
+    )
+    if not entity_paths or not migration_candidates:
+        return []
+    migration = migration_candidates[0].read_text(encoding="utf-8")
+    table_columns: dict[str, set[str]] = {}
+    for table_match in re.finditer(
+        r"(?is)create\s+table(?:\s+if\s+not\s+exists)?\s+\"?(?P<table>[A-Za-z_]\w*)\"?\s*\((?P<body>.*?);",
+        migration,
+    ):
+        table = table_match.group("table").lower()
+        columns: set[str] = set()
+        for line in table_match.group("body").splitlines():
+            match = re.match(
+                r"\s*\"?(?P<column>[A-Za-z_]\w*)\"?\s+[A-Za-z][A-Za-z0-9_]*(?:\s*\([^)]*\))?",
+                line,
+            )
+            if match:
+                columns.add(match.group("column").lower())
+        if columns:
+            table_columns[table] = columns
+
+    violations: list[str] = []
+    for relative in entity_paths:
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        source = path.read_text(encoding="utf-8")
+        table_match = re.search(r'@Table\s*\(\s*name\s*=\s*"([^"]+)"', source)
+        if not table_match:
+            continue
+        table = table_match.group(1).lower()
+        expected = table_columns.get(table)
+        if not expected:
+            continue
+        mapped = {
+            match.group(1).lower()
+            for match in re.finditer(r'@Column\s*\(\s*name\s*=\s*"([^"]+)"', source)
+        }
+        mapped.update(
+            match.group(1).lower()
+            for match in re.finditer(
+                r'@JoinColumn\s*\(\s*name\s*=\s*"([^"]+)"', source
+            )
+        )
+        missing = sorted(expected - mapped)
+        if missing:
+            violations.append(
+                f"{relative}: @Table({table}) is missing migration column(s): {', '.join(missing)}"
+            )
+    return violations
+
+
 def repair_invalid_inverse_entity_associations(
     sandbox: Path, relative_paths: list[str]
 ) -> list[str]:

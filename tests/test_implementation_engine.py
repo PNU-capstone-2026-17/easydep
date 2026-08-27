@@ -62,6 +62,7 @@ from app.implementation.agents.verification.build import (
     ensure_persistence_schema_test,
     repair_persistence_schema_table_quoting,
     repair_invalid_inverse_entity_associations,
+    persistence_entity_schema_violations,
     read_gradle_test_failures,
     summarize_test_failure,
     task_verification_command,
@@ -657,6 +658,57 @@ class GeneratedContractImportRepairTest(unittest.TestCase):
 
 
 class PersistenceSchemaContractRepairTest(unittest.TestCase):
+    def test_entity_schema_mismatch_reports_columns_before_e2e(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            migration = sandbox / "application/src/main/resources/db/migration/V1__initial_schema.sql"
+            entity = sandbox / "application/src/main/java/com/example/persistence/entity/EnrollmentEntity.java"
+            migration.parent.mkdir(parents=True)
+            entity.parent.mkdir(parents=True)
+            migration.write_text(
+                """CREATE TABLE enrollment (
+  enrollment_id VARCHAR(255) NOT NULL,
+  student_id VARCHAR(255) NOT NULL,
+  course_id VARCHAR(255) NOT NULL,
+  enrollment_status VARCHAR(255)
+);\n""",
+                encoding="utf-8",
+            )
+            entity.write_text(
+                """@Entity
+@Table(name = "enrollment")
+class EnrollmentEntity {
+  @Id @Column(name = "enrollment_id") private String enrollmentId;
+  @Column(name = "enrollment_status") private String status;
+}
+""",
+                encoding="utf-8",
+            )
+
+            violations = persistence_entity_schema_violations(
+                sandbox,
+                ["application/src/main/java/com/example/persistence/entity/EnrollmentEntity.java"],
+            )
+
+            self.assertEqual(1, len(violations))
+            self.assertIn("course_id", violations[0])
+            self.assertIn("student_id", violations[0])
+
+            entity.write_text(
+                entity.read_text(encoding="utf-8").replace(
+                    '@Column(name = "enrollment_status") private String status;',
+                    '@Column(name = "enrollment_status") private String status;\n'
+                    '  @JoinColumn(name = "student_id") private Object student;',
+                ),
+                encoding="utf-8",
+            )
+            violations = persistence_entity_schema_violations(
+                sandbox,
+                ["application/src/main/java/com/example/persistence/entity/EnrollmentEntity.java"],
+            )
+            self.assertEqual(1, len(violations))
+            self.assertNotIn("student_id", violations[0])
+
     def test_invalid_inverse_relationship_is_made_transient(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)
@@ -4476,6 +4528,7 @@ class ApplicationConfiguration {
             "UnnecessaryStubbingException\nNotAMockException\n"
             "InvalidUseOfMatchersException: 2 matchers expected\n"
             "testStartPurchase_ConnectionFails_HandlesFailure(): Wanted but not invoked\n"
+            "Forbidden test bean configuration: @MockBean\n"
             'expected "identifier"; SQL statement:\n'
             "error: incompatible types: java.util.Date cannot be converted to com.easydep.app.bce.Date"
             "package com.easydep.app.bce.control does not exist\n"
@@ -4492,6 +4545,8 @@ class ApplicationConfiguration {
         self.assertIn("Incompatible types", hints)
         self.assertIn("API/BCE request conversion", hints)
         self.assertIn("Project contract import", hints)
+        self.assertIn("real E2E test", hints)
+        self.assertIn("remove @MockBean", hints)
 
     def test_runtime_failure_hints_preserve_exact_e2e_http_contract(self) -> None:
         hints = verification_failure_hints(
@@ -4511,6 +4566,14 @@ class ApplicationConfiguration {
         self.assertIn("foreign-key target", hints)
         self.assertIn("same identifier", hints)
         self.assertIn("Do not disable constraints", hints)
+
+    def test_runtime_failure_hints_require_entity_migration_columns(self) -> None:
+        hints = verification_failure_hints(
+            "Persistence entity schema mismatch: EnrollmentEntity is missing migration column(s): student_id"
+        )
+
+        self.assertIn("entity contract", hints)
+        self.assertIn("exact snake_case name", hints)
 
     def test_runtime_failure_hints_explain_boundary_control_recursion(self) -> None:
         hints = verification_failure_hints(

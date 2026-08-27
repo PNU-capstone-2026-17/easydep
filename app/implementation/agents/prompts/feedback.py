@@ -190,6 +190,13 @@ def verification_failure_hints(output: str) -> str:
             "the request sends. Do not disable constraints, alter production mappings, or substitute "
             "a different fixture key."
         )
+    if "Persistence entity schema mismatch" in output or "missing migration column" in output:
+        hints.append(
+            "- Persistence entity contract: the entity omits one or more columns declared by "
+            "the Flyway migration/ERD. Add every listed @Column with the exact snake_case name, "
+            "Java type, constructor argument, getter, and setter before allowing downstream "
+            "mapping or E2E work. Do not weaken NOT NULL constraints or patch only the test fixture."
+        )
     if "StackOverflowError" in output:
         hints.append(
             "- Boundary/Control recursion: the stack trace shows a Boundary adapter calling its Control "
@@ -276,6 +283,16 @@ def verification_failure_hints(output: str) -> str:
             "- InvalidUseOfMatchersException: if one argument uses a matcher, wrap every "
             "argument in that invocation with a matcher. For example, use "
             "verify(timer).startTimer(eq(30), anyString()), not startTimer(30, anyString())."
+        )
+    if "Forbidden test bean configuration" in output or any(
+        marker in output for marker in ("@mockbean", "@mockitobean", "@testconfiguration")
+    ):
+        hints.append(
+            "- Forbidden test bean configuration: this is a real E2E test, so remove "
+            "@MockBean, @MockitoBean, @TestConfiguration, @Bean, and @Primary from the "
+            "test. Do not replace application beans or enable bean overriding. Use the real "
+            "Spring application graph and autowire only concrete production adapters or "
+            "repositories already present in the generated source."
         )
     if "ConnectionFails_HandlesFailure" in output and "Wanted but not invoked" in output:
         hints.append(

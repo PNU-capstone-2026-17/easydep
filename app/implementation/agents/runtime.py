@@ -26,6 +26,7 @@ from .verification.build import (
     WorkspaceVerificationError,
     ensure_persistence_schema_test,
     repair_invalid_inverse_entity_associations,
+    persistence_entity_schema_violations,
     persistence_reserved_identifier_markers,
     repair_persistence_schema_table_quoting,
     production_placeholder_markers,
@@ -621,6 +622,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     repair_invalid_inverse_entity_associations(
                         sandbox, list(task["allowed_write_paths"])
                     )
+                    schema_violations = persistence_entity_schema_violations(
+                        sandbox, list(task["allowed_write_paths"])
+                    )
+                    if schema_violations:
+                        raise WorkspaceVerificationError({
+                            "stderr": "Persistence entity schema mismatch: "
+                            + "; ".join(schema_violations),
+                        })
                 if task_type == "control":
                     ensure_control_service_component(
                         sandbox, list(task["allowed_write_paths"])
