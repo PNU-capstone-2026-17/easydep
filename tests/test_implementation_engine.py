@@ -4575,6 +4575,15 @@ class ApplicationConfiguration {
         self.assertIn("entity contract", hints)
         self.assertIn("exact snake_case name", hints)
 
+    def test_runtime_failure_hints_preserve_mapper_entity_constructor(self) -> None:
+        hints = verification_failure_hints(
+            "error: no suitable constructor found for EnrollmentEntity(String,StudentEntity,CourseEntity,String,String)"
+        )
+
+        self.assertIn("mapper constructor contract", hints)
+        self.assertIn("Preserve every existing public constructor", hints)
+        self.assertIn("Re-run the build", hints)
+
     def test_runtime_failure_hints_explain_boundary_control_recursion(self) -> None:
         hints = verification_failure_hints(
             "StackOverflowError at CourseDetailsBoundaryAdapter.viewCourseDetails "

@@ -197,6 +197,14 @@ def verification_failure_hints(output: str) -> str:
             "Java type, constructor argument, getter, and setter before allowing downstream "
             "mapping or E2E work. Do not weaken NOT NULL constraints or patch only the test fixture."
         )
+    if "no suitable constructor found for" in output:
+        hints.append(
+            "- Persistence mapper constructor contract: the compiler error identifies a mapper call "
+            "to an entity constructor. Preserve every existing public constructor used by "
+            "BcePersistenceMapper (including relationship arguments such as StudentEntity and "
+            "CourseEntity); add fields or an overloaded constructor instead of replacing that "
+            "signature. Re-run the build after the entity repair."
+        )
     if "StackOverflowError" in output:
         hints.append(
             "- Boundary/Control recursion: the stack trace shows a Boundary adapter calling its Control "
