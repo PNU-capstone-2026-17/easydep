@@ -46,6 +46,7 @@ from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec.extractor import extract_api_spec_model
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.api_spec.reviser import revise_api_spec_model
+from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.class_diagram.service import (
@@ -84,6 +85,9 @@ DESIGN_STAGES: tuple[str, ...] = (
     "erd",
     "deployment_diagram",
 )
+
+# 수락 단위 cache는 process에만 존재한다. graph state와 checkpoint에는 기록하지 않는다.
+_CLASS_DESIGN_ACCEPTED_UNIT_CACHE = ProcessLocalAcceptedUnitCache(capacity=256)
 
 
 def _seed_erd_model(state: ArchitectureState) -> dict[str, Any]:
@@ -210,8 +214,15 @@ def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
     index = _class_index(state)
     current = state.get("extracted_bce_classes")
     if isinstance(current, dict) and current.get("Classes"):
-        return resume_class_model(index, _stored_class_model(current)).model_dump(by_alias=True)
-    return generate_class_model(index).model_dump(by_alias=True)
+        return resume_class_model(
+            index,
+            _stored_class_model(current),
+            cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
+        ).model_dump(by_alias=True)
+    return generate_class_model(
+        index,
+        cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
+    ).model_dump(by_alias=True)
 
 
 def _revise_class_state(
@@ -229,6 +240,7 @@ def _revise_class_state(
         _class_index(state),
         feedback,
         targets,
+        cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
     ).model_dump(by_alias=True)
 
 
@@ -286,6 +298,7 @@ def _revise_sequence_state(
         _class_index(state),
         feedback,
         targets,
+        cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
     )
     revised_payload = revised_class.model_dump(by_alias=True)
     class_puml = generate_plantuml_from_bce_json(revised_payload)

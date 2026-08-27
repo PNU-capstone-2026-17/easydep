@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from pydantic import BaseModel, model_validator
@@ -11,7 +12,9 @@ from app.design.services.common.structured import (
     StructuredLlmError,
     _parse_with_schema_repair,
     _stream_structured,
+    bind_context,
     capture_llm_timings,
+    record_llm_timing,
     run_with_wall_timeout,
 )
 
@@ -453,3 +456,54 @@ def test_invalid_structured_output_does_not_record_content_without_opt_in(monkey
         )
 
     assert not any(key.startswith("failureContent") for key in observation)
+
+
+def test_timing_capture_propagates_to_concurrent_context_bound_workers():
+    def emit(operation: str) -> None:
+        record_llm_timing(operation, status="cache_hit")
+
+    with capture_llm_timings() as events, ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [
+            executor.submit(bind_context(emit), f"operation-{index}")
+            for index in range(8)
+        ]
+        for future in futures:
+            future.result()
+
+    assert len(events) == 8
+    assert {event["operation"] for event in events} == {
+        f"operation-{index}" for index in range(8)
+    }
+    assert all(event["observationScope"] == "logicalOnly" for event in events)
+    assert all(event["physicalRequest"] is False for event in events)
+
+
+def test_timing_capture_isolated_between_calls():
+    with capture_llm_timings() as first:
+        record_llm_timing("first", status="completed")
+
+    with capture_llm_timings() as second:
+        record_llm_timing("second", status="cache_miss")
+
+    assert [event["operation"] for event in first] == ["first"]
+    assert [event["operation"] for event in second] == ["second"]
+    assert first is not second
+
+
+def test_timing_event_retains_digest_and_logical_physical_repair_handoff_cache_metadata():
+    metadata = {
+        "inputDigest": "sha256:input",
+        "logicalRequest": "operation-unit",
+        "physicalRequest": False,
+        "repairAttempt": 1,
+        "handoffOwner": "collaboration",
+        "cacheKey": "unit:UC1:main:1",
+    }
+
+    with capture_llm_timings() as events:
+        record_llm_timing("InteractionOperations", status="cache_hit", metadata=metadata)
+
+    event = events[0]
+    assert event["cacheStatus"] == "hit"
+    for key, value in metadata.items():
+        assert event[key] == value

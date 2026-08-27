@@ -14,6 +14,11 @@ from typing import Any
 
 from app.config import settings
 from app.design.schemas.class_model import BCEModel
+from app.design.services.class_diagram.cache import (
+    AcceptedUnitCache,
+    accepted_unit_key,
+    record_cache_outcome,
+)
 from app.design.services.class_diagram.models import AcceptedInventory
 from app.design.services.class_diagram.proposals import InventoryProposal
 from app.design.services.class_diagram.scenario import ScenarioIndex, id_key, text
@@ -61,6 +66,26 @@ reads or changes that Entity. Authentication, actor presence, a precondition,
 or indirect domain context alone does not justify assigning an Entity to a use
 case. Candidate scope does not force the later operation task to select it.
 """.strip() + "\n\n" + structure_type_contract())
+
+
+def inventory_reasoning_effort() -> str:
+    """inventory 전용 reasoning 설정이 없던 실행도 기존 정책으로 유지한다."""
+
+    return str(getattr(
+        settings,
+        "design_class_inventory_reasoning_effort",
+        settings.design_reasoning_effort,
+    ))
+
+
+def inventory_max_completion_tokens() -> int:
+    """inventory 전용 output cap이 없던 실행은 기존 구조 단계 cap을 유지한다."""
+
+    return int(getattr(
+        settings,
+        "design_class_inventory_max_completion_tokens",
+        settings.design_class_structure_max_completion_tokens,
+    ))
 
 
 def finding_text(findings: tuple[Finding, ...]) -> list[str]:
@@ -179,7 +204,7 @@ def inventory_payload(index: ScenarioIndex) -> dict[str, Any]:
     }
 
 
-def inventory_proposal(index: ScenarioIndex) -> AcceptedInventory:
+def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
     """전역 inventory를 생성하고 최대 한 번의 전체 replacement로 수락한다.
 
     Args:
@@ -198,15 +223,20 @@ def inventory_proposal(index: ScenarioIndex) -> AcceptedInventory:
     """
 
     # 1. 원문을 재전송하지 않고 inventory 결정에 필요한 압축 payload를 한 번 만든다.
+    source_payload = inventory_payload(index)
     messages = [
         {"role": "system", "content": INVENTORY_PROMPT},
-        {"role": "user", "content": json.dumps(inventory_payload(index), ensure_ascii=False)},
+        {"role": "user", "content": json.dumps(source_payload, ensure_ascii=False)},
     ]
     # 2. 응답 타입을 InventoryProposal로 고정해 설명문이나 임의 필드를 받지 않는다.
     parsed = parse_structured(
-        messages, InventoryProposal, reasoning_effort=settings.design_reasoning_effort,
-        max_completion_tokens=settings.design_class_structure_max_completion_tokens,
+        messages, InventoryProposal, reasoning_effort=inventory_reasoning_effort(),
+        max_completion_tokens=inventory_max_completion_tokens(),
         operation="InteractionInventory",
+        metadata={
+            "executionSlice": "inventory",
+            "candidateCount": len(source_payload["useCases"]),
+        },
     )
     # 3. LLM shape를 저장 shape로 바꾼 뒤에야 결정론 규칙이 후보를 판단한다.
     candidate = _normalize_inventory(InventoryProposal.model_validate(parsed))
@@ -221,9 +251,13 @@ def inventory_proposal(index: ScenarioIndex) -> AcceptedInventory:
                 "task": "Return one full repaired inventory. Preserve valid decisions and resolve every finding.",
                 "candidate": candidate, "findings": finding_text(report.findings),
             }, ensure_ascii=False)}],
-            InventoryProposal, reasoning_effort=settings.design_reasoning_effort,
-            max_completion_tokens=settings.design_class_structure_max_completion_tokens,
+            InventoryProposal, reasoning_effort=inventory_reasoning_effort(),
+            max_completion_tokens=inventory_max_completion_tokens(),
             operation="InteractionInventoryRepair",
+            metadata={
+                "executionSlice": "inventory",
+                "candidateCount": len(candidate["Classes"]) + len(candidate["DataTypes"]),
+            },
         )
         candidate = _normalize_inventory(InventoryProposal.model_validate(parsed))
         report = run_checks(INVENTORY_CHECKS, candidate, index)
@@ -233,6 +267,83 @@ def inventory_proposal(index: ScenarioIndex) -> AcceptedInventory:
         ))
     # 5. raw dict가 하위 단계로 새지 않도록 frozen 수락 경계로 닫는다.
     return AcceptedInventory.from_payload(candidate)
+
+
+def _inventory_cache_key(index: ScenarioIndex) -> str:
+    """현재 시나리오와 LLM 정책에만 대응하는 inventory cache key다."""
+
+    return accepted_unit_key(
+        "inventory",
+        unit_slice=inventory_payload(index),
+        inventory={},
+        feedback="",
+        prompt=INVENTORY_PROMPT,
+        schema=InventoryProposal,
+        provider="nvidia-nim",
+        model=settings.model,
+        seed=settings.seed,
+        temperature=settings.temperature,
+        reasoning_effort=inventory_reasoning_effort(),
+        max_completion_tokens=inventory_max_completion_tokens(),
+    )
+
+
+def _accepted_inventory_from_cache(
+    payload: dict[str, Any], index: ScenarioIndex,
+) -> AcceptedInventory:
+    """cache value도 schema와 inventory checks를 다시 통과시킨다."""
+
+    accepted = AcceptedInventory.from_payload(payload)
+    # 저장 BCE schema를 다시 통과시켜 cache가 typed boundary를 우회하지 못하게 한다.
+    inventory_model(accepted)
+    report = run_checks(INVENTORY_CHECKS, accepted.as_payload(), index)
+    if report.errors or report.findings:
+        raise ValueError("cached class inventory is invalid: " + "; ".join(
+            [*report.errors, *finding_text(report.findings)]
+        ))
+    return accepted
+
+
+def inventory_proposal(
+    index: ScenarioIndex, *, cache: AcceptedUnitCache | None = None,
+) -> AcceptedInventory:
+    """전역 inventory를 수락하고 지정 cache가 있으면 완성 단위만 재사용한다.
+
+    Args:
+        index: 정규화된 전체 use-case 시나리오다.
+        cache: graph adapter가 선택적으로 주입하는 process-local accepted-unit cache다.
+
+    Returns:
+        Pydantic과 결정론 검사를 모두 통과한 불변 inventory다.
+
+    Notes:
+        cache를 생략하면 기존 LLM 호출 경로를 유지한다. hit도 저장 BCE schema와 inventory
+        checks를 다시 실행하며 raw·partial·repair 중간 응답은 저장하지 않는다.
+    """
+
+    metadata = {
+        "executionSlice": "inventory",
+        "candidateCount": len(index.use_cases),
+    }
+    if cache is None:
+        record_cache_outcome(
+            None,
+            operation="InteractionInventory",
+            unit="inventory",
+            metadata=metadata,
+        )
+        return _inventory_proposal_uncached(index)
+    result = cache.get_or_compute(
+        _inventory_cache_key(index),
+        lambda: _inventory_proposal_uncached(index).as_payload(),
+    )
+    record_cache_outcome(
+        result,
+        operation="InteractionInventory",
+        unit="inventory",
+        metadata=metadata,
+    )
+    return _accepted_inventory_from_cache(result.value, index)
 
 
 def normalize_inventory(proposal: InventoryProposal) -> AcceptedInventory:

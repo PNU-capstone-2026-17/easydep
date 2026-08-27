@@ -1,9 +1,10 @@
 """Class-design operation fragments and deterministic operation checks."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from app.validation import run_checks
 from app.design.services.class_diagram import service
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
@@ -15,6 +16,7 @@ from app.design.services.class_diagram.validation.operations import (
     OPERATION_CHECKS,
     OperationContext,
 )
+from app.validation import run_checks
 from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
@@ -40,6 +42,54 @@ def test_operation_generation_keeps_signature_data_types_in_the_persisted_model(
 
     assert [item["name"] for item in model["DataTypes"]] == [
         "RequestData", "RequestResult",
+    ]
+
+
+def test_operation_public_payload_keeps_context_without_repeating_full_scenario(monkeypatch):
+    payloads: list[dict] = []
+
+    def fake_parse(messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is OperationFragment:
+            payloads.append(json.loads(messages[-1]["content"]))
+            return operation_fragment()
+        if issubclass(schema, CallPlanProposal):
+            return call_plan()
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    raw = single_use_case()
+    raw["use_cases"][0]["goal"] = "Submit a request and receive a result."
+    raw["use_cases"][0]["supporting_actors"] = ["Request Gateway"]
+    raw["use_case_specs"][0]["preconditions"] = ["The member is authenticated."]
+    raw["use_case_specs"][0]["postconditions"] = ["The result is recorded."]
+    raw["use_case_specs"][0]["business_rules"] = ["A request is accepted once."]
+    raw["use_cases"][0]["main_scenario"] = [{"step_number": 99}]
+    raw["use_cases"][0]["extensions"] = [{"label": "legacy"}]
+    service.generate_class_model(build_scenario_index(raw))
+
+    assert len(payloads) == 1
+    payload = payloads[0]
+    use_case = payload["useCase"]
+    assert use_case["id"] == "UC1"
+    assert use_case["name"] == "Submit request"
+    assert use_case["goal"] == "Submit a request and receive a result."
+    assert use_case["supporting_actors"] == ["Request Gateway"]
+    assert "main_scenario" not in use_case
+    assert "extensions" not in use_case
+    specification = use_case["specification"]
+    assert specification["preconditions"] == ["The member is authenticated."]
+    assert specification["postconditions"] == ["The result is recorded."]
+    assert specification["business_rules"] == ["A request is accepted once."]
+    assert "main_scenario" not in specification
+    assert "extensions" not in specification
+    encoded = json.dumps(use_case)
+    assert encoded.count('"goal"') == 1
+    assert encoded.count('"primary_actor"') == 1
+    assert payload["allowedStepRefs"] == ["UC1:main:1", "UC1:main:2"]
+    assert [step["stepRef"] for step in payload["executionSlice"]["steps"]] == [
+        "UC1:main:1", "UC1:main:2",
     ]
 
 

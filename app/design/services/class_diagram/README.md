@@ -24,13 +24,19 @@ raw use-case JSON
 ## 공개 입력과 출력
 
 ```python
-generate_class_model(index: ScenarioIndex) -> BCEModel
-resume_class_model(index: ScenarioIndex, current: BCEModel) -> BCEModel
+generate_class_model(
+    index: ScenarioIndex, *, cache: AcceptedUnitCache | None = None,
+) -> BCEModel
+resume_class_model(
+    index: ScenarioIndex, current: BCEModel, *, cache: AcceptedUnitCache | None = None,
+) -> BCEModel
 revise_class_model(
     current: BCEModel,
     index: ScenarioIndex,
     feedback: str,
     targets: AbstractSet[str],
+    *,
+    cache: AcceptedUnitCache | None = None,
 ) -> BCEModel
 ```
 
@@ -285,3 +291,49 @@ finding이 남을 때 최대 한 번만 교체된다.
 - Pydantic schema 위반, 목록 밖 ID, provenance 후보 부재, 순서·타입 위반은 명시적으로
   실패하며 임의 문자열 보정이나 빈 placeholder를 만들지 않는다.
 - 기본 긴 호출 병렬도는 2이며 설정을 통해서만 조정한다.
+
+## 최적화 cache와 관측 계약
+
+`cache.py`의 `AcceptedUnitCache`는 이미 Pydantic·결정론 검사를 통과한 단위만 재사용하는
+프로세스 경계다. 기본 구현 `ProcessLocalAcceptedUnitCache`는 최대 256개를 보관하는
+thread-safe LRU다. 서비스에서 `cache=`를 생략하면 기존처럼 cache를 우회하며,
+graph adapter가 application-scope 인스턴스를 명시적으로 주입한다.
+
+- 입력: 정규화 slice, 고정 inventory, feedback/findings, prompt/schema digest, provider와
+  model, seed/temperature/reasoning 설정, completion cap을 포함한 canonical cache key다.
+- 출력: `CacheResult(value, status, key)`이며 status는 `hit`, `miss`, `coalesced` 중 하나다.
+- 부작용: 같은 key의 동시 계산은 single-flight로 합치고, 성공한 accepted value만 깊은
+  복사해 LRU에 저장한다. 용량을 넘으면 가장 오래 사용하지 않은 완료 항목을 제거한다.
+- 금지: raw LLM response, validation finding, partial repair 후보, credential 또는 prompt의
+  비공개 추론을 저장하지 않는다. cache hit도 typed schema와 결정론 검사를 다시 수행한다.
+- 실패: producer 예외는 저장하지 않고 모든 대기 호출에 전달한다. hit 재검증 실패는
+  `cached ... is invalid` 오류로 반환하며 오래된 값을 조용히 채택하지 않는다.
+
+`generate`, `resume`, `revise` 모두 같은 cache 경계를 받는다. 같은 입력으로 generate를
+다시 실행하거나 누락된 collaboration을 resume할 때 accepted inventory/operation/call-plan
+hit이면 외부 LLM physical request는 발생하지 않는다. revise는 소유 operation 또는
+collaboration slice와 feedback을 key에 포함해 영향받은 단위만 교체한다.
+
+### Reasoning과 timing
+
+inventory, operation, call-plan은 각각 `design_class_inventory_reasoning_effort`,
+`design_class_operation_reasoning_effort`, `design_class_call_plan_reasoning_effort`를
+읽는다. 값이 없는 구버전 설정은 기존 `design_reasoning_effort`로 fallback한다. 이 설정은
+호출 수, 각 제안의 최대 1회 replacement, handoff 범위와 병렬도 정책을 바꾸지 않는다.
+
+모든 호출은 `capture_llm_timings()`의 invocation별 ContextVar 수집기를 사용한다. worker는
+`bind_context`로 collector를 전달하고, concurrent event는 유실 없이 합쳐진다. cache event는
+`observationScope=logicalOnly`, `physicalRequest=False`와 `cacheStatus/cacheKey`를 갖는다.
+따라서 provider `llm_calls`에는 logical cache event를 세지 않으며, request event에는
+input/output digest·token, repair attempt, handoff owner와 execution-slice metadata를
+남긴다. `DesignAdapter.start` 후 `resume`은 세션에 누적된 목록이 아니라 해당 invocation의
+event만 반환한다.
+
+## 최적화 평가와 실패 조건
+
+고정 E1 입력과 최대 9-cell protocol은
+[`evaluation/class_design_optimization_protocol.md`](../../../../evaluation/class_design_optimization_protocol.md)에
+정의한다. 오프라인 evaluator는 network/LLM을 호출하지 않고 frozen checkpoint digest와
+schema/reference/call/sequence gate를 평가한다. 실제 생성 runner는 retry 0, 독립 run ID,
+9개 cold cell과 same-process warm 검증을 강제한다. gate 실패, digest mismatch, token 상한
+초과면 후속 candidate를 즉시 중단하며 실패 cell을 재시도해 대체하지 않는다.

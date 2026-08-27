@@ -17,18 +17,19 @@ import hashlib
 import json
 import queue
 import threading
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from datetime import UTC, datetime
-from functools import lru_cache
+from functools import lru_cache, wraps
 from time import perf_counter
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 from app.config import settings
-from app.metrics.llm_stall_probe import start_stall_probe
 from app.metrics import langsmith as langsmith_metrics
+from app.metrics.llm_stall_probe import start_stall_probe
 
 
 class StructuredLlmError(RuntimeError):
@@ -60,19 +61,103 @@ def _failure_category(error: BaseException) -> str:
     return "provider_or_runtime"
 
 
-_TIMING_EVENTS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+class _TimingEventList(list[dict[str, Any]]):
+    """Context copies share this collector, so writes must be explicitly synchronized."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.RLock()
+
+    def append(self, item: dict[str, Any]) -> None:
+        with self._lock:
+            super().append(item)
+
+    def extend(self, values) -> None:
+        with self._lock:
+            super().extend(values)
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(super().__iter__())
+
+    def __iter__(self):
+        return iter(self.snapshot())
+
+    def __len__(self) -> int:
+        with self._lock:
+            return super().__len__()
+
+    def __getitem__(self, index):
+        with self._lock:
+            return super().__getitem__(index)
+
+
+_TIMING_EVENTS: ContextVar[_TimingEventList | None] = ContextVar(
     "design_llm_timing_events", default=None
 )
 
 
 @contextmanager
-def capture_llm_timings():
-    events: list[dict[str, Any]] = []
+def capture_llm_timings() -> Iterator[list[dict[str, Any]]]:
+    """Collect only this invocation's events, including context-bound worker calls."""
+
+    events = _TimingEventList()
     token = _TIMING_EVENTS.set(events)
     try:
         yield events
     finally:
         _TIMING_EVENTS.reset(token)
+
+
+def bind_context(callable_obj: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Bind the current ContextVars to one executor submission.
+
+    Call this once per submission. A copied context cannot be entered by two workers at
+    the same time, while each copy may safely share the synchronized timing collector.
+    """
+
+    context = copy_context()
+
+    @wraps(callable_obj)
+    def bound(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        return context.run(callable_obj, *args, **kwargs)
+
+    return bound
+
+
+def record_llm_timing(
+    operation: str,
+    *,
+    status: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> None:
+    """Record a zero-duration logical/cache event in the existing timing collection."""
+
+    events = _TIMING_EVENTS.get()
+    if events is None:
+        return
+    observed_at = datetime.now(UTC).isoformat()
+    event = {
+        "operation": operation,
+        "status": status,
+        "errorType": None,
+        "startedAt": observed_at,
+        "finishedAt": observed_at,
+        "elapsedSeconds": 0.0,
+        "wallTimeoutSeconds": settings.llm_wall_timeout_seconds,
+        "clientTimeoutSeconds": settings.llm_timeout_seconds,
+        "observationScope": "logicalOnly",
+        "ttftSeconds": None,
+        "physicalRequest": False,
+    }
+    if status.startswith("cache_"):
+        event["cacheStatus"] = status.removeprefix("cache_")
+    event.update(dict(metadata or {}))
+    events.append(event)
 
 
 def run_with_wall_timeout(
@@ -137,7 +222,8 @@ def _run_with_wall_timeout(
         except Exception as error:  # noqa: BLE001 - 호출 스레드로 그대로 올린다
             result_queue.put((False, error))
 
-    thread = threading.Thread(target=target, daemon=True)
+    request_context = copy_context()
+    thread = threading.Thread(target=lambda: request_context.run(target), daemon=True)
     thread.start()
 
     try:
@@ -427,6 +513,39 @@ def _structured_client(
     )
 
 
+def _stable_digest(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _request_digests(
+    messages: list[dict[str, str]], schema: type[BaseModel]
+) -> dict[str, str]:
+    """Return content fingerprints without retaining prompt or input text."""
+
+    user_content = [
+        message.get("content", "")
+        for message in messages
+        if message.get("role") != "system"
+    ]
+    system_content = [
+        message.get("content", "")
+        for message in messages
+        if message.get("role") == "system"
+    ]
+    return {
+        "inputDigest": _stable_digest(user_content),
+        "promptDigest": _stable_digest(system_content),
+        "schemaDigest": _stable_digest(schema.model_json_schema()),
+    }
+
+
 def _parse_with_schema_repair(
     client,
     messages: list[dict[str, str]],
@@ -445,10 +564,25 @@ def _parse_with_schema_repair(
     escalated.
     """
     operation_name = operation or schema.__name__
+    semantic_repair = operation_name.casefold().endswith("repair")
+    logical_request_digest = _stable_digest(
+        {
+            "operation": operation_name,
+            "messages": messages,
+            "schema": schema.model_json_schema(),
+        }
+    )
     observation: dict[str, Any] = {
         "schemaRepairAttempt": 0,
         "taskKind": operation_name,
+        "logicalRequest": operation_name,
+        "logicalRequestDigest": logical_request_digest,
+        "physicalRequest": True,
+        "physicalRequestIndex": 1,
+        "repairKind": "semantic" if semantic_repair else None,
+        "handoff": "deterministic-validation" if semantic_repair else None,
         **dict(metadata or {}),
+        **_request_digests(messages, schema),
     }
     try:
         return run_with_wall_timeout(
@@ -477,14 +611,17 @@ def _parse_with_schema_repair(
             validation_error = cause
         else:
             raise
-        validation_errors = validation_error.errors(
-            include_url=False,
-            include_input=False,
-            # Pydantic keeps the original exception object in ``ctx.error``
-            # for value errors.  Repair prompts are JSON, so retaining that
-            # object masks the validation failure with a serialization error.
-            include_context=False,
-        )
+        validation_errors = [
+            dict(item)
+            for item in validation_error.errors(
+                include_url=False,
+                include_input=False,
+                # Pydantic keeps the original exception object in ``ctx.error``
+                # for value errors. Repair prompts are JSON, so retaining that
+                # object masks the validation failure with a serialization error.
+                include_context=False,
+            )
+        ]
 
     repair_payload = _schema_repair_payload(validation_errors, parsed_input)
     repair_messages = [
@@ -502,7 +639,14 @@ def _parse_with_schema_repair(
     repair_observation: dict[str, Any] = {
         "schemaRepairAttempt": 1,
         "taskKind": operation_name,
+        "logicalRequest": operation_name,
+        "logicalRequestDigest": logical_request_digest,
+        "physicalRequest": True,
+        "physicalRequestIndex": 2,
+        "repairKind": "schema",
+        "handoff": "schema-repair",
         **dict(metadata or {}),
+        **_request_digests(repair_messages, schema),
     }
     return run_with_wall_timeout(
         lambda: _stream_structured(

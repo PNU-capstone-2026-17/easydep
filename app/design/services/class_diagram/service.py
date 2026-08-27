@@ -18,6 +18,9 @@ from app.config import settings
 from app.design.schemas.class_model import BCEModel, Collaboration
 from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram import inventory, operations
+from app.design.services.class_diagram.cache import (
+    AcceptedUnitCache,
+)
 from app.design.services.class_diagram.models import (
     AcceptedFragment,
     AcceptedInventory,
@@ -45,13 +48,15 @@ def _payload(model: BCEModel) -> dict[str, Any]:
 
 def _build_skeleton(
     index: ScenarioIndex,
+    *,
+    cache: AcceptedUnitCache | None,
 ) -> tuple[BCEModel, AcceptedInventory, dict[str, AcceptedFragment]]:
     """inventory를 먼저 고정한 뒤 모든 유스케이스 operation fragment를 합친다.
 
     inventory preview는 구조가 수락된 직후 한 번 발행한다. operation worker는 이 같은
     immutable inventory를 읽으므로 병렬 실행 중 클래스·field 기준이 달라지지 않는다.
     """
-    accepted_inventory = inventory.inventory_proposal(index)
+    accepted_inventory = inventory.inventory_proposal(index, cache=cache)
     operations.emit_preview(
         _payload(inventory.inventory_model(accepted_inventory)),
         "inventory",
@@ -63,6 +68,7 @@ def _build_skeleton(
         index,
         accepted_inventory,
         reconstruct_fragments=feedback_stage.fragments_from_model,
+        cache=cache,
     )
     return skeleton, accepted_inventory, fragments
 
@@ -74,6 +80,7 @@ def _replace_groups(
     *,
     feedback_text: str = "",
     workers: int | None = None,
+    cache: AcceptedUnitCache | None = None,
 ) -> list[CollaborationResult]:
     """선택된 collaboration 그룹만 feedback 단계의 bounded runner에 위임한다.
 
@@ -86,6 +93,7 @@ def _replace_groups(
         groups,
         feedback=feedback_text,
         workers=workers,
+        cache=cache,
     )
 
 
@@ -97,7 +105,9 @@ def _workers(count: int) -> int:
     ))
 
 
-def generate_class_model(index: ScenarioIndex) -> BCEModel:
+def generate_class_model(
+    index: ScenarioIndex, *, cache: AcceptedUnitCache | None = None,
+) -> BCEModel:
     """시나리오 인덱스에서 수락된 BCE 모델을 생성한다.
 
     Args:
@@ -117,10 +127,12 @@ def generate_class_model(index: ScenarioIndex) -> BCEModel:
         return BCEModel()
     # 1. 구조와 operation contract를 수락해야 collaboration의 receiver 후보를 유한하게
     # 만들 수 있다. 이 순서를 뒤집으면 호출 계획이 존재하지 않는 operation을 발명한다.
-    skeleton, accepted_inventory, fragments = _build_skeleton(index)
+    skeleton, accepted_inventory, fragments = _build_skeleton(index, cache=cache)
     # 2. 독립 execution group을 설정 상한 안에서 처리한다. 결과는 입력 그룹 순서다.
     workers = _workers(len(index.groups))
-    results = _replace_groups(index, skeleton, list(index.groups), workers=workers)
+    results = _replace_groups(
+        index, skeleton, list(index.groups), workers=workers, cache=cache,
+    )
     failures = [result for result in results if result.collaboration is None]
     if failures:
         try:
@@ -128,6 +140,7 @@ def generate_class_model(index: ScenarioIndex) -> BCEModel:
             # 유스케이스 fragment만 handoff repair한다. 성공한 비영향 group은 보존한다.
             repaired_use_cases = operations.repair_failed_operations(
                 index, accepted_inventory, fragments, failures,
+                cache=cache,
             )
             skeleton = operations.compose_fragments(accepted_inventory, fragments)
             affected = [
@@ -139,7 +152,9 @@ def generate_class_model(index: ScenarioIndex) -> BCEModel:
                 result.group_id: result for result in results
                 if result.collaboration is not None and result.group_id not in affected_ids
             }
-            retried = _replace_groups(index, skeleton, affected, workers=workers)
+            retried = _replace_groups(
+                index, skeleton, affected, workers=workers, cache=cache,
+            )
             results = [
                 retained.get(group.id)
                 or next(result for result in retried if result.group_id == group.id)
@@ -180,7 +195,12 @@ def generate_class_model(index: ScenarioIndex) -> BCEModel:
     return model
 
 
-def resume_class_model(index: ScenarioIndex, current: BCEModel) -> BCEModel:
+def resume_class_model(
+    index: ScenarioIndex,
+    current: BCEModel,
+    *,
+    cache: AcceptedUnitCache | None = None,
+) -> BCEModel:
     """기존 BCE 모델에서 빠졌거나 유효하지 않은 협업만 완성한다.
 
     Args:
@@ -219,7 +239,9 @@ def resume_class_model(index: ScenarioIndex, current: BCEModel) -> BCEModel:
     if not selected:
         return current
     workers = _workers(len(selected))
-    results = _replace_groups(index, current, selected, workers=workers)
+    results = _replace_groups(
+        index, current, selected, workers=workers, cache=cache,
+    )
     selected_ids = {group.id for group in selected}
     working_model = current
     failures = [result for result in results if result.collaboration is None]
@@ -231,13 +253,16 @@ def resume_class_model(index: ScenarioIndex, current: BCEModel) -> BCEModel:
             fragments = feedback_stage.fragments_from_model(index, current)
             repaired_use_cases = operations.repair_failed_operations(
                 index, accepted_inventory, fragments, failures,
+                cache=cache,
             )
             working_model = operations.compose_fragments(accepted_inventory, fragments)
             affected = [
                 group for group in index.groups
                 if set(group.trace_use_case_ids) & repaired_use_cases
             ]
-            retried = _replace_groups(index, working_model, affected, workers=workers)
+            retried = _replace_groups(
+                index, working_model, affected, workers=workers, cache=cache,
+            )
             affected_ids = {group.id for group in affected}
             results = [
                 result for result in results if result.group_id not in affected_ids
@@ -275,6 +300,8 @@ def revise_class_model(
     index: ScenarioIndex,
     feedback: str,
     targets: AbstractSet[str],
+    *,
+    cache: AcceptedUnitCache | None = None,
 ) -> BCEModel:
     """피드백을 가장 작은 소유 단계에 적용해 BCE 모델을 재조립한다.
 
@@ -310,11 +337,13 @@ def revise_class_model(
         # collaboration을 다시 만든다. target 밖 inventory item은 feedback 단계가 보존한다.
         accepted_inventory = feedback_stage.propose_inventory_revision(
             index, accepted_inventory, feedback, set(scope.ids),
+            cache=cache,
         )
         skeleton, fragments = operations.build_fragments(
             index,
             accepted_inventory,
             reconstruct_fragments=feedback_stage.fragments_from_model,
+            cache=cache,
         )
         selected_groups = list(index.groups)
     elif scope.kind == "operation":
@@ -338,6 +367,7 @@ def revise_class_model(
                     for group in selected_operation_groups
                 ],
                 operation="InteractionOperationFeedback",
+                cache=cache,
             )
         for use_case_id in sorted(selected_use_cases, key=id_key):
             if any(group.use_case_id == use_case_id for group in selected_operation_groups):
@@ -354,6 +384,7 @@ def revise_class_model(
                 reserved=operations.reserved_operations(base),
                 reserved_types=list(_payload(base).get("DataTypes") or []),
                 operation="InteractionOperationFeedback",
+                cache=cache,
             )
         skeleton = operations.compose_fragments(accepted_inventory, fragments)
         selected_groups = [
@@ -376,6 +407,7 @@ def revise_class_model(
         skeleton,
         selected_groups,
         feedback_text=feedback if scope.kind == "collaboration" else "",
+        cache=cache,
     )
     failures = [result for result in results if result.collaboration is None]
     if failures:

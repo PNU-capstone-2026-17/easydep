@@ -4,7 +4,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.design.services.class_diagram import inventory
+from app.config import settings
+from app.design.services.class_diagram import collaboration, inventory, operations
 from app.design.services.class_diagram.proposals import InventoryProposal
 from app.design.services.class_diagram.scenario import build_scenario_index
 from tests.class_design_fixtures import scenario
@@ -77,3 +78,19 @@ def test_normalized_inventory_propagates_entity_scope_through_structural_types()
     normalized = inventory.normalize_inventory(proposal)
     details = next(item for item in normalized.data_types if item["name"] == "OrderDetails")
     assert details["useCaseIds"] == ["UC1"]
+
+
+def test_class_design_reasoning_effort_is_independent_per_owned_stage(monkeypatch):
+    """E1 can lower one stage without changing the others or repair scope."""
+
+    monkeypatch.setattr(settings, "design_class_inventory_reasoning_effort", "low")
+    monkeypatch.setattr(settings, "design_class_operation_reasoning_effort", "high")
+    monkeypatch.setattr(settings, "design_class_call_plan_reasoning_effort", "medium")
+
+    assert inventory.inventory_reasoning_effort() == "low"
+    assert operations.operation_reasoning_effort() == "high"
+    assert collaboration.call_plan_reasoning_effort() == "medium"
+
+    # Stage-specific reasoning is only a model policy. The established one
+    # replacement rule remains owned by each stage's existing validators.
+    assert settings.design_max_repair_iters == 3

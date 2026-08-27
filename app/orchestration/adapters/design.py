@@ -170,7 +170,9 @@ class DesignAdapter:
             with capture_llm_timings() as events:
                 return callable_obj()
         finally:
-            self._timings.setdefault(session_id, []).extend(events)
+            # start/retry/resume is one observable invocation. Returning a session
+            # accumulation here made resume telemetry count the preceding call twice.
+            self._timings[session_id] = list(events)
 
     @staticmethod
     @contextmanager

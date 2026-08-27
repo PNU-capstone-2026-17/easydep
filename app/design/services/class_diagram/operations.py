@@ -20,6 +20,11 @@ from typing import Any
 from app.config import settings
 from app.design import progress as design_progress
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
+from app.design.services.class_diagram.cache import (
+    AcceptedUnitCache,
+    accepted_unit_key,
+    record_cache_outcome,
+)
 from app.design.services.class_diagram.inventory import finding_text
 from app.design.services.class_diagram.models import (
     AcceptedFragment,
@@ -59,7 +64,7 @@ from app.design.services.class_diagram.validation.model import (
     type_can_default,
 )
 from app.design.services.common import fields
-from app.design.services.common.structured import parse_structured
+from app.design.services.common.structured import bind_context, parse_structured
 from app.validation import run_checks
 
 logger = logging.getLogger(__name__)
@@ -119,6 +124,26 @@ when it must first perform validation or authorization.
 """.strip() + "\n\n" + structure_type_contract())
 
 
+def operation_reasoning_effort() -> str:
+    """연산 전용 reasoning 설정이 없던 실행은 기존 정책으로 유지한다."""
+
+    return str(getattr(
+        settings,
+        "design_class_operation_reasoning_effort",
+        settings.design_reasoning_effort,
+    ))
+
+
+def operation_max_completion_tokens() -> int:
+    """연산 전용 output cap이 없던 실행은 기존 collaboration cap을 유지한다."""
+
+    return int(getattr(
+        settings,
+        "design_class_operation_max_completion_tokens",
+        settings.design_class_collaboration_max_completion_tokens,
+    ))
+
+
 def _reserved_operations(model: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -148,10 +173,33 @@ def _operation_payload(
     ``allowedStepRefs``는 현재 unit이 소유할 수 있는 단계만 담는다. ``previousFragment``와
     ``findings``는 최초 실패 뒤 full replacement를 요청할 때만 추가한다.
     """
-    summary = next((
+    source_summary = next((
         item for item in index.raw.get("use_cases") or []
         if isinstance(item, dict) and text(item.get("id")) == use_case.id
     ), {})
+    # 원문 시나리오 본문은 executionSlice.steps로만 전달한다. 하지만 goal, actor,
+    # pre/postcondition, business rule 같은 use-case 문맥은 operation 설계에 필요하므로
+    # specification 전체를 버리지 않고 main/extension flow만 제거한다.
+    specification = use_case.specification
+    if not settings.design_class_compact_operation_payload:
+        summary = deepcopy(source_summary)
+        if isinstance(specification, dict):
+            summary["specification"] = deepcopy(specification)
+    else:
+        summary = {
+            key: deepcopy(value)
+            for key, value in source_summary.items()
+            if key not in {"main_scenario", "extensions"}
+        }
+    if settings.design_class_compact_operation_payload and isinstance(specification, dict):
+        compact_specification = {
+            key: deepcopy(value)
+            for key, value in specification.items()
+            if key not in {"main_scenario", "extensions"}
+        }
+        # raw use-case의 goal·actor 문맥은 top-level에 유지한다. specification 안에만 있던
+        # pre/postcondition과 business rule은 아래 compact specification에 한 번만 남긴다.
+        summary["specification"] = compact_specification
     scoped_classes = [
         {
             key: value for key, value in item.items()
@@ -394,29 +442,32 @@ def _propose_fragment(
     """
     # 1. 허용 step, 고정 타입과 예약 이름을 먼저 payload로 좁힌다. LLM이 전체 모델을
     # 보지 않으므로 다른 use case의 성공한 연산을 임의로 다시 작성할 수 없다.
+    prompt_payload = _operation_payload(
+        index,
+        inventory,
+        use_case,
+        previous=previous,
+        findings=findings,
+        reserved=reserved,
+        reserved_types=reserved_types,
+        allowed_step_ids=allowed_step_ids,
+        execution_group_id=execution_group_id,
+    )
     parsed = parse_structured(
         [
             {"role": "system", "content": _OPERATION_PROMPT},
-            {"role": "user", "content": json.dumps(
-                _operation_payload(
-                    index,
-                    inventory,
-                    use_case,
-                    previous=previous,
-                    findings=findings,
-                    reserved=reserved,
-                    reserved_types=reserved_types,
-                    allowed_step_ids=allowed_step_ids,
-                    execution_group_id=execution_group_id,
-                ),
-                ensure_ascii=False,
-            )},
+            {"role": "user", "content": json.dumps(prompt_payload, ensure_ascii=False)},
         ],
         OperationFragment,
-        reasoning_effort=settings.design_reasoning_effort,
-        max_completion_tokens=settings.design_class_collaboration_max_completion_tokens,
+        reasoning_effort=operation_reasoning_effort(),
+        max_completion_tokens=operation_max_completion_tokens(),
         operation=operation,
-        metadata={"useCaseId": use_case.id},
+        metadata={
+            "useCaseId": use_case.id,
+            "executionSlice": execution_group_id or use_case.id,
+            "candidateCount": len(prompt_payload["fixedClasses"])
+            + len(prompt_payload["executionSlice"]["steps"]),
+        },
     )
     # 2. 설명문이나 임의 필드를 거부하고 일시적 proposal schema만 수락한다.
     candidate = OperationFragment.model_validate(parsed).model_dump(by_alias=True)
@@ -460,7 +511,7 @@ def _propose_fragment(
     )
 
 
-def _checked_fragment(
+def _checked_fragment_uncached(
     index: ScenarioIndex,
     inventory: dict[str, Any],
     use_case: UseCase,
@@ -543,6 +594,206 @@ def _checked_fragment(
             + "; ".join([*report.errors, *finding_text(report.findings)])
         )
     return candidate
+
+
+def _operation_cache_key(
+    index: ScenarioIndex,
+    inventory: dict[str, Any],
+    use_case: UseCase,
+    *,
+    previous: dict[str, Any] | None,
+    findings: list[str] | None,
+    reserved: list[dict[str, Any]] | None,
+    reserved_types: list[dict[str, Any]] | None,
+    allowed_step_ids: tuple[str, ...],
+    execution_group_id: str,
+    operation: str,
+) -> str:
+    """execution slice의 수락 fragment에만 대응하는 cache key를 만든다."""
+
+    payload = _operation_payload(
+        index,
+        inventory,
+        use_case,
+        previous=previous,
+        findings=findings,
+        reserved=reserved,
+        reserved_types=reserved_types,
+        allowed_step_ids=allowed_step_ids,
+        execution_group_id=execution_group_id,
+    )
+    if isinstance(payload.get("findings"), list):
+        payload["findings"] = [
+            " ".join(str(item).split()) for item in payload["findings"]
+        ]
+    return accepted_unit_key(
+        "operation-fragment",
+        unit_slice=payload,
+        inventory=inventory,
+        feedback={
+            "findings": [" ".join(str(item).split()) for item in findings or []],
+            "operation": operation,
+        },
+        prompt=_OPERATION_PROMPT,
+        schema=OperationFragment,
+        provider="nvidia-nim",
+        model=settings.model,
+        seed=settings.seed,
+        temperature=settings.temperature,
+        reasoning_effort=operation_reasoning_effort(),
+        max_completion_tokens=operation_max_completion_tokens(),
+    )
+
+
+def _validate_accepted_fragment(
+    candidate: dict[str, Any],
+    index: ScenarioIndex,
+    inventory: dict[str, Any],
+    use_case: UseCase,
+    *,
+    reserved_types: list[dict[str, Any]] | None,
+    allowed_step_ids: tuple[str, ...],
+    execution_group_id: str,
+) -> dict[str, Any]:
+    """cache hit을 Pydantic과 기존 operation validator로 다시 수락한다."""
+
+    normalized = deepcopy(candidate)
+    # 실제 cache value는 이미 ``name : Type`` 수락 표기다. test double이나 호환 caller가
+    # parse 직후의 field mapping을 넣어도 같은 수락 표기로만 바꾼 뒤 영속 BCE schema를
+    # 검증한다. raw ``OperationFragment`` schema로 normalized value를 다시 읽지는 않는다.
+    for item in normalized.get("DataTypes") or []:
+        if not isinstance(item, dict):
+            continue
+        item["fields"] = [
+            fields.normalize_java_field(f"{field['name']} : {field['type']}")
+            if isinstance(field, dict) else field
+            for field in item.get("fields") or []
+        ]
+    try:
+        _compose(inventory, [(use_case.id, normalized)])
+    except Exception as error:
+        raise ValueError(
+            f"cached operation fragment {use_case.id} is not a valid accepted BCE fragment: {error}"
+        ) from error
+    validation_inventory = {
+        **inventory,
+        "DataTypes": [
+            *(inventory.get("DataTypes") or []),
+            *(
+                item for item in (reserved_types or [])
+                if isinstance(item, dict)
+                and text(item.get("name")) not in {
+                    text(existing.get("name"))
+                    for existing in inventory.get("DataTypes") or []
+                    if isinstance(existing, dict)
+                }
+            ),
+        ],
+    }
+    report = run_checks(
+        OPERATION_CHECKS,
+        normalized,
+        OperationContext(
+            index,
+            validation_inventory,
+            use_case,
+            allowed_step_ids,
+            (execution_group_id,) if execution_group_id else (),
+        ),
+    )
+    if report.errors or report.findings:
+        raise ValueError(
+            f"cached operation fragment {use_case.id} is invalid: "
+            + "; ".join([*report.errors, *finding_text(report.findings)])
+        )
+    return normalized
+
+
+def _checked_fragment(
+    index: ScenarioIndex,
+    inventory: dict[str, Any],
+    use_case: UseCase,
+    *,
+    previous: dict[str, Any] | None = None,
+    findings: list[str] | None = None,
+    reserved: list[dict[str, Any]] | None = None,
+    reserved_types: list[dict[str, Any]] | None = None,
+    allowed_step_ids: tuple[str, ...] = (),
+    execution_group_id: str = "",
+    operation: str = "InteractionOperations",
+    cache: AcceptedUnitCache | None = None,
+) -> dict[str, Any]:
+    """수락된 fragment만 저장하고 cache hit도 동일한 검사를 다시 수행한다."""
+
+    def compute() -> dict[str, Any]:
+        return _checked_fragment_uncached(
+            index,
+            inventory,
+            use_case,
+            previous=previous,
+            findings=findings,
+            reserved=reserved,
+            reserved_types=reserved_types,
+            allowed_step_ids=allowed_step_ids,
+            execution_group_id=execution_group_id,
+            operation=operation,
+        )
+    prompt_payload = _operation_payload(
+        index,
+        inventory,
+        use_case,
+        previous=previous,
+        findings=findings,
+        reserved=reserved,
+        reserved_types=reserved_types,
+        allowed_step_ids=allowed_step_ids,
+        execution_group_id=execution_group_id,
+    )
+    metadata = {
+        "executionSlice": execution_group_id or use_case.id,
+        "candidateCount": len(prompt_payload["fixedClasses"])
+        + len(prompt_payload["fixedDataTypes"]),
+    }
+    if cache is None:
+        record_cache_outcome(
+            None,
+            operation=operation,
+            unit=execution_group_id or use_case.id,
+            metadata=metadata,
+        )
+        candidate = compute()
+    else:
+        result = cache.get_or_compute(
+            _operation_cache_key(
+                index,
+                inventory,
+                use_case,
+                previous=previous,
+                findings=findings,
+                reserved=reserved,
+                reserved_types=reserved_types,
+                allowed_step_ids=allowed_step_ids,
+                execution_group_id=execution_group_id,
+                operation=operation,
+            ),
+            compute,
+        )
+        record_cache_outcome(
+            result,
+            operation=operation,
+            unit=execution_group_id or use_case.id,
+            metadata=metadata,
+        )
+        candidate = result.value
+    return _validate_accepted_fragment(
+        candidate,
+        index,
+        inventory,
+        use_case,
+        reserved_types=reserved_types,
+        allowed_step_ids=allowed_step_ids,
+        execution_group_id=execution_group_id,
+    )
 
 
 def _operation_signature(operation: dict[str, Any]) -> tuple[Any, ...]:
@@ -694,6 +945,7 @@ def _build_fragments(
     inventory: dict[str, Any],
     *,
     reconstruct_fragments: Callable[[ScenarioIndex, dict[str, Any]], dict[str, dict[str, Any]]],
+    cache: AcceptedUnitCache | None = None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """Operation unit을 안정적인 wave로 실행하고 수락 순서대로 조립한다.
 
@@ -746,13 +998,14 @@ def _build_fragments(
                     reserved_types=reserved_types,
                     allowed_step_ids=wave[0].step_ids,
                     execution_group_id=wave[0].execution_group_id,
+                    cache=cache,
                 )
             ]
         else:
             with ThreadPoolExecutor(max_workers=len(wave)) as executor:
                 futures = [
                     executor.submit(
-                        _checked_fragment,
+                        bind_context(_checked_fragment),
                         index,
                         inventory,
                         unit.use_case,
@@ -760,6 +1013,7 @@ def _build_fragments(
                         reserved_types=reserved_types,
                         allowed_step_ids=unit.step_ids,
                         execution_group_id=unit.execution_group_id,
+                        cache=cache,
                     )
                     for unit in wave
                 ]
@@ -784,6 +1038,7 @@ def _build_fragments(
                     allowed_step_ids=unit.step_ids,
                     execution_group_id=unit.execution_group_id,
                     operation="InteractionOperationCollisionRepair",
+                    cache=cache,
                 )
                 candidate = _compose(
                     inventory, [*committed, (unit.use_case.id, fragment)],
@@ -812,6 +1067,7 @@ def _repair_failed_operations(
     failures: list[CollaborationResult],
     *,
     operation: str = "InteractionOperationHandoff",
+    cache: AcceptedUnitCache | None = None,
 ) -> set[str]:
     """협업 실패가 가리킨 execution slice의 연산 부분만 보완한다.
 
@@ -881,6 +1137,7 @@ def _repair_failed_operations(
             allowed_step_ids=tuple(group.step_ids),
             execution_group_id=group.id,
             operation=operation,
+            cache=cache,
         )
         merged_types = {
             text(item.get("name")): deepcopy(item)
@@ -1006,6 +1263,7 @@ def build_fragments(
     inventory: AcceptedInventory,
     *,
     reconstruct_fragments: Callable[[ScenarioIndex, BCEModel], Mapping[str, AcceptedFragment]],
+    cache: AcceptedUnitCache | None = None,
 ) -> tuple[BCEModel, dict[str, AcceptedFragment]]:
     """실행 unit fragment를 bounded wave로 생성하고 BCE skeleton으로 수락한다.
 
@@ -1032,6 +1290,7 @@ def build_fragments(
         index,
         inventory.as_payload(),
         reconstruct_fragments=reconstruct_raw,
+        cache=cache,
     )
     return (
         BCEModel.model_validate(skeleton),
@@ -1068,6 +1327,7 @@ def repair_failed_operations(
     failures: list[CollaborationResult],
     *,
     operation: str = "InteractionOperationHandoff",
+    cache: AcceptedUnitCache | None = None,
 ) -> set[str]:
     """협업 실패 group의 연산 slice만 보완하고 수락 fragment를 갱신한다.
 
@@ -1092,6 +1352,7 @@ def repair_failed_operations(
         raw_fragments,
         failures,
         operation=operation,
+        cache=cache,
     )
     fragments.clear()
     fragments.update({

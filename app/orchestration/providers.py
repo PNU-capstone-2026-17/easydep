@@ -54,6 +54,12 @@ from app.requirements.resources.application_cloud import (
 from app.requirements.schemas import ResourceAnswer
 
 
+def _physical_llm_call_count(events: list[dict[str, Any]]) -> int:
+    """Count provider requests while retaining older events that lack the new marker."""
+
+    return sum(event.get("physicalRequest", True) is not False for event in events)
+
+
 def _failure(step: str, provider: ProviderKind, error: Exception) -> StepResult:
     return StepResult(
         step=step,
@@ -272,14 +278,15 @@ class MemberDesignProvider:
                 if result.get("status") == "completed"
                 else StepStatus.NEEDS_INPUT
             )
+            timing_events = result.get("llm_timing_events") or []
             return StepResult(
                 step=self.step,
                 provider=ProviderKind.MEMBER,
                 status=status,
                 output={"member_result": result},
                 metrics={
-                    "llm_calls": len(result.get("llm_timing_events") or []),
-                    "llm_timing_events": result.get("llm_timing_events") or [],
+                    "llm_calls": _physical_llm_call_count(timing_events),
+                    "llm_timing_events": timing_events,
                 },
                 prompt={
                     "stage": result.get("stage"),
@@ -292,7 +299,7 @@ class MemberDesignProvider:
             failed = _failure(self.step, ProviderKind.MEMBER, error)
             events = self.adapter.timing_events(f"orchestration:{context.run_id}:design")
             failed.metrics = {
-                "llm_calls": len(events),
+                "llm_calls": _physical_llm_call_count(events),
                 "llm_timing_events": events,
             }
             return failed

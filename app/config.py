@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     llm_max_completion_tokens: int | None = 16384
     design_reasoning_effort: str = "medium"
     design_selector_reasoning_effort: str = "low"
+    # Class authoring stages keep the former medium policy by default. Separate
+    # settings let the frozen E1 experiment lower one stage without changing the
+    # inventory, selectors, or repair scope.
+    design_class_inventory_reasoning_effort: str = "medium"
+    design_class_operation_reasoning_effort: str = "medium"
+    design_class_call_plan_reasoning_effort: str = "medium"
+    design_class_compact_operation_payload: bool = True
     llm_timeout_seconds: float = 300.0
     llm_wall_timeout_seconds: float = 330.0
     llm_max_retries: int = 0
@@ -63,6 +70,11 @@ class Settings(BaseSettings):
     # Long design calls are independent, but hosted NIM is more stable and each
     # prompt easier to observe when no more than two are in flight.
     design_class_behavior_parallelism: int = 2
+    # Stage-specific caps retain the former broad defaults until the frozen E1
+    # experiment justifies a lower 2K/4K/8K/16K tier.
+    design_class_inventory_max_completion_tokens: int = 16384
+    design_class_operation_max_completion_tokens: int = 8192
+    design_class_call_plan_max_completion_tokens: int = 8192
     # The global inventory needs enough combined reasoning/output budget to
     # finish strict JSON.  Choice-space reduction happens in its compact input,
     # not by truncating the response.

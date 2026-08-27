@@ -20,6 +20,11 @@ from typing import Any
 from app.config import settings
 from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import collaboration, inventory
+from app.design.services.class_diagram.cache import (
+    AcceptedUnitCache,
+    accepted_unit_key,
+    record_cache_outcome,
+)
 from app.design.services.class_diagram.models import (
     AcceptedFragment,
     AcceptedInventory,
@@ -42,7 +47,7 @@ from app.design.services.class_diagram.type_system import (
 )
 from app.design.services.class_diagram.validation.inventory import INVENTORY_CHECKS
 from app.design.services.class_diagram.validation.model import class_name
-from app.design.services.common.structured import parse_structured
+from app.design.services.common.structured import bind_context, parse_structured
 from app.validation import run_checks
 
 
@@ -360,9 +365,13 @@ def _propose_inventory_revision(
             }, ensure_ascii=False)},
         ],
         InventoryProposal,
-        reasoning_effort=settings.design_reasoning_effort,
-        max_completion_tokens=settings.design_class_structure_max_completion_tokens,
+        reasoning_effort=inventory.inventory_reasoning_effort(),
+        max_completion_tokens=inventory.inventory_max_completion_tokens(),
         operation="InteractionInventoryFeedback",
+        metadata={
+            "executionSlice": "inventory",
+            "candidateCount": len(target_ids) or len(current["items"]),
+        },
     )
     proposal = InventoryProposal.model_validate(parsed)
     if target_ids:
@@ -403,6 +412,7 @@ def _replace_selected_groups(
     *,
     feedback: str = "",
     workers: int | None = None,
+    cache: AcceptedUnitCache | None = None,
 ) -> list[CollaborationResult]:
     """선택한 실행 그룹만 기존 collaboration 수리 규약으로 재계획한다.
 
@@ -418,12 +428,22 @@ def _replace_selected_groups(
     ))
     directive = f"Apply this user feedback to this call plan only: {feedback}" if feedback else ""
     if workers == 1 or len(groups) <= 1:
-        return [collaboration.process_group(index, model, group, directive) for group in groups]
+        return [
+            collaboration.process_group(index, model, group, directive, cache=cache)
+            for group in groups
+        ]
     # 각 worker는 한 group만 소유한다. process_group의 한정 repair도 같은 group 안에서만
     # 일어나므로 형제 결과를 공유하거나 덮어쓰지 않는다.
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
-            executor.submit(collaboration.process_group, index, model, group, directive)
+            executor.submit(
+                bind_context(collaboration.process_group),
+                index,
+                model,
+                group,
+                directive,
+                cache=cache,
+            )
             for group in groups
         ]
         return [future.result() for future in futures]
@@ -502,6 +522,8 @@ def propose_inventory_revision(
     inventory_model: AcceptedInventory,
     feedback: str,
     target_ids: AbstractSet[str],
+    *,
+    cache: AcceptedUnitCache | None = None,
 ) -> AcceptedInventory:
     """피드백을 반영한 inventory 교체안을 검사해 수락한다.
 
@@ -520,13 +542,57 @@ def propose_inventory_revision(
     Notes:
         LLM은 전체 교체안을 반환하지만 target 밖 item은 코드가 원본으로 복원한다.
     """
-    candidate = _propose_inventory_revision(
-        index,
-        inventory_model.as_payload(),
-        feedback,
-        set(target_ids),
-    )
-    return AcceptedInventory.from_payload(candidate)
+    targets = set(target_ids)
+    payload = inventory_model.as_payload()
+    metadata = {
+        "executionSlice": "inventory",
+        "candidateCount": len(targets) or len(index.use_cases),
+    }
+    def compute() -> dict[str, Any]:
+        return _propose_inventory_revision(index, payload, feedback, targets)
+    if cache is None:
+        record_cache_outcome(
+            None,
+            operation="InteractionInventoryFeedback",
+            unit="inventory",
+            metadata=metadata,
+        )
+        candidate = compute()
+    else:
+        key = accepted_unit_key(
+            "inventory-revision",
+            unit_slice=inventory.inventory_payload(index),
+            inventory=payload,
+            feedback={
+                "feedback": " ".join(feedback.split()),
+                "targetIds": sorted(targets),
+            },
+            prompt=inventory.INVENTORY_PROMPT,
+            schema=InventoryProposal,
+            provider="nvidia-nim",
+            model=settings.model,
+            seed=settings.seed,
+            temperature=settings.temperature,
+            reasoning_effort=inventory.inventory_reasoning_effort(),
+            max_completion_tokens=inventory.inventory_max_completion_tokens(),
+        )
+        result = cache.get_or_compute(key, compute)
+        record_cache_outcome(
+            result,
+            operation="InteractionInventoryFeedback",
+            unit="inventory",
+            metadata=metadata,
+        )
+        candidate = result.value
+    accepted = AcceptedInventory.from_payload(candidate)
+    # cache hit도 저장 BCE schema와 inventory 규칙을 같은 순서로 재실행한다.
+    inventory.inventory_model(accepted)
+    report = run_checks(INVENTORY_CHECKS, accepted.as_payload(), index)
+    if report.errors or report.findings:
+        raise ValueError("cached inventory feedback is invalid: " + "; ".join([
+            *report.errors, *inventory.finding_text(report.findings),
+        ]))
+    return accepted
 
 
 def replace_selected_groups(
@@ -536,6 +602,7 @@ def replace_selected_groups(
     *,
     feedback: str = "",
     workers: int | None = None,
+    cache: AcceptedUnitCache | None = None,
 ) -> list[CollaborationResult]:
     """선택한 실행 그룹의 협업만 재계획한다.
 
@@ -553,7 +620,7 @@ def replace_selected_groups(
         각 그룹의 최초 제안과 최대 한 번 repair 규약은 ``process_group``이 소유한다.
     """
     return _replace_selected_groups(
-        index, model, groups, feedback=feedback, workers=workers,
+        index, model, groups, feedback=feedback, workers=workers, cache=cache,
     )
 
 

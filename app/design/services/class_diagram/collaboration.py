@@ -16,6 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from app.config import settings
 from app.design.schemas.class_model import BCEModel, Collaboration, canonical_call_id
+from app.design.services.class_diagram.cache import (
+    AcceptedUnitCache,
+    accepted_unit_key,
+    record_cache_outcome,
+)
 from app.design.services.class_diagram.models import CollaborationResult
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
@@ -57,6 +62,26 @@ Control. Control delegates persistent-state work to Entity. Boundary never
 calls Entity directly. Cover every requiredStepRef, including included-flow
 steps, without repeating calls merely to repeat a step label.
 """.strip()
+
+
+def call_plan_reasoning_effort() -> str:
+    """call-plan 전용 reasoning 설정이 없던 실행은 기존 정책으로 유지한다."""
+
+    return str(getattr(
+        settings,
+        "design_class_call_plan_reasoning_effort",
+        settings.design_reasoning_effort,
+    ))
+
+
+def call_plan_max_completion_tokens() -> int:
+    """call-plan 전용 output cap이 없던 실행은 기존 collaboration cap을 유지한다."""
+
+    return int(getattr(
+        settings,
+        "design_class_call_plan_max_completion_tokens",
+        settings.design_class_collaboration_max_completion_tokens,
+    ))
 
 
 BINDING_PROMPT = """
@@ -184,10 +209,14 @@ def _propose_call_plan(
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
         finite_plan,
-        reasoning_effort=settings.design_reasoning_effort,
-        max_completion_tokens=settings.design_class_collaboration_max_completion_tokens,
+        reasoning_effort=call_plan_reasoning_effort(),
+        max_completion_tokens=call_plan_max_completion_tokens(),
         operation="InteractionCallPlanRepair" if finding else "InteractionCallPlan",
-        metadata={"collaborationGroup": group.id},
+        metadata={
+            "collaborationGroup": group.id,
+            "executionSlice": group.id,
+            "candidateCount": len(operation_ids),
+        },
     )
     return CallPlanProposal.model_validate(
         finite_plan.model_validate(parsed).model_dump(by_alias=True),
@@ -345,7 +374,11 @@ def select_ambiguous_bindings(
         reasoning_effort="low",
         max_completion_tokens=min(settings.design_class_collaboration_max_completion_tokens, 2048),
         operation="InteractionBindingSelection",
-        metadata={"collaborationGroup": group.id},
+        metadata={
+            "collaborationGroup": group.id,
+            "executionSlice": group.id,
+            "candidateCount": sum(len(choice["candidates"]) for choice in choices),
+        },
     )
     selected = selection_schema.model_validate(parsed).model_dump()
     return {locations[field_name]: source_ref for field_name, source_ref in selected.items()}
@@ -497,11 +530,94 @@ def materialize(
     ))
 
 
+class _CollaborationUnitFailure(RuntimeError):
+    """한 execution group의 두 번째 수리도 실패했음을 cache 밖으로 전달한다."""
+
+    def __init__(self, issue: str) -> None:
+        super().__init__(issue)
+        self.issue = issue
+
+
+def _accepted_collaboration_payload(
+    index: ScenarioIndex,
+    model: BCEModel,
+    group: ExecutionGroup,
+    directive: str = "",
+) -> dict[str, Any]:
+    """한 execution group을 수락하거나 두 번째 실패를 cache 밖으로 보낸다."""
+
+    plan: CallPlanProposal | None = None
+    try:
+        plan = propose_call_plan(index, model, group, finding=directive)
+        return materialize(index, model, group, plan).model_dump(by_alias=True)
+    except Exception as first_error:
+        try:
+            repaired = propose_call_plan(
+                index,
+                model,
+                group,
+                previous=plan,
+                finding=str(first_error),
+            )
+            return materialize(index, model, group, repaired).model_dump(by_alias=True)
+        except Exception as second_error:
+            raise _CollaborationUnitFailure(
+                f"{type(second_error).__name__}: {second_error}"
+            ) from second_error
+
+
+def _collaboration_cache_key(
+    index: ScenarioIndex,
+    model: BCEModel,
+    group: ExecutionGroup,
+    directive: str,
+) -> str:
+    """수락된 skeleton과 한 execution group에 한정한 call-plan key다."""
+
+    return accepted_unit_key(
+        "collaboration",
+        unit_slice=_group_payload(index, model.model_dump(by_alias=True), group),
+        inventory=model.model_dump(by_alias=True),
+        feedback=" ".join(directive.split()),
+        prompt=CALL_PLAN_PROMPT,
+        schema=CallPlanProposal,
+        provider="nvidia-nim",
+        model=settings.model,
+        seed=settings.seed,
+        temperature=settings.temperature,
+        reasoning_effort=call_plan_reasoning_effort(),
+        max_completion_tokens=call_plan_max_completion_tokens(),
+    )
+
+
+def _validate_accepted_collaboration(
+    payload: dict[str, Any],
+    index: ScenarioIndex,
+    model: BCEModel,
+    group: ExecutionGroup,
+) -> Collaboration:
+    """cache hit도 typed collaboration과 기존 deterministic checks를 재실행한다."""
+
+    collaboration = Collaboration.model_validate(payload)
+    report = run_checks(
+        COLLABORATION_CHECKS,
+        collaboration.model_dump(by_alias=True),
+        CollaborationContext(index, model.model_dump(by_alias=True), group),
+    )
+    if report.errors or report.findings:
+        raise ValueError("cached collaboration is invalid: " + "; ".join(
+            [*report.errors, *_finding_text(report.findings)]
+        ))
+    return collaboration
+
+
 def process_group(
     index: ScenarioIndex,
     model: BCEModel,
     group: ExecutionGroup,
     directive: str = "",
+    *,
+    cache: AcceptedUnitCache | None = None,
 ) -> CollaborationResult:
     """한 실행 그룹을 제안·materialize하고 최대 한 번 국소 교체한다.
 
@@ -510,6 +626,7 @@ def process_group(
         model: 호출 가능한 operation이 수락된 BCE skeleton이다.
         group: 현재 worker가 독점하는 실행 그룹이다.
         directive: collaboration 피드백 또는 상위 repair 지시다.
+        cache: 수락된 collaboration만 공유하는 선택적 process-local cache다.
 
     Returns:
         수락된 ``Collaboration`` 또는 두 번째 실패의 명시적 issue를 담은 결과다.
@@ -518,18 +635,40 @@ def process_group(
         예외를 전역으로 전파하지 않고 실패 결과로 바꾸는 이유는 형제 worker의 성공을
         보존하고 service가 필요한 operation slice만 handoff repair할 수 있게 하기 위해서다.
     """
-    plan: CallPlanProposal | None = None
     try:
-        plan = propose_call_plan(index, model, group, finding=directive)
-        return CollaborationResult(group.id, materialize(index, model, group, plan))
-    except Exception as first_error:  # 현재 group의 한 번 교체이며 전역 반복으로 승격하지 않는다.
-        try:
-            # 이전 계획이 parse되었다면 함께 제공한다. 최초 호출 자체가 실패했으면 None이며,
-            # 오류 text만으로 같은 유한 후보 범위에서 새 전체 계획을 요청한다.
-            repaired = propose_call_plan(index, model, group, previous=plan, finding=str(first_error))
-            return CollaborationResult(group.id, materialize(index, model, group, repaired))
-        except Exception as second_error:
-            return CollaborationResult(group.id, None, f"{type(second_error).__name__}: {second_error}")
+        payload = _group_payload(index, model.model_dump(by_alias=True), group)
+        metadata = {
+            "executionSlice": group.id,
+            "candidateCount": len(payload["receiverOperations"]),
+        }
+        if cache is None:
+            record_cache_outcome(
+                None,
+                operation="InteractionCallPlan",
+                unit=group.id,
+                metadata=metadata,
+            )
+            accepted = _accepted_collaboration_payload(index, model, group, directive)
+        else:
+            result = cache.get_or_compute(
+                _collaboration_cache_key(index, model, group, directive),
+                lambda: _accepted_collaboration_payload(index, model, group, directive),
+            )
+            record_cache_outcome(
+                result,
+                operation="InteractionCallPlan",
+                unit=group.id,
+                metadata=metadata,
+            )
+            accepted = result.value
+        return CollaborationResult(
+            group.id,
+            _validate_accepted_collaboration(accepted, index, model, group),
+        )
+    except _CollaborationUnitFailure as error:
+        return CollaborationResult(group.id, None, error.issue)
+    except Exception as error:
+        return CollaborationResult(group.id, None, f"{type(error).__name__}: {error}")
 
 
 call_plan = propose_call_plan
