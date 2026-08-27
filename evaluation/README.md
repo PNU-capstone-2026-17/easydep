@@ -7,6 +7,9 @@
 - `baselines/`: 동일 입력과 LLM 설정으로 실행하는 LLM CoT 및 MetaGPT 비교군
 - `class_design_evaluation.py`: 동결된 수강신청 요구사항·명세를 재사용해 클래스 후보를
   구조·참조·호출·입력 출처 및 선택적 순차 산출물과 비교하는 오프라인 도구
+- `class_design_optimization.py`: 이미 생성된 9-cell artifact를 네트워크 없이 판정하는 도구
+- `class_design_optimization_run.py`: frozen E1을 실제 provider로 최대 9회 생성하고 단계별
+  설정·token/cap gate와 accepted-unit cold/warm 동작을 기록하는 실행기
 
 새 하위 디렉터리는 독립적인 평가 목적이나 비교 방법이 생길 때만 추가한다. 실행 결과나
 캐시는 이곳에 커밋하지 않는다.

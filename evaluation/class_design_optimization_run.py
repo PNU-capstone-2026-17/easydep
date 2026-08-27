@@ -1,0 +1,480 @@
+"""실제 provider를 사용하는 bounded E1 클래스 설계 최적화 실행기다.
+
+오프라인 후보 판정은 ``class_design_optimization.py``가 담당한다. 이 모듈은 동결된 E1
+시나리오를 직접 생성하며 cold LLM 실행은 정확히 9개 cell을 넘지 않는다. 마지막 후보의
+warm 검증은 같은 accepted-unit cache를 읽기만 하며 physical provider 호출을 허용하지
+않는다.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import statistics
+import time
+import uuid
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from copy import deepcopy
+from pathlib import Path
+from typing import Any
+
+from app.config import settings
+from app.design.schemas.class_model import BCEModel
+from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
+from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
+from app.design.services.class_diagram.service import generate_class_model
+from app.design.services.common.structured import capture_llm_timings
+from app.design.services.common.validation import validate_puml_artifact
+from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
+from app.design.services.sequence_diagram.projection import project_sequence_model
+from app.design.validation import design_readiness_report
+from evaluation.class_design_evaluation import (
+    CASE_ID,
+    evaluate_candidate,
+    frozen_e1_scenario_index,
+)
+
+SCHEMA_VERSION = "easydep-class-design-live-optimization/v1"
+OUTPUT_TIERS = (2048, 4096, 8192, 16384)
+MAX_COLD_GENERATIONS = 9
+
+
+@contextmanager
+def _override_settings(values: Mapping[str, Any]) -> Iterator[None]:
+    previous = {name: getattr(settings, name) for name in values}
+    try:
+        for name, value in values.items():
+            setattr(settings, name, value)
+        yield
+    finally:
+        for name, value in previous.items():
+            setattr(settings, name, value)
+
+
+def _physical_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [event for event in events if event.get("physicalRequest", True) is not False]
+
+
+def _stage(operation: str) -> str | None:
+    folded = operation.casefold()
+    if folded.startswith("interactioninventory"):
+        return "inventory"
+    if folded.startswith("interactionoperation"):
+        return "operation"
+    if folded.startswith("interactioncallplan"):
+        return "callPlan"
+    return None
+
+
+def _event_metrics(events: list[dict[str, Any]], wall_seconds: float) -> dict[str, Any]:
+    physical = _physical_events(events)
+    input_tokens = sum(int(event.get("inputTokens") or 0) for event in physical)
+    output_tokens = sum(int(event.get("outputTokens") or 0) for event in physical)
+    total_tokens = sum(
+        int(event.get("totalTokens") or 0)
+        or int(event.get("inputTokens") or 0) + int(event.get("outputTokens") or 0)
+        for event in physical
+    )
+    stage_output_max = {"inventory": 0, "operation": 0, "callPlan": 0}
+    stage_length_or_schema_failure = dict.fromkeys(stage_output_max, False)
+    for event in physical:
+        stage = _stage(str(event.get("operation") or ""))
+        if stage is None:
+            continue
+        stage_output_max[stage] = max(
+            stage_output_max[stage], int(event.get("outputTokens") or 0)
+        )
+        finish_reasons = {str(item).casefold() for item in event.get("finishReasons") or []}
+        if (
+            "length" in finish_reasons
+            or event.get("failureCategory") == "schema_validation"
+            or event.get("status") == "failed"
+        ):
+            stage_length_or_schema_failure[stage] = True
+    repairs = sum(
+        event.get("repairKind") in {"schema", "semantic"}
+        or "repair" in str(event.get("operation") or "").casefold()
+        for event in physical
+    )
+    handoffs = sum(bool(event.get("handoff")) for event in physical)
+    return {
+        "physicalLlmCalls": len(physical),
+        "logicalCacheEvents": len(events) - len(physical),
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": total_tokens,
+        "wallSeconds": round(wall_seconds, 6),
+        "repairs": repairs,
+        "handoffs": handoffs,
+        "stageOutputMax": stage_output_max,
+        "stageLengthOrSchemaFailure": stage_length_or_schema_failure,
+    }
+
+
+def _machine_gates(
+    index,
+    model: BCEModel,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = model.model_dump(by_alias=True)
+    class_puml = generate_plantuml_from_bce_json(payload)
+    sequence = project_sequence_model(index, model, class_puml)
+    sequence_payload = sequence.model_dump()
+    sequence_puml = generate_sequence_from_model(sequence_payload)
+    evaluation = evaluate_candidate(payload, sequence_model=sequence_payload)
+    state = {
+        "usecase_spec": index.raw,
+        "relationships": index.raw.get("relationships") or {},
+        "extracted_bce_classes": payload,
+        "class_diagram_puml": class_puml,
+        "sequence_diagram_model": sequence_payload,
+        "sequence_diagram_puml": sequence_puml,
+    }
+    readiness = design_readiness_report(state, ("class_diagram", "sequence_diagram"))
+    syntax = {
+        "class": validate_puml_artifact(class_puml),
+        "sequence": validate_puml_artifact(sequence_puml),
+    }
+    passed = (
+        evaluation.get("status") == "passed"
+        and readiness.get("status") == "READY"
+        and all(item.get("syntax_valid") for item in syntax.values())
+    )
+    gates = {
+        "status": "passed" if passed else "failed",
+        "evaluation": evaluation,
+        "readiness": readiness,
+        "plantuml": syntax,
+    }
+    artifacts = {
+        "classModel": payload,
+        "classPuml": class_puml,
+        "sequenceModel": sequence_payload,
+        "sequencePuml": sequence_puml,
+    }
+    return gates, artifacts
+
+
+def _run_cell(
+    key: str,
+    treatment: str,
+    overrides: Mapping[str, Any],
+    *,
+    cache: ProcessLocalAcceptedUnitCache,
+    generator: Callable[..., BCEModel],
+    run_id_factory: Callable[[str], str],
+) -> dict[str, Any]:
+    run_id = run_id_factory(key)
+    index = frozen_e1_scenario_index()
+    configured = {**dict(overrides), "llm_max_retries": 0, "easydep_experiment_session": run_id}
+    started = time.perf_counter()
+    with _override_settings(configured), capture_llm_timings() as events:
+        model = generator(index, cache=cache)
+    wall_seconds = time.perf_counter() - started
+    gates, artifacts = _machine_gates(index, model)
+    return {
+        "runId": run_id,
+        "cell": key,
+        "treatment": treatment,
+        "settings": dict(overrides),
+        "metrics": _event_metrics(events, wall_seconds),
+        "timingEvents": list(events),
+        "machineGates": gates,
+        "artifacts": artifacts,
+        "status": gates["status"],
+    }
+
+
+def _median(runs: list[dict[str, Any]], field: str) -> float:
+    return float(statistics.median(float(run["metrics"][field]) for run in runs))
+
+
+def _p95(runs: list[dict[str, Any]], field: str) -> float:
+    values = sorted(float(run["metrics"][field]) for run in runs)
+    return values[max(0, math.ceil(len(values) * 0.95) - 1)]
+
+
+def _next_tier(value: float, existing: int) -> int:
+    for tier in OUTPUT_TIERS:
+        if value <= tier:
+            return min(tier, existing)
+    return existing
+
+
+def _candidate_caps(baselines: list[dict[str, Any]]) -> dict[str, int]:
+    existing = {
+        "inventory": settings.design_class_inventory_max_completion_tokens,
+        "operation": settings.design_class_operation_max_completion_tokens,
+        "callPlan": settings.design_class_call_plan_max_completion_tokens,
+    }
+    result: dict[str, int] = {}
+    for stage, current in existing.items():
+        failed = any(
+            run["metrics"]["stageLengthOrSchemaFailure"][stage] for run in baselines
+        )
+        observed = max(run["metrics"]["stageOutputMax"][stage] for run in baselines)
+        result[stage] = current if failed or observed == 0 else _next_tier(observed * 1.5, current)
+    return result
+
+
+def _default_run_id(key: str) -> str:
+    return f"class-opt-{CASE_ID}-{key}-{uuid.uuid4().hex[:12]}"
+
+
+def execute_live_e1(
+    *,
+    generator: Callable[..., BCEModel] = generate_class_model,
+    run_id_factory: Callable[[str], str] = _default_run_id,
+    cell_runner: Callable[..., dict[str, Any]] = _run_cell,
+) -> dict[str, Any]:
+    """Run nine bounded cold cells and one zero-provider warm cache verification."""
+
+    baseline_settings = {
+        "design_class_compact_operation_payload": False,
+        "design_class_inventory_reasoning_effort": "medium",
+        "design_class_operation_reasoning_effort": "medium",
+        "design_class_call_plan_reasoning_effort": "medium",
+        "design_class_inventory_max_completion_tokens": 16384,
+        "design_class_operation_max_completion_tokens": 8192,
+        "design_class_call_plan_max_completion_tokens": 8192,
+    }
+    runs: list[dict[str, Any]] = []
+
+    def cold(key: str, treatment: str, overrides: Mapping[str, Any]) -> dict[str, Any]:
+        if len(runs) >= MAX_COLD_GENERATIONS:
+            raise RuntimeError("frozen E1 cold generation budget exceeded")
+        run = cell_runner(
+            key,
+            treatment,
+            overrides,
+            cache=ProcessLocalAcceptedUnitCache(capacity=256),
+            generator=generator,
+            run_id_factory=run_id_factory,
+        )
+        runs.append(run)
+        return run
+
+    baselines = [cold(f"baseline-{index}", "baseline", baseline_settings) for index in range(1, 4)]
+    if any(run["status"] != "passed" for run in baselines):
+        return _report(runs, stopped_at="baseline", decision={"adopted": False})
+
+    compact = cold(
+        "compact",
+        "compact",
+        {**baseline_settings, "design_class_compact_operation_payload": True},
+    )
+    call_low = cold(
+        "call-plan-low",
+        "call-plan-low",
+        {**baseline_settings, "design_class_call_plan_reasoning_effort": "low"},
+    )
+    operation_low = cold(
+        "operation-low",
+        "operation-low",
+        {**baseline_settings, "design_class_operation_reasoning_effort": "low"},
+    )
+
+    baseline_input = _median(baselines, "inputTokens")
+    compact_reduction = (
+        1.0 - float(compact["metrics"]["inputTokens"]) / baseline_input
+        if baseline_input
+        else 0.0
+    )
+    baseline_repairs = _median(baselines, "repairs")
+    baseline_handoffs = _median(baselines, "handoffs")
+    accepted_compact = compact["status"] == "passed" and compact_reduction >= 0.15
+    accepted_call_low = (
+        call_low["status"] == "passed"
+        and call_low["metrics"]["repairs"] <= baseline_repairs
+        and call_low["metrics"]["handoffs"] <= baseline_handoffs
+    )
+    accepted_operation_low = (
+        operation_low["status"] == "passed"
+        and operation_low["metrics"]["repairs"] <= baseline_repairs
+        and operation_low["metrics"]["handoffs"] <= baseline_handoffs
+    )
+    caps = _candidate_caps(baselines)
+    candidate_settings = {
+        **baseline_settings,
+        "design_class_compact_operation_payload": accepted_compact,
+        "design_class_call_plan_reasoning_effort": "low" if accepted_call_low else "medium",
+        "design_class_operation_reasoning_effort": (
+            "low" if accepted_operation_low else "medium"
+        ),
+        "design_class_inventory_max_completion_tokens": caps["inventory"],
+        "design_class_operation_max_completion_tokens": caps["operation"],
+        "design_class_call_plan_max_completion_tokens": caps["callPlan"],
+    }
+    token_limit = max(run["metrics"]["totalTokens"] for run in baselines) * 1.25
+    candidate_runs: list[dict[str, Any]] = []
+    last_cache: ProcessLocalAcceptedUnitCache | None = None
+    stopped_at: str | None = None
+    for ordinal in range(1, 4):
+        last_cache = ProcessLocalAcceptedUnitCache(capacity=256)
+        run = cell_runner(
+            f"candidate-{ordinal}",
+            "candidate",
+            candidate_settings,
+            cache=last_cache,
+            generator=generator,
+            run_id_factory=run_id_factory,
+        )
+        runs.append(run)
+        candidate_runs.append(run)
+        if run["metrics"]["totalTokens"] > token_limit:
+            run["status"] = "failed"
+            run["machineGates"]["tokenBudget"] = {
+                "status": "failed",
+                "limit": token_limit,
+                "observed": run["metrics"]["totalTokens"],
+            }
+        if run["status"] != "passed":
+            stopped_at = run["cell"]
+            break
+
+    warm: dict[str, Any] | None = None
+    if stopped_at is None and len(candidate_runs) == 3 and last_cache is not None:
+        warm = cell_runner(
+            "candidate-warm-verification",
+            "cache-warm",
+            candidate_settings,
+            cache=last_cache,
+            generator=generator,
+            run_id_factory=run_id_factory,
+        )
+        if warm["metrics"]["physicalLlmCalls"] != 0:
+            warm["status"] = "failed"
+            stopped_at = warm["cell"]
+
+    decision = _decision(
+        baselines,
+        candidate_runs,
+        compact_reduction=compact_reduction,
+        token_limit=token_limit,
+        candidate_caps=caps,
+        warm=warm,
+    )
+    return _report(runs, stopped_at=stopped_at, decision=decision, warm=warm)
+
+
+def _decision(
+    baselines: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    *,
+    compact_reduction: float,
+    token_limit: float,
+    candidate_caps: Mapping[str, int],
+    warm: dict[str, Any] | None,
+) -> dict[str, Any]:
+    complete = len(candidates) == 3 and all(run["status"] == "passed" for run in candidates)
+    baseline_tokens = _median(baselines, "totalTokens")
+    candidate_tokens = _median(candidates, "totalTokens") if candidates else float("inf")
+    baseline_wall = _median(baselines, "wallSeconds")
+    candidate_wall = _median(candidates, "wallSeconds") if candidates else float("inf")
+    token_gain = 1.0 - candidate_tokens / baseline_tokens if baseline_tokens else 0.0
+    wall_gain = 1.0 - candidate_wall / baseline_wall if baseline_wall else 0.0
+    p95_ratio = (
+        _p95(candidates, "wallSeconds") / _p95(baselines, "wallSeconds")
+        if candidates
+        else float("inf")
+    )
+    checks = {
+        "allMachineGates": complete,
+        "repairMedianNotIncreased": (
+            complete and _median(candidates, "repairs") <= _median(baselines, "repairs")
+        ),
+        "handoffMedianNotIncreased": (
+            complete and _median(candidates, "handoffs") <= _median(baselines, "handoffs")
+        ),
+        "compactInputReductionAtLeast15Percent": compact_reduction >= 0.15,
+        "tokenOrWallImprovementAtLeast10Percent": token_gain >= 0.10 or wall_gain >= 0.10,
+        "wallP95NotWorseThan10Percent": p95_ratio <= 1.10,
+        "warmPhysicalCallsZero": (
+            warm is not None and warm["metrics"]["physicalLlmCalls"] == 0
+        ),
+        # Qualitative review is intentionally offline and must be attached before adoption.
+        "qualitativeIssueCountNotIncreased": False,
+    }
+    return {
+        "adopted": all(checks.values()),
+        "checks": checks,
+        "compactInputReduction": compact_reduction,
+        "tokenImprovement": token_gain,
+        "wallImprovement": wall_gain,
+        "wallP95Ratio": p95_ratio,
+        "candidateTokenLimit": token_limit,
+        "candidateCaps": dict(candidate_caps),
+        "qualitativeReview": "pending",
+    }
+
+
+def apply_qualitative_review(
+    report: dict[str, Any], *, baseline_issues: int, candidate_issues: int
+) -> dict[str, Any]:
+    """Attach an offline rubric review without performing another LLM generation."""
+
+    reviewed = deepcopy(report)
+    decision = reviewed["decision"]
+    passed = candidate_issues <= baseline_issues
+    decision["checks"]["qualitativeIssueCountNotIncreased"] = passed
+    decision["qualitativeReview"] = {
+        "baselineIssues": baseline_issues,
+        "candidateIssues": candidate_issues,
+    }
+    decision["adopted"] = all(decision["checks"].values())
+    return reviewed
+
+
+def _report(
+    runs: list[dict[str, Any]],
+    *,
+    stopped_at: str | None,
+    decision: Mapping[str, Any],
+    warm: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "caseId": CASE_ID,
+        "maxColdGenerations": MAX_COLD_GENERATIONS,
+        "coldGenerationCount": len(runs),
+        "retryBudget": 0,
+        "status": "stopped" if stopped_at else "completed",
+        "stoppedAt": stopped_at,
+        "runs": runs,
+        "warmVerification": warm,
+        "decision": dict(decision),
+    }
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise TypeError(f"expected JSON object: {path}")
+    return value
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--review-report", type=Path)
+    parser.add_argument("--baseline-issues", type=int, default=0)
+    parser.add_argument("--candidate-issues", type=int, default=0)
+    args = parser.parse_args(argv)
+    if args.review_report:
+        report = apply_qualitative_review(
+            _read_json(args.review_report),
+            baseline_issues=args.baseline_issues,
+            candidate_issues=args.candidate_issues,
+        )
+    else:
+        report = execute_live_e1()
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return 0 if report["decision"].get("adopted") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

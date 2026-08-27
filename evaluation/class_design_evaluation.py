@@ -16,6 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.design.schemas.class_model import BCEModel
+from app.design.services.class_diagram.scenario import ScenarioIndex, build_scenario_index
 
 CASE_ID = "e1-aws"
 SCHEMA_VERSION = "easydep-class-design-evaluation/v1"
@@ -50,6 +51,16 @@ def _checkpoint_context() -> tuple[dict[str, Any], dict[str, str]]:
         "specifications": _checkpoint_digest(specifications),
     }
     return state, checkpoints
+
+
+def frozen_e1_scenario_index() -> ScenarioIndex:
+    """Load the digest-verified E1 specification as the class service input."""
+
+    state, _checkpoints = _checkpoint_context()
+    specification = state.get("usecase_spec")
+    if not isinstance(specification, dict):
+        raise TypeError("frozen E1 usecase_spec must be an object")
+    return build_scenario_index(specification)
 
 
 def _checkpoint_digest(state: dict[str, Any]) -> str:
