@@ -44,6 +44,7 @@ from .conformance import (
 from .release import write_release_manifest
 from .repair import (
     apply_repair_directives,
+    repair_task_ids,
     repair_rounds,
     schedule_cross_phase_repair,
     schedule_source_conformance_repair,
@@ -80,6 +81,10 @@ PHASES = (
 PARALLEL_PHASES = frozenset(
     {"control", "api-adapters", "boundary-adapters", "outbound-adapters"}
 )
+# Individual tasks already compile their owned production sources and run only
+# their owned tests.  A full workspace build is valuable at integration seams,
+# but repeating it after every independent phase dominated the end-to-end run.
+FULL_VERIFICATION_PHASES = frozenset({"wiring", "end-to-end"})
 PHASE_LABELS = {
     "control": "Control",
     "persistence": "Repository",
@@ -200,6 +205,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         item.get("taskId"): item for item in previous.get("tasks", [])
         if isinstance(item, dict)
     }
+    repaired_tasks = repair_task_ids(run_root)
     tasks: list[dict[str, object]] = []
     for task in manifest.get("implementation_tasks", []):
         task_id = str(task["task_id"])
@@ -224,6 +230,10 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             and complete_outputs
             and result.get("promptSha256", prompt_sha) == prompt_sha
         )
+        repair_replay_required = (
+            task_id in repaired_tasks
+            and result.get("promptSha256") != prompt_sha
+        )
         if old.get("status") == "RUNNING":
             status = (
                 "SUCCEEDED"
@@ -234,6 +244,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             old.get("status") == "SUCCEEDED"
             and same_output_checkpoint
             and complete_outputs
+            and not repair_replay_required
         ):
             status = "SUCCEEDED"
         elif result_matches and not old:
@@ -497,11 +508,23 @@ def _run_workflow(
                         )
                         return repaired_state
                 raise error
+        full_phase_verification = (
+            verifier is not verify_run_workspace
+            or phase_id in FULL_VERIFICATION_PHASES
+        )
         state["currentActivity"] = {
             "id": f"verify-{phase_id}",
-            "label": f"{PHASE_LABELS[phase_id]} 빌드 및 Unit Test",
+            "label": (
+                f"{PHASE_LABELS[phase_id]} 통합 빌드 및 Test"
+                if full_phase_verification
+                else f"{PHASE_LABELS[phase_id]} 작업 단위 검증 확인"
+            ),
             "status": "RUNNING",
-            "detail": "변경된 소스를 빌드하고 Unit Test를 실행하고 있습니다.",
+            "detail": (
+                "전체 애플리케이션을 빌드하고 통합 테스트를 실행하고 있습니다."
+                if full_phase_verification
+                else "각 작업의 컴파일·소유 테스트가 완료되어 다음 통합 게이트에서 다시 검증합니다."
+            ),
         }
         state["updatedAt"] = _now()
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
@@ -751,6 +774,19 @@ def _verify_phase(
     verifier: Callable[[Path], dict[str, object]],
 ) -> dict[str, object]:
     if verifier is verify_run_workspace:
+        if phase_id not in FULL_VERIFICATION_PHASES:
+            result = {
+                "status": "SKIPPED",
+                "reason": (
+                    "Task-scoped verification already completed; full workspace "
+                    "verification runs at the next integration seam and final gate."
+                ),
+            }
+            _write_json_atomic(
+                run_root / "reports" / f"phase-{phase_id}-verification.json",
+                result,
+            )
+            return result
         return verify_run_workspace(
             run_root,
             report_name=f"phase-{phase_id}-verification.json",

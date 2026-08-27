@@ -278,6 +278,29 @@ def apply_repair_directives(run_root: Path) -> None:
     _write_json(manifest_path, manifest)
 
 
+def repair_task_ids(run_root: Path) -> set[str]:
+    """Return tasks whose successful checkpoint must be replayed for a repair.
+
+    Normal replanning can change a downstream prompt after its dependencies
+    land; that is not a reason to rerun a durable successful checkpoint.
+    Repair directives are different: their evidence is an explicit request to
+    regenerate an owner or revalidate a dependent task.
+    """
+    plan_path = run_root / REPAIR_PLAN
+    if not plan_path.is_file():
+        return set()
+    plan = _read_json(plan_path)
+    return {
+        str(task_id)
+        for entry in plan.get("entries", [])
+        if isinstance(entry, dict)
+        for task_id in (
+            list(entry.get("ownerTaskIds", []))
+            + list(entry.get("revalidationTaskIds", []))
+        )
+    }
+
+
 def referenced_source_paths(evidence: dict[str, object]) -> list[str]:
     text = _evidence_text(evidence).replace("\\", "/")
     matches = re.findall(r"(?:[A-Za-z]:)?[^\r\n:]*?(application/(?:src|build)/[^\r\n:]+?\.(?:java|sql|yml))(?=:\d|:|\s|$)", text)
@@ -337,6 +360,18 @@ def _infer_upstream_owners(
             )
         }
         return named or {str(task["task_id"]) for task in entity_tasks}
+    if failed_type == "configuration" and (
+        "schema-validation: wrong column type" in lowered
+        or ("schemamanagementexception" in lowered and "wrong column type" in lowered)
+    ):
+        # The wiring task merely exposes the mismatch while the JPA entity,
+        # mapper, and Flyway migration jointly own its repair.
+        return {
+            str(task["task_id"])
+            for task in tasks
+            if task.get("task_type")
+            in {"persistence-entities", "persistence-mapping", "persistence-schema"}
+        }
     if failed_type == "configuration" and re.search(r"repository|jpa|entitymanager|bean", lowered):
         return {
             str(task["task_id"]) for task in tasks

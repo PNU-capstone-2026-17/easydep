@@ -200,34 +200,39 @@ def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         run_root, spec.base_package, set(entity_names)
     )
     package_path = spec.base_package.replace(".", "/")
-    entity_files = [
-        f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
-        for name in entity_names
-    ]
     repository_files = [
         f"application/src/main/java/{package_path}/persistence/repository/{name}Repository.java"
         for name in entity_names
     ]
-    # Keep one generated source file per agent task. A single LLM conversation
-    # can exhaust its iteration budget while creating a large entity set,
-    # leaving a partially generated workspace that fails the output gate.
+    # Keep independent entities separate so a large model turn remains
+    # bounded.  Entities joined by an ERD association, however, must be
+    # generated together: a per-file sandbox cannot safely create the two
+    # sides of a JPA relationship and tends to omit it merely to compile.
+    entity_groups = _persistence_entity_groups(entity_names, erd)
     groups = [
         *[
             (
-                f"implement-erd-persistence-entity-{camel_to_kebab(name)}",
+                "implement-erd-persistence-entity-"
+                + "-".join(camel_to_kebab(name) for name in names),
                 "persistence-entities",
-                [path],
+                [
+                    f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
+                    for name in names
+                ],
                 render_persistence_entity_prompt(
                     spec,
                     erd,
                     read_generated_java_contracts(
-                        run_root, spec.base_package, {name}
+                        run_root, spec.base_package, set(names)
                     ),
-                    [name],
-                    [path],
+                    names,
+                    [
+                        f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
+                        for name in names
+                    ],
                 ),
             )
-            for name, path in zip(entity_names, entity_files, strict=True)
+            for names in entity_groups
         ],
         *[
             (
@@ -1544,6 +1549,10 @@ Rules:
 - Use package `{spec.base_package}.persistence.entity` and Jakarta Persistence annotations.
 - Derive every table, column, primary key, foreign key, nullability rule, and relationship from the
   injected ERD. Do not assume a fixed number of entities or relationships.
+- Map `TIMESTAMP` to `LocalDateTime` and `TIMESTAMP WITH TIME ZONE` to `OffsetDateTime`,
+  `Instant`, or `ZonedDateTime`. Never map `LocalDateTime` directly to a timezone-aware
+  SQL column. If an immutable BCE contract disagrees with the ERD, do not alter either
+  contract or disable validation; let verification evidence report the contradiction.
 - Use a generated `Long id` only when the ERD declares a technical numeric key; preserve explicit
   natural-key Java types otherwise.
 - Map every ERD scalar column with its exact snake_case column name. Rename a reserved identifier
@@ -1575,6 +1584,41 @@ Rules:
 {contracts}
 ```
 """
+
+
+def _persistence_entity_groups(entity_names: list[str], erd: str) -> list[list[str]]:
+    """Return ERD-connected BCE entities as one atomic generation task each."""
+    names = list(dict.fromkeys(entity_names))
+    neighbors: dict[str, set[str]] = {name: set() for name in names}
+    for line in erd.splitlines():
+        if "--" not in line and ".." not in line:
+            continue
+        mentioned = [
+            name for name in names
+            if re.search(rf"\b{re.escape(name)}\b", line)
+        ]
+        if len(mentioned) != 2:
+            continue
+        left, right = mentioned
+        neighbors[left].add(right)
+        neighbors[right].add(left)
+
+    groups: list[list[str]] = []
+    remaining = set(names)
+    for root in names:
+        if root not in remaining:
+            continue
+        stack = [root]
+        component: set[str] = set()
+        while stack:
+            current = stack.pop()
+            if current in component:
+                continue
+            component.add(current)
+            remaining.discard(current)
+            stack.extend(neighbors[current] - component)
+        groups.append([name for name in names if name in component])
+    return groups
 
 
 def render_persistence_repository_prompt(

@@ -601,6 +601,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 if str(task.get("task_type", "")) == "configuration":
                     remove_duplicate_component_adapter_beans(sandbox, task)
                     normalize_spring_boot_repository_discovery(sandbox, task)
+                    enforce_spring_persistence_validation(sandbox, task)
                 if str(task.get("task_type", "")) == "persistence-schema":
                     repair_persistence_schema_table_quoting(
                         sandbox, list(task["allowed_write_paths"])
@@ -917,6 +918,14 @@ def _requires_cross_phase_repair(
     if task_type != "persistence-entities" and (
         "is 'mappedby' a property named" in output
         or ("annotationexception" in output and "mappedby" in output)
+    ):
+        return True
+    # A configuration task owns neither the entity nor Flyway migration.  A
+    # schema type mismatch must therefore be repaired by persistence owners,
+    # not by asking the wiring agent to repeatedly rewrite application.yml.
+    if task_type == "configuration" and (
+        "schema-validation: wrong column type" in output
+        or ("schemamanagementexception" in output and "wrong column type" in output)
     ):
         return True
     if task_type != "integration-test":
@@ -1438,6 +1447,44 @@ def normalize_spring_boot_repository_discovery(
     )
     if text != original:
         entrypoint.write_text(text, encoding="utf-8")
+
+
+def enforce_spring_persistence_validation(
+    sandbox: Path, task: dict[str, object]
+) -> None:
+    """Keep the generated runtime honest about JPA-to-migration compatibility.
+
+    A context failure previously led the wiring agent to change ``ddl-auto``
+    to ``none``.  That only hides a broken entity/migration pair and lets a
+    release pass without validating its schema.  The configuration task owns
+    this file, so normalizing the setting here is a safe deterministic guard.
+    """
+    configuration = next(
+        (
+            sandbox / str(relative)
+            for relative in task.get("allowed_write_paths", [])
+            if str(relative).replace("\\", "/").endswith("/application.yml")
+        ),
+        None,
+    )
+    if configuration is None or not configuration.is_file():
+        return
+    text = configuration.read_text(encoding="utf-8")
+    original = text
+    # Support both the nested YAML form and a dotted Spring property.  Do not
+    # preserve a value such as ``none``/``update``: this file is the runtime
+    # verification contract and must validate the generated Flyway schema.
+    text, replacements = re.subn(
+        r"(?m)^(?P<prefix>\s*(?:ddl-auto|spring\.jpa\.hibernate\.ddl-auto)\s*:\s*).*?$",
+        r"\g<prefix>validate",
+        text,
+    )
+    if replacements == 0:
+        # A dotted YAML key is a valid Spring property and avoids duplicating a
+        # pre-existing top-level ``spring`` map just to add this single guard.
+        text = text.rstrip() + "\n\nspring.jpa.hibernate.ddl-auto: validate\n"
+    if text != original:
+        configuration.write_text(text, encoding="utf-8")
 
 
 def remove_placeholder_comments(text: str) -> tuple[str, bool]:

@@ -220,6 +220,43 @@ def test_warning_path_does_not_override_causal_owner(tmp_path: Path) -> None:
     assert repair["ownerTaskIds"] == ["implement-repositories"]
 
 
+def test_schema_type_failure_in_wiring_targets_persistence_owners(tmp_path: Path) -> None:
+    tasks = _tasks() + [
+        {
+            "task_id": "implement-entities",
+            "task_type": "persistence-entities",
+            "allowed_write_paths": ["application/src/main/java/example/EnrollmentEntity.java"],
+        },
+        {
+            "task_id": "implement-mapping",
+            "task_type": "persistence-mapping",
+            "allowed_write_paths": ["application/src/main/java/example/Mapper.java"],
+        },
+        {
+            "task_id": "implement-schema",
+            "task_type": "persistence-schema",
+            "allowed_write_paths": ["application/src/main/resources/db/migration/V1__init.sql"],
+        },
+    ]
+    _write_run(tmp_path, tasks)
+
+    repair = schedule_cross_phase_repair(
+        tmp_path,
+        "implement-application-wiring",
+        {
+            "testResults": (
+                "SchemaManagementException: Schema-validation: wrong column type "
+                "encountered in column [enrollment_date]"
+            )
+        },
+    )
+
+    assert repair is not None
+    assert repair["ownerTaskIds"] == [
+        "implement-entities", "implement-mapping", "implement-schema"
+    ]
+
+
 def test_repair_prompt_is_idempotent_and_uses_real_bounded_evidence(
     tmp_path: Path,
 ) -> None:

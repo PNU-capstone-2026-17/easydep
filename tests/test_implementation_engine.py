@@ -28,6 +28,7 @@ from app.implementation.agents.runtime import (
     _promote_changed_files,
     _restore_unauthorized_files,
     break_configuration_cycles,
+    enforce_spring_persistence_validation,
     execution_attempt,
     normalize_spring_boot_repository_discovery,
     remove_placeholder_comments,
@@ -140,6 +141,7 @@ from app.implementation.workflows.coordinator import (
     _execute_task_batch,
     _e2e_prerequisites_complete,
     _phase_task_batches,
+    _verify_phase,
     reconcile_workflow_state,
     _write_json_atomic,
     validate_approval,
@@ -457,6 +459,16 @@ class ImplementationParallelismTest(unittest.TestCase):
             [task["taskId"] for task in batch] for batch in batches
         ])
 
+    def test_non_integration_phase_skips_duplicate_full_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            result = _verify_phase(run, "persistence", verify_run_workspace)
+
+            self.assertEqual("SKIPPED", result["status"])
+            self.assertTrue(
+                (run / "reports/phase-persistence-verification.json").is_file()
+            )
+
     def test_persistence_entity_and_repository_tasks_are_split_per_file(self) -> None:
         from app.implementation.planning import design_context
 
@@ -507,6 +519,45 @@ class ImplementationParallelismTest(unittest.TestCase):
             entity_prompt = (run / entity_tasks[0].prompt_file).read_text(encoding="utf-8")
             self.assertIn("mappedBy", entity_prompt)
             self.assertIn("scalar foreign-key column", entity_prompt)
+
+    def test_related_persistence_entities_share_one_atomic_task(self) -> None:
+        from app.implementation.planning import design_context
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            erd = root / "erd.puml"
+            erd.write_text(
+                "entity Course {\n  course_id : String\n}\n"
+                "entity Enrollment {\n  enrollment_id : String\n}\n"
+                "Course ||--o{ Enrollment\n",
+                encoding="utf-8",
+            )
+            run = root / "run_sample"
+            run.mkdir()
+            spec = SimpleNamespace(
+                inputs={"erd": erd},
+                base_package="com.example.demo",
+                name="sample",
+                workspace_root=root,
+                agent_model="model",
+                agent_base_url="http://localhost",
+                agent_temperature=0.2,
+                agent_top_p=0.9,
+                agent_max_output_tokens=1000,
+                agent_reasoning_budget=100,
+            )
+            fake_ir = SimpleNamespace(persistent_entities=("Course", "Enrollment"))
+            with patch.object(design_context, "build_implementation_ir", return_value=fake_ir), \
+                patch.object(design_context, "read_generated_java_contracts", return_value="contract"), \
+                patch.object(design_context, "_llm_config", return_value={}):
+                tasks = generate_persistence_tasks(spec, run)
+
+            entity_tasks = [task for task in tasks if task.task_type == "persistence-entities"]
+            self.assertEqual(
+                ["implement-erd-persistence-entity-course-enrollment"],
+                [task.task_id for task in entity_tasks],
+            )
+            self.assertEqual(2, len(entity_tasks[0].allowed_write_paths))
 
     def test_overlapping_outputs_force_sequential_batches(self) -> None:
         tasks = [
@@ -1242,6 +1293,8 @@ class LoadJobTest(unittest.TestCase):
         final_command = task_verification_command(["gradlew"])
         self.assertIn("bootJar", final_command)
         self.assertIn("test", final_command)
+        self.assertNotIn("--no-daemon", command)
+        self.assertNotIn("--no-daemon", final_command)
 
     def test_agent_execution_history_preserves_attempt_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1990,6 +2043,19 @@ TestRestTemplate http; CourseRepository courseRepository;
             )
         )
 
+    def test_schema_type_failure_in_wiring_skips_local_llm_repair(self) -> None:
+        self.assertTrue(
+            _requires_cross_phase_repair(
+                "configuration",
+                {
+                    "testResults": (
+                        "SchemaManagementException: Schema-validation: wrong column type "
+                        "encountered in column [enrollment_date]"
+                    )
+                },
+            )
+        )
+
     def test_wiring_normalizer_restores_spring_data_repository_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)
@@ -2023,6 +2089,25 @@ TestRestTemplate http; CourseRepository courseRepository;
 
         self.assertTrue(changed)
         self.assertEqual('return ""; \n', normalized)
+
+    def test_wiring_normalizer_enforces_jpa_schema_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            configuration = sandbox / "application/src/main/resources/application.yml"
+            configuration.parent.mkdir(parents=True)
+            configuration.write_text(
+                "spring:\n  jpa:\n    hibernate:\n      ddl-auto: none\n",
+                encoding="utf-8",
+            )
+
+            enforce_spring_persistence_validation(
+                sandbox,
+                {"allowed_write_paths": ["application/src/main/resources/application.yml"]},
+            )
+
+            self.assertIn(
+                "ddl-auto: validate", configuration.read_text(encoding="utf-8")
+            )
 
     def test_workflow_checkpoint_recovers_results_and_interrupted_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2164,6 +2249,68 @@ TestRestTemplate http; CourseRepository courseRepository;
             self.assertEqual("SUCCEEDED", state["tasks"][0]["status"])
             self.assertEqual("replanned-prompt", state["tasks"][0]["promptSha256"])
             self.assertEqual([], state["nextRunnableTasks"])
+
+    def test_workflow_replays_successful_checkpoint_for_repair_directive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run_repair_replay"
+            reports = run / "reports"
+            executions = reports / "agent-executions"
+            executions.mkdir(parents=True)
+            relative = "application/src/Stable.java"
+            output = run / relative
+            output.parent.mkdir(parents=True)
+            output.write_text("class Stable {}", encoding="utf-8")
+            output_hashes = {relative: hashlib.sha256(output.read_bytes()).hexdigest()}
+            (reports / "run-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "implementation_tasks": [
+                            {
+                                "task_id": "implement-stable",
+                                "task_type": "control",
+                                "prompt_sha256": "repair-prompt",
+                                "allowed_write_paths": [relative],
+                                "source_artifacts": {"repairEvidence": "reports/repair-plan.json"},
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (reports / "workflow-state.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "taskId": "implement-stable",
+                                "status": "SUCCEEDED",
+                                "promptSha256": "original-prompt",
+                                "outputHashes": output_hashes,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (executions / "implement-stable.result.json").write_text(
+                json.dumps({"status": "SUCCEEDED", "promptSha256": "original-prompt"}),
+                encoding="utf-8",
+            )
+            (reports / "repair-plan.json").write_text(
+                json.dumps(
+                    {
+                        "entries": [
+                            {"ownerTaskIds": ["implement-stable"], "revalidationTaskIds": []}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = reconcile_workflow_state(run)
+
+            self.assertEqual("PENDING", state["tasks"][0]["status"])
+            self.assertEqual(["implement-stable"], state["nextRunnableTasks"])
 
     def test_workflow_invalidates_failed_result_when_repair_prompt_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -245,7 +245,6 @@ def task_verification_command(
             "bootJar",
             "test",
             "--build-cache",
-            "--no-daemon",
         ]
 
     test_names = sorted(
@@ -261,7 +260,9 @@ def task_verification_command(
         command.extend(["testClasses", "test"])
         for test_name in test_names:
             command.extend(["--tests", f"*{test_name}"])
-    command.extend(["--build-cache", "--no-daemon"])
+    # These workspaces share Gradle's user home, so allowing the daemon to
+    # remain alive avoids starting a one-shot JVM for every agent task.
+    command.append("--build-cache")
     return command
 
 
