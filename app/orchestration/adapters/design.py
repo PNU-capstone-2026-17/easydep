@@ -8,7 +8,7 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
 
-from app.core.orchestration.checkpoint import (
+from app.orchestration.checkpoint import (
     DEFAULT_CHECKPOINT_PATH,
     SqliteMemorySaver,
 )

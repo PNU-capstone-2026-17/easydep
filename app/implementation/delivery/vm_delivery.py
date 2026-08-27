@@ -14,19 +14,17 @@ from typing import Any
 
 import hcl2
 
-from app.core.orchestration.app_cloud_contracts import (
+from app.orchestration.app_cloud_contracts import (
     ApplicationRuntimeContract,
     contract_value,
 )
-from app.core.orchestration.iac_renderer import render_open_tofu
-from app.core.orchestration.provider_target import resolve_resource_spec
-from app.core.orchestration.vm_selection import select_vm_candidates
-from app.design.services.deployment_diagram.planner import (
+from app.implementation.delivery.iac_renderer import render_open_tofu
+from app.implementation.planning.provider_target import resolve_resource_spec
+from app.implementation.planning.vm_selection import select_vm_candidates
+from app.design.contracts.deployment import (
     RESOURCE_PLAN_SCHEMA,
     bind_runtime_contract,
     build_provider_resource_plan,
-)
-from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_runtime_puml,
 )
 from app.requirements.capability_contract import (

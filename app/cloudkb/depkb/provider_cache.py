@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[4]
 PINNED_PROVIDERS = {
     "aws": {"source": "hashicorp/aws", "version": "5.100.0"},
     "azure": {"source": "hashicorp/azurerm", "version": "5.0.1"},
     "gcp": {"source": "hashicorp/google", "version": "5.45.2"},
 }
-PLUGIN_CACHE = ROOT / ".easydep" / "provider-plugin-cache"
+PLUGIN_CACHE = (
+    Path(tempfile.gettempdir()) / "easydep" / "provider-plugin-cache"
+)
 
 
 def audit_provider_cache(path: Path = PLUGIN_CACHE) -> dict[str, Any]:

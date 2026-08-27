@@ -58,7 +58,7 @@ application requirements
 - 디스크 크기·IOPS 같은 VM 연계 리소스의 별도 용량 제약 KB
 - 애플리케이션 부하에서 도출한 최소 용량을 사용하는 종단 RQ3 평가
 
-`costkb`와 `perfkb`는 현재 `app/core/orchestration/vm_selection.py`에 연결되어 있다.
+`costkb`와 `perfkb`는 현재 `app/implementation/planning/vm_selection.py`에 연결되어 있다.
 다만 이 값들은 사용자가 명시한 최소 요구량이 있을 때만 후보 필터에 사용할 수 있다.
 근거가 없는 최소 사양을 시스템이 임의로 추정하지 않는다.
 

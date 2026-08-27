@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 import evaluation.experiment as experiment
-from app.core.orchestration.contracts import ProviderKind, StepStatus
-from app.core.orchestration.store import RunStore
+from app.orchestration.contracts import ProviderKind, StepStatus
+from app.orchestration.store import RunStore
 from evaluation.baselines.chatdev import _task as chatdev_task
 from evaluation.baselines.common import (
     BUILD_COMPLETENESS_CONTRACT,
@@ -621,7 +621,7 @@ def test_environment_report_never_exposes_the_api_key(monkeypatch):
 def test_easydep_experiment_uses_the_member_implementation_provider(tmp_path, monkeypatch):
     captured = []
 
-    import app.core.orchestration as orchestration
+    import app.orchestration as orchestration
 
     fake_result = SimpleNamespace(
         status=StepStatus.COMPLETED,
@@ -646,7 +646,7 @@ def test_easydep_experiment_uses_the_member_implementation_provider(tmp_path, mo
 def test_easydep_experiment_retries_the_same_failed_run(tmp_path, monkeypatch):
     captured = []
 
-    import app.core.orchestration as orchestration
+    import app.orchestration as orchestration
 
     fake_result = SimpleNamespace(
         status=StepStatus.COMPLETED,
@@ -677,7 +677,7 @@ def test_easydep_experiment_retries_the_same_failed_run(tmp_path, monkeypatch):
 
 def test_easydep_uses_a_bounded_same_run_repair_budget(tmp_path, monkeypatch):
     captured = []
-    import app.core.orchestration as orchestration
+    import app.orchestration as orchestration
 
     failed = SimpleNamespace(
         status=StepStatus.FAILED,
@@ -716,7 +716,7 @@ def test_easydep_uses_a_bounded_same_run_repair_budget(tmp_path, monkeypatch):
 
 
 def test_easydep_stops_when_bounded_repair_budget_is_exhausted(tmp_path, monkeypatch):
-    import app.core.orchestration as orchestration
+    import app.orchestration as orchestration
 
     failed = SimpleNamespace(
         status=StepStatus.FAILED,
@@ -743,7 +743,7 @@ def test_easydep_stops_when_bounded_repair_budget_is_exhausted(tmp_path, monkeyp
 def test_easydep_experiment_removes_only_its_copied_evaluation_workspace(
     tmp_path, monkeypatch
 ):
-    import app.core.orchestration as orchestration
+    import app.orchestration as orchestration
 
     monkeypatch.setattr(experiment, "ROOT", tmp_path)
     monkeypatch.setattr(experiment, "DEFAULT_ARTIFACT_ROOT", tmp_path / "artifacts")
@@ -766,7 +766,7 @@ def test_easydep_experiment_removes_only_its_copied_evaluation_workspace(
 
 
 def test_easydep_experiment_preserves_member_owned_workspace(tmp_path, monkeypatch):
-    import app.core.orchestration as orchestration
+    import app.orchestration as orchestration
 
     monkeypatch.setattr(experiment, "ROOT", tmp_path)
     monkeypatch.setattr(experiment, "DEFAULT_ARTIFACT_ROOT", tmp_path / "artifacts")

@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from app.core.orchestration import process as process_boundary
+from app.implementation.runtime import process as process_boundary
 
 
 def test_timeout_terminates_the_worker_tree(monkeypatch):

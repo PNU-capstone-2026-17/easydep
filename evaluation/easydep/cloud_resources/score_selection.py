@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DATA_ROOT = ROOT.parents[2] / "app" / "core" / "cloudkb" / "data"
+DATA_ROOT = ROOT.parents[2] / "app" / "cloudkb" / "data"
 SNAPSHOTS = {
     "costSnapshotSha256": DATA_ROOT / "tumblebug-cost.json.gz",
     "performanceSnapshotSha256": DATA_ROOT / "tumblebug-perf.json.gz",

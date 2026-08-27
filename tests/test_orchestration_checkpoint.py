@@ -3,7 +3,7 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
-from app.core.orchestration.checkpoint import SqliteMemorySaver
+from app.orchestration.checkpoint import SqliteMemorySaver
 
 
 def _graph(path, store_id="test"):

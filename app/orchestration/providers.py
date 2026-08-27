@@ -15,13 +15,13 @@ from openai import OpenAI
 
 from app.config import settings
 
-from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
-from app.core.orchestration.adapters.design import DesignAdapter
-from app.core.orchestration.adapters.requirements import RequirementsAdapter
-from app.core.orchestration.adapters.testing import TestingAdapter
-from app.core.orchestration.adapters.vm_delivery import BindingMismatchError, VmDeliveryAdapter
-from app.core.orchestration.api_traceability import missing_explicit_fields
-from app.core.orchestration.app_cloud_contracts import (
+from app.orchestration.adapters.cloud_design import CloudDesignAdapter
+from app.orchestration.adapters.design import DesignAdapter
+from app.orchestration.adapters.requirements import RequirementsAdapter
+from app.orchestration.adapters.testing import TestingAdapter
+from app.implementation.delivery.vm_delivery import BindingMismatchError, VmDeliveryAdapter
+from app.orchestration.api_traceability import missing_explicit_fields
+from app.orchestration.app_cloud_contracts import (
     CloudCapabilityContract,
     DeploymentBindingContract,
     application_intent_contract_from_requirements,
@@ -33,7 +33,7 @@ from app.core.orchestration.app_cloud_contracts import (
     validate_application_consistency,
     validate_binding_consistency,
 )
-from app.core.orchestration.contracts import (
+from app.orchestration.contracts import (
     Diagnostic,
     ProviderKind,
     RunMode,
@@ -41,15 +41,15 @@ from app.core.orchestration.contracts import (
     StepResult,
     StepStatus,
 )
-from app.core.orchestration.linux_runner_transport import (
+from app.implementation.runtime.linux_runner_transport import (
     configured_runner_image,
     runner_command,
     to_container_path,
     to_host_path,
 )
-from app.core.orchestration.process import run_process_tree
-from app.core.orchestration.provider_target import resolve_resource_spec
-from app.core.orchestration.vm_selection import select_vm_candidates
+from app.implementation.runtime.process import run_process_tree
+from app.implementation.planning.provider_target import resolve_resource_spec
+from app.implementation.planning.vm_selection import select_vm_candidates
 from app.implementation.application.prototype import PrototypeClient
 from app.implementation.config import ImplementationSettings
 from app.requirements.schemas import ResourceAnswer
@@ -443,7 +443,10 @@ class MemberScaffoldProvider:
                 worker_arguments.append("--retry-failed-generation")
             worker_environment = os.environ.copy()
             if os.name == "nt":
-                hook_root = self.settings.repository_root / "app/core/orchestration/runtime_hooks"
+                hook_root = (
+                    self.settings.repository_root
+                    / "app/implementation/runtime/runtime_hooks"
+                )
                 existing_pythonpath = worker_environment.get("PYTHONPATH")
                 worker_environment["PYTHONPATH"] = os.pathsep.join(
                     part
@@ -478,7 +481,7 @@ class MemberScaffoldProvider:
                     str(self.settings.python_executable),
                     "-B",
                     "-m",
-                    "app.core.orchestration.scaffold_worker",
+                    "app.implementation.runtime.scaffold_worker",
                     *worker_arguments,
                 ]
             completed = run_process_tree(

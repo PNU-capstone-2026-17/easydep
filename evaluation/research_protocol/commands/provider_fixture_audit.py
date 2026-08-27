@@ -78,7 +78,7 @@ def validate_fixture(provider: str, fixture_root: Path = FIXTURE_ROOT) -> dict[s
             "validate": validate,
             "elapsedSeconds": round(time.perf_counter() - started, 6),
             "providerCache": {
-                "path": str(PLUGIN_CACHE.relative_to(ROOT)),
+                "path": ".easydep/provider-plugin-cache",
                 "policy": "dedicated-pinned-versions-only-serial",
                 "allowed": PROVIDERS,
                 "bytesBefore": cache_before,

@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.orchestration.adapters.design import (
+from app.orchestration.adapters.design import (
     DesignAdapter,
     DesignContractError,
 )

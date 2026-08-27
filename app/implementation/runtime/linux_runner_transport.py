@@ -66,7 +66,7 @@ def runner_command(
         "-v",
         f"{root}:{CONTAINER_WORKSPACE.as_posix()}",
         "-e",
-        f"PYTHONPATH={CONTAINER_WORKSPACE}/app/core/orchestration/runtime_hooks:{CONTAINER_WORKSPACE}",
+        f"PYTHONPATH={CONTAINER_WORKSPACE}/app/implementation/runtime/runtime_hooks:{CONTAINER_WORKSPACE}",
         "-e",
         "EASYDEP_FIXED_LINUX_RUNNER=1",
     ]

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from app.core.orchestration.vm_selection import select_vm_candidates
+from app.implementation.planning.vm_selection import select_vm_candidates
 
 GIB = 1024**3
 
@@ -36,7 +36,12 @@ def estimate_capacity_floor(
         "p95LatencyMs": p95_latency,
         "maxP95LatencyMs": maximum_p95,
     }
-    if any(value is None for value in required.values()):
+    if (
+        achieved_rps is None
+        or target_rps is None
+        or p95_latency is None
+        or maximum_p95 is None
+    ):
         return {
             "schemaVersion": "easydep-capacity-floor/v1",
             "status": "deferred",
@@ -161,7 +166,12 @@ def _disk_floor(measurement: dict[str, Any], target: dict[str, Any]) -> dict[str
     bytes_per_write = _positive(measurement.get("bytesGrowthPerDurableWrite"))
     write_rps = _positive(target.get("targetDurableWriteRps"))
     retention_hours = _positive(target.get("retentionHours"))
-    if None in (current_bytes, bytes_per_write, write_rps, retention_hours):
+    if (
+        current_bytes is None
+        or bytes_per_write is None
+        or write_rps is None
+        or retention_hours is None
+    ):
         return {"status": "deferred", "reason": "missing_disk_growth_measurement"}
     disk_headroom = _positive(target.get("diskHeadroomFactor")) or 1.30
     projected = current_bytes + bytes_per_write * write_rps * retention_hours * 3600

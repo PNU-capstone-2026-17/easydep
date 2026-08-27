@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from app.core.orchestration.scaffold_worker import (
+from app.implementation.runtime.scaffold_worker import (
     APPROVAL_MISMATCH,
     MemberPlannerExhausted,
     _explicit_checkpoint,

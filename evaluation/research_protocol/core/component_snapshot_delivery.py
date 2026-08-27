@@ -8,14 +8,14 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
-from app.core.orchestration.app_cloud_contracts import (
+from app.orchestration.adapters.cloud_design import CloudDesignAdapter
+from app.orchestration.app_cloud_contracts import (
     cloud_contract_from_legacy,
     derive_deployment_bindings,
     infer_application_contract,
 )
-from app.core.orchestration.contracts import RunMode, StepContext
-from app.core.orchestration.providers import LlmVmDeliveryProvider
+from app.orchestration.contracts import RunMode, StepContext
+from app.orchestration.providers import LlmVmDeliveryProvider
 from evaluation.implementation import evaluate_repository
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 from evaluation.research_protocol.core.snapshot_context import source_app_id

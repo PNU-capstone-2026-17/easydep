@@ -1,4 +1,4 @@
-from app.core.orchestration.docker_path_adapter import translate_docker_command
+from app.implementation.runtime.docker_path_adapter import translate_docker_command
 
 
 def test_translate_docker_command_maps_only_workspace_paths():

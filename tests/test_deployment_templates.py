@@ -6,7 +6,7 @@ import io
 import hcl2
 import pytest
 
-from app.core.orchestration.iac_renderer import (
+from app.implementation.delivery.iac_renderer import (
     render_open_tofu,
     rendered_resource_types,
 )

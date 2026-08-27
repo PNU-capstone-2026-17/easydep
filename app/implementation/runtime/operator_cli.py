@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from app.core.orchestration.graph import IMPLEMENTATION_STEP_ORDER, retry_failed_run
+from app.orchestration.graph import IMPLEMENTATION_STEP_ORDER, retry_failed_run
 
 
 def main(argv: list[str] | None = None) -> int:

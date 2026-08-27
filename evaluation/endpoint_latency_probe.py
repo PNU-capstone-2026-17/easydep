@@ -31,7 +31,7 @@ def _messages(kind: str, design_thread_id: str | None = None) -> list[dict[str, 
     if kind == "simple":
         return [{"role": "user", "content": "Reply with exactly: pong"}]
     if design_thread_id:
-        from app.core.orchestration.adapters.design import DesignAdapter
+        from app.orchestration.adapters.design import DesignAdapter
         from app.design.schemas.architecture_state import usecase_spec_text
 
         config = {"configurable": {"thread_id": design_thread_id}}

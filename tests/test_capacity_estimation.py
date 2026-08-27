@@ -1,4 +1,4 @@
-from app.core.orchestration.capacity_estimation import (
+from app.implementation.planning.capacity_estimation import (
     GIB,
     estimate_capacity_floor,
     recommend_measured_capacity,

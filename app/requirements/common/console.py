@@ -16,9 +16,8 @@ utf-8로 쓰고 있었으니 잃은 것은 순전히 화면 출력 때문이었�
 
 `app/cloudkb/kbcommon/console.py`에 같은 것이 있다(`use_utf8`). **합치지 않는 것이
 맞다** — `kbcommon`은 "프로젝트 내부를 import하지 않는다"가 규약인 맨 아래 층이고
-(`app/cloudkb/tests/test_architecture.py`), `app/core`는 오히려 배포 KB **위에서**
-접근점을 여는 층이다. 공용화하려면 층이 뒤집히거나, stdout 한 줄 고치자고 요구사항
-CLI가 KB 패키지를 통째로 끌어오게 된다.
+(`app/cloudkb/tests/test_architecture.py`). 합치면 stdout 한 줄을 고치기 위해 요구사항
+CLI가 KB 패키지를 통째로 끌어오므로 경계가 뒤집힌다.
 
 그래서 **두 벌이되 각자 자기 패키지 안에서는 하나**다. 이 문단이 그 결론이니,
 세 번째 사본을 만들지 말고 둘 중 가까운 쪽을 부르면 된다.

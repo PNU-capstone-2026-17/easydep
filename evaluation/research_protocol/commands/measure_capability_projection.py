@@ -12,7 +12,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
+from app.orchestration.adapters.cloud_design import CloudDesignAdapter
 from app.requirements.agent.steps.step_cloud import derive_deployment_needs
 from app.requirements.capability_contract import link_dependency_capability
 from evaluation.baselines.common import model, seed, temperature

@@ -117,7 +117,7 @@ def run_audit(projections_path: Path = DEFAULT_PROJECTIONS) -> dict[str, Any]:
         "projectionSha256": hashlib.sha256(projections_path.read_bytes()).hexdigest(),
         "providers": {},
         "providerCache": {
-            "path": str(PLUGIN_CACHE.relative_to(ROOT)),
+            "path": ".easydep/provider-plugin-cache",
             "policy": "dedicated-pinned-versions-only-serial",
             "allowed": PROVIDERS,
             "bytesBefore": directory_size(PLUGIN_CACHE),

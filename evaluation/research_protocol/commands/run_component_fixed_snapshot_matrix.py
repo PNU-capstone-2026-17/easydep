@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.core.orchestration.adapters.testing import TestingAdapter
+from app.orchestration.adapters.testing import TestingAdapter
 from evaluation.research_protocol.core.component_snapshot_delivery import (
     read_protocol_json,
     run_delivery_cell,

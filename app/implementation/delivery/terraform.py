@@ -17,7 +17,7 @@ from app.implementation.config import (
 from app.design.contracts.deployment import (
     validate_provider_resource_plan,
 )
-from app.core.orchestration.iac_renderer import render_open_tofu
+from app.implementation.delivery.iac_renderer import render_open_tofu
 from ..domain.implementation_ir import remove_readonly
 
 SCHEMA_VERSION = "easydep-iac-render/v1alpha1"

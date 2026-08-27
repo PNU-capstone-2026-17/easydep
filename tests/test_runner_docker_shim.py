@@ -1,4 +1,4 @@
-from app.core.orchestration.runner_docker_shim import translate
+from app.implementation.runtime.runner_docker_shim import translate
 
 
 def test_runner_shim_translates_declared_gradle_tool_only():

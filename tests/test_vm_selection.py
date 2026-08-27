@@ -1,5 +1,5 @@
-from app.core.orchestration import vm_selection
-from app.core.orchestration.iac_binding_validation import (
+from app.implementation.planning import vm_selection
+from app.implementation.delivery.iac_binding_validation import (
     validate_vm_selection_binding,
 )
 

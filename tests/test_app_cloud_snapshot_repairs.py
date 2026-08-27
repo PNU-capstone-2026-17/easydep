@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import evaluation.research_protocol.commands.run_app_cloud_snapshot_repairs as subject
-from app.core.orchestration.contracts import ProviderKind, StepResult, StepStatus
+from app.orchestration.contracts import ProviderKind, StepResult, StepStatus
 
 
 def _write(root: Path, name: str, content: str) -> None:

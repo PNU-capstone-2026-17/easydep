@@ -14,9 +14,9 @@ from typing import Any
 from app.config import settings
 from langgraph.graph import END, START, StateGraph
 
-from app.core.orchestration.adapters.testing import TestingAdapter
-from app.core.orchestration.artifacts import persist_run_artifacts, restore_run_application
-from app.core.orchestration.contracts import (
+from app.orchestration.adapters.testing import TestingAdapter
+from app.orchestration.artifacts import persist_run_artifacts, restore_run_application
+from app.orchestration.contracts import (
     DesignOutput,
     ImplementationOutput,
     OrchestrationState,
@@ -31,7 +31,7 @@ from app.core.orchestration.contracts import (
     StepStatus,
     TestingOutput,
 )
-from app.core.orchestration.providers import (
+from app.orchestration.providers import (
     BuiltinCloudDesignProvider,
     BuiltinTestingProvider,
     BuiltinVmSelectionProvider,
@@ -43,10 +43,10 @@ from app.core.orchestration.providers import (
     MemberRequirementsProvider,
     MemberScaffoldProvider,
 )
-from app.core.orchestration.registry import ProviderRegistry
-from app.core.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
-from app.core.orchestration.store import RunStore
-from app.core.orchestration.worker_lock import (
+from app.orchestration.registry import ProviderRegistry
+from app.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
+from app.orchestration.store import RunStore
+from app.orchestration.worker_lock import (
     exclusive_implementation_worker,
     exclusive_run_execution,
 )

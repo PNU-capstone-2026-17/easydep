@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.core.orchestration.contracts import ProviderKind, StepProvider
+from app.orchestration.contracts import ProviderKind, StepProvider
 
 
 class ProviderRegistry:

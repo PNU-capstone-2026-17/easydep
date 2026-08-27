@@ -10,8 +10,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.core.orchestration.adapters.testing import TestingAdapter
-from app.core.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
+from app.orchestration.adapters.testing import TestingAdapter
+from app.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 from evaluation.research_protocol.core.snapshot_support import (
     apply_mutations,

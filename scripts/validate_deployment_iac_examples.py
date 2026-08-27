@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 from app.cloudkb.depkb.provider_cache import (  # noqa: E402
     provider_cache_environment,
 )
-from app.core.orchestration.iac_renderer import render_open_tofu  # noqa: E402
+from app.implementation.delivery.iac_renderer import render_open_tofu  # noqa: E402
 from app.design.services.deployment_diagram.bundle import (  # noqa: E402
     build_deployment_diagram_bundle,
 )

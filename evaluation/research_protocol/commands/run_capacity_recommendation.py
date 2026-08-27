@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from app.core.orchestration.capacity_estimation import recommend_measured_capacity
+from app.implementation.planning.capacity_estimation import recommend_measured_capacity
 
 
 def run(measurement_path: Path, cases_path: Path) -> dict[str, Any]:

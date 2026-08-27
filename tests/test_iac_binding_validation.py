@@ -1,4 +1,4 @@
-from app.core.orchestration.iac_binding_validation import (
+from app.implementation.delivery.iac_binding_validation import (
     observe_terraform_plan,
     validate_iac_bindings,
     validate_managed_group_binding,

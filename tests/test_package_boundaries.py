@@ -22,15 +22,50 @@ def _python_files(root: Path) -> list[Path]:
 
 
 def _imports(path: Path) -> list[tuple[int, str]]:
-    """Return absolute import names with their source line numbers."""
+    """Return absolute import names with their source line numbers.
+
+    In addition to import statements, include literal (and prefix-stable
+    f-string) arguments passed to ``import_module``/``__import__``. Otherwise
+    a legacy namespace could evade this migration gate by moving behind a
+    dynamic import.
+    """
 
     tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     found: list[tuple[int, str]] = []
+
+    def dynamic_name(value: ast.AST) -> str | None:
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return value.value
+        if isinstance(value, ast.JoinedStr):
+            prefix = next(
+                (
+                    part.value
+                    for part in value.values
+                    if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                ),
+                "",
+            )
+            return prefix or None
+        return None
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found.extend((node.lineno, alias.name) for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             found.append((node.lineno, node.module))
+        elif isinstance(node, ast.Call) and node.args:
+            function = node.func
+            function_name = (
+                function.id
+                if isinstance(function, ast.Name)
+                else function.attr
+                if isinstance(function, ast.Attribute)
+                else ""
+            )
+            if function_name in {"import_module", "__import__"}:
+                imported = dynamic_name(node.args[0])
+                if imported:
+                    found.append((node.lineno, imported))
     return found
 
 

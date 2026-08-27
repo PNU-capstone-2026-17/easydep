@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.core.orchestration.process import run_process_tree
+from app.implementation.runtime.process import run_process_tree
 from evaluation.baselines.common import (
     DEFAULT_ARTIFACT_ROOT,
     ROOT,
@@ -226,8 +226,8 @@ def environment_report() -> dict[str, Any]:
 def _easydep(
     case_path: Path, variant: str = "full", resume_run_id: str | None = None
 ) -> Path:
-    from app.core.orchestration import RunRequest, retry_failed_run, run_batch
-    from app.core.orchestration.contracts import ProviderConfig
+    from app.orchestration import RunRequest, retry_failed_run, run_batch
+    from app.orchestration.contracts import ProviderConfig
 
     case = ExperimentCase.load(case_path)
     request = RunRequest(

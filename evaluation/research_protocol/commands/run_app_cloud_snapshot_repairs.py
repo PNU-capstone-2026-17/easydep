@@ -12,14 +12,14 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.core.orchestration.adapters.testing import TestingAdapter
-from app.core.orchestration.app_cloud_contracts import (
+from app.orchestration.adapters.testing import TestingAdapter
+from app.orchestration.app_cloud_contracts import (
     cloud_contract_from_legacy,
     derive_deployment_bindings,
     infer_application_contract,
 )
-from app.core.orchestration.contracts import RunMode, StepContext, StepStatus
-from app.core.orchestration.providers import LlmLogicProvider, LlmVmDeliveryProvider
+from app.orchestration.contracts import RunMode, StepContext, StepStatus
+from app.orchestration.providers import LlmLogicProvider, LlmVmDeliveryProvider
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 from evaluation.research_protocol.core.snapshot_context import (
     load_context,

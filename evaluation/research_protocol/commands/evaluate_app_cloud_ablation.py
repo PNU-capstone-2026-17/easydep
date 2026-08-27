@@ -11,7 +11,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.core.orchestration.app_cloud_contracts import (
+from app.orchestration.app_cloud_contracts import (
     ApplicationRuntimeContract,
     BindingEndpoint,
     CloudCapabilityContract,
@@ -22,7 +22,7 @@ from app.core.orchestration.app_cloud_contracts import (
     validate_application_consistency,
     validate_binding_consistency,
 )
-from app.core.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
+from app.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 
 ROOT = REPOSITORY_ROOT

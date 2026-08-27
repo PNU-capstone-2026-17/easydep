@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
+from app.orchestration.adapters.cloud_design import CloudDesignAdapter
 from app.design.graphs.subgraphs import _finalize_deployment_diagram
 from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,

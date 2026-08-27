@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.core.orchestration.app_cloud_contracts import (
+from app.orchestration.app_cloud_contracts import (
     ApplicationRuntimeContract,
     BindingEndpoint,
     CloudCapabilityContract,
@@ -16,7 +16,7 @@ from app.core.orchestration.app_cloud_contracts import (
     validate_application_consistency,
     validate_binding_consistency,
 )
-from app.core.orchestration.app_cloud_contracts import (
+from app.orchestration.app_cloud_contracts import (
     test_environment as contract_test_environment,
 )
 

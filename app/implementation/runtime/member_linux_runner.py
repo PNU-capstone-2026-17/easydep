@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.core.orchestration.runner_compat import gradle_command, install
+from app.implementation.runtime.runner_compat import gradle_command, install
 
 RUNNER_WORKSPACE = Path("/easydep-workspace")
 
@@ -26,7 +26,7 @@ def _runner_job(job_path: Path) -> Path:
 
 def _worker(arguments: list[str]) -> int:
     _configure_runner_tools()
-    from app.core.orchestration.scaffold_worker import main as worker_main
+    from app.implementation.runtime.scaffold_worker import main as worker_main
 
     if not arguments:
         raise SystemExit("worker requires a job path")
@@ -35,7 +35,7 @@ def _worker(arguments: list[str]) -> int:
 
 def _test(arguments: list[str]) -> int:
     _configure_runner_tools()
-    from app.core.orchestration.adapters.testing import TestingAdapter
+    from app.orchestration.adapters.testing import TestingAdapter
 
     if len(arguments) != 1:
         raise SystemExit("test requires an input JSON path")

@@ -27,7 +27,7 @@ per distinct interaction concern, not automatically one per actor"*라고 경계
 
 `app/design`은 `app/requirements`를 **전혀 import하지 않는다**(현재 위반 0건). 그 격리를
 깨지 않는다. 모양은 같지만 규칙 목록은 각 축의 선언이라 공유할 것이 아니다. 공유해야 할
-것이 생기면 그때 `app/core/`로 올린다 — `requirements/common/`이 기다리고 있는 자리와 같다.
+것이 생기면 소유권이 분명한 공개 계약으로 승격한다. 이름 없는 공용 패키지를 만들지 않는다.
 
 ## `stage` 필드를 지금 두는 이유
 

@@ -10,7 +10,7 @@ from typing import Any
 
 import hcl2
 
-from app.core.orchestration.app_cloud_contracts import ConsistencyDiagnostic
+from app.orchestration.app_cloud_contracts import ConsistencyDiagnostic
 
 
 @dataclass(frozen=True)

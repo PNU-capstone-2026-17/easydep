@@ -12,8 +12,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
-from app.core.orchestration.adapters.vm_delivery import VmDeliveryAdapter
+from app.orchestration.adapters.cloud_design import CloudDesignAdapter
+from app.implementation.delivery.vm_delivery import VmDeliveryAdapter
 
 REGIONS = {
     "aws": "ap-northeast-2",

@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
-from app.core.orchestration.adapters.vm_delivery import VmDeliveryAdapter
-from app.core.orchestration.provider_target import resolve_resource_spec
+from app.orchestration.adapters.cloud_design import CloudDesignAdapter
+from app.implementation.delivery.vm_delivery import VmDeliveryAdapter
+from app.implementation.planning.provider_target import resolve_resource_spec
 from app.design.services.deployment_diagram.planner import (
     build_deployment_plan,
     build_provider_resource_plan,

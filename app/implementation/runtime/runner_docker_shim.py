@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
-from app.core.orchestration.runner_compat import gradle_command
+from app.implementation.runtime.runner_compat import gradle_command
 
 OPENAPI_JARS = {
     "openapitools/openapi-generator-cli": PurePosixPath("/opt/easydep/openapi-generator-7.24.0.jar"),

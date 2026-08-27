@@ -19,9 +19,9 @@
 **의존 규약은 2026-07-28에 바뀌었다.** 예전에는 *"`app/requirements`는 `app/cloudkb`
 없이 돌아야 한다(데이터셋 수백 MB)"*였는데, 좁은 표면에서는 그 근거가 성립하지 않았다 —
 `appkb.contract` + `envkb.regions`는 446ms · 모듈 168개이고 import 시점에 데이터셋을
-읽지 않는다(실측). 지금 규약은 **문을 하나로 둔다**이다: 런타임 경로는 `app/core/`를
-거쳐서만 배포 KB에 닿는다(`tests/test_core_layer.py`). `common/telemetry.py`는 여전히
-`app/core/`로 옮길 자리를 기다린다.
+읽지 않는다(실측). 지금 규약은 소유권이 분명한 문을 하나씩 두는 것이다. 요구사항의
+자원 계약은 `app.requirements.resources`, 공급자 사실은 `app.cloudkb`의 공개 표면을
+통해서만 읽는다. 공용 계측은 `app.metrics`가 소유한다.
 
 ## 등급을 둘로만 나눈다
 

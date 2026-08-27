@@ -47,8 +47,12 @@ class Verdict:
 
 def load_claim_keys() -> set[str]:
     """claims.json의 주장 키 전부. 빈 집합은 성공이 아니라 실패다."""
-    path = (Path(__file__).resolve().parents[2]
-            / "core" / "cloudkb" / "depkb" / "claims.json")
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "cloudkb"
+        / "depkb"
+        / "claims.json"
+    )
     doc = json.loads(path.read_text(encoding="utf-8"))
     keys = {f"{c['csp']}/{c['subject']}->{c['object']}/{c['relationFamily']}"
             for c in doc["claims"]}

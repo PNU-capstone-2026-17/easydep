@@ -18,7 +18,7 @@ def test_testing_runner_uses_its_own_container_entrypoint(tmp_path: Path):
     assert "easydep.experiment-session=experiment-1" in command
     assert command[command.index("--entrypoint") + 1] == "python"
     assert "app.testing.runtime.member_linux_runner" in command
-    assert "app.core.orchestration.member_linux_runner" not in command
+    assert "app.orchestration.member_linux_runner" not in command
     assert all("runtime_hooks" not in value for value in command)
 
 

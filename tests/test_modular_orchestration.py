@@ -7,10 +7,10 @@ from typing import Any, ClassVar
 
 import pytest
 
-import app.core.orchestration.graph as graph_module
-from app.core.orchestration.adapters.testing import TestingAdapter as _TestingAdapter
-from app.core.orchestration.artifacts import persist_run_artifacts, restore_run_application
-from app.core.orchestration.contracts import (
+import app.orchestration.graph as graph_module
+from app.orchestration.adapters.testing import TestingAdapter as _TestingAdapter
+from app.orchestration.artifacts import persist_run_artifacts, restore_run_application
+from app.orchestration.contracts import (
     ProviderKind,
     RunMode,
     RunRequest,
@@ -19,8 +19,8 @@ from app.core.orchestration.contracts import (
     StepResult,
     StepStatus,
 )
-from app.core.orchestration.graph import Orchestrator, build_orchestration_graph
-from app.core.orchestration.providers import (
+from app.orchestration.graph import Orchestrator, build_orchestration_graph
+from app.orchestration.providers import (
     BuiltinCloudDesignProvider,
     LlmAcceptanceTestsProvider,
     LlmLogicProvider,
@@ -28,9 +28,9 @@ from app.core.orchestration.providers import (
     MemberRequirementsProvider,
     _completion_options,
 )
-from app.core.orchestration.registry import ProviderRegistry
-from app.core.orchestration.store import RunStore
-from app.core.orchestration.worker_lock import (
+from app.orchestration.registry import ProviderRegistry
+from app.orchestration.store import RunStore
+from app.orchestration.worker_lock import (
     exclusive_implementation_worker,
     exclusive_run_execution,
 )
@@ -834,7 +834,7 @@ def test_restore_run_application_rehydrates_only_expected_workspace(tmp_path, mo
         "completedStages": ["implementation"],
         "checkpointAttempt": 0,
         "applicationSha256": __import__(
-            "app.core.orchestration.artifacts", fromlist=["_tree_sha256"]
+            "app.orchestration.artifacts", fromlist=["_tree_sha256"]
         )._tree_sha256(checkpoint),
     }
     (checkpoint.parent.parent / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -1049,7 +1049,7 @@ def test_requirements_provider_separates_interactive_and_batch_graphs(monkeypatc
         def __init__(self, *, feedback_gates: bool):
             created.append(feedback_gates)
 
-    monkeypatch.setattr("app.core.orchestration.providers.RequirementsAdapter", Adapter)
+    monkeypatch.setattr("app.orchestration.providers.RequirementsAdapter", Adapter)
     provider = MemberRequirementsProvider()
 
     assert provider._adapter(RunMode.INTERACTIVE) is provider._adapter(RunMode.INTERACTIVE)
@@ -1686,7 +1686,7 @@ def test_llm_scaffold_accepts_json_production_resources(tmp_path, monkeypatch):
 
 
 def test_llm_prompts_forbid_unverified_framework_overrides():
-    from app.core.orchestration.providers import (
+    from app.orchestration.providers import (
         ACCEPTANCE_TEST_SYSTEM_PROMPT,
         LOGIC_SYSTEM_PROMPT,
         SCAFFOLD_SYSTEM_PROMPT,
@@ -1828,7 +1828,7 @@ def test_run_execution_lock_rejects_only_same_run(tmp_path):
 
 
 def test_member_scaffold_without_explicit_transmission_approval_only_plans(tmp_path, monkeypatch):
-    from app.core.orchestration.providers import MemberScaffoldProvider
+    from app.orchestration.providers import MemberScaffoldProvider
 
     application = tmp_path / "generated" / "application"
     application.mkdir(parents=True)
@@ -1846,7 +1846,7 @@ def test_member_scaffold_without_explicit_transmission_approval_only_plans(tmp_p
     )()
     provider.client = type("Client", (), {"prepare_job": lambda *_args, **_kwargs: job})()
     monkeypatch.setattr(
-        "app.core.orchestration.providers.run_process_tree",
+        "app.orchestration.providers.run_process_tree",
         lambda *_args, **_kwargs: type(
             "Completed",
             (),
@@ -1873,7 +1873,7 @@ def test_member_scaffold_without_explicit_transmission_approval_only_plans(tmp_p
 
 
 def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(tmp_path, monkeypatch):
-    from app.core.orchestration.providers import MemberScaffoldProvider
+    from app.orchestration.providers import MemberScaffoldProvider
 
     application = tmp_path / "generated" / "application"
     application.mkdir(parents=True)
@@ -1916,7 +1916,7 @@ def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(tmp_pa
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     monkeypatch.delenv("NVIDIA_NIM_API_KEY", raising=False)
-    monkeypatch.setattr("app.core.orchestration.providers.run_process_tree", completed)
+    monkeypatch.setattr("app.orchestration.providers.run_process_tree", completed)
 
     result = provider.run(
         {
@@ -1934,7 +1934,7 @@ def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(tmp_pa
 
 
 def test_member_scaffold_checkpoint_retry_requests_failed_cache_recovery(tmp_path, monkeypatch):
-    from app.core.orchestration.providers import MemberScaffoldProvider
+    from app.orchestration.providers import MemberScaffoldProvider
 
     application = tmp_path / "generated" / "application"
     application.mkdir(parents=True)
@@ -1965,7 +1965,7 @@ def test_member_scaffold_checkpoint_retry_requests_failed_cache_recovery(tmp_pat
             },
         )()
 
-    monkeypatch.setattr("app.core.orchestration.providers.run_process_tree", completed)
+    monkeypatch.setattr("app.orchestration.providers.run_process_tree", completed)
     provider.run(
         {"requirements_result": {}, "design_result": {"artifacts": {}}},
         StepContext(

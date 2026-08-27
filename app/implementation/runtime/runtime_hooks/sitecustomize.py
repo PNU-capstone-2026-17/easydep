@@ -3,10 +3,10 @@
 import os
 
 from app.config import settings
-from app.core.orchestration.docker_path_adapter import install as install_docker_paths
+from app.implementation.runtime.docker_path_adapter import install as install_docker_paths
 
 install_docker_paths()
 if settings.easydep_fixed_linux_runner == "1":
-    from app.core.orchestration.runner_compat import install as install_runner_compat
+    from app.implementation.runtime.runner_compat import install as install_runner_compat
 
     install_runner_compat()

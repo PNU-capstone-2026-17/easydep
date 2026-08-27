@@ -22,7 +22,7 @@ def _terminate_process_tree(process: subprocess.Popen) -> None:
         )
     else:
         try:
-            os.killpg(process.pid, signal.SIGTERM)
+            getattr(os, "killpg")(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             return
     try:
@@ -32,7 +32,7 @@ def _terminate_process_tree(process: subprocess.Popen) -> None:
             process.kill()
         else:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                getattr(os, "killpg")(process.pid, getattr(signal, "SIGKILL"))
             except ProcessLookupError:
                 pass
         process.wait(timeout=10)
@@ -77,8 +77,9 @@ def run_process_tree(
     except subprocess.TimeoutExpired:
         _terminate_process_tree(process)
         stdout, stderr = process.communicate()
+        elapsed_timeout = timeout if timeout is not None else 0.0
         raise subprocess.TimeoutExpired(
-            list(command), timeout, output=stdout, stderr=stderr
+            list(command), elapsed_timeout, output=stdout, stderr=stderr
         ) from None
     completed = subprocess.CompletedProcess(
         list(command), process.returncode, stdout, stderr

@@ -8,12 +8,12 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.core.orchestration.app_cloud_contracts import (
+from app.orchestration.app_cloud_contracts import (
     contract_value,
     infer_application_contract,
     validate_application_consistency,
 )
-from app.core.orchestration.iac_binding_validation import validate_iac_bindings
+from app.implementation.delivery.iac_binding_validation import validate_iac_bindings
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 
 IGNORED_SNAPSHOT_PARTS = frozenset({"build", ".gradle", ".terraform"})
