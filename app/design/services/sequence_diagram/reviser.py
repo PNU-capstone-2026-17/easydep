@@ -88,12 +88,11 @@ same schema. Rules:
 - Preserve or repair unique `call_id` values on calls and exact `reply_to` values
   on returns. Never infer a return association from participant direction alone.
 - Every return message must have a non-empty result label equal to the return type
-  declared on its corresponding receiver-class method. Remove a return for a void
+  declared on its corresponding receiver-class method. Use `void` for a void
   method; never invent a narrative result label. Each call can have at most one
   corresponding return; remove duplicate or hallucinated returns.
-- Every sync or self call whose receiver method declares a non-void return type
-  must have exactly one corresponding return. Do not delete the call merely to
-  avoid supplying its grounded return.
+- Every sync or self call must have exactly one corresponding return, including
+  void methods. Do not delete the call merely to avoid supplying its return.
 - Async calls are fire-and-forget and cannot have return messages. If the caller
   consumes a result, change the grounded call to sync; otherwise remove the return.
 - Remove every `activate` and `deactivate` lifecycle event. The shared sequence

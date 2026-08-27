@@ -25,6 +25,7 @@ from app.design.api import (
     rewind_design_session,
     start_design_session,
 )
+from app.design import progress as design_progress
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
 from app.implementation.application.jobs import worker as implementation_worker
@@ -51,6 +52,7 @@ from app.requirements.schemas import (
 from app.testing.api import CreateTestingJobRequest, create_testing_job, get_testing_job
 
 from . import repository
+from .live_preview import live_previews
 
 TERMINAL_JOB_STATUSES = {
     "COMPLETED",
@@ -773,7 +775,9 @@ class WorkspaceService:
         command_id = str(command["command_id"])
         started = time.perf_counter()
 
-        def record(status: str, detail: str) -> None:
+        def record(
+            status: str, detail: str, metadata: dict[str, Any] | None = None,
+        ) -> None:
             repository.append_event(
                 app_id,
                 command_id=command_id,
@@ -790,18 +794,48 @@ class WorkspaceService:
                     "progress_detail": detail,
                     "progress_status": status,
                     "progress_card_label": "Design generation",
+                } | dict(metadata or {}),
+            )
+
+        def report(event: str, fields: dict[str, Any]) -> None:
+            if event != "classDiagramSnapshotAccepted":
+                return
+            puml = str(fields.get("puml") or "")
+            if not puml.strip():
+                return
+            snapshot = live_previews.publish(
+                app_id=app_id,
+                command_id=command_id,
+                stage="class_diagram",
+                puml=puml,
+                phase=str(fields.get("phase") or "generation"),
+                unit=str(fields.get("unit") or ""),
+                completed=int(fields.get("completed") or 0),
+                total=int(fields.get("total") or 0),
+            )
+            record(
+                "running",
+                str(fields.get("detail") or "Updating the class diagram"),
+                {
+                    "progress_event": "classDiagramPreviewUpdated",
+                    "preview_revision": snapshot.revision,
+                    "preview_unit": snapshot.unit,
+                    "preview_completed": snapshot.completed,
+                    "preview_total": snapshot.total,
                 },
             )
 
         record("running", "Started")
         try:
-            response = operation()
+            with design_progress.progress_scope(report):
+                response = operation()
         except Exception as error:
             elapsed = time.perf_counter() - started
             record(
                 "failed",
                 f"Failed after {elapsed:.1f}s: {WorkspaceService._error_text(error)}",
             )
+            live_previews.mark_terminal(app_id, command_id)
             raise
         elapsed = time.perf_counter() - started
         payload = _json_response(response) if isinstance(response, JSONResponse) else {}
@@ -818,6 +852,7 @@ class WorkspaceService:
             )
         else:
             record("completed", f"Completed in {elapsed:.1f}s")
+        live_previews.mark_terminal(app_id, command_id)
         return response
 
     @staticmethod

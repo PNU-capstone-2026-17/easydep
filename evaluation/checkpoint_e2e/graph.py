@@ -11,9 +11,12 @@ from langgraph.graph import END, START, StateGraph
 
 from .catalog import (
     CHECKPOINTS,
+    GOLD_ROOT,
     RUN_ROOT,
     case_definition,
     checkpoint_after,
+    current_chain_path,
+    current_stage_sample_path,
     digest,
     jsonable,
     load_gold,
@@ -165,6 +168,75 @@ def _new_run_id(case_id: str) -> str:
     return f"{case_id}-{stamp}-{uuid.uuid4().hex[:8]}"
 
 
+def _staging_path(destination: Path) -> Path:
+    """Create a sibling location that can be published atomically by rename."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return destination.with_name(
+        f".{destination.name}.staging-{uuid.uuid4().hex[:8]}"
+    )
+
+
+def _backup_path(destination: Path) -> Path:
+    return destination.with_name(f".{destination.name}.previous-{uuid.uuid4().hex[:8]}")
+
+
+def _publish_staging(staging: Path, destination: Path) -> None:
+    """Replace only the requested current destination after staging completes.
+
+    The old current tree is kept until the new one has been renamed into place.
+    It is then removed as part of the explicit replacement; goldset locations
+    are never passed to this helper by the experiment commands.
+    """
+
+    if not staging.is_dir():
+        raise ValueError(f"Staging output is missing: {staging}")
+    if not destination.exists():
+        staging.rename(destination)
+        return
+    if not destination.is_dir():
+        raise FileExistsError(f"Current destination is not a directory: {destination}")
+
+    previous = _backup_path(destination)
+    destination.rename(previous)
+    try:
+        staging.rename(destination)
+    except Exception:
+        previous.rename(destination)
+        raise
+    shutil.rmtree(previous)
+
+
+def _prepare_staging(
+    destination: Path, *, resume: bool, replace: bool
+) -> Path:
+    """Prepare a fresh staging tree without changing the published output."""
+
+    if destination.exists():
+        if not destination.is_dir():
+            raise FileExistsError(f"Destination is not a directory: {destination}")
+        if not (resume or replace):
+            raise FileExistsError(
+                f"Current experiment exists: {destination}; use --resume or --replace"
+            )
+    staging = _staging_path(destination)
+    if resume and destination.exists():
+        shutil.copytree(destination, staging)
+    else:
+        staging.mkdir()
+    return staging
+
+
+def _reject_gold_destination(destination: Path) -> None:
+    """Experiments may observe gold, but must never publish into it."""
+
+    try:
+        destination.resolve().relative_to(GOLD_ROOT.resolve())
+    except ValueError:
+        return
+    raise ValueError("Experiment output cannot be written inside the goldset")
+
+
 def run_one(
     case_id: str,
     source_checkpoint: str,
@@ -243,6 +315,104 @@ def run_all(
     return {"root": str(root), **summary}
 
 
+def _sample_manifest(root: Path, source_checkpoint: str, index: int) -> dict[str, Any]:
+    target = checkpoint_after(source_checkpoint)
+    path = root / f"sample-{index:02d}" / "jobs" / _job_name(source_checkpoint, target)
+    return read_json(path / "manifest.json")
+
+
+def _stage_summary(
+    case_id: str, source_checkpoint: str, samples: list[dict[str, Any]], *, status: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    verdict_counts = {
+        verdict: sum(
+            str(sample.get("verdict", "failed")) == verdict for sample in samples
+        )
+        for verdict in ("passed", "needs_review", "failed")
+    }
+    if status != "complete" or verdict_counts["failed"]:
+        verdict = "failed"
+    elif verdict_counts["needs_review"]:
+        verdict = "needs_review"
+    else:
+        verdict = "passed"
+    return {
+        "schemaVersion": "easydep-checkpoint-e2e-stage-samples", "caseId": case_id,
+        "sourceCheckpoint": source_checkpoint, "targetCheckpoint": checkpoint_after(source_checkpoint),
+        "status": status, "error": error, "verdict": verdict, "sampleCount": len(samples),
+        "verdictCounts": verdict_counts,
+        "samples": [{"id": f"sample-{index:02d}", "verdict": item.get("verdict", "failed")}
+                    for index, item in enumerate(samples, start=1)],
+    }
+
+
+def _completed_stage(
+    root: Path, case_id: str, source_checkpoint: str, sample_count: int
+) -> dict[str, Any] | None:
+    try:
+        summary = read_json(root / "manifest.json")
+    except (OSError, ValueError):
+        return None
+    target = checkpoint_after(source_checkpoint)
+    if (
+        summary.get("schemaVersion") != "easydep-checkpoint-e2e-stage-samples"
+        or summary.get("status") != "complete"
+        or summary.get("caseId") != case_id
+        or summary.get("sourceCheckpoint") != source_checkpoint
+        or summary.get("targetCheckpoint") != target
+        or summary.get("sampleCount") != sample_count
+    ):
+        return None
+    try:
+        manifests = [_sample_manifest(root, source_checkpoint, index) for index in range(1, sample_count + 1)]
+    except (OSError, ValueError):
+        return None
+    if any(
+        item.get("caseId") != case_id
+        or item.get("sourceCheckpoint") != source_checkpoint
+        or item.get("targetCheckpoint") != target
+        for item in manifests
+    ):
+        return None
+    return summary
+
+
+def run_stage_samples(
+    case_id: str, source_checkpoint: str, *, destination: Path | None = None,
+    samples: int = 3, resume: bool = False, replace: bool = False,
+) -> dict[str, Any]:
+    """Run fixed isolated gold-sourced samples at one stable stage path."""
+
+    if samples < 1:
+        raise ValueError("Stage sample count must be at least one")
+    destination = destination or current_stage_sample_path(case_id, source_checkpoint)
+    _reject_gold_destination(destination)
+    if destination.exists() and resume:
+        completed = _completed_stage(destination, case_id, source_checkpoint, samples)
+        if completed is not None:
+            return {"root": str(destination), **completed}
+        raise FileExistsError("Stage output is incomplete or has a different identity; use --replace")
+
+    staging = _prepare_staging(destination, resume=False, replace=replace)
+    completed_samples: list[dict[str, Any]] = []
+    try:
+        for index in range(1, samples + 1):
+            run_one(case_id, source_checkpoint, output_root=staging, run_id=f"sample-{index:02d}")
+            manifest = _sample_manifest(staging, source_checkpoint, index)
+            target = checkpoint_after(source_checkpoint)
+            if (manifest.get("caseId"), manifest.get("sourceCheckpoint"), manifest.get("targetCheckpoint")) != (case_id, source_checkpoint, target):
+                raise RuntimeError(f"Stage sample identity mismatch: sample-{index:02d}")
+            completed_samples.append(manifest)
+        summary = _stage_summary(case_id, source_checkpoint, completed_samples, status="complete")
+    except Exception as error:
+        summary = _stage_summary(case_id, source_checkpoint, completed_samples, status="failed", error=f"{type(error).__name__}: {error}")
+        write_json(staging / "manifest.json", summary)
+        _publish_staging(staging, destination)
+        raise
+    write_json(staging / "manifest.json", summary)
+    _publish_staging(staging, destination)
+    return {"root": str(destination), **summary}
 def git_revision() -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
@@ -252,17 +422,108 @@ def git_revision() -> str:
 
 def generate_candidate(
     case_id: str,
-    destination: Path,
+    destination: Path | None = None,
     *,
     resume: bool = False,
+    replace: bool = False,
+    restart_from: str | None = None,
     through: str = CHECKPOINTS[-1],
+) -> dict[str, Any]:
+    """Generate a promotable candidate without ever modifying the goldset.
+
+    The default destination is the stable current chain for the case.  A full
+    candidate is directly eligible for the existing validation/promotion flow.
+    """
+
+    destination = destination or current_chain_path(case_id)
+    _reject_gold_destination(destination)
+    return _run_staged_chain(
+        case_id,
+        destination,
+        resume=resume,
+        replace=replace,
+        restart_from=restart_from,
+        through=through,
+    )
+
+
+def _truncate_candidate(destination: Path, case_id: str, restart_from: str) -> None:
+    """Keep a verified prefix and remove stale downstream candidate evidence."""
+
+    if restart_from not in CHECKPOINTS[:-1]:
+        raise ValueError(f"Candidate restart checkpoint is invalid: {restart_from}")
+    manifest_path = destination / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("Candidate restart requires an existing manifest")
+    manifest = read_json(manifest_path)
+    if manifest.get("caseId") != case_id:
+        raise ValueError("Candidate case does not match the requested case")
+    entries = list(manifest.get("checkpoints") or [])
+    ids = [item.get("id") for item in entries]
+    keep_count = CHECKPOINTS.index(restart_from) + 1
+    if ids[:keep_count] != list(CHECKPOINTS[:keep_count]):
+        raise ValueError(f"Candidate restart checkpoint is absent: {restart_from}")
+
+    for item in entries[:keep_count]:
+        checkpoint = str(item["id"])
+        value = read_json(destination / "snapshots" / checkpoint / "state.json")
+        if digest(value) != item.get("sha256"):
+            raise ValueError(f"Candidate checkpoint digest mismatch: {checkpoint}")
+
+    for checkpoint in CHECKPOINTS[keep_count:]:
+        snapshot = destination / "snapshots" / checkpoint
+        oracle = destination / "oracles" / f"{checkpoint}.json"
+        if snapshot.exists():
+            shutil.rmtree(snapshot)
+        if oracle.exists():
+            oracle.unlink()
+        stage = destination / "stages" / _job_name(
+            CHECKPOINTS[CHECKPOINTS.index(checkpoint) - 1], checkpoint
+        )
+        if stage.exists():
+            shutil.rmtree(stage)
+    failures = destination / "failures"
+    if failures.exists():
+        shutil.rmtree(failures)
+    manifest.update(status="in_progress", error=None, checkpoints=entries[:keep_count])
+    write_json(manifest_path, manifest)
+
+
+def _generate_chain_at(
+    case_id: str,
+    destination: Path,
+    *,
+    resume: bool,
+    through: str,
 ) -> dict[str, Any]:
     if through not in CHECKPOINTS[1:]:
         raise ValueError(f"Candidate target is invalid: {through}")
-    if destination.exists() and not resume:
-        raise FileExistsError(f"Candidate already exists: {destination}")
     case = case_definition(case_id)
     checkpoints: list[dict[str, Any]] = []
+
+    def write_evidence(
+        checkpoint: str,
+        value: dict[str, Any],
+        validation: dict[str, Any],
+        tasks: list[dict[str, Any]],
+    ) -> None:
+        index = CHECKPOINTS.index(checkpoint)
+        source = CHECKPOINTS[index - 1]
+        root = destination / "stages" / _job_name(source, checkpoint)
+        write_json(root / "tasks.json", tasks)
+        write_json(root / "validation.json", validation)
+        write_json(root / "signature.json", semantic_signature(checkpoint, value))
+        rendered = write_outputs(checkpoint, value, root / "output")
+        write_json(
+            root / "manifest.json",
+            {
+                "sourceCheckpoint": source,
+                "targetCheckpoint": checkpoint,
+                "validation": validation.get("status"),
+                "tasks": len(tasks),
+                "files": rendered.get("files") or [],
+            },
+        )
 
     def save(checkpoint: str, value: dict[str, Any]) -> None:
         from .catalog import oracle_path, snapshot_path
@@ -302,6 +563,18 @@ def generate_candidate(
                 raise ValueError(f"Candidate checkpoint digest mismatch: {checkpoint}")
             checkpoints.append(item)
             state = value
+            if checkpoint != "input" and not (
+                destination
+                / "stages"
+                / _job_name(CHECKPOINTS[CHECKPOINTS.index(checkpoint) - 1], checkpoint)
+                / "manifest.json"
+            ).is_file():
+                write_evidence(
+                    checkpoint,
+                    state,
+                    validate_state(checkpoint, state),
+                    [],
+                )
         start_index = max(0, len(checkpoints) - 1)
 
     if not checkpoints:
@@ -319,6 +592,10 @@ def generate_candidate(
             _target, state = run_transition(source, state, record)
             validation = validate_state(target, state)
             if validation["status"] == "failed":
+                # Invalid diagrams are still valuable visual evidence.  Keep the
+                # same stage layout as successful checkpoints so a failed run
+                # can be inspected without manually rendering its state.
+                write_evidence(target, state, validation, records)
                 write_json(
                     destination / "failures" / target / "state.json",
                     jsonable(state),
@@ -330,9 +607,7 @@ def generate_candidate(
                 raise RuntimeError(
                     f"Candidate {target} is invalid: {validation['errors']}"
                 )
-            failed_evidence = destination / "failures" / target
-            if failed_evidence.exists():
-                shutil.rmtree(failed_evidence)
+            write_evidence(target, state, validation, records)
             save(target, state)
             write_manifest("in_progress")
         except Exception as error:
@@ -341,6 +616,46 @@ def generate_candidate(
     return write_manifest(
         "complete" if through == CHECKPOINTS[-1] else "in_progress"
     )
+
+
+def _run_staged_chain(
+    case_id: str,
+    destination: Path,
+    *,
+    resume: bool,
+    replace: bool,
+    restart_from: str | None,
+    through: str,
+) -> dict[str, Any]:
+    """Build beside current, publishing the final success or failure record."""
+
+    resuming_current = resume and destination.exists()
+    if restart_from is not None:
+        if not resuming_current or replace:
+            raise ValueError("--restart-from requires an existing candidate and --resume")
+        if CHECKPOINTS.index(through) <= CHECKPOINTS.index(restart_from):
+            raise ValueError("Candidate target must follow the restart checkpoint")
+    staging = _prepare_staging(destination, resume=resume, replace=replace)
+    try:
+        if restart_from is not None:
+            _truncate_candidate(staging, case_id, restart_from)
+        manifest = _generate_chain_at(
+            case_id,
+            staging,
+            resume=resuming_current,
+            through=through,
+        )
+    except Exception:
+        # Validation/transition failures have a manifest and often diagnostic
+        # evidence.  Publish that useful state; only empty setup staging is
+        # cleaned, so successful or failed runs never leave hidden siblings.
+        if (staging / "manifest.json").is_file():
+            _publish_staging(staging, destination)
+        elif staging.exists():
+            shutil.rmtree(staging)
+        raise
+    _publish_staging(staging, destination)
+    return manifest
 
 
 def initial_candidate_state(case: dict[str, Any]) -> dict[str, Any]:
@@ -409,6 +724,9 @@ def seed_candidate_prefix(
 def validate_candidate(path: Path) -> dict[str, Any]:
     manifest = read_json(path / "manifest.json")
     errors: list[str] = []
+    schema_version = manifest.get("schemaVersion")
+    if schema_version not in {None, "easydep-checkpoint-goldset"}:
+        errors.append(f"candidate manifest is not promotable: {schema_version}")
     if manifest.get("status") not in {None, "complete"}:
         errors.append(f"candidate status is {manifest.get('status')}")
     ids = [item.get("id") for item in manifest.get("checkpoints") or []]

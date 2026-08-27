@@ -10,9 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.config import settings
 from app.design.knowledge import rules
 from app.design.schemas.class_model import BCEModel, ClassParameter, DataType
-from app.design.services.class_diagram.type_system import field_type, type_is_resolved
+from app.design.services.class_diagram.type_system import (
+    field_type,
+    reachable_data_type_names,
+    structure_type_contract,
+    type_is_resolved,
+)
 from app.design.services.common import fields
-from app.design.services.common.structured import parse_structured
+from app.design.services.common.structured import StructuredLlmError, parse_structured
 
 
 def rules_section(stage: str = rules.CLASS_DIAGRAM) -> str:
@@ -34,6 +39,10 @@ and reusable typed operation signatures. Return a valueObject or enumeration
 DataType only when it is referenced by an operation or field. Return only
 Entity-to-Entity structural relationships, with both multiplicities where the
 relationship is structural.
+Structural relationships are optional: omit one unless both endpoint Entities
+are independently grounded in the scenarios with their own persistent fields
+and state-bearing operations. Never add a Class or Entity solely to make a
+relationship endpoint valid.
 
 Boundary mediates an actor or external-system interface. Control coordinates
 use-case flow and business decisions. Entity is persistent business state that
@@ -70,19 +79,47 @@ scoped Control instead of a Boundary, but it still needs its Control operation
 and step trace. Use exact canonical step references: a main step N is
 `<useCaseId>:main:<N>` and an extension sub-step S under label L is
 `<useCaseId>:extension:<L>:<S>`. Do not use empty placeholders.
+Treat class use_case_ids as an execution trace contract: every operation stepRef
+must belong to one of its class's declared use cases. Every Entity use case must
+have at least one state-bearing Entity operation traced to that use case; do not
+claim Entity participation only through a field or description.
+An extension condition or extension point is not an executable stepRef; never
+invent a `:condition` or `:extensionPoint` suffix. When a base scenario step
+invokes an included use case, retain the base stepRef as well as the included
+flow's own stepRefs on the operations that trace those respective steps.
 Across the operations in each use case, cover every main and extension step
 that an execution collaboration must trace. A single operation may cite
 several steps, including later output and extension steps fulfilled by its
 return; do not create another operation merely for trace coverage.
+When a later actor request follows completed system behavior, it is a new
+entry interaction and needs a distinct Boundary operation. Consecutive actor
+input steps with no intervening system response may remain one submission.
 When a synchronous actor interaction returns stated data or a success/failure
 outcome, the actor-facing Boundary operation returns that typed value rather
 than `void`; the delegated Control operation returns the same usable outcome.
+
+Operation signatures must be composable into a finite call chain. Every
+parameter of a delegated operation must be sourceable either from an ancestor
+call parameter with the exact same name and type, from a same-named typed field
+of an ancestor structured parameter, from the exact return type or a declared
+same-named field of an earlier non-void operation. A prose precondition is a
+flow condition, not a typed argument value. Encapsulate an unstated clock,
+generated identifier, or default state behind the responsible operation rather
+than adding it as a caller-supplied parameter.
+Align actor-facing Boundary and delegated
+Control parameters by name and type when they convey the same input. Do not
+require a composite object from a caller that has only separate component
+values; if a child needs that object, an earlier operation must return it before
+the child call.
+An Entity creation operation need not receive generated identifiers or default
+state as parameters when the scenario never supplies them; those are outcomes
+of the state-bearing operation, not invented actor inputs.
 
 Do not persist legacy methods, behavioral Dependency relationships,
 actor-entry flags, input bindings, Collaborations, calls, call ids, or argument
 sources. A later deterministic behavior stage owns calls, provenance, and
 Dependency projection. Return only the supplied schema.
-""".strip()
+""".strip() + "\n\n" + structure_type_contract()
 
 
 class _DomainModel(BaseModel):
@@ -106,7 +143,7 @@ class DomainOperation(_DomainModel):
         )
         if any(not canonical.fullmatch(str(value).strip()) for value in values):
             raise ValueError("stepRefs must use canonical main or extension identities")
-        return values
+        return list(dict.fromkeys(str(value).strip() for value in values))
 
 
 class DomainClass(_DomainModel):
@@ -164,10 +201,52 @@ class DomainStructureProposal(_DomainModel):
     DataTypes: list[DataType] = Field(default_factory=list)
     Relationships: list[DomainRelationship] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def omit_relations_without_independent_entity_evidence(cls, value: Any) -> Any:
+        """Drop optional relations whose declared Entity endpoint is only a marker."""
+
+        if not isinstance(value, dict):
+            return value
+        classes = {
+            str(item.get("className") or ""): item
+            for item in value.get("Classes") or []
+            if isinstance(item, dict)
+        }
+        relationships: list[Any] = []
+        for relationship in value.get("Relationships") or []:
+            if not isinstance(relationship, dict):
+                relationships.append(relationship)
+                continue
+            source = classes.get(str(relationship.get("source") or ""))
+            target = classes.get(str(relationship.get("target") or ""))
+            declared_entities = (
+                source is not None
+                and target is not None
+                and source.get("stereotype") == "Entity"
+                and target.get("stereotype") == "Entity"
+            )
+            if declared_entities and (
+                not source.get("fields")
+                or not target.get("fields")
+                or not source.get("operations")
+                or not target.get("operations")
+            ):
+                continue
+            relationships.append(relationship)
+        return {**value, "Relationships": relationships}
+
     @model_validator(mode="after")
     def references_are_closed(self) -> DomainStructureProposal:
         classes = {item.class_name: item for item in self.Classes}
-        names = set(classes) | {item.name for item in self.DataTypes}
+        data_type_names = {item.name for item in self.DataTypes}
+        overlapping = sorted(set(classes) & data_type_names)
+        if overlapping:
+            raise ValueError(
+                "Class and DataType names must not overlap: "
+                + ", ".join(overlapping)
+            )
+        names = set(classes) | data_type_names
         unresolved: list[str] = []
         for class_item in self.Classes:
             for value in class_item.fields:
@@ -217,6 +296,19 @@ class DomainStructureProposal(_DomainModel):
                 + ", ".join(invalid_relationships)
             )
         return self
+
+
+class DomainOperationSet(_DomainModel):
+    """Focused replacement operations for one existing class."""
+
+    class_name: str = Field(alias="className", min_length=1)
+    operations: list[DomainOperation] = Field(default_factory=list)
+
+
+class DomainOperationRepair(_DomainModel):
+    """Small repair boundary that cannot rewrite class structure."""
+
+    Classes: list[DomainOperationSet] = Field(min_length=1)
 
 
 def _normalize_field_types(result: dict[str, Any]) -> dict[str, Any]:
@@ -271,6 +363,11 @@ def _normalize_field_types(result: dict[str, Any]) -> dict[str, Any]:
                 fields.normalize_java_field(str(field))
                 for field in data_type.get("fields") or []
             ]
+    reachable = reachable_data_type_names(classes, data_types)
+    result["DataTypes"] = [
+        data_type for data_type in data_types
+        if str(data_type.get("name") or "").strip() in reachable
+    ]
     return result
 
 
@@ -387,8 +484,6 @@ def _scenario_structure_issues(
             field_names = {value.partition(":")[0].strip() for value in fields}
             if not fields:
                 issues.append(f"Entity {class_name} has no persistent fields")
-            if not class_item.get("operations"):
-                issues.append(f"Entity {class_name} has no state-bearing operations")
             dangling_identifiers = sorted(
                 str(value).strip() for value in class_item.get("identifier") or []
                 if str(value).strip() not in field_names
@@ -406,11 +501,36 @@ def _scenario_structure_issues(
                 if str(value).strip()
             }
             covered_steps.update(step_refs)
+            operation_use_case_ids = {
+                step_ref.partition(":")[0] for step_ref in step_refs
+            }
+            out_of_scope_steps = sorted(operation_use_case_ids - use_case_ids)
+            if out_of_scope_steps:
+                issues.append(
+                    f"{class_name}.{operation.get('name')} traces use cases outside "
+                    f"its class scope: {out_of_scope_steps}"
+                )
             unknown_steps = sorted(step_refs - required_steps)
             if unknown_steps:
                 issues.append(
                     f"{class_name}.{operation.get('name')} references unknown steps: "
                     f"{unknown_steps}"
+                )
+        if str(class_item.get("stereotype") or "") == "Entity":
+            entity_operation_use_cases = {
+                str(step_ref).partition(":")[0]
+                for operation in class_item.get("operations") or []
+                if isinstance(operation, dict)
+                for step_ref in operation.get("stepRefs") or []
+                if str(step_ref).strip()
+            }
+            missing_operation_scopes = sorted(
+                use_case_ids - entity_operation_use_cases
+            )
+            if missing_operation_scopes:
+                issues.append(
+                    f"Entity {class_name} has no state-bearing operation for "
+                    f"declared use cases: {missing_operation_scopes}"
                 )
 
     for use_case in scenario.get("use_cases") or []:
@@ -439,6 +559,319 @@ def _scenario_structure_issues(
     return issues
 
 
+def _scenario_signature_issues(
+    model: dict[str, Any], scenario: dict[str, Any],
+) -> list[str]:
+    """Find execution groups that cannot form a sourceable BCE call tree."""
+
+    from app.design.services.class_diagram.behavior import (
+        _deterministic_group_calls,
+        _required_trace_steps,
+        execution_groups,
+    )
+
+    issues: list[str] = []
+    schema_complete = all(
+        isinstance(operation, dict)
+        and "operationId" in operation
+        and "parameters" in operation
+        and "returnType" in operation
+        for class_item in model.get("Classes") or []
+        if isinstance(class_item, dict)
+        for operation in class_item.get("operations") or []
+    )
+    if not schema_complete:
+        # Production candidates have already crossed DomainStructureProposal
+        # and BCEModel.  A few compatibility tests deliberately pass the old
+        # structure-only dictionaries; keep the scenario-step checks useful
+        # without pretending those dictionaries can form executable calls.
+        return issues
+    groups = execution_groups(scenario)
+
+    actor_groups_by_use_case: dict[str, list[Any]] = {}
+    for group in groups:
+        if group.actor_step:
+            actor_groups_by_use_case.setdefault(group.use_case_id, []).append(group)
+    for class_item in model.get("Classes") or []:
+        if (
+            not isinstance(class_item, dict)
+            or str(class_item.get("stereotype") or "").casefold() != "boundary"
+        ):
+            continue
+        class_name = str(class_item.get("className") or "").strip()
+        for operation in class_item.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            step_refs = {
+                str(value).strip() for value in operation.get("stepRefs") or []
+                if str(value).strip()
+            }
+            for use_case_id in class_item.get("use_case_ids") or []:
+                current_groups = actor_groups_by_use_case.get(str(use_case_id), [])
+                covered_entries = [
+                    group for group in current_groups
+                    if group.actor_step in step_refs
+                ]
+                if len(covered_entries) < 2:
+                    continue
+                if any(
+                    _required_trace_steps(group, scenario) - {group.actor_step}
+                    for group in covered_entries[:-1]
+                ):
+                    issues.append(
+                        f"Boundary operation {class_name}.{operation.get('name')} "
+                        f"merges actor entries separated by completed system "
+                        f"behavior in {use_case_id}"
+                    )
+
+    for group in groups:
+        try:
+            _deterministic_group_calls(model, scenario, group)
+        except (ValueError, TypeError) as error:
+            issues.append(
+                f"execution group {group.id} cannot form a sourceable BCE call "
+                f"tree: {error}"
+            )
+    return issues
+
+
+def _issue_use_case_ids(issues: list[str], scenario: dict[str, Any]) -> list[str]:
+    known = [
+        str(item.get("id") or "").strip()
+        for item in scenario.get("use_cases") or []
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    ]
+    return [
+        use_case_id
+        for use_case_id in known
+        if any(
+            re.search(
+                rf"(?<![A-Za-z0-9_-]){re.escape(use_case_id)}(?![A-Za-z0-9_-])",
+                issue,
+            )
+            for issue in issues
+        )
+    ]
+
+
+def _focused_operation_prompt(
+    candidate: dict[str, Any], scenario: dict[str, Any], use_case_id: str,
+    issues: list[str],
+) -> list[dict[str, str]]:
+    scoped_scenario = {
+        "use_cases": [
+            item for item in scenario.get("use_cases") or []
+            if isinstance(item, dict) and str(item.get("id") or "") == use_case_id
+        ],
+        "use_case_specs": [
+            item for item in scenario.get("use_case_specs") or []
+            if isinstance(item, dict)
+            and str(item.get("use_case_id") or "") == use_case_id
+        ],
+    }
+    class_catalog = [
+        {
+            "className": item.get("className"),
+            "stereotype": item.get("stereotype"),
+            "fields": item.get("fields") or [],
+            "operationsForUseCase": [
+                operation
+                for operation in item.get("operations") or []
+                if isinstance(operation, dict)
+                and any(
+                    str(step_ref).partition(":")[0] == use_case_id
+                    for step_ref in operation.get("stepRefs") or []
+                )
+            ],
+            "reservedOperations": [
+                operation
+                for operation in item.get("operations") or []
+                if isinstance(operation, dict)
+                and not any(
+                    str(step_ref).partition(":")[0] == use_case_id
+                    for step_ref in operation.get("stepRefs") or []
+                )
+            ],
+        }
+        for item in candidate.get("Classes") or []
+        if isinstance(item, dict)
+        and (
+            use_case_id in {
+                str(value).strip()
+                for value in item.get("use_case_ids") or []
+            }
+            or any(
+                str(step_ref).partition(":")[0] == use_case_id
+                for operation in item.get("operations") or []
+                if isinstance(operation, dict)
+                for step_ref in operation.get("stepRefs") or []
+            )
+        )
+    ]
+    system = """
+Repair operation signatures for exactly one use case inside a fixed BCE class
+structure. Return only the supplied DomainOperationRepair schema. Class names,
+stereotypes, fields, relationships, and DataTypes are fixed: use only a listed
+className and the declared type vocabulary; never add or rename a class or type.
+
+Return the complete replacement set of operations needed for this use case on
+each participating existing class. Use only exact main and extension stepRefs
+from the scoped specification. An actor entry is Boundary -> Control; persistent
+business behavior is Control -> Entity. Boundary parameters are actor-supplied
+inputs and its return is the actor-visible result. Do not model output values or
+the actor object as Control input parameters. Every delegated parameter must be
+available by the same name and type from its Boundary input, a field of a
+structured input, or an earlier operation result. Do not require generated ids,
+default state, or an unstated clock as caller parameters. Keep one cohesive
+operation when it covers several adjacent steps; do not create one operation per
+sentence. A reserved operation name is already owned by another use case. Reuse
+it only by returning its exact signature with this use case's stepRefs; otherwise
+choose a distinct operation name. Do not return calls, argument bindings, or
+relationships.
+""".strip()
+    user = json.dumps(
+        {
+            "useCaseId": use_case_id,
+            "scenario": scoped_scenario,
+            "fixedClasses": class_catalog,
+            "fixedDataTypes": candidate.get("DataTypes") or [],
+            "findings": issues,
+        },
+        ensure_ascii=False,
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _merge_operation_repair(
+    candidate: dict[str, Any], repair: DomainOperationRepair, use_case_id: str,
+) -> dict[str, Any]:
+    """Replace only operation records traced to one UC; preserve all structure."""
+
+    repaired_by_class = {
+        item.class_name: [
+            operation.model_dump(by_alias=True)
+            for operation in item.operations
+            if operation.step_refs
+            and all(
+                str(step_ref).partition(":")[0] == use_case_id
+                for step_ref in operation.step_refs
+            )
+        ]
+        for item in repair.Classes
+        if item.operations
+    }
+    merged = {**candidate, "Classes": []}
+    for class_item in candidate.get("Classes") or []:
+        if not isinstance(class_item, dict):
+            continue
+        class_name = str(class_item.get("className") or "")
+        if class_name not in repaired_by_class:
+            merged["Classes"].append(class_item)
+            continue
+        preserved = [
+            operation
+            for operation in class_item.get("operations") or []
+            if isinstance(operation, dict)
+            and not any(
+                str(step_ref).partition(":")[0] == use_case_id
+                for step_ref in operation.get("stepRefs") or []
+            )
+        ]
+        replacements = repaired_by_class[class_name]
+        combined = list(preserved)
+        for replacement in replacements:
+            replacement_name = str(replacement.get("name") or "")
+            same_name_index = next(
+                (
+                    index for index, operation in enumerate(combined)
+                    if str(operation.get("name") or "") == replacement_name
+                ),
+                None,
+            )
+            if same_name_index is None:
+                combined.append(replacement)
+                continue
+            existing = combined[same_name_index]
+            if (
+                existing.get("parameters") != replacement.get("parameters")
+                or existing.get("returnType") != replacement.get("returnType")
+            ):
+                raise ValueError(
+                    f"operation name collision on {class_name}.{replacement_name}"
+                )
+            combined[same_name_index] = {
+                **existing,
+                "stepRefs": list(dict.fromkeys([
+                    *(existing.get("stepRefs") or []),
+                    *(replacement.get("stepRefs") or []),
+                ])),
+            }
+        use_case_ids = list(class_item.get("use_case_ids") or [])
+        if replacements and use_case_id not in use_case_ids:
+            use_case_ids.append(use_case_id)
+        merged["Classes"].append({
+            **class_item,
+            "use_case_ids": use_case_ids,
+            "operations": combined,
+        })
+    return BCEModel.model_validate(merged).model_dump(by_alias=True)
+
+
+def _repair_operations_by_use_case(
+    candidate: dict[str, Any], scenario: dict[str, Any], issues: list[str],
+) -> dict[str, Any]:
+    """Repair one UC at a time so shared classes never merge stale proposals."""
+
+    targets = _issue_use_case_ids(issues, scenario)
+    if not targets:
+        return candidate
+    result = candidate
+    for target in targets:
+        current_findings = [
+            issue for issue in _scenario_structure_issues(result, scenario)
+            if re.search(
+                rf"(?<![A-Za-z0-9_-]){re.escape(target)}(?![A-Za-z0-9_-])",
+                issue,
+            )
+        ]
+        if not current_findings:
+            current_findings = [
+                issue for issue in issues
+                if re.search(
+                    rf"(?<![A-Za-z0-9_-]){re.escape(target)}(?![A-Za-z0-9_-])",
+                    issue,
+                )
+            ]
+        if not current_findings:
+            continue
+        try:
+            parsed = parse_structured(
+                _focused_operation_prompt(
+                    result, scenario, target, current_findings,
+                ),
+                DomainOperationRepair,
+                reasoning_effort=settings.design_reasoning_effort,
+                max_completion_tokens=settings.design_class_collaboration_max_completion_tokens,
+                operation="DomainOperationRepair",
+                metadata={"useCaseId": target},
+            )
+            repair = DomainOperationRepair.model_validate(parsed)
+            result = _merge_operation_repair(result, repair, target)
+        except (StructuredLlmError, ValueError, TypeError):
+            # The unchanged candidate keeps the finding explicit for the next
+            # bounded round or the final failure report.
+            continue
+    return result
+
+
+def repair_bce_operations_for_findings(
+    candidate: dict[str, Any], scenario: dict[str, Any], findings: list[str],
+) -> dict[str, Any]:
+    """Public bounded bridge from concrete collaboration failures to signatures."""
+
+    return _repair_operations_by_use_case(candidate, scenario, findings)
+
+
 def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
     if not scenario_text:
         return {}
@@ -453,31 +886,47 @@ def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
         return model
     if not isinstance(scenario, dict) or not scenario.get("use_case_specs"):
         return model
-    issues = _scenario_structure_issues(model, scenario)
-    if not issues:
-        return model
-    repaired = run_domain_structure_parse(
-        [
-            *messages,
-            {
-                "role": "user",
-                "content": (
-                    "The candidate below passed JSON Schema but failed deterministic "
-                    "scenario contracts. Regenerate the full structure and fix every "
-                    "finding without adding behavior outside the scenario.\n\n"
-                    "[Candidate]\n"
-                    + json.dumps(model, ensure_ascii=False)
-                    + "\n\n[Findings]\n"
-                    + json.dumps(issues, ensure_ascii=False)
-                ),
-            },
-        ],
-        operation="DomainStructureContractRepair",
-    )
-    remaining = _scenario_structure_issues(repaired, scenario)
+    candidate = model
+    finding_history: list[dict[str, Any]] = []
+    repair_budget = max(0, settings.design_max_repair_iters)
+    global_repair_budget = min(1, repair_budget)
+    for repair_index in range(1, global_repair_budget + 1):
+        issues = _scenario_structure_issues(candidate, scenario)
+        if not issues:
+            return candidate
+        finding_history.append({"iteration": repair_index, "findings": issues})
+        candidate = run_domain_structure_parse(
+            [
+                *messages,
+                {
+                    "role": "user",
+                    "content": (
+                        "The latest candidate below passed JSON Schema but failed "
+                        "deterministic scenario contracts. Regenerate the full structure "
+                        "and fix every finding without adding behavior outside the "
+                        "scenario. Findings from earlier candidates remain relevant; "
+                        "do not reintroduce them. Keep a grounded state-bearing Entity "
+                        "operation when its only defect is an internal transition value: "
+                        "encapsulate an unstated default or derived value instead of "
+                        "deleting the persistent behavior.\n\n"
+                        "[Latest candidate]\n"
+                        + json.dumps(candidate, ensure_ascii=False)
+                        + "\n\n[Finding history]\n"
+                        + json.dumps(finding_history, ensure_ascii=False)
+                    ),
+                },
+            ],
+            operation="DomainStructureContractRepair",
+        )
+    remaining = _scenario_structure_issues(candidate, scenario)
+    for _ in range(global_repair_budget, repair_budget):
+        if not remaining:
+            break
+        candidate = _repair_operations_by_use_case(candidate, scenario, remaining)
+        remaining = _scenario_structure_issues(candidate, scenario)
     if remaining:
         raise ValueError(
             "domain structure remains incomplete after bounded repair: "
             + "; ".join(remaining)
         )
-    return repaired
+    return candidate

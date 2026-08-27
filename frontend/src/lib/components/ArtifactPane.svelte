@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Braces, Check, CheckCircle2, Clock3, Copy, FileCode2, FileText, Image, Layers3, Maximize2, ShieldCheck, X } from '@lucide/svelte';
-  import type { ArtifactDocument, FileArtifactSnapshot, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
+  import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
   import { getArtifactFile, getFileArtifactVersions, getSequenceDiagrams, getVersions } from '$lib/api';
   import { errorMessage } from '$lib/utils';
   import ArtifactVisualization from '$lib/components/ArtifactVisualization.svelte';
@@ -14,6 +14,7 @@
     document,
     fileArtifacts,
     events,
+    classPreview,
     selected,
     onSelect,
     onSequenceFeedbackSubmit,
@@ -26,6 +27,7 @@
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
     events: WorkspaceEvent[];
+    classPreview?: LiveDiagramPreview | null;
     selected: string;
     onSelect: (stage: string) => void;
     onSequenceFeedbackSubmit?: (
@@ -56,6 +58,10 @@
   let sequenceFeedbackDrafts = $state<Record<string, string>>({});
   let previouslySelected = '';
   let content = $derived(document?.artifacts?.[selected]);
+  let liveClassPreview = $derived(
+    selected === 'class_diagram' ? classPreview ?? null : null
+  );
+  let displayContent = $derived(liveClassPreview?.puml ?? content);
   let fileArtifact = $derived(fileArtifacts[selected]);
   let implementationStages = $derived(
     Object.keys(fileArtifacts).filter((stage) => Boolean(fileArtifacts[stage]))
@@ -71,6 +77,8 @@
     Object.keys(document?.artifacts ?? {})
       .filter((key) => key in artifactLabels && artifactPresent(document?.artifacts?.[key]))
       .concat(Object.keys(fileArtifacts))
+      .concat(classPreview ? ['class_diagram'] : [])
+      .filter((stage, index, stages) => stages.indexOf(stage) === index)
   );
 
   $effect(() => {
@@ -89,6 +97,7 @@
     if (!appId || !selected) return;
     versions = [];
     versionsError = '';
+    if (liveClassPreview) return;
     const loader = fileArtifacts[selected] ? getFileArtifactVersions : getVersions;
     loader(appId, selected)
       .then((result) => (versions = result.versions))
@@ -226,6 +235,10 @@
 
   function diagramImageUrl(stage: string) {
     const encodedAppId = encodeURIComponent(appId);
+    if (stage === 'class_diagram' && liveClassPreview) {
+      const commandId = encodeURIComponent(liveClassPreview.command_id);
+      return `/api/workspace/apps/${encodedAppId}/commands/${commandId}/previews/class_diagram/image.svg?revision=${liveClassPreview.revision}`;
+    }
     if (stage === 'deployment_diagram') {
       return `/api/apps/${encodedAppId}/stages/deployment_diagram/views/${deploymentView}/image.svg`;
     }
@@ -281,22 +294,29 @@
       ['evidence', 'Evidence']
     ] as item}
       <button
-        class="focus-ring flex-1 border-b-2 px-1 py-2.5 text-[11px] font-semibold {tab === item[0]
+        class="focus-ring flex-1 border-b-2 px-1 py-2.5 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 {tab === item[0]
           ? 'border-[#1f5d45] text-[#1f5d45]'
           : 'border-transparent text-[#7c7e75]'}"
         onclick={() => (tab = item[0] as typeof tab)}
+        disabled={Boolean(liveClassPreview) && item[0] !== 'artifact'}
       >{item[1]}</button>
     {/each}
   </div>
 
   <div class="scrollbar-thin flex-1 overflow-auto bg-[#fbfbf8] p-4 md:p-5">
     <div class="mx-auto w-full max-w-6xl">
-    {#if !content && !fileArtifact}
+    {#if !displayContent && !fileArtifact}
       <div class="mt-16 text-center text-[#898b83]">
         <FileText class="mx-auto mb-3" size={25} strokeWidth={1.5} />
         <p class="text-xs">This artifact has not been generated yet.</p>
       </div>
     {:else if tab === 'artifact'}
+      {#if liveClassPreview}
+        <div class="mb-4 rounded-xl border border-[#b8d7c5] bg-[#eef8f1] px-3 py-2 text-xs leading-5 text-[#24553d]" role="status">
+          <strong>Generating the class diagram</strong>
+          <span class="ml-1">{liveClassPreview.completed}/{liveClassPreview.total || '?'} · {liveClassPreview.unit || liveClassPreview.phase}</span>
+        </div>
+      {/if}
       {#if selected === 'deployment_diagram' && document?.artifact_metadata?.deployment_diagram?.readOnly}
         <div class="mb-4 rounded-xl border border-[#e3c98b] bg-[#fff8e7] p-3 text-xs leading-5 text-[#755b24]" role="status">
           <strong class="block">Legacy deployment plan is read-only</strong>
@@ -481,13 +501,13 @@
           {/if}
         </div>
       {:else}
-        <ArtifactVisualization stage={selected} value={content} />
+        <ArtifactVisualization stage={selected} value={displayContent} />
       {/if}
       <details class="mt-4 rounded-xl border border-[#e1e1db] bg-white">
         <summary class="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-[11px] font-semibold text-[#65675f]">
           <Braces size={13} /> Raw source
         </summary>
-        <pre class="prose-json overflow-auto border-t border-[#ecece7] p-3">{rawContent(content)}</pre>
+        <pre class="prose-json overflow-auto border-t border-[#ecece7] p-3">{rawContent(displayContent)}</pre>
       </details>
       {/if}
     {:else if tab === 'validation'}

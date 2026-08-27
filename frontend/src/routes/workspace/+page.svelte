@@ -7,8 +7,8 @@
   import ChatTimeline from '$lib/components/ChatTimeline.svelte';
   import Composer from '$lib/components/Composer.svelte';
   import StageRail from '$lib/components/StageRail.svelte';
-  import { connectEvents, getArtifacts, getCloudOptions, getFileArtifact, getWorkspace, listApps, saveDeploymentPreferences, sendCommand } from '$lib/api';
-  import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, Stage, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
+  import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getWorkspace, listApps, saveDeploymentPreferences, sendCommand } from '$lib/api';
+  import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, LiveDiagramPreview, Stage, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
   import { errorMessage } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -33,6 +33,8 @@
   let error = $state('');
   let source: EventSource | null = null;
   let artifactRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let classPreview = $state<LiveDiagramPreview | null>(null);
+  let previewOpenedForCommand = '';
   let timelineScroller = $state<HTMLDivElement>();
   let followTimeline = $state(true);
   let initialized = false;
@@ -148,11 +150,17 @@
     try {
       const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
       events = snapshot.events;
+      classPreview = null;
+      previewOpenedForCommand = '';
       command = snapshot.command ?? null;
       deploymentPreferences = snapshot.deployment_preferences ?? null;
       currentStage = (command?.stage ?? snapshot.current_stage ?? 'requirements') as Stage;
       const loadedFileArtifacts = await loadFileArtifacts(id);
       applyArtifactSnapshot(document, loadedFileArtifacts, true);
+      const previewEvent = [...events].reverse().find(
+        (event) => event.metadata?.progress_event === 'classDiagramPreviewUpdated'
+      );
+      if (previewEvent?.command_id) void refreshClassPreview(id, previewEvent.command_id, false);
       connect(id);
     } catch (reason) {
       error = errorMessage(reason);
@@ -170,12 +178,37 @@
       (event) => {
         connected = true;
         if (!events.some((item) => item.event_id === event.event_id)) events = [...events, event];
+        if (
+          event.metadata?.progress_event === 'classDiagramPreviewUpdated' &&
+          event.command_id
+        ) {
+          void refreshClassPreview(id, event.command_id, true);
+        }
         if (event.kind !== 'progress') void refreshState(id);
         else if (event.stage === 'implementation') scheduleArtifactRefresh(id);
       },
       () => (connected = false)
     );
     source.onopen = () => (connected = true);
+  }
+
+  async function refreshClassPreview(id: string, commandId: string, reveal: boolean) {
+    try {
+      const preview = await getClassDiagramPreview(id, commandId);
+      if (id !== appId) return;
+      if (
+        classPreview?.command_id === preview.command_id &&
+        classPreview.revision >= preview.revision
+      ) return;
+      classPreview = preview;
+      if (reveal && previewOpenedForCommand !== commandId) {
+        previewOpenedForCommand = commandId;
+        selectedArtifact = 'class_diagram';
+        if (window.innerWidth >= 900) artifactOpen = true;
+      }
+    } catch {
+      // A terminal or restarted command may have already released its preview.
+    }
   }
 
   async function refreshState(id = appId) {
@@ -223,6 +256,7 @@
     artifacts = document;
     fileArtifacts = files;
     artifactSignatures = nextSignatures;
+    if (artifactPresent(document.artifacts.class_diagram)) classPreview = null;
 
     if (initial) {
       if (!nextSignatures[selectedArtifact]) {
@@ -418,6 +452,7 @@
             document={artifacts}
             {fileArtifacts}
             {events}
+            {classPreview}
             selected={selectedArtifact}
             onSelect={reviewArtifact}
             onSequenceFeedbackSubmit={submitSequenceFeedback}

@@ -11,6 +11,10 @@ CASE_ROOT = ROOT / "evaluation" / "baselines" / "course-registration-cases"
 HARNESS_CASE_ROOT = ROOT / "evaluation" / "checkpoint_e2e" / "cases"
 GOLD_ROOT = CASE_ROOT / "goldset"
 RUN_ROOT = ROOT / "artifacts" / "checkpoint-e2e"
+# Experiment output is deliberately separate from the frozen goldset.  The
+# directory is stable so repeated local evaluation does not leave a collection
+# of timestamped run directories behind.
+CURRENT_EXPERIMENT_ROOT = RUN_ROOT / "current"
 
 CHECKPOINTS = (
     "input",
@@ -124,6 +128,33 @@ def snapshot_path(root: Path, checkpoint: str) -> Path:
 
 def oracle_path(root: Path, checkpoint: str) -> Path:
     return root / "oracles" / f"{checkpoint}.json"
+
+
+def current_experiment_path(case_id: str) -> Path:
+    """Return the one replaceable experiment destination for a case."""
+
+    if case_id not in CASES:
+        raise ValueError(f"Unknown gold case: {case_id}")
+    return CURRENT_EXPERIMENT_ROOT / case_id
+
+
+def current_chain_path(case_id: str) -> Path:
+    """Return the current sequential candidate chain for a case."""
+
+    return current_experiment_path(case_id) / "chain"
+
+
+def current_stage_sample_path(case_id: str, source_checkpoint: str) -> Path:
+    """Return the current isolated sample destination for one transition."""
+
+    target = checkpoint_after(source_checkpoint)
+    return current_experiment_path(case_id) / "stages" / _stage_name(
+        source_checkpoint, target
+    )
+
+
+def _stage_name(source_checkpoint: str, target_checkpoint: str) -> str:
+    return f"{CHECKPOINTS.index(target_checkpoint):02d}-{source_checkpoint}-to-{target_checkpoint}"
 
 
 def load_gold(case_id: str, checkpoint: str) -> tuple[dict[str, Any], dict[str, Any]]:

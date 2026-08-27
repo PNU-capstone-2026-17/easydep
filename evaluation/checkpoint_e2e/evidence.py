@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import tempfile
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -8,7 +11,6 @@ from typing import Any
 import hcl2
 
 from app.core.orchestration.iac_renderer import render_open_tofu
-from app.design.services.common.plantuml import render_plantuml
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from evaluation.easydep.requirements.evaluate import (
     preclassified_errors,
@@ -16,6 +18,36 @@ from evaluation.easydep.requirements.evaluate import (
 )
 
 from .catalog import digest, write_json
+from .oracles import case_expectation_issues, product_contract_issues
+
+
+def render_plantuml(puml_text: str, image_format: str = "png") -> bytes:
+    """Render checkpoint evidence with the user's local, offline ``puml`` tool."""
+
+    command = shutil.which("puml")
+    if not command:
+        raise RuntimeError(
+            "Local PlantUML renderer 'puml' is not installed or is not on PATH"
+        )
+    with tempfile.TemporaryDirectory(prefix="easydep-checkpoint-puml-") as directory:
+        source = Path(directory) / "diagram.puml"
+        source.write_text(puml_text, encoding="utf-8")
+        result = subprocess.run(
+            [command, str(source), image_format],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+        target = source.with_suffix(f".{image_format}")
+        if result.returncode != 0 or not target.is_file():
+            detail = "\n".join(
+                value.strip() for value in (result.stdout, result.stderr)
+                if value.strip()
+            )
+            raise RuntimeError(detail or "Local PlantUML rendering failed")
+        return target.read_bytes()
 
 
 def _ids(items: Any, *keys: str) -> list[str]:
@@ -157,10 +189,16 @@ def validate_state(checkpoint: str, state: dict[str, Any]) -> dict[str, Any]:
             errors.append("deployment provider projection is not completed")
     if checkpoint == "usecase_diagram":
         errors.extend(blocking_issues(state, through="relationships"))
+    errors.extend(product_contract_issues(checkpoint, state))
+    errors.extend(case_expectation_issues(checkpoint, state))
     return {"status": "failed" if errors else "passed", "errors": errors, "warnings": warnings}
 
 
 def write_outputs(checkpoint: str, state: dict[str, Any], output: Path) -> dict[str, Any]:
+    # A resumed checkpoint may replace a previous failed attempt whose output
+    # had more diagrams or IaC files. Evidence is a snapshot, not an overlay.
+    if output.exists():
+        shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
     written: list[str] = []
 

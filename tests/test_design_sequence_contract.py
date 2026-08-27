@@ -410,13 +410,20 @@ class DropController <<Control>> {
 
     normalized = normalize_sequence_contracts(model, class_diagram)
 
-    assert [message["label"] for message in normalized["Messages"]] == [
+    assert [
+        message["label"] for message in normalized["Messages"]
+        if message["type"] != "return"
+    ] == [
         "requestDrop(sectionId:String)",
         "dropSection(studentId:String,sectionId:String)",
     ]
+    assert [
+        message["label"] for message in normalized["Messages"]
+        if message["type"] == "return"
+    ] == ["void", "void"]
 
 
-def test_normalizer_drops_blank_return_for_void_receiver_method() -> None:
+def test_normalizer_restores_explicit_returns_for_void_receiver_methods() -> None:
     class_diagram = """@startuml
 class DepartmentBoundary <<Boundary>> { + deleteDepartment(departmentId : String): void }
 class DepartmentController <<Control>> { + deleteDepartment(departmentId : String): void }
@@ -437,7 +444,11 @@ DepartmentBoundary ..> DepartmentController
 
     normalized = normalize_sequence_contracts(model, class_diagram)
 
-    assert not [message for message in normalized["Messages"] if message["type"] == "return"]
+    returns = [
+        message for message in normalized["Messages"] if message["type"] == "return"
+    ]
+    assert [message["label"] for message in returns] == ["void", "void"]
+    assert {message["reply_to"] for message in returns} == {"call-1", "call-2"}
 
 
 def test_llm_extraction_receives_the_allowed_interaction_routes() -> None:
@@ -908,11 +919,21 @@ OrderApi ..> OrderControl
 
     result = extract_sequence_diagrams(specification, class_diagram)
     diagram = result["Diagrams"][0]
-    assert [message["label"] for message in diagram["Messages"]] == [
+    assert [
+        message["label"] for message in diagram["Messages"]
+        if message["type"] != "return"
+    ] == [
         "createOrder()",
         "processOrder()",
     ]
-    assert [message["step_ids"] for message in diagram["Messages"]] == [
+    assert [
+        message["label"] for message in diagram["Messages"]
+        if message["type"] == "return"
+    ] == ["void", "void"]
+    assert [
+        message["step_ids"] for message in diagram["Messages"]
+        if message["type"] != "return"
+    ] == [
         ["UC1:main:1"],
         ["UC1:main:2"],
     ]
@@ -1000,7 +1021,10 @@ OrderApi ..> OrderControl
         result = extract_sequence_diagrams(specification, class_diagram)
 
     llm.assert_not_called()
-    assert result["Diagrams"][0]["Messages"][-1]["label"] == "persistOrder()"
+    assert [
+        message["label"] for message in result["Diagrams"][0]["Messages"]
+        if message["type"] != "return"
+    ][-1] == "persistOrder()"
 
 
 def test_rule_based_generation_emits_return_for_non_void_method():
@@ -1421,6 +1445,7 @@ CourseForm ..> CatalogController
     assert [
         (message["target"], message["label"])
         for message in result["Diagrams"][0]["Messages"]
+        if message["type"] != "return"
     ] == [
         ("CourseForm", "submitCourse(courseData:CourseData)"),
         ("CatalogController", "listCatalog()"),
@@ -1911,7 +1936,7 @@ def test_sequence_check_keeps_progress_when_a_later_contract_finding_is_revealed
         if model.get("phase") == "return":
             return [
                 Finding(
-                    "sequence.nonvoid-call-requires-return",
+                    "sequence.call-requires-return",
                     "return is missing",
                     "A -> B",
                 )

@@ -12,11 +12,13 @@ import logging
 import re
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.traceability import constraints_for_use_case
+from app.design.schemas.class_model import BCEModel
 from app.design.services.common.structured import StructuredLlmError, parse_structured
 from app.design.services.sequence_diagram.methods import (
     is_complete_method_call,
@@ -64,8 +66,10 @@ class SequenceArgumentBinding(BaseModel):
 
     parameter: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     type: str = Field(min_length=1)
-    source_kind: Literal["input", "call_result", "state", "literal"]
-    #: call_result이면 선행 call_id, input이면 step_id, 나머지는 설명 가능한 식별자.
+    source_kind: Literal[
+        "input", "precondition", "call_parameter", "call_result", "state", "literal",
+    ]
+    #: input/call_parameter는 ``id#parameter``, call_result는 선행 call_id를 쓴다.
     source_ref: str = Field(min_length=1)
 
 
@@ -375,14 +379,30 @@ def _collaboration_argument_bindings(
         # The persisted collaboration deliberately has one neutral sourceRef
         # vocabulary.  The old renderer needs a display category, so derive it
         # only from an already-existing id; never introduce an input binding.
-        source_kind = "call_result" if _source_ref_call_id(source_ref, call_ids) else (
-            "input" if source_ref.partition("#")[0] in step_refs else "state"
-        )
+        source_id, separator, source_value = source_ref.partition("#")
+        source_call_id = _source_ref_call_id(source_ref, call_ids)
+        if source_call_id and (
+            source_value == "result" or source_value.startswith("result.")
+        ):
+            source_kind = "call_result"
+            projected_ref = source_call_id if source_value == "result" else source_ref
+        elif source_call_id and separator:
+            source_kind = "call_parameter"
+            projected_ref = source_ref
+        elif source_id in step_refs and separator:
+            source_kind = "input"
+            projected_ref = source_ref
+        elif re.fullmatch(r"[^:\s]+:precondition:\d+", source_ref):
+            source_kind = "precondition"
+            projected_ref = source_ref
+        else:
+            source_kind = "state"
+            projected_ref = source_ref
         result.append({
             "parameter": parameter["name"],
             "type": parameter["type"],
             "source_kind": source_kind,
-            "source_ref": source_ref,
+            "source_ref": projected_ref,
         })
     return result
 
@@ -519,8 +539,7 @@ def _collaboration_messages(
         })
         for child_id in children.get(call_id, []):
             append_call(child_id, target)
-        if operation["return_type"].casefold() != "void":
-            messages.append(_return_message(messages[-1] if not children.get(call_id) else {
+        messages.append(_return_message(messages[-1] if not children.get(call_id) else {
                 "source": caller or target,
                 "target": target,
                 "step_ids": step_refs,
@@ -581,7 +600,7 @@ def _collaboration_sequence_collection(
         for item in requested.get("use_cases") or []
         if isinstance(item, dict)
     }
-    extension_fragments: dict[str, dict[str, str]] = {}
+    extension_fragments: dict[str, dict[str, dict[str, str]]] = defaultdict(dict)
     for specification in requested.get("use_case_specs") or []:
         if not isinstance(specification, dict):
             continue
@@ -601,8 +620,41 @@ def _collaboration_sequence_collection(
             }
             for step in extension.get("handling_steps") or []:
                 if isinstance(step, dict) and step.get("sub_step") is not None:
-                    extension_fragments[
+                    extension_fragments[use_case_id][
                         f"{use_case_id}:extension:{label}:{step['sub_step']}"
+                    ] = fragment
+    for relationship in (requested.get("relationships") or {}).get("extends") or []:
+        if not isinstance(relationship, dict):
+            continue
+        base_id = str(relationship.get("base_use_case_id") or "").strip()
+        extending_id = str(relationship.get("extending_use_case_id") or "").strip()
+        condition = str(relationship.get("condition") or "").strip()
+        if not base_id or not extending_id or not condition:
+            continue
+        fragment = {
+            "id": f"{base_id}:extend:{extending_id}",
+            "type": "opt",
+            "branch": "main",
+            "condition": condition,
+        }
+        extending_specification = next((
+            item for item in requested.get("use_case_specs") or []
+            if isinstance(item, dict)
+            and str(item.get("use_case_id") or "").strip() == extending_id
+        ), {})
+        for step in extending_specification.get("main_scenario") or []:
+            if isinstance(step, dict) and step.get("step_number") is not None:
+                extension_fragments[base_id][
+                    f"{extending_id}:main:{step['step_number']}"
+                ] = fragment
+        for extension in extending_specification.get("extensions") or []:
+            if not isinstance(extension, dict):
+                continue
+            label = str(extension.get("label") or "").strip()
+            for step in extension.get("handling_steps") or []:
+                if label and isinstance(step, dict) and step.get("sub_step") is not None:
+                    extension_fragments[base_id][
+                        f"{extending_id}:extension:{label}:{step['sub_step']}"
                     ] = fragment
     main_step_order = {
         (str(specification.get("use_case_id") or "").strip(), str(step.get("step_number"))): position
@@ -661,7 +713,7 @@ def _collaboration_sequence_collection(
         # execution as independent diagrams.
         use_case_id = normalized_scope[0]
         messages, participants = _collaboration_messages(
-            collaboration, operations, use_case_id, extension_fragments,
+            collaboration, operations, use_case_id, extension_fragments[use_case_id],
         )
         diagram = diagrams.get(use_case_id)
         if diagram is None:
@@ -703,6 +755,105 @@ def _collaboration_sequence_collection(
             else collaboration.get("use_case_ids") or []
         )[1:]
     }
+
+    specifications = {
+        str(item.get("use_case_id") or "").strip(): item
+        for item in requested.get("use_case_specs") or []
+        if isinstance(item, dict) and str(item.get("use_case_id") or "").strip()
+    }
+    actors = {
+        str(item.get("id") or "").strip(): str(item.get("primary_actor") or "").strip()
+        for item in requested.get("use_cases") or []
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+
+    def scoped_projection(identifier: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
+        specification = specifications.get(identifier, {})
+        first_step = next((
+            f"{identifier}:main:{step.get('step_number')}"
+            for step in specification.get("main_scenario") or []
+            if isinstance(step, dict) and step.get("step_number") is not None
+        ), f"{identifier}:root")
+        for collaboration in ordered_collaborations:
+            if not isinstance(collaboration, dict):
+                continue
+            scope = collaboration.get("useCaseIds")
+            if not isinstance(scope, list) or identifier not in scope[1:]:
+                continue
+            selected = [
+                call for call in collaboration.get("calls") or []
+                if isinstance(call, dict)
+                and any(
+                    str(step_ref).startswith(f"{identifier}:")
+                    for step_ref in call.get("stepRefs") or []
+                )
+            ]
+            if not selected:
+                continue
+            id_map = {
+                str(call.get("callId") or "").strip():
+                f"{identifier}:scoped:call:{position}"
+                for position, call in enumerate(selected, start=1)
+            }
+            projected_calls: list[dict[str, Any]] = []
+            for call in selected:
+                old_id = str(call.get("callId") or "").strip()
+                old_parent = str(call.get("parentCallId") or "").strip()
+                bindings: list[dict[str, str]] = []
+                for binding in call.get("argumentBindings") or []:
+                    if not isinstance(binding, dict):
+                        continue
+                    source_ref = str(binding.get("sourceRef") or "").strip()
+                    source_id, separator, source_value = source_ref.partition("#")
+                    if source_id in id_map:
+                        source_ref = id_map[source_id] + (
+                            f"#{source_value}" if separator else ""
+                        )
+                    elif separator:
+                        source_ref = f"{first_step}#{binding.get('parameter')}"
+                    bindings.append({
+                        "parameter": str(binding.get("parameter") or ""),
+                        "sourceRef": source_ref,
+                    })
+                projected_calls.append({
+                    "callId": id_map[old_id],
+                    "parentCallId": id_map.get(old_parent),
+                    "receiverOperationId": _receiver_operation_id(call),
+                    "stepRefs": [
+                        str(step_ref) for step_ref in call.get("stepRefs") or []
+                        if str(step_ref).startswith(f"{identifier}:")
+                    ],
+                    "argumentBindings": bindings,
+                })
+            projected = {
+                "collaborationId": f"{identifier}:scoped",
+                "useCaseIds": [identifier],
+                "entryActor": (
+                    str(specification.get("primary_actor") or "").strip()
+                    or actors.get(identifier, "")
+                ),
+                "calls": projected_calls,
+            }
+            return _collaboration_messages(
+                projected, operations, identifier, extension_fragments[identifier],
+            )
+        return None
+
+    for identifier in requested_ids:
+        if identifier in diagrams or identifier not in scoped_only_ids:
+            continue
+        projection = scoped_projection(identifier)
+        if projection is None:
+            continue
+        messages, participants = projection
+        diagrams[identifier] = {
+            "use_case_id": identifier,
+            "use_case_name": names.get(identifier, ""),
+            "Participants": participants,
+            "Messages": messages,
+            "UnresolvedSteps": [],
+            "NarrativeSteps": [],
+        }
     missing = [
         identifier for identifier in requested_ids
         if identifier not in diagrams and identifier not in scoped_only_ids
@@ -712,6 +863,62 @@ def _collaboration_sequence_collection(
             "class model is stale for sequence regeneration; missing Collaborations for "
             + ", ".join(missing)
         )
+
+    # An extending use case owns its own actor-entry Collaboration.  Sequence
+    # composition, rather than the class call graph, places a copy of that
+    # already-accepted flow at the base extension point.  This preserves BCE
+    # dependencies (no invented Boundary-to-Boundary call) while showing the
+    # conditional behavior in the base diagram.
+    for relationship in (requested.get("relationships") or {}).get("extends") or []:
+        if not isinstance(relationship, dict):
+            continue
+        base_id = str(relationship.get("base_use_case_id") or "").strip()
+        extending_id = str(relationship.get("extending_use_case_id") or "").strip()
+        condition = str(relationship.get("condition") or "").strip()
+        if (
+            not base_id
+            or not extending_id
+            or not condition
+            or base_id not in diagrams
+            or extending_id not in diagrams
+        ):
+            continue
+        base_diagram = diagrams[base_id]
+        extending_diagram = diagrams[extending_id]
+        aliases = {
+            str(item.get("alias") or item.get("name") or "")
+            for item in base_diagram["Participants"]
+            if isinstance(item, dict)
+        }
+        base_diagram["Participants"].extend(
+            deepcopy(item)
+            for item in extending_diagram["Participants"]
+            if str(item.get("alias") or item.get("name") or "") not in aliases
+        )
+        fragment = {
+            "id": f"{base_id}:extend:{extending_id}",
+            "type": "opt",
+            "branch": "main",
+            "condition": condition,
+        }
+        extension_messages = deepcopy(extending_diagram["Messages"])
+        for message in extension_messages:
+            message["fragments"] = [fragment, *(message.get("fragments") or [])]
+            message["use_case_ids"] = [base_id]
+        extension_point = str(relationship.get("extension_point") or "").strip()
+        anchor = f"{base_id}:{extension_point}" if extension_point else ""
+        insertion = len(base_diagram["Messages"])
+        if anchor:
+            anchored = [
+                index for index, message in enumerate(base_diagram["Messages"])
+                if anchor in {
+                    str(step).strip() for step in message.get("step_ids") or []
+                }
+            ]
+            if anchored:
+                insertion = max(anchored) + 1
+        base_diagram["Messages"][insertion:insertion] = extension_messages
+
     ordered_ids = [identifier for identifier in requested_ids if identifier in diagrams] or list(diagrams)
     return SequenceDiagramCollection(
         Diagrams=[diagrams[identifier] for identifier in ordered_ids],
@@ -905,22 +1112,23 @@ do not turn them into an actor message or invent a method, participant, or step.
   an ASCII letter or underscore and contain only ASCII letters, digits, or
   underscores in the method name, and the parentheses are mandatory. Never put a
   step number or sequence number in `label`; `step_ids` carries flow ordering separately.
-- Every sync or self call to a method with a non-void declared return type MUST
-  have exactly one corresponding return message. Its `label` is mandatory and
-  MUST exactly match the return type declared after `:` on the corresponding
-  receiver-class method. Never use a narrative result label. A void method has
-  no return message.
+- Every sync or self call MUST have exactly one corresponding return message.
+  Its `label` is mandatory and MUST exactly match the return type declared after
+  `:` on the corresponding receiver-class method. Use the literal `void` for a
+  void method; never invent a narrative result label.
   Async calls are fire-and-forget and MUST NOT have a corresponding return; use
   sync instead when the caller consumes the declared result.
 - `arguments` must contain exactly one binding per parameter declared in the
   call label, and [] for calls without parameters and for non-call events. Copy
-  the parameter name and type exactly. Set `source_kind` to input, call_result,
-  state, or literal. For call_result, `source_ref` is a preceding call_id whose
+  the parameter name and type exactly. Set `source_kind` to input, precondition,
+  call_parameter, call_result, state, or literal. For input and call_parameter,
+  preserve the qualified `<step-or-call-id>#<parameter>` reference. For
+  call_result, `source_ref` is a preceding call_id whose
   declared return type equals the parameter type and whose caller is the source
   of the consuming call. A participant cannot use a result returned to another
   participant unless an explicit intervening message transfers that value. For
-  input, `source_ref` is an exact step_id. Never claim a value source that the
-  preceding interaction does not provide.
+  input, its step-id prefix must exist in the specification. Never claim a value
+  source that the preceding interaction does not provide.
 - Do not emit `activate` or `deactivate` events. The shared sequence template
   uses fixed lifelines without activation rectangles; show processing through
   regular sync/self calls and grounded returns instead.
@@ -993,7 +1201,7 @@ do not turn them into an actor message or invent a method, participant, or step.
     extend the class diagram to make a message valid,
 (g) every non-actor message source has already been reached by an earlier call,
     so no Boundary, Control, Entity, or Database starts acting spontaneously,
-(h) every non-void sync/self call has exactly one matching return, and every alt
+(h) every sync/self call has exactly one matching return, and every alt
     contains both main and else branches,
 (i) call_id/reply_to links are unique and exact, every parameter has a grounded
     argument binding owned by the consuming caller, actor-led steps contain an
@@ -1351,18 +1559,14 @@ def normalize_sequence_contracts(
                 reply_to = candidates[0]
                 message["reply_to"] = reply_to
                 message["call_id"] = ""
-                expected_return = declared_return_type(calls[reply_to])
-                if expected_return and expected_return.lower() != "void":
+                expected_return = declared_return_type(calls[reply_to]) or "void"
+                if expected_return:
                     message["label"] = expected_return
                     message["step_ids"] = list(calls[reply_to].get("step_ids") or [])
                     message["use_case_ids"] = list(
                         calls[reply_to].get("use_case_ids") or []
                     )
                     used_replies.add(reply_to)
-                else:
-                    # A void method cannot have a return message.  Removing it
-                    # is contract restoration, not a semantic choice.
-                    message["_drop"] = True
             else:
                 # There is no grounded call for this return.  Leave it out
                 # rather than retaining a false call-return relation.
@@ -1370,12 +1574,10 @@ def normalize_sequence_contracts(
         normalized_messages = [message for message in messages if not message.pop("_drop", False)]
         for call_id in call_order:
             call = calls[call_id]
-            expected_return = declared_return_type(call)
+            expected_return = declared_return_type(call) or "void"
             if (
                 call_id not in used_replies
                 and str(call.get("type") or "").lower() in {"sync", "self"}
-                and expected_return
-                and expected_return.lower() != "void"
             ):
                 normalized_messages.append(_return_message(call, expected_return))
         ordered_messages = normalize_sequence_entry_order(
@@ -1830,6 +2032,8 @@ def _class_model_payload(class_model: Any) -> Any:
     """Return a JSON-compatible projection of the persisted class contract."""
     if isinstance(class_model, BaseModel):
         return class_model.model_dump(by_alias=True)
+    if isinstance(class_model, dict) and "Collaborations" in class_model:
+        return BCEModel.model_validate(class_model).model_dump(by_alias=True)
     return class_model
 
 
@@ -2389,11 +2593,11 @@ def _participant(class_item: dict[str, Any]) -> dict[str, str]:
 
 
 def _return_message(call: dict[str, Any], return_type: str) -> dict[str, Any]:
-    """Build the deterministic reply for a synchronous non-void call."""
+    """Build the deterministic reply for a synchronous call, including void."""
     return {
         "source": call["target"],
         "target": call["source"],
-        "label": return_type.strip(),
+        "label": return_type.strip() or "void",
         "type": "return",
         "fragments": list(call.get("fragments") or []),
         "use_case_ids": list(call.get("use_case_ids") or []),
@@ -2679,8 +2883,8 @@ def _assemble_deterministic_diagrams(
                 message_type,
             )
             messages.append(call)
-            if return_type and return_type.strip().lower() != "void":
-                messages.append(_return_message(call, return_type))
+            if message_type in {"sync", "self"}:
+                messages.append(_return_message(call, return_type or "void"))
             return True
 
         for plan_index, plan in enumerate(use_case_plans):

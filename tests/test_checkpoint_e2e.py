@@ -5,14 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from evaluation.checkpoint_e2e import catalog
+from evaluation.checkpoint_e2e import catalog, graph
 from evaluation.checkpoint_e2e.catalog import CHECKPOINTS, digest, write_json
-from evaluation.checkpoint_e2e.evidence import semantic_signature, validate_state
+from evaluation.checkpoint_e2e.evidence import semantic_signature, validate_state, write_outputs
 from evaluation.checkpoint_e2e.graph import (
     generate_candidate,
     promote_candidate,
     run_all,
     run_one,
+    run_stage_samples,
     validate_candidate,
 )
 from evaluation.checkpoint_e2e.transitions import run_transition
@@ -38,6 +39,38 @@ def test_checkpoint_order_has_only_adjacent_successors() -> None:
     assert catalog.checkpoint_after("erd") == "deployment_diagram"
     with pytest.raises(ValueError, match="no successor"):
         catalog.checkpoint_after("deployment_diagram")
+
+
+def test_checkpoint_output_replaces_stale_sequence_gallery(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "evaluation.checkpoint_e2e.evidence.render_plantuml",
+        lambda _source, _format: b"<svg/>",
+    )
+    output = tmp_path / "output"
+    def diagram(identifier: str) -> dict:
+        return {
+            "use_case_id": identifier,
+            "use_case_name": identifier,
+            "Participants": [],
+            "Messages": [],
+            "UnresolvedSteps": [],
+            "NarrativeSteps": [],
+        }
+
+    write_outputs(
+        "sequence_diagram",
+        {"sequence_diagram_model": {"Diagrams": [diagram("UC1"), diagram("UC2")]}},
+        output,
+    )
+    write_outputs(
+        "sequence_diagram",
+        {"sequence_diagram_model": {"Diagrams": [diagram("UC1")]}},
+        output,
+    )
+
+    assert sorted(path.name for path in (output / "gallery").iterdir()) == [
+        "01-UC1.puml", "01-UC1.svg",
+    ]
 
 
 def test_e1_harness_case_adds_explicit_deployment_contract() -> None:
@@ -294,6 +327,211 @@ def test_run_all_resume_reuses_matching_completed_job(tmp_path, monkeypatch) -> 
 
     assert result["verdict"] == "passed"
     assert result["jobs"] == [manifest]
+
+
+def test_current_chain_resumes_from_its_own_previous_state_and_replaces_safely(
+    tmp_path, monkeypatch
+) -> None:
+    checkpoints = ("input", "requirements", "use_cases")
+    monkeypatch.setattr(graph, "CHECKPOINTS", checkpoints)
+    monkeypatch.setattr(
+        graph,
+        "case_definition",
+        lambda _case_id: {
+            "caseId": "test",
+            "requirements": ["A requirement"],
+            "resourceConstraintsText": "",
+            "initialCloudConstraints": {},
+            "deploymentPlanningFacts": [],
+            "inputPath": "input.json",
+        },
+    )
+    monkeypatch.setattr(graph, "initial_candidate_state", lambda _case: {"seed": True})
+    monkeypatch.setattr(
+        graph,
+        "semantic_signature",
+        lambda checkpoint, state: {"checkpoint": checkpoint, "state": state},
+    )
+    monkeypatch.setattr(
+        graph,
+        "validate_state",
+        lambda _checkpoint, _state: {"status": "passed", "errors": []},
+    )
+    calls = []
+
+    def transition(source, state, record):
+        calls.append((source, dict(state)))
+        target = "requirements" if source == "input" else "use_cases"
+        record(f"{target}.generate", state, {target: True}, 0.1)
+        return target, {**state, f"{target}_from_candidate": True}
+
+    monkeypatch.setattr(graph, "run_transition", transition)
+    destination = tmp_path / "current" / "test" / "chain"
+
+    first = generate_candidate("test", destination, through="requirements")
+    resumed = generate_candidate(
+        "test", destination=destination, through="use_cases", resume=True
+    )
+
+    assert first["status"] == "in_progress"
+    assert resumed["status"] == "complete"
+    assert calls[1] == (
+        "requirements",
+        {"seed": True, "requirements_from_candidate": True},
+    )
+    assert resumed["schemaVersion"] == "easydep-checkpoint-goldset"
+    assert validate_candidate(destination)["status"] == "passed"
+
+    write_json(destination / "old-current.json", {"must": "go"})
+    generate_candidate("test", destination, through="requirements", replace=True)
+
+    assert not (destination / "old-current.json").exists()
+    assert [path.name for path in destination.parent.iterdir()] == ["chain"]
+
+
+def test_current_chain_can_restart_from_a_verified_checkpoint(
+    tmp_path, monkeypatch
+) -> None:
+    checkpoints = ("input", "requirements", "use_cases", "specifications")
+    monkeypatch.setattr(graph, "CHECKPOINTS", checkpoints)
+    monkeypatch.setattr(
+        graph,
+        "case_definition",
+        lambda _case_id: {
+            "requirements": ["A requirement"],
+            "resourceConstraintsText": "",
+            "initialCloudConstraints": {},
+            "deploymentPlanningFacts": [],
+            "inputPath": "input.json",
+        },
+    )
+    monkeypatch.setattr(graph, "initial_candidate_state", lambda _case: {"seed": True})
+    monkeypatch.setattr(
+        graph,
+        "validate_state",
+        lambda _checkpoint, _state: {"status": "passed", "errors": []},
+    )
+    calls = []
+
+    def transition(source, state, _record):
+        calls.append(source)
+        target = checkpoints[checkpoints.index(source) + 1]
+        return target, {**state, target: calls.count(source)}
+
+    monkeypatch.setattr(graph, "run_transition", transition)
+    destination = tmp_path / "current" / "test" / "chain"
+    generate_candidate("test", destination, through="specifications")
+    write_json(destination / "failures" / "use_cases" / "state.json", {"stale": True})
+
+    manifest = generate_candidate(
+        "test",
+        destination,
+        resume=True,
+        restart_from="requirements",
+        through="specifications",
+    )
+
+    assert calls == [
+        "input",
+        "requirements",
+        "use_cases",
+        "requirements",
+        "use_cases",
+    ]
+    assert [item["id"] for item in manifest["checkpoints"]] == list(checkpoints)
+    assert not (destination / "failures").exists()
+    requirements = catalog.read_json(
+        destination / "snapshots" / "requirements" / "state.json"
+    )
+    use_cases = catalog.read_json(
+        destination / "snapshots" / "use_cases" / "state.json"
+    )
+    assert requirements["requirements"] == 1
+    assert use_cases["use_cases"] == 2
+
+
+def test_restart_requires_resume_and_a_later_target(tmp_path) -> None:
+    with pytest.raises(ValueError, match="existing candidate"):
+        generate_candidate(
+            "test", tmp_path / "candidate", restart_from="input", through="requirements"
+        )
+
+
+def test_current_chain_publishes_failure_evidence_without_leaving_staging(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(graph, "CHECKPOINTS", ("input", "requirements"))
+    monkeypatch.setattr(
+        graph,
+        "case_definition",
+        lambda _case_id: {
+            "caseId": "test",
+            "requirements": ["A requirement"],
+            "resourceConstraintsText": "",
+            "initialCloudConstraints": {},
+            "deploymentPlanningFacts": [],
+            "inputPath": "input.json",
+        },
+    )
+    monkeypatch.setattr(graph, "initial_candidate_state", lambda _case: {"seed": True})
+    monkeypatch.setattr(
+        graph,
+        "run_transition",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("transition failed")),
+    )
+    destination = tmp_path / "current" / "test" / "chain"
+
+    with pytest.raises(RuntimeError, match="transition failed"):
+        generate_candidate("test", destination, through="requirements")
+
+    manifest = catalog.read_json(destination / "manifest.json")
+    assert manifest["status"] == "failed"
+    assert not [path for path in destination.parent.iterdir() if "staging" in path.name]
+
+
+def test_current_stage_samples_reuse_only_matching_completed_samples(tmp_path, monkeypatch) -> None:
+    destination = tmp_path / "current" / "test" / "stages" / "01-input-to-requirements"
+    calls = []
+
+    def fake_run_one(case_id, source_checkpoint, *, output_root, run_id):
+        calls.append((case_id, source_checkpoint, output_root, run_id))
+        target = "requirements"
+        write_json(
+            output_root / run_id / "jobs" / "01-input-to-requirements" / "manifest.json",
+            {
+                "caseId": case_id,
+                "sourceCheckpoint": source_checkpoint,
+                "targetCheckpoint": target,
+                "verdict": "passed",
+            },
+        )
+        return {"root": str(output_root / run_id), "verdict": "passed"}
+
+    monkeypatch.setattr(graph, "run_one", fake_run_one)
+
+    first = run_stage_samples("test", "input", destination=destination, samples=3)
+    second = run_stage_samples(
+        "test", "input", destination=destination, samples=3, resume=True
+    )
+
+    assert first["root"] == str(destination)
+    assert second["root"] == str(destination)
+    assert first["sampleCount"] == 3
+    assert len(calls) == 3
+
+    write_json(destination / "old-current.json", {"must": "go"})
+    run_stage_samples("test", "input", destination=destination, samples=3, replace=True)
+
+    assert len(calls) == 6
+    assert not (destination / "old-current.json").exists()
+    assert [path.name for path in destination.parent.iterdir()] == [
+        "01-input-to-requirements"
+    ]
+    assert [path.name for path in destination.iterdir() if path.is_dir()] == [
+        "sample-01",
+        "sample-02",
+        "sample-03",
+    ]
 
 
 def test_promote_copies_only_canonical_gold_artifacts(tmp_path, monkeypatch) -> None:

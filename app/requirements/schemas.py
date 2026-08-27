@@ -391,6 +391,15 @@ class UseCaseSpec(BaseModel):
 # The relationship projection keeps display names for consumers, but every
 # relationship join is made through a stable ``use_case_id``.
 # ----------------------------------------------------------------------------
+class IncludeBaseStepRef(BaseModel):
+    """One existing base step selected for an existing-use-case include candidate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    use_case_id: str = Field(description="Stable ID copied from the candidate base-step options.")
+    step_ref: str = Field(description="Exact supplied main:<number> base step reference.")
+
+
 class IncludeSelection(BaseModel):
     """Semantic decision for one evidence-bounded shared-step candidate."""
 
@@ -403,6 +412,25 @@ class IncludeSelection(BaseModel):
         max_length=60,
         description="Concise shared behavior name; required only when approved.",
     )
+
+
+class ExistingIncludeSelection(BaseModel):
+    """Bound selection of an existing reusable use case and its mandatory bases."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    included_use_case_id: str = Field(description="Stable existing target ID copied from options.")
+    base_step_refs: list[IncludeBaseStepRef] = Field(
+        description="At least two supplied exact mandatory base steps from distinct use cases."
+    )
+
+
+class ExistingIncludeModel(BaseModel):
+    """Transient focused output for selecting existing reusable use cases."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    existing_includes: list[ExistingIncludeSelection] = Field(default_factory=list)
 
 
 class ExtendSelection(BaseModel):
@@ -429,8 +457,11 @@ class ExtendSelection(BaseModel):
     )
     condition: str = Field(
         min_length=1,
-        max_length=60,
-        description="Concise observable condition that activates the optional use case.",
+        max_length=120,
+        description=(
+            "Concise observable condition that activates the optional use case. The diagram "
+            "renderer wraps it across lines when needed."
+        ),
     )
 
 

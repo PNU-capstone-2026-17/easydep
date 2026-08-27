@@ -4,7 +4,14 @@ from __future__ import annotations
 import pytest
 
 from app.requirements.agent.steps import step4_diagram as s4
-from app.requirements.schemas import ExtendSelection, IncludeSelection, RelationshipModel
+from app.requirements.schemas import (
+    ExistingIncludeModel,
+    ExistingIncludeSelection,
+    ExtendSelection,
+    IncludeBaseStepRef,
+    IncludeSelection,
+    RelationshipModel,
+)
 
 
 def _actors() -> list[dict]:
@@ -131,6 +138,178 @@ def test_same_words_without_shared_covered_fr_do_not_form_include_candidate(monk
     assert rel["derived_use_cases"] == []
 
 
+def test_existing_use_case_can_be_included_from_different_requirement_steps(monkeypatch):
+    state = {
+        "actors": _actors(),
+        "classified": [
+            {"id": "FR-VIEW", "type": "FR", "text": "Inspect a published status."},
+            {"id": "FR-SUBMIT", "type": "FR", "text": "Submit a request."},
+            {"id": "FR-REPORT", "type": "FR", "text": "Open a report."},
+        ],
+        "use_cases": [
+            _use_case("UC-VIEW", "Inspect status", requirement_ids=["FR-VIEW"]),
+            _use_case("UC-SUBMIT", "Submit request", requirement_ids=["FR-SUBMIT"]),
+            _use_case("UC-REPORT", "Open report", requirement_ids=["FR-REPORT"]),
+        ],
+        "use_case_specs": [
+            _spec(
+                "UC-VIEW",
+                [
+                    {
+                        "step_number": 1,
+                        "sentence": "System presents the published status.",
+                        "covered_req_ids": ["FR-VIEW"],
+                    }
+                ],
+            ),
+            _spec(
+                "UC-SUBMIT",
+                [
+                    {
+                        "step_number": 2,
+                        "sentence": "Member inspects the published status before submitting.",
+                        "covered_req_ids": ["FR-SUBMIT"],
+                    }
+                ],
+            ),
+            _spec(
+                "UC-REPORT",
+                [
+                    {
+                        "step_number": 3,
+                        "sentence": "Member inspects the published status before opening the report.",
+                        "covered_req_ids": ["FR-REPORT"],
+                    }
+                ],
+            ),
+        ],
+    }
+    options = s4._existing_include_options(
+        state,
+        state["use_cases"],
+        {item["use_case_id"]: item for item in state["use_case_specs"]},
+    )
+    assert [(item["included_use_case_id"], item["name"]) for item in options] == [
+        ("UC-VIEW", "Inspect status")
+    ]
+    assert {
+        (item["use_case_id"], item["step_ref"])
+        for item in options[0]["base_step_options"]
+    } == {("UC-SUBMIT", "main:2"), ("UC-REPORT", "main:3")}
+
+    monkeypatch.setattr(
+        s4,
+        "invoke_structured",
+        lambda *_: ExistingIncludeModel(
+            existing_includes=[
+                ExistingIncludeSelection(
+                    included_use_case_id="UC-VIEW",
+                    base_step_refs=[
+                        IncludeBaseStepRef(use_case_id="UC-SUBMIT", step_ref="main:2"),
+                        IncludeBaseStepRef(use_case_id="UC-REPORT", step_ref="main:3"),
+                    ],
+                )
+            ]
+        ),
+    )
+
+    relationships = s4.identify_relationships(state)["relationships"]
+
+    assert {
+        (item["base_use_case_id"], item["included_use_case_id"])
+        for item in relationships["includes"]
+    } == {("UC-SUBMIT", "UC-VIEW"), ("UC-REPORT", "UC-VIEW")}
+    assert relationships["derived_use_cases"] == []
+    assert {
+        ref["requirement_id"]
+        for ref in relationships["includes"][0]["requirement_refs"]
+    } == {"FR-SUBMIT", "FR-REPORT"}
+
+
+def test_existing_include_rejects_a_base_step_outside_the_accepted_options():
+    use_cases = [
+        _use_case("UC-A", "Inspect", requirement_ids=["FR-A"]),
+        _use_case("UC-B", "Submit", requirement_ids=["FR-B"]),
+        _use_case("UC-C", "Review", requirement_ids=["FR-C"]),
+    ]
+    options = [
+        {
+            "included_use_case_id": "UC-A",
+            "name": "Inspect",
+            "base_step_options": [
+                {
+                    "use_case_id": "UC-B",
+                    "step_ref": "main:1",
+                    "sentence": "System presents a status.",
+                    "requirement_ids": ["FR-B"],
+                },
+                {
+                    "use_case_id": "UC-C",
+                    "step_ref": "main:1",
+                    "sentence": "System presents a status.",
+                    "requirement_ids": ["FR-C"],
+                },
+            ],
+        }
+    ]
+    model = ExistingIncludeModel(
+        existing_includes=[
+            ExistingIncludeSelection(
+                included_use_case_id="UC-A",
+                base_step_refs=[
+                    IncludeBaseStepRef(use_case_id="UC-B", step_ref="main:99"),
+                    IncludeBaseStepRef(use_case_id="UC-C", step_ref="main:1"),
+                ],
+            )
+        ]
+    )
+
+    includes, dropped = s4._materialize_existing_includes(model, options, use_cases)
+
+    assert includes == []
+    assert any("not supplied" in item for item in dropped)
+
+
+def test_existing_include_uses_a_focused_call_separate_from_derived_candidates(
+    monkeypatch,
+):
+    state = {
+        "actors": _actors(),
+        "classified": [
+            {"id": "FR-I", "type": "FR", "text": "Inspect a record."},
+            {"id": "FR-A", "type": "FR", "text": "Submit a record."},
+            {"id": "FR-B", "type": "FR", "text": "Review a record."},
+            {"id": "FR-S", "type": "FR", "text": "Validate a record."},
+        ],
+        "use_cases": [
+            _use_case("UC-I", "Inspect record", requirement_ids=["FR-I"]),
+            _use_case("UC-A", "Submit record", requirement_ids=["FR-A"]),
+            _use_case("UC-B", "Review record", requirement_ids=["FR-B"]),
+            _use_case("UC-V1", "Validate record", requirement_ids=["FR-S"]),
+            _use_case("UC-V2", "Confirm record", requirement_ids=["FR-S"]),
+        ],
+        "use_case_specs": [
+            _spec("UC-I", [{"step_number": 1, "sentence": "System presents a record.", "covered_req_ids": ["FR-I"]}]),
+            _spec("UC-A", [{"step_number": 1, "sentence": "Member inspects the record.", "covered_req_ids": ["FR-A"]}]),
+            _spec("UC-B", [{"step_number": 1, "sentence": "Member inspects the record.", "covered_req_ids": ["FR-B"]}]),
+            _spec("UC-V1", [{"step_number": 1, "sentence": "System validates the record.", "covered_req_ids": ["FR-S"]}]),
+            _spec("UC-V2", [{"step_number": 1, "sentence": "System validates the record.", "covered_req_ids": ["FR-S"]}]),
+        ],
+    }
+    schemas = []
+
+    def decide(schema, _messages):
+        schemas.append(schema)
+        return ExistingIncludeModel() if schema is ExistingIncludeModel else RelationshipModel()
+
+    monkeypatch.setattr(s4, "invoke_structured", decide)
+
+    relationships = s4.identify_relationships(state)["relationships"]
+
+    assert schemas == [RelationshipModel, ExistingIncludeModel]
+    assert relationships["includes"] == []
+
+
 def test_semantic_include_rejection_does_not_create_a_diagram_node(monkeypatch):
     def reject(schema, messages):
         candidate = s4._include_candidates(
@@ -194,7 +373,44 @@ def test_materialized_relationships_are_independently_reviewed(monkeypatch):
     assert rel["semantic_status"] == "ok"
     assert rel["relationship_issues"]
     assert rel["unexamined_rules"] == ["rel.generalization-keeps-meaning"]
+    assert rel["repair_iters"] == 1
     assert rel["repair_stopped"] == "unresolved"
+
+
+def test_confirmed_relationship_defect_gets_one_bounded_selection_repair(monkeypatch):
+    state = _shared_state()
+    candidate = s4._include_candidates(
+        state,
+        state["use_cases"],
+        {item["use_case_id"]: item for item in state["use_case_specs"]},
+    )[0]
+    selections = iter([
+        RelationshipModel(includes=[IncludeSelection(
+            candidate_id=candidate["candidate_id"],
+            decision="approve",
+            included_use_case_name="Validate enrollment eligibility",
+        )]),
+        RelationshipModel(includes=[IncludeSelection(
+            candidate_id=candidate["candidate_id"], decision="reject",
+        )]),
+    ])
+    monkeypatch.setattr(s4, "invoke_structured", lambda *_args, **_kwargs: next(selections))
+    reviews = iter([
+        s4.validator.Review(
+            findings=["[rel] Invalid include [rel.include-is-the-default-relationship · p.81]"],
+            status=s4.validator.OK,
+        ),
+        s4.validator.Review(status=s4.validator.OK),
+    ])
+    monkeypatch.setattr(s4.validator, "review", lambda *_args, **_kwargs: next(reviews))
+
+    relationships = s4.identify_relationships(state)["relationships"]
+
+    assert relationships["includes"] == []
+    assert relationships["derived_use_cases"] == []
+    assert relationships["relationship_issues"] == []
+    assert relationships["repair_iters"] == 1
+    assert relationships["repair_stopped"] == "clean"
 
 
 def test_extend_selection_is_bounded_to_existing_ids_and_exact_base_step(monkeypatch):
@@ -321,6 +537,24 @@ def test_renderer_preserves_input_order_and_previous_extend_notation():
         f"{s4._san('UC-2')} <.. {s4._san('UC-1')} : "
         "<<extend>>\\n[while viewing the schedule]"
     ) in diagram
+
+
+def test_grounded_extend_condition_can_be_wrapped_instead_of_rejected():
+    condition = (
+        "registration is rejected because the offering is full and its waitlist is enabled"
+    )
+
+    selection = ExtendSelection(
+        base_use_case_id="UC-register",
+        extending_use_case_id="UC-waitlist",
+        base_step_ref="main:3",
+        extension_point_name="after eligibility validation",
+        condition=condition,
+    )
+
+    assert len(condition) > 60
+    assert selection.condition == condition
+    assert "\\n" in s4._extend_label({"condition": selection.condition})
 
 
 def test_unaccepted_specs_do_not_reach_the_model(monkeypatch):

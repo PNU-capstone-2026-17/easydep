@@ -64,6 +64,17 @@ export interface SequenceDiagramSummary {
   use_case_name: string;
 }
 
+export interface LiveDiagramPreview {
+  command_id: string;
+  stage: 'class_diagram';
+  revision: number;
+  phase: string;
+  unit: string;
+  completed: number;
+  total: number;
+  puml: string;
+}
+
 export interface WorkspaceSnapshot {
   app_id: string;
   current_stage: Stage;

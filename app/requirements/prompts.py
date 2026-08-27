@@ -663,12 +663,24 @@ _RELATIONSHIPS_SHAPE = """You decide only UML <<include>> and <<extend>> relatio
 supplied evidence. The application projects actor associations and generalizations and validates
 all references.
 
-Include: decide only supplied candidate_id values. Approve only when the cited steps of at least
-two base use cases express the same reusable mandatory interaction with its own observable result.
+Work systematically before returning existing_includes: for each supplied existing target use
+case, compare its goal and main scenario with every supplied base-step option. Collect the distinct
+base use cases whose mandatory steps perform that same complete behavior, then emit one selection
+containing all exact matching step refs only when at least two distinct bases qualify.
+A base scenario may summarize the invocation in one step instead of duplicating every internal
+step of the target scenario. In that case select the exact invocation step; do not require
+word-for-word or step-for-step duplication of the target.
+
+Include: decide derived includes only from supplied candidate_id values, and existing includes
+only from the supplied existing target IDs and base-step options. Approve only when the cited steps
+of at least two base use cases express the same reusable mandatory interaction with its own observable result.
 A shared requirement id alone is insufficient; reject different actions, rules, invariants,
 broad policy or authentication state, and internal consequences or postconditions. Give an
-approved candidate one concise active-verb name. Except for that approved include-node name, do
-not create or rename use cases.
+approved derived candidate one concise active-verb name. An existing include selection is chosen
+separately: copy its supplied existing target ID and two or more exact
+base_step_options from distinct bases only when those supplied steps genuinely perform that target
+use case's behavior. Do not rename or derive that existing target. Except for an approved derived
+include-node name, do not create or rename use cases.
 
 Extend: choose only supplied existing use_case_id values and copy an exact main:<number> value
 into base_step_ref from a step owned by the base. Compare the extending goal, requirements,

@@ -6,6 +6,7 @@ import threading
 import pytest
 from pydantic import BaseModel, model_validator
 
+import app.design.services.common.structured as structured
 from app.design.services.common.structured import (
     StructuredLlmError,
     _parse_with_schema_repair,
@@ -70,6 +71,58 @@ def test_value_error_context_is_serialized_for_schema_repair(monkeypatch):
     assert parsed.answer == "ok"
     assert len(calls) == 2
     assert "answer must not be empty" in calls[1][-1]["content"]
+
+
+def test_schema_repair_carries_a_bounded_prior_model_level_input(monkeypatch):
+    class Result(BaseModel):
+        source: str
+        target: str
+
+        @model_validator(mode="after")
+        def endpoints_must_differ(self):
+            if self.source == self.target:
+                raise ValueError("endpoints must differ")
+            return self
+
+    invalid = {"source": "same", "target": "same", "padding": "x" * 128}
+    repair_payloads = []
+    original_payload = structured._schema_repair_payload
+
+    def capture_payload(validation_errors, parsed_input):
+        payload = original_payload(validation_errors, parsed_input)
+        repair_payloads.append(payload)
+        return payload
+
+    class Completions:
+        def __init__(self):
+            self.contents = iter((json.dumps(invalid), '{"source":"left","target":"right"}'))
+
+        def create(self, **_kwargs):
+            choice = type("Choice", (), {
+                "delta": type("Delta", (), {
+                    "content": next(self.contents), "reasoning_content": ""
+                })(),
+                "finish_reason": "stop",
+            })()
+            return [type("Chunk", (), {"choices": [choice]})()]
+
+    completions = Completions()
+    client = type("Client", (), {
+        "chat": type("Chat", (), {"completions": completions})()
+    })()
+
+    monkeypatch.setattr(structured, "_SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS", 32)
+    monkeypatch.setattr(structured, "_schema_repair_payload", capture_payload)
+
+    parsed = _parse_with_schema_repair(
+        client, [{"role": "user", "content": "generate"}], Result
+    )
+
+    previous = repair_payloads[0]["previousParsedInput"]
+    assert parsed.source == "left"
+    assert len(repair_payloads) == 1
+    assert previous["truncated"] is True
+    assert len(previous["sha256"]) == 64
 
 
 def test_schema_repair_keeps_or_explicitly_overrides_call_reasoning_effort(monkeypatch):

@@ -123,6 +123,32 @@ def test_actor_cannot_invoke_boundary_display_operation():
     assert "출력 오퍼레이션" in findings[0].message
 
 
+def test_persisted_collaboration_defines_boundary_call_direction():
+    state = {
+        "extracted_bce_classes": {
+            "Collaborations": [{
+                "collaborationId": "UC1:main:1",
+                "useCaseIds": ["UC1"],
+                "calls": [],
+            }],
+        },
+    }
+    model = {
+        "Participants": [
+            {"name": "User", "alias": "user", "kind": "actor"},
+            {"name": "OrderScreen", "alias": "screen", "kind": "boundary"},
+        ],
+        "Messages": [{
+            "source": "user",
+            "target": "screen",
+            "type": "sync",
+            "label": "showOrder(orderId:UUID)",
+        }],
+    }
+
+    assert detectors.sequence_boundary_operation_direction(model, state) == []
+
+
 def test_control_can_call_declared_external_boundary_gateway():
     state = {
         "extracted_bce_classes": {
@@ -574,12 +600,10 @@ def test_return_label_rejects_a_different_method_return_type():
     assert findings[0].rule_id == "sequence.return-label-matches-method-return"
 
 
-def test_return_label_rejects_method_without_declared_return_type():
-    findings = detectors.sequence_return_values_match_methods(
-        _order_return_model("boolean", method="validateOrder()"), STATE
-    )
-    assert len(findings) == 1
-    assert "반환 타입" in findings[0].message
+def test_return_label_uses_void_for_method_without_value_return():
+    assert detectors.sequence_return_values_match_methods(
+        _order_return_model("void", method="validateOrder()"), STATE
+    ) == []
 
 
 def test_return_label_rejects_empty_result():
@@ -824,6 +848,57 @@ def test_usecase_coverage_requires_each_traced_operation_family():
         "source": "control", "target": "record", "type": "sync",
         "label": "find()", "step_ids": ["UC1:main:2"],
     })
+    assert detectors.sequence_usecase_coverage(model, state) == []
+
+
+def test_usecase_coverage_uses_persisted_collaboration_calls_as_authority():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1}, {"step_number": 2}],
+                "extensions": [],
+            }],
+        },
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "RequestBoundary", "operations": [{
+                    "operationId": "boundary-submit",
+                    "name": "submit",
+                    "stepRefs": ["UC1:main:1"],
+                }]},
+                {"className": "Record", "operations": [{
+                    "operationId": "record-find",
+                    "name": "find",
+                    "stepRefs": ["UC1:main:2"],
+                }]},
+            ],
+            "Collaborations": [{
+                "useCaseIds": ["UC1"],
+                "calls": [{
+                    "receiverOperationId": "boundary-submit",
+                    "stepRefs": ["UC1:main:1", "UC1:main:2"],
+                }],
+            }],
+        },
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Participants": [{
+            "name": "RequestBoundary",
+            "alias": "boundary",
+            "kind": "boundary",
+            "source_class": "RequestBoundary",
+        }],
+        "Messages": [{
+            "source": "actor",
+            "target": "boundary",
+            "type": "sync",
+            "label": "submit()",
+            "step_ids": ["UC1:main:1", "UC1:main:2"],
+        }],
+    }
+
     assert detectors.sequence_usecase_coverage(model, state) == []
 
 
@@ -1087,6 +1162,34 @@ def test_extension_retry_inside_loop_is_not_treated_as_duplicate_operation():
     assert detectors.sequence_extension_replays_anchor_operation(model, state) == []
 
 
+def test_shared_anchor_call_with_extension_trace_is_not_a_replay():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "extensions": [{"label": "1a", "branch_step": 1}],
+            }]
+        }
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Participants": [
+            {"alias": "actor", "kind": "actor"},
+            {"alias": "boundary", "kind": "boundary"},
+        ],
+        "Messages": [{
+            "source": "actor",
+            "target": "boundary",
+            "label": "cancel()",
+            "type": "sync",
+            "step_ids": ["UC1:main:1", "UC1:extension:1a:1a1"],
+            "fragments": [],
+        }],
+    }
+
+    assert detectors.sequence_extension_replays_anchor_operation(model, state) == []
+
+
 def test_extension_repeated_boundary_display_is_not_an_operation_replay():
     state = {
         "usecase_spec": {
@@ -1223,27 +1326,30 @@ def _sequence_contract_model(messages: list[dict]) -> dict:
     }
 
 
-def test_nonvoid_sync_call_requires_matching_return_message():
+def test_sync_call_requires_matching_return_message():
     model = _sequence_contract_model([
         {"source": "User", "target": "Boundary", "type": "sync", "label": "displayOrderForm()"},
+        {"source": "Boundary", "target": "User", "type": "return", "label": "void"},
         {"source": "Boundary", "target": "Control", "type": "sync", "label": "createOrder(items: List)"},
     ])
 
-    findings = detectors.sequence_nonvoid_calls_have_returns(model, STATE)
+    findings = detectors.sequence_calls_have_returns(model, STATE)
 
     assert len(findings) == 1
-    assert findings[0].rule_id == "sequence.nonvoid-call-requires-return"
+    assert findings[0].rule_id == "sequence.call-requires-return"
 
 
-def test_nonvoid_sync_call_accepts_one_matching_return_and_void_needs_none():
+def test_sync_calls_accept_one_matching_return_including_void():
     model = _sequence_contract_model([
         {"source": "User", "target": "Boundary", "type": "sync", "label": "displayOrderForm()"},
+        {"source": "Boundary", "target": "User", "type": "return", "label": "void"},
         {"source": "Boundary", "target": "Control", "type": "sync", "label": "createOrder(items: List)"},
         {"source": "Control", "target": "Boundary", "type": "return", "label": "Order"},
         {"source": "Boundary", "target": "Control", "type": "sync", "label": "validateOrder()"},
+        {"source": "Control", "target": "Boundary", "type": "return", "label": "void"},
     ])
 
-    assert detectors.sequence_nonvoid_calls_have_returns(model, STATE) == []
+    assert detectors.sequence_calls_have_returns(model, STATE) == []
 
 
 def test_causal_chain_rejects_participant_that_acts_before_being_called():
@@ -1482,6 +1588,37 @@ def test_distinct_main_actor_steps_cannot_reuse_one_boundary_operation():
     assert "동일 Boundary 호출" in findings[0].message
 
 
+def test_system_response_trace_is_not_a_second_actor_action():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [
+                    {"step_number": 1, "sentence": "User submits a request."},
+                    {"step_number": 2, "sentence": "System displays the result."},
+                ],
+                "extensions": [],
+            }]
+        }
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Participants": [
+            {"name": "User", "alias": "user", "kind": "actor"},
+            {"name": "RequestScreen", "alias": "screen", "kind": "boundary"},
+        ],
+        "Messages": [{
+            "source": "user",
+            "target": "screen",
+            "type": "sync",
+            "label": "submit()",
+            "step_ids": ["UC1:main:1", "UC1:main:2"],
+        }],
+    }
+
+    assert detectors.sequence_step_operation_distinctness(model, state) == []
+
+
 def test_repeated_actor_step_can_reuse_the_only_boundary_operation():
     state = {
         "usecase_spec": {
@@ -1572,6 +1709,24 @@ def test_flow_order_allows_outer_return_after_nested_later_step():
                 "source": "Boundary", "target": "Actor", "type": "return",
                 "label": "Result", "reply_to": "outer",
                 "step_ids": ["UC1:main:1"],
+            },
+        ],
+    }
+
+    assert detectors.sequence_flow_order(model, STATE) == []
+
+
+def test_flow_order_treats_later_parent_trace_as_call_completion():
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [
+            {
+                "source": "Actor", "target": "Boundary", "type": "sync",
+                "label": "request()", "step_ids": ["UC1:main:1", "UC1:main:3"],
+            },
+            {
+                "source": "Boundary", "target": "Control", "type": "sync",
+                "label": "handle()", "step_ids": ["UC1:main:2"],
             },
         ],
     }

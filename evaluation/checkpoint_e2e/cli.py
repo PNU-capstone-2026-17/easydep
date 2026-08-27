@@ -3,15 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
-from .catalog import CASES, CHECKPOINTS, RUN_ROOT
+from .catalog import CASES, CHECKPOINTS, RUN_ROOT, current_chain_path
 from .graph import (
     generate_candidate,
     promote_candidate,
     run_all,
     run_one,
+    run_stage_samples,
     seed_candidate_prefix,
     validate_candidate,
 )
@@ -38,10 +38,28 @@ def main() -> None:
     all_parser.add_argument("--run-id")
     all_parser.add_argument("--resume", action="store_true")
 
+    stage = sub.add_parser(
+        "run-stage",
+        aliases=["stage"],
+        help="Run one isolated gold-sourced stage sample at the stable current path.",
+    )
+    stage.add_argument("--case", choices=sorted(CASES), default="e1-aws")
+    stage.add_argument("--from", dest="source", choices=CHECKPOINTS[:-1], required=True)
+    stage.add_argument("--output", type=Path)
+    stage.add_argument("--samples", type=int, default=3)
+    stage.add_argument("--resume", action="store_true")
+    stage.add_argument("--replace", action="store_true")
+
     candidate = sub.add_parser("gold-candidate")
     candidate.add_argument("--case", choices=sorted(CASES), default="e1-aws")
     candidate.add_argument("--output", type=Path)
     candidate.add_argument("--resume", action="store_true")
+    candidate.add_argument("--replace", action="store_true")
+    candidate.add_argument(
+        "--restart-from",
+        choices=CHECKPOINTS[:-1],
+        help="Keep this verified checkpoint and regenerate every later checkpoint.",
+    )
     candidate.add_argument("--through", choices=CHECKPOINTS[1:], default=CHECKPOINTS[-1])
 
     seed = sub.add_parser("gold-seed")
@@ -69,12 +87,19 @@ def main() -> None:
                 resume=args.resume,
             )
         )
-    elif args.command == "gold-candidate":
-        destination = args.output or (
-            RUN_ROOT
-            / "gold-candidates"
-            / f"{args.case}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    elif args.command in {"run-stage", "stage"}:
+        _print(
+            run_stage_samples(
+                args.case,
+                args.source,
+                destination=args.output,
+                samples=args.samples,
+                resume=args.resume,
+                replace=args.replace,
+            )
         )
+    elif args.command == "gold-candidate":
+        destination = args.output or current_chain_path(args.case)
         _print(
             {
                 "path": str(destination),
@@ -82,6 +107,8 @@ def main() -> None:
                     args.case,
                     destination,
                     resume=args.resume,
+                    replace=args.replace,
+                    restart_from=args.restart_from,
                     through=args.through,
                 ),
             }

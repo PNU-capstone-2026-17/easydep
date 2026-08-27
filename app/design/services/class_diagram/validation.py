@@ -21,8 +21,11 @@ from app.design.services.class_diagram.behavior import (
 )
 from app.design.services.class_diagram.type_system import (
     field_type,
-    referenced_type_names,
+    projected_field_type,
+    reachable_data_type_names,
+    structured_field_types,
     type_is_resolved,
+    types_compatible,
 )
 
 
@@ -85,6 +88,7 @@ def operation_contract_issues(
         for item in model.get("DataTypes") or [] if isinstance(item, dict)
     }
     operations = _operation_catalog(classes, issues)
+    fields_by_type = structured_field_types(model)
     _type_issues(classes, data_types, issues)
     scenario = state.get("usecase_spec") if isinstance(state, dict) else None
     if isinstance(scenario, dict):
@@ -93,7 +97,7 @@ def operation_contract_issues(
             scenario = {**scenario, "relationships": relationships}
     _relationship_issues(model, class_by_name, issues)
     _collaboration_issues(
-        model, operations, class_by_name, issues,
+        model, operations, class_by_name, fields_by_type, issues,
         scenario if isinstance(scenario, dict) else None,
     )
     for outcome in group_outcomes(model):
@@ -138,12 +142,10 @@ def _type_issues(
     issues: list[tuple[str, str, str | None]],
 ) -> None:
     names = {_class_name(item) for item in classes} | set(data_types)
-    referenced_data_types: set[str] = set()
     for class_item in classes:
         class_name = _class_name(class_item)
         for field in class_item.get("fields") or []:
             type_name = field_type(field)
-            referenced_data_types.update(referenced_type_names(type_name))
             if type_name and not type_is_resolved(type_name, names, allow_void=False):
                 issues.append(("operation", "field type does not resolve to a primitive, Class, or DataType", class_name))
         for operation in class_item.get("operations") or []:
@@ -153,18 +155,15 @@ def _type_issues(
             for parameter in operation.get("parameters") or []:
                 if isinstance(parameter, dict) and not type_is_resolved(_text(parameter.get("type")), names, allow_void=False):
                     issues.append(("operation", "parameter type does not resolve to a primitive, Class, or DataType", operation_id))
-                if isinstance(parameter, dict):
-                    referenced_data_types.update(referenced_type_names(_text(parameter.get("type"))))
             if not type_is_resolved(_text(operation.get("returnType")), names, allow_void=True):
                 issues.append(("operation", "return type does not resolve to a primitive, Class, or DataType", operation_id))
-            referenced_data_types.update(referenced_type_names(_text(operation.get("returnType"))))
     for name, data_type in data_types.items():
         for field in data_type.get("fields") or []:
             type_name = field_type(field)
-            referenced_data_types.update(referenced_type_names(type_name))
             if type_name and not type_is_resolved(type_name, names, allow_void=False):
                 issues.append(("operation", "DataType field type does not resolve to a primitive, Class, or DataType", name))
-    for name in sorted(set(data_types) - referenced_data_types):
+    reachable = reachable_data_type_names(classes, list(data_types.values()))
+    for name in sorted(set(data_types) - reachable):
         issues.append(("operation", "DataType is not referenced by a Class or operation", name))
 
 
@@ -210,7 +209,9 @@ def _relationship_issues(
 
 def _collaboration_issues(
     model: dict[str, Any], operations: dict[str, tuple[str, dict[str, Any]]],
-    class_by_name: dict[str, dict[str, Any]], issues: list[tuple[str, str, str | None]],
+    class_by_name: dict[str, dict[str, Any]],
+    fields_by_type: dict[str, dict[str, str]],
+    issues: list[tuple[str, str, str | None]],
     scenario: dict[str, Any] | None,
 ) -> None:
     collaborations = [item for item in model.get("Collaborations") or [] if isinstance(item, dict)]
@@ -235,10 +236,13 @@ def _collaboration_issues(
                 if use_case_ids != expected_scope:
                     issues.append(("operation", "useCaseIds must put the execution/root use case first, followed by deterministic include/extend trace scope", collaboration_id))
                 _actor_issue(collaboration, group, scenario, issues)
-        _call_issues(collaboration, operations, class_by_name, group, scenario, issues)
+        _call_issues(
+            collaboration, operations, class_by_name, fields_by_type,
+            group, scenario, issues,
+        )
     if scenario:
         for group_id in sorted(set(expected_groups) - seen_collaborations):
-            issues.append(("operation", "accepted execution group has no Collaboration", group_id))
+            issues.append(("operation", "required execution group has no Collaboration", group_id))
 
 
 def _actor_issue(
@@ -255,7 +259,9 @@ def _actor_issue(
 
 def _call_issues(
     collaboration: dict[str, Any], operations: dict[str, tuple[str, dict[str, Any]]],
-    class_by_name: dict[str, dict[str, Any]], group, scenario: dict[str, Any] | None,
+    class_by_name: dict[str, dict[str, Any]],
+    fields_by_type: dict[str, dict[str, str]],
+    group, scenario: dict[str, Any] | None,
     issues: list[tuple[str, str, str | None]],
 ) -> None:
     collaboration_id = _text(collaboration.get("collaborationId"))
@@ -323,13 +329,15 @@ def _call_issues(
         if not target:
             continue
         _binding_issues_for_call(
-            collaboration, calls, position, target[1], operations, group, scenario, issues,
+            collaboration, calls, position, target[1], operations, fields_by_type,
+            group, scenario, issues,
         )
 
 
 def _binding_issues_for_call(
     collaboration: dict[str, Any], calls: list[dict[str, Any]], index: int,
-    operation: dict[str, Any], operations: dict[str, tuple[str, dict[str, Any]]], group,
+    operation: dict[str, Any], operations: dict[str, tuple[str, dict[str, Any]]],
+    fields_by_type: dict[str, dict[str, str]], group,
     scenario: dict[str, Any] | None, issues: list[tuple[str, str, str | None]],
 ) -> None:
     call = calls[index]
@@ -352,7 +360,8 @@ def _binding_issues_for_call(
             continue
         _source_issue(
             _text(entries[0].get("sourceRef")), parameter, type_name,
-            collaboration, calls, index, operations, group, scenario, issues,
+            collaboration, calls, index, operations, fields_by_type,
+            group, scenario, issues,
         )
     for parameter in sorted(set(bindings) - set(declared)):
         issues.append(("input", "argumentBinding names no declared receiver parameter", f"{call_id}#{parameter}"))
@@ -361,7 +370,8 @@ def _binding_issues_for_call(
 def _source_issue(
     source_ref: str, parameter: str, type_name: str, collaboration: dict[str, Any],
     calls: list[dict[str, Any]], index: int,
-    operations: dict[str, tuple[str, dict[str, Any]]], group, scenario: dict[str, Any] | None,
+    operations: dict[str, tuple[str, dict[str, Any]]],
+    fields_by_type: dict[str, dict[str, str]], group, scenario: dict[str, Any] | None,
     issues: list[tuple[str, str, str | None]],
 ) -> None:
     call_id = _text(calls[index].get("callId"))
@@ -381,35 +391,44 @@ def _source_issue(
             issues.append(("producer", "precondition context sourceRef is not declared", location))
         return
     earlier = {_text(call.get("callId")): call for call in calls[:index]}
-    if "#" in source_ref and not source_ref.endswith("#result"):
-        source_call_id, source_parameter = source_ref.rsplit("#", 1)
-        source_call = earlier.get(source_call_id)
-        if not source_call:
-            issues.append(("producer", "ancestor-call parameter source must reference an earlier call", location))
-            return
-        if source_call_id not in _ancestor_ids(calls, index):
-            issues.append(("producer", "parameter source must be an ancestor call, not an unrelated earlier call", location))
-            return
-        source_operation = operations.get(_text(source_call.get("receiverOperationId")), ("", {}))[1]
-        source_type = next((
-            _text(item.get("type")) for item in source_operation.get("parameters") or []
-            if isinstance(item, dict) and _text(item.get("name")) == source_parameter
-        ), "")
-        if source_parameter != parameter or source_type != type_name:
-            issues.append(("producer", "ancestor-call parameter source must preserve parameter name and type", location))
-        return
-    source_call_id, separator, source_kind = source_ref.partition("#")
-    if not separator or source_kind != "result":
-        issues.append(("producer", "earlier call result sourceRef must end with #result", location))
+    source_call_id, separator, source_value = source_ref.partition("#")
+    if not separator:
+        issues.append(("producer", "sourceRef must identify a declared producer value", location))
         return
     source_call = earlier.get(source_call_id)
     if not source_call:
         issues.append(("producer", "sourceRef must be actor input, precondition context, ancestor parameter, or earlier call result", location))
         return
     source_operation = operations.get(_text(source_call.get("receiverOperationId")), ("", {}))[1]
-    return_type = _text(source_operation.get("returnType"))
-    if return_type.casefold() == "void" or return_type != type_name:
-        issues.append(("producer", "earlier call result must be non-void and type-compatible", location))
+    if source_value == "result" or source_value.startswith("result."):
+        return_type = _text(source_operation.get("returnType"))
+        field_path = source_value.removeprefix("result.") if source_value != "result" else ""
+        produced_type = (
+            projected_field_type(return_type, field_path, fields_by_type)
+            if field_path else return_type
+        )
+        if (
+            return_type.casefold() == "void"
+            or not types_compatible(produced_type, type_name)
+            or (field_path and field_path.rpartition(".")[2] != parameter)
+        ):
+            issues.append(("producer", "earlier call result value must be declared and type-compatible", location))
+        return
+    if source_call_id not in _ancestor_ids(calls, index):
+        issues.append(("producer", "parameter source must be an ancestor call, not an unrelated earlier call", location))
+        return
+    source_parameter, dot, field_path = source_value.partition(".")
+    source_type = next((
+        _text(item.get("type")) for item in source_operation.get("parameters") or []
+        if isinstance(item, dict) and _text(item.get("name")) == source_parameter
+    ), "")
+    produced_type = (
+        projected_field_type(source_type, field_path, fields_by_type)
+        if dot else source_type
+    )
+    produced_name = field_path.rpartition(".")[2] if dot else source_parameter
+    if produced_name != parameter or not types_compatible(produced_type, type_name):
+        issues.append(("producer", "ancestor-call value must preserve the parameter name and type", location))
 
 
 def _ancestor_ids(calls: list[dict[str, Any]], index: int) -> set[str]:

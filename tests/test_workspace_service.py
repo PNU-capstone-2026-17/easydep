@@ -6,10 +6,13 @@ from types import SimpleNamespace
 from fastapi.responses import JSONResponse
 
 from app.db.models import Base
+from app.design import progress as design_progress
 from app.repositories import artifact_repository
 from app.workspace import repository
+from app.workspace import api as workspace_api
 from app.workspace import service as workspace_module
 from app.workspace.service import WorkspaceService
+from app.workspace.live_preview import LivePreviewStore, live_previews
 
 import json
 
@@ -507,6 +510,120 @@ def test_design_operation_emits_a_named_progress_card(monkeypatch) -> None:
         "completed",
     ]
     assert events[-1]["metadata"]["progress_card_label"] == "Design generation"
+
+
+def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -> None:
+    events = []
+    live_previews.clear()
+    monkeypatch.setattr(
+        repository,
+        "append_event",
+        lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
+    )
+
+    def operation():
+        design_progress.emit_progress(
+            "classDiagramSnapshotAccepted",
+            puml="@startuml\nclass Course\n@enduml",
+            phase="inventory",
+            unit="inventory",
+            completed=1,
+            total=2,
+        )
+        design_progress.emit_progress(
+            "classDiagramSnapshotAccepted",
+            puml="@startuml\nclass Course {\n  + find()\n}\n@enduml",
+            phase="operations",
+            unit="UC1",
+            completed=2,
+            total=2,
+        )
+        return "done"
+
+    assert WorkspaceService._run_design_operation(
+        {"app_id": "app-1", "command_id": "command-1"},
+        stage="class_diagram",
+        label="Generating the class diagram",
+        operation=operation,
+    ) == "done"
+
+    preview = live_previews.get("app-1", "command-1", "class_diagram")
+    assert preview is not None
+    assert preview.revision == 2
+    assert preview.unit == "UC1"
+    preview_events = [
+        event for event in events
+        if event["metadata"].get("progress_event") == "classDiagramPreviewUpdated"
+    ]
+    assert [event["metadata"]["preview_revision"] for event in preview_events] == [1, 2]
+
+
+def test_live_preview_store_isolates_commands_and_invalidates_cached_svg() -> None:
+    store = LivePreviewStore()
+    first = store.publish(
+        app_id="app-1", command_id="command-1", stage="class_diagram",
+        puml="@startuml\nclass A\n@enduml", phase="inventory",
+    )
+    store.cache_svg("app-1", "command-1", "class_diagram", first.revision, b"svg")
+    second = store.publish(
+        app_id="app-1", command_id="command-1", stage="class_diagram",
+        puml="@startuml\nclass B\n@enduml", phase="operations",
+    )
+    store.publish(
+        app_id="app-1", command_id="command-2", stage="class_diagram",
+        puml="@startuml\nclass C\n@enduml", phase="inventory",
+    )
+
+    assert second.revision == 2
+    assert second.image_svg is None
+    assert store.get("app-1", "command-2", "class_diagram").revision == 1
+
+
+def test_class_preview_endpoints_return_and_cache_the_latest_snapshot(monkeypatch) -> None:
+    app_id = "11111111-1111-4111-8111-111111111111"
+    live_previews.clear()
+    preview = live_previews.publish(
+        app_id=app_id,
+        command_id="command-1",
+        stage="class_diagram",
+        puml="@startuml\nclass Course\n@enduml",
+        phase="inventory",
+        unit="inventory",
+        completed=1,
+        total=3,
+    )
+    monkeypatch.setattr(
+        workspace_api.repository,
+        "get_command",
+        lambda command_id: {"command_id": command_id, "app_id": app_id},
+    )
+    renders = []
+    monkeypatch.setattr(
+        workspace_api,
+        "render_plantuml",
+        lambda puml, image_format: renders.append((puml, image_format)) or b"<svg />",
+    )
+
+    payload = workspace_api.get_class_diagram_preview(app_id, "command-1")
+    first_image = workspace_api.get_class_diagram_preview_image(
+        app_id, "command-1",
+    )
+    second_image = workspace_api.get_class_diagram_preview_image(
+        app_id, "command-1",
+    )
+
+    assert payload == {
+        "command_id": "command-1",
+        "stage": "class_diagram",
+        "revision": preview.revision,
+        "phase": "inventory",
+        "unit": "inventory",
+        "completed": 1,
+        "total": 3,
+        "puml": "@startuml\nclass Course\n@enduml",
+    }
+    assert first_image.body == second_image.body == b"<svg />"
+    assert renders == [("@startuml\nclass Course\n@enduml", "svg")]
 
 
 def test_design_operation_marks_a_generated_draft_as_needing_review(monkeypatch) -> None:

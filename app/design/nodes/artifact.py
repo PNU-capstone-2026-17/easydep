@@ -126,7 +126,7 @@ _SEQUENCE_REPAIR_RULE_GROUPS = (
         "sequence.unmatched-return-message",
         "sequence.return-label-matches-method-return",
         "sequence.async-call-has-no-return",
-        "sequence.nonvoid-call-requires-return",
+        "sequence.call-requires-return",
     },
     # 반환값과 호출 연결이 확정된 뒤에야 인자 출처를 판정할 수 있다.
     {

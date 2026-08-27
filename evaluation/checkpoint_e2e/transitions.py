@@ -76,6 +76,7 @@ def _architecture_projection(state: dict[str, Any]) -> dict[str, Any]:
             "actors": list(state.get("actors") or []),
             "use_cases": list(state.get("use_cases") or []),
             "use_case_specs": list(state.get("use_case_specs") or []),
+            "relationships": dict(state.get("relationships") or {}),
         },
         usecase_diagram_puml=str(state.get("diagram") or ""),
     )

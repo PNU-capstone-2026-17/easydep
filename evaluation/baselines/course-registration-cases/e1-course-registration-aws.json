@@ -1,8 +1,7 @@
 {
   "caseId": "E1-course-registration-aws",
   "requirements": [
-    "Students, professors, and academic administrators are specialized roles of a university user.",
-    "A university user shall sign in with valid account credentials that the application verifies to start an authenticated session.",
+    "Students, professors, and academic administrators are specialized roles of a university user. An authenticated identity and role are preconditions for protected operations.",
     "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining-seat information.",
     "A student shall register for a selected course offering during its registration period and receive the result.",
     "A student shall atomically swap a current registration for another course offering and receive the result.",
@@ -10,7 +9,7 @@
     "A student shall view current registrations and the resulting class schedule.",
     "A student shall drop a selected registration during the allowed period and receive the result.",
     "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view. Viewing the schedule remains complete without an export.",
-    "When a student's request to register for a selected course offering is rejected only because that offering is full and its waitlist is enabled, the student may join the waitlist. The rejected registration request remains a complete result without joining.",
+    "When registration is rejected only because an offering is full and its waitlist is enabled, the student may join the waitlist. The rejected registration remains a complete result without joining.",
     "A student shall view and cancel their own waitlist entries.",
     "A professor shall review assigned course offerings and their current student rosters.",
     "An academic administrator shall create and update academic terms and their registration periods.",

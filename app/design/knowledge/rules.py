@@ -533,8 +533,8 @@ RULES: tuple[Rule, ...] = (
         severity=DEFECT,
         statement=(
             "Every return message must have a non-empty result label exactly matching "
-            "the return type declared by its corresponding receiver-class method. A "
-            "method without a return type, or declared void, cannot emit a return message."
+            "the return type declared by its corresponding receiver-class method. Use "
+            "the literal void for a method without a value return."
         ),
         citation="app/design/services/class_diagram/extractor.py (BCEClass.methods)",
         evidence="pipeline-invariant",
@@ -555,17 +555,17 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_async_returns",
     ),
     Rule(
-        id="sequence.nonvoid-call-requires-return",
+        id="sequence.call-requires-return",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "Every synchronous or self call whose receiver-class method declares "
-            "a non-void return type must have exactly one corresponding return message."
+            "Every synchronous or self call must have exactly one corresponding "
+            "return message, including calls whose declared return type is void."
         ),
         citation="app/design/services/class_diagram/extractor.py (BCEClass.methods)",
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
-        detector="sequence_nonvoid_calls_have_returns",
+        detector="sequence_calls_have_returns",
     ),
     Rule(
         id="sequence.causal-call-chain",

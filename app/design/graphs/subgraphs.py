@@ -43,9 +43,20 @@ from app.design.schemas.architecture_state import ArchitectureState, usecase_spe
 from app.design.services.api_spec.extractor import extract_api_spec_model
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.api_spec.reviser import revise_api_spec_model
-from app.design.services.class_diagram.behavior import enrich_bce_behavior
-from app.design.services.class_diagram.extractor import extract_bce_classes_from_scenario
+from app.design.services.class_diagram.behavior import (
+    affected_group_ids,
+    enrich_bce_behavior,
+    execution_groups,
+    group_outcomes,
+)
+from app.design.services.class_diagram.extractor import (
+    extract_bce_classes_from_scenario,
+)
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
+from app.design.services.class_diagram.pipeline import (
+    generate_class_skeleton,
+    repair_operation_fragment_for_finding,
+)
 from app.design.services.class_diagram.reviser import revise_bce_classes
 from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
 from app.design.services.deployment_diagram.bundle import (
@@ -193,10 +204,51 @@ def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
     # skeleton pass the same complete scenario that behaviour enrichment sees,
     # so a derived internal include can receive its own explicit BCE scope.
     scenario = _class_scenario(state)
-    skeleton = extract_bce_classes_from_scenario(json.dumps(scenario, ensure_ascii=False))
     if not scenario.get("use_case_specs"):
-        return skeleton
-    return enrich_bce_behavior(scenario, skeleton)
+        return extract_bce_classes_from_scenario(
+            json.dumps(scenario, ensure_ascii=False)
+        )
+    skeleton = generate_class_skeleton(scenario)
+    enriched = enrich_bce_behavior(scenario, skeleton)
+    failures = [
+        outcome for outcome in group_outcomes(enriched)
+        if outcome.status != "accepted"
+    ]
+    if not failures:
+        return enriched
+
+    # Collaboration is allowed to hand a signature defect back to its owning
+    # UC exactly once.  Aggregate sibling execution-group findings first so a
+    # shared class is never repaired concurrently and no accepted fragment is
+    # regenerated merely because another group failed.
+    group_owner = {group.id: group.use_case_id for group in execution_groups(scenario)}
+    findings_by_use_case: dict[str, list[str]] = {}
+    for outcome in failures:
+        use_case_id = group_owner.get(outcome.group_id)
+        if not use_case_id:
+            continue
+        findings_by_use_case.setdefault(use_case_id, []).append(
+            f"execution group {outcome.group_id}: "
+            + (outcome.issues[0] if outcome.issues else "collaboration was not accepted")
+        )
+    if not findings_by_use_case:
+        return enriched
+
+    repaired = skeleton
+    for use_case_id in sorted(findings_by_use_case):
+        repaired = repair_operation_fragment_for_finding(
+            repaired,
+            scenario,
+            use_case_id,
+            findings_by_use_case[use_case_id],
+        )
+    selected_groups = affected_group_ids(scenario, set(findings_by_use_case))
+    return enrich_bce_behavior(
+        scenario,
+        repaired,
+        group_ids=selected_groups,
+        existing=enriched,
+    )
 
 
 CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
@@ -237,7 +289,7 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     feedback_key="sequence_diagram_feedback",
     empty="",
     extract=lambda state: extract_sequence_model(
-        state.get("usecase_spec"),
+        _class_scenario(state),
         state.get("class_diagram_puml", ""),
         class_model=state.get("extracted_bce_classes") or {},
     ),

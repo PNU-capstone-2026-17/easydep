@@ -8,7 +8,8 @@ import type {
   CloudProvider,
   CloudRegionOption,
   DeploymentPreferences,
-  SequenceDiagramSummary
+  SequenceDiagramSummary,
+  LiveDiagramPreview
 } from '$lib/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -64,6 +65,12 @@ export function sendCommand(appId: string, payload: CommandPayload) {
 
 export function getArtifacts(appId: string) {
   return request<{ app_id: string } & ArtifactDocument>(`/api/apps/${appId}`);
+}
+
+export function getClassDiagramPreview(appId: string, commandId: string) {
+  return request<LiveDiagramPreview>(
+    `/api/workspace/apps/${encodeURIComponent(appId)}/commands/${encodeURIComponent(commandId)}/previews/class_diagram`
+  );
 }
 
 export function getVersions(appId: string, stage: string) {

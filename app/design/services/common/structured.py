@@ -35,6 +35,15 @@ class StructuredLlmError(RuntimeError):
     """어느 구조화 산출물 호출이 실패했는지 보존하는 경계 오류."""
 
 
+class _SchemaValidationFailure(Exception):
+    """Carry a local validation error and its parsed JSON object to the one repair."""
+
+    def __init__(self, error: ValidationError, parsed_input: Any | None) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.parsed_input = parsed_input
+
+
 def _failure_category(error: BaseException) -> str:
     """Classify transport failures without mistaking sandbox/network causes for 429s."""
 
@@ -46,7 +55,7 @@ def _failure_category(error: BaseException) -> str:
         return "timeout"
     if "connection" in name or "connection" in text or "dns" in text:
         return "connection"
-    if isinstance(error, ValidationError):
+    if isinstance(error, (ValidationError, _SchemaValidationFailure)):
         return "schema_validation"
     return "provider_or_runtime"
 
@@ -313,24 +322,34 @@ def _stream_structured(
         responseSha256=hashlib.sha256(content_text.encode("utf-8")).hexdigest(),
     )
     try:
+        parsed_input = json.loads(content_text)
+    except json.JSONDecodeError:
+        parsed_input = None
+    try:
         return schema.model_validate_json(content_text)
+    except ValidationError as error:
+        _record_failure_content(observation, content_text)
+        raise _SchemaValidationFailure(error, parsed_input) from error
     except Exception:
-        # 실패 원문 전체와 reasoning은 보존하지 않는다. 실험에서 명시적으로 요청한
-        # 제한 길이의 양 끝 표본과 전체 content 지문만 남겨 토큰 절단, 반복 출력,
-        # 단순 문법 오류를 구분한다. 특정 schema나 사례에 의존하지 않는 공통 경계다.
-        sample_limit = settings.llm_failure_response_sample_chars
-        if settings.easydep_experiment_session and sample_limit > 0:
-            bounded = min(sample_limit, 4096)
-            observation.update(
-                failureContentSha256=hashlib.sha256(
-                    content_text.encode("utf-8")
-                ).hexdigest(),
-                failureContentPrefix=content_text[:bounded],
-                failureContentSuffix=content_text[-bounded:],
-                failureContentSampleCharacters=bounded,
-                failureContentSampleTruncated=len(content_text) > bounded * 2,
-            )
+        _record_failure_content(observation, content_text)
         raise
+
+
+def _record_failure_content(observation: dict[str, Any], content_text: str) -> None:
+    """Keep opt-in diagnostics identical for JSON and model validation failures."""
+    # 실패 원문 전체와 reasoning은 보존하지 않는다. 실험에서 명시적으로 요청한
+    # 제한 길이의 양 끝 표본과 전체 content 지문만 남겨 토큰 절단, 반복 출력,
+    # 단순 문법 오류를 구분한다. 특정 schema나 사례에 의존하지 않는 공통 경계다.
+    sample_limit = settings.llm_failure_response_sample_chars
+    if settings.easydep_experiment_session and sample_limit > 0:
+        bounded = min(sample_limit, 4096)
+        observation.update(
+            failureContentSha256=hashlib.sha256(content_text.encode("utf-8")).hexdigest(),
+            failureContentPrefix=content_text[:bounded],
+            failureContentSuffix=content_text[-bounded:],
+            failureContentSampleCharacters=bounded,
+            failureContentSampleTruncated=len(content_text) > bounded * 2,
+        )
 
 
 def _observe_stream_usage(observation: dict[str, Any], usage: Any) -> None:
@@ -450,9 +469,15 @@ def _parse_with_schema_repair(
         )
     except StructuredLlmError as error:
         cause = error.__cause__
-        if not isinstance(cause, ValidationError):
+        parsed_input: Any | None = None
+        if isinstance(cause, _SchemaValidationFailure):
+            validation_error = cause.error
+            parsed_input = cause.parsed_input
+        elif isinstance(cause, ValidationError):
+            validation_error = cause
+        else:
             raise
-        validation_errors = cause.errors(
+        validation_errors = validation_error.errors(
             include_url=False,
             include_input=False,
             # Pydantic keeps the original exception object in ``ctx.error``
@@ -461,6 +486,7 @@ def _parse_with_schema_repair(
             include_context=False,
         )
 
+    repair_payload = _schema_repair_payload(validation_errors, parsed_input)
     repair_messages = [
         *messages,
         {
@@ -468,8 +494,8 @@ def _parse_with_schema_repair(
             "content": (
                 "The previous response failed local schema validation. Regenerate the "
                 "entire object; do not return a patch and do not omit required values.\n\n"
-                "[Validation errors]\n"
-                + json.dumps(validation_errors, ensure_ascii=False)
+                "[Schema repair context]\n"
+                + json.dumps(repair_payload, ensure_ascii=False)
             ),
         },
     ]
@@ -494,6 +520,30 @@ def _parse_with_schema_repair(
         operation=f"{operation_name}:schema-repair",
         observation=repair_observation,
     )
+
+
+_SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS = 16_000
+
+
+def _schema_repair_payload(
+    validation_errors: list[dict[str, Any]], parsed_input: Any | None,
+) -> dict[str, Any]:
+    """Keep repair context JSON-safe and bounded without persisting model output."""
+    payload: dict[str, Any] = {"validationErrors": validation_errors}
+    if parsed_input is None:
+        return payload
+    encoded = json.dumps(parsed_input, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded) <= _SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS:
+        payload["previousParsedInput"] = parsed_input
+        return payload
+    sample = _SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS // 2
+    payload["previousParsedInput"] = {
+        "truncated": True,
+        "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        "prefix": encoded[:sample],
+        "suffix": encoded[-sample:],
+    }
+    return payload
 
 
 def focus_note(targets: set[str] | None) -> str:

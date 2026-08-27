@@ -5,18 +5,67 @@ import json
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.artifacts_api import require_app, to_web_response, validate_app_id
 from app.core import region_catalog
+from app.design.services.common.plantuml import render_plantuml
 from app.repositories import artifact_repository
 from app.requirements.schemas import DeploymentPreferences
 
 from . import repository
+from .live_preview import live_previews
 from .service import workspace_service
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
+
+
+def _class_preview(app_id: str, command_id: str):
+    validate_app_id(app_id)
+    command = repository.get_command(command_id)
+    if command is None or str(command.get("app_id") or "") != app_id:
+        raise HTTPException(status_code=404, detail="Unknown workspace command.")
+    preview = live_previews.get(app_id, command_id, "class_diagram")
+    if preview is None:
+        raise HTTPException(
+            status_code=404, detail="Class diagram preview is not available."
+        )
+    return preview
+
+
+@router.get("/apps/{app_id}/commands/{command_id}/previews/class_diagram")
+def get_class_diagram_preview(app_id: str, command_id: str) -> dict[str, Any]:
+    preview = _class_preview(app_id, command_id)
+    return {
+        "command_id": preview.command_id,
+        "stage": preview.stage,
+        "revision": preview.revision,
+        "phase": preview.phase,
+        "unit": preview.unit,
+        "completed": preview.completed,
+        "total": preview.total,
+        "puml": preview.puml,
+    }
+
+
+@router.get(
+    "/apps/{app_id}/commands/{command_id}/previews/class_diagram/image.svg"
+)
+def get_class_diagram_preview_image(app_id: str, command_id: str) -> Response:
+    preview = _class_preview(app_id, command_id)
+    image = preview.image_svg or render_plantuml(preview.puml, "svg")
+    if not image:
+        raise HTTPException(status_code=500, detail="Diagram rendering failed.")
+    if preview.image_svg is None:
+        live_previews.cache_svg(
+            app_id, command_id, preview.stage, preview.revision, image,
+        )
+    return Response(
+        content=image,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 class CreateWorkspaceAppRequest(BaseModel):

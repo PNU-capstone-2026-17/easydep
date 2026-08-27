@@ -1,9 +1,10 @@
 """Step 4: project canonical relations and render the use-case diagram.
 
-This is the single relationship-identification stage. It bounds ``include``
-candidates with Step 3 RTM coverage and bounds ``extend`` to existing use cases
-and existing base-scenario steps; the model only makes semantic choices inside
-those spaces. Actor relations are canonical upstream facts.
+This is the single relationship-identification stage. It bounds derived
+``include`` candidates and existing-use-case include bases with accepted Step 3
+RTM coverage, and bounds ``extend`` to existing use cases and existing
+base-scenario steps; the model only makes semantic choices inside those spaces.
+Actor relations are canonical upstream facts.
 """
 from __future__ import annotations
 
@@ -23,9 +24,10 @@ from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
 from app.requirements.common.state_contract import contract
 from app.requirements.knowledge import rules
-from app.requirements.schemas import RelationshipModel
+from app.requirements.schemas import ExistingIncludeModel, RelationshipModel
 
 _EXTEND_CUE = re.compile(r"\b(?:may|optionally|when|while|after|once|unless)\b", re.IGNORECASE)
+_LEXICAL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9'-]*")
 
 
 def _clean_text(value: object) -> str:
@@ -194,6 +196,106 @@ def _include_candidates(
     return candidates
 
 
+def _existing_include_options(
+    state: AgentState,
+    use_cases: list[dict],
+    specs_by_id: dict[str, dict],
+) -> list[dict]:
+    """Shortlist reusable existing UCs from action/object evidence in accepted specs."""
+    accepted_fr_ids = {
+        str(item["id"])
+        for item in state.get("classified") or []
+        if item.get("id") and item.get("type") == "FR"
+    }
+
+    def lexical_terms(value: object) -> list[str]:
+        return [match.group(0).lower() for match in _LEXICAL_TOKEN.finditer(str(value or ""))]
+
+    def verb_stem(token: str) -> str:
+        if token.endswith("ies") and len(token) > 3:
+            return f"{token[:-3]}y"
+        if token.endswith(("ches", "shes", "sses", "xes", "zes", "oes")):
+            return token[:-2]
+        if token.endswith("s") and not token.endswith("ss"):
+            return token[:-1]
+        return token
+
+    accepted: list[tuple[dict, list[dict]]] = []
+    for use_case in use_cases:
+        if use_case.get("level") == "subfunction":
+            continue
+        use_case_id = str(use_case["id"])
+        spec = specs_by_id.get(use_case_id)
+        if spec is None:
+            continue
+        numbered_steps = [
+            step
+            for step in spec.get("main_scenario") or []
+            if isinstance(step.get("step_number"), int)
+        ]
+        if not numbered_steps:
+            continue
+        mapped_requirements = {
+            str(value) for value in use_case.get("requirement_ids") or []
+        }
+        refs: list[dict] = []
+        for step in numbered_steps:
+            requirement_ids = list(
+                dict.fromkeys(
+                    str(requirement_id)
+                    for requirement_id in step.get("covered_req_ids") or []
+                    if str(requirement_id) in accepted_fr_ids
+                    and str(requirement_id) in mapped_requirements
+                )
+            )
+            if requirement_ids:
+                refs.append(
+                    {
+                        "use_case_id": use_case_id,
+                        "step_ref": f"main:{step['step_number']}",
+                        "sentence": _clean_text(step.get("sentence")),
+                        "requirement_ids": requirement_ids,
+                    }
+                )
+        accepted.append((use_case, refs))
+
+    options: list[dict] = []
+    for target, _target_refs in accepted:
+        name_terms = lexical_terms(target.get("name"))
+        if not name_terms:
+            continue
+        action = verb_stem(name_terms[0])
+        object_terms = set(name_terms[1:])
+        object_terms.update(
+            term
+            for term in lexical_terms(target.get("goal"))
+            if verb_stem(term) != action
+        )
+        if not object_terms:
+            continue
+        target_id = str(target["id"])
+        base_step_options = []
+        for base, refs in accepted:
+            if str(base["id"]) == target_id:
+                continue
+            for ref in refs:
+                step_terms = lexical_terms(ref["sentence"])
+                if (
+                    action in {verb_stem(term) for term in step_terms}
+                    and object_terms.intersection(step_terms)
+                ):
+                    base_step_options.append(ref)
+        if len({str(ref["use_case_id"]) for ref in base_step_options}) >= 2:
+            options.append(
+                {
+                    "included_use_case_id": target_id,
+                    "name": str(target.get("name") or ""),
+                    "base_step_options": base_step_options,
+                }
+            )
+    return options
+
+
 def _ancestor_names(actor: str, parent_by_child: dict[str, str]) -> set[str]:
     ancestors: set[str] = set()
     current = parent_by_child.get(actor)
@@ -266,6 +368,7 @@ def _relationship_prompt(
     use_cases: list[dict],
     specs_by_id: dict[str, dict],
     include_candidates: list[dict],
+    existing_include_options: list[dict],
     feedback: str,
 ) -> str:
     """Serialize compact evidence; relationship semantics live in the system prompt."""
@@ -310,6 +413,7 @@ def _relationship_prompt(
     prompt = (
         f"Requirements by ID:\n{_prompt_json(requirement_text)}\n\n"
         f"Include candidates:\n{_prompt_json(prompt_candidates)}\n\n"
+        f"Existing include options:\n{_prompt_json(existing_include_options)}\n\n"
         f"Use cases:\n{_prompt_json(bounded_artifact)}"
     )
     return prompts.apply_user_feedback(prompt, feedback)
@@ -454,6 +558,82 @@ def _materialize_includes(
     return includes, derived, dropped
 
 
+def _materialize_existing_includes(
+    model: ExistingIncludeModel,
+    options: list[dict],
+    use_cases: list[dict],
+) -> tuple[list[dict], list[str]]:
+    """Materialize only model-selected existing targets and supplied base steps."""
+    names_by_id = {str(item["id"]): str(item.get("name") or "") for item in use_cases}
+    options_by_target = {
+        str(item["included_use_case_id"]): item for item in options
+    }
+    selections_by_target: dict[str, list] = defaultdict(list)
+    for selection in model.existing_includes:
+        selections_by_target[selection.included_use_case_id].append(selection)
+
+    includes: list[dict] = []
+    dropped: list[str] = []
+    for target_id, selections in selections_by_target.items():
+        option = options_by_target.get(target_id)
+        if option is None or target_id not in names_by_id:
+            dropped.append(f"existing include {target_id}: target is not supplied")
+            continue
+        if len(selections) != 1:
+            dropped.append(f"existing include {target_id}: ambiguous selection")
+            continue
+        selected_steps: list[dict] = []
+        allowed_steps = {
+            (str(item["use_case_id"]), str(item["step_ref"])): item
+            for item in option["base_step_options"]
+        }
+        seen: set[tuple[str, str]] = set()
+        for ref in selections[0].base_step_refs:
+            key = (ref.use_case_id, ref.step_ref)
+            if key not in allowed_steps:
+                dropped.append(f"existing include {target_id}: base step {key} is not supplied")
+                continue
+            if ref.use_case_id == target_id:
+                dropped.append(f"existing include {target_id}: target cannot be its own base")
+                continue
+            if key not in seen:
+                selected_steps.append(allowed_steps[key])
+                seen.add(key)
+        base_ids = list(dict.fromkeys(str(item["use_case_id"]) for item in selected_steps))
+        if len(base_ids) < 2:
+            dropped.append(f"existing include {target_id}: needs steps from two bases")
+            continue
+        requirement_ids = list(
+            dict.fromkeys(
+                requirement_id
+                for item in selected_steps
+                for requirement_id in item["requirement_ids"]
+            )
+        )
+        requirement_refs = [
+            {
+                "use_case_id": item["use_case_id"],
+                "step_ref": item["step_ref"],
+                "requirement_id": requirement_id,
+            }
+            for item in selected_steps
+            for requirement_id in item["requirement_ids"]
+        ]
+        for base_id in base_ids:
+            includes.append(
+                {
+                    "base_use_case_id": base_id,
+                    "included_use_case_id": target_id,
+                    "base_use_case": names_by_id[base_id],
+                    "included_use_case": names_by_id[target_id],
+                    "step_refs": selected_steps,
+                    "requirement_ids": requirement_ids,
+                    "requirement_refs": requirement_refs,
+                }
+            )
+    return includes, dropped
+
+
 def _materialize_extends(
     model: RelationshipModel,
     use_cases: list[dict],
@@ -573,6 +753,111 @@ def _suppress_redundant_associations(
     return kept, suppressed
 
 
+def _select_relationship_parts(
+    state: AgentState,
+    use_cases: list[dict],
+    specs_by_id: dict[str, dict],
+    candidates: list[dict],
+    existing_include_options: list[dict],
+    feedback: str,
+) -> tuple[list[dict], list[dict], list[dict], list[str]]:
+    """Make one bounded set of include/extend choices from accepted evidence."""
+
+    include_model = RelationshipModel()
+    existing_include_model = ExistingIncludeModel()
+    extend_model = RelationshipModel()
+    if specs_by_id:
+        derived_include_prompt = _relationship_prompt(
+            state,
+            use_cases,
+            specs_by_id,
+            candidates,
+            [],
+            feedback,
+        )
+        system = prompts.generation_system_for(rules.DRAW_DIAGRAM)
+        if candidates:
+            include_model = invoke_structured(
+                RelationshipModel,
+                [
+                    SystemMessage(content=system),
+                    HumanMessage(
+                        content=(
+                            f"{derived_include_prompt}\n\n"
+                            "Task focus: decide derived include candidates only. Return extends "
+                            "as an empty list."
+                        )
+                    ),
+                ],
+            )
+        if existing_include_options:
+            existing_include_prompt = _relationship_prompt(
+                state,
+                use_cases,
+                specs_by_id,
+                [],
+                existing_include_options,
+                feedback,
+            )
+            existing_include_model = invoke_structured(
+                ExistingIncludeModel,
+                [
+                    SystemMessage(content=system),
+                    HumanMessage(
+                        content=(
+                            f"{existing_include_prompt}\n\n"
+                            "Task focus: decide existing include selections only. Return one "
+                            "existing target ID with all matching supplied base steps, or an "
+                            "empty list."
+                        )
+                    ),
+                ],
+            )
+        extend_prompt = _relationship_prompt(
+            state, use_cases, specs_by_id, [], [], feedback
+        )
+        extend_selections = []
+        for extending_use_case_id in _extend_candidate_ids(
+            state, use_cases, specs_by_id
+        ):
+            focused_model = invoke_structured(
+                RelationshipModel,
+                [
+                    SystemMessage(content=system),
+                    HumanMessage(
+                        content=(
+                            f"{extend_prompt}\n\n"
+                            "Task focus: decide extend relationships only for "
+                            f"extending_use_case_id={extending_use_case_id}. Return includes as "
+                            "an empty list. Every selected base must be directly named or "
+                            "unambiguously described by this use case's own requirement evidence; "
+                            "sharing a validation, actor, or business object is insufficient."
+                        )
+                    ),
+                ],
+            )
+            extend_selections.extend(
+                selection
+                for selection in focused_model.extends
+                if selection.extending_use_case_id == extending_use_case_id
+            )
+        extend_model = RelationshipModel(extends=extend_selections)
+    derived_includes, derived, include_drops = _materialize_includes(
+        include_model, candidates, use_cases
+    )
+    existing_includes, existing_include_drops = _materialize_existing_includes(
+        existing_include_model, existing_include_options, use_cases
+    )
+    includes = [*derived_includes, *existing_includes]
+    extends, extend_drops = _materialize_extends(extend_model, use_cases, specs_by_id)
+    return (
+        includes,
+        extends,
+        derived,
+        [*include_drops, *existing_include_drops, *extend_drops],
+    )
+
+
 @contract("identify_relationships", requires=("use_cases", "actors"), produces=("relationships",))
 def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     """Project actor facts and select bounded include/extend relations in focused calls."""
@@ -599,94 +884,69 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     accepted_ids = {str(use_case["id"]) for use_case in use_cases}
     specs_by_id, spec_rejections = _accepted_specs_by_id(state, accepted_ids)
     candidates = _include_candidates(state, use_cases, specs_by_id)
-    include_model = RelationshipModel()
-    extend_model = RelationshipModel()
-    if specs_by_id:
-        relationship_prompt = _relationship_prompt(
-            state, use_cases, specs_by_id, candidates, feedback
+    existing_include_options = _existing_include_options(state, use_cases, specs_by_id)
+
+    def build(selection_feedback: str) -> dict[str, Any]:
+        includes, extends, derived, selection_drops = _select_relationship_parts(
+            state,
+            use_cases,
+            specs_by_id,
+            candidates,
+            existing_include_options,
+            selection_feedback,
         )
-        system = prompts.generation_system_for(rules.DRAW_DIAGRAM)
-        if candidates:
-            include_model = invoke_structured(
-                RelationshipModel,
-                [
-                    SystemMessage(content=system),
-                    HumanMessage(
-                        content=(
-                            f"{relationship_prompt}\n\n"
-                            "Task focus: decide include candidates only. Return extends as an "
-                            "empty list."
-                        )
-                    ),
-                ],
-            )
-        extend_selections = []
-        for extending_use_case_id in _extend_candidate_ids(
-            state, use_cases, specs_by_id
-        ):
-            focused_model = invoke_structured(
-                RelationshipModel,
-                [
-                    SystemMessage(content=system),
-                    HumanMessage(
-                        content=(
-                            f"{relationship_prompt}\n\n"
-                            "Task focus: decide extend relationships only for "
-                            f"extending_use_case_id={extending_use_case_id}. Return includes as "
-                            "an empty list. Every selected base must be directly named or "
-                            "unambiguously described by this use case's own requirement evidence; "
-                            "sharing a validation, actor, or business object is insufficient."
-                        )
-                    ),
-                ],
-            )
-            extend_selections.extend(
-                selection
-                for selection in focused_model.extends
-                if selection.extending_use_case_id == extending_use_case_id
-            )
-        extend_model = RelationshipModel(extends=extend_selections)
-    includes, derived, include_drops = _materialize_includes(
-        include_model, candidates, use_cases
-    )
-    extends, extend_drops = _materialize_extends(extend_model, use_cases, specs_by_id)
-    relation_parts = {"includes": includes, "extends": extends}
-    projected_associations, suppressed = _suppress_redundant_associations(
-        associations, relation_parts, actors
-    )
-    relations = {
-        "associations": projected_associations,
-        "includes": includes,
-        "extends": extends,
-        "generalizations": generalizations,
-        "derived_use_cases": derived,
-        "suppressed_associations": suppressed,
-        "orphan_actors": orphan_actors,
-        "dropped_refs": [
-            *actor_drops,
-            *(f"{item['use_case_id']}: {item['reason']}" for item in spec_rejections),
-            *include_drops,
-            *extend_drops,
-        ],
-        "relationship_issues": [],
-        "semantic_status": "single_pass" if specs_by_id else "not_run",
-        "repair_iters": 0,
-        "repair_stopped": "single_pass" if specs_by_id else "not_applicable",
-    }
-    if specs_by_id:
-        review = validator.review(
-            rules.DRAW_DIAGRAM,
-            _relationship_review_payload(
-                cast(list[dict], state.get("classified") or []),
-                actors,
-                use_cases,
-                specs_by_id,
-                relations,
-            ),
-            prefix="rel",
-            source="relationships.semantic_validator",
-            confirm_violations=True,
+        projected_associations, suppressed = _suppress_redundant_associations(
+            associations, {"includes": includes, "extends": extends}, actors
         )
+        return {
+            "associations": projected_associations,
+            "includes": includes,
+            "extends": extends,
+            "generalizations": generalizations,
+            "derived_use_cases": derived,
+            "suppressed_associations": suppressed,
+            "orphan_actors": orphan_actors,
+            "dropped_refs": [
+                *actor_drops,
+                *(f"{item['use_case_id']}: {item['reason']}" for item in spec_rejections),
+                *selection_drops,
+            ],
+            "relationship_issues": [],
+            "semantic_status": "single_pass" if specs_by_id else "not_run",
+            "repair_iters": 0,
+            "repair_stopped": "single_pass" if specs_by_id else "not_applicable",
+        }
+
+    relations = build(feedback)
+    if specs_by_id:
+        def review_current(subject: str) -> validator.Review:
+            return validator.review(
+                rules.DRAW_DIAGRAM,
+                _relationship_review_payload(
+                    cast(list[dict], state.get("classified") or []),
+                    actors,
+                    use_cases,
+                    specs_by_id,
+                    relations,
+                ),
+                prefix="rel",
+                source="relationships.semantic_validator",
+                subject=subject,
+                confirm_violations=True,
+            )
+
+        review = review_current("initial")
+        if review.status == validator.OK and review.findings:
+            repair_feedback = "\n".join([
+                feedback,
+                "Correct only these independently confirmed relationship defects. "
+                "Re-evaluate the supplied candidates and return a complete relationship "
+                "selection without changing use cases or specifications:",
+                *(f"- {finding}" for finding in review.findings),
+            ]).strip()
+            relations = build(repair_feedback)
+            relations["repair_iters"] = 1
+            review = review_current("repair-1")
         relations["relationship_issues"] = review.findings
         relations["semantic_status"] = review.status
         relations["unexamined_rules"] = list(review.unexamined)

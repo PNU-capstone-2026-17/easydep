@@ -16,11 +16,18 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.config import settings
 from app.core.traceability import constraints_for_use_case
+from app.design import progress as design_progress
 from app.design.schemas.class_model import BCEModel, canonical_call_id
+from app.design.services.class_diagram.type_system import (
+    projected_field_type,
+    structured_field_types,
+    types_compatible,
+)
+from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.common.structured import parse_structured
 
 
@@ -33,34 +40,18 @@ class ProposedCall(BaseModel):
     parent_call_index: int | None = Field(default=None, alias="parentCallIndex", ge=1)
     step_refs: list[str] = Field(alias="stepRefs", min_length=1)
 
+    @field_validator("step_refs")
+    @classmethod
+    def step_refs_are_nonblank(cls, values: list[str]) -> list[str]:
+        if any(not str(value).strip() for value in values):
+            raise ValueError("stepRefs cannot contain blank values")
+        return values
+
 
 class CollaborationProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     calls: list[ProposedCall] = Field(min_length=1)
-
-
-class SourceChoice(BaseModel):
-    """The LLM may select exactly one source from a supplied finite list."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    source_ref: str = Field(alias="sourceRef", min_length=1)
-
-
-class SemanticIssue(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    collaboration_id: str = Field(alias="collaborationId", min_length=1)
-    class_name: str | None = Field(default=None, alias="className")
-    message: str = Field(min_length=1)
-    needs_input: bool = Field(default=False, alias="needsInput")
-
-
-class ClassSemanticReview(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    issues: list[SemanticIssue] = Field(default_factory=list)
 
 
 _COLLABORATION_SYSTEM = """
@@ -73,6 +64,10 @@ call.  Cover every supplied group step with one or more call stepRefs.
 A single call may cite several main or extension steps.  Do not repeat the
 same operation under the same parent merely to cover another step; repeat it
 only when the scenario explicitly invokes that operation again.
+Every call stepRef must be selected from that receiver operation candidate's
+declared stepRefs. Never assign a group step to an operation that does not
+declare it. The actor group's root Boundary operation must declare the exact
+actor entry step.
 
 For an actor group, make the root call a Boundary operation.  For an internal
 group, make the root call a Control operation.  Child calls model delegation
@@ -89,44 +84,11 @@ or notification of that returned value.
 Return only the supplied schema.
 """.strip()
 
-_SOURCE_SYSTEM = """
-Choose exactly one sourceRef from candidateSources[].sourceRef.  Use the
-candidate evidence only to distinguish the supplied finite choices.  Do not
-invent, alter, or explain a sourceRef, call id, or operation id.  Return only
-the schema.
-""".strip()
-
 _REPAIR_SYSTEM = """
 Repair one failed collaboration proposal only.  The structural model and all
 operation signatures are fixed.  Choose only supplied receiverOperationId
 values; do not create identifiers or source refs.  Return a full replacement
 proposal for this execution group and cover all its steps.
-""".strip()
-
-_SEMANTIC_REVIEW_SYSTEM = """
-Review only unresolved collaboration decisions in the supplied, already
-deterministically valid class model.  Do not review class fields, identifiers,
-naming, class granularity, or implementation values, and do not propose edits.
-A symbolic actor-step source such as `<step>#<parameter>` or a precondition
-source is sufficient provenance; the prose need not contain that exact symbol.
-Argument-source availability and type compatibility have already passed their
-finite deterministic contract, so they are not review targets and must not be
-reported as missing identifiers or missing values.  Emit an issue only when
-the selected operation meaning or call ordering contradicts the scenario and
-the scenario cannot resolve an alternative without user input.  Every issue
-must name an existing collaborationId, may name an existing className, and
-must set needsInput=true.  Return only the schema.
-
-A synchronous Boundary or Control operation may trace both the request step
-and later presentation/notification steps; that trace does not mean the call
-is repeated or its order is ambiguous.  Do not redesign or revalidate the
-upstream use-case specification, including its extension layout, in this
-review.
-
-Call order is preorder: a parent Control invocation starts before its child
-Entity checks or mutations and returns only after all children return.  Do not
-claim that the parent business operation completes before its prerequisite
-children merely because the parent call is listed first.
 """.strip()
 
 _PRIMITIVE_TYPES = frozenset({
@@ -175,12 +137,6 @@ class _BehaviorArtifact(dict):
 
 def group_outcomes(model: dict[str, Any]) -> tuple[_GroupOutcome, ...]:
     return tuple(getattr(model, "_behavior_group_outcomes", ()))
-
-
-def semantic_review_issues(model: dict[str, Any]) -> tuple[SemanticIssue, ...]:
-    """Return advisory model-review observations; they never mutate or block."""
-
-    return tuple(getattr(model, "_semantic_review_issues", ()))
 
 
 def _text(value: Any) -> str:
@@ -308,6 +264,58 @@ def relationship_pairs(scenario: dict[str, Any]) -> list[tuple[str, str, str]]:
     return sorted(set(result))
 
 
+def _relationship_invocation_steps(
+    scenario: dict[str, Any], kind: str, base: str, child: str,
+) -> set[str]:
+    """Return canonical base-step anchors when the relation declares them."""
+
+    relations = scenario.get("relationships")
+    if not isinstance(relations, dict):
+        return set()
+    aliases = _use_case_aliases(scenario)
+    collection = "includes" if kind == "include" else "extends"
+    child_id_key = "included_use_case_id" if kind == "include" else "extending_use_case_id"
+    child_name_keys = (
+        ("included_use_case", "includedUseCase")
+        if kind == "include"
+        else ("extending_use_case", "extendingUseCase")
+    )
+    for item in relations.get(collection) or []:
+        if not isinstance(item, dict):
+            continue
+        base_raw = _text(
+            item.get("base_use_case_id")
+            or item.get("base_use_case")
+            or item.get("baseUseCase")
+        )
+        child_raw = _text(
+            item.get(child_id_key)
+            or next((item.get(key) for key in child_name_keys if item.get(key)), "")
+        )
+        if aliases.get(base_raw.casefold()) != base or aliases.get(child_raw.casefold()) != child:
+            continue
+        anchors = {
+            f"{base}:{_text(ref.get('step_ref'))}"
+            for ref in item.get("step_refs") or []
+            if isinstance(ref, dict)
+            and _text(ref.get("use_case_id")) == base
+            and _text(ref.get("step_ref"))
+        }
+        if kind == "extend" and not anchors:
+            extension_point = _text(item.get("extension_point"))
+            if extension_point:
+                anchors.add(f"{base}:{extension_point}")
+        return anchors
+    return set()
+
+
+def _relationship_applies_to_group(
+    scenario: dict[str, Any], group: _Group, kind: str, base: str, child: str,
+) -> bool:
+    anchors = _relationship_invocation_steps(scenario, kind, base, child)
+    return not anchors or bool(anchors & set(group.step_ids))
+
+
 def execution_groups(scenario: dict[str, Any]) -> list[_Group]:
     """Split each actor request into one finite collaboration group.
 
@@ -318,8 +326,8 @@ def execution_groups(scenario: dict[str, Any]) -> list[_Group]:
 
     specs = _specification_map(scenario)
     internal_ids = {
-        child for kind, _base, child in relationship_pairs(scenario)
-        if kind == "include" or not _actor_steps(scenario, specs.get(child, {}))
+        child for _kind, _base, child in relationship_pairs(scenario)
+        if not _actor_steps(scenario, specs.get(child, {}))
     }
     groups: list[_Group] = []
     for use_case_id, specification in sorted(specs.items()):
@@ -339,16 +347,14 @@ def execution_groups(scenario: dict[str, Any]) -> list[_Group]:
         active: str | None = None
         grouped: dict[str, list[str]] = {}
         main_owner: dict[str, str] = {}
-        previous_was_actor = False
         for step in main_steps:
             actor_step = step.id in actor_steps
-            if actor_step and (active is None or not previous_was_actor):
+            if actor_step:
                 active = step.id
                 grouped.setdefault(active, [])
             if active:
                 grouped[active].append(step.id)
                 main_owner[step.id] = active
-            previous_was_actor = actor_step
         if not grouped:
             groups.append(_Group(use_case_id, f"{use_case_id}:root", tuple(step.id for step in steps), None, False))
         else:
@@ -376,11 +382,19 @@ def _class_in_scope(item: dict[str, Any], use_case_id: str) -> bool:
 
 
 def _trace_scope_ids(group: _Group, scenario: dict[str, Any]) -> list[str]:
-    """First id is the execution root; following ids are include/extend scope."""
+    """First id is the execution root; following ids are invoked include scope.
+
+    An extending use case owns an independent actor-entry collaboration.  The
+    sequence projection may place that collaboration inside the base use
+    case's conditional fragment, but the class contract must not fake a
+    Boundary-to-Boundary call merely to embed it.
+    """
 
     children = [
-        child for _kind, base, child in relationship_pairs(scenario)
-        if base == group.use_case_id
+        child for kind, base, child in relationship_pairs(scenario)
+        if kind == "include"
+        and base == group.use_case_id
+        and _relationship_applies_to_group(scenario, group, kind, base, child)
     ]
     return [group.use_case_id, *sorted(set(children))]
 
@@ -395,7 +409,11 @@ def _required_trace_steps(group: _Group, scenario: dict[str, Any]) -> set[str]:
 
     required = set(group.step_ids)
     for kind, base, child in relationship_pairs(scenario):
-        if kind == "include" and base == group.use_case_id:
+        if (
+            kind == "include"
+            and base == group.use_case_id
+            and _relationship_applies_to_group(scenario, group, kind, base, child)
+        ):
             required.update(step.id for step in _steps(_specification_map(scenario).get(child, {})))
     return required
 
@@ -484,15 +502,20 @@ def _group_payload(model: dict[str, Any], group: _Group, scenario: dict[str, Any
     }
 
 
-def _propose_group(model: dict[str, Any], group: _Group, scenario: dict[str, Any], *, repair: list[str] | None = None) -> CollaborationProposal:
+def _propose_group(
+    model: dict[str, Any], group: _Group, scenario: dict[str, Any], *,
+    repair: list[str] | None = None, previous: CollaborationProposal | None = None,
+) -> CollaborationProposal:
     payload = _group_payload(model, group, scenario)
     if repair:
         payload["repairFindings"] = repair
+        if previous is not None:
+            payload["previousProposal"] = previous.model_dump(by_alias=True)
     parsed = parse_structured(
         [{"role": "system", "content": _REPAIR_SYSTEM if repair else _COLLABORATION_SYSTEM},
          {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
         CollaborationProposal,
-        reasoning_effort="medium",
+        reasoning_effort=settings.design_reasoning_effort,
         max_completion_tokens=settings.design_class_collaboration_max_completion_tokens,
         operation="CollaborationProposal" if not repair else "FailedCollaborationRepair",
         metadata={"collaborationGroup": group.id},
@@ -534,6 +557,7 @@ def _ancestors(calls: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
 def _binding_candidates(
     calls: list[dict[str, Any]], index: int, parameter: dict[str, Any],
     operations: dict[str, dict[str, Any]], group: _Group, scenario: dict[str, Any],
+    model: dict[str, Any] | None = None,
 ) -> list[str]:
     """Return every valid source in deterministic priority/order.
 
@@ -543,69 +567,57 @@ def _binding_candidates(
     """
 
     parameter_name, parameter_type = _text(parameter.get("name")), _text(parameter.get("type"))
-    specification = _specification_map(scenario).get(group.use_case_id, {})
-    candidates: list[str] = []
     if index == 0 and group.actor_step:
-        candidates.append(f"{group.actor_step}#{parameter_name}")
-    candidates.extend(sorted(_precondition_refs(specification)))
+        return [f"{group.actor_step}#{parameter_name}"]
+    candidates: list[str] = []
+    fields_by_type = structured_field_types(model or {})
     for ancestor in _ancestors(calls, index):
         operation = operations.get(_text(ancestor.get("receiverOperationId")), {})
-        if _parameter_type(operation, parameter_name) == parameter_type:
+        if types_compatible(_parameter_type(operation, parameter_name), parameter_type):
             candidates.append(f"{ancestor['callId']}#{parameter_name}")
-    for earlier in calls[:index]:
+        for source_parameter in operation.get("parameters") or []:
+            if not isinstance(source_parameter, dict):
+                continue
+            source_name = _text(source_parameter.get("name"))
+            source_type = _text(source_parameter.get("type"))
+            for field_path in fields_by_type.get(source_type, {}):
+                projected_type = projected_field_type(
+                    source_type, field_path, fields_by_type,
+                )
+                if field_path == parameter_name and types_compatible(
+                    projected_type, parameter_type,
+                ):
+                    candidates.append(
+                        f"{ancestor['callId']}#{source_name}.{field_path}"
+                    )
+    if candidates:
+        return list(dict.fromkeys(candidates))
+    # A compatible result produced immediately before this call is the most
+    # local value.  Reverse traversal keeps that policy deterministic without
+    # asking the model to choose among equivalent provenance candidates.
+    for earlier in reversed(calls[:index]):
         operation = operations.get(_text(earlier.get("receiverOperationId")), {})
         return_type = _text(operation.get("returnType"))
-        if return_type and return_type.casefold() != "void" and return_type == parameter_type:
+        if return_type and return_type.casefold() != "void" and types_compatible(
+            return_type, parameter_type,
+        ):
             candidates.append(f"{earlier['callId']}#result")
+        for field_path in fields_by_type.get(return_type, {}):
+            projected_type = projected_field_type(return_type, field_path, fields_by_type)
+            if field_path == parameter_name and types_compatible(
+                projected_type, parameter_type,
+            ):
+                candidates.append(f"{earlier['callId']}#result.{field_path}")
+    if candidates:
+        return list(dict.fromkeys(candidates))
     return list(dict.fromkeys(candidates))
 
 
-def _choose_source(
-    candidates: list[str], *, group: _Group, call_id: str, parameter: str,
-    scenario: dict[str, Any],
-) -> str:
-    specification = _specification_map(scenario).get(group.use_case_id, {})
-    step_text = {step.id: step.sentence for step in _steps(specification)}
-    raw_preconditions = specification.get("preconditions") or []
-    preconditions = (
-        list(raw_preconditions.values())
-        if isinstance(raw_preconditions, dict)
-        else list(raw_preconditions)
-    )
-
-    def evidence(source_ref: str) -> str:
-        source_id = source_ref.split("#", 1)[0]
-        if source_id in step_text:
-            return step_text[source_id]
-        match = re.fullmatch(rf"{re.escape(group.use_case_id)}:precondition:(\d+)", source_id)
-        if match:
-            index = int(match.group(1)) - 1
-            if 0 <= index < len(preconditions):
-                return _text(preconditions[index])
-        return "Value produced by the referenced earlier call"
-
-    parsed = parse_structured(
-        [{"role": "system", "content": _SOURCE_SYSTEM}, {"role": "user", "content": json.dumps({
-            "collaborationId": group.id, "callId": call_id, "parameter": parameter,
-            "candidateSources": [
-                {"sourceRef": source_ref, "evidence": evidence(source_ref)}
-                for source_ref in candidates
-            ],
-        }, ensure_ascii=False)}],
-        SourceChoice,
-        reasoning_effort="low",
-        max_completion_tokens=settings.design_class_selector_max_completion_tokens,
-        operation="SourceChoice",
-        metadata={"collaborationGroup": group.id, "callId": call_id},
-    )
-    source = _text(SourceChoice.model_validate(parsed).source_ref)
-    if source not in candidates:
-        raise ValueError(f"sourceRef is not one of the finite candidates for {call_id}#{parameter}")
-    return source
-
-
 def _materialize_calls(
-    proposal: CollaborationProposal, model: dict[str, Any], group: _Group, scenario: dict[str, Any],
+    proposal: CollaborationProposal,
+    model: dict[str, Any],
+    group: _Group,
+    scenario: dict[str, Any],
 ) -> list[dict[str, Any]]:
     operations = _operation_catalog(model, group)
     for class_item in _scope_classes(
@@ -633,6 +645,7 @@ def _materialize_calls(
                 operation_id = finite_matches[0]
             else:
                 raise ValueError(f"call selects unknown receiverOperationId: {operation_id}")
+        operation = operations[operation_id]
         parent_call_index = proposal_call.parent_call_index
         # At the second call there is exactly one possible earlier parent.  A
         # model choice adds no information; later calls still need an explicit
@@ -647,9 +660,27 @@ def _materialize_calls(
             raise ValueError("only the first call may omit parentCallIndex")
         proposed_step_refs = [_text(ref) for ref in proposal_call.step_refs]
         trace_steps = _available_trace_steps(group, scenario)
-        step_refs = [ref for ref in proposed_step_refs if ref in trace_steps]
-        if index == 0 and group.actor_step and group.actor_step not in step_refs:
-            step_refs.insert(0, group.actor_step)
+        declared_steps = {
+            _text(ref) for ref in operation.get("stepRefs") or [] if _text(ref)
+        }
+        undeclared_steps = sorted(
+            ref for ref in proposed_step_refs
+            if ref in trace_steps and ref not in declared_steps
+        )
+        if undeclared_steps:
+            raise ValueError(
+                "call stepRefs must be declared by its receiver operation; "
+                f"operation={operation_id}, undeclared={undeclared_steps}"
+            )
+        step_refs = [
+            ref for ref in proposed_step_refs
+            if ref in trace_steps and ref in declared_steps
+        ]
+        if index == 0 and group.actor_step and group.actor_step not in declared_steps:
+            raise ValueError(
+                "an actor group's root operation must declare its actor step: "
+                f"{group.actor_step}"
+            )
         if not step_refs:
             raise ValueError(
                 "call has no stepRefs in collaboration trace scope; "
@@ -667,6 +698,17 @@ def _materialize_calls(
         }
         calls.append(call)
         covered.update(step_refs)
+    call_by_id = {call["callId"]: call for call in calls}
+    for call in calls[1:]:
+        parent = call_by_id.get(_text(call.get("parentCallId")))
+        if not parent:
+            continue
+        source = operations[parent["receiverOperationId"]]["stereotype"]
+        target = operations[call["receiverOperationId"]]["stereotype"]
+        if not bce_dependency_allowed(source, target):
+            raise ValueError(
+                f"call dependency violates BCE communication: {source} -> {target}"
+            )
     missing = sorted(_required_trace_steps(group, scenario) - covered)
     if missing:
         raise ValueError(
@@ -683,6 +725,26 @@ def _materialize_calls(
         for call in calls
     ):
         raise ValueError("an actor group's Boundary root must delegate to a Control call")
+    entity_steps = {
+        _text(step_ref)
+        for operation in operations.values()
+        if operation["stereotype"] == "entity"
+        for step_ref in operation.get("stepRefs") or []
+        if _text(step_ref) in _available_trace_steps(group, scenario)
+    }
+    covered_entity_steps = {
+        _text(step_ref)
+        for call in calls
+        if operations[call["receiverOperationId"]]["stereotype"] == "entity"
+        for step_ref in call.get("stepRefs") or []
+        if _text(step_ref) in entity_steps
+    }
+    missing_entity_steps = sorted(entity_steps - covered_entity_steps)
+    if missing_entity_steps:
+        raise ValueError(
+            "persistent-state steps must delegate to an in-scope Entity operation; "
+            f"missing={missing_entity_steps}"
+        )
     for index, call in enumerate(calls):
         operation = operations[call["receiverOperationId"]]
         bindings: list[dict[str, str]] = []
@@ -692,25 +754,30 @@ def _materialize_calls(
                     "operation parameters must be objects: "
                     f"{call['receiverOperationId']}"
                 )
-            candidates = _binding_candidates(calls, index, parameter, operations, group, scenario)
+            candidates = _binding_candidates(
+                calls, index, parameter, operations, group, scenario, model,
+            )
             if not candidates:
                 raise ValueError(f"no finite source candidate for {call['callId']}#{_text(parameter.get('name'))}")
             bindings.append({
                 "parameter": _text(parameter.get("name")),
-                "sourceRef": (
-                    candidates[0]
-                    if len(candidates) == 1
-                    else _choose_source(
-                        candidates,
-                        group=group,
-                        call_id=call["callId"],
-                        parameter=_text(parameter.get("name")),
-                        scenario=scenario,
-                    )
-                ),
+                # Candidate order is the shared provenance policy: nearest
+                # ancestor first, then latest compatible earlier result.
+                "sourceRef": candidates[0],
             })
         call["argumentBindings"] = bindings
     return calls
+
+
+def bce_dependency_allowed(source: str, target: str) -> bool:
+    """Return whether a directed class dependency is valid in this BCE model."""
+
+    return (str(source).casefold(), str(target).casefold()) not in {
+        ("boundary", "entity"),
+        ("entity", "boundary"),
+        ("boundary", "boundary"),
+        ("entity", "control"),
+    }
 
 
 def project_call_dependencies(model: dict[str, Any]) -> list[dict[str, Any]]:
@@ -774,35 +841,322 @@ def _validate_group_result(model: dict[str, Any], scenario: dict[str, Any], grou
     ]
 
 
-def _semantic_review(model: dict[str, Any], scenario: dict[str, Any]) -> list[SemanticIssue]:
-    collaboration_ids = {
-        _text(item.get("collaborationId")) for item in model.get("Collaborations") or []
-        if isinstance(item, dict)
+def _deterministic_group_calls(
+    model: dict[str, Any], scenario: dict[str, Any], group: _Group,
+) -> list[dict[str, Any]]:
+    """Choose a finite valid tree after both bounded model proposals fail."""
+
+    payload = _group_payload(model, group, scenario)
+    allowed_steps = _available_trace_steps(group, scenario)
+    operations = {
+        _text(item.get("operationId")): item
+        for item in payload["receiverOperationCandidates"]
+        if _text(item.get("operationId"))
+        and set(item.get("stepRefs") or []) & allowed_steps
     }
-    class_names = {
-        _class_name(item) for item in model.get("Classes") or [] if isinstance(item, dict)
+    root_stereotype = "control" if group.internal else "boundary"
+    roots = [
+        operation for operation in operations.values()
+        if operation.get("stereotype") == root_stereotype
+    ]
+    controls = [
+        operation for operation in operations.values()
+        if operation.get("stereotype") == "control"
+    ]
+    entities = [
+        operation for operation in operations.values()
+        if operation.get("stereotype") == "entity"
+    ]
+    fields_by_type = structured_field_types(model)
+
+    def refs(operation: dict[str, Any]) -> list[str]:
+        return [
+            _text(value) for value in operation.get("stepRefs") or []
+            if _text(value) in allowed_steps
+        ]
+
+    roots.sort(key=lambda operation: (
+        -len(refs(operation)),
+        str(operation.get("returnType") or "").casefold() == "void",
+        -len(operation.get("parameters") or []),
+        _text(operation.get("operationId")),
+    ))
+    controls.sort(key=lambda operation: (
+        -len(refs(operation)),
+        _text(operation.get("operationId")),
+    ))
+
+    def control_candidates(root: dict[str, Any]) -> list[tuple[dict[str, Any], ...]]:
+        if group.internal:
+            return [tuple()]
+        candidates: list[tuple[dict[str, Any], ...]] = [
+            (control,) for control in controls
+        ]
+        uncovered = set(_required_trace_steps(group, scenario)) - set(refs(root))
+        remaining = list(controls)
+        greedy: list[dict[str, Any]] = []
+        while remaining and uncovered:
+            selected = max(
+                remaining,
+                key=lambda operation: (
+                    len(set(refs(operation)) & uncovered),
+                    -len(refs(operation)),
+                    _text(operation.get("operationId")),
+                ),
+            )
+            if not set(refs(selected)) & uncovered:
+                break
+            greedy.append(selected)
+            uncovered -= set(refs(selected))
+            remaining.remove(selected)
+        if greedy:
+            candidates.append(tuple(greedy))
+        if controls:
+            candidates.append(tuple(controls))
+        unique: dict[tuple[str, ...], tuple[dict[str, Any], ...]] = {}
+        for selected in candidates:
+            key = tuple(_text(operation.get("operationId")) for operation in selected)
+            unique.setdefault(key, selected)
+        return sorted(unique.values(), key=lambda selected: (
+            -len({step for operation in selected for step in refs(operation)}),
+            len(selected),
+            tuple(_text(operation.get("operationId")) for operation in selected),
+        ))
+
+    def selection_key(selected: tuple[dict[str, Any], ...]) -> tuple[Any, ...]:
+        return (
+        -len({step for operation in selected for step in refs(operation)}),
+        len(selected),
+        tuple(_text(operation.get("operationId")) for operation in selected),
+        )
+
+    for root in roots:
+        for selected_controls in sorted(control_candidates(root), key=selection_key):
+            selected_operations = [root, *selected_controls]
+            proposal_calls: list[dict[str, Any]] = [{
+                "receiverOperationId": root["operationId"],
+                "stepRefs": refs(root),
+            }]
+            for operation in selected_controls:
+                proposal_calls.append({
+                    "receiverOperationId": operation["operationId"],
+                    "parentCallIndex": 1,
+                    "stepRefs": refs(operation),
+                })
+
+            def available_from(
+                required_name: str, required_type: str,
+                ancestors: tuple[dict[str, Any], ...],
+            ) -> bool:
+                ancestor_parameters = [
+                    (_text(parameter.get("name")), _text(parameter.get("type")))
+                    for operation in ancestors
+                    for parameter in operation.get("parameters") or []
+                    if isinstance(parameter, dict)
+                ]
+                produced_types = [
+                    _text(operation.get("returnType"))
+                    for operation in selected_operations
+                    if _text(operation.get("returnType")).casefold() != "void"
+                ]
+                if any(
+                    source_name == required_name
+                    and types_compatible(source_type, required_type)
+                    for source_name, source_type in ancestor_parameters
+                ):
+                    return True
+                if any(
+                    types_compatible(source_type, required_type)
+                    for source_type in produced_types
+                ):
+                    return True
+                if any(
+                    types_compatible(
+                        projected_field_type(
+                            source_type, required_name, fields_by_type,
+                        ),
+                        required_type,
+                    )
+                    for _source_name, source_type in ancestor_parameters
+                ):
+                    return True
+                return any(
+                    types_compatible(
+                        projected_field_type(
+                            source_type, required_name, fields_by_type,
+                        ),
+                        required_type,
+                    )
+                    for source_type in produced_types
+                )
+
+            for entity in sorted(entities, key=lambda item: _text(item.get("operationId"))):
+                required_parameters = [
+                    (_text(parameter.get("name")), _text(parameter.get("type")))
+                    for parameter in entity.get("parameters") or []
+                    if isinstance(parameter, dict)
+                ]
+                parent_index: int | None = None
+                parent_controls = (
+                    [(1, root)]
+                    if root.get("stereotype") == "control"
+                    else list(enumerate(selected_controls, start=2))
+                )
+                for index, control in parent_controls:
+                    if all(
+                        available_from(name, type_name, (root, control))
+                        for name, type_name in required_parameters
+                    ):
+                        parent_index = index
+                        break
+                if parent_index is None:
+                    continue
+                proposal_calls.append({
+                    "receiverOperationId": entity["operationId"],
+                    "parentCallIndex": parent_index,
+                    "stepRefs": refs(entity),
+                })
+                selected_operations.append(entity)
+
+            covered_steps = {
+                step
+                for proposal_call in proposal_calls
+                for step in proposal_call.get("stepRefs") or []
+            }
+            output_boundaries = [
+                operation for operation in operations.values()
+                if operation.get("stereotype") == "boundary"
+                and operation.get("operationId") != root.get("operationId")
+                and set(refs(operation)) - covered_steps
+            ]
+            for output in sorted(
+                output_boundaries,
+                key=lambda item: _text(item.get("operationId")),
+            ):
+                required_parameters = [
+                    (_text(parameter.get("name")), _text(parameter.get("type")))
+                    for parameter in output.get("parameters") or []
+                    if isinstance(parameter, dict)
+                ]
+                parent_index = next((
+                    index
+                    for index, control in enumerate(selected_controls, start=2)
+                    if all(
+                        available_from(name, type_name, (root, control))
+                        for name, type_name in required_parameters
+                    )
+                ), None)
+                if parent_index is None:
+                    continue
+                proposal_calls.append({
+                    "receiverOperationId": output["operationId"],
+                    "parentCallIndex": parent_index,
+                    "stepRefs": refs(output),
+                })
+                selected_operations.append(output)
+                covered_steps.update(refs(output))
+
+            try:
+                calls = _materialize_calls(
+                    CollaborationProposal.model_validate({"calls": proposal_calls}),
+                    model,
+                    group,
+                    scenario,
+                )
+                if not _validate_group_result(model, scenario, group, calls):
+                    return calls
+            except Exception:  # noqa: BLE001 - continue through the finite candidates
+                continue
+    raise ValueError("no deterministic call tree satisfies the execution-group contract")
+
+
+def _unique_group_calls(
+    model: dict[str, Any], scenario: dict[str, Any], group: _Group,
+) -> list[dict[str, Any]]:
+    """Materialize only a call tree whose operations and parents are unique."""
+
+    payload = _group_payload(model, group, scenario)
+    allowed_steps = _available_trace_steps(group, scenario)
+    required_steps = _required_trace_steps(group, scenario)
+    operations = {
+        _text(item.get("operationId")): item
+        for item in payload["receiverOperationCandidates"]
+        if _text(item.get("operationId"))
+        and set(item.get("stepRefs") or []) & allowed_steps
     }
-    parsed = parse_structured(
-        [{"role": "system", "content": _SEMANTIC_REVIEW_SYSTEM}, {"role": "user", "content": json.dumps({
-            "scenario": scenario,
-            "Classes": model.get("Classes") or [],
-            "DataTypes": model.get("DataTypes") or [],
-            "Collaborations": model.get("Collaborations") or [],
-        }, ensure_ascii=False)}],
-        ClassSemanticReview,
-        reasoning_effort=settings.design_reasoning_effort,
-        max_completion_tokens=settings.design_class_review_max_completion_tokens,
-        operation="ClassSemanticReview",
+    root_stereotype = "control" if group.internal else "boundary"
+    roots = [
+        item for item in operations.values()
+        if item.get("stereotype") == root_stereotype
+        and (not group.actor_step or group.actor_step in set(item.get("stepRefs") or []))
+    ]
+    if len(roots) != 1:
+        raise ValueError("the execution group has no unique root operation")
+
+    root = roots[0]
+    selected = [root]
+    proposed = [{
+        "receiverOperationId": root["operationId"],
+        "stepRefs": [
+            ref for ref in root.get("stepRefs") or [] if ref in allowed_steps
+        ],
+    }]
+    covered = set(proposed[0]["stepRefs"])
+    remaining = set(required_steps) - covered
+    step_order = {step_id: index for index, step_id in enumerate(group.step_ids)}
+
+    while remaining:
+        owners: dict[str, list[dict[str, Any]]] = {
+            step: [
+                item for item in operations.values()
+                if item not in selected and step in set(item.get("stepRefs") or [])
+            ]
+            for step in remaining
+        }
+        if any(len(items) != 1 for items in owners.values()):
+            raise ValueError("the execution group has no unique step-to-operation mapping")
+        next_operations = {
+            _text(items[0].get("operationId")): items[0]
+            for items in owners.values()
+        }
+        ordered = sorted(
+            next_operations.values(),
+            key=lambda item: min(
+                step_order.get(ref, len(step_order))
+                for ref in item.get("stepRefs") or [] if ref in allowed_steps
+            ),
+        )
+        for operation in ordered:
+            parents = [
+                index for index, parent in enumerate(selected, start=1)
+                if bce_dependency_allowed(
+                    str(parent.get("stereotype") or ""),
+                    str(operation.get("stereotype") or ""),
+                )
+            ]
+            if len(parents) != 1:
+                raise ValueError("the execution group has no unique parent operation")
+            refs = [
+                ref for ref in operation.get("stepRefs") or [] if ref in allowed_steps
+            ]
+            proposed.append({
+                "receiverOperationId": operation["operationId"],
+                "parentCallIndex": parents[0],
+                "stepRefs": refs,
+            })
+            selected.append(operation)
+            covered.update(refs)
+        next_remaining = set(required_steps) - covered
+        if next_remaining == remaining:
+            raise ValueError("the unique call-tree fallback made no progress")
+        remaining = next_remaining
+
+    return _materialize_calls(
+        CollaborationProposal.model_validate({"calls": proposed}),
+        model,
+        group,
+        scenario,
     )
-    review = ClassSemanticReview.model_validate(parsed)
-    issues: list[SemanticIssue] = []
-    for issue in review.issues:
-        if issue.collaboration_id not in collaboration_ids:
-            continue
-        if issue.class_name is not None and issue.class_name not in class_names:
-            continue
-        issues.append(issue)
-    return issues
 
 
 def _process_group(
@@ -810,6 +1164,7 @@ def _process_group(
 ) -> tuple[dict[str, Any] | None, _GroupOutcome]:
     """Propose one independent group, retaining failure as visible evidence."""
 
+    proposal: CollaborationProposal | None = None
     try:
         proposal = _propose_group(model, group, scenario)
         calls = _materialize_calls(proposal, model, group, scenario)
@@ -825,33 +1180,101 @@ def _process_group(
         return collaboration, _GroupOutcome(group.id, tuple(call["callId"] for call in calls), ())
     except Exception as error:  # noqa: BLE001 - group repair remains bounded and explicit
         initial_issue = _text(error) or "collaboration proposal failed"
+        repair_findings = [initial_issue]
+        previous = proposal
+        repair_error: Exception = error
+        for _attempt in range(2):
+            try:
+                repaired = _propose_group(
+                    model,
+                    group,
+                    scenario,
+                    repair=repair_findings,
+                    previous=previous,
+                )
+                previous = repaired
+                calls = _materialize_calls(repaired, model, group, scenario)
+                issues = _validate_group_result(model, scenario, group, calls)
+                if issues:
+                    raise ValueError(issues[0])
+                collaboration = {
+                    "collaborationId": group.id,
+                    "useCaseIds": _trace_scope_ids(group, scenario),
+                    "entryActor": _primary_actor(scenario, _specification_map(scenario).get(group.use_case_id, {})) if group.actor_step else None,
+                    "calls": calls,
+                }
+                return collaboration, _GroupOutcome(
+                    group.id,
+                    tuple(call["callId"] for call in calls),
+                    (),
+                    repaired=True,
+                )
+            except Exception as current_error:  # noqa: BLE001
+                repair_error = current_error
+                repair_findings.append(
+                    _text(current_error) or "collaboration repair failed"
+                )
         try:
-            repaired = _propose_group(model, group, scenario, repair=[initial_issue])
-            calls = _materialize_calls(repaired, model, group, scenario)
-            issues = _validate_group_result(model, scenario, group, calls)
-            if issues:
-                raise ValueError(issues[0])
-            collaboration = {
-                "collaborationId": group.id,
-                "useCaseIds": _trace_scope_ids(group, scenario),
-                "entryActor": _primary_actor(scenario, _specification_map(scenario).get(group.use_case_id, {})) if group.actor_step else None,
-                "calls": calls,
-            }
-            return collaboration, _GroupOutcome(group.id, tuple(call["callId"] for call in calls), (), repaired=True)
-        except Exception as repair_error:  # noqa: BLE001
+                calls = _unique_group_calls(model, scenario, group)
+                collaboration = {
+                    "collaborationId": group.id,
+                    "useCaseIds": _trace_scope_ids(group, scenario),
+                    "entryActor": _primary_actor(
+                        scenario,
+                        _specification_map(scenario).get(group.use_case_id, {}),
+                    ) if group.actor_step else None,
+                    "calls": calls,
+                }
+                return collaboration, _GroupOutcome(
+                    group.id,
+                    tuple(call["callId"] for call in calls),
+                    (),
+                    repaired=True,
+                )
+        except Exception as fallback_error:  # noqa: BLE001
             return None, _GroupOutcome(
-                group.id, (), (initial_issue, _text(repair_error) or "collaboration repair failed"), repaired=True,
+                group.id,
+                (),
+                (
+                    initial_issue,
+                    _text(repair_error) or "collaboration repair failed",
+                    _text(fallback_error) or "deterministic fallback failed",
+                ),
+                repaired=True,
             )
 
 
-def enrich_bce_behavior(scenario: dict[str, Any], skeleton: dict[str, Any]) -> dict[str, Any]:
+def affected_group_ids(
+    scenario: dict[str, Any], use_case_ids: set[str],
+) -> set[str]:
+    return {
+        group.id for group in execution_groups(scenario)
+        if set(_trace_scope_ids(group, scenario)) & use_case_ids
+    }
+
+
+def enrich_bce_behavior(
+    scenario: dict[str, Any],
+    skeleton: dict[str, Any],
+    *,
+    group_ids: set[str] | None = None,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Add collaborations without changing structural or signature decisions."""
 
     if not isinstance(scenario, dict) or not isinstance(skeleton, dict) or not skeleton:
         return deepcopy(skeleton)
     result = _BehaviorArtifact(deepcopy(skeleton))
-    result["Collaborations"] = []
-    groups = execution_groups(scenario)
+    all_groups = execution_groups(scenario)
+    selected_ids = group_ids or {group.id for group in all_groups}
+    groups = [group for group in all_groups if group.id in selected_ids]
+    retained = {
+        _text(item.get("collaborationId")): deepcopy(item)
+        for item in (existing or {}).get("Collaborations") or []
+        if isinstance(item, dict)
+        and _text(item.get("collaborationId")) not in selected_ids
+    }
+    result["Collaborations"] = list(retained.values())
     workers = max(1, int(getattr(settings, "design_class_behavior_parallelism", 4)))
     if len(groups) <= 1 or workers == 1:
         processed = [_process_group(result, scenario, group) for group in groups]
@@ -859,28 +1282,41 @@ def enrich_bce_behavior(scenario: dict[str, Any], skeleton: dict[str, Any]) -> d
         with ThreadPoolExecutor(max_workers=min(workers, len(groups))) as executor:
             futures = [executor.submit(_process_group, result, scenario, group) for group in groups]
             processed = [future.result() for future in futures]
-    outcomes = []
-    for collaboration, outcome in processed:
+    outcome_by_id = {
+        outcome.group_id: outcome for outcome in group_outcomes(existing or {})
+        if outcome.group_id not in selected_ids
+    }
+    collaboration_by_id = dict(retained)
+    for index, (collaboration, outcome) in enumerate(processed, start=1):
         if collaboration:
-            result["Collaborations"].append(collaboration)
-        outcomes.append(outcome)
+            collaboration_by_id[outcome.group_id] = collaboration
+            result["Collaborations"] = [
+                collaboration_by_id[group.id]
+                for group in all_groups if group.id in collaboration_by_id
+            ]
+            result["Relationships"] = project_call_dependencies(result)
+            design_progress.emit_progress(
+                "classDiagramSnapshotAccepted",
+                puml=generate_plantuml_from_bce_json(result),
+                phase="collaborations",
+                unit=outcome.group_id,
+                completed=index,
+                total=len(processed),
+                detail=f"Planning collaboration {outcome.group_id}",
+            )
+        outcome_by_id[outcome.group_id] = outcome
+    result["Collaborations"] = [
+        collaboration_by_id[group.id]
+        for group in all_groups if group.id in collaboration_by_id
+    ]
     result["Relationships"] = project_call_dependencies(result)
-    semantic_issues: list[SemanticIssue] = []
-    try:
-        from app.design.services.class_diagram.validation import operation_contract_issues
-
-        deterministic_issues = operation_contract_issues(
-            result, {"usecase_spec": scenario}
-        )
-        if not deterministic_issues and result.get("Collaborations"):
-            semantic_issues = _semantic_review(result, scenario)
-    except Exception:  # noqa: BLE001 - advisory review cannot invalidate accepted calls
-        semantic_issues = []
     # Canonicalize ids and reject accidental legacy fields at the persistence
     # boundary.  Do not write the transient outcomes into the JSON artifact.
     validated = BCEModel.model_validate(result).model_dump(by_alias=True)
     result.clear()
     result.update(validated)
-    result._behavior_group_outcomes = tuple(outcomes)
-    result._semantic_review_issues = tuple(semantic_issues)
+    result._behavior_group_outcomes = tuple(
+        outcome_by_id[group.id]
+        for group in all_groups if group.id in outcome_by_id
+    )
     return result

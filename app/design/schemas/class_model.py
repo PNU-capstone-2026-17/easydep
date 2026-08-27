@@ -65,6 +65,11 @@ class ClassOperation(ClassModelBase):
     return_type: str = Field(default="void", alias="returnType", min_length=1)
     step_refs: list[str] = Field(default_factory=list, alias="stepRefs")
 
+    @field_validator("step_refs")
+    @classmethod
+    def normalize_step_refs(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(str(value).strip() for value in values))
+
     def method_signature(self) -> str:
         return operation_method_signature(self.name, self.parameters, self.return_type)
 
@@ -148,6 +153,11 @@ class CollaborationCall(ClassModelBase):
     argument_bindings: list[ArgumentBinding] = Field(
         default_factory=list, alias="argumentBindings"
     )
+
+    @field_validator("step_refs")
+    @classmethod
+    def normalize_step_refs(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(str(value).strip() for value in values))
 
 
 class Collaboration(ClassModelBase):

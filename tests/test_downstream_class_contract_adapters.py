@@ -106,7 +106,76 @@ def test_sequence_projects_collaboration_without_mutating_class_contract():
         ("place-order::call:1", "OrderBoundary", "submit(request:OrderRequest)"),
         ("place-order::call:2", "OrderControl", "place(request:OrderRequest)"),
     ]
+    assert calls[0]["arguments"][0]["source_kind"] == "input"
+    assert calls[0]["arguments"][0]["source_ref"] == "UC1:main:1#request"
+    assert calls[1]["arguments"][0]["source_kind"] == "call_parameter"
     assert calls[1]["arguments"][0]["source_ref"] == "place-order::call:1#request"
+    replies = {
+        message["reply_to"]: message["label"]
+        for message in sequence["Diagrams"][0]["Messages"]
+        if message["type"] == "return"
+    }
+    assert replies == {
+        "place-order::call:1": "Receipt",
+        "place-order::call:2": "void",
+    }
+
+
+def test_sequence_preserves_structured_parameter_projection_as_call_provenance():
+    class_model = _collaboration_model()
+    class_model["Classes"][1]["operations"][0]["parameters"] = [
+        {"name": "sku", "type": "String"},
+    ]
+    class_model = BCEModel.model_validate(class_model).model_dump(by_alias=True)
+    call = class_model["Collaborations"][0]["calls"][1]
+    call["receiverOperationId"] = "OrderControl::place(sku:String)"
+    call["argumentBindings"] = [{
+        "parameter": "sku",
+        "sourceRef": "place-order::call:1#request.sku",
+    }]
+
+    sequence = extract_sequence_diagrams(_use_case_spec(), "", class_model)
+    projected_call = next(
+        message for message in sequence["Diagrams"][0]["Messages"]
+        if message.get("call_id") == "place-order::call:2"
+    )
+
+    assert projected_call["arguments"] == [{
+        "parameter": "sku",
+        "type": "String",
+        "source_kind": "call_parameter",
+        "source_ref": "place-order::call:1#request.sku",
+    }]
+
+
+def test_sequence_projects_an_included_use_case_from_its_scoped_calls():
+    class_model = _collaboration_model()
+    class_model["Collaborations"][0]["calls"][0]["stepRefs"].append(
+        "UC_INCLUDED:main:1"
+    )
+    specification = _use_case_spec()
+    specification["use_cases"][1]["name"] = "Review order"
+    specification["use_cases"][1]["primary_actor"] = "Buyer"
+    specification["use_case_specs"][1].update({
+        "primary_actor": "Buyer",
+        "main_scenario": [{"step_number": 1, "sentence": "Buyer reviews the order."}],
+    })
+
+    sequence = extract_sequence_diagrams(specification, "", class_model)
+
+    assert [diagram["use_case_id"] for diagram in sequence["Diagrams"]] == [
+        "UC1", "UC_INCLUDED",
+    ]
+    included = sequence["Diagrams"][1]
+    calls = [
+        message for message in included["Messages"]
+        if message["type"] in {"sync", "self", "async"}
+    ]
+    assert [call["target"] for call in calls] == ["OrderBoundary"]
+    assert calls[0]["step_ids"] == ["UC_INCLUDED:main:1"]
+    assert calls[0]["arguments"][0]["source_ref"] == (
+        "UC_INCLUDED:main:1#request"
+    )
 
 
 def test_sequence_combines_multiple_execution_groups_for_one_use_case():
@@ -219,6 +288,66 @@ def test_sequence_projects_extension_only_call_and_return_as_opt_fragment():
     }]
     assert call["fragments"] == expected
     assert reply["fragments"] == expected
+
+
+def test_sequence_projects_extending_use_case_calls_as_base_opt_fragment():
+    class_model = _collaboration_model()
+    class_model["Collaborations"][0]["useCaseIds"] = ["UC1"]
+    boundary = next(
+        item for item in class_model["Classes"]
+        if item["className"] == "OrderBoundary"
+    )
+    boundary["use_case_ids"].append("UC_INCLUDED")
+    boundary["operations"].append({
+        "operationId": "ignored",
+        "name": "export",
+        "parameters": [],
+        "returnType": "Receipt",
+        "stepRefs": ["UC_INCLUDED:main:1"],
+    })
+    class_model["Collaborations"].append({
+        "collaborationId": "UC_INCLUDED:main:1",
+        "useCaseIds": ["UC_INCLUDED"],
+        "entryActor": "Buyer",
+        "calls": [{
+            "callId": "ignored",
+            "receiverOperationId": "OrderBoundary::export()",
+            "stepRefs": ["UC_INCLUDED:main:1"],
+            "argumentBindings": [],
+        }],
+    })
+    class_model = BCEModel.model_validate(class_model).model_dump(by_alias=True)
+    specification = _use_case_spec()
+    specification["use_cases"][1]["primary_actor"] = "Buyer"
+    specification["use_case_specs"][1]["main_scenario"] = [{
+        "step_number": 1,
+        "sentence": "Buyer exports the order.",
+    }]
+    specification["relationships"] = {
+        "extends": [{
+            "base_use_case_id": "UC1",
+            "extending_use_case_id": "UC_INCLUDED",
+            "condition": "when the buyer requests an export",
+        }],
+    }
+
+    sequence = extract_sequence_diagrams(specification, "", class_model)
+
+    base_call = next(
+        message for message in sequence["Diagrams"][0]["Messages"]
+        if message.get("label") == "export()"
+    )
+    extending_call = next(
+        message for message in sequence["Diagrams"][1]["Messages"]
+        if message.get("label") == "export()"
+    )
+    assert base_call["fragments"] == [{
+        "id": "UC1:extend:UC_INCLUDED",
+        "type": "opt",
+        "branch": "main",
+        "condition": "when the buyer requests an export",
+    }]
+    assert extending_call["fragments"] == []
 
 
 @pytest.mark.parametrize("missing_key", [False, True])

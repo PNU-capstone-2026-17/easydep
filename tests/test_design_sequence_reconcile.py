@@ -779,7 +779,7 @@ def test_sequence_finalizer_rejects_missing_nonvoid_return():
         {"source": "Boundary", "target": "Control", "label": "process()", "type": "sync"},
     ])
 
-    with pytest.raises(ValueError, match="return 메시지가 없음"):
+    with pytest.raises(ValueError, match="no matching return message"):
         ensure_sequence_class_methods(state)
 
 

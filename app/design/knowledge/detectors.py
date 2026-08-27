@@ -49,8 +49,13 @@ from app.core.validation import CheckSpec, ValidationReport, run_checks
 from app.core.validation import Finding as ValidationFinding
 from app.design import rtm
 from app.design.knowledge import rules
-from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
 from app.design.schemas.class_model import operation_method_signature
+from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
+from app.design.services.class_diagram.type_system import (
+    projected_field_type,
+    structured_field_types,
+    types_compatible,
+)
 from app.design.services.class_diagram.validation import operation_contract_issues
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
@@ -1770,6 +1775,12 @@ def _declared_control_boundary_gateways(state: dict) -> set[tuple[str, str]]:
 
 def sequence_boundary_operation_direction(model: dict, state: dict) -> list[Finding]:
     """Boundary 호출이 입력/출력 방향의 소유권을 지키는지 검사한다."""
+    if isinstance(
+        (state.get("extracted_bce_classes") or {}).get("Collaborations"), list,
+    ) and (state.get("extracted_bce_classes") or {}).get("Collaborations"):
+        # Persisted collaborations explicitly define actor-entry and delegation
+        # direction. Method-name prefixes are only a legacy heuristic.
+        return []
     rule_id = "sequence.boundary-operation-direction"
     kinds = {
         _participant_id(item): str(item.get("kind", "")).strip().lower()
@@ -1996,56 +2007,24 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
             continue  # 참가자/메서드 소유권 검출기가 맡는다
 
         declared = class_signatures[called_method]
-        non_void = {
-            return_type
-            for return_type in declared
-            if normalize_return_type(return_type) != "void"
-        }
-        if not non_void:
-            found.append(
-                Finding(
-                    rule_id,
-                    f"'{class_name}.{call.get('label', '')}'에 반환 타입이 선언되지 않았거나 void임",
-                    location,
-                )
-            )
-            continue
+        return_types = declared or {"void"}
         if normalize_return_type(label) not in {
-            normalize_return_type(return_type) for return_type in non_void
+            normalize_return_type(return_type) for return_type in return_types
         }:
             found.append(
                 Finding(
                     rule_id,
                     f"return 라벨 '{label}'이 '{class_name}.{call.get('label', '')}'의 "
-                    f"반환 타입 {sorted(non_void)}와 일치하지 않음",
+                    f"반환 타입 {sorted(return_types)}와 일치하지 않음",
                     location,
                 )
             )
     return found
 
 
-def sequence_nonvoid_calls_have_returns(model: dict, state: dict) -> list[Finding]:
-    """반환값이 선언된 동기 호출마다 정확히 하나의 반환 메시지가 있는가."""
-    rule_id = "sequence.nonvoid-call-requires-return"
-    participant_classes = {
-        _participant_id(participant): str(
-            participant.get("source_class") or participant.get("name") or ""
-        ).strip()
-        for participant in model.get("Participants", [])
-        if str(participant.get("kind", "")).strip().lower() != "actor"
-    }
-    contracts: dict[str, dict[str, str]] = {}
-    for class_item in (state.get("extracted_bce_classes") or {}).get("Classes", []):
-        class_name = str(class_item.get("className") or "").strip()
-        if not class_name:
-            continue
-        contracts[class_name] = {
-            signature: return_type
-            for raw_method in _class_method_signatures(class_item)
-            if (signature := method_call_signature(str(raw_method)))
-            and (return_type := method_return_type(str(raw_method)))
-        }
-
+def sequence_calls_have_returns(model: dict, state: dict) -> list[Finding]:
+    """Every synchronous/self call has exactly one explicit return message."""
+    rule_id = "sequence.call-requires-return"
     explicit = _uses_explicit_call_links(model)
     if explicit:
         returned_ids = {
@@ -2085,16 +2064,11 @@ def sequence_nonvoid_calls_have_returns(model: dict, state: dict) -> list[Findin
     found: list[Finding] = []
     for call in pending_calls:
         target = str(call.get("target") or "").strip()
-        class_name = participant_classes.get(target)
-        signature = method_call_signature(str(call.get("label") or ""))
-        return_type = contracts.get(class_name or "", {}).get(signature)
-        if not return_type or normalize_return_type(return_type) == "void":
-            continue  # 잘못된 클래스/메서드는 소유권 검출기가 맡는다.
         source = str(call.get("source") or "").strip()
         found.append(
             Finding(
                 rule_id,
-                f"반환 타입 '{return_type}'을 선언한 호출 '{class_name}.{signature}'에 return 메시지가 없음",
+                "Synchronous/self call has no matching return message",
                 f"{source} -> {target} : {call.get('label', '')}",
             )
         )
@@ -2138,7 +2112,9 @@ def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
         if str(participant.get("kind", "")).strip().lower() != "actor"
     }
     contracts: dict[str, dict[str, tuple[dict[str, str], str | None]]] = {}
-    for class_item in (state.get("extracted_bce_classes") or {}).get("Classes", []):
+    class_model = state.get("extracted_bce_classes") or {}
+    fields_by_type = structured_field_types(class_model)
+    for class_item in class_model.get("Classes", []):
         class_name = str(class_item.get("className") or "").strip()
         if not class_name:
             continue
@@ -2198,11 +2174,76 @@ def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
                 )
             source_kind = str(binding.get("source_kind") or "").strip()
             source_ref = str(binding.get("source_ref") or "").strip()
-            if source_kind == "input" and known_steps and source_ref not in known_steps:
-                found.append(Finding(rule_id, f"입력 원천 단계 '{source_ref}'가 명세에 없음", location))
+            if source_kind == "input":
+                source_step, separator, source_parameter = source_ref.partition("#")
+                if (
+                    not separator
+                    or source_parameter != parameter
+                    or (known_steps and source_step not in known_steps)
+                ):
+                    found.append(
+                        Finding(rule_id, f"입력 원천 '{source_ref}'가 명세 단계/인자와 일치하지 않음", location)
+                    )
+                continue
+            if source_kind == "precondition":
+                use_case_id, marker, index = source_ref.partition(":precondition:")
+                specification = next((
+                    item
+                    for item in (state.get("usecase_spec") or {}).get("use_case_specs") or []
+                    if isinstance(item, dict)
+                    and str(item.get("use_case_id") or "").strip() == use_case_id
+                ), {})
+                preconditions = specification.get("preconditions") or []
+                if marker != ":precondition:" or not index.isdigit() or not (
+                    1 <= int(index) <= len(preconditions)
+                ):
+                    found.append(Finding(rule_id, f"선행조건 원천 '{source_ref}'가 명세에 없음", location))
+                continue
+            if source_kind == "call_parameter":
+                source_call_id, separator, source_value = source_ref.partition("#")
+                source_call = calls.get(source_call_id)
+                if not separator or source_call is None or source_call[0] >= call_index:
+                    found.append(Finding(rule_id, f"선행 호출 인자 '{source_ref}'가 존재하지 않음", location))
+                    continue
+                producer = source_call[1]
+                producer_owner = str(producer.get("target") or "").strip()
+                consumer = str(call.get("source") or "").strip()
+                if producer_owner != consumer:
+                    found.append(
+                        Finding(
+                            rule_id,
+                            f"호출 인자 '{source_ref}'는 '{producer_owner}'에 있으므로 "
+                            f"'{consumer}'가 직접 전달할 수 없음",
+                            location,
+                        )
+                    )
+                producer_class = participant_classes.get(producer_owner, "")
+                producer_signature = method_call_signature(str(producer.get("label") or ""))
+                producer_contract = contracts.get(producer_class, {}).get(producer_signature)
+                source_parameter, dot, field_path = source_value.partition(".")
+                producer_type = producer_contract[0].get(source_parameter) if producer_contract else None
+                produced_type = (
+                    projected_field_type(producer_type or "", field_path, fields_by_type)
+                    if dot else producer_type
+                )
+                produced_name = field_path.rpartition(".")[2] if dot else source_parameter
+                if produced_name != parameter or not produced_type or not types_compatible(
+                    produced_type, bound_type,
+                ):
+                    found.append(
+                        Finding(
+                            rule_id,
+                            f"선행 호출 인자 '{source_ref}' 타입이 '{parameter}:{bound_type}'과 일치하지 않음",
+                            location,
+                        )
+                    )
+                continue
             if source_kind != "call_result":
                 continue
-            source_call = calls.get(source_ref)
+            source_call_id, separator, source_value = source_ref.partition("#")
+            if not separator:
+                source_call_id, source_value = source_ref, "result"
+            source_call = calls.get(source_call_id)
             if source_call is None or source_call[0] >= call_index:
                 found.append(Finding(rule_id, f"선행 호출 결과 '{source_ref}'가 존재하지 않음", location))
                 continue
@@ -2222,11 +2263,21 @@ def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
             result_signature = method_call_signature(str(result_call.get("label") or ""))
             result_contract = contracts.get(result_class, {}).get(result_signature)
             result_type = result_contract[1] if result_contract else None
-            if not result_type or normalize_return_type(result_type) != normalize_return_type(bound_type):
+            field_path = source_value.removeprefix("result.") if source_value != "result" else ""
+            produced_type = (
+                projected_field_type(result_type or "", field_path, fields_by_type)
+                if field_path else result_type
+            )
+            produced_name = field_path.rpartition(".")[2] if field_path else parameter
+            if (
+                produced_name != parameter
+                or not produced_type
+                or not types_compatible(produced_type, bound_type)
+            ):
                 found.append(
                     Finding(
                         rule_id,
-                        f"호출 결과 '{source_ref}' 타입 '{result_type or '<none>'}'이 인자 '{parameter}' 타입 '{bound_type}'과 일치하지 않음",
+                        f"호출 결과 '{source_ref}' 타입 '{produced_type or '<none>'}'이 인자 '{parameter}' 타입 '{bound_type}'과 일치하지 않음",
                         location,
                     )
                 )
@@ -2467,25 +2518,66 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
             and participant_classes.get(str(message.get("target") or "").strip())
             and method_name(method_call_signature(str(message.get("label") or "")))
         }
-        required_families = {
-            (
+        operations = {
+            str(operation.get("operationId") or "").strip(): (
                 f"{str(class_item.get('className') or '').strip().casefold()}::"
-                f"{str(operation.get('name') or '').strip().casefold()}"
-            ): (
+                f"{str(operation.get('name') or '').strip().casefold()}",
                 f"{str(class_item.get('className') or '').strip()}::"
-                f"{str(operation.get('name') or '').strip()}"
+                f"{str(operation.get('name') or '').strip()}",
             )
             for class_item in class_model.get("Classes") or []
             if isinstance(class_item, dict) and class_item.get("className")
             for operation in class_item.get("operations") or []
-            if isinstance(operation, dict) and operation.get("name")
-            and any(
-                str(step_ref).strip() in flow_steps
-                for step_ref in (
-                    operation.get("stepRefs") or operation.get("step_refs") or []
-                )
-            )
+            if isinstance(operation, dict)
+            and operation.get("operationId")
+            and operation.get("name")
         }
+        collaborations = class_model.get("Collaborations")
+        if isinstance(collaborations, list):
+            required_operation_ids = {
+                str(call.get("receiverOperationId") or "").strip()
+                for collaboration in collaborations
+                if isinstance(collaboration, dict)
+                and diagram_use_case_id in {
+                    str(value).strip()
+                    for value in collaboration.get("useCaseIds") or []
+                }
+                for call in collaboration.get("calls") or []
+                if isinstance(call, dict)
+                and any(
+                    str(step_ref).startswith(f"{diagram_use_case_id}:")
+                    for step_ref in call.get("stepRefs") or []
+                )
+            }
+            required_families = {
+                operations[operation_id][0]: operations[operation_id][1]
+                for operation_id in required_operation_ids
+                if operation_id in operations
+            }
+        else:
+            # Legacy class models have no collaboration graph and may also lack
+            # operation ids.  Preserve their step-trace coverage check without
+            # weakening the collaboration-authoritative path above.
+            required_families = {
+                (
+                    f"{str(class_item.get('className') or '').strip().casefold()}::"
+                    f"{str(operation.get('name') or '').strip().casefold()}"
+                ): (
+                    f"{str(class_item.get('className') or '').strip()}::"
+                    f"{str(operation.get('name') or '').strip()}"
+                )
+                for class_item in class_model.get("Classes") or []
+                if isinstance(class_item, dict) and class_item.get("className")
+                for operation in class_item.get("operations") or []
+                if isinstance(operation, dict)
+                and operation.get("name")
+                and any(
+                    str(step_ref).strip() in flow_steps
+                    for step_ref in (
+                        operation.get("stepRefs") or operation.get("step_refs") or []
+                    )
+                )
+            }
         found.extend(
             Finding(
                 rule_id,
@@ -2556,6 +2648,20 @@ def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Findi
         for step in item.get("main_scenario") or []
         if isinstance(step, dict) and step.get("step_number") is not None
     }
+    actor_names = {
+        " ".join(str(participant.get("name") or "").casefold().split())
+        for participant in model.get("Participants", []) or []
+        if isinstance(participant, dict)
+        and str(participant.get("kind") or "").casefold() == "actor"
+        and str(participant.get("name") or "").strip()
+    }
+
+    def is_actor_step(step_id: str) -> bool:
+        sentence = " ".join(step_sentences.get(step_id, "").split())
+        return not actor_names or any(
+            re.match(rf"^(?:the )?{re.escape(actor)}\b", sentence)
+            for actor in actor_names
+        )
 
     def is_single_submission(step_ids: set[str]) -> bool:
         """Allow an intent followed by its entered data to share one command.
@@ -2603,6 +2709,7 @@ def sequence_step_operation_distinctness(model: dict, state: dict) -> list[Findi
                 if use_case_id
                 else ":main:" in str(step_id)
             )
+            and is_actor_step(str(step_id).strip())
         }
         if main_steps:
             calls.setdefault(signature, set()).update(main_steps)
@@ -2666,6 +2773,7 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
     messages = model.get("Messages", [])
     found: list[Finding] = []
     last_main = -1
+    seen_main: set[int] = set()
     main_positions: dict[int, list[int]] = {}
     for index, message in enumerate(messages):
         is_return = str(message.get("type") or "").casefold() == "return"
@@ -2674,12 +2782,17 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
             for step_id in message.get("step_ids") or []
             if (number := _main_step_number(str(step_id), use_case_id)) is not None
         ])
-        for number in numbers:
-            main_positions.setdefault(number, []).append(index)
+        # One synchronous call may start at an input step and complete at a
+        # later output step after nested calls. Only its earliest trace advances
+        # the preorder call position; coverage still retains every step id.
+        for number in numbers[:1]:
             # A reply completes an earlier nested call after its inner calls
             # return.  Its trace belongs to that call, but it is not a new
             # scenario action and therefore cannot reverse main-flow order.
-            if not is_return and number < last_main:
+            if is_return:
+                continue
+            main_positions.setdefault(number, []).append(index)
+            if number not in seen_main and number < last_main:
                 found.append(
                     Finding(
                         rule_id,
@@ -2687,8 +2800,9 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
                         f"{message.get('source', '')} -> {message.get('target', '')} : {message.get('label', '')}",
                     )
                 )
-            if not is_return:
+            if number not in seen_main:
                 last_main = max(last_main, number)
+                seen_main.add(number)
 
     use_case = next(
         (
@@ -2716,12 +2830,24 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
         positions = [
             index
             for index, message in enumerate(messages)
+            if str(message.get("type") or "").casefold() != "return"
             if any(
                 str(step_id).startswith(f"{use_case_id}:extension:{label}:")
                 for step_id in message.get("step_ids") or []
             )
         ]
         if not positions:
+            continue
+        if all(
+            any(
+                (number := _main_step_number(str(step_id), use_case_id)) is not None
+                and number > branch_step
+                for step_id in messages[position].get("step_ids") or []
+            )
+            for position in positions
+        ):
+            # A Control call may own both the main outcome and the extension
+            # result. The call itself is not a later duplicate scenario action.
             continue
         if branch_step not in main_positions:
             found.append(
@@ -3160,6 +3286,12 @@ def sequence_extension_replays_anchor_operation(
                 for step_id in message.get("step_ids") or []
             ):
                 continue
+            if anchor_step_id in {
+                str(step_id) for step_id in message.get("step_ids") or []
+            }:
+                # One call carrying both refs is the shared branch anchor, not
+                # a second execution of that operation.
+                continue
             if any(
                 str(fragment.get("type") or "").lower() == "loop"
                 for fragment in _message_fragments(message)
@@ -3331,7 +3463,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_unmatched_returns": sequence_unmatched_returns,
     "sequence_async_returns": sequence_async_returns,
     "sequence_return_values_match_methods": sequence_return_values_match_methods,
-    "sequence_nonvoid_calls_have_returns": sequence_nonvoid_calls_have_returns,
+    "sequence_calls_have_returns": sequence_calls_have_returns,
     "sequence_causal_call_chain": sequence_causal_call_chain,
     "sequence_argument_data_flow": sequence_argument_data_flow,
     "sequence_actor_step_involvement": sequence_actor_step_involvement,
@@ -3365,7 +3497,7 @@ SEQUENCE_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("sequence.call-return-links", sequence_call_return_links),
     CheckSpec("sequence.return-label-matches-method-return", sequence_return_values_match_methods),
     CheckSpec("sequence.async-call-has-no-return", sequence_async_returns),
-    CheckSpec("sequence.nonvoid-call-requires-return", sequence_nonvoid_calls_have_returns),
+    CheckSpec("sequence.call-requires-return", sequence_calls_have_returns),
     CheckSpec("sequence.causal-call-chain", sequence_causal_call_chain),
     CheckSpec("sequence.argument-data-flow", sequence_argument_data_flow),
     CheckSpec("sequence.actor-step-involvement", sequence_actor_step_involvement),

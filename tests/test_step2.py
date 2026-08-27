@@ -167,6 +167,54 @@ def test_identify_use_cases_assigns_ids_and_maps_fields(monkeypatch):
     assert "main_scenario_steps" not in ucs[1]
 
 
+def test_identify_use_cases_prunes_unused_actors_but_keeps_ancestors(monkeypatch):
+    monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: UseCaseResult(use_cases=[
+        UseCase(
+            name="Submit request", primary_actor="Customer",
+            supporting_actors=["Notification Provider"], goal="submit a request",
+            requirement_ids=["R1"],
+        )
+    ]))
+
+    out = s2.identify_use_cases({
+        "classified": [{"id": "R1", "text": "A customer submits a request.", "type": "FR"}],
+        "actors": [
+            {"name": "Account Holder", "description": "base role", "parent_actor": None},
+            {"name": "Customer", "description": "requester", "parent_actor": "Account Holder"},
+            {"name": "Notification Provider", "description": "external service", "parent_actor": None},
+            {"name": "Unused Role", "description": "not involved", "parent_actor": None},
+        ],
+    })
+
+    assert [actor["name"] for actor in out["actors"]] == [
+        "Account Holder", "Customer", "Notification Provider"
+    ]
+
+
+def test_local_use_case_edit_prunes_actors_the_same_way(monkeypatch):
+    monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: UseCaseResult(use_cases=[
+        UseCase(name="Submit request", primary_actor="Customer", goal="submit a request",
+                requirement_ids=["R1"])
+    ]))
+    actors = [
+        {"name": "Account Holder", "description": "base role", "parent_actor": None},
+        {"name": "Customer", "description": "requester", "parent_actor": "Account Holder"},
+        {"name": "Unused Role", "description": "not involved", "parent_actor": None},
+    ]
+
+    out = s2.identify_use_cases({
+        "classified": [{"id": "R1", "text": "A customer submits a request.", "type": "FR"}],
+        "actors": actors,
+        "use_cases": [{
+            "id": "UC1", "name": "Submit request", "primary_actor": "Customer",
+            "supporting_actors": [], "level": "user_goal", "goal": "submit a request",
+            "requirement_ids": ["R1"], "nfr_ids": [],
+        }],
+    }, feedback="clarify the request", target_ids=["UC1"])
+
+    assert [actor["name"] for actor in out["actors"]] == ["Account Holder", "Customer"]
+
+
 def test_identify_use_cases_retries_a_dangling_actor_reference_once(monkeypatch):
     calls = []
 

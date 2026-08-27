@@ -153,6 +153,34 @@ def _canonical_use_cases(
     return use_cases, dangling
 
 
+def _actors_referenced_by_use_cases(
+    actors: list[ActorItem], use_cases: list[UseCase]
+) -> list[ActorItem]:
+    """Keep participating actors and the generalization context they inherit from."""
+    by_key = {
+        _actor_key(actor.get("name")): actor
+        for actor in actors
+        if _actor_key(actor.get("name"))
+    }
+    retained = {
+        _actor_key(reference)
+        for use_case in use_cases
+        for reference in (use_case.primary_actor, *use_case.supporting_actors)
+        if _actor_key(reference)
+    }
+    pending = list(retained)
+    while pending:
+        actor = by_key.get(pending.pop())
+        parent = _actor_key(actor.get("parent_actor")) if actor else ""
+        if parent and parent not in retained:
+            retained.add(parent)
+            pending.append(parent)
+    return [
+        actor for actor in actors
+        if _actor_key(actor.get("name")) in retained
+    ]
+
+
 def _retry_dangling_actor_refs(
     *,
     schema,
@@ -481,6 +509,7 @@ def _local_edit_use_cases(
     use_case_items = [_uc_dict(use_case, ids[index]) for index, use_case in enumerate(use_cases)]
     preserved_ids = {item["id"] for item in use_case_items}
     return {
+        "actors": _actors_referenced_by_use_cases(actors, use_cases),
         "use_cases": use_case_items,
         "constraint_applicability": {
             requirement_id: [
@@ -503,7 +532,12 @@ def identify_use_cases(
     fr, nfr = _split_fr_nfr(classified)
     actors = state.get("actors") or []
     if not fr:
-        return {"use_cases": [], "constraint_applicability": {}, "phase": "use_cases"}
+        return {
+            "actors": [],
+            "use_cases": [],
+            "constraint_applicability": {},
+            "phase": "use_cases",
+        }
 
     actor_listing = "\n".join(
         f"- {actor['name']}: {actor['description']}" for actor in actors
@@ -574,6 +608,7 @@ def identify_use_cases(
         if not targets or any(target in ids_by_name for target in targets)
     }
     return {
+        "actors": _actors_referenced_by_use_cases(actors, use_cases),
         "use_cases": use_case_items,
         "constraint_applicability": constraint_applicability,
         "phase": "use_cases",
@@ -702,6 +737,7 @@ def review_model(state: AgentState) -> dict:
         return {"model_review": initial_review, "phase": "model_review"}
 
     return {
+        "actors": candidate_update.get("actors", state.get("actors") or []),
         "use_cases": candidate_update["use_cases"],
         "constraint_applicability": candidate_update.get("constraint_applicability") or {},
         "model_review": candidate_review,
