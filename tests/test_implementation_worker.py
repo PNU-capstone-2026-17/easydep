@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -384,6 +385,34 @@ def test_cancel_terminates_active_process_and_preserves_cancelled_status(
     assert result["status"] == "CANCELLED"
     assert cancelled == ["job-cancel"]
     assert persisted["status"] == "CANCELLED"
+
+
+def test_write_uses_unique_temp_and_falls_back_when_windows_replace_is_denied(
+    monkeypatch, tmp_path: Path
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    record = {
+        "job_id": "job-replace-permission",
+        "status": "QUEUED",
+        "created_at": "now",
+    }
+    original_replace = os.replace
+    attempts = {"count": 0}
+
+    def deny_replace(source, destination):
+        attempts["count"] += 1
+        if attempts["count"] <= 3:
+            raise PermissionError(5, "Access is denied")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", deny_replace)
+    try:
+        implementation_worker._write(record)
+        assert implementation_worker._read(record["job_id"])["status"] == "QUEUED"
+        assert attempts["count"] == 3
+        assert not list((tmp_path / record["job_id"]).glob("*.tmp"))
+    finally:
+        implementation_worker.shutdown()
 
 
 def test_settings_ignore_legacy_external_project_paths(monkeypatch) -> None:

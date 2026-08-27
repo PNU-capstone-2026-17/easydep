@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -864,10 +866,37 @@ class ImplementationWorker:
     def _write(self, record: dict[str, Any]) -> None:
         path = self._record_path(record["job_id"])
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".tmp")
         with self.lock:
-            temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-            temporary.replace(path)
+            payload = json.dumps(record, ensure_ascii=False, indent=2)
+            # A fixed ``.tmp`` path is vulnerable to another server process or
+            # antivirus scanner opening it while Windows is replacing the
+            # durable state file.  Use a unique sibling and retry the replace;
+            # the final direct write is safe when the destination is writable
+            # but temporarily cannot be atomically replaced.
+            temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                temporary.write_text(payload, encoding="utf-8")
+                last_error: PermissionError | None = None
+                for attempt in range(3):
+                    try:
+                        os.replace(temporary, path)
+                        last_error = None
+                        break
+                    except PermissionError as error:
+                        last_error = error
+                        if attempt < 2:
+                            time.sleep(0.05 * (attempt + 1))
+                if last_error is not None:
+                    # Some Windows file-sharing configurations deny replacing
+                    # an existing file while still allowing it to be opened
+                    # for writing. Preserve a durable record instead of
+                    # aborting the entire implementation job.
+                    path.write_text(payload, encoding="utf-8")
+            finally:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     @staticmethod
     def public_record(record: dict[str, Any]) -> dict[str, Any]:
