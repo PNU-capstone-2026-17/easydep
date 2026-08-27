@@ -40,7 +40,7 @@ from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_runtime_puml,
 )
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
-from app.design.services.sequence_diagram.extractor import normalize_sequence_contracts
+from app.design.services.interaction_design.sequence import normalize_sequence_model
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.validation import rehydrated_check_state
 
@@ -286,20 +286,15 @@ def load_state(app_id: str) -> ArchitectureState:
             artifact_status[stage] = "implemented"
 
         state["artifact_status"] = artifact_status
-        # Reapply the same deterministic normalization used at generation time.
-        # Persisted legacy models may lack typed operation data, so the helper
-        # deliberately falls back to the rendered class contract in that case.
+        # Revalidate the persisted current contract. Old sequence shapes are
+        # regenerated from the class stage rather than reconstructed from PUML.
         sequence_model = state.get("sequence_diagram_model")
         class_model = state.get("extracted_bce_classes")
         class_puml = str(state.get("class_diagram_puml") or "")
         if isinstance(sequence_model, dict) and sequence_model and (
             isinstance(class_model, dict) or class_puml
         ):
-            normalized_sequence = normalize_sequence_contracts(
-                sequence_model,
-                class_puml,
-                class_model if isinstance(class_model, dict) else None,
-            )
+            normalized_sequence = normalize_sequence_model(sequence_model)
             state["sequence_diagram_model"] = normalized_sequence
             state["sequence_diagram_puml"] = generate_sequence_from_model(
                 normalized_sequence

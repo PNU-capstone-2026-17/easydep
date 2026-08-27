@@ -56,7 +56,11 @@ from app.design.services.class_diagram.type_system import (
     structured_field_types,
     types_compatible,
 )
-from app.design.services.class_diagram.validation import operation_contract_issues
+from app.design.services.interaction_design.checks import final_model_findings
+from app.design.services.interaction_design.scenario import build_scenario_index
+from app.design.services.interaction_design.sequence import (
+    sequence_findings as interaction_sequence_findings,
+)
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
 from app.design.services.sequence_diagram.methods import (
@@ -393,27 +397,49 @@ def fields_typed(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def _interaction_contract_findings(model: dict, state: dict) -> list[ValidationFinding]:
+    # Historical structure-only BCE artifacts remain viewable. New class
+    # artifacts always persist the Collaborations key, even while incomplete.
+    if "Collaborations" not in (model or {}):
+        return []
+    scenario = state.get("usecase_spec") if isinstance(state, dict) else None
+    if not isinstance(scenario, dict):
+        return []
+    scenario = {**scenario, "relationships": state.get("relationships") or {}}
+    return final_model_findings(model, build_scenario_index(scenario))
+
+
 def operation_contract(model: dict, state: dict) -> list[Finding]:
-    """Validate canonical accepted operations and their BCE execution topology."""
+    """Validate the current operation and call-tree contract."""
+    if (
+        stereotype_is_bce(model, state)
+        or names_unique(model, state)
+        or name_pascal_case(model, state)
+    ):
+        return []
     return [
         Finding(
             "class.operation-contract-canonical",
-            message,
-            location,
-            requires_user_input=kind == "needs_input",
-            origin="semantic" if kind == "needs_input" else "deterministic",
+            finding.message,
+            finding.location,
+            origin=finding.origin,
         )
-        for kind, message, location in operation_contract_issues(model, state)
-        if kind in {"operation", "needs_input"}
+        for finding in _interaction_contract_findings(model, state)
+        if finding.rule_id != "class.collaboration.bindings"
     ]
 
 
 def operation_input_producers(model: dict, state: dict) -> list[Finding]:
     """Validate each persisted finite input source and its producer ordering."""
     return [
-        Finding("class.operation-input-producers", message, location)
-        for kind, message, location in operation_contract_issues(model, state)
-        if kind in {"input", "producer"}
+        Finding(
+            "class.operation-input-producers",
+            finding.message,
+            finding.location,
+            origin=finding.origin,
+        )
+        for finding in _interaction_contract_findings(model, state)
+        if finding.rule_id == "class.collaboration.bindings"
     ]
 
 
@@ -3564,7 +3590,19 @@ def _sequence_rule_findings(model: dict, state: dict) -> list[Finding]:
 def sequence_diagram_findings(model: dict, state: dict) -> list[Finding]:
     diagrams = model.get("Diagrams") if isinstance(model, dict) else None
     if isinstance(diagrams, list):
-        found: list[Finding] = sequence_class_diagram_version(model, state)
+        found = [
+            Finding("sequence.call-return-links", message, "SequenceDiagramCollection")
+            for message in interaction_sequence_findings(model)
+        ]
+        expected_hash = hashlib.sha256(
+            str(state.get("class_diagram_puml") or "").encode("utf-8")
+        ).hexdigest()
+        if str(model.get("class_diagram_hash") or "") != expected_hash:
+            found.append(Finding(
+                "sequence.class-diagram-version",
+                "sequence model was not projected from the current class diagram",
+                "SequenceDiagramCollection",
+            ))
         known = _known_use_case_ids(state)
         identifiers = [
             str(diagram.get("use_case_id") or "").strip()
@@ -3601,23 +3639,11 @@ def sequence_diagram_findings(model: dict, state: dict) -> list[Finding]:
                     )
                 )
             seen.add(use_case_id)
-            for message in diagram.get("Messages") or []:
-                references = {
-                    str(value).strip()
-                    for value in message.get("use_case_ids") or []
-                    if value
-                }
-                if references != {use_case_id}:
-                    found.append(
-                        Finding(
-                            "sequence.references-exist",
-                            f"'{use_case_id}' 다이어그램 메시지가 다른 유스케이스를 참조함",
-                            str(message.get("label") or "<message>"),
-                        )
-                    )
-            found.extend(_sequence_rule_findings(diagram, state))
         return found
-    return _sequence_rule_findings(model, state)
+    return [
+        Finding("sequence.call-return-links", message, "SequenceDiagramCollection")
+        for message in interaction_sequence_findings(model or {})
+    ]
 
 
 def api_spec_validation_report(model: dict, state: dict) -> ValidationReport:

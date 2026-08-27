@@ -107,8 +107,6 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
             for operation in class_item.get("operations") or []
             if isinstance(operation, dict) and operation.get("name")
         ]
-        # Legacy models have no Collaborations and can still be displayed. New
-        # models always project their reusable signatures from ``operations``.
         for method in operation_methods or class_item.get("methods", []):
             # 과거/외부 BCE도 `Integer`·`Decimal` 매개변수나 반환형을 그대로 보이지
             # 않게 한다. 새 BCE는 extractor에서 이미 정규화되지만, 렌더러가 마지막
@@ -146,12 +144,15 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
         puml_lines.append("")
 
     if json_data.get("Collaborations"):
-        # A persisted model should already contain these relationships.  Using
-        # the projector here also makes an unpersisted-but-valid model render
-        # correctly without putting call boxes into the class diagram.
-        from app.design.services.class_diagram.behavior import project_call_dependencies
+        # Call dependencies have one owner: the persisted Collaboration tree.
+        # Project them alongside, rather than instead of, the inventory's
+        # structural Entity relationships.
+        from app.design.services.interaction_design.pipeline import project_call_dependencies
 
-        relationships = project_call_dependencies(json_data)
+        relationships = [
+            *relationships,
+            *project_call_dependencies(json_data),
+        ]
 
     for relationship in relationships:
         source = sanitize_class_name(relationship.get("source", ""))

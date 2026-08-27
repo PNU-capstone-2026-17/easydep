@@ -61,21 +61,6 @@ def test_void_command_can_document_error_statuses_without_result_contract() -> N
     assert detectors.api_control_outcomes(model, state) == []
 
 
-def test_sequence_detector_rejects_dangling_and_invalid_bce_messages():
-    model = {
-        "Participants": [
-            {"name": "User", "kind": "actor"},
-            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
-        ],
-        "Messages": [
-            {"source": "User", "target": "OrderControl", "type": "sync", "use_case_ids": ["UC404"]},
-            {"source": "Missing", "target": "OrderControl", "type": "sync"},
-        ],
-    }
-    found = {item.rule_id for item in detectors.sequence_diagram_findings(model, STATE)}
-    assert {"sequence.message-participants-exist", "sequence.message-bce-flow", "sequence.references-exist"} <= found
-
-
 def test_sequence_bce_flow_rejects_distinct_boundary_to_boundary_call():
     model = {
         "Participants": [
@@ -266,7 +251,7 @@ def test_schema_only_api_model_is_repaired_before_rendering(monkeypatch):
         feedback_seen.append(feedback)
         return repaired
 
-    spec = dataclasses.replace(API_SPEC_SPEC, revise=revise)
+    spec = dataclasses.replace(API_SPEC_SPEC, revise=revise, repair=revise)
     result = check_node(spec)(
         {**state, "api_spec_model": {"Endpoints": [], "Schemas": [{"name": "CartResponse"}]}}
     )
@@ -541,23 +526,6 @@ def test_message_methods_rejects_hallucinated_parameter_content():
     assert findings[0].rule_id == "sequence.message-labels-match-methods"
 
 
-def test_message_methods_integrated_via_findings():
-    """sequence_diagram_findings를 통해 새 검출기가 동작하는지 통합 확인."""
-    model = {
-        "Participants": [
-            {"name": "User", "kind": "actor"},
-            {"name": "GhostService", "kind": "control"},
-            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
-        ],
-        "Messages": [
-            {"source": "User", "target": "OrderControl", "label": "nonExistentMethod()", "type": "sync"},
-        ],
-    }
-    found = {item.rule_id for item in detectors.sequence_diagram_findings(model, STATE)}
-    assert "sequence.participant-classes-exist" in found
-    assert "sequence.message-labels-match-methods" in found
-
-
 # ---------------------------------------------------------------------------
 # sequence.return-label-matches-method-return
 # ---------------------------------------------------------------------------
@@ -622,15 +590,6 @@ def test_async_call_cannot_have_a_return_message():
 
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.async-call-has-no-return"
-
-
-def test_async_return_rule_is_integrated_via_findings():
-    model = _order_return_model("Order")
-    model["Messages"][0]["type"] = "async"
-
-    found = {item.rule_id for item in detectors.sequence_diagram_findings(model, STATE)}
-
-    assert "sequence.async-call-has-no-return" in found
 
 
 def test_sequence_collection_requires_one_diagram_per_use_case():

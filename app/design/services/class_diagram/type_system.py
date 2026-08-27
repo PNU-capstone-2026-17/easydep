@@ -17,6 +17,39 @@ GENERIC_CONTAINERS = frozenset({
 TYPE_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+def type_expression_is_well_formed(type_name: str) -> bool:
+    """Recognize nested generic, array, and optional design type syntax."""
+
+    value = re.sub(r"\s+", "", str(type_name or ""))
+    if not value:
+        return False
+
+    def parse(position: int) -> int:
+        match = re.match(r"[A-Za-z_][A-Za-z0-9_.]*", value[position:])
+        if match is None:
+            return -1
+        position += len(match.group(0))
+        if position < len(value) and value[position] == "<":
+            position += 1
+            position = parse(position)
+            if position < 0:
+                return -1
+            while position < len(value) and value[position] == ",":
+                position = parse(position + 1)
+                if position < 0:
+                    return -1
+            if position >= len(value) or value[position] != ">":
+                return -1
+            position += 1
+        if value[position: position + 2] == "[]":
+            position += 2
+        if position < len(value) and value[position] == "?":
+            position += 1
+        return position
+
+    return parse(0) == len(value)
+
+
 def structure_type_inventory() -> dict[str, tuple[str, ...] | str]:
     """The closed vocabulary supplied to structure proposals and their validator."""
     return {
@@ -102,7 +135,7 @@ def reachable_data_type_names(
 
 def type_is_resolved(type_name: str, names: set[str], *, allow_void: bool) -> bool:
     normalized = " ".join(str(type_name or "").split())
-    if not normalized:
+    if not normalized or not type_expression_is_well_formed(normalized):
         return False
     if not allow_void and normalized.casefold() == "void":
         return False

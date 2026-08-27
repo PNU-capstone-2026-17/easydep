@@ -50,6 +50,7 @@ def product_contract_issues(checkpoint: str, state: dict[str, Any]) -> list[str]
                 api_spec=state.get("api_spec"),
                 erd_model=state.get("erd_bce_classes"),
                 artifact_versions=state.get("artifact_versions"),
+                additional_planning_facts=state.get("deployment_planning_facts"),
             )
             issues.extend(
                 f"product contract: deployment inputs are stale for {item.get('artifact')}"

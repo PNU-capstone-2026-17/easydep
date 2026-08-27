@@ -63,6 +63,34 @@ def sanitize_text(text: str) -> str:
     return text.replace('"', "'")
 
 
+def _display_message_label(label: str, message_type: str) -> str:
+    """Keep the exact model signature while rendering a compact call label."""
+
+    safe = sanitize_text(label)
+    if message_type not in {"sync", "self"}:
+        return safe
+    match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\((.*)\)", safe)
+    if match is None or not match.group(2):
+        return safe
+    raw = match.group(2)
+    arguments: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for character in raw:
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth = max(0, depth - 1)
+        if character == "," and depth == 0:
+            arguments.append("".join(current).partition(":")[0].strip())
+            current = []
+        else:
+            current.append(character)
+    arguments.append("".join(current).partition(":")[0].strip())
+    rows = [", ".join(arguments[index: index + 3]) for index in range(0, len(arguments), 3)]
+    return f"{match.group(1)}(" + "\\n".join(rows) + ")"
+
+
 def generate_sequence_from_model(model: dict[str, Any]) -> str:
     """상호작용 모델을 시퀀스 다이어그램 PlantUML로 변환한다.
 
@@ -209,7 +237,9 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
         transition_fragments(fragment_path(message))
 
         arrow = _ARROW.get(message_type, "->")
-        label = sanitize_text(message.get("label", ""))
+        label = _display_message_label(
+            str(message.get("label", "")), message_type,
+        )
         line = f"{source} {arrow} {target}"
         if label:
             line += f" : {label}"

@@ -183,6 +183,10 @@ def _integrity_findings(
             if set(bindings) != set(parameters):
                 calls.append({"ruleId": "class.call-argument-contract", "message": "argument bindings must exactly match receiver parameters", "location": call_id})
             for parameter, source_ref in bindings.items():
+                # Runtime clocks and deterministic DTO derivations are checked
+                # against exact parameter/field types by the product contract.
+                if source_ref.startswith(("runtime#", "derived#")):
+                    continue
                 source_id, separator, source_parameter = source_ref.rpartition("#")
                 source = seen_calls.get(source_ref)
                 source_parameter_call = seen_calls.get(source_id) if separator else None

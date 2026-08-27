@@ -1539,6 +1539,26 @@ def _add_storage(
             source_refs=refs,
             rule=f"{provider}.singleton-data-disk",
         )
+        zone_producer = (
+            (details.get("subnets") or [""])[0]
+            if provider == "aws"
+            else details.get("compute") or compute_id
+        )
+        template.reference(
+            disk_id,
+            zone_producer,
+            consumer_path={
+                "aws": "availability_zone",
+                "azure": "zone",
+                "gcp": "zone",
+            }[provider],
+            producer_attribute={
+                "aws": "availability_zone",
+                "azure": "zone",
+                "gcp": "zone",
+            }[provider],
+            rule=f"{provider}.singleton-data-disk-zone",
+        )
         template.add_node(
             attachment_id,
             _provider_kind(provider, "diskAttachment"),

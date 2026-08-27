@@ -36,7 +36,7 @@ UNMAPPED = next(c for c in ERD_SEEDED if c.rule_id == "erd.relationship-mapped")
 
 
 def _spec_with(revise):
-    return dataclasses.replace(ERD_SPEC, revise=revise)
+    return dataclasses.replace(ERD_SPEC, revise=revise, repair=revise)
 
 
 def _run(spec, model, state=None):

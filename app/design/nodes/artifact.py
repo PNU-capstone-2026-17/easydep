@@ -214,6 +214,10 @@ class DesignArtifactSpec:
     #: 그 산출물에는 아직 규칙이 없다는 뜻이고, 없는 것을 있는 척하지 않는다.
     #: 값은 dict: {findings: list[str], repair_iters: int, stopped: str, error?: str}.
     check_key: str = ""
+    #: Optional automatic finding repair. User feedback always uses ``revise``;
+    #: stages with owned local repair leave this unset so the generic graph
+    #: cannot start a second whole-model correction loop.
+    repair: Callable[[Any, str, ArchitectureState, set[str]], Any] | None = None
     #: 모델이 만들어진 뒤, 검사 전에 **다른 산출물과 대사**하는 후크. 그래프에서
     #: extract/revise 노드와 check/render 사이에 선택적으로 끼워진다. 하위 산출물은
     #: 상위 계약을 수정하지 않는 것이 원칙이며, 필요한 스테이지에만 둔다.
@@ -222,6 +226,11 @@ class DesignArtifactSpec:
     reconcile: Callable[[ArchitectureState], dict] | None = None
     #: 검사·수리가 모델을 바꾼 뒤 렌더 직전에 다시 강제할 산출물 불변식.
     finalize: Callable[[ArchitectureState], dict] | None = None
+    #: Feedback may revise an upstream source-of-truth and deterministically
+    #: reproject this artifact. The returned delta must include ``model_key``.
+    revise_state: Callable[
+        [Any, str, ArchitectureState, set[str]], dict[str, Any]
+    ] | None = None
 
 
 def merge_targeted(
@@ -372,6 +381,18 @@ def revise_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]
         # 게이트 피드백은 산출물 전체를 대상으로 한다 — 사용자가 그 산출물을 보면서
         # 말하는 자리라 항목을 좁힐 근거가 없다. 항목을 지목하는 수정은 cascade 가 한다.
         current = state.get(spec.model_key) or {}
+        if spec.revise_state is not None:
+            delta = spec.revise_state(
+                current,
+                state.get(spec.feedback_key, ""),
+                state,
+                set(),
+            )
+            if spec.model_key not in delta:
+                raise ValueError(
+                    f"{spec.stage} state revision did not return {spec.model_key}"
+                )
+            return delta
         revised = spec.revise(
             current,
             state.get(spec.feedback_key, ""),
@@ -610,9 +631,10 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         iterations = 0
         error: str | None = None
         # 루프를 한 번도 안 돌 수 있다(위반이 없거나 예산이 0). 그때의 답을 먼저 적어 둔다.
-        repairable = _repairable_findings(findings)
+        repairable = _repairable_findings(findings) if spec.repair else []
         stopped = CLEAN if not findings else (
-            BUDGET if repairable else _unrepaired_stop(findings)
+            CHECKED_ONLY if spec.repair is None
+            else (BUDGET if repairable else _unrepaired_stop(findings))
         )
         skipped_findings: set[tuple[str, str, str]] = set()
 
@@ -620,7 +642,9 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         # 모델에서는 같은 유계 예산을 각 유스케이스에 부여한다. 레거시 단일 모델과 다른
         # 산출물의 호출 횟수는 그대로 유지한다.
         diagrams = model.get("Diagrams") if isinstance(model, dict) else None
-        if spec.stage == "sequence_diagram" and isinstance(diagrams, list):
+        if spec.repair is None:
+            budget = 0
+        elif spec.stage == "sequence_diagram" and isinstance(diagrams, list):
             # Bound the collection as a whole. Multiplying the per-use-case
             # budget can turn a large model into dozens of serial LLM calls.
             from app.core.config import settings
@@ -675,7 +699,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                         if _finding_key(finding) in local_keys
                     ]
                     targets = {target}
-                revised = spec.revise(model, repair_directive(batch), state, targets)
+                revised = spec.repair(model, repair_directive(batch), state, targets)
                 # 컬렉션이면 finding이 속한 유스케이스만 LLM 출력을 받아들인다. 대상
                 # 추론이 불가능한 컬렉션 수준 결함만 기존처럼 전체 수정한다.
                 candidate = merge_model(spec, model, revised, targets)

@@ -10,7 +10,7 @@ import pytest
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec.extractor import _control_parameter_types
 from app.design.services.erd.mapping import build_logical_model
-from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
+from app.design.services.interaction_design.sequence import project_sequence_model
 
 _PUML2CODE_ROOT = Path("app/implementation/tools/puml2code-bce")
 _PUML2CODE_READY = (_PUML2CODE_ROOT / "src/parser/plantuml.js").is_file()
@@ -83,18 +83,22 @@ def _collaboration_model() -> dict:
     }).model_dump(by_alias=True)
 
 
-def _use_case_spec() -> dict:
-    return {
-        "use_cases": [{"id": "UC1", "name": "Place order"}, {"id": "UC_INCLUDED"}],
-        "use_case_specs": [{"use_case_id": "UC1"}, {"use_case_id": "UC_INCLUDED"}],
+def _use_case_spec(*, include: bool = False) -> dict:
+    result = {
+        "use_cases": [{"id": "UC1", "name": "Place order"}],
+        "use_case_specs": [{"use_case_id": "UC1"}],
     }
+    if include:
+        result["use_cases"].append({"id": "UC_INCLUDED"})
+        result["use_case_specs"].append({"use_case_id": "UC_INCLUDED"})
+    return result
 
 
 def test_sequence_projects_collaboration_without_mutating_class_contract():
     class_model = _collaboration_model()
     before = copy.deepcopy(class_model)
 
-    sequence = extract_sequence_diagrams(_use_case_spec(), "", class_model)
+    sequence = project_sequence_model(_use_case_spec(), class_model, "")
 
     assert class_model == before
     assert [diagram["use_case_id"] for diagram in sequence["Diagrams"]] == ["UC1"]
@@ -134,7 +138,7 @@ def test_sequence_preserves_structured_parameter_projection_as_call_provenance()
         "sourceRef": "place-order::call:1#request.sku",
     }]
 
-    sequence = extract_sequence_diagrams(_use_case_spec(), "", class_model)
+    sequence = project_sequence_model(_use_case_spec(), class_model, "")
     projected_call = next(
         message for message in sequence["Diagrams"][0]["Messages"]
         if message.get("call_id") == "place-order::call:2"
@@ -153,7 +157,7 @@ def test_sequence_projects_an_included_use_case_from_its_scoped_calls():
     class_model["Collaborations"][0]["calls"][0]["stepRefs"].append(
         "UC_INCLUDED:main:1"
     )
-    specification = _use_case_spec()
+    specification = _use_case_spec(include=True)
     specification["use_cases"][1]["name"] = "Review order"
     specification["use_cases"][1]["primary_actor"] = "Buyer"
     specification["use_case_specs"][1].update({
@@ -161,7 +165,7 @@ def test_sequence_projects_an_included_use_case_from_its_scoped_calls():
         "main_scenario": [{"step_number": 1, "sentence": "Buyer reviews the order."}],
     })
 
-    sequence = extract_sequence_diagrams(specification, "", class_model)
+    sequence = project_sequence_model(specification, class_model, "")
 
     assert [diagram["use_case_id"] for diagram in sequence["Diagrams"]] == [
         "UC1", "UC_INCLUDED",
@@ -198,7 +202,7 @@ def test_sequence_combines_multiple_execution_groups_for_one_use_case():
     specification["use_case_specs"][0]["main_scenario"] = [
         {"step_number": 1}, {"step_number": 2}, {"step_number": 3},
     ]
-    sequence = extract_sequence_diagrams(specification, "", class_model)
+    sequence = project_sequence_model(specification, class_model, "")
 
     assert len(sequence["Diagrams"]) == 1
     calls = [
@@ -234,7 +238,7 @@ def test_sequence_keeps_actor_and_same_named_entity_as_distinct_lifelines():
     })
     class_model = BCEModel.model_validate(class_model).model_dump(by_alias=True)
 
-    sequence = extract_sequence_diagrams(_use_case_spec(), "", class_model)
+    sequence = project_sequence_model(_use_case_spec(), class_model, "")
 
     participants = {
         item["alias"]: (item["kind"], item["source_class"])
@@ -275,7 +279,7 @@ def test_sequence_projects_extension_only_call_and_return_as_opt_fragment():
         "handling_steps": [{"sub_step": "2a1", "sentence": "System flags it."}],
     }]
 
-    sequence = extract_sequence_diagrams(specification, "", class_model)
+    sequence = project_sequence_model(specification, class_model, "")
 
     messages = sequence["Diagrams"][0]["Messages"]
     call = next(message for message in messages if message.get("call_id") == "place-order::call:3")
@@ -317,7 +321,7 @@ def test_sequence_projects_extending_use_case_calls_as_base_opt_fragment():
         }],
     })
     class_model = BCEModel.model_validate(class_model).model_dump(by_alias=True)
-    specification = _use_case_spec()
+    specification = _use_case_spec(include=True)
     specification["use_cases"][1]["primary_actor"] = "Buyer"
     specification["use_case_specs"][1]["main_scenario"] = [{
         "step_number": 1,
@@ -331,7 +335,7 @@ def test_sequence_projects_extending_use_case_calls_as_base_opt_fragment():
         }],
     }
 
-    sequence = extract_sequence_diagrams(specification, "", class_model)
+    sequence = project_sequence_model(specification, class_model, "")
 
     base_call = next(
         message for message in sequence["Diagrams"][0]["Messages"]
@@ -360,10 +364,8 @@ def test_sequence_reports_stale_collaboration_model_instead_of_reconstructing_ca
     else:
         class_model["Collaborations"] = []
 
-    sequence = extract_sequence_diagrams(_use_case_spec(), "", class_model)
-
-    assert sequence["Diagrams"][0]["Messages"] == []
-    assert "stale" in sequence["Diagrams"][0]["UnresolvedSteps"][0]["reason"].lower()
+    with pytest.raises(ValueError, match="no accepted Collaborations"):
+        project_sequence_model(_use_case_spec(), class_model, "")
 
 
 def test_erd_maps_entities_but_never_data_types_to_tables():

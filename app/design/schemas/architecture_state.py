@@ -105,6 +105,7 @@ class ArchitectureState(TypedDict, total=False):
     # node can label the version generated vs feedback-revised.
     gate_route: str
     stage_origin: str
+    revised_upstream_stages: list[str]
 
     artifact_status: dict[str, str]
 

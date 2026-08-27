@@ -12,9 +12,40 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.core.config import settings
 from app.design.knowledge import rules
-from app.design.services.class_diagram.extractor import rules_section, run_bce_parse
-from app.design.services.common.structured import focus_note
+from app.design.schemas.class_model import BCEModel
+from app.design.services.common import fields
+from app.design.services.common.structured import focus_note, parse_structured
+
+
+def _rules_section(stage: str) -> str:
+    section = f"\n## Rules\n{rules.generation_prompt_block(stage)}\n"
+    if not_rules := rules.non_rules_block(stage):
+        section += f"\n## Not rules\n{not_rules}\n"
+    return section
+
+
+def _parse_bce(messages: list[dict[str, str]]) -> dict[str, Any]:
+    parsed = parse_structured(
+        messages,
+        BCEModel,
+        reasoning_effort=settings.design_reasoning_effort,
+        max_completion_tokens=settings.design_class_structure_max_completion_tokens,
+        operation="ErdEntityRevision",
+    )
+    model = BCEModel.model_validate(parsed).model_dump(by_alias=True)
+    for class_item in model.get("Classes") or []:
+        class_item["fields"] = [
+            fields.normalize_java_field(value)
+            for value in class_item.get("fields") or []
+        ]
+    for data_type in model.get("DataTypes") or []:
+        data_type["fields"] = [
+            fields.normalize_java_field(value)
+            for value in data_type.get("fields") or []
+        ]
+    return BCEModel.model_validate(model).model_dump(by_alias=True)
 
 
 _ERD_REVISION_PREAMBLE = """
@@ -80,7 +111,7 @@ include markdown, code fences, or any prose outside the schema fields.
 #: 그래서 규범은 산문이 아니라 지식베이스에서 온다. ERD는 **추출 프롬프트가 없으므로**
 #: (모델을 클래스 BCE에서 시드한다) 이것이 규칙을 받는 유일한 자리다.
 ERD_BCE_REVISION_SYSTEM_PROMPT = (
-    _ERD_REVISION_PREAMBLE + rules_section(rules.ERD) + _ERD_REVISION_CLOSING
+    _ERD_REVISION_PREAMBLE + _rules_section(rules.ERD) + _ERD_REVISION_CLOSING
 )
 
 
@@ -106,4 +137,4 @@ def revise_erd_classes(
         {"role": "system", "content": ERD_BCE_REVISION_SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
-    return run_bce_parse(messages)
+    return _parse_bce(messages)

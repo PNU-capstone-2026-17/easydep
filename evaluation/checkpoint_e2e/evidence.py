@@ -41,6 +41,10 @@ def render_plantuml(puml_text: str, image_format: str = "png") -> bytes:
             check=False,
         )
         target = source.with_suffix(f".{image_format}")
+        if not target.is_file():
+            rendered = list(Path(directory).glob(f"*.{image_format}"))
+            if len(rendered) == 1:
+                target = rendered[0]
         if result.returncode != 0 or not target.is_file():
             detail = "\n".join(
                 value.strip() for value in (result.stdout, result.stderr)

@@ -672,9 +672,10 @@ def _aws_resources(
             body = (
                 f"vpc_id = {context.dependency_ref(node_id, 'vpc_id')}\n"
                 f"cidr_block = {_quoted(attributes.get('cidr'))}\n"
-                f"availability_zone = {_quoted(attributes.get('zone'))}\n"
                 f"map_public_ip_on_launch = {str(bool(attributes.get('public'))).lower()}"
             )
+            if attributes.get("zone"):
+                body += f"\navailability_zone = {_quoted(attributes.get('zone'))}"
         elif kind == "aws_route_table_association":
             body = (
                 f"subnet_id = {context.dependency_ref(node_id, 'subnet_id')}\n"
@@ -778,7 +779,12 @@ def _aws_resources(
             port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
             body = f'load_balancer_arn = {context.dependency_ref(node_id, "load_balancer_arn")}\nport = {port}\nprotocol = "TCP"\ndefault_action {{ type = "forward"; target_group_arn = {context.dependency_ref(node_id, "default_action.target_group_arn")} }}'
         elif kind == "aws_ebs_volume":
-            body = f'availability_zone = {_quoted(attributes.get("zone"))}\nsize = {int(attributes.get("capacityGiB") or 10)}\ntype = "gp3"'
+            body = (
+                "availability_zone = "
+                f"{context.dependency_ref(node_id, 'availability_zone')}\n"
+                f"size = {int(attributes.get('capacityGiB') or 10)}\n"
+                'type = "gp3"'
+            )
             if attributes.get("deletionPolicy") == "retain":
                 body += "\nlifecycle { prevent_destroy = true }"
         elif kind == "aws_volume_attachment":
@@ -904,6 +910,8 @@ def _azure_resources(
             )
             if identity_target:
                 body += f'\nidentity {{ type = "UserAssigned"; identity_ids = [{context.ref(identity_target)}] }}'
+            if attributes.get("zone"):
+                body += f'\nzone = {_quoted(attributes.get("zone"))}'
         elif kind == "azurerm_linux_virtual_machine_scale_set":
             subnet_target = context.target(
                 node_id, "network_interface.ip_configuration.subnet_id"
@@ -984,7 +992,7 @@ def _azure_resources(
             frontend_name = context.dependency_ref(node_id, "frontend_ip_configuration_name")
             body = f'name = "http"\nloadbalancer_id = {context.dependency_ref(node_id, "loadbalancer_id")}\nprotocol = "Tcp"\nfrontend_port = {port}\nbackend_port = {port}\nfrontend_ip_configuration_name = {frontend_name}\nbackend_address_pool_ids = [{context.dependency_ref(node_id, "backend_address_pool_ids[]")}]\nprobe_id = {context.dependency_ref(node_id, "probe_id")} '
         elif kind == "azurerm_managed_disk":
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nlocation = {_quoted(region)}\nresource_group_name = {rg_name}\nstorage_account_type = "Standard_LRS"\ncreate_option = "Empty"\ndisk_size_gb = {int(attributes.get("capacityGiB") or 10)}\nzone = {_quoted(attributes.get("zone") or "1")}'
+            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nlocation = {_quoted(region)}\nresource_group_name = {rg_name}\nstorage_account_type = "Standard_LRS"\ncreate_option = "Empty"\ndisk_size_gb = {int(attributes.get("capacityGiB") or 10)}\nzone = {context.dependency_ref(node_id, "zone")}'
             if attributes.get("deletionPolicy") == "retain":
                 body += "\nlifecycle { prevent_destroy = true }"
         elif kind == "azurerm_virtual_machine_data_disk_attachment":
@@ -1150,7 +1158,7 @@ def _gcp_resources(
                     f"\nsubnetwork = {context.dependency_ref(node_id, 'subnetwork')}"
                 )
         elif kind == "google_compute_disk":
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nzone = {_quoted(attributes.get("zone") or region + "-a")}\nsize = {int(attributes.get("capacityGiB") or 10)}\ntype = "pd-balanced"'
+            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nzone = {context.dependency_ref(node_id, "zone")}\nsize = {int(attributes.get("capacityGiB") or 10)}\ntype = "pd-balanced"'
             if attributes.get("deletionPolicy") == "retain":
                 body += "\nlifecycle { prevent_destroy = true }"
         elif kind == "google_compute_attached_disk":

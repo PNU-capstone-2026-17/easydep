@@ -27,10 +27,9 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.design.knowledge.detectors import (
+    Finding as ArtifactFinding,
     api_spec_findings,
-    class_diagram_findings,
     erd_findings,
-    sequence_diagram_findings,
 )
 from app.design.nodes.artifact import (
     DesignArtifactSpec,
@@ -43,21 +42,7 @@ from app.design.schemas.architecture_state import ArchitectureState, usecase_spe
 from app.design.services.api_spec.extractor import extract_api_spec_model
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.api_spec.reviser import revise_api_spec_model
-from app.design.services.class_diagram.behavior import (
-    affected_group_ids,
-    enrich_bce_behavior,
-    execution_groups,
-    group_outcomes,
-)
-from app.design.services.class_diagram.extractor import (
-    extract_bce_classes_from_scenario,
-)
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
-from app.design.services.class_diagram.pipeline import (
-    generate_class_skeleton,
-    repair_operation_fragment_for_finding,
-)
-from app.design.services.class_diagram.reviser import revise_bce_classes
 from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
 from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
@@ -71,12 +56,16 @@ from app.design.services.deployment_diagram.provider_plantuml import (
 from app.design.services.deployment_diagram.reviser import revise_deployment_model
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
-from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
-from app.design.services.sequence_diagram.reviser import revise_sequence_model
-
-# 기존 테스트·확장 코드가 패치하는 이름을 유지하되 실제 동작은 복수 추출이다.
-extract_sequence_model = extract_sequence_diagrams
+from app.design.services.interaction_design import (
+    generate_class_model,
+    project_sequence_model,
+    resume_class_model,
+    revise_class_model,
+)
+from app.design.services.interaction_design.checks import final_model_findings
+from app.design.services.interaction_design.scenario import build_scenario_index
+from app.design.services.interaction_design.sequence import sequence_findings
 
 #: 설계 파이프라인의 순서. 상위 그래프의 엣지도, 저장 순회도 여기서만 나온다.
 #: 시퀀스·API는 클래스 다이어그램을, 배포는 그 앞의 모두를 재료로 쓴다. ERD는 클래스
@@ -191,64 +180,78 @@ def _class_scenario(state: ArchitectureState) -> dict[str, Any]:
 
 
 def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
-    """Build a fixed structural skeleton, then enrich only structured scenarios.
+    """Run the sole executable class-design path."""
 
-    The empty-spec branch preserves compatibility with legacy callers that pass
-    presentation-only use-case summaries; there is no finite step graph from
-    which operation ownership or input provenance could honestly be derived.
-    """
-    scenario = state.get("usecase_spec") or {}
-    if not isinstance(scenario, dict):
-        return extract_bce_classes_from_scenario(usecase_spec_text(state))
-    # Relationship decisions are a separate persisted artifact.  Give the
-    # skeleton pass the same complete scenario that behaviour enrichment sees,
-    # so a derived internal include can receive its own explicit BCE scope.
     scenario = _class_scenario(state)
     if not scenario.get("use_case_specs"):
-        return extract_bce_classes_from_scenario(
-            json.dumps(scenario, ensure_ascii=False)
+        raise ValueError("class design requires structured use-case specifications")
+    current = state.get("extracted_bce_classes")
+    if isinstance(current, dict) and current.get("Classes"):
+        return resume_class_model(scenario, current)
+    return generate_class_model(scenario)
+
+
+def _class_model_findings(
+    model: dict[str, Any], state: ArchitectureState,
+) -> list[ArtifactFinding]:
+    index = build_scenario_index(_class_scenario(state))
+    return [
+        ArtifactFinding(
+            finding.rule_id,
+            finding.message,
+            finding.location,
+            finding.requires_user_input,
+            finding.origin,
         )
-    skeleton = generate_class_skeleton(scenario)
-    enriched = enrich_bce_behavior(scenario, skeleton)
-    failures = [
-        outcome for outcome in group_outcomes(enriched)
-        if outcome.status != "accepted"
+        for finding in final_model_findings(model, index)
     ]
-    if not failures:
-        return enriched
 
-    # Collaboration is allowed to hand a signature defect back to its owning
-    # UC exactly once.  Aggregate sibling execution-group findings first so a
-    # shared class is never repaired concurrently and no accepted fragment is
-    # regenerated merely because another group failed.
-    group_owner = {group.id: group.use_case_id for group in execution_groups(scenario)}
-    findings_by_use_case: dict[str, list[str]] = {}
-    for outcome in failures:
-        use_case_id = group_owner.get(outcome.group_id)
-        if not use_case_id:
-            continue
-        findings_by_use_case.setdefault(use_case_id, []).append(
-            f"execution group {outcome.group_id}: "
-            + (outcome.issues[0] if outcome.issues else "collaboration was not accepted")
-        )
-    if not findings_by_use_case:
-        return enriched
 
-    repaired = skeleton
-    for use_case_id in sorted(findings_by_use_case):
-        repaired = repair_operation_fragment_for_finding(
-            repaired,
-            scenario,
-            use_case_id,
-            findings_by_use_case[use_case_id],
-        )
-    selected_groups = affected_group_ids(scenario, set(findings_by_use_case))
-    return enrich_bce_behavior(
+def _sequence_model_findings(
+    model: dict[str, Any], _state: ArchitectureState,
+) -> list[ArtifactFinding]:
+    return [
+        ArtifactFinding("sequence.contract", message, "SequenceDiagramCollection")
+        for message in sequence_findings(model)
+    ]
+
+
+def _revise_sequence_state(
+    _current: dict[str, Any],
+    feedback: str,
+    state: ArchitectureState,
+    targets: set[str],
+) -> dict[str, Any]:
+    """Revise interaction truth in the class model, then reproject sequence."""
+
+    scenario = _class_scenario(state)
+    revised_class = revise_class_model(
+        state.get("extracted_bce_classes") or {},
         scenario,
-        repaired,
-        group_ids=selected_groups,
-        existing=enriched,
+        feedback,
+        targets,
     )
+    class_puml = generate_plantuml_from_bce_json(revised_class)
+    class_validation = validate_puml_artifact(class_puml)
+    class_findings = _class_model_findings(revised_class, state)
+    if class_findings:
+        raise ValueError(
+            "sequence feedback produced an invalid class interaction contract: "
+            + "; ".join(finding.message for finding in class_findings)
+        )
+    return {
+        "extracted_bce_classes": revised_class,
+        "class_diagram_puml": class_puml,
+        "class_diagram_syntax_valid": class_validation["syntax_valid"],
+        "class_diagram_syntax_errors": class_validation["syntax_errors"],
+        "class_diagram_check": {
+            "findings": [], "repair_iters": 0, "stopped": "clean",
+        },
+        "sequence_diagram_model": project_sequence_model(
+            scenario, revised_class, class_puml,
+        ),
+        "revised_upstream_stages": ["class_diagram"],
+    }
 
 
 CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
@@ -260,11 +263,11 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     feedback_key="class_diagram_feedback",
     empty="",
     extract=_extract_class_model,
-    revise=lambda current, feedback, state, targets: revise_bce_classes(
-        current_bce=current,
-        feedback=feedback,
-        scenario_text=json.dumps(_class_scenario(state), ensure_ascii=False, indent=2),
-        targets=targets,
+    revise=lambda current, feedback, state, targets: revise_class_model(
+        current,
+        _class_scenario(state),
+        feedback,
+        targets,
     ),
     render=generate_plantuml_from_bce_json,
     validate=validate_puml_artifact,
@@ -276,7 +279,7 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     # 규칙 지식베이스를 가진 두 스테이지 중 하나다(다른 하나는 ERD). 시퀀스·API·배포는
     # 아직 `check_key`가 없고, 그래서 검사 노드도 생기지 않는다 — 검사하지 않는다는
     # 사실이 그래프에 그대로 보인다.
-    check=class_diagram_findings,
+    check=_class_model_findings,
     check_key="class_diagram_check",
 )
 
@@ -288,18 +291,15 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     errors_key="sequence_diagram_syntax_errors",
     feedback_key="sequence_diagram_feedback",
     empty="",
-    extract=lambda state: extract_sequence_model(
+    extract=lambda state: project_sequence_model(
         _class_scenario(state),
+        state.get("extracted_bce_classes") or {},
         state.get("class_diagram_puml", ""),
-        class_model=state.get("extracted_bce_classes") or {},
     ),
-    revise=lambda current, feedback, state, targets: revise_sequence_model(
-        current,
-        feedback,
-        _sequence_revision_context(state, targets),
-        targets,
+    revise=lambda _current, _feedback, state, _targets: project_sequence_model(
+        _class_scenario(state),
+        state.get("extracted_bce_classes") or {},
         state.get("class_diagram_puml", ""),
-        class_model=state.get("extracted_bce_classes") or {},
     ),
     render=generate_sequence_from_model,
     validate=validate_puml_artifact,
@@ -309,8 +309,9 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
         # 메시지에는 id 가 없다 — 추적표가 쓰는 것과 같은 조합으로 가리킨다.
         "Messages": _message_key,
     },
-    check=sequence_diagram_findings,
+    check=_sequence_model_findings,
     check_key="sequence_diagram_check",
+    revise_state=_revise_sequence_state,
 )
 
 API_SPEC_SPEC = DesignArtifactSpec(
@@ -343,6 +344,14 @@ API_SPEC_SPEC = DesignArtifactSpec(
     },
     check=api_spec_findings,
     check_key="api_spec_check",
+    repair=lambda current, feedback, state, targets: revise_api_spec_model(
+        current,
+        feedback,
+        _design_context(state, "api_spec"),
+        targets,
+        state.get("class_diagram_puml", ""),
+        class_model=state.get("extracted_bce_classes") or {},
+    ),
 )
 
 ERD_SPEC = DesignArtifactSpec(
@@ -369,6 +378,12 @@ ERD_SPEC = DesignArtifactSpec(
     # `erd_findings` 가 사상을 돌려 나온 논리 데이터 모델(테이블·키·외래키)까지 판정한다.
     check=erd_findings,
     check_key="erd_check",
+    repair=lambda current, feedback, state, targets: revise_erd_classes(
+        current_bce=current or state.get("extracted_bce_classes", {}),
+        feedback=feedback,
+        scenario_text=usecase_spec_text(state),
+        targets=targets,
+    ),
 )
 
 

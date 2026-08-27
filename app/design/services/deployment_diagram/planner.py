@@ -287,6 +287,7 @@ def planning_inputs_stale(
     api_spec: Any = None,
     erd_model: Any = None,
     artifact_versions: dict[str, Any] | None = None,
+    additional_planning_facts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compare stored artifact versions/digests with current upstream inputs."""
 
@@ -301,6 +302,7 @@ def planning_inputs_stale(
         api_spec=api_spec,
         erd_model=erd_model,
         artifact_versions=artifact_versions,
+        additional_planning_facts=additional_planning_facts,
     )
     old_by_name = {
         str(item.get("artifact")): item

@@ -450,6 +450,47 @@ def test_current_chain_can_restart_from_a_verified_checkpoint(
     assert use_cases["use_cases"] == 2
 
 
+def test_current_chain_resume_reuses_failed_stage_state(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(graph, "CHECKPOINTS", ("input", "requirements"))
+    monkeypatch.setattr(
+        graph,
+        "case_definition",
+        lambda _case_id: {
+            "requirements": ["A requirement"],
+            "resourceConstraintsText": "",
+            "initialCloudConstraints": {},
+            "deploymentPlanningFacts": [],
+            "inputPath": "input.json",
+        },
+    )
+    monkeypatch.setattr(graph, "initial_candidate_state", lambda _case: {"seed": True})
+    states: list[dict] = []
+
+    def transition(_source, state, _record):
+        states.append(dict(state))
+        return "requirements", {**state, "partial": True, "attempt": len(states)}
+
+    monkeypatch.setattr(graph, "run_transition", transition)
+    validations = iter((
+        {"status": "failed", "errors": ["incomplete"]},
+        {"status": "passed", "errors": []},
+    ))
+    monkeypatch.setattr(graph, "validate_state", lambda _checkpoint, _state: next(validations))
+    destination = tmp_path / "candidate"
+
+    with pytest.raises(RuntimeError, match="invalid"):
+        generate_candidate("test", destination, through="requirements")
+    manifest = generate_candidate(
+        "test", destination, through="requirements", resume=True,
+    )
+
+    assert states == [
+        {"seed": True},
+        {"seed": True, "partial": True, "attempt": 1},
+    ]
+    assert manifest["status"] == "complete"
+
+
 def test_restart_requires_resume_and_a_later_target(tmp_path) -> None:
     with pytest.raises(ValueError, match="existing candidate"):
         generate_candidate(

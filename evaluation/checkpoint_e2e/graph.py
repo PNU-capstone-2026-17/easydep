@@ -576,6 +576,20 @@ def _generate_chain_at(
                     [],
                 )
         start_index = max(0, len(checkpoints) - 1)
+        if existing.get("status") == "failed" and checkpoints:
+            source = str(checkpoints[-1]["id"])
+            if source != through:
+                failed_target = checkpoint_after(source)
+                failed_state = destination / "failures" / failed_target / "state.json"
+                if failed_state.is_file():
+                    state = read_json(failed_state)
+        if len(checkpoints) > 1:
+            latest = str(checkpoints[-1]["id"])
+            if validate_state(latest, state).get("status") == "failed":
+                # Retain the failed artifact in state so its stage extractor can
+                # resume owned units, but replace its checkpoint evidence.
+                checkpoints.pop()
+                start_index = max(0, len(checkpoints) - 1)
 
     if not checkpoints:
         save("input", state)

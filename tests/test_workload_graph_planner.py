@@ -514,6 +514,26 @@ def test_input_digest_marks_upstream_change_stale() -> None:
     assert {item["artifact"] for item in report["changedArtifacts"]} == {"apiSpec"}
 
 
+def test_input_digest_compares_explicit_deployment_facts_with_current_facts() -> None:
+    explicit = [{"id": "workload", "kind": "workloadContract", "value": {}}]
+    facts = extract_planning_facts(additional_planning_facts=explicit)
+
+    current = planning_inputs_stale(
+        facts, additional_planning_facts=explicit,
+    )
+    changed = planning_inputs_stale(
+        facts,
+        additional_planning_facts=[{
+            "id": "workload", "kind": "workloadContract", "value": {"replicaCount": 2},
+        }],
+    )
+
+    assert current["stale"] is False
+    assert {item["artifact"] for item in changed["changedArtifacts"]} == {
+        "deploymentPlanningFacts",
+    }
+
+
 def test_accepted_typed_capability_constraint_is_applied_deterministically() -> None:
     facts = extract_planning_facts(
         capability_contract={

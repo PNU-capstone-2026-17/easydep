@@ -228,6 +228,36 @@ def test_group_and_persistent_templates_include_lifecycle_closures() -> None:
 
 
 @pytest.mark.parametrize(
+    ("provider", "consumer_path", "producer_prefix"),
+    [
+        ("aws", "availability_zone", "subnet-compute-1-"),
+        ("azure", "zone", "compute-1"),
+        ("gcp", "zone", "compute-1"),
+    ],
+)
+def test_singleton_disk_zone_is_a_compute_placement_reference(
+    provider: str, consumer_path: str, producer_prefix: str,
+) -> None:
+    bundle = build_deployment_diagram_bundle(
+        _graph(STANDALONE_DEFAULT_TWO_WORKLOADS_ONE_PERSISTENT),
+        _resource_spec(provider),
+    )
+    resource_plan = bundle["projections"][0]["resourcePlan"]
+    disk = next(
+        item for item in resource_plan["nodes"]
+        if item["id"].startswith("data-disk-")
+    )
+    zone_reference = next(
+        item for item in resource_plan["references"]
+        if item["consumerRef"] == disk["id"]
+        and item["consumerPath"] == consumer_path
+    )
+
+    assert zone_reference["producerRef"].startswith(producer_prefix)
+    assert zone_reference["producerAttribute"] in {"availability_zone", "zone"}
+
+
+@pytest.mark.parametrize(
     ("provider", "disk_name"),
     [
         ("aws", "EBS Volume"),

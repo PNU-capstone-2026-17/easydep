@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 import subprocess
+import shutil
+import tempfile
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -44,6 +47,31 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
     """
     if not puml_text.strip():
         return ["PlantUML code is empty."]
+
+    local = shutil.which("puml")
+    if local:
+        try:
+            with tempfile.TemporaryDirectory(prefix="easydep-puml-check-") as directory:
+                source = Path(directory) / "diagram.puml"
+                source.write_text(puml_text, encoding="utf-8")
+                result = subprocess.run(
+                    [local, str(source), "svg"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=30,
+                    check=False,
+                )
+                rendered = list(Path(directory).glob("*.svg"))
+                if result.returncode == 0 and rendered:
+                    return []
+                detail = "\n".join(
+                    value.strip() for value in (result.stdout, result.stderr)
+                    if value.strip()
+                )
+                return [detail or "Local PlantUML syntax check failed."]
+        except subprocess.TimeoutExpired:
+            return ["PlantUML syntax check timed out."]
 
     try:
         result = subprocess.run(

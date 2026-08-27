@@ -47,13 +47,13 @@ class StageUnderTest:
 
 
 def _prompts() -> dict[str, tuple[str, ...]]:
-    from app.design.services.class_diagram import extractor, reviser
     from app.design.services.erd import reviser as erd_reviser
+    from app.design.services.interaction_design import pipeline
 
     return {
         rules.CLASS_DIAGRAM: (
-            extractor.BCE_CLASS_EXTRACTION_SYSTEM_PROMPT,
-            reviser.BCE_REVISION_SYSTEM_PROMPT,
+            pipeline._INVENTORY_PROMPT,
+            pipeline._OPERATION_PROMPT,
         ),
         rules.ERD: (erd_reviser.ERD_BCE_REVISION_SYSTEM_PROMPT,),
     }

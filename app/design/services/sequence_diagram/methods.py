@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+from app.design.services.class_diagram.type_system import type_expression_is_well_formed
+
 
 _METHOD_CALL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\([^()\r\n]*\)$")
 _METHOD_NAME = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)")
@@ -40,7 +42,7 @@ def method_return_type(raw: str) -> str | None:
 
 def is_return_value_label(label: str) -> bool:
     """반환 라벨로 사용할 수 있는 UML 타입 표기인가."""
-    return bool(_RETURN_LABEL.fullmatch(label.strip()))
+    return type_expression_is_well_formed(label)
 
 
 def normalize_return_type(raw: str) -> str:

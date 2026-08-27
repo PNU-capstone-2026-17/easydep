@@ -294,7 +294,7 @@ def _audit_requirement_traceability(
     by_id = {requirement["id"]: requirement for requirement in accepted_requirements}
     constraint_ids = [constraint["id"] for constraint in constraints]
     task_ids = functional_audit_ids + constraint_ids
-    workers = max(1, min(4, len(task_ids)))
+    workers = max(1, min(settings.spec_concurrency, len(task_ids)))
     decisions: dict[str, _RequirementTraceSlice] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {

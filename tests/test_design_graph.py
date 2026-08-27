@@ -28,53 +28,95 @@ _BCE = {
         {
             "className": "OrderBoundary",
             "stereotype": "Boundary",
-            "fields": ["total: int"],
-            "methods": ["placeOrder()"],
+            "description": "Order interface",
+            "fields": [],
+            "identifier": [],
+            "use_case_ids": ["UC1"],
+            "operations": [{
+                "operationId": "OrderBoundary::placeOrder(request:OrderRequest)",
+                "name": "placeOrder",
+                "parameters": [{"name": "request", "type": "OrderRequest"}],
+                "returnType": "OrderResult",
+                "stepRefs": ["UC1:main:1", "UC1:main:2"],
+            }],
         },
-        {"className": "Order", "stereotype": "Entity", "fields": ["total: int"], "methods": []},
+        {
+            "className": "OrderControl",
+            "stereotype": "Control",
+            "description": "Order coordination",
+            "fields": [],
+            "identifier": [],
+            "use_case_ids": ["UC1"],
+            "operations": [{
+                "operationId": "OrderControl::placeOrder(request:OrderRequest)",
+                "name": "placeOrder",
+                "parameters": [{"name": "request", "type": "OrderRequest"}],
+                "returnType": "OrderResult",
+                "stepRefs": ["UC1:main:2"],
+            }],
+        },
+        {
+            "className": "Order",
+            "stereotype": "Entity",
+            "description": "Persistent order",
+            "fields": ["orderId : UUID", "total : int"],
+            "identifier": ["orderId"],
+            "use_case_ids": ["UC1"],
+            "operations": [],
+        },
+    ],
+    "DataTypes": [
+        {"name": "OrderRequest", "kind": "valueObject", "fields": ["total : int"], "values": []},
+        {"name": "OrderResult", "kind": "valueObject", "fields": ["accepted : boolean"], "values": []},
     ],
     "Relationships": [],
+    "Collaborations": [{
+        "collaborationId": "UC1:main:1",
+        "useCaseIds": ["UC1"],
+        "entryActor": "Customer",
+        "calls": [
+            {
+                "callId": "UC1:main:1::call:1",
+                "parentCallId": None,
+                "receiverOperationId": "OrderBoundary::placeOrder(request:OrderRequest)",
+                "stepRefs": ["UC1:main:1", "UC1:main:2"],
+                "argumentBindings": [{"parameter": "request", "sourceRef": "UC1:main:1#request"}],
+            },
+            {
+                "callId": "UC1:main:1::call:2",
+                "parentCallId": "UC1:main:1::call:1",
+                "receiverOperationId": "OrderControl::placeOrder(request:OrderRequest)",
+                "stepRefs": ["UC1:main:2"],
+                "argumentBindings": [{"parameter": "request", "sourceRef": "UC1:main:1::call:1#request"}],
+            },
+        ],
+    }],
 }
 _BCE_REVISED = {
+    **_BCE,
     "Classes": [
-        {
-            "className": "OrderBoundary",
-            "stereotype": "Boundary",
-            "fields": ["total: int", "note: String"],
-            "methods": ["placeOrder()"],
-        },
-        {"className": "Order", "stereotype": "Entity", "fields": ["total: int"], "methods": []},
+        {**_BCE["Classes"][0], "description": "Revised order interface"},
+        _BCE["Classes"][1],
+        _BCE["Classes"][2],
     ],
-    "Relationships": [],
 }
 _SEQUENCE = {
-    "Participants": [
-        {
-            "name": "Customer",
-            "alias": "Customer",
-            "kind": "actor",
-            "description": "",
-            "source_class": "",
-        },
-        {
-            "name": "OrderBoundary",
-            "alias": "OrderBoundary",
-            "kind": "boundary",
-            "description": "",
-            "source_class": "OrderBoundary",
-        },
-    ],
-    "Messages": [
-        {
-            "source": "Customer",
-            "target": "OrderBoundary",
-            "label": "placeOrder()",
-            "type": "sync",
-            "fragments": [],
-            "use_case_ids": ["UC1"],
-            "step_ids": [],
-        }
-    ],
+    "Diagrams": [{
+        "use_case_id": "UC1",
+        "use_case_name": "Place order",
+        "Participants": [
+            {"name": "Customer", "alias": "Customer", "kind": "actor", "description": "", "source_class": ""},
+            {"name": "OrderBoundary", "alias": "OrderBoundary", "kind": "boundary", "description": "", "source_class": "OrderBoundary"},
+        ],
+        "Messages": [
+            {"source": "Customer", "target": "OrderBoundary", "label": "placeOrder(request:OrderRequest)", "type": "sync", "fragments": [], "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1"], "call_id": "UC1:main:1::call:1", "reply_to": "", "arguments": [{"parameter": "request", "type": "OrderRequest", "source_kind": "input", "source_ref": "UC1:main:1#request"}]},
+            {"source": "OrderBoundary", "target": "Customer", "label": "OrderResult", "type": "return", "fragments": [], "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1"], "call_id": "", "reply_to": "UC1:main:1::call:1", "arguments": []},
+        ],
+        "UnresolvedSteps": [],
+        "NarrativeSteps": [],
+    }],
+    "class_diagram_hash": "test",
+    "MethodProposals": [],
 }
 _API = {
     "title": "Order API",
@@ -136,10 +178,9 @@ def stub_llm(monkeypatch):
         return call
 
     for name, stage, mode, model in (
-        ("extract_bce_classes_from_scenario", "class_diagram", "gen", _BCE),
-        ("revise_bce_classes", "class_diagram", "fb", _BCE_REVISED),
-        ("extract_sequence_model", "sequence_diagram", "gen", _SEQUENCE),
-        ("revise_sequence_model", "sequence_diagram", "fb", _SEQUENCE),
+        ("generate_class_model", "class_diagram", "gen", _BCE),
+        ("revise_class_model", "class_diagram", "fb", _BCE_REVISED),
+        ("project_sequence_model", "sequence_diagram", "gen", _SEQUENCE),
         ("extract_api_spec_model", "api_spec", "gen", _API),
         ("revise_api_spec_model", "api_spec", "fb", _API),
         ("revise_erd_classes", "erd", "fb", _BCE),
@@ -171,7 +212,17 @@ def graph(monkeypatch, stub_llm):
 
 
 THREAD = {"configurable": {"thread_id": "test-app"}}
-SEED = {"usecase_spec": {"use_cases": [{"id": "UC1", "name": "주문"}]}}
+SEED = {"usecase_spec": {
+    "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "Customer"}],
+    "use_case_specs": [{
+        "use_case_id": "UC1",
+        "main_scenario": [
+            {"step_number": 1, "sentence": "Customer submits an order."},
+            {"step_number": 2, "sentence": "System returns the order result."},
+        ],
+        "extensions": [],
+    }],
+}}
 
 
 def test_revision_context_does_not_duplicate_current_or_irrelevant_artifacts():
@@ -232,7 +283,7 @@ def test_gate_shows_the_artifact_it_is_asking_about(graph):
 
     assert payload["status"] == "need_feedback"
     assert payload["stage"] == "class_diagram"
-    assert "class Order" in payload["artifact"]
+    assert "class OrderBoundary" in payload["artifact"]
     assert payload["valid"] is True
 
 
@@ -278,6 +329,28 @@ def test_each_stage_is_persisted_when_it_completes(monkeypatch, graph):
 
     graph.invoke(Command(resume=""), THREAD)
     assert saved[-1] == ("sequence_diagram", ORIGIN_GENERATED)
+
+
+def test_sequence_feedback_revises_and_persists_class_contract(monkeypatch, graph, stub_llm):
+    saved: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.repositories.artifact_repository.save_stage",
+        lambda app_id, stage, state, origin=None: saved.append((stage, origin)),
+    )
+    graph.invoke({**SEED, "app_id": "test-app"}, THREAD)
+    graph.invoke(Command(resume=""), THREAD)
+    saved.clear()
+    stub_llm.clear()
+
+    result = graph.invoke(Command(resume="Change the interaction call order."), THREAD)
+
+    assert _stage_at_gate(result) == "sequence_diagram"
+    assert "fb:class_diagram" in stub_llm
+    assert "gen:sequence_diagram" in stub_llm
+    assert saved == [
+        ("class_diagram", ORIGIN_FEEDBACK_REVISED),
+        ("sequence_diagram", ORIGIN_FEEDBACK_REVISED),
+    ]
 
 
 def test_every_stage_has_the_same_skeleton():
@@ -401,7 +474,7 @@ def test_rendering_is_deterministic_and_valid_by_construction(graph):
 
     # 산출물이 실제로 모델에서 나왔는지 — 스텁 모델의 내용이 렌더 결과에 보여야 한다.
     assert "class Order" in first["class_diagram_puml"]
-    assert "placeOrder()" in first["sequence_diagram_puml"]
+    assert "placeOrder(request)" in first["sequence_diagram_puml"]
     assert first["api_spec"]["openapi"].startswith("3.1")
     assert "/orders" in first["api_spec"]["paths"]
     assert "Order" in first["erd_puml"]
@@ -448,7 +521,7 @@ def test_failed_stage_is_retryable_without_restarting_upstream(graph, monkeypatc
         stub_llm.append("gen:sequence_diagram:failed")
         raise ValueError("invalid sequence")
 
-    monkeypatch.setattr(sg, "extract_sequence_model", invalid_sequence)
+    monkeypatch.setattr(sg, "project_sequence_model", invalid_sequence)
     with pytest.raises(ValueError, match="invalid sequence"):
         dg.resume_design("test-app", "")
 
@@ -461,7 +534,7 @@ def test_failed_stage_is_retryable_without_restarting_upstream(graph, monkeypatc
     }
 
     monkeypatch.setattr(
-        sg, "extract_sequence_model", lambda *_args, **_kwargs: _SEQUENCE
+        sg, "project_sequence_model", lambda *_args, **_kwargs: _SEQUENCE
     )
     result = dg.retry_design("test-app")
 

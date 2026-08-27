@@ -58,10 +58,13 @@ class Settings(BaseSettings):
     implementation_max_conformance_repairs: int = 3
     design_max_repair_iters: int = 3
     design_max_sequence_repair_calls: int = 4
-    design_sequence_parallelism: int = 4
-    # Behaviour proposals are independent per execution group.  Keep the
-    # default bounded so a larger scenario cannot fan out unbounded NIM calls.
-    design_class_behavior_parallelism: int = 4
+    design_sequence_parallelism: int = 2
+    # Long design calls are independent, but hosted NIM is more stable and each
+    # prompt easier to observe when no more than two are in flight.
+    design_class_behavior_parallelism: int = 2
+    # The global inventory needs enough combined reasoning/output budget to
+    # finish strict JSON.  Choice-space reduction happens in its compact input,
+    # not by truncating the response.
     design_class_structure_max_completion_tokens: int = 16384
     design_class_collaboration_max_completion_tokens: int = 8192
     implementation_max_workers: int = 1
