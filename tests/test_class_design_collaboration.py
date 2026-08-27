@@ -1,18 +1,18 @@
 """Interaction-design collaborations and value provenance."""
 from __future__ import annotations
 
-from app.design.services.interaction_design import collaboration, service
-from app.design.services.interaction_design.proposals import (
+from app.design.services.class_diagram import collaboration, service
+from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     InventoryProposal,
     OperationFragment,
 )
-from app.design.services.interaction_design.scenario import build_scenario_index
-from tests.interaction_design_fixtures import (
+from app.design.services.class_diagram.scenario import build_scenario_index
+from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
     operation_fragment,
-    patch_interaction_parser,
+    patch_class_design_parser,
     single_use_case,
 )
 
@@ -27,7 +27,7 @@ def test_vertical_service_persists_calls_and_derives_parameter_provenance(monkey
             return call_plan()
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     model = service.generate_class_model(single_use_case())
 
     assert len(model["Collaborations"]) == 1
@@ -78,7 +78,7 @@ def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(m
             return plan
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     model = service.generate_class_model(single_use_case())
 
     runtime_call = model["Collaborations"][0]["calls"][2]
@@ -130,7 +130,7 @@ def test_structured_parameter_is_derived_from_upstream_fields(monkeypatch):
             return plan
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     model = service.generate_class_model(single_use_case())
     binding = model["Collaborations"][0]["calls"][2]["argumentBindings"][0]
 
@@ -233,7 +233,7 @@ def test_ambiguous_binding_selection_is_limited_to_finite_candidates(monkeypatch
         assert properties["choice1"]["enum"] == candidates
         return {"choice1": candidates[1]}
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     selected = collaboration.select_ambiguous_bindings(
         build_scenario_index(single_use_case()).groups[0],
         {"UC1:main:1::call:3#studentId": candidates},

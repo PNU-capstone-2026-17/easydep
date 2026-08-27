@@ -1,4 +1,4 @@
-"""전역 BCE 인벤토리 제안, 정규화와 검증을 소유한다."""
+﻿"""전역 BCE 인벤토리 제안, 정규화와 검증을 소유한다."""
 from __future__ import annotations
 
 import json
@@ -7,17 +7,16 @@ from typing import Any
 from app.core.config import settings
 from app.core.validation import Finding, run_checks
 from app.design.schemas.class_model import BCEModel
+from app.design.services.class_diagram.proposals import InventoryProposal
+from app.design.services.class_diagram.scenario import ScenarioIndex, id_key, text
 from app.design.services.class_diagram.type_system import (
     field_type,
     referenced_type_names,
     structure_type_contract,
 )
+from app.design.services.class_diagram.validation.inventory import INVENTORY_CHECKS
 from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
-from app.design.services.interaction_design.proposals import InventoryProposal
-from app.design.services.interaction_design.scenario import ScenarioIndex, id_key, text
-from app.design.services.interaction_design.validation.inventory import INVENTORY_CHECKS
-
 
 INVENTORY_PROMPT = ("""
 Build one fixed BCE inventory for the supplied accepted use-case
@@ -197,3 +196,6 @@ def inventory_model(inventory: dict[str, Any]) -> dict[str, Any]:
                       for item in inventory.get("DataTypes") or [] if isinstance(item, dict)],
         "Relationships": inventory.get("Relationships") or [], "Collaborations": [],
     }).model_dump(by_alias=True)
+
+
+

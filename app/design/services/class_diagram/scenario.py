@@ -1,4 +1,4 @@
-"""One normalized source of use-case and execution-group identities."""
+﻿"""One normalized source of use-case and execution-group identities."""
 from __future__ import annotations
 
 import re
@@ -280,3 +280,6 @@ def build_scenario_index(raw: dict[str, Any]) -> ScenarioIndex:
     accepted = tuple(use_cases)
     relationships = _relationships(raw, accepted)
     return ScenarioIndex(raw, accepted, relationships, _groups(accepted, relationships))
+
+
+

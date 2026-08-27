@@ -1,4 +1,4 @@
-"""Deterministically project accepted BCE collaborations to sequence models."""
+﻿"""Deterministically project accepted BCE collaborations to sequence models."""
 from __future__ import annotations
 
 import hashlib
@@ -9,12 +9,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.design.services.interaction_design.checks import (
+from app.design.services.class_diagram.checks import (
     derived_value_parts,
     derived_value_source,
     operation_catalog,
 )
-from app.design.services.interaction_design.scenario import (
+from app.design.services.class_diagram.scenario import (
     ScenarioIndex,
     build_scenario_index,
     id_key,
@@ -536,3 +536,6 @@ def normalize_sequence_model(model: dict[str, Any]) -> dict[str, Any]:
     """Validate the current persisted contract without legacy reconstruction."""
 
     return SequenceCollection.model_validate(model).model_dump()
+
+
+

@@ -1,4 +1,4 @@
-"""LLM이 한정된 선택 공간에서 반환하는 일시적 제안 계약이다.
+﻿"""LLM이 한정된 선택 공간에서 반환하는 일시적 제안 계약이다.
 
 Only ``BCEModel`` and ``SequenceDiagramCollection`` are persisted.  These
 small contracts bound one model decision and deliberately contain no repair
@@ -128,3 +128,6 @@ class CallPlanProposal(Proposal):
 class FeedbackScope(Proposal):
     kind: Literal["inventory", "operation", "collaboration"]
     ids: list[str] = Field(default_factory=list)
+
+
+

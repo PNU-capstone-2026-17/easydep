@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import json
@@ -40,8 +40,8 @@ from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_runtime_puml,
 )
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
-from app.design.services.interaction_design.sequence import normalize_sequence_model
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
+from app.design.services.sequence_diagram.projection import normalize_sequence_model
 from app.design.validation import rehydrated_check_state
 
 
@@ -563,3 +563,4 @@ def _safe_json_object(value: str) -> dict[str, Any]:
         return decoded if isinstance(decoded, dict) else {}
     except json.JSONDecodeError:
         return {}
+

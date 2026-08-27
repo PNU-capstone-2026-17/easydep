@@ -1,10 +1,10 @@
-"""수락된 상호작용 모델에서 파생되는 표시용 투영을 제공한다."""
+﻿"""수락된 상호작용 모델에서 파생되는 표시용 투영을 제공한다."""
 from __future__ import annotations
 
 from typing import Any
 
-from app.design.services.interaction_design.scenario import text
-from app.design.services.interaction_design.validation.model import operation_catalog
+from app.design.services.class_diagram.scenario import text
+from app.design.services.class_diagram.validation.model import operation_catalog
 
 
 def project_call_dependencies(model: dict[str, Any]) -> list[dict[str, Any]]:
@@ -36,3 +36,6 @@ def project_call_dependencies(model: dict[str, Any]) -> list[dict[str, Any]]:
                     "type": "Dependency",
                 }
     return [result[key] for key in sorted(result)]
+
+
+

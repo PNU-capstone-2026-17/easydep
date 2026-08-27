@@ -1,4 +1,4 @@
-"""5개 설계 스테이지의 스펙과 서브그래프 — 골격은 하나, 다른 것은 스펙뿐.
+﻿"""5개 설계 스테이지의 스펙과 서브그래프 — 골격은 하나, 다른 것은 스펙뿐.
 
 상위 그래프(`design_graph.py`)의 노드명은 산출물 이름이고, 세부 작업은 서브그래프
 내부 노드로 캡슐화된다. 다섯 산출물이 모두 같은 골격을 따른다:
@@ -44,7 +44,14 @@ from app.design.schemas.architecture_state import ArchitectureState, usecase_spe
 from app.design.services.api_spec.extractor import extract_api_spec_model
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.api_spec.reviser import revise_api_spec_model
+from app.design.services.class_diagram import (
+    generate_class_model,
+    resume_class_model,
+    revise_class_model,
+)
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
+from app.design.services.class_diagram.scenario import build_scenario_index
+from app.design.services.class_diagram.validation.model import final_model_findings
 from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
 from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
@@ -58,15 +65,10 @@ from app.design.services.deployment_diagram.provider_plantuml import (
 from app.design.services.deployment_diagram.reviser import revise_deployment_model
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
-from app.design.services.interaction_design import (
-    generate_class_model,
+from app.design.services.sequence_diagram import (
     project_sequence_model,
-    resume_class_model,
-    revise_class_model,
+    sequence_findings,
 )
-from app.design.services.interaction_design.scenario import build_scenario_index
-from app.design.services.interaction_design.sequence import sequence_findings
-from app.design.services.interaction_design.validation.model import final_model_findings
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 
 #: 설계 파이프라인의 순서. 상위 그래프의 엣지도, 저장 순회도 여기서만 나온다.
@@ -561,3 +563,4 @@ def build_design_subgraphs() -> dict[str, dict[str, Any]]:
 #: 앱 전역에서 공유하는 컴파일된 서브그래프(모듈 로드 시 1회). 파이프라인 그래프가
 #: 이것을 배선한다 — 요청마다 다시 컴파일할 이유가 없다.
 DESIGN_SUBGRAPHS = build_design_subgraphs()
+

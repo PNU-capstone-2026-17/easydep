@@ -1,4 +1,4 @@
-"""Pure deterministic checks for the interaction-design vertical slice."""
+﻿"""Pure deterministic checks for the interaction-design vertical slice."""
 from __future__ import annotations
 
 import re
@@ -7,6 +7,12 @@ from typing import Any
 
 from app.core.validation import CheckSpec, Finding
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
+from app.design.services.class_diagram.scenario import (
+    ExecutionGroup,
+    ScenarioIndex,
+    UseCase,
+    text,
+)
 from app.design.services.class_diagram.type_system import (
     field_name,
     field_type,
@@ -15,12 +21,6 @@ from app.design.services.class_diagram.type_system import (
     structured_field_types,
     type_is_resolved,
     types_compatible,
-)
-from app.design.services.interaction_design.scenario import (
-    ExecutionGroup,
-    ScenarioIndex,
-    UseCase,
-    text,
 )
 
 
@@ -1051,3 +1051,6 @@ def final_model_findings(model: dict[str, Any], index: ScenarioIndex) -> list[Fi
             findings.extend(_collaboration_order(collaboration, context))
             findings.extend(_collaboration_bindings(collaboration, context))
     return findings
+
+
+

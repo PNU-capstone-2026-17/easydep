@@ -1,4 +1,4 @@
-"""Call-plan selection, binding provenance, and collaboration materialization."""
+﻿"""Call-plan selection, binding provenance, and collaboration materialization."""
 from __future__ import annotations
 
 import json
@@ -9,33 +9,33 @@ from pydantic import Field, create_model
 from app.core.config import settings
 from app.core.validation import Finding, run_checks
 from app.design.schemas.class_model import canonical_call_id
+from app.design.services.class_diagram.models import GroupResult
+from app.design.services.class_diagram.proposals import (
+    CallPlanProposal,
+    ProposedCall,
+)
+from app.design.services.class_diagram.scenario import (
+    ExecutionGroup,
+    ScenarioIndex,
+    text,
+)
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
     structured_field_types,
     types_compatible,
 )
-from app.design.services.common.structured import parse_structured
-from app.design.services.interaction_design.models import GroupResult
-from app.design.services.interaction_design.proposals import (
-    CallPlanProposal,
-    ProposedCall,
-)
-from app.design.services.interaction_design.scenario import (
-    ExecutionGroup,
-    ScenarioIndex,
-    text,
-)
-from app.design.services.interaction_design.validation.collaboration import (
+from app.design.services.class_diagram.validation.collaboration import (
     COLLABORATION_CHECKS,
     CollaborationContext,
 )
-from app.design.services.interaction_design.validation.model import (
+from app.design.services.class_diagram.validation.model import (
     derived_value_source,
     operation_catalog,
     optional_inner_type,
     runtime_value_source,
     type_can_default,
 )
+from app.design.services.common.structured import parse_structured
 
 CALL_PLAN_PROMPT = """
 Build the ordered call tree for exactly one execution group. Select only the
@@ -408,3 +408,6 @@ __all__ = [
     "propose_call_plan",
     "select_ambiguous_bindings",
 ]
+
+
+

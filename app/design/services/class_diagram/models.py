@@ -1,10 +1,10 @@
-"""상호작용 설계 서비스가 수락한 불변 작업 단위다."""
+﻿"""상호작용 설계 서비스가 수락한 불변 작업 단위다."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-from app.design.services.interaction_design.scenario import UseCase
+from app.design.services.class_diagram.scenario import UseCase
 
 
 @dataclass(frozen=True)
@@ -45,3 +45,6 @@ class OperationUnit:
     use_case: UseCase
     step_ids: tuple[str, ...]
     execution_group_id: str = ""
+
+
+

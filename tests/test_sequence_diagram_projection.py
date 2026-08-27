@@ -1,23 +1,23 @@
-"""Deterministic class and sequence projections from accepted interactions."""
+"""Deterministic sequence projections from accepted class designs."""
 from __future__ import annotations
 
+from app.design.services.class_diagram import projections, service
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
-from app.design.services.interaction_design import projections, service
-from app.design.services.interaction_design.proposals import (
+from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     InventoryProposal,
     OperationFragment,
 )
-from app.design.services.interaction_design.sequence import (
+from app.design.services.sequence_diagram.methods import is_return_value_label
+from app.design.services.sequence_diagram.projection import (
     project_sequence_model,
     sequence_findings,
 )
-from app.design.services.sequence_diagram.methods import is_return_value_label
-from tests.interaction_design_fixtures import (
+from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
     operation_fragment,
-    patch_interaction_parser,
+    patch_class_design_parser,
     single_use_case,
 )
 
@@ -32,7 +32,7 @@ def _accepted_model(monkeypatch):
             return call_plan()
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     return service.generate_class_model(single_use_case())
 
 

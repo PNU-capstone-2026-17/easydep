@@ -1,4 +1,4 @@
-"""Design-readiness checks shared by design hand-off and implementation entry."""
+﻿"""Design-readiness checks shared by design hand-off and implementation entry."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
@@ -120,3 +120,4 @@ def rehydrated_check_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
         }
         result[check_key] = check
     return result
+

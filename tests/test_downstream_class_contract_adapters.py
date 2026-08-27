@@ -10,7 +10,7 @@ import pytest
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec.extractor import _control_parameter_types
 from app.design.services.erd.mapping import build_logical_model
-from app.design.services.interaction_design.sequence import project_sequence_model
+from app.design.services.sequence_diagram.projection import project_sequence_model
 
 _PUML2CODE_ROOT = Path("app/implementation/tools/puml2code-bce")
 _PUML2CODE_READY = (_PUML2CODE_ROOT / "src/parser/plantuml.js").is_file()

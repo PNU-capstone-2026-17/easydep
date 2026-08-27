@@ -1,8 +1,8 @@
-"""Small synthetic interaction-design inputs shared by focused tests.
+"""Small synthetic class-design inputs shared by focused tests.
 
-The fixtures intentionally describe the contracts at the service boundary.  A
-test should be able to exercise inventory, operation, collaboration, and
-projection behavior without reaching into the orchestration implementation.
+The fixtures intentionally describe the contracts at the service boundary. A
+test should be able to exercise class inventory, operation, collaboration, and
+sequence projection behavior without reaching into orchestration internals.
 """
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ def call_plan() -> dict:
 def valid_parse_response(_messages, schema, **_kwargs):
     """Return the standard synthetic response for a structured parser stub."""
 
-    from app.design.services.interaction_design.proposals import (
+    from app.design.services.class_diagram.proposals import (
         CallPlanProposal,
         InventoryProposal,
         OperationFragment,
@@ -153,10 +153,10 @@ def valid_parse_response(_messages, schema, **_kwargs):
     raise AssertionError(schema)
 
 
-def patch_interaction_parser(monkeypatch, parser):
-    """Inject one deterministic parser at every interaction-design stage."""
+def patch_class_design_parser(monkeypatch, parser):
+    """Inject one deterministic parser at every class-design stage."""
 
-    from app.design.services.interaction_design import (
+    from app.design.services.class_diagram import (
         collaboration,
         feedback,
         inventory,

@@ -1,4 +1,4 @@
-"""결정론 검출기 — 규칙 하나에 검출기 하나.
+﻿"""결정론 검출기 — 규칙 하나에 검출기 하나.
 
 ## 무엇을 보는가: 그림이 아니라 모델
 
@@ -51,23 +51,23 @@ from app.design import rtm
 from app.design.knowledge import rules
 from app.design.schemas.class_model import operation_method_signature
 from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
+from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
     structured_field_types,
     types_compatible,
 )
+from app.design.services.class_diagram.validation.model import final_model_findings
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
-from app.design.services.interaction_design.scenario import build_scenario_index
-from app.design.services.interaction_design.sequence import (
-    sequence_findings as interaction_sequence_findings,
-)
-from app.design.services.interaction_design.validation.model import final_model_findings
 from app.design.services.sequence_diagram.methods import (
     method_call_signature,
     method_name,
     method_return_type,
     normalize_return_type,
+)
+from app.design.services.sequence_diagram.projection import (
+    sequence_findings as interaction_sequence_findings,
 )
 
 #: BCE 세 분류. 소문자로 비교한다 — 모델은 `<<Control>>`, `Control`, `control`을 섞어 낸다.
@@ -3653,3 +3653,4 @@ def api_spec_validation_report(model: dict, state: dict) -> ValidationReport:
 
 def api_spec_findings(model: dict, state: dict) -> list[Finding]:
     return _findings_from_report(api_spec_validation_report(model, state))
+

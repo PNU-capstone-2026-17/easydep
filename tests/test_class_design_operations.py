@@ -4,19 +4,19 @@ from __future__ import annotations
 import pytest
 
 from app.core.validation import run_checks
-from app.design.services.interaction_design import service
-from app.design.services.interaction_design.checks import OPERATION_CHECKS, OperationContext
-from app.design.services.interaction_design.proposals import (
+from app.design.services.class_diagram import service
+from app.design.services.class_diagram.checks import OPERATION_CHECKS, OperationContext
+from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     InventoryProposal,
     OperationFragment,
 )
-from app.design.services.interaction_design.scenario import build_scenario_index
-from tests.interaction_design_fixtures import (
+from app.design.services.class_diagram.scenario import build_scenario_index
+from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
     operation_fragment,
-    patch_interaction_parser,
+    patch_class_design_parser,
     single_use_case,
 )
 
@@ -31,7 +31,7 @@ def test_operation_generation_keeps_signature_data_types_in_the_persisted_model(
             return call_plan()
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     model = service.generate_class_model(single_use_case())
 
     assert [item["name"] for item in model["DataTypes"]] == [
@@ -51,7 +51,7 @@ def test_vertical_service_does_not_fabricate_an_unsourceable_parameter(monkeypat
             return plan
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     model = service.generate_class_model(single_use_case())
 
     assert model["Collaborations"] == []
@@ -99,7 +99,7 @@ def test_operation_generation_reuses_one_grounded_upstream_value_type(monkeypatc
             return plan
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     model = service.generate_class_model(single_use_case())
 
     registration = next(item for item in model["Classes"] if item["className"] == "Registration")
@@ -127,7 +127,7 @@ def test_placeholder_operations_are_removed_before_the_fragment_is_accepted(monk
             return call_plan()
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     model = service.generate_class_model(single_use_case())
 
     assert all(
@@ -155,7 +155,7 @@ def test_repaired_fragment_drops_actor_entry_refs_from_delegated_operations(monk
             return call_plan()
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     model = service.generate_class_model(single_use_case())
 
     control = next(item for item in model["Classes"] if item["className"] == "RequestControl")

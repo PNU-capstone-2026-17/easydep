@@ -1,4 +1,4 @@
-"""Feedback scope, model reconstruction, and selected collaboration replacement."""
+﻿"""Feedback scope, model reconstruction, and selected collaboration replacement."""
 from __future__ import annotations
 
 import json
@@ -8,26 +8,26 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.validation import run_checks
-from app.design.services.class_diagram.type_system import (
-    field_name,
-    field_type,
-    referenced_type_names,
-)
-from app.design.services.common.structured import parse_structured
-from app.design.services.interaction_design import collaboration, inventory
-from app.design.services.interaction_design.models import GroupResult
-from app.design.services.interaction_design.proposals import (
+from app.design.services.class_diagram import collaboration, inventory
+from app.design.services.class_diagram.models import GroupResult
+from app.design.services.class_diagram.proposals import (
     FeedbackScope,
     InventoryProposal,
 )
-from app.design.services.interaction_design.scenario import (
+from app.design.services.class_diagram.scenario import (
     ExecutionGroup,
     ScenarioIndex,
     id_key,
     text,
 )
-from app.design.services.interaction_design.validation.inventory import INVENTORY_CHECKS
-from app.design.services.interaction_design.validation.model import class_name
+from app.design.services.class_diagram.type_system import (
+    field_name,
+    field_type,
+    referenced_type_names,
+)
+from app.design.services.class_diagram.validation.inventory import INVENTORY_CHECKS
+from app.design.services.class_diagram.validation.model import class_name
+from app.design.services.common.structured import parse_structured
 
 
 def inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
@@ -380,3 +380,6 @@ __all__ = [
     "revise_inventory",
     "run_selected_groups",
 ]
+
+
+

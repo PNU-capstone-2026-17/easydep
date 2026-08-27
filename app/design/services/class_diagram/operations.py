@@ -1,4 +1,4 @@
-"""Generate one executable BCE model without legacy fallback paths."""
+﻿"""Generate one executable BCE model without legacy fallback paths."""
 from __future__ import annotations
 
 import json
@@ -13,7 +13,28 @@ from app.core.config import settings
 from app.core.validation import run_checks
 from app.design import progress as design_progress
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
+from app.design.services.class_diagram.inventory import finding_text
+from app.design.services.class_diagram.models import (
+    Collision as _Collision,
+)
+from app.design.services.class_diagram.models import (
+    DataTypeCollision as _DataTypeCollision,
+)
+from app.design.services.class_diagram.models import (
+    GroupResult,
+)
+from app.design.services.class_diagram.models import (
+    OperationUnit as _OperationUnit,
+)
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
+from app.design.services.class_diagram.proposals import OperationFragment
+from app.design.services.class_diagram.scenario import (
+    ExecutionGroup,
+    ScenarioIndex,
+    UseCase,
+    id_key,
+    text,
+)
 from app.design.services.class_diagram.type_system import (
     field_type,
     reachable_data_type_names,
@@ -22,35 +43,14 @@ from app.design.services.class_diagram.type_system import (
     structured_field_types,
     types_compatible,
 )
-from app.design.services.common import fields
-from app.design.services.common.structured import parse_structured
-from app.design.services.interaction_design.inventory import finding_text
-from app.design.services.interaction_design.models import (
-    Collision as _Collision,
-)
-from app.design.services.interaction_design.models import (
-    DataTypeCollision as _DataTypeCollision,
-)
-from app.design.services.interaction_design.models import (
-    GroupResult,
-)
-from app.design.services.interaction_design.models import (
-    OperationUnit as _OperationUnit,
-)
-from app.design.services.interaction_design.proposals import OperationFragment
-from app.design.services.interaction_design.scenario import (
-    ExecutionGroup,
-    ScenarioIndex,
-    UseCase,
-    id_key,
-    text,
-)
-from app.design.services.interaction_design.validation import OPERATION_CHECKS, OperationContext
-from app.design.services.interaction_design.validation.model import (
+from app.design.services.class_diagram.validation import OPERATION_CHECKS, OperationContext
+from app.design.services.class_diagram.validation.model import (
     class_name,
     runtime_value_source,
     type_can_default,
 )
+from app.design.services.common import fields
+from app.design.services.common.structured import parse_structured
 
 logger = logging.getLogger(__name__)
 
@@ -844,3 +844,6 @@ __all__ = [
     "repair_failed_operations",
     "reserved_operations",
 ]
+
+
+

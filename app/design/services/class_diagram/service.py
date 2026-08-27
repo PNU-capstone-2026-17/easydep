@@ -1,4 +1,4 @@
-"""Public interaction-design orchestration over independently owned stages."""
+﻿"""Public interaction-design orchestration over independently owned stages."""
 from __future__ import annotations
 
 import logging
@@ -8,25 +8,25 @@ from typing import Any
 from app.core.config import settings
 from app.core.validation import run_checks
 from app.design.schemas.class_model import BCEModel
-from app.design.services.interaction_design import (
+from app.design.services.class_diagram import (
     feedback as feedback_stage,
 )
-from app.design.services.interaction_design import (
+from app.design.services.class_diagram import (
     inventory,
     operations,
 )
-from app.design.services.interaction_design.models import GroupResult
-from app.design.services.interaction_design.scenario import (
+from app.design.services.class_diagram.models import GroupResult
+from app.design.services.class_diagram.scenario import (
     ExecutionGroup,
     build_scenario_index,
     id_key,
     text,
 )
-from app.design.services.interaction_design.validation.collaboration import (
+from app.design.services.class_diagram.validation.collaboration import (
     COLLABORATION_CHECKS,
     CollaborationContext,
 )
-from app.design.services.interaction_design.validation.model import final_model_findings
+from app.design.services.class_diagram.validation.model import final_model_findings
 
 logger = logging.getLogger(__name__)
 
@@ -342,3 +342,6 @@ __all__ = [
     "resume_class_model",
     "revise_class_model",
 ]
+
+
+

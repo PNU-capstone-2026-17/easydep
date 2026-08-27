@@ -1,17 +1,17 @@
 """Interaction-design service orchestration and owned-unit resume behavior."""
 from __future__ import annotations
 
-from app.design.services.interaction_design import service
-from app.design.services.interaction_design.proposals import (
+from app.design.services.class_diagram import service
+from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     InventoryProposal,
     OperationFragment,
 )
-from tests.interaction_design_fixtures import (
+from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
     operation_fragment,
-    patch_interaction_parser,
+    patch_class_design_parser,
     single_use_case,
 )
 
@@ -29,7 +29,7 @@ def test_resume_only_plans_missing_collaborations(monkeypatch):
             return call_plan()
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     current = service.generate_class_model(single_use_case())
     current["Collaborations"] = []
     calls.clear()
@@ -65,7 +65,7 @@ def test_operation_feedback_rebuilds_only_the_owned_contract(monkeypatch):
             return plan
         raise AssertionError(schema)
 
-    patch_interaction_parser(monkeypatch, fake_parse)
+    patch_class_design_parser(monkeypatch, fake_parse)
     current = service.generate_class_model(single_use_case())
     inventory_before = [
         (item["className"], item["fields"], item["identifier"])

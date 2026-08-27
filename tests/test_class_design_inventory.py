@@ -4,10 +4,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.design.services.interaction_design import inventory
-from app.design.services.interaction_design.proposals import InventoryProposal
-from app.design.services.interaction_design.scenario import build_scenario_index
-from tests.interaction_design_fixtures import scenario
+from app.design.services.class_diagram import inventory
+from app.design.services.class_diagram.proposals import InventoryProposal
+from app.design.services.class_diagram.scenario import build_scenario_index
+from tests.class_design_fixtures import scenario
 
 
 def test_scenario_index_splits_actor_entries_and_attaches_extension_steps():
