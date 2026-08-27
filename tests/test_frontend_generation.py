@@ -245,7 +245,7 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
     def generated(_name: str, command: list[str], _cwd: Path):
         commands.append(command)
         if "-o" in command:
-            target = application / "frontend/src/generated"
+            target = application / "frontend/src/generated/src"
             target.mkdir(parents=True)
             (target / "index.ts").write_text(
                 "export class DefaultApi {}", encoding="utf-8"
@@ -258,7 +258,7 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
     orchestrator._generate_frontend(application)
 
     assert (application / "frontend/src/App.tsx").is_file()
-    assert (application / "frontend/src/generated/index.ts").is_file()
+    assert (application / "frontend/src/generated/index.ts").read_text(encoding="utf-8") == "export * from './src';\n"
     assert (application / "frontend/package-lock.json").is_file()
     assert "typescript-fetch" in commands[0]
     # The committed lock template makes npm unnecessary on the happy path.
