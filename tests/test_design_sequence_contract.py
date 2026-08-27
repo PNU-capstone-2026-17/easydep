@@ -30,6 +30,7 @@ from app.design.services.sequence_diagram.extractor import (
     normalize_sequence_message_order,
     _only_callable_class,
     _assemble_deterministic_diagrams,
+    _actor_requires_system_input,
     _recover_explicit_actor_retries,
     _drop_unknown_flow_messages,
     _supplementary_actor_selection_routes,
@@ -174,6 +175,18 @@ def test_explicit_actor_retry_reuses_prior_boundary_input_in_loop():
         "condition": "credentials are invalid",
     }]
     assert {argument["source_ref"] for argument in retry["arguments"]} == {"UC1:extension:2a:2a2"}
+
+
+def test_actor_review_of_presented_result_is_not_a_new_boundary_input() -> None:
+    assert not _actor_requires_system_input(
+        "Student reviews the presented course details.", "Student"
+    )
+    assert _actor_requires_system_input(
+        "Student selects a course to register.", "Student"
+    )
+    assert _actor_requires_system_input(
+        "Student reviews the list and selects a course.", "Student"
+    )
 
 
 def test_selection_step_exposes_existing_selection_boundary_to_llm():

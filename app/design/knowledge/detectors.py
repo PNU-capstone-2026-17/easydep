@@ -1365,7 +1365,12 @@ def api_schema_references(model: dict, state: dict) -> list[Finding]:
         location = f"{endpoint.get('method', 'get').upper()} {endpoint.get('path', '')}"
         references = [endpoint.get("request_schema", "")] + [item.get("schema_name", "") for item in endpoint.get("responses", [])]
         for reference in references:
-            if reference and str(reference).strip() not in schemas:
+            if (
+                reference
+                and str(reference).strip().lower()
+                not in {"string", "integer", "number", "boolean"}
+                and str(reference).strip() not in schemas
+            ):
                 found.append(Finding("api.schema-references-exist", f"Schemas에 없는 참조 '{reference}'", location))
     return found
 
@@ -1716,21 +1721,29 @@ def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
                 continue
             # A named result DTO is intentionally allowed to project to a
             # differently named HTTP schema (for example CartLookupResult ->
-            # CartResponse).  Primitive returns, however, cannot produce a
-            # named object response and are the unsafe case this check targets.
+            # CartResponse).  Primitive returns are also valid when the
+            # rendered OpenAPI schema is the corresponding primitive.  The
+            # previous check treated every schema_name as an object name, so a
+            # perfectly matching ``boolean -> boolean`` response was reported
+            # as an incompatible contract.
             primitive_return = return_type in {
                 "string", "integer", "number", "boolean", "char",
                 "byte", "short", "long", "float", "double",
             }
             if not is_array and primitive_return:
-                found.append(Finding(
-                    "api.control-outcomes-cover-responses",
-                    f"{control}.{method} 반환 타입 '{contract.get('returnType')}'이 성공 응답 schema '{schema_name}'과 일치하지 않음",
-                    location,
-                ))
+                if _normalise_contract_type(schema_name) != return_type:
+                    found.append(Finding(
+                        "api.control-outcomes-cover-responses",
+                        f"{control}.{method} 반환 타입 '{contract.get('returnType')}'이 성공 응답 schema '{schema_name}'과 일치하지 않음",
+                        location,
+                    ))
             elif is_array:
                 element = re.search(r"<([^>]+)>", return_type)
-                if element and element.group(1).split(".")[-1] != schema_name:
+                if (
+                    element
+                    and element.group(1).split(".")[-1].lower()
+                    != schema_name.lower()
+                ):
                     found.append(Finding(
                         "api.control-outcomes-cover-responses",
                         f"{control}.{method} 요소 타입 '{element.group(1)}'이 성공 응답 schema '{schema_name}'과 일치하지 않음",
@@ -3194,6 +3207,69 @@ def sequence_duplicate_consecutive_messages(model: dict, state: dict) -> list[Fi
     return found
 
 
+def sequence_declared_boundary_control_handoff(model: dict, state: dict) -> list[Finding]:
+    """Require an actor-entered Boundary to delegate through its declared Control.
+
+    This is intentionally narrower than a blanket "every Boundary calls a
+    Control" rule. A diagram is only required to contain the handoff when the
+    BCE class diagram explicitly declares that Boundary -> Control dependency.
+    It catches partial LLM output where the actor input and boundary return are
+    rendered but the domain operation is silently skipped.
+    """
+    source = str(state.get("class_diagram_puml") or "")
+    if not source:
+        return []
+    declared_pairs = {
+        (left.strip('"'), right.strip('"'))
+        for left, right in re.findall(
+            r'(?m)^\s*("?[A-Za-z_]\w*"?)\s+(?:\.\.|--)[-.]*>\s*("?[A-Za-z_]\w*"?)',
+            source,
+        )
+    }
+    if not declared_pairs:
+        return []
+    participants = {
+        _participant_id(participant): {
+            "kind": str(participant.get("kind") or "").strip().lower(),
+            "class": str(participant.get("source_class") or participant.get("name") or "").strip(),
+        }
+        for participant in model.get("Participants", []) or []
+        if isinstance(participant, dict)
+    }
+    actor_entered_boundaries = {
+        str(message.get("target") or "").strip()
+        for message in model.get("Messages", []) or []
+        if isinstance(message, dict)
+        and str(message.get("type") or "sync").lower() in {"sync", "async", "self"}
+        and participants.get(str(message.get("source") or "").strip(), {}).get("kind") == "actor"
+        and participants.get(str(message.get("target") or "").strip(), {}).get("kind") == "boundary"
+    }
+    found: list[Finding] = []
+    for boundary_alias in sorted(actor_entered_boundaries):
+        boundary_class = participants[boundary_alias]["class"]
+        expected_controls = {
+            control for boundary, control in declared_pairs if boundary == boundary_class
+        }
+        if not expected_controls:
+            continue
+        handoff_exists = any(
+            isinstance(message, dict)
+            and str(message.get("type") or "sync").lower() in {"sync", "async", "self"}
+            and str(message.get("source") or "").strip() == boundary_alias
+            and participants.get(str(message.get("target") or "").strip(), {}).get("class")
+            in expected_controls
+            for message in model.get("Messages", []) or []
+        )
+        if not handoff_exists:
+            found.append(Finding(
+                "sequence.declared-boundary-control-handoff",
+                f"{boundary_class}로 들어온 Actor 요청이 선언된 Control "
+                f"{', '.join(sorted(expected_controls))}로 전달되지 않음",
+                boundary_class,
+            ))
+    return found
+
+
 def sequence_extension_replays_anchor_operation(
     model: dict, state: dict
 ) -> list[Finding]:
@@ -3459,6 +3535,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_return_values_match_methods": sequence_return_values_match_methods,
     "sequence_nonvoid_calls_have_returns": sequence_nonvoid_calls_have_returns,
     "sequence_causal_call_chain": sequence_causal_call_chain,
+    "sequence_declared_boundary_control_handoff": sequence_declared_boundary_control_handoff,
     "sequence_argument_data_flow": sequence_argument_data_flow,
     "sequence_actor_step_involvement": sequence_actor_step_involvement,
     "sequence_usecase_coverage": sequence_usecase_coverage,

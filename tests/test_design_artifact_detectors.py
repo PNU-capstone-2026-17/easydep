@@ -128,6 +128,73 @@ def test_api_control_outcomes_rejects_success_schema_different_from_control_retu
     assert "성공 응답 schema" in findings[0].message
 
 
+def test_api_control_outcomes_accepts_matching_primitive_success_schema() -> None:
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [{
+                "className": "AuthenticationControl",
+                "stereotype": "Control",
+                "methods": ["authenticate(credentials : String): boolean"],
+            }],
+        },
+    }
+    model = {
+        "Endpoints": [{
+            "path": "/auth/login",
+            "method": "post",
+            "responses": [{"status": 200, "schema_name": "boolean"}],
+            "control_binding": {
+                "control": "AuthenticationControl",
+                "method": "authenticate",
+                "arguments": [],
+                "outcomes": [{"status": 200, "outcome": "authenticated"}],
+            },
+        }],
+    }
+
+    assert detectors.api_control_outcomes(model, state) == []
+
+
+def test_api_schema_references_accepts_primitive_response_contract() -> None:
+    model = {
+        "Endpoints": [{
+            "path": "/catalog/criteria",
+            "method": "get",
+            "responses": [{"status": 200, "schema_name": "string", "is_array": True}],
+        }],
+        "Schemas": [],
+    }
+
+    assert detectors.api_schema_references(model, STATE) == []
+
+
+def test_api_control_outcomes_accepts_case_only_collection_element_difference() -> None:
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [{
+                "className": "CatalogControl",
+                "stereotype": "Control",
+                "methods": ["listCourses(): List<Course>"],
+            }],
+        },
+    }
+    model = {
+        "Endpoints": [{
+            "path": "/catalog",
+            "method": "get",
+            "responses": [{"status": 200, "schema_name": "course", "is_array": True}],
+            "control_binding": {
+                "control": "CatalogControl",
+                "method": "listCourses",
+                "arguments": [],
+                "outcomes": [{"status": 200, "outcome": "listed"}],
+            },
+        }],
+    }
+
+    assert detectors.api_control_outcomes(model, state) == []
+
+
 def test_sequence_detector_rejects_dangling_and_invalid_bce_messages():
     model = {
         "Participants": [
@@ -171,6 +238,31 @@ def test_sequence_bce_flow_allows_boundary_self_call():
     }
 
     assert detectors.sequence_bce_flow(model, STATE) == []
+
+
+def test_sequence_requires_declared_boundary_control_handoff_for_actor_request():
+    state = {
+        "class_diagram_puml": """
+class RegistrationBoundary <<Boundary>>
+class RegistrationControl <<Control>>
+RegistrationBoundary ..> RegistrationControl
+""",
+    }
+    model = {
+        "Participants": [
+            {"name": "Student", "alias": "student", "kind": "actor"},
+            {"name": "RegistrationBoundary", "alias": "registration", "kind": "boundary"},
+        ],
+        "Messages": [
+            {"source": "student", "target": "registration", "type": "sync", "label": "registerCourse()"},
+        ],
+    }
+
+    findings = detectors.sequence_declared_boundary_control_handoff(model, state)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.declared-boundary-control-handoff"
+    assert "RegistrationControl" in findings[0].message
 
 
 def test_actor_cannot_invoke_boundary_display_operation():
