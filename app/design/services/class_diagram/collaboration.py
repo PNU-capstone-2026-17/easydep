@@ -1,15 +1,15 @@
-﻿"""Call-plan selection, binding provenance, and collaboration materialization."""
+"""실행 그룹의 호출 계획과 협업 결과를 수락하는 단계다."""
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from pydantic import Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from app.core.config import settings
 from app.core.validation import Finding, run_checks
-from app.design.schemas.class_model import canonical_call_id
-from app.design.services.class_diagram.models import GroupResult
+from app.design.schemas.class_model import BCEModel, Collaboration, canonical_call_id
+from app.design.services.class_diagram.models import CollaborationResult
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     ProposedCall,
@@ -58,6 +58,15 @@ return no explanation.
 Prefer the source whose name and role best match the receiver parameter; do
 not invent values or identifiers.
 """.strip()
+
+
+def _finite_schema(name: str, **fields: Any) -> type[BaseModel]:
+    """런타임 Pydantic 스키마의 동적 타입을 이 경계에서만 좁힌다.
+
+    ``create_model``은 전달된 유한 선택지로 클래스를 생성하므로 정적으로는
+    반환 하위 클래스를 알 수 없다. 이 한 곳의 cast가 그 동적 경계를 격리한다.
+    """
+    return cast(type[BaseModel], create_model(name, **fields))
 
 
 def _finding_text(findings: tuple[Finding, ...]) -> list[str]:
@@ -115,7 +124,7 @@ def _group_payload(
     }
 
 
-def propose_call_plan(
+def _propose_call_plan(
     index: ScenarioIndex,
     model: dict[str, Any],
     group: ExecutionGroup,
@@ -132,7 +141,7 @@ def propose_call_plan(
     operation_ids = tuple(item["operationId"] for item in payload["receiverOperations"])
     if not operation_ids:
         raise ValueError(f"execution group has no receiver operations: {group.id}")
-    finite_call = create_model(
+    finite_call = _finite_schema(
         "FiniteProposedCall",
         __base__=ProposedCall,
         receiver_operation_id=(
@@ -140,10 +149,10 @@ def propose_call_plan(
             Field(alias="receiverOperationId"),
         ),
     )
-    finite_plan = create_model(
+    finite_plan = _finite_schema(
         "FiniteCallPlan",
         __base__=CallPlanProposal,
-        calls=(list[finite_call], Field(min_length=1, max_length=len(operation_ids))),
+        calls=(list[finite_call], Field(min_length=1, max_length=len(operation_ids))),  # type: ignore[valid-type]
     )
     parsed = parse_structured(
         [
@@ -280,8 +289,8 @@ def select_ambiguous_bindings(
         )
         choices.append({"choice": field_name, "parameter": parameter, "candidates": list(finite_values)})
         locations[field_name] = parameter
-    selection_schema = create_model(
-        "FiniteBindingChoices", __config__={"extra": "forbid"}, **fields,
+    selection_schema = _finite_schema(
+        "FiniteBindingChoices", __config__=ConfigDict(extra="forbid"), **fields,
     )
     parsed = parse_structured(
         [
@@ -300,7 +309,7 @@ def select_ambiguous_bindings(
     return {locations[field_name]: source_ref for field_name, source_ref in selected.items()}
 
 
-def materialize(
+def _materialize(
     index: ScenarioIndex,
     model: dict[str, Any],
     group: ExecutionGroup,
@@ -374,29 +383,60 @@ def materialize(
         "calls": calls,
     }
     report = run_checks(
-        COLLABORATION_CHECKS, collaboration, CollaborationContext(index, model, group), parallel=True,
+        COLLABORATION_CHECKS, collaboration, CollaborationContext(index, model, group),
     )
     if report.errors or report.findings:
         raise ValueError("; ".join([*report.errors, *_finding_text(report.findings)]))
     return collaboration
 
 
+def propose_call_plan(
+    index: ScenarioIndex,
+    model: BCEModel,
+    group: ExecutionGroup,
+    *,
+    previous: CallPlanProposal | None = None,
+    finding: str = "",
+) -> CallPlanProposal:
+    """수락된 BCE 모델로부터 한 실행 그룹의 호출 계획을 제안한다."""
+    return _propose_call_plan(
+        index,
+        model.model_dump(by_alias=True),
+        group,
+        previous=previous,
+        finding=finding,
+    )
+
+
+def materialize(
+    index: ScenarioIndex,
+    model: BCEModel,
+    group: ExecutionGroup,
+    plan: CallPlanProposal,
+) -> Collaboration:
+    """호출 계획을 검증된 협업 객체로 구체화한다."""
+    return Collaboration.model_validate(_materialize(
+        index, model.model_dump(by_alias=True), group, plan,
+    ))
+
+
 def process_group(
     index: ScenarioIndex,
-    model: dict[str, Any],
+    model: BCEModel,
     group: ExecutionGroup,
     directive: str = "",
-) -> GroupResult:
+) -> CollaborationResult:
+    """한 실행 그룹을 제안·검사·국소 수리해 협업 결과로 수락한다."""
     plan: CallPlanProposal | None = None
     try:
         plan = propose_call_plan(index, model, group, finding=directive)
-        return GroupResult(group.id, materialize(index, model, group, plan))
+        return CollaborationResult(group.id, materialize(index, model, group, plan))
     except Exception as first_error:  # one local replacement, never a global loop
         try:
             repaired = propose_call_plan(index, model, group, previous=plan, finding=str(first_error))
-            return GroupResult(group.id, materialize(index, model, group, repaired))
+            return CollaborationResult(group.id, materialize(index, model, group, repaired))
         except Exception as second_error:
-            return GroupResult(group.id, None, f"{type(second_error).__name__}: {second_error}")
+            return CollaborationResult(group.id, None, f"{type(second_error).__name__}: {second_error}")
 
 
 call_plan = propose_call_plan

@@ -1,8 +1,7 @@
 ﻿"""LLM이 한정된 선택 공간에서 반환하는 일시적 제안 계약이다.
 
-Only ``BCEModel`` and ``SequenceDiagramCollection`` are persisted.  These
-small contracts bound one model decision and deliberately contain no repair
-telemetry or compatibility fields.
+``BCEModel``과 ``SequenceCollection``만 저장한다. 이 작은 계약들은 LLM의 결정 하나를
+유한한 후보로 제한하며 repair telemetry나 호환성 필드를 포함하지 않는다.
 """
 from __future__ import annotations
 
@@ -50,7 +49,7 @@ class InventoryProposal(Proposal):
     Relationships: list[InventoryRelationship]
 
     @model_validator(mode="after")
-    def names_are_unique(self) -> "InventoryProposal":
+    def names_are_unique(self) -> InventoryProposal:
         names = [item.name for item in self.items]
         if len(names) != len(set(names)):
             raise ValueError("inventory names must be unique")
@@ -75,7 +74,7 @@ class OperationProposal(Proposal):
         return list(dict.fromkeys(str(value).strip() for value in values))
 
     @model_validator(mode="after")
-    def parameter_names_are_unique(self) -> "OperationProposal":
+    def parameter_names_are_unique(self) -> OperationProposal:
         names = [parameter.name for parameter in self.parameters]
         if len(names) != len(set(names)):
             raise ValueError("operation parameter names must be unique")
@@ -87,7 +86,7 @@ class ClassOperations(Proposal):
     operations: list[OperationProposal] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def operation_names_are_unique(self) -> "ClassOperations":
+    def operation_names_are_unique(self) -> ClassOperations:
         names = [operation.name for operation in self.operations]
         if len(names) != len(set(names)):
             raise ValueError("operation names must be unique within a class fragment")
@@ -106,7 +105,7 @@ class OperationFragment(Proposal):
     Classes: list[ClassOperations] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def class_sets_are_unique(self) -> "OperationFragment":
+    def class_sets_are_unique(self) -> OperationFragment:
         names = [item.class_name for item in self.Classes]
         if len(names) != len(set(names)):
             raise ValueError("a fragment may contain each class once")

@@ -1,10 +1,10 @@
-﻿"""Generate one executable BCE model without legacy fallback paths."""
+"""수락된 인벤토리에서 BCE 연산 조각을 생성하고 조립한다."""
 from __future__ import annotations
 
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, MutableMapping
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import Any
@@ -15,13 +15,15 @@ from app.design import progress as design_progress
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
 from app.design.services.class_diagram.inventory import finding_text
 from app.design.services.class_diagram.models import (
+    AcceptedFragment,
+    AcceptedInventory,
+    CollaborationResult,
+)
+from app.design.services.class_diagram.models import (
     Collision as _Collision,
 )
 from app.design.services.class_diagram.models import (
     DataTypeCollision as _DataTypeCollision,
-)
-from app.design.services.class_diagram.models import (
-    GroupResult,
 )
 from app.design.services.class_diagram.models import (
     OperationUnit as _OperationUnit,
@@ -109,7 +111,7 @@ when it must first perform validation or authorization.
 """.strip() + "\n\n" + structure_type_contract())
 
 
-def reserved_operations(model: dict[str, Any]) -> list[dict[str, Any]]:
+def _reserved_operations(model: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "className": class_name(item),
@@ -357,7 +359,7 @@ def _canonicalize_step_ownership(
     return normalized
 
 
-def propose_fragment(
+def _propose_fragment(
     index: ScenarioIndex,
     inventory: dict[str, Any],
     use_case: UseCase,
@@ -429,7 +431,7 @@ def propose_fragment(
     )
 
 
-def checked_fragment(
+def _checked_fragment(
     index: ScenarioIndex,
     inventory: dict[str, Any],
     use_case: UseCase,
@@ -442,7 +444,7 @@ def checked_fragment(
     execution_group_id: str = "",
     operation: str = "InteractionOperations",
 ) -> dict[str, Any]:
-    candidate = propose_fragment(
+    candidate = _propose_fragment(
         index,
         inventory,
         use_case,
@@ -476,11 +478,11 @@ def checked_fragment(
         allowed_step_ids,
         (execution_group_id,) if execution_group_id else (),
     )
-    report = run_checks(OPERATION_CHECKS, candidate, context, parallel=True)
+    report = run_checks(OPERATION_CHECKS, candidate, context)
     if report.errors:
         raise RuntimeError("; ".join(report.errors))
     if report.findings:
-        candidate = propose_fragment(
+        candidate = _propose_fragment(
             index,
             inventory,
             use_case,
@@ -496,7 +498,7 @@ def checked_fragment(
                 else f"{operation}Repair"
             ),
         )
-        report = run_checks(OPERATION_CHECKS, candidate, context, parallel=True)
+        report = run_checks(OPERATION_CHECKS, candidate, context)
     if report.errors or report.findings:
         raise ValueError(
             f"operation fragment {use_case.id} remains invalid: "
@@ -634,7 +636,7 @@ def emit_preview(
         )
 
 
-def build_fragments(
+def _build_fragments(
     index: ScenarioIndex,
     inventory: dict[str, Any],
     *,
@@ -671,11 +673,11 @@ def build_fragments(
     for offset in range(0, len(units), workers):
         wave = units[offset:offset + workers]
         current = _compose(inventory, committed)
-        reserved = reserved_operations(current)
+        reserved = _reserved_operations(current)
         reserved_types = list(current.get("DataTypes") or [])
         if len(wave) == 1:
             proposals = [
-                checked_fragment(
+                _checked_fragment(
                     index,
                     inventory,
                     wave[0].use_case,
@@ -689,7 +691,7 @@ def build_fragments(
             with ThreadPoolExecutor(max_workers=len(wave)) as executor:
                 futures = [
                     executor.submit(
-                        checked_fragment,
+                        _checked_fragment,
                         index,
                         inventory,
                         unit.use_case,
@@ -708,13 +710,13 @@ def build_fragments(
                 )
             except (_Collision, _DataTypeCollision) as collision:
                 current = _compose(inventory, committed)
-                fragment = checked_fragment(
+                fragment = _checked_fragment(
                     index,
                     inventory,
                     unit.use_case,
                     previous=fragment,
                     findings=[str(collision)],
-                    reserved=reserved_operations(current),
+                    reserved=_reserved_operations(current),
                     reserved_types=list(current.get("DataTypes") or []),
                     allowed_step_ids=unit.step_ids,
                     execution_group_id=unit.execution_group_id,
@@ -730,7 +732,7 @@ def build_fragments(
     return skeleton, reconstruct_fragments(index, skeleton)
 
 
-def compose_fragments(
+def _compose_fragments(
     inventory: dict[str, Any], fragments: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     return _compose(
@@ -740,11 +742,11 @@ def compose_fragments(
     )
 
 
-def repair_failed_operations(
+def _repair_failed_operations(
     index: ScenarioIndex,
     inventory: dict[str, Any],
     fragments: dict[str, dict[str, Any]],
-    failures: list[GroupResult],
+    failures: list[CollaborationResult],
     *,
     operation: str = "InteractionOperationHandoff",
 ) -> set[str]:
@@ -791,8 +793,8 @@ def repair_failed_operations(
             **{key: value for key, value in fragments.items() if key != use_case_id},
             **({use_case_id: preserved} if preserved_classes else {}),
         }
-        base = compose_fragments(inventory, base_fragments)
-        candidate = checked_fragment(
+        base = _compose_fragments(inventory, base_fragments)
+        candidate = _checked_fragment(
             index,
             inventory,
             use_case,
@@ -801,7 +803,7 @@ def repair_failed_operations(
                 "Classes": previous_classes,
             },
             findings=[f"execution group {result.group_id}: {result.issue}"],
-            reserved=reserved_operations(base),
+            reserved=_reserved_operations(base),
             reserved_types=list(base.get("DataTypes") or []),
             allowed_step_ids=tuple(group.step_ids),
             execution_group_id=group.id,
@@ -815,7 +817,7 @@ def repair_failed_operations(
             text(item.get("name")): deepcopy(item)
             for item in candidate.get("DataTypes") or [] if isinstance(item, dict)
         })
-        merged_classes = {
+        merged_classes: dict[str, dict[str, Any]] = {
             text(item.get("className")): deepcopy(item)
             for item in preserved_classes
         }
@@ -823,13 +825,134 @@ def repair_failed_operations(
             if not isinstance(class_set, dict):
                 continue
             owner = text(class_set.get("className"))
-            target = merged_classes.setdefault(owner, {"className": owner, "operations": []})
-            target["operations"].extend(deepcopy(class_set.get("operations") or []))
+            target = merged_classes.setdefault(
+                owner, {"className": owner, "operations": []},
+            )
+            target_operations = target.get("operations")
+            if isinstance(target_operations, list):
+                target_operations.extend(deepcopy(class_set.get("operations") or []))
         fragments[use_case_id] = {
             "DataTypes": list(merged_types.values()),
             "Classes": list(merged_classes.values()),
         }
         repaired.add(use_case_id)
+    return repaired
+
+
+def reserved_operations(model: BCEModel) -> list[dict[str, Any]]:
+    """수락된 모델에서 이후 조각 생성에 예약할 연산을 읽는다."""
+    return _reserved_operations(model.model_dump(by_alias=True))
+
+
+def propose_fragment(
+    index: ScenarioIndex,
+    inventory: AcceptedInventory,
+    use_case: UseCase,
+    *,
+    previous: AcceptedFragment | None = None,
+    findings: list[str] | None = None,
+    reserved: list[dict[str, Any]] | None = None,
+    reserved_types: list[dict[str, Any]] | None = None,
+    allowed_step_ids: tuple[str, ...] = (),
+    execution_group_id: str = "",
+    operation: str = "InteractionOperation",
+) -> AcceptedFragment:
+    """고정 인벤토리 안에서 한 유스케이스 연산 조각을 제안한다."""
+    candidate = _propose_fragment(
+        index,
+        inventory.as_payload(),
+        use_case,
+        previous=previous.as_payload() if previous else None,
+        findings=findings,
+        reserved=reserved,
+        reserved_types=reserved_types,
+        allowed_step_ids=allowed_step_ids,
+        execution_group_id=execution_group_id,
+        operation=operation,
+    )
+    return AcceptedFragment(use_case_id=use_case.id, payload=candidate)
+
+
+def checked_fragment(
+    index: ScenarioIndex,
+    inventory: AcceptedInventory,
+    use_case: UseCase,
+    **kwargs: Any,
+) -> AcceptedFragment:
+    """검사와 수리를 거친 수락 연산 조각을 생성한다."""
+    previous = kwargs.pop("previous", None)
+    candidate = _checked_fragment(
+        index,
+        inventory.as_payload(),
+        use_case,
+        previous=previous.as_payload() if isinstance(previous, AcceptedFragment) else previous,
+        **kwargs,
+    )
+    return AcceptedFragment(use_case_id=use_case.id, payload=candidate)
+
+
+def build_fragments(
+    index: ScenarioIndex,
+    inventory: AcceptedInventory,
+    *,
+    reconstruct_fragments: Callable[[ScenarioIndex, BCEModel], Mapping[str, AcceptedFragment]],
+) -> tuple[BCEModel, dict[str, AcceptedFragment]]:
+    """유스케이스 조각을 병렬 생성하고 불변 모델 경계로 수락한다."""
+    def reconstruct_raw(
+        scenario_index: ScenarioIndex, skeleton: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        accepted = reconstruct_fragments(
+            scenario_index, BCEModel.model_validate(skeleton),
+        )
+        return {key: value.as_payload() for key, value in accepted.items()}
+
+    skeleton, fragments = _build_fragments(
+        index,
+        inventory.as_payload(),
+        reconstruct_fragments=reconstruct_raw,
+    )
+    return (
+        BCEModel.model_validate(skeleton),
+        {
+            use_case_id: AcceptedFragment(use_case_id=use_case_id, payload=fragment)
+            for use_case_id, fragment in fragments.items()
+        },
+    )
+
+
+def compose_fragments(
+    inventory: AcceptedInventory,
+    fragments: Mapping[str, AcceptedFragment],
+) -> BCEModel:
+    """수락된 조각을 하나의 BCE 모델로 조립한다."""
+    return BCEModel.model_validate(_compose_fragments(
+        inventory.as_payload(),
+        {key: value.as_payload() for key, value in fragments.items()},
+    ))
+
+
+def repair_failed_operations(
+    index: ScenarioIndex,
+    inventory: AcceptedInventory,
+    fragments: MutableMapping[str, AcceptedFragment],
+    failures: list[CollaborationResult],
+    *,
+    operation: str = "InteractionOperationHandoff",
+) -> set[str]:
+    """협업 실패 그룹만 재생성하고 수락 조각을 제자리에서 갱신한다."""
+    raw_fragments = {key: value.as_payload() for key, value in fragments.items()}
+    repaired = _repair_failed_operations(
+        index,
+        inventory.as_payload(),
+        raw_fragments,
+        failures,
+        operation=operation,
+    )
+    fragments.clear()
+    fragments.update({
+        use_case_id: AcceptedFragment(use_case_id=use_case_id, payload=fragment)
+        for use_case_id, fragment in raw_fragments.items()
+    })
     return repaired
 
 

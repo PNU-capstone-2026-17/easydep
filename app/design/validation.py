@@ -8,12 +8,30 @@ from app.core.validation import ValidationReport
 from app.design.knowledge.detectors import (
     Finding,
     api_spec_validation_report,
-    class_diagram_validation_report,
     erd_validation_report,
-    sequence_diagram_findings,
+)
+from app.design.services.class_diagram.validation.diagram import (
+    class_diagram_validation_report,
+)
+from app.design.services.sequence_diagram.validation import (
+    validate_sequence_model as _validate_sequence_model,
 )
 
 DESIGN_READINESS_SCHEMA = "easydep-design-readiness/v1alpha1"
+
+
+def validate_class_model(
+    model: dict[str, Any], state: dict[str, Any]
+) -> ValidationReport:
+    """클래스 다이어그램의 전체 의미 규칙을 typed 보고서로 반환한다."""
+    return class_diagram_validation_report(model, state)
+
+
+def validate_sequence_model(
+    model: dict[str, Any], state: dict[str, Any]
+) -> ValidationReport:
+    """시퀀스 모델의 전체 규칙을 typed 보고서로 반환한다."""
+    return _validate_sequence_model(model or {}, state or {})
 
 
 def _finding_payload(finding: Finding) -> dict[str, Any]:
@@ -42,10 +60,10 @@ def _readiness_status(
 
 
 _CHECKED_STAGES: tuple[
-    tuple[str, str, str, Callable[[dict, dict], ValidationReport | list[Finding]]], ...
+    tuple[str, str, str, Callable[[dict, dict], ValidationReport]], ...
 ] = (
-    ("class_diagram", "extracted_bce_classes", "class_diagram_check", class_diagram_validation_report),
-    ("sequence_diagram", "sequence_diagram_model", "sequence_diagram_check", sequence_diagram_findings),
+    ("class_diagram", "extracted_bce_classes", "class_diagram_check", validate_class_model),
+    ("sequence_diagram", "sequence_diagram_model", "sequence_diagram_check", validate_sequence_model),
     ("api_spec", "api_spec_model", "api_spec_check", api_spec_validation_report),
     ("erd", "erd_bce_classes", "erd_check", erd_validation_report),
 )
@@ -64,14 +82,8 @@ def design_readiness_report(
         if not isinstance(model, dict) or not model:
             continue
         checked = check(model, state)
-        validation_status: str | None = None
-        if isinstance(checked, ValidationReport):
-            validation_status = checked.status
-            findings = [Finding.model_validate(finding) for finding in checked.findings]
-        else:
-            # Sequence collections include cross-diagram checks in their
-            # established public list-returning adapter.
-            findings = checked
+        validation_status = checked.status
+        findings = [Finding.model_validate(finding) for finding in checked.findings]
         reports.append(
             {
                 "stage": stage,

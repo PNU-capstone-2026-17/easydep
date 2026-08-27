@@ -18,6 +18,13 @@ include = [
     "app/core/cloudkb/**/*.py",
     # 두 에이전트가 공유하는 얇은 층. 둘 다 내 범위라 여기도 같이 검사한다.
     "app/core/**/*.py",
+    # Class-diagram authoring contracts and its sequence projection adapter.
+    # Keep this list explicit so enabling Ruff here does not format unrelated design code.
+    "app/design/services/class_diagram/**/*.py",
+    "app/design/services/sequence_diagram/projection.py",
+    "app/design/services/sequence_diagram/validation.py",
+    "app/design/schemas/class_model.py",
+    "app/design/graphs/subgraphs.py",
     "evaluation/baselines/**/*.py",
     "evaluation/checkpoint_e2e/**/*.py",
     "tests/test_checkpoint_e2e.py",
@@ -147,8 +154,12 @@ files = [
     "app/requirements/evaluation",
     # 체크포인터. 상위 인터페이스와 시그니처가 어긋나면 재개가 조용히 깨진다.
     "app/requirements/session_store.py",
+    "app/design/services/class_diagram",
+    "app/design/services/sequence_diagram/projection.py",
+    "app/design/services/sequence_diagram/validation.py",
+    "app/design/schemas/class_model.py",
+    "app/design/graphs/subgraphs.py",
     "app/core/cloudkb/kbcommon",
-    "app/core/cloudkb/sizingkb/model.py",
 ]
 ignore_missing_imports = true    # 벤더 SDK 상당수가 스텁을 내놓지 않는다
 follow_imports = "silent"        # files 밖 모듈은 해석만 하고 검사하지 않는다

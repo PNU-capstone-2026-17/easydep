@@ -5,6 +5,8 @@ import pytest
 from app.core.validation import ValidationReport
 from app.design import validation
 from app.design.knowledge import detectors, rules
+from app.design.services.class_diagram.validation import diagram as class_validation
+from app.design.services.sequence_diagram import validation as sequence_validation
 
 
 def _catalog_rule_ids(stage: str) -> tuple[str, ...]:
@@ -12,10 +14,10 @@ def _catalog_rule_ids(stage: str) -> tuple[str, ...]:
 
 
 def test_design_check_registries_follow_the_rule_catalog_order() -> None:
-    assert tuple(check.rule_id for check in detectors.CLASS_DIAGRAM_CHECKS) == _catalog_rule_ids(
+    assert tuple(check.rule_id for check in class_validation.CLASS_DIAGRAM_CHECKS) == _catalog_rule_ids(
         rules.CLASS_DIAGRAM
     )
-    assert tuple(check.rule_id for check in detectors.SEQUENCE_CHECKS) == _catalog_rule_ids(
+    assert tuple(check.rule_id for check in sequence_validation.SEQUENCE_CHECKS) == _catalog_rule_ids(
         rules.SEQUENCE_DIAGRAM
     )
     assert tuple(check.rule_id for check in detectors.API_SPEC_CHECKS) == _catalog_rule_ids(
@@ -88,3 +90,43 @@ def test_readiness_uses_typed_status_without_treating_incomplete_checks_as_clean
     assert report["findingRecords"] == [
         {"stage": "test", **record} for record in report["stages"][0]["findingRecords"]
     ]
+
+
+def test_class_readiness_keeps_semantic_relationship_checks() -> None:
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [
+                {
+                    "className": "OrderBoundary",
+                    "stereotype": "Boundary",
+                    "fields": [],
+                    "operations": [],
+                    "use_case_ids": [],
+                },
+                {
+                    "className": "OrderEntity",
+                    "stereotype": "Entity",
+                    "fields": [],
+                    "operations": [],
+                    "use_case_ids": [],
+                },
+            ],
+            "Relationships": [
+                {
+                    "source": "OrderBoundary",
+                    "target": "OrderEntity",
+                    "type": "Association",
+                    "sourceMultiplicity": "1",
+                    "targetMultiplicity": "1",
+                }
+            ],
+        }
+    }
+
+    report = validation.design_readiness_report(state, stages=("class_diagram",))
+
+    assert report["status"] == "BLOCKED"
+    assert any(
+        finding["ruleId"] == "class.no-boundary-entity-link"
+        for finding in report["findingRecords"]
+    )

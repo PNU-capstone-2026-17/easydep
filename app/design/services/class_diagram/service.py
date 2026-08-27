@@ -1,44 +1,46 @@
-﻿"""Public interaction-design orchestration over independently owned stages."""
+"""수락된 시나리오와 BCE 모델을 조율하는 클래스 설계 공개 API다."""
 from __future__ import annotations
 
 import logging
-from copy import deepcopy
+from collections.abc import Set as AbstractSet
 from typing import Any
 
 from app.core.config import settings
 from app.core.validation import run_checks
-from app.design.schemas.class_model import BCEModel
-from app.design.services.class_diagram import (
-    feedback as feedback_stage,
+from app.design.schemas.class_model import BCEModel, Collaboration
+from app.design.services.class_diagram import feedback as feedback_stage
+from app.design.services.class_diagram import inventory, operations
+from app.design.services.class_diagram.models import (
+    AcceptedFragment,
+    AcceptedInventory,
+    CollaborationResult,
 )
-from app.design.services.class_diagram import (
-    inventory,
-    operations,
-)
-from app.design.services.class_diagram.models import GroupResult
 from app.design.services.class_diagram.scenario import (
     ExecutionGroup,
-    build_scenario_index,
+    ScenarioIndex,
     id_key,
-    text,
 )
 from app.design.services.class_diagram.validation.collaboration import (
     COLLABORATION_CHECKS,
     CollaborationContext,
 )
-from app.design.services.class_diagram.validation.model import final_model_findings
+from app.design.services.class_diagram.validation.model import validate_class_model
 
 logger = logging.getLogger(__name__)
 
 
-def _build_skeleton(
-    index: Any,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, dict[str, Any]]]:
-    """Coordinate the inventory and operation stages with an explicit handoff."""
+def _payload(model: BCEModel) -> dict[str, Any]:
+    """기존 검사와 미리보기 경계에만 별칭 JSON 모양을 제공한다."""
+    return model.model_dump(by_alias=True)
 
+
+def _build_skeleton(
+    index: ScenarioIndex,
+) -> tuple[BCEModel, AcceptedInventory, dict[str, AcceptedFragment]]:
+    """인벤토리와 연산 단계를 명시적 수락 경계로 연결한다."""
     accepted_inventory = inventory.inventory_proposal(index)
     operations.emit_preview(
-        inventory.inventory_model(accepted_inventory),
+        _payload(inventory.inventory_model(accepted_inventory)),
         "inventory",
         "inventory",
         1,
@@ -53,15 +55,14 @@ def _build_skeleton(
 
 
 def _replace_groups(
-    index: Any,
-    model: dict[str, Any],
+    index: ScenarioIndex,
+    model: BCEModel,
     groups: list[ExecutionGroup],
     *,
     feedback_text: str = "",
     workers: int | None = None,
-) -> list[GroupResult]:
-    """Keep collaboration concurrency and local repair inside its stage owner."""
-
+) -> list[CollaborationResult]:
+    """협업 단계가 가진 병렬성 및 국소 수리를 그대로 사용한다."""
     return feedback_stage.replace_selected_groups(
         index,
         model,
@@ -71,41 +72,49 @@ def _replace_groups(
     )
 
 
-def generate_class_model(scenario: dict[str, Any]) -> dict[str, Any]:
-    """Generate the persisted BCE model through bounded owned stages."""
-
-    index = build_scenario_index(scenario)
-    if not index.use_cases:
-        return {}
-    skeleton, accepted_inventory, fragments = _build_skeleton(index)
-    workers = max(1, min(
-        len(index.groups) or 1,
+def _workers(count: int) -> int:
+    return max(1, min(
+        count or 1,
         int(getattr(settings, "design_class_behavior_parallelism", 2)),
     ))
-    results = _replace_groups(
-        index,
-        skeleton,
-        list(index.groups),
-        workers=workers,
-    )
+
+
+def generate_class_model(index: ScenarioIndex) -> BCEModel:
+    """시나리오 인덱스에서 수락된 BCE 모델을 생성한다.
+
+    Args:
+        index: 원시 유스케이스를 정규화한 불변 인덱스다.
+
+    Returns:
+        인벤토리, 연산, 협업을 포함한 저장 가능한 BCE 모델이다.
+
+    Raises:
+        ValueError: LLM 제안이 제한된 repair 뒤에도 단계 계약을 만족하지 못한 경우다.
+
+    Notes:
+        인벤토리와 연산을 먼저 수락하고 실행 그룹별 협업을 최대 설정 병렬도 2로 만든다.
+        실패한 그룹은 소유 연산 조각만 한 번 repair하며 다른 그룹은 보존한다.
+    """
+    if not index.use_cases:
+        return BCEModel()
+    skeleton, accepted_inventory, fragments = _build_skeleton(index)
+    workers = _workers(len(index.groups))
+    results = _replace_groups(index, skeleton, list(index.groups), workers=workers)
     failures = [result for result in results if result.collaboration is None]
     if failures:
         try:
             repaired_use_cases = operations.repair_failed_operations(
-                index,
-                accepted_inventory,
-                fragments,
-                failures,
+                index, accepted_inventory, fragments, failures,
             )
             skeleton = operations.compose_fragments(accepted_inventory, fragments)
             affected = [
                 group for group in index.groups
                 if set(group.trace_use_case_ids) & repaired_use_cases
             ]
+            affected_ids = {group.id for group in affected}
             retained = {
                 result.group_id: result for result in results
-                if result.collaboration is not None
-                and result.group_id not in {group.id for group in affected}
+                if result.collaboration is not None and result.group_id not in affected_ids
             }
             retried = _replace_groups(index, skeleton, affected, workers=workers)
             results = [
@@ -120,11 +129,14 @@ def generate_class_model(scenario: dict[str, Any]) -> dict[str, Any]:
                 error,
                 exc_info=True,
             )
-    collaborations: list[dict[str, Any]] = []
+    collaborations: list[Collaboration] = []
     for position, result in enumerate(results, start=1):
         if result.collaboration is not None:
             collaborations.append(result.collaboration)
-            preview = {**deepcopy(skeleton), "Collaborations": deepcopy(collaborations)}
+            preview = {
+                **_payload(skeleton),
+                "Collaborations": [item.model_dump(by_alias=True) for item in collaborations],
+            }
             operations.emit_preview(
                 preview,
                 "collaborations",
@@ -133,25 +145,35 @@ def generate_class_model(scenario: dict[str, Any]) -> dict[str, Any]:
                 len(index.groups),
             )
     model = BCEModel.model_validate({
-        **skeleton,
+        **_payload(skeleton),
         "Collaborations": collaborations,
-    }).model_dump(by_alias=True)
-    # The final check deliberately does not start another repair path.
-    final_model_findings(model, index)
+    })
+    # 최종 검증은 finding이 가리킨 소유 단위 외의 repair 경로를 시작하지 않는다.
+    validate_class_model(model, index)
     return model
 
 
-def resume_class_model(
-    scenario: dict[str, Any], current: dict[str, Any],
-) -> dict[str, Any]:
-    """Complete only missing or invalid collaboration groups in an accepted skeleton."""
+def resume_class_model(index: ScenarioIndex, current: BCEModel) -> BCEModel:
+    """기존 BCE 모델에서 빠졌거나 유효하지 않은 협업만 완성한다.
 
-    index = build_scenario_index(scenario)
-    model = BCEModel.model_validate(current).model_dump(by_alias=True)
+    Args:
+        index: 현재 체크포인트와 대응하는 정규화된 시나리오 인덱스다.
+        current: 저장소에서 검증해 복원한 BCE 모델이다.
+
+    Returns:
+        유효한 기존 협업을 유지하고 필요한 실행 그룹만 보완한 모델이다.
+
+    Raises:
+        ValueError: 선택된 실행 그룹을 유효한 협업으로 만들 수 없는 경우다.
+
+    Notes:
+        정상 예: 네 그룹 중 한 협업이 없으면 나머지 세 협업은 LLM에 다시 보내지 않는다.
+        실패 예: 체크포인트와 다른 시나리오 인덱스를 섞어 누락 범위를 넓히면 안 된다.
+    """
     existing = {
-        text(item.get("collaborationId")): item
-        for item in model.get("Collaborations") or [] if isinstance(item, dict)
+        item.collaboration_id: item for item in current.Collaborations
     }
+    current_payload = _payload(current)
     selected: list[ExecutionGroup] = []
     for group in index.groups:
         current_collaboration = existing.get(group.id)
@@ -160,43 +182,31 @@ def resume_class_model(
             continue
         report = run_checks(
             COLLABORATION_CHECKS,
-            current_collaboration,
-            CollaborationContext(index, model, group),
-            parallel=True,
+            current_collaboration.model_dump(by_alias=True),
+            CollaborationContext(index, current_payload, group),
         )
         if report.errors or report.findings:
             selected.append(group)
     if not selected:
-        return model
-    workers = max(1, min(
-        len(selected),
-        int(getattr(settings, "design_class_behavior_parallelism", 2)),
-    ))
-    results = _replace_groups(index, model, selected, workers=workers)
+        return current
+    workers = _workers(len(selected))
+    results = _replace_groups(index, current, selected, workers=workers)
     selected_ids = {group.id for group in selected}
+    working_model = current
     failures = [result for result in results if result.collaboration is None]
-    working_model = model
     if failures:
         try:
-            accepted_inventory = feedback_stage.inventory_from_model(model)
-            fragments = feedback_stage.fragments_from_model(index, model)
+            accepted_inventory = feedback_stage.inventory_from_model(current)
+            fragments = feedback_stage.fragments_from_model(index, current)
             repaired_use_cases = operations.repair_failed_operations(
-                index,
-                accepted_inventory,
-                fragments,
-                failures,
+                index, accepted_inventory, fragments, failures,
             )
             working_model = operations.compose_fragments(accepted_inventory, fragments)
             affected = [
                 group for group in index.groups
                 if set(group.trace_use_case_ids) & repaired_use_cases
             ]
-            retried = _replace_groups(
-                index,
-                working_model,
-                affected,
-                workers=workers,
-            )
+            retried = _replace_groups(index, working_model, affected, workers=workers)
             affected_ids = {group.id for group in affected}
             results = [
                 result for result in results if result.group_id not in affected_ids
@@ -219,37 +229,50 @@ def resume_class_model(
             for result in results if result.collaboration is not None
         },
     }
-    working_model["Collaborations"] = [
-        accepted[group.id] for group in index.groups if group.id in accepted
-    ]
-    return BCEModel.model_validate(working_model).model_dump(by_alias=True)
+    return BCEModel.model_validate({
+        **_payload(working_model),
+        "Collaborations": [
+            accepted[group.id] for group in index.groups if group.id in accepted
+        ],
+    })
 
 
 def revise_class_model(
-    current: dict[str, Any],
-    scenario: dict[str, Any],
+    current: BCEModel,
+    index: ScenarioIndex,
     feedback: str,
-    targets: set[str] | None = None,
-) -> dict[str, Any]:
-    """Apply feedback through its smallest owner and deterministically reassemble."""
+    targets: AbstractSet[str],
+) -> BCEModel:
+    """피드백을 가장 작은 소유 단계에 적용해 BCE 모델을 재조립한다.
 
-    if not current or not feedback.strip():
-        return current or {}
-    index = build_scenario_index(scenario)
-    scope = feedback_stage.feedback_scope(index, current, feedback, targets or set())
+    Args:
+        current: 수정 전의 수락된 BCE 모델이다.
+        index: 모델을 만든 시나리오와 실행 그룹 인덱스다.
+        feedback: 사용자에게서 받은 피드백 문자열이다.
+        targets: UI 또는 검증 finding이 지정한 산출물 식별자 집합이다.
+
+    Returns:
+        대상 인벤토리, 연산 또는 협업만 교체한 새 BCE 모델이다.
+
+    Raises:
+        ValueError: 국소 재생성 결과가 완성 모델 계약을 만족하지 못한 경우다.
+
+    Notes:
+        빈 피드백은 원본 모델을 그대로 반환한다. 대상 해석은 피드백 단계가 소유하며,
+        서비스는 선택되지 않은 협업과 연산 조각을 보존한다.
+    """
+    if not feedback.strip():
+        return current
+    scope = feedback_stage.feedback_scope(index, current, feedback, targets)
     accepted_inventory = feedback_stage.inventory_from_model(current)
     fragments = feedback_stage.fragments_from_model(index, current)
     existing = {
-        text(item.get("collaborationId")): deepcopy(item)
-        for item in current.get("Collaborations") or [] if isinstance(item, dict)
+        item.collaboration_id: item for item in current.Collaborations
     }
 
     if scope.kind == "inventory":
         accepted_inventory = feedback_stage.propose_inventory_revision(
-            index,
-            accepted_inventory,
-            feedback,
-            set(scope.ids),
+            index, accepted_inventory, feedback, set(scope.ids),
         )
         skeleton, fragments = operations.build_fragments(
             index,
@@ -268,7 +291,7 @@ def revise_class_model(
                 accepted_inventory,
                 fragments,
                 [
-                    GroupResult(
+                    CollaborationResult(
                         group.id,
                         None,
                         f"User feedback for this execution slice: {feedback}",
@@ -290,7 +313,7 @@ def revise_class_model(
                 previous=fragments.get(use_case_id),
                 findings=[f"User feedback: {feedback}"],
                 reserved=operations.reserved_operations(base),
-                reserved_types=list(base.get("DataTypes") or []),
+                reserved_types=list(_payload(base).get("DataTypes") or []),
                 operation="InteractionOperationFeedback",
             )
         skeleton = operations.compose_fragments(accepted_inventory, fragments)
@@ -300,8 +323,8 @@ def revise_class_model(
         ]
     else:
         skeleton = BCEModel.model_validate({
-            **deepcopy(current), "Collaborations": [],
-        }).model_dump(by_alias=True)
+            **_payload(current), "Collaborations": [],
+        })
         selected = set(scope.ids) or {group.id for group in index.groups}
         selected_groups = [group for group in index.groups if group.id in selected]
 
@@ -323,16 +346,19 @@ def revise_class_model(
     collaborations = [
         replacements.get(group.id) or existing.get(group.id)
         for group in index.groups
-        if (replacements.get(group.id) or existing.get(group.id)) is not None
+        if replacements.get(group.id) or existing.get(group.id)
     ]
     revised = BCEModel.model_validate({
-        **skeleton,
+        **_payload(skeleton),
         "Collaborations": collaborations,
-    }).model_dump(by_alias=True)
-    findings = final_model_findings(revised, index)
-    if findings:
+    })
+    report = validate_class_model(revised, index)
+    if report.errors or report.findings:
         raise ValueError("feedback result is invalid: " + "; ".join(
-            f"{finding.location}: {finding.message}" for finding in findings
+            [
+                *(f"{finding.location}: {finding.message}" for finding in report.findings),
+                *report.errors,
+            ]
         ))
     return revised
 
@@ -342,6 +368,3 @@ __all__ = [
     "resume_class_model",
     "revise_class_model",
 ]
-
-
-

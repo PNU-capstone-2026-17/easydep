@@ -1,17 +1,20 @@
-"""Interaction-design operation fragments and deterministic operation checks."""
+"""Class-design operation fragments and deterministic operation checks."""
 from __future__ import annotations
 
 import pytest
 
 from app.core.validation import run_checks
 from app.design.services.class_diagram import service
-from app.design.services.class_diagram.checks import OPERATION_CHECKS, OperationContext
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     InventoryProposal,
     OperationFragment,
 )
 from app.design.services.class_diagram.scenario import build_scenario_index
+from app.design.services.class_diagram.validation.operations import (
+    OPERATION_CHECKS,
+    OperationContext,
+)
 from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
@@ -32,7 +35,8 @@ def test_operation_generation_keeps_signature_data_types_in_the_persisted_model(
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(single_use_case())
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+    model = model.model_dump(by_alias=True)
 
     assert [item["name"] for item in model["DataTypes"]] == [
         "RequestData", "RequestResult",
@@ -52,7 +56,8 @@ def test_vertical_service_does_not_fabricate_an_unsourceable_parameter(monkeypat
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(single_use_case())
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+    model = model.model_dump(by_alias=True)
 
     assert model["Collaborations"] == []
 
@@ -100,7 +105,8 @@ def test_operation_generation_reuses_one_grounded_upstream_value_type(monkeypatc
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(single_use_case())
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+    model = model.model_dump(by_alias=True)
 
     registration = next(item for item in model["Classes"] if item["className"] == "Registration")
     assert registration["operations"][0]["parameters"][0]["type"] == "RequestData"
@@ -128,7 +134,8 @@ def test_placeholder_operations_are_removed_before_the_fragment_is_accepted(monk
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(single_use_case())
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+    model = model.model_dump(by_alias=True)
 
     assert all(
         operation["name"] != "none"
@@ -156,7 +163,8 @@ def test_repaired_fragment_drops_actor_entry_refs_from_delegated_operations(monk
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(single_use_case())
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+    model = model.model_dump(by_alias=True)
 
     control = next(item for item in model["Classes"] if item["className"] == "RequestControl")
     assert operation_calls == 1

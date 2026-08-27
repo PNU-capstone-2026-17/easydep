@@ -1,4 +1,4 @@
-﻿"""One normalized source of use-case and execution-group identities."""
+"""원시 유스케이스에서 실행 그룹과 추적 식별자의 단일 인덱스를 만든다."""
 from __future__ import annotations
 
 import re

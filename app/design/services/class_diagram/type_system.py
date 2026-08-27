@@ -1,4 +1,4 @@
-"""Shared type-reference rules for class proposals and persisted models."""
+"""클래스 제안과 저장 모델이 공유하는 타입 참조 규칙을 제공한다."""
 from __future__ import annotations
 
 import re

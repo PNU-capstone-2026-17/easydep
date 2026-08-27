@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
 
@@ -41,17 +42,18 @@ from app.design.nodes.artifact import (
     revise_node,
 )
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
+from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec.extractor import extract_api_spec_model
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.api_spec.reviser import revise_api_spec_model
-from app.design.services.class_diagram import (
+from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
+from app.design.services.class_diagram.scenario import build_scenario_index
+from app.design.services.class_diagram.service import (
     generate_class_model,
     resume_class_model,
     revise_class_model,
 )
-from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
-from app.design.services.class_diagram.scenario import build_scenario_index
-from app.design.services.class_diagram.validation.model import final_model_findings
+from app.design.services.class_diagram.validation.model import validate_class_model
 from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
 from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
@@ -65,11 +67,12 @@ from app.design.services.deployment_diagram.provider_plantuml import (
 from app.design.services.deployment_diagram.reviser import revise_deployment_model
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
-from app.design.services.sequence_diagram import (
+from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
+from app.design.services.sequence_diagram.projection import (
+    SequenceCollection,
     project_sequence_model,
     sequence_findings,
 )
-from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 
 #: 설계 파이프라인의 순서. 상위 그래프의 엣지도, 저장 순회도 여기서만 나온다.
 #: 시퀀스·API는 클래스 다이어그램을, 배포는 그 앞의 모두를 재료로 쓴다. ERD는 클래스
@@ -183,40 +186,77 @@ def _class_scenario(state: ArchitectureState) -> dict[str, Any]:
     return {**scenario, "relationships": state.get("relationships") or scenario.get("relationships") or {}}
 
 
+def _class_index(state: ArchitectureState):
+    """그래프 상태의 유스케이스 JSON을 한 번만 수락된 인덱스로 만든다."""
+    return build_scenario_index(_class_scenario(state))
+
+
+def _stored_class_model(value: object) -> BCEModel:
+    """상태에 저장된 JSON을 서비스 경계의 BCE 계약으로 검증한다."""
+    if not isinstance(value, dict):
+        raise TypeError("stored class model must be an object")
+    return BCEModel.model_validate(value)
+
+
 def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
-    """Run the sole executable class-design path."""
+    """클래스 설계의 단일 실행 경로를 typed 서비스에 연결한다."""
 
     scenario = _class_scenario(state)
     if not scenario.get("use_case_specs"):
         raise ValueError("class design requires structured use-case specifications")
+    index = _class_index(state)
     current = state.get("extracted_bce_classes")
     if isinstance(current, dict) and current.get("Classes"):
-        return resume_class_model(scenario, current)
-    return generate_class_model(scenario)
+        return resume_class_model(index, _stored_class_model(current)).model_dump(by_alias=True)
+    return generate_class_model(index).model_dump(by_alias=True)
+
+
+def _revise_class_state(
+    current: dict[str, Any],
+    feedback: str,
+    state: ArchitectureState,
+    targets: set[str],
+) -> dict[str, Any]:
+    """그래프의 원시 상태만 typed 클래스 설계 API에 맞춰 변환한다."""
+    return revise_class_model(
+        _stored_class_model(current),
+        _class_index(state),
+        feedback,
+        targets,
+    ).model_dump(by_alias=True)
 
 
 def _class_model_findings(
     model: dict[str, Any], state: ArchitectureState,
 ) -> list[ArtifactFinding]:
-    index = build_scenario_index(_class_scenario(state))
+    index = _class_index(state)
+    accepted = _stored_class_model(model)
+    report = validate_class_model(accepted, index)
+    if report.errors:
+        raise RuntimeError("; ".join(report.errors))
     return [
         ArtifactFinding(
-            finding.rule_id,
-            finding.message,
-            finding.location,
-            finding.requires_user_input,
-            finding.origin,
+            rule_id=finding.rule_id,
+            message=finding.message,
+            location=finding.location,
+            requires_user_input=finding.requires_user_input,
+            origin=finding.origin,
         )
-        for finding in final_model_findings(model, index)
+        for finding in report.findings
     ]
 
 
 def _sequence_model_findings(
     model: dict[str, Any], _state: ArchitectureState,
 ) -> list[ArtifactFinding]:
+    accepted = SequenceCollection.model_validate(model)
     return [
-        ArtifactFinding("sequence.contract", message, "SequenceDiagramCollection")
-        for message in sequence_findings(model)
+        ArtifactFinding(
+            rule_id="sequence.contract",
+            message=message,
+            location="SequenceDiagramCollection",
+        )
+        for message in sequence_findings(accepted)
     ]
 
 
@@ -226,25 +266,25 @@ def _revise_sequence_state(
     state: ArchitectureState,
     targets: set[str],
 ) -> dict[str, Any]:
-    """Revise interaction truth in the class model, then reproject sequence."""
+    """클래스 모델의 상호작용 원본을 수정한 뒤 시퀀스를 다시 투영한다."""
 
-    scenario = _class_scenario(state)
     revised_class = revise_class_model(
-        state.get("extracted_bce_classes") or {},
-        scenario,
+        _stored_class_model(state.get("extracted_bce_classes") or {}),
+        _class_index(state),
         feedback,
         targets,
     )
-    class_puml = generate_plantuml_from_bce_json(revised_class)
+    revised_payload = revised_class.model_dump(by_alias=True)
+    class_puml = generate_plantuml_from_bce_json(revised_payload)
     class_validation = validate_puml_artifact(class_puml)
-    class_findings = _class_model_findings(revised_class, state)
+    class_findings = _class_model_findings(revised_payload, state)
     if class_findings:
         raise ValueError(
             "sequence feedback produced an invalid class interaction contract: "
             + "; ".join(finding.message for finding in class_findings)
         )
     return {
-        "extracted_bce_classes": revised_class,
+        "extracted_bce_classes": revised_payload,
         "class_diagram_puml": class_puml,
         "class_diagram_syntax_valid": class_validation["syntax_valid"],
         "class_diagram_syntax_errors": class_validation["syntax_errors"],
@@ -252,10 +292,29 @@ def _revise_sequence_state(
             "findings": [], "repair_iters": 0, "stopped": "clean",
         },
         "sequence_diagram_model": project_sequence_model(
-            scenario, revised_class, class_puml,
-        ),
+            _class_index(state), revised_class, class_puml,
+        ).model_dump(),
         "revised_upstream_stages": ["class_diagram"],
     }
+
+
+def _project_sequence_state(state: ArchitectureState) -> dict[str, Any]:
+    """그래프 상태의 두 원시 산출물을 typed 시퀀스 투영으로 연결한다."""
+    return project_sequence_model(
+        _class_index(state),
+        _stored_class_model(state.get("extracted_bce_classes") or {}),
+        state.get("class_diagram_puml", ""),
+    ).model_dump()
+
+
+def _state_check(
+    callback: Callable[[dict[str, Any], dict[str, Any]], list[ArtifactFinding]],
+) -> Callable[[dict[str, Any], ArchitectureState], list[ArtifactFinding]]:
+    """런타임 함수 정체성을 보존하며 dict 검사를 TypedDict 경계에 맞춘다."""
+    return cast(
+        Callable[[dict[str, Any], ArchitectureState], list[ArtifactFinding]],
+        callback,
+    )
 
 
 CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
@@ -267,12 +326,7 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     feedback_key="class_diagram_feedback",
     empty="",
     extract=_extract_class_model,
-    revise=lambda current, feedback, state, targets: revise_class_model(
-        current,
-        _class_scenario(state),
-        feedback,
-        targets,
-    ),
+    revise=_revise_class_state,
     render=generate_plantuml_from_bce_json,
     validate=validate_puml_artifact,
     elements={
@@ -295,16 +349,8 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     errors_key="sequence_diagram_syntax_errors",
     feedback_key="sequence_diagram_feedback",
     empty="",
-    extract=lambda state: project_sequence_model(
-        _class_scenario(state),
-        state.get("extracted_bce_classes") or {},
-        state.get("class_diagram_puml", ""),
-    ),
-    revise=lambda _current, _feedback, state, _targets: project_sequence_model(
-        _class_scenario(state),
-        state.get("extracted_bce_classes") or {},
-        state.get("class_diagram_puml", ""),
-    ),
+    extract=_project_sequence_state,
+    revise=lambda _current, _feedback, state, _targets: _project_sequence_state(state),
     render=generate_sequence_from_model,
     validate=validate_puml_artifact,
     elements={
@@ -346,7 +392,7 @@ API_SPEC_SPEC = DesignArtifactSpec(
         "Endpoints": _endpoint_key,
         "Schemas": lambda s: s.get("name", ""),
     },
-    check=api_spec_findings,
+    check=_state_check(api_spec_findings),
     check_key="api_spec_check",
     repair=lambda current, feedback, state, targets: revise_api_spec_model(
         current,
@@ -380,7 +426,7 @@ ERD_SPEC = DesignArtifactSpec(
     # ERD 모델은 클래스 BCE 의 **사본**이라 독립적으로 편집된다. 클래스 쪽이 통과했다는
     # 것이 이쪽의 보증이 아니므로 여기서 다시 본다. 그리고 검사 대상이 BCE 만이 아니다 —
     # `erd_findings` 가 사상을 돌려 나온 논리 데이터 모델(테이블·키·외래키)까지 판정한다.
-    check=erd_findings,
+    check=_state_check(erd_findings),
     check_key="erd_check",
     repair=lambda current, feedback, state, targets: revise_erd_classes(
         current_bce=current or state.get("extracted_bce_classes", {}),
@@ -476,8 +522,26 @@ FEEDBACK_KEYS: dict[str, str] = {
 }
 
 
+def _state_node(
+    callback: Callable[[ArchitectureState], dict[str, Any]],
+) -> Callable[[ArchitectureState], ArchitectureState]:
+    """LangGraph의 부분 상태 업데이트를 typed 노드 경계에서 명시한다."""
+    return cast(Callable[[ArchitectureState], ArchitectureState], callback)
+
+
+def _add_state_node(
+    builder: StateGraph[ArchitectureState, None, ArchitectureState, ArchitectureState],
+    name: str,
+    callback: Callable[[ArchitectureState], ArchitectureState],
+) -> None:
+    """LangGraph stubs가 부분 TypedDict 상태 노드를 표현하지 못하는 지점을 격리한다."""
+    builder.add_node(name, callback)  # type: ignore[call-overload]
+
+
 def _add_stage_tail(
-    builder: StateGraph, spec: DesignArtifactSpec, entry_node: str
+    builder: StateGraph[ArchitectureState, None, ArchitectureState, ArchitectureState],
+    spec: DesignArtifactSpec,
+    entry_node: str,
 ) -> None:
     """공유 꼬리: 모델 → [대사] → [규칙 검사] → [최종 강제] → 렌더 → END.
 
@@ -501,24 +565,24 @@ def _add_stage_tail(
 
     if spec.reconcile:
         reconcile = f"reconcile_{spec.stage}"
-        builder.add_node(reconcile, spec.reconcile)
+        _add_state_node(builder, reconcile, _state_node(spec.reconcile))
         builder.add_edge(current_node, reconcile)
         current_node = reconcile
 
     if spec.check_key:
         check = f"check_{spec.stage}"
-        builder.add_node(check, check_node(spec))
+        _add_state_node(builder, check, _state_node(check_node(spec)))
         builder.add_edge(current_node, check)
         current_node = check
 
     if spec.finalize:
         finalize = f"finalize_{spec.stage}"
-        builder.add_node(finalize, spec.finalize)
+        _add_state_node(builder, finalize, _state_node(spec.finalize))
         builder.add_edge(current_node, finalize)
         current_node = finalize
 
     render = f"render_{spec.stage}"
-    builder.add_node(render, render_node(spec))
+    _add_state_node(builder, render, _state_node(render_node(spec)))
     builder.add_edge(current_node, render)
 
     builder.add_edge(render, END)
@@ -528,7 +592,7 @@ def build_generation_graph(spec: DesignArtifactSpec):
     """생성: 앞선 산출물 → 구조화 모델 추출 → [규칙 검사] → 렌더."""
     builder = StateGraph(ArchitectureState)
     entry = f"extract_{spec.stage}"
-    builder.add_node(entry, extract_node(spec))
+    _add_state_node(builder, entry, _state_node(extract_node(spec)))
     builder.add_edge(START, entry)
     _add_stage_tail(builder, spec, entry)
     return builder.compile()
@@ -543,7 +607,7 @@ def build_feedback_graph(spec: DesignArtifactSpec):
     """
     builder = StateGraph(ArchitectureState)
     entry = f"revise_{spec.stage}"
-    builder.add_node(entry, revise_node(spec))
+    _add_state_node(builder, entry, _state_node(revise_node(spec)))
     builder.add_edge(START, entry)
     _add_stage_tail(builder, spec, entry)
     return builder.compile()

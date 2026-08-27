@@ -15,9 +15,10 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
@@ -28,8 +29,10 @@ from app.design.evaluation.seeded import (
     ERD_SEEDED,
     SEEDED,
 )
-from app.design.knowledge import basis, detectors, rules
 from app.design.graphs.subgraphs import DESIGN_STAGES
+from app.design.knowledge import basis, detectors, rules
+from app.design.services.class_diagram.validation import diagram as class_validation
+from app.design.services.sequence_diagram import validation as sequence_validation
 
 
 @dataclass(frozen=True)
@@ -46,10 +49,10 @@ class StageUnderTest:
 STAGES = (
     StageUnderTest(
         rules.CLASS_DIAGRAM,
-        detectors.class_diagram_findings,
+        class_validation.class_diagram_findings,
         CLEAN,
         SEEDED,
-        detectors.CLASS_DIAGRAM_DETECTORS,
+        class_validation.CLASS_DIAGRAM_DETECTORS,
     ),
     StageUnderTest(
         rules.ERD,
@@ -136,8 +139,8 @@ def test_an_empty_model_is_not_an_error():
     검사 노드는 extract 직후에도 돌 수 있고, 그때 모델이 비어 있을 수 있다. 빈 모델에
     대고 "클래스가 없다"고 지적하면 재생성이 무엇을 고쳐야 할지 알 수 없다.
     """
-    assert detectors.class_diagram_findings({}, {}) == []
-    assert detectors.class_diagram_findings({"Classes": [], "Relationships": []}, {}) == []
+    assert class_validation.class_diagram_findings({}, {}) == []
+    assert class_validation.class_diagram_findings({"Classes": [], "Relationships": []}, {}) == []
 
 
 def test_legacy_structure_remains_viewable_without_execution_validation():
@@ -146,7 +149,7 @@ def test_legacy_structure_remains_viewable_without_execution_validation():
         "Classes": [{"className": "Order", "stereotype": "Entity", "use_case_ids": ["UC1"]}],
         "Relationships": [],
     }
-    found = detectors.class_diagram_findings(model, {"usecase_spec": {}})
+    found = class_validation.class_diagram_findings(model, {"usecase_spec": {}})
     assert found == []
 
 
@@ -170,7 +173,7 @@ def test_names_that_collide_only_after_rendering_are_caught():
         ],
         "Relationships": [],
     }
-    caught = {f.rule_id for f in detectors.names_unique(model, {})}
+    caught = {f.rule_id for f in class_validation.names_unique(model, {})}
     assert caught == {"class.names-unique"}
 
 
@@ -182,7 +185,7 @@ def test_stereotypes_are_read_as_leniently_as_the_renderer_reads_them(written):
     멀쩡히 나오는 것을 결함이라고 부른다 — 고칠 수 없는 지적이다.
     """
     model = {"Classes": [{"className": "X", "stereotype": written}], "Relationships": []}
-    assert detectors.stereotype_is_bce(model, {}) == []
+    assert class_validation.stereotype_is_bce(model, {}) == []
 
 
 def test_one_broken_relationship_is_reported_once_not_by_every_detector():
@@ -195,7 +198,7 @@ def test_one_broken_relationship_is_reported_once_not_by_every_detector():
         "Classes": [{"className": "OrderForm", "stereotype": "Boundary"}],
         "Relationships": [{"source": "OrderForm", "target": "Ghost", "type": "Association"}],
     }
-    found = detectors.class_diagram_findings(model, {})
+    found = class_validation.class_diagram_findings(model, {})
     assert [f.rule_id for f in found] == ["class.relationship-endpoints-exist"]
 
 
@@ -217,8 +220,8 @@ def test_control_to_entity_is_allowed_but_entity_to_control_is_not():
         "Classes": classes,
         "Relationships": [{"source": "Order", "target": "OrderController"}],
     }
-    assert detectors.communication_rules(allowed, {}) == []
-    assert [f.rule_id for f in detectors.communication_rules(forbidden, {})] == [
+    assert class_validation.communication_rules(allowed, {}) == []
+    assert [f.rule_id for f in class_validation.communication_rules(forbidden, {})] == [
         "class.entity-does-not-initiate"
     ]
 
@@ -241,7 +244,12 @@ def test_every_detector_is_claimed_by_at_least_one_rule():
     그 검출기들이 "아무 규칙도 안 쓴다"로 오인된다.
     """
     claimed = {r.detector for r in rules.RULES if r.detector}
-    implemented = set(detectors.SPEC_DETECTORS) | set(detectors.ERD_DETECTORS)
+    implemented = (
+        set(class_validation.CLASS_DIAGRAM_DETECTORS)
+        | set(sequence_validation.SEQUENCE_DIAGRAM_DETECTORS)
+        | set(detectors.API_SPEC_DETECTORS)
+        | set(detectors.ERD_DETECTORS)
+    )
     assert implemented == claimed
 
 
@@ -279,7 +287,7 @@ def test_findings_carry_their_rule_tag():
     재생성 지시문도 근거 없이 나간다.
     """
     case = SEEDED[0]
-    issue = detectors.class_diagram_findings(case.model, case.state)[0].as_issue()
+    issue = class_validation.class_diagram_findings(case.model, case.state)[0].as_issue()
     assert rules.rule_of(issue) == case.rule_id
 
 
@@ -347,6 +355,7 @@ def test_plantuml_invents_a_class_for_a_dangling_endpoint():
         capture_output=True,
         text=True,
         timeout=60,
+        check=False,
     )
     assert "ERROR" not in result.stdout.upper(), result.stdout
     assert "2 entities" in result.stdout, result.stdout

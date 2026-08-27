@@ -1,15 +1,21 @@
-﻿"""Feedback scope, model reconstruction, and selected collaboration replacement."""
+"""피드백 범위와 수락 모델 재구성·부분 협업 교체를 담당한다."""
 from __future__ import annotations
 
 import json
+from collections.abc import Set as AbstractSet
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import Any
 
 from app.core.config import settings
 from app.core.validation import run_checks
+from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import collaboration, inventory
-from app.design.services.class_diagram.models import GroupResult
+from app.design.services.class_diagram.models import (
+    AcceptedFragment,
+    AcceptedInventory,
+    CollaborationResult,
+)
 from app.design.services.class_diagram.proposals import (
     FeedbackScope,
     InventoryProposal,
@@ -30,7 +36,7 @@ from app.design.services.class_diagram.validation.model import class_name
 from app.design.services.common.structured import parse_structured
 
 
-def inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
+def _inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
     """Reconstruct the fixed inventory without operation-local declaration noise."""
 
     all_data_types = {
@@ -105,7 +111,7 @@ def inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def inventory_as_proposal(inventory_model: dict[str, Any]) -> dict[str, Any]:
+def _inventory_as_proposal(inventory_model: dict[str, Any]) -> dict[str, Any]:
     """Rehydrate a persisted inventory into the LLM proposal contract."""
 
     items: list[dict[str, Any]] = []
@@ -145,14 +151,14 @@ def inventory_as_proposal(inventory_model: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def fragments_from_model(
+def _fragments_from_model(
     index: ScenarioIndex, model: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
     """Recover each operation-local fragment from the persisted BCE model."""
 
     inventory_type_names = {
         text(item.get("name"))
-        for item in inventory_from_model(model).get("DataTypes") or []
+        for item in _inventory_from_model(model).get("DataTypes") or []
         if isinstance(item, dict)
     }
     all_types = {
@@ -208,7 +214,7 @@ def fragments_from_model(
     return result
 
 
-def feedback_scope(
+def _feedback_scope(
     index: ScenarioIndex,
     model: dict[str, Any],
     feedback: str,
@@ -220,10 +226,10 @@ def feedback_scope(
         class_name(item) for item in model.get("Classes") or [] if isinstance(item, dict)
     } | {
         text(item.get("name"))
-        for item in inventory_from_model(model).get("DataTypes") or []
+        for item in _inventory_from_model(model).get("DataTypes") or []
         if isinstance(item, dict)
     }
-    fragments = fragments_from_model(index, model)
+    fragments = _fragments_from_model(index, model)
     local_type_owners: dict[str, set[str]] = {}
     for use_case_id, fragment in fragments.items():
         for item in fragment.get("DataTypes") or []:
@@ -287,7 +293,7 @@ def feedback_scope(
     return scope
 
 
-def propose_inventory_revision(
+def _propose_inventory_revision(
     index: ScenarioIndex,
     inventory_model: dict[str, Any],
     feedback: str,
@@ -295,7 +301,7 @@ def propose_inventory_revision(
 ) -> dict[str, Any]:
     """Request and validate a full inventory replacement, retaining untargeted owners."""
 
-    current = inventory_as_proposal(inventory_model)
+    current = _inventory_as_proposal(inventory_model)
     parsed = parse_structured(
         [
             {"role": "system", "content": inventory.INVENTORY_PROMPT},
@@ -331,8 +337,8 @@ def propose_inventory_revision(
                 ) else original.Relationships
             ),
         )
-    candidate = inventory.normalize_inventory(proposal)
-    report = run_checks(INVENTORY_CHECKS, candidate, index, parallel=True)
+    candidate = inventory._normalize_inventory(proposal)
+    report = run_checks(INVENTORY_CHECKS, candidate, index)
     if report.errors or report.findings:
         raise ValueError("inventory feedback is invalid: " + "; ".join([
             *report.errors, *inventory.finding_text(report.findings),
@@ -340,14 +346,14 @@ def propose_inventory_revision(
     return candidate
 
 
-def replace_selected_groups(
+def _replace_selected_groups(
     index: ScenarioIndex,
-    model: dict[str, Any],
+    model: BCEModel,
     groups: list[ExecutionGroup],
     *,
     feedback: str = "",
     workers: int | None = None,
-) -> list[GroupResult]:
+) -> list[CollaborationResult]:
     """Replan only selected groups while preserving bounded parallelism and repair."""
 
     workers = max(1, min(
@@ -365,6 +371,69 @@ def replace_selected_groups(
             for group in groups
         ]
         return [future.result() for future in futures]
+
+
+def inventory_from_model(model: BCEModel) -> AcceptedInventory:
+    """수락된 모델에서 구조 인벤토리를 불변 경계로 재구성한다."""
+    return AcceptedInventory.from_payload(_inventory_from_model(model.model_dump(by_alias=True)))
+
+
+def inventory_as_proposal(inventory_model: AcceptedInventory) -> dict[str, Any]:
+    """수락된 인벤토리를 LLM 제안 계약으로 되살린다."""
+    return _inventory_as_proposal(inventory_model.as_payload())
+
+
+def fragments_from_model(
+    index: ScenarioIndex, model: BCEModel,
+) -> dict[str, AcceptedFragment]:
+    """수락된 BCE 모델에서 유스케이스별 연산 조각을 복원한다."""
+    fragments = _fragments_from_model(index, model.model_dump(by_alias=True))
+    return {
+        use_case_id: AcceptedFragment(use_case_id=use_case_id, payload=fragment)
+        for use_case_id, fragment in fragments.items()
+    }
+
+
+def feedback_scope(
+    index: ScenarioIndex,
+    model: BCEModel,
+    feedback: str,
+    targets: AbstractSet[str],
+) -> FeedbackScope:
+    """피드백이 수정할 가장 작은 수락 경계를 결정한다."""
+    return _feedback_scope(
+        index, model.model_dump(by_alias=True), feedback, set(targets),
+    )
+
+
+def propose_inventory_revision(
+    index: ScenarioIndex,
+    inventory_model: AcceptedInventory,
+    feedback: str,
+    target_ids: AbstractSet[str],
+) -> AcceptedInventory:
+    """피드백을 반영한 전체 인벤토리를 검사해 수락한다."""
+    candidate = _propose_inventory_revision(
+        index,
+        inventory_model.as_payload(),
+        feedback,
+        set(target_ids),
+    )
+    return AcceptedInventory.from_payload(candidate)
+
+
+def replace_selected_groups(
+    index: ScenarioIndex,
+    model: BCEModel,
+    groups: list[ExecutionGroup],
+    *,
+    feedback: str = "",
+    workers: int | None = None,
+) -> list[CollaborationResult]:
+    """선택한 실행 그룹의 협업만 재계획한다."""
+    return _replace_selected_groups(
+        index, model, groups, feedback=feedback, workers=workers,
+    )
 
 
 revise_inventory = propose_inventory_revision

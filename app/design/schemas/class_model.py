@@ -1,11 +1,11 @@
-"""Strict, persisted contracts for the class-design artifact.
+"""클래스 설계 산출물의 엄격한 영속 계약.
 
-Operations are class-level signatures. A collaboration records each concrete
-execution of those signatures; it is the only place argument provenance and
-call order are persisted.
+연산은 클래스 수준 시그니처다. 협업은 그 시그니처의 구체적인 실행을 기록하며,
+argument provenance와 호출 순서를 저장하는 유일한 위치다.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -18,9 +18,9 @@ def _parameter_value(parameter: object, name: str) -> str:
 
 
 def canonical_operation_id(
-    class_name: str, operation_name: str, parameters: list[object],
+    class_name: str, operation_name: str, parameters: Sequence[object],
 ) -> str:
-    """Return the one stable operation identifier for a typed signature."""
+    """타입이 지정된 시그니처의 안정적인 연산 식별자를 반환한다."""
 
     signature = ",".join(
         f"{_parameter_value(parameter, 'name')}:{_parameter_value(parameter, 'type')}"
@@ -30,9 +30,9 @@ def canonical_operation_id(
 
 
 def operation_method_signature(
-    operation_name: str, parameters: list[object], return_type: str,
+    operation_name: str, parameters: Sequence[object], return_type: str,
 ) -> str:
-    """A display projection retained for callers that need a UML signature."""
+    """UML 시그니처가 필요한 호출자를 위한 표시 투영을 반환한다."""
 
     arguments = ", ".join(
         f"{_parameter_value(parameter, 'name')} : {_parameter_value(parameter, 'type')}"
@@ -42,13 +42,13 @@ def operation_method_signature(
 
 
 def canonical_call_id(collaboration_id: str, position: int) -> str:
-    """Return a deterministic call id for its one-based ordered position."""
+    """1부터 시작하는 호출 위치로 결정론적 호출 식별자를 만든다."""
 
     return f"{collaboration_id}::call:{position}"
 
 
 class ClassModelBase(BaseModel):
-    """Common strict configuration for persisted class-model records."""
+    """저장되는 클래스 모델 레코드가 공유하는 엄격한 설정이다."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 

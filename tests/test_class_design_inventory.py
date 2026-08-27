@@ -1,4 +1,4 @@
-"""Interaction-design inventory and scenario evidence contracts."""
+"""Class-design inventory and scenario evidence contracts."""
 from __future__ import annotations
 
 import pytest
@@ -75,5 +75,5 @@ def test_normalized_inventory_propagates_entity_scope_through_structural_types()
     })
 
     normalized = inventory.normalize_inventory(proposal)
-    details = next(item for item in normalized["DataTypes"] if item["name"] == "OrderDetails")
+    details = next(item for item in normalized.data_types if item["name"] == "OrderDetails")
     assert details["useCaseIds"] == ["UC1"]

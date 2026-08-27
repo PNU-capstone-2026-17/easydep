@@ -5,6 +5,7 @@ from app.design.knowledge import detectors
 from app.design.nodes.artifact import check_node
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.common.validation import validate_api_spec
+from app.design.services.sequence_diagram import validation as sequence_validation
 from app.design.validation import design_readiness_report
 
 STATE = {
@@ -72,7 +73,7 @@ def test_sequence_bce_flow_rejects_distinct_boundary_to_boundary_call():
         ],
     }
 
-    findings = detectors.sequence_bce_flow(model, STATE)
+    findings = sequence_validation.sequence_bce_flow(model, STATE)
 
     assert len(findings) == 1
     assert "boundary → boundary" in findings[0].message
@@ -88,7 +89,7 @@ def test_sequence_bce_flow_allows_boundary_self_call():
         ],
     }
 
-    assert detectors.sequence_bce_flow(model, STATE) == []
+    assert sequence_validation.sequence_bce_flow(model, STATE) == []
 
 
 def test_actor_cannot_invoke_boundary_display_operation():
@@ -102,7 +103,7 @@ def test_actor_cannot_invoke_boundary_display_operation():
         }],
     }
 
-    findings = detectors.sequence_boundary_operation_direction(model, STATE)
+    findings = sequence_validation.sequence_boundary_operation_direction(model, STATE)
 
     assert len(findings) == 1
     assert "출력 오퍼레이션" in findings[0].message
@@ -131,7 +132,7 @@ def test_persisted_collaboration_defines_boundary_call_direction():
         }],
     }
 
-    assert detectors.sequence_boundary_operation_direction(model, state) == []
+    assert sequence_validation.sequence_boundary_operation_direction(model, state) == []
 
 
 def test_control_can_call_declared_external_boundary_gateway():
@@ -169,7 +170,7 @@ def test_control_can_call_declared_external_boundary_gateway():
         }],
     }
 
-    assert detectors.sequence_boundary_operation_direction(model, state) == []
+    assert sequence_validation.sequence_boundary_operation_direction(model, state) == []
 
 
 def test_control_cannot_call_undeclared_boundary_input_operation():
@@ -184,7 +185,7 @@ def test_control_cannot_call_undeclared_boundary_input_operation():
         }],
     }
 
-    findings = detectors.sequence_boundary_operation_direction(model, STATE)
+    findings = sequence_validation.sequence_boundary_operation_direction(model, STATE)
 
     assert len(findings) == 1
     assert "입력 오퍼레이션" in findings[0].message
@@ -367,7 +368,7 @@ def test_participant_classes_valid_model_passes():
         ],
         "Messages": [],
     }
-    findings = detectors.sequence_participant_classes(model, STATE)
+    findings = sequence_validation.sequence_participant_classes(model, STATE)
     assert findings == []
 
 
@@ -380,7 +381,7 @@ def test_participant_classes_rejects_nonexistent_class():
         ],
         "Messages": [],
     }
-    findings = detectors.sequence_participant_classes(model, STATE)
+    findings = sequence_validation.sequence_participant_classes(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.participant-classes-exist"
     assert "GhostService" in findings[0].message
@@ -394,7 +395,7 @@ def test_participant_classes_uses_source_class_when_present():
         ],
         "Messages": [],
     }
-    findings = detectors.sequence_participant_classes(model, STATE)
+    findings = sequence_validation.sequence_participant_classes(model, STATE)
     assert findings == []
 
 
@@ -406,7 +407,7 @@ def test_participant_classes_source_class_wrong():
         ],
         "Messages": [],
     }
-    findings = detectors.sequence_participant_classes(model, STATE)
+    findings = sequence_validation.sequence_participant_classes(model, STATE)
     assert len(findings) == 1
     assert "NoSuchClass" in findings[0].message
 
@@ -419,7 +420,7 @@ def test_participant_classes_skips_actors():
         ],
         "Messages": [],
     }
-    findings = detectors.sequence_participant_classes(model, STATE)
+    findings = sequence_validation.sequence_participant_classes(model, STATE)
     assert findings == []
 
 
@@ -441,7 +442,7 @@ def test_message_methods_valid_model_passes():
             {"source": "OrderControl", "target": "Order", "label": "save()", "type": "sync"},
         ],
     }
-    findings = detectors.sequence_message_methods(model, STATE)
+    findings = sequence_validation.sequence_message_methods(model, STATE)
     assert findings == []
 
 
@@ -456,7 +457,7 @@ def test_message_methods_rejects_nonexistent_method():
             {"source": "User", "target": "OrderControl", "label": "deleteOrder()", "type": "sync"},
         ],
     }
-    findings = detectors.sequence_message_methods(model, STATE)
+    findings = sequence_validation.sequence_message_methods(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.message-labels-match-methods"
     assert "deleteOrder" in findings[0].message
@@ -473,7 +474,7 @@ def test_message_methods_skips_return_messages():
             {"source": "Order", "target": "OrderControl", "label": "ghostMethod()", "type": "return"},
         ],
     }
-    findings = detectors.sequence_message_methods(model, STATE)
+    findings = sequence_validation.sequence_message_methods(model, STATE)
     assert findings == []
 
 
@@ -488,7 +489,7 @@ def test_message_methods_skips_empty_labels():
             {"source": "OrderControl", "target": "Order", "label": "", "type": "sync"},
         ],
     }
-    findings = detectors.sequence_message_methods(model, STATE)
+    findings = sequence_validation.sequence_message_methods(model, STATE)
     assert findings == []
 
 
@@ -502,7 +503,7 @@ def test_message_methods_normalizes_signature_whitespace():
             {"source": "User", "target": "OrderControl", "label": "createOrder(items:List)", "type": "sync"},
         ],
     }
-    findings = detectors.sequence_message_methods(model, STATE)
+    findings = sequence_validation.sequence_message_methods(model, STATE)
     assert findings == []
 
 
@@ -521,7 +522,7 @@ def test_message_methods_rejects_hallucinated_parameter_content():
             },
         ],
     }
-    findings = detectors.sequence_message_methods(model, STATE)
+    findings = sequence_validation.sequence_message_methods(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.message-labels-match-methods"
 
@@ -555,13 +556,13 @@ def _order_return_model(
 
 
 def test_return_label_matches_declared_method_return_type():
-    assert detectors.sequence_return_values_match_methods(
+    assert sequence_validation.sequence_return_values_match_methods(
         _order_return_model("Order"), STATE
     ) == []
 
 
 def test_return_label_rejects_a_different_method_return_type():
-    findings = detectors.sequence_return_values_match_methods(
+    findings = sequence_validation.sequence_return_values_match_methods(
         _order_return_model("Customer"), STATE
     )
     assert len(findings) == 1
@@ -569,13 +570,13 @@ def test_return_label_rejects_a_different_method_return_type():
 
 
 def test_return_label_uses_void_for_method_without_value_return():
-    assert detectors.sequence_return_values_match_methods(
+    assert sequence_validation.sequence_return_values_match_methods(
         _order_return_model("void", method="validateOrder()"), STATE
     ) == []
 
 
 def test_return_label_rejects_empty_result():
-    findings = detectors.sequence_return_values_match_methods(
+    findings = sequence_validation.sequence_return_values_match_methods(
         _order_return_model(""), STATE
     )
     assert len(findings) == 1
@@ -586,7 +587,7 @@ def test_async_call_cannot_have_a_return_message():
     model = _order_return_model("Order")
     model["Messages"][0]["type"] = "async"
 
-    findings = detectors.sequence_async_returns(model, STATE)
+    findings = sequence_validation.sequence_async_returns(model, STATE)
 
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.async-call-has-no-return"
@@ -613,7 +614,7 @@ def test_sequence_collection_requires_one_diagram_per_use_case():
         ]
     }
 
-    findings = detectors.sequence_diagram_findings(model, state)
+    findings = sequence_validation.sequence_diagram_findings(model, state)
 
     assert any(
         finding.rule_id == "sequence.usecase-step-coverage"
@@ -636,7 +637,7 @@ def test_initial_entry_valid():
             {"source": "User", "target": "OrderBoundary", "type": "sync"},
         ],
     }
-    assert detectors.sequence_initial_entry(model, STATE) == []
+    assert sequence_validation.sequence_initial_entry(model, STATE) == []
 
 
 def test_initial_entry_invalid_direct_control():
@@ -650,7 +651,7 @@ def test_initial_entry_invalid_direct_control():
             {"source": "User", "target": "OrderControl", "type": "sync"},
         ],
     }
-    findings = detectors.sequence_initial_entry(model, STATE)
+    findings = sequence_validation.sequence_initial_entry(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.initial-message-entry"
 
@@ -670,7 +671,7 @@ def test_unmatched_returns_valid():
             {"source": "OrderControl", "target": "OrderBoundary", "type": "return"},
         ],
     }
-    assert detectors.sequence_unmatched_returns(model, STATE) == []
+    assert sequence_validation.sequence_unmatched_returns(model, STATE) == []
 
 
 def test_unmatched_returns_rejects_dangling_return():
@@ -684,7 +685,7 @@ def test_unmatched_returns_rejects_dangling_return():
             {"source": "OrderControl", "target": "OrderBoundary", "type": "return"},
         ],
     }
-    findings = detectors.sequence_unmatched_returns(model, STATE)
+    findings = sequence_validation.sequence_unmatched_returns(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.unmatched-return-message"
 
@@ -713,7 +714,7 @@ def test_unmatched_returns_rejects_a_second_return_for_one_call():
         ],
     }
 
-    findings = detectors.sequence_unmatched_returns(model, STATE)
+    findings = sequence_validation.sequence_unmatched_returns(model, STATE)
 
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.unmatched-return-message"
@@ -730,7 +731,7 @@ def test_usecase_coverage_valid():
             {"source": "User", "target": "OrderBoundary", "use_case_ids": ["UC1"]},
         ],
     }
-    assert detectors.sequence_usecase_coverage(model, STATE) == []
+    assert sequence_validation.sequence_usecase_coverage(model, STATE) == []
 
 
 def test_usecase_coverage_accepts_explicit_narrative_step_without_method_call():
@@ -759,7 +760,7 @@ def test_usecase_coverage_accepts_explicit_narrative_step_without_method_call():
         }],
     }
 
-    assert detectors.sequence_usecase_coverage(model, state) == []
+    assert sequence_validation.sequence_usecase_coverage(model, state) == []
 
 
 def test_usecase_coverage_requires_each_traced_operation_family():
@@ -800,14 +801,14 @@ def test_usecase_coverage_requires_each_traced_operation_family():
         ],
     }
 
-    findings = detectors.sequence_usecase_coverage(model, state)
+    findings = sequence_validation.sequence_usecase_coverage(model, state)
 
     assert [finding.location for finding in findings] == ["Record::find"]
     model["Messages"].append({
         "source": "control", "target": "record", "type": "sync",
         "label": "find()", "step_ids": ["UC1:main:2"],
     })
-    assert detectors.sequence_usecase_coverage(model, state) == []
+    assert sequence_validation.sequence_usecase_coverage(model, state) == []
 
 
 def test_usecase_coverage_uses_persisted_collaboration_calls_as_authority():
@@ -858,7 +859,7 @@ def test_usecase_coverage_uses_persisted_collaboration_calls_as_authority():
         }],
     }
 
-    assert detectors.sequence_usecase_coverage(model, state) == []
+    assert sequence_validation.sequence_usecase_coverage(model, state) == []
 
 
 def test_usecase_coverage_rejects_uncovered_usecase():
@@ -873,7 +874,7 @@ def test_usecase_coverage_rejects_uncovered_usecase():
             {"source": "User", "target": "OrderBoundary", "use_case_ids": ["UC1"]},
         ],
     }
-    findings = detectors.sequence_usecase_coverage(model, state_multi_uc)
+    findings = sequence_validation.sequence_usecase_coverage(model, state_multi_uc)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.usecase-step-coverage"
     assert "UC2" in findings[0].message
@@ -890,7 +891,7 @@ def test_fragment_condition_valid():
             {"source": "A", "target": "B", "group": "", "condition": "", "label": "msg2()"},
         ],
     }
-    assert detectors.sequence_fragment_condition_consistency(model, STATE) == []
+    assert sequence_validation.sequence_fragment_condition_consistency(model, STATE) == []
 
 
 def test_fragment_condition_rejects_missing_condition():
@@ -900,7 +901,7 @@ def test_fragment_condition_rejects_missing_condition():
             {"source": "A", "target": "B", "group": "loop", "condition": "", "label": "msg()"},
         ],
     }
-    findings = detectors.sequence_fragment_condition_consistency(model, STATE)
+    findings = sequence_validation.sequence_fragment_condition_consistency(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.fragment-condition-consistency"
 
@@ -919,7 +920,7 @@ def test_database_access_valid():
             {"source": "OrderControl", "target": "MyDB", "type": "sync"},
         ],
     }
-    assert detectors.sequence_database_access_discipline(model, STATE) == []
+    assert sequence_validation.sequence_database_access_discipline(model, STATE) == []
 
 
 def test_database_access_rejects_actor_or_boundary_direct_access():
@@ -934,7 +935,7 @@ def test_database_access_rejects_actor_or_boundary_direct_access():
             {"source": "OrderBoundary", "target": "MyDB", "type": "sync"},
         ],
     }
-    findings = detectors.sequence_database_access_discipline(model, STATE)
+    findings = sequence_validation.sequence_database_access_discipline(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.database-access-discipline"
 
@@ -949,7 +950,7 @@ def test_self_call_valid():
             {"source": "OrderControl", "target": "OrderControl", "label": "internalCalc()", "type": "sync"},
         ],
     }
-    assert detectors.sequence_self_call_method_validation(model, STATE) == []
+    assert sequence_validation.sequence_self_call_method_validation(model, STATE) == []
 
 
 def test_self_call_rejects_empty_label():
@@ -959,7 +960,7 @@ def test_self_call_rejects_empty_label():
             {"source": "OrderControl", "target": "OrderControl", "label": "", "type": "sync"},
         ],
     }
-    findings = detectors.sequence_self_call_method_validation(model, STATE)
+    findings = sequence_validation.sequence_self_call_method_validation(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.self-call-method-validation"
 
@@ -978,7 +979,7 @@ def test_orphan_participant_valid():
             {"source": "User", "target": "OrderBoundary", "label": "open()"},
         ],
     }
-    assert detectors.sequence_orphan_participant_detection(model, STATE) == []
+    assert sequence_validation.sequence_orphan_participant_detection(model, STATE) == []
 
 
 def test_orphan_participant_rejects_unreferenced_participant():
@@ -993,7 +994,7 @@ def test_orphan_participant_rejects_unreferenced_participant():
             {"source": "User", "target": "OrderBoundary", "label": "open()"},
         ],
     }
-    findings = detectors.sequence_orphan_participant_detection(model, STATE)
+    findings = sequence_validation.sequence_orphan_participant_detection(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.orphan-participant-detection"
     assert "GhostControl" in findings[0].message
@@ -1010,7 +1011,7 @@ def test_duplicate_consecutive_messages_valid():
             {"source": "A", "target": "B", "label": "doB()", "type": "sync"},
         ],
     }
-    assert detectors.sequence_duplicate_consecutive_messages(model, STATE) == []
+    assert sequence_validation.sequence_duplicate_consecutive_messages(model, STATE) == []
 
 
 def test_duplicate_consecutive_messages_rejects_duplicates():
@@ -1021,7 +1022,7 @@ def test_duplicate_consecutive_messages_rejects_duplicates():
             {"source": "A", "target": "B", "label": "doA()", "type": "sync"},
         ],
     }
-    findings = detectors.sequence_duplicate_consecutive_messages(model, STATE)
+    findings = sequence_validation.sequence_duplicate_consecutive_messages(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.duplicate-consecutive-messages"
     assert "2회" in findings[0].message
@@ -1037,7 +1038,7 @@ def test_duplicate_consecutive_messages_reports_one_run_with_its_size():
         ],
     }
 
-    findings = detectors.sequence_duplicate_consecutive_messages(model, STATE)
+    findings = sequence_validation.sequence_duplicate_consecutive_messages(model, STATE)
 
     assert len(findings) == 1
     assert "3회" in findings[0].message
@@ -1089,7 +1090,7 @@ def test_extension_replaying_its_anchor_operation_is_rejected():
         ],
     }
 
-    findings = detectors.sequence_extension_replays_anchor_operation(model, state)
+    findings = sequence_validation.sequence_extension_replays_anchor_operation(model, state)
 
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.extension-replays-anchor-operation"
@@ -1118,7 +1119,7 @@ def test_extension_retry_inside_loop_is_not_treated_as_duplicate_operation():
         ],
     }
 
-    assert detectors.sequence_extension_replays_anchor_operation(model, state) == []
+    assert sequence_validation.sequence_extension_replays_anchor_operation(model, state) == []
 
 
 def test_shared_anchor_call_with_extension_trace_is_not_a_replay():
@@ -1146,7 +1147,7 @@ def test_shared_anchor_call_with_extension_trace_is_not_a_replay():
         }],
     }
 
-    assert detectors.sequence_extension_replays_anchor_operation(model, state) == []
+    assert sequence_validation.sequence_extension_replays_anchor_operation(model, state) == []
 
 
 def test_extension_repeated_boundary_display_is_not_an_operation_replay():
@@ -1179,7 +1180,7 @@ def test_extension_repeated_boundary_display_is_not_an_operation_replay():
         ],
     }
 
-    assert detectors.sequence_extension_replays_anchor_operation(model, state) == []
+    assert sequence_validation.sequence_extension_replays_anchor_operation(model, state) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1193,7 +1194,7 @@ def test_message_naming_convention_valid():
             {"source": "A", "target": "B", "label": "calculateTotal", "type": "sync"},
         ],
     }
-    assert detectors.sequence_message_naming_convention(model, STATE) == []
+    assert sequence_validation.sequence_message_naming_convention(model, STATE) == []
 
 
 def test_message_naming_convention_rejects_pascal_case_class_name():
@@ -1203,7 +1204,7 @@ def test_message_naming_convention_rejects_pascal_case_class_name():
             {"source": "A", "target": "B", "label": "OrderControl", "type": "sync"},
         ],
     }
-    findings = detectors.sequence_message_naming_convention(model, STATE)
+    findings = sequence_validation.sequence_message_naming_convention(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.message-naming-convention"
 
@@ -1222,7 +1223,7 @@ def test_participant_kind_validity_valid():
             {"name": "DB", "kind": "database"},
         ],
     }
-    assert detectors.sequence_participant_kind_validity(model, STATE) == []
+    assert sequence_validation.sequence_participant_kind_validity(model, STATE) == []
 
 
 def test_participant_kind_validity_rejects_invalid_kind():
@@ -1232,7 +1233,7 @@ def test_participant_kind_validity_rejects_invalid_kind():
             {"name": "CustomNode", "kind": "microservice"},
         ],
     }
-    findings = detectors.sequence_participant_kind_validity(model, STATE)
+    findings = sequence_validation.sequence_participant_kind_validity(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.participant-kind-validity"
 
@@ -1249,7 +1250,7 @@ def test_message_type_validity_valid():
             {"source": "B", "target": "A", "type": "return"},
         ],
     }
-    assert detectors.sequence_message_type_validity(model, STATE) == []
+    assert sequence_validation.sequence_message_type_validity(model, STATE) == []
 
 
 def test_message_type_validity_rejects_invalid_type():
@@ -1259,7 +1260,7 @@ def test_message_type_validity_rejects_invalid_type():
             {"source": "A", "target": "B", "type": "rpc_call"},
         ],
     }
-    findings = detectors.sequence_message_type_validity(model, STATE)
+    findings = sequence_validation.sequence_message_type_validity(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.message-type-validity"
 
@@ -1292,7 +1293,7 @@ def test_sync_call_requires_matching_return_message():
         {"source": "Boundary", "target": "Control", "type": "sync", "label": "createOrder(items: List)"},
     ])
 
-    findings = detectors.sequence_calls_have_returns(model, STATE)
+    findings = sequence_validation.sequence_calls_have_returns(model, STATE)
 
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.call-requires-return"
@@ -1308,7 +1309,7 @@ def test_sync_calls_accept_one_matching_return_including_void():
         {"source": "Control", "target": "Boundary", "type": "return", "label": "void"},
     ])
 
-    assert detectors.sequence_calls_have_returns(model, STATE) == []
+    assert sequence_validation.sequence_calls_have_returns(model, STATE) == []
 
 
 def test_causal_chain_rejects_participant_that_acts_before_being_called():
@@ -1317,7 +1318,7 @@ def test_causal_chain_rejects_participant_that_acts_before_being_called():
         {"source": "Control", "target": "Control", "type": "self", "label": "validateOrder()"},
     ])
 
-    findings = detectors.sequence_causal_call_chain(model, STATE)
+    findings = sequence_validation.sequence_causal_call_chain(model, STATE)
 
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.causal-call-chain"
@@ -1329,7 +1330,7 @@ def test_causal_chain_accepts_reached_participants():
         {"source": "Boundary", "target": "Control", "type": "sync", "label": "validateOrder()"},
     ])
 
-    assert detectors.sequence_causal_call_chain(model, STATE) == []
+    assert sequence_validation.sequence_causal_call_chain(model, STATE) == []
 
 
 def test_explicit_alt_requires_main_and_else_but_opt_can_be_one_sided():
@@ -1350,8 +1351,8 @@ def test_explicit_alt_requires_main_and_else_but_opt_can_be_one_sided():
         }]
     }
 
-    assert detectors.sequence_fragment_condition_consistency(opt, STATE) == []
-    assert len(detectors.sequence_fragment_condition_consistency(alt, STATE)) == 1
+    assert sequence_validation.sequence_fragment_condition_consistency(opt, STATE) == []
+    assert len(sequence_validation.sequence_fragment_condition_consistency(alt, STATE)) == 1
 
 
 def test_explicit_return_link_rejects_wrong_direction_and_duplicate_reply():
@@ -1371,7 +1372,7 @@ def test_explicit_return_link_rejects_wrong_direction_and_duplicate_reply():
         },
     ])
 
-    findings = detectors.sequence_call_return_links(model, STATE)
+    findings = sequence_validation.sequence_call_return_links(model, STATE)
 
     assert {"호출 'call-1'과 반환 방향이 일치하지 않음", "호출 'call-1'에 반환이 둘 이상 연결됨"} <= {
         finding.message for finding in findings
@@ -1411,7 +1412,7 @@ def test_argument_data_flow_rejects_incompatible_preceding_result():
         },
     ])
 
-    findings = detectors.sequence_argument_data_flow(model, state)
+    findings = sequence_validation.sequence_argument_data_flow(model, state)
 
     assert any("타입 'String'" in finding.message for finding in findings)
 
@@ -1449,7 +1450,7 @@ def test_argument_data_flow_rejects_result_returned_to_another_participant():
         },
     ])
 
-    findings = detectors.sequence_argument_data_flow(model, state)
+    findings = sequence_validation.sequence_argument_data_flow(model, state)
 
     assert any("'Control'에게 반환" in finding.message for finding in findings)
     assert any("'Boundary'가 사용할 수 없음" in finding.message for finding in findings)
@@ -1480,7 +1481,7 @@ def test_actor_led_step_requires_an_actor_originated_call():
         }],
     }
 
-    findings = detectors.sequence_actor_step_involvement(model, state)
+    findings = sequence_validation.sequence_actor_step_involvement(model, state)
 
     assert len(findings) == 1
     assert findings[0].location == "UC1:main:4"
@@ -1507,7 +1508,7 @@ def test_actor_led_step_accepts_actor_to_boundary_entry():
         }],
     }
 
-    assert detectors.sequence_actor_step_involvement(model, state) == []
+    assert sequence_validation.sequence_actor_step_involvement(model, state) == []
 
 
 def test_distinct_main_actor_steps_cannot_reuse_one_boundary_operation():
@@ -1540,7 +1541,7 @@ def test_distinct_main_actor_steps_cannot_reuse_one_boundary_operation():
         ],
     }
 
-    findings = detectors.sequence_actor_step_involvement(model, state)
+    findings = sequence_validation.sequence_actor_step_involvement(model, state)
 
     assert len(findings) == 1
     assert findings[0].location == "UC1:main:2"
@@ -1575,7 +1576,7 @@ def test_system_response_trace_is_not_a_second_actor_action():
         }],
     }
 
-    assert detectors.sequence_step_operation_distinctness(model, state) == []
+    assert sequence_validation.sequence_step_operation_distinctness(model, state) == []
 
 
 def test_repeated_actor_step_can_reuse_the_only_boundary_operation():
@@ -1616,7 +1617,7 @@ def test_repeated_actor_step_can_reuse_the_only_boundary_operation():
         ],
     }
 
-    assert detectors.sequence_actor_step_involvement(model, state) == []
+    assert sequence_validation.sequence_actor_step_involvement(model, state) == []
 
 
 def test_flow_order_rejects_reversed_main_step_and_late_extension():
@@ -1639,7 +1640,7 @@ def test_flow_order_rejects_reversed_main_step_and_late_extension():
         ],
     }
 
-    findings = detectors.sequence_flow_order(model, state)
+    findings = sequence_validation.sequence_flow_order(model, state)
 
     assert any("단계 2가 단계 3 뒤" in finding.message for finding in findings)
     assert any("분기 단계 1 직후" in finding.message for finding in findings)
@@ -1672,7 +1673,7 @@ def test_flow_order_allows_outer_return_after_nested_later_step():
         ],
     }
 
-    assert detectors.sequence_flow_order(model, STATE) == []
+    assert sequence_validation.sequence_flow_order(model, STATE) == []
 
 
 def test_flow_order_treats_later_parent_trace_as_call_completion():
@@ -1690,7 +1691,7 @@ def test_flow_order_treats_later_parent_trace_as_call_completion():
         ],
     }
 
-    assert detectors.sequence_flow_order(model, STATE) == []
+    assert sequence_validation.sequence_flow_order(model, STATE) == []
 
 
 def test_flow_order_reports_extension_when_branch_main_step_is_missing():
@@ -1717,7 +1718,7 @@ def test_flow_order_reports_extension_when_branch_main_step_is_missing():
         }],
     }
 
-    findings = detectors.sequence_flow_order(model, state)
+    findings = sequence_validation.sequence_flow_order(model, state)
 
     assert len(findings) == 1
     assert "주 흐름 단계 2가 없어" in findings[0].message
@@ -1732,7 +1733,7 @@ def test_fragment_reports_one_root_finding_for_one_sided_alt():
         ]
     }
 
-    findings = detectors.sequence_fragment_condition_consistency(model, STATE)
+    findings = sequence_validation.sequence_fragment_condition_consistency(model, STATE)
 
     assert len(findings) == 1
     assert findings[0].location == "failure"
@@ -1760,7 +1761,7 @@ def test_fragment_rejects_identical_alt_branch_conditions():
         ]
     }
 
-    findings = detectors.sequence_fragment_condition_consistency(model, STATE)
+    findings = sequence_validation.sequence_fragment_condition_consistency(model, STATE)
 
     assert len(findings) == 1
     assert "상호 배타적이지 않음" in findings[0].message
@@ -1800,7 +1801,7 @@ def test_extension_trigger_without_main_flow_uses_opt_not_alt():
         ]
     }
 
-    findings = detectors.sequence_fragment_condition_consistency(model, state)
+    findings = sequence_validation.sequence_fragment_condition_consistency(model, state)
 
     assert any("alt가 아니라 opt" in finding.message for finding in findings)
 
@@ -1820,9 +1821,6 @@ def test_unresolved_flow_step_blocks_behavior_generation_and_is_not_coverage_deb
     }
     model = {"use_case_id": "UC1", "Messages": []}
 
-    assert detectors.sequence_usecase_coverage(model, state) == []
-    findings = detectors.sequence_unresolved_steps(model, state)
+    assert sequence_validation.sequence_usecase_coverage(model, state) == []
+    findings = sequence_validation.sequence_unresolved_steps(model, state)
     assert [finding.location for finding in findings] == ["UC1:extension:4a:4a1"]
-
-
-

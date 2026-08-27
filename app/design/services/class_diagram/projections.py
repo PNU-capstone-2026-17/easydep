@@ -1,21 +1,26 @@
-﻿"""수락된 상호작용 모델에서 파생되는 표시용 투영을 제공한다."""
+"""수락된 클래스 모델에서 화면용 결정론적 투영을 만든다."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
+from app.design.schemas.class_model import BCEModel
+from app.design.services.class_diagram.models import CallDependency
 from app.design.services.class_diagram.scenario import text
 from app.design.services.class_diagram.validation.model import operation_catalog
 
 
-def project_call_dependencies(model: dict[str, Any]) -> list[dict[str, Any]]:
-    """영속 호출 트리에서 클래스 다이어그램용 의존선만 결정론적으로 만든다."""
-
+def project_call_dependencies(
+    model: BCEModel | Mapping[str, Any],
+) -> list[CallDependency]:
+    """영속 호출 트리에서 클래스 다이어그램용 의존선을 결정론적으로 만든다."""
+    payload = model.model_dump(by_alias=True) if isinstance(model, BCEModel) else dict(model)
     owners = {
         operation_id: operation["className"]
-        for operation_id, operation in operation_catalog(model).items()
+        for operation_id, operation in operation_catalog(payload).items()
     }
-    result: dict[tuple[str, str], dict[str, str]] = {}
-    for collaboration in model.get("Collaborations") or []:
+    result: dict[tuple[str, str], CallDependency] = {}
+    for collaboration in payload.get("Collaborations") or []:
         if not isinstance(collaboration, dict):
             continue
         calls = {
@@ -30,12 +35,5 @@ def project_call_dependencies(model: dict[str, Any]) -> list[dict[str, Any]]:
             source = owners.get(text(parent.get("receiverOperationId")), "")
             target = owners.get(text(call.get("receiverOperationId")), "")
             if source and target and source != target:
-                result[(source, target)] = {
-                    "source": source,
-                    "target": target,
-                    "type": "Dependency",
-                }
+                result[(source, target)] = CallDependency(source=source, target=target)
     return [result[key] for key in sorted(result)]
-
-
-

@@ -7,6 +7,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.validation import Finding, run_checks
 from app.design.schemas.class_model import BCEModel
+from app.design.services.class_diagram.models import AcceptedInventory
 from app.design.services.class_diagram.proposals import InventoryProposal
 from app.design.services.class_diagram.scenario import ScenarioIndex, id_key, text
 from app.design.services.class_diagram.type_system import (
@@ -63,7 +64,7 @@ def finding_text(findings: tuple[Finding, ...]) -> list[str]:
     ]
 
 
-def normalize_inventory(proposal: InventoryProposal) -> dict[str, Any]:
+def _normalize_inventory(proposal: InventoryProposal) -> dict[str, Any]:
     """제안 스키마를 영속 BCE 인벤토리 모양으로 정규화한다."""
 
     classes: list[dict[str, Any]] = []
@@ -150,7 +151,7 @@ def inventory_payload(index: ScenarioIndex) -> dict[str, Any]:
     }
 
 
-def inventory_proposal(index: ScenarioIndex) -> dict[str, Any]:
+def inventory_proposal(index: ScenarioIndex) -> AcceptedInventory:
     """인벤토리를 한 번 생성하고 finding이 있으면 한 번만 전체 수리한다."""
 
     messages = [
@@ -162,8 +163,8 @@ def inventory_proposal(index: ScenarioIndex) -> dict[str, Any]:
         max_completion_tokens=settings.design_class_structure_max_completion_tokens,
         operation="InteractionInventory",
     )
-    candidate = normalize_inventory(InventoryProposal.model_validate(parsed))
-    report = run_checks(INVENTORY_CHECKS, candidate, index, parallel=True)
+    candidate = _normalize_inventory(InventoryProposal.model_validate(parsed))
+    report = run_checks(INVENTORY_CHECKS, candidate, index)
     if report.errors:
         raise RuntimeError("; ".join(report.errors))
     if report.findings:
@@ -176,26 +177,33 @@ def inventory_proposal(index: ScenarioIndex) -> dict[str, Any]:
             max_completion_tokens=settings.design_class_structure_max_completion_tokens,
             operation="InteractionInventoryRepair",
         )
-        candidate = normalize_inventory(InventoryProposal.model_validate(parsed))
-        report = run_checks(INVENTORY_CHECKS, candidate, index, parallel=True)
+        candidate = _normalize_inventory(InventoryProposal.model_validate(parsed))
+        report = run_checks(INVENTORY_CHECKS, candidate, index)
     if report.errors or report.findings:
         raise ValueError("class inventory remains invalid: " + "; ".join(
             [*report.errors, *finding_text(report.findings)]
         ))
-    return candidate
+    return AcceptedInventory.from_payload(candidate)
 
 
-def inventory_model(inventory: dict[str, Any]) -> dict[str, Any]:
+def normalize_inventory(proposal: InventoryProposal) -> AcceptedInventory:
+    """제안 계약을 단계 경계의 불변 인벤토리로 정규화한다."""
+
+    return AcceptedInventory.from_payload(_normalize_inventory(proposal))
+
+
+def inventory_model(inventory: AcceptedInventory) -> BCEModel:
     """인벤토리를 연산·협업이 비어 있는 유효 BCE 모델로 투영한다."""
 
+    payload = inventory.as_payload()
     return BCEModel.model_validate({
         "Classes": [{**{key: value for key, value in item.items() if key not in {"useCaseIds", "values"}},
                      "use_case_ids": [], "operations": []}
-                    for item in inventory.get("Classes") or []],
+                    for item in payload["Classes"]],
         "DataTypes": [{key: value for key, value in item.items() if key not in {"useCaseIds", "identifier"}}
-                      for item in inventory.get("DataTypes") or [] if isinstance(item, dict)],
-        "Relationships": inventory.get("Relationships") or [], "Collaborations": [],
-    }).model_dump(by_alias=True)
+                      for item in payload["DataTypes"] if isinstance(item, dict)],
+        "Relationships": payload["Relationships"], "Collaborations": [],
+    })
 
 
 

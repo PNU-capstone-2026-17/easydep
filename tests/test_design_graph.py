@@ -19,6 +19,8 @@ from app.db.models import ORIGIN_FEEDBACK_REVISED, ORIGIN_GENERATED
 from app.design.graphs import design_graph as dg
 from app.design.graphs.subgraphs import DESIGN_STAGES, DESIGN_SUBGRAPHS
 from app.design.knowledge import rules
+from app.design.schemas.class_model import BCEModel
+from app.design.services.sequence_diagram.projection import SequenceCollection
 
 #: 스테이지별 (추출 결과 모델, 수정 결과 모델). 다섯 산출물이 모두 구조화 모델을
 #: 내놓으므로 스텁도 모델만 돌려주면 되고, **렌더러는 진짜가 돈다** — 그래서 이 테스트는
@@ -178,9 +180,24 @@ def stub_llm(monkeypatch):
         return call
 
     for name, stage, mode, model in (
-        ("generate_class_model", "class_diagram", "gen", _BCE),
-        ("revise_class_model", "class_diagram", "fb", _BCE_REVISED),
-        ("project_sequence_model", "sequence_diagram", "gen", _SEQUENCE),
+        (
+            "generate_class_model",
+            "class_diagram",
+            "gen",
+            BCEModel.model_validate(_BCE),
+        ),
+        (
+            "revise_class_model",
+            "class_diagram",
+            "fb",
+            BCEModel.model_validate(_BCE_REVISED),
+        ),
+        (
+            "project_sequence_model",
+            "sequence_diagram",
+            "gen",
+            SequenceCollection.model_validate(_SEQUENCE),
+        ),
         ("extract_api_spec_model", "api_spec", "gen", _API),
         ("revise_api_spec_model", "api_spec", "fb", _API),
         ("revise_erd_classes", "erd", "fb", _BCE),
@@ -534,7 +551,9 @@ def test_failed_stage_is_retryable_without_restarting_upstream(graph, monkeypatc
     }
 
     monkeypatch.setattr(
-        sg, "project_sequence_model", lambda *_args, **_kwargs: _SEQUENCE
+        sg,
+        "project_sequence_model",
+        lambda *_args, **_kwargs: SequenceCollection.model_validate(_SEQUENCE),
     )
     result = dg.retry_design("test-app")
 

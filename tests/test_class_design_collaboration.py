@@ -1,6 +1,7 @@
-"""Interaction-design collaborations and value provenance."""
+"""Class-design collaborations and value provenance."""
 from __future__ import annotations
 
+from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import collaboration, service
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
@@ -28,7 +29,8 @@ def test_vertical_service_persists_calls_and_derives_parameter_provenance(monkey
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(single_use_case())
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+    model = model.model_dump(by_alias=True)
 
     assert len(model["Collaborations"]) == 1
     calls = model["Collaborations"][0]["calls"]
@@ -79,7 +81,8 @@ def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(m
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(single_use_case())
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+    model = model.model_dump(by_alias=True)
 
     runtime_call = model["Collaborations"][0]["calls"][2]
     assert runtime_call["argumentBindings"] == [{
@@ -131,7 +134,8 @@ def test_structured_parameter_is_derived_from_upstream_fields(monkeypatch):
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(single_use_case())
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+    model = model.model_dump(by_alias=True)
     binding = model["Collaborations"][0]["calls"][2]["argumentBindings"][0]
 
     assert binding == {
@@ -211,10 +215,10 @@ def test_earlier_optional_result_has_explicit_unwrap_source():
 
     collaboration_model = collaboration.materialize(
         build_scenario_index(single_use_case()),
-        model,
+        BCEModel.model_validate(model),
         build_scenario_index(single_use_case()).groups[0],
         plan,
-    )
+    ).model_dump(by_alias=True)
 
     assert collaboration_model["calls"][2]["argumentBindings"] == [{
         "parameter": "student",

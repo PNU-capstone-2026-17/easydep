@@ -1,4 +1,4 @@
-"""Interaction-design service orchestration and owned-unit resume behavior."""
+"""Class-design service orchestration and owned-unit resume behavior."""
 from __future__ import annotations
 
 from app.design.services.class_diagram import service
@@ -7,6 +7,7 @@ from app.design.services.class_diagram.proposals import (
     InventoryProposal,
     OperationFragment,
 )
+from app.design.services.class_diagram.scenario import build_scenario_index
 from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
@@ -30,13 +31,14 @@ def test_resume_only_plans_missing_collaborations(monkeypatch):
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    current = service.generate_class_model(single_use_case())
-    current["Collaborations"] = []
+    index = build_scenario_index(single_use_case())
+    current = service.generate_class_model(index)
+    current.Collaborations = []
     calls.clear()
 
-    resumed = service.resume_class_model(single_use_case(), current)
+    resumed = service.resume_class_model(index, current)
 
-    assert len(resumed["Collaborations"]) == 1
+    assert len(resumed.Collaborations) == 1
     assert sum(issubclass(schema, CallPlanProposal) for schema in calls) == 1
     assert all(schema is not OperationFragment for schema in calls)
 
@@ -66,27 +68,28 @@ def test_operation_feedback_rebuilds_only_the_owned_contract(monkeypatch):
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    current = service.generate_class_model(single_use_case())
+    index = build_scenario_index(single_use_case())
+    current = service.generate_class_model(index)
     inventory_before = [
-        (item["className"], item["fields"], item["identifier"])
-        for item in current["Classes"]
+        (item.class_name, item.fields, item.identifier)
+        for item in current.Classes
     ]
 
     result = service.revise_class_model(
         current,
-        single_use_case(),
+        index,
         "Rename the actor-facing operation to send.",
         {"UC1"},
     )
 
     boundary = next(
-        item for item in result["Classes"] if item["className"] == "RequestBoundary"
+        item for item in result.Classes if item.class_name == "RequestBoundary"
     )
-    assert boundary["operations"][0]["name"] == "send"
+    assert boundary.operations[0].name == "send"
     assert [
-        (item["className"], item["fields"], item["identifier"])
-        for item in result["Classes"]
+        (item.class_name, item.fields, item.identifier)
+        for item in result.Classes
     ] == inventory_before
-    assert result["Collaborations"][0]["calls"][0]["receiverOperationId"].startswith(
+    assert result.Collaborations[0].calls[0].receiver_operation_id.startswith(
         "RequestBoundary::send("
     )

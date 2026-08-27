@@ -9,6 +9,7 @@ import pytest
 
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec.extractor import _control_parameter_types
+from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.erd.mapping import build_logical_model
 from app.design.services.sequence_diagram.projection import project_sequence_model
 
@@ -94,11 +95,20 @@ def _use_case_spec(*, include: bool = False) -> dict:
     return result
 
 
+def _project(specification: dict, class_model: dict, class_puml: str = "") -> dict:
+    """Exercise the typed projection boundary while keeping assertions compact."""
+    return project_sequence_model(
+        build_scenario_index(specification),
+        BCEModel.model_validate(class_model),
+        class_puml,
+    ).model_dump(mode="json")
+
+
 def test_sequence_projects_collaboration_without_mutating_class_contract():
     class_model = _collaboration_model()
     before = copy.deepcopy(class_model)
 
-    sequence = project_sequence_model(_use_case_spec(), class_model, "")
+    sequence = _project(_use_case_spec(), class_model)
 
     assert class_model == before
     assert [diagram["use_case_id"] for diagram in sequence["Diagrams"]] == ["UC1"]
@@ -138,7 +148,7 @@ def test_sequence_preserves_structured_parameter_projection_as_call_provenance()
         "sourceRef": "place-order::call:1#request.sku",
     }]
 
-    sequence = project_sequence_model(_use_case_spec(), class_model, "")
+    sequence = _project(_use_case_spec(), class_model)
     projected_call = next(
         message for message in sequence["Diagrams"][0]["Messages"]
         if message.get("call_id") == "place-order::call:2"
@@ -165,7 +175,7 @@ def test_sequence_projects_an_included_use_case_from_its_scoped_calls():
         "main_scenario": [{"step_number": 1, "sentence": "Buyer reviews the order."}],
     })
 
-    sequence = project_sequence_model(specification, class_model, "")
+    sequence = _project(specification, class_model)
 
     assert [diagram["use_case_id"] for diagram in sequence["Diagrams"]] == [
         "UC1", "UC_INCLUDED",
@@ -202,7 +212,7 @@ def test_sequence_combines_multiple_execution_groups_for_one_use_case():
     specification["use_case_specs"][0]["main_scenario"] = [
         {"step_number": 1}, {"step_number": 2}, {"step_number": 3},
     ]
-    sequence = project_sequence_model(specification, class_model, "")
+    sequence = _project(specification, class_model)
 
     assert len(sequence["Diagrams"]) == 1
     calls = [
@@ -238,7 +248,7 @@ def test_sequence_keeps_actor_and_same_named_entity_as_distinct_lifelines():
     })
     class_model = BCEModel.model_validate(class_model).model_dump(by_alias=True)
 
-    sequence = project_sequence_model(_use_case_spec(), class_model, "")
+    sequence = _project(_use_case_spec(), class_model)
 
     participants = {
         item["alias"]: (item["kind"], item["source_class"])
@@ -279,7 +289,7 @@ def test_sequence_projects_extension_only_call_and_return_as_opt_fragment():
         "handling_steps": [{"sub_step": "2a1", "sentence": "System flags it."}],
     }]
 
-    sequence = project_sequence_model(specification, class_model, "")
+    sequence = _project(specification, class_model)
 
     messages = sequence["Diagrams"][0]["Messages"]
     call = next(message for message in messages if message.get("call_id") == "place-order::call:3")
@@ -335,7 +345,7 @@ def test_sequence_projects_extending_use_case_calls_as_base_opt_fragment():
         }],
     }
 
-    sequence = project_sequence_model(specification, class_model, "")
+    sequence = _project(specification, class_model)
 
     base_call = next(
         message for message in sequence["Diagrams"][0]["Messages"]
@@ -365,7 +375,7 @@ def test_sequence_reports_stale_collaboration_model_instead_of_reconstructing_ca
         class_model["Collaborations"] = []
 
     with pytest.raises(ValueError, match="no accepted Collaborations"):
-        project_sequence_model(_use_case_spec(), class_model, "")
+        _project(_use_case_spec(), class_model)
 
 
 def test_erd_maps_entities_but_never_data_types_to_tables():

@@ -1,4 +1,4 @@
-﻿"""Deterministically project accepted BCE collaborations to sequence models."""
+"""수락된 BCE 협업을 결정론적 시퀀스 모델로 투영한다."""
 from __future__ import annotations
 
 import hashlib
@@ -9,16 +9,16 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.design.services.class_diagram.checks import (
+from app.design.schemas.class_model import BCEModel
+from app.design.services.class_diagram.scenario import (
+    ScenarioIndex,
+    id_key,
+    text,
+)
+from app.design.services.class_diagram.validation.model import (
     derived_value_parts,
     derived_value_source,
     operation_catalog,
-)
-from app.design.services.class_diagram.scenario import (
-    ScenarioIndex,
-    build_scenario_index,
-    id_key,
-    text,
 )
 from app.design.services.sequence_diagram.methods import (
     is_complete_method_call,
@@ -67,7 +67,7 @@ class SequenceMessage(SequenceRecord):
     arguments: list[SequenceArgument] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def call_or_return_contract(self) -> "SequenceMessage":
+    def call_or_return_contract(self) -> SequenceMessage:
         if self.type in {"sync", "self"}:
             if not is_complete_method_call(self.label):
                 raise ValueError("call label must be a complete method signature")
@@ -90,7 +90,7 @@ class UseCaseSequence(SequenceRecord):
     NarrativeSteps: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def messages_reference_owner(self) -> "UseCaseSequence":
+    def messages_reference_owner(self) -> UseCaseSequence:
         for message in self.Messages:
             if message.use_case_ids != [self.use_case_id]:
                 raise ValueError("every message must reference its diagram use case")
@@ -441,16 +441,32 @@ def _embed_extending_use_cases(
 
 
 def project_sequence_model(
-    scenario: dict[str, Any],
-    class_model: dict[str, Any],
-    class_diagram_puml: str,
-) -> dict[str, Any]:
-    """Project sequence diagrams without selecting or repairing operations."""
+    index: ScenarioIndex,
+    class_model: BCEModel,
+    class_puml: str = "",
+) -> SequenceCollection:
+    """수락된 협업을 연산 선택이나 repair 없이 시퀀스로 투영한다.
 
-    index = build_scenario_index(scenario)
-    operations = operation_catalog(class_model)
+    Args:
+        index: 유스케이스 순서와 include/extend 관계를 제공하는 인덱스다.
+        class_model: 연산과 협업이 모두 수락된 BCE 모델이다.
+        class_puml: 투영 버전을 고정할 클래스 PlantUML 문자열이다.
+
+    Returns:
+        유스케이스 입력 순서대로 정렬된 시퀀스 컬렉션이다.
+
+    Raises:
+        ValueError: 협업이 없거나 유스케이스 하나를 결정론적으로 투영할 수 없는 경우다.
+
+    Notes:
+        이 함수는 LLM을 호출하지 않는다. 동일한 세 입력에는 메시지 순서와
+        ``class_diagram_hash``까지 동일한 결과를 반환한다.
+    """
+
+    model_payload = class_model.model_dump(by_alias=True)
+    operations = operation_catalog(model_payload)
     collaborations = [
-        item for item in class_model.get("Collaborations") or [] if isinstance(item, dict)
+        item for item in model_payload.get("Collaborations") or [] if isinstance(item, dict)
     ]
     if not collaborations:
         raise ValueError("class model has no accepted Collaborations")
@@ -501,17 +517,17 @@ def project_sequence_model(
     _embed_extending_use_cases(index, diagrams)
     ordered = [diagrams[use_case.id] for use_case in index.use_cases]
     return SequenceCollection(
-        Diagrams=ordered,
-        class_diagram_hash=hashlib.sha256(class_diagram_puml.encode("utf-8")).hexdigest(),
+        Diagrams=[UseCaseSequence.model_validate(diagram) for diagram in ordered],
+        class_diagram_hash=hashlib.sha256(class_puml.encode("utf-8")).hexdigest(),
         MethodProposals=[],
-    ).model_dump()
+    )
 
 
-def sequence_findings(model: dict[str, Any]) -> list[str]:
-    """Return deterministic contract defects without attempting a repair."""
+def sequence_findings(model: SequenceCollection | dict[str, Any]) -> list[str]:
+    """repair를 시작하지 않고 시퀀스의 호출·반환 계약 위반을 반환한다."""
 
     try:
-        parsed = SequenceCollection.model_validate(model)
+        parsed = model if isinstance(model, SequenceCollection) else SequenceCollection.model_validate(model)
     except Exception as error:
         return [str(error)]
     findings: list[str] = []
@@ -533,6 +549,7 @@ def sequence_findings(model: dict[str, Any]) -> list[str]:
 
 
 def normalize_sequence_model(model: dict[str, Any]) -> dict[str, Any]:
+    """이전 시퀀스 JSON도 현재 저장 alias로 검증해 직렬화한다."""
     """Validate the current persisted contract without legacy reconstruction."""
 
     return SequenceCollection.model_validate(model).model_dump()
