@@ -13,6 +13,9 @@
 
 코드와 함께 갱신되는 실행 상세는 문서 수에 포함하지 않는다.
 
+- [클래스·시퀀스 설계 생성 로직](class-design-pipeline.md): 현재 생성 계약과 단계별 책임
+- [상호작용 설계 개선과 LLM 호출 최적화](interaction-design-improvements.md): 남은 개선,
+  호출 운영 원칙과 측정 항목
 - `app/core/orchestration/README.md`: 오케스트레이터 명령과 provider 계약
 - `evaluation/README.md`: 평가 실행 명령
 - `evaluation/experiment-contract.md`: 실패·검열 분류
