@@ -123,13 +123,19 @@ same schema. Rules:
 - Preserve each message's outer-to-inner `fragments` path. Use the same fragment
   id for alt branches, `branch="main"` for the first branch and `branch="else"`
   for the alternative so the renderer produces one alt/else block.
-- Every alt must contain both main and else branches. An extension represented
-  only by its conditional handling messages is an opt, not a one-sided alt. Use
-  alt only when normal/main and mutually exclusive else messages share one id;
-  opt and loop never have an else branch.
+- Every alt must contain at least two mutually exclusive branches. The first
+  branch is `main`; additional branches use stable names such as `else`,
+  `conflict`, or `validation_error`. An extension represented only by its
+  conditional handling messages is an opt, not a one-sided alt. Opt and loop
+  never have an else branch.
 - Preserve main-scenario step order and keep each extension immediately after
-  its declared branch_step. Do not turn an unresolved/TODO/TBD/question step into
-  invented behavior.
+  the exact `branch_step` declared in the use-case specification. The numeric
+  prefix in an extension label (for example `3a`) is only a label and MUST NOT
+  override an explicit `branch_step` (which may be a different step). For a
+  `sequence.flow-order` repair, move the complete extension interaction block
+  after the last message of that main step and before the first later main-step
+  message; never append it to the end of the diagram. Do not turn an
+  unresolved/TODO/TBD/question step into invented behavior.
 - Keep each return in the local interaction of the call named by `reply_to`.
   Do not move a return behind a later independent main-scenario call; complete
   the call and its conditional outcome before advancing the scenario.

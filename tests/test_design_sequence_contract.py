@@ -28,6 +28,7 @@ from app.design.services.sequence_diagram.extractor import (
     parse_sequence_structured,
     reassemble_sequence_diagrams,
     normalize_sequence_message_order,
+    _extension_anchor_map_from_context,
     _only_callable_class,
     _assemble_deterministic_diagrams,
     _actor_requires_system_input,
@@ -1645,6 +1646,48 @@ def test_use_case_summaries_without_specs_are_rejected_instead_of_collapsed():
         normalize_sequence_usecase_spec(
             {"use_cases": [{"id": "UC1"}, {"id": "UC2"}]}
         )
+
+
+def test_raw_extension_preserves_explicit_branch_step_over_label_prefix():
+    normalized = normalize_sequence_usecase_spec(
+        {
+            "UseCases": [
+                {
+                    "id": "UC2",
+                    "name": "Browse courses",
+                    "primary_actor": "Student",
+                    "MainSuccessScenario": [
+                        {"step": 1, "description": "Student enters criteria"},
+                        {"step": 2, "description": "System retrieves courses"},
+                    ],
+                    "Extensions": [
+                        {
+                            "label": "3a",
+                            "branch_step": 1,
+                            "condition": "3a invalid criteria",
+                            "actions": [
+                                {"description": "Student adjusts criteria"}
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert normalized["use_case_specs"][0]["extensions"][0]["branch_step"] == 1
+
+
+def test_sequence_order_uses_explicit_extension_anchor_not_label_prefix():
+    messages = [
+        _message("boundary", "control", "retrieve()", step_ids=["UC2:main:2"]),
+        _message("boundary", "control", "browse()", step_ids=["UC2:main:1"]),
+        _message("boundary", "control", "retry()", step_ids=["UC2:extension:3a:3a1"]),
+    ]
+
+    ordered = normalize_sequence_message_order(messages, {"3a": 1})
+
+    assert [message["label"] for message in ordered] == ["browse()", "retry()", "retrieve()"]
 
 
 def test_invalid_sequence_is_retained_but_not_rendered():

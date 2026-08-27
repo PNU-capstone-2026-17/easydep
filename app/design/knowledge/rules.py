@@ -700,9 +700,12 @@ RULES: tuple[Rule, ...] = (
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "Every main-scenario and extension handling step from the specification "
-            "must be referenced by at least one sequence call through step_ids. Legacy "
-            "specifications without step structure fall back to use_case_ids coverage."
+            "Every step that represents an observable input or declared receiver "
+            "operation must be referenced by a sequence call through step_ids. "
+            "Conditions, outcomes, and actor decisions without a receiver method "
+            "may be represented in NarrativeSteps; unresolved interactions remain "
+            "explicit in UnresolvedSteps. Legacy specifications without step structure "
+            "fall back to use_case_ids coverage."
         ),
         citation="app/design/rtm.py (traceability references)",
         evidence="pipeline-invariant",
@@ -756,7 +759,8 @@ RULES: tuple[Rule, ...] = (
         statement=(
             "Every fragment path entry must have a stable id, alt/loop/opt type and "
             "condition. Else branches are valid only for alt and follow its main branch; "
-            "an alt has both main and else branches, while a single condition uses opt."
+            "an alt has at least two mutually exclusive branches, while a single "
+            "condition uses opt."
         ),
         citation="app/design/services/sequence_diagram/plantuml.py (Fragment rendering)",
         evidence="pipeline-invariant",

@@ -1769,8 +1769,8 @@ def api_control_sequence(model: dict, state: dict) -> list[Finding]:
     validation followed by session creation).  Requiring the exact aggregate
     method label in the diagram confuses these two abstraction levels and
     rejects otherwise consistent designs.  An exact call remains preferred;
-    when it is absent, a call to the same Control in the endpoint's use case is
-    sufficient evidence of the executable path.
+    when it is absent, a semantically related declared method on the same Control
+    in the endpoint's use case is sufficient evidence of a decomposed path.
     """
     controls = _control_method_contracts(state)
     diagrams = _sequence_diagrams_for_api(state)
@@ -1791,7 +1791,7 @@ def api_control_sequence(model: dict, state: dict) -> list[Finding]:
             str(item).strip() for item in endpoint.get("use_case_ids", []) or [] if str(item).strip()
         }
         matches = False
-        same_control_path = False
+        decomposed_path = False
         for diagram in diagrams:
             participant_classes = {
                 _participant_id(participant): str(
@@ -1813,10 +1813,34 @@ def api_control_sequence(model: dict, state: dict) -> list[Finding]:
                 if method_call_signature(str(message.get("label") or "")) == expected_signature:
                     matches = True
                     break
-                same_control_path = True
+                candidate_signature = method_call_signature(str(message.get("label") or ""))
+                candidate_match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\(.*\)$", candidate_signature)
+                expected_match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\(.*\)$", expected_signature)
+                if not candidate_match or not expected_match:
+                    continue
+                candidate_contract = controls.get(control, {}).get(candidate_match.group(1))
+                if candidate_contract is None:
+                    continue
+                # A decomposed internal call must still be semantically tied to
+                # the bound operation. Merely mentioning the same Control is not
+                # sufficient: enroll() must not be satisfied by cancel().
+                expected_tokens = set(re.findall(
+                    r"[a-z]+",
+                    re.sub(r"([a-z])([A-Z])", r"\1 \2", expected_match.group(1)).lower(),
+                ))
+                candidate_tokens = set(re.findall(
+                    r"[a-z]+",
+                    re.sub(r"([a-z])([A-Z])", r"\1 \2", candidate_match.group(1)).lower(),
+                ))
+                return_compatible = _contract_types_compatible(
+                    str(candidate_contract.get("returnType") or ""),
+                    str(contract.get("returnType") or ""),
+                )
+                if expected_tokens & candidate_tokens and return_compatible:
+                    decomposed_path = True
             if matches:
                 break
-        if not matches and not same_control_path:
+        if not matches and not decomposed_path:
             found.append(Finding(
                 "api.control-call-in-sequence",
                 f"{control}의 endpoint 유스케이스 경로에 Control 호출이 없음",
@@ -2943,12 +2967,15 @@ def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Fi
         if (
             fragment_id in explicit_fragment_ids
             and group == "alt"
-            and branches.get(fragment_id) != {"main", "else"}
+            and (
+                len(branches.get(fragment_id, set())) < 2
+                or "main" not in branches.get(fragment_id, set())
+            )
         ):
             found.append(
                 Finding(
                     rule_id,
-                    f"alt fragment '{fragment_id}'는 main과 else branch를 모두 가져야 함; 단일 조건은 opt를 사용해야 함",
+                    f"alt fragment '{fragment_id}'는 main을 포함한 서로 다른 branch를 두 개 이상 가져야 함; 단일 조건은 opt를 사용해야 함",
                     fragment_id,
                 )
             )

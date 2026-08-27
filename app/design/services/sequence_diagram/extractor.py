@@ -302,8 +302,13 @@ that the inputs do not support.
   recorded in `NarrativeSteps` when the surrounding grounded interaction already
   explains them. Do not invent a call merely to give such a sentence a method.
 - Use `UnresolvedSteps` only when a step truly requires a concrete interaction
-  but no declared receiver method can represent it. Every flow step must appear
-  either in a message's `step_ids`, `NarrativeSteps`, or `UnresolvedSteps`.
+  but no declared receiver method can represent it. Only a step that describes
+  an observable input, command, query, or system interaction should become a
+  message method. Conditions, outcomes, display text, and actor decisions that
+  do not have a declared receiver operation belong in `NarrativeSteps` (or
+  `UnresolvedSteps` when clarification is required). Never invent a method just
+  to give every prose step a call. Every flow step must still appear either in
+  a message's `step_ids`, `NarrativeSteps`, or `UnresolvedSteps`.
 
 ## Messages and receiver ownership
 - `source` and `target` must both be participant aliases you listed.
@@ -368,7 +373,9 @@ that the inputs do not support.
   same id and type.
 - The first branch uses `branch="main"`; an alternative branch of the same alt
   uses `branch="else"`. This is rendered as PlantUML `else`, not a second alt.
-- An alt fragment MUST contain both main and else branches. Use opt, not a
+- An alt fragment MUST contain at least two mutually exclusive branches. The
+  first branch should use `branch="main"`; additional branches may use stable
+  names such as `else`, `conflict`, or `validation_error`. Use opt, not a
   one-sided alt, when there is only one conditional branch.
 - An extension shown by itself is a single conditional branch and MUST use opt.
   Use alt only when both the normal/main branch and the mutually exclusive else
@@ -505,11 +512,41 @@ def extract_sequence_model(
         },
     ]
     model = parse_sequence_structured(messages, SequenceModel)
-    return normalize_sequence_contracts(model, class_diagram_puml)
+    extension_anchors = _extension_anchor_map_from_context(scenario_text)
+    return normalize_sequence_contracts(model, class_diagram_puml, extension_anchors)
+
+
+def _extension_anchor_map_from_context(scenario_text: str) -> dict[str, int]:
+    """Read explicit extension anchors from the structured extraction context.
+
+    Extension labels are not anchors: ``3a`` can branch from main step 1.
+    Keeping this metadata outside the LLM response lets mechanical ordering
+    honor the requirements contract without inventing or rewriting messages.
+    """
+    try:
+        payload = json.loads(scenario_text)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    specification = payload.get("use_case_specification") if isinstance(payload, dict) else None
+    if not isinstance(specification, dict):
+        return {}
+    anchors: dict[str, int] = {}
+    for extension in specification.get("extensions") or []:
+        if not isinstance(extension, dict):
+            continue
+        label = str(extension.get("label") or "").strip()
+        branch_step = extension.get("branch_step")
+        if isinstance(branch_step, str) and branch_step.isdigit():
+            branch_step = int(branch_step)
+        if label and isinstance(branch_step, int):
+            anchors[label] = branch_step
+    return anchors
 
 
 def normalize_sequence_contracts(
-    model: dict[str, Any], class_diagram_puml: str
+    model: dict[str, Any],
+    class_diagram_puml: str,
+    extension_anchors: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Repair mechanical LLM output defects without changing its chosen behavior.
 
@@ -806,13 +843,16 @@ def normalize_sequence_contracts(
             ):
                 normalized_messages.append(_return_message(call, expected_return))
         ordered_messages = normalize_sequence_entry_order(
-            normalize_sequence_message_order(normalized_messages), participant_kinds
+            normalize_sequence_message_order(normalized_messages, extension_anchors), participant_kinds
         )
         diagram["Messages"] = normalize_sequence_return_order(ordered_messages)
     return normalize_sequence_participants(model, class_diagram_puml)
 
 
-def normalize_sequence_message_order(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalize_sequence_message_order(
+    messages: list[dict[str, Any]],
+    extension_anchors: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
     """Place traced extensions directly after their declared main-flow anchor.
 
     The LLM decides which grounded messages express a scenario.  Their
@@ -835,10 +875,14 @@ def normalize_sequence_message_order(messages: list[dict[str, Any]]) -> list[dic
             extension = re.fullmatch(r"[^:]+:extension:([^:]+):[^:]+", value)
             if extension:
                 label = extension.group(1)
+                explicit_anchor = (extension_anchors or {}).get(label)
                 match = re.match(r"(\d+)", label)
                 # Global alternatives have no numeric anchor and remain after
                 # the explicitly ordered scenario steps.
-                return (int(match.group(1)), 1, label) if match else (10**9, 1, label)
+                anchor = explicit_anchor if isinstance(explicit_anchor, int) else (
+                    int(match.group(1)) if match else 10**9
+                )
+                return anchor, 1, label
         return None
 
     groups: list[tuple[int, int, str] | None] = []
@@ -1144,7 +1188,26 @@ def _normalize_raw_use_cases(items: list[dict[str, Any]]) -> dict[str, Any]:
                 if label_match
                 else raw_condition.rstrip(":")
             )
-            branch_match = re.match(r"^(\d+)", label)
+            # The canonical use-case schema may explicitly place an extension
+            # at a different main step than the label's numeric prefix (for
+            # example label ``3a`` branching from main step 1).  Preserve that
+            # contract; only infer from the label for legacy/raw inputs that
+            # do not carry ``branch_step``.
+            raw_branch_step = raw_extension.get(
+                "branch_step",
+                raw_extension.get("BranchStep", raw_extension.get("branchStep")),
+            )
+            if isinstance(raw_branch_step, str) and raw_branch_step.isdigit():
+                raw_branch_step = int(raw_branch_step)
+            branch_step = (
+                raw_branch_step
+                if isinstance(raw_branch_step, int)
+                else (
+                    int(branch_match.group(1))
+                    if (branch_match := re.match(r"^(\d+)", label))
+                    else None
+                )
+            )
             handling_steps: list[dict[str, str]] = []
             for action_index, action in enumerate(raw_extension.get("actions") or [], 1):
                 sub_step, sentence = _raw_flow_step(action, f"{label}{action_index}")
@@ -1152,7 +1215,7 @@ def _normalize_raw_use_cases(items: list[dict[str, Any]]) -> dict[str, Any]:
             extensions.append(
                 {
                     "label": label,
-                    "branch_step": int(branch_match.group(1)) if branch_match else None,
+                    "branch_step": branch_step,
                     "condition": condition,
                     "handling_steps": handling_steps,
                 }

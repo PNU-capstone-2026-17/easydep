@@ -1746,6 +1746,45 @@ def test_api_control_sequence_accepts_decomposed_calls_on_same_control():
     assert detectors.sequence_flow_order(model, state) == []
 
 
+def test_api_control_sequence_rejects_unrelated_method_on_same_control():
+    state, model = _cart_contract_state(
+        {
+            "control": "ShoppingCartController",
+            "method": "getCart",
+            "arguments": [{"name": "cartId", "source": "$path.cartId"}],
+            "outcomes": [{"status": 200, "outcome": "found"}],
+        }
+    )
+    state["extracted_bce_classes"]["Classes"][1]["methods"].append(
+        "cancelCart(cartId: String): void"
+    )
+    state["sequence_diagram_model"]["Messages"][0]["label"] = (
+        "cancelCart(cartId: String)"
+    )
+
+    findings = detectors.api_spec_findings(model, state)
+
+    assert any(
+        finding.rule_id == "api.control-call-in-sequence"
+        for finding in findings
+    )
+
+
+def test_fragment_condition_accepts_multi_branch_alt():
+    fragment_main = {"id": "result", "type": "alt", "branch": "main", "condition": "success"}
+    fragment_conflict = {"id": "result", "type": "alt", "branch": "conflict", "condition": "conflict"}
+    fragment_else = {"id": "result", "type": "alt", "branch": "else", "condition": "other error"}
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "label": "ok()", "fragments": [fragment_main]},
+            {"source": "A", "target": "B", "label": "conflict()", "fragments": [fragment_conflict]},
+            {"source": "A", "target": "B", "label": "error()", "fragments": [fragment_else]},
+        ]
+    }
+
+    assert detectors.sequence_fragment_condition_consistency(model, STATE) == []
+
+
 def test_fragment_reports_one_root_finding_for_one_sided_alt():
     fragment = {"id": "failure", "type": "alt", "branch": "else", "condition": "failed"}
     model = {
