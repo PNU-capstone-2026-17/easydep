@@ -147,7 +147,7 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
         # Call dependencies have one owner: the persisted Collaboration tree.
         # Project them alongside, rather than instead of, the inventory's
         # structural Entity relationships.
-        from app.design.services.interaction_design.pipeline import project_call_dependencies
+        from app.design.services.interaction_design.projections import project_call_dependencies
 
         relationships = [
             *relationships,

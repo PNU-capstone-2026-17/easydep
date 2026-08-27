@@ -28,6 +28,8 @@ from langgraph.graph import END, START, StateGraph
 
 from app.design.knowledge.detectors import (
     Finding as ArtifactFinding,
+)
+from app.design.knowledge.detectors import (
     api_spec_findings,
     erd_findings,
 )
@@ -56,16 +58,16 @@ from app.design.services.deployment_diagram.provider_plantuml import (
 from app.design.services.deployment_diagram.reviser import revise_deployment_model
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
-from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.interaction_design import (
     generate_class_model,
     project_sequence_model,
     resume_class_model,
     revise_class_model,
 )
-from app.design.services.interaction_design.checks import final_model_findings
 from app.design.services.interaction_design.scenario import build_scenario_index
 from app.design.services.interaction_design.sequence import sequence_findings
+from app.design.services.interaction_design.validation.model import final_model_findings
+from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 
 #: 설계 파이프라인의 순서. 상위 그래프의 엣지도, 저장 순회도 여기서만 나온다.
 #: 시퀀스·API는 클래스 다이어그램을, 배포는 그 앞의 모두를 재료로 쓴다. ERD는 클래스

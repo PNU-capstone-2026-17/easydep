@@ -41,22 +41,6 @@ class StageUnderTest:
     clean: dict[str, Any]
     seeded: tuple
     detector_registry: dict[str, Callable]
-    #: 규칙을 실어 나르는 프롬프트들. ERD는 추출 프롬프트가 없다 — 모델을 클래스
-    #: 다이어그램의 BCE에서 시드하므로 LLM에게 만들라고 시키는 자리가 없다.
-    prompts: tuple[str, ...]
-
-
-def _prompts() -> dict[str, tuple[str, ...]]:
-    from app.design.services.erd import reviser as erd_reviser
-    from app.design.services.interaction_design import pipeline
-
-    return {
-        rules.CLASS_DIAGRAM: (
-            pipeline._INVENTORY_PROMPT,
-            pipeline._OPERATION_PROMPT,
-        ),
-        rules.ERD: (erd_reviser.ERD_BCE_REVISION_SYSTEM_PROMPT,),
-    }
 
 
 STAGES = (
@@ -66,7 +50,6 @@ STAGES = (
         CLEAN,
         SEEDED,
         detectors.CLASS_DIAGRAM_DETECTORS,
-        _prompts()[rules.CLASS_DIAGRAM],
     ),
     StageUnderTest(
         rules.ERD,
@@ -74,7 +57,6 @@ STAGES = (
         ERD_CLEAN,
         ERD_SEEDED,
         detectors.ERD_DETECTORS,
-        _prompts()[rules.ERD],
     ),
 )
 

@@ -56,13 +56,13 @@ from app.design.services.class_diagram.type_system import (
     structured_field_types,
     types_compatible,
 )
-from app.design.services.interaction_design.checks import final_model_findings
+from app.design.services.common import fields, multiplicity
+from app.design.services.erd import mapping
 from app.design.services.interaction_design.scenario import build_scenario_index
 from app.design.services.interaction_design.sequence import (
     sequence_findings as interaction_sequence_findings,
 )
-from app.design.services.common import fields, multiplicity
-from app.design.services.erd import mapping
+from app.design.services.interaction_design.validation.model import final_model_findings
 from app.design.services.sequence_diagram.methods import (
     method_call_signature,
     method_name,
