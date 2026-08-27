@@ -101,6 +101,8 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -SkipFrontendBuild
+```
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -Stop
 ```
 
