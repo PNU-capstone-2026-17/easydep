@@ -32,7 +32,9 @@ from app.design.services.sequence_diagram.extractor import (
     _only_callable_class,
     _assemble_deterministic_diagrams,
     _actor_requires_system_input,
+    _pick_method,
     _recover_explicit_actor_retries,
+    _remove_extension_anchor_replays,
     _drop_unknown_flow_messages,
     _supplementary_actor_selection_routes,
 )
@@ -75,6 +77,43 @@ def _message(source: str, target: str, label: str, **overrides) -> dict:
     }
     message.update(overrides)
     return message
+
+
+def test_pick_method_prefers_unique_control_over_data_collaborators():
+    control = {"kind": "control", "name": "CourseDetailsController"}
+    entity = {"kind": "entity", "name": "Course"}
+
+    selected_class, selected_method = _pick_method(
+        [(control, "getCourseDetails(courseId:String)"), (entity, "findById(id:String)")]
+    )
+
+    assert selected_class is control
+    assert selected_method == "getCourseDetails(courseId:String)"
+
+
+def test_remove_extension_anchor_replay_keeps_explicit_loop_retry():
+    specification = {
+        "use_case_id": "UC1",
+        "extensions": [{"label": "2a", "branch_step": 2}],
+    }
+    extracted = {
+        "use_case_id": "UC1",
+        "Messages": [
+            _message("b", "c", "register(studentId:String)", step_ids=["UC1:main:2"]),
+            _message("b", "c", "register(studentId:String)", step_ids=["UC1:extension:2a:1"]),
+            _message(
+                "b", "c", "register(studentId:String)",
+                step_ids=["UC1:extension:2a:2"],
+                fragments=[{"id": "retry", "type": "loop", "branch": "main", "condition": "retry"}],
+            ),
+        ],
+    }
+
+    _remove_extension_anchor_replays(extracted, specification)
+
+    assert [m["step_ids"][0] for m in extracted["Messages"]] == [
+        "UC1:main:2", "UC1:extension:2a:2"
+    ]
 
 
 def test_normalize_sequence_message_order_places_extension_after_anchor():

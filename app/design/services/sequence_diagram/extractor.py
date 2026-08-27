@@ -1544,6 +1544,22 @@ def _pick_method(
         raise ValueError("sequence generation requires at least one callable BCE method")
     if len(candidates) == 1:
         return candidates[0]
+    # A system step may expose both a Control operation and persistence
+    # collaborators.  The Control is the only valid receiver for a use-case
+    # interaction; leaving the choice to the semantic selector can produce an
+    # unresolved step when the LLM times out.  Prefer the unique Control method
+    # when every other candidate belongs to data participants.  This is a
+    # structural BCE rule, not lexical guessing.
+    control_candidates = [
+        item for item in candidates if str(item[0].get("kind") or "").lower() == "control"
+    ]
+    non_control_kinds = {
+        str(item[0].get("kind") or "").lower()
+        for item in candidates
+        if str(item[0].get("kind") or "").lower() != "control"
+    }
+    if len(control_candidates) == 1 and non_control_kinds <= {"entity", "database"}:
+        return control_candidates[0]
     return None, ""
 
 
@@ -2554,6 +2570,7 @@ def _generate_llm_use_case_diagram(
             "Semantic extraction returned no grounded interaction messages.",
         )
     _recover_explicit_actor_retries(extracted, specification, summary)
+    _remove_extension_anchor_replays(extracted, specification)
     covered_step_ids = {
         str(step_id)
         for message in extracted.get("Messages") or []
@@ -2613,6 +2630,69 @@ def _generate_llm_use_case_diagram(
         "UnresolvedSteps": unresolved,
         "NarrativeSteps": narrative,
     }
+
+
+def _remove_extension_anchor_replays(
+    extracted: dict[str, Any], specification: dict[str, Any]
+) -> None:
+    """Remove extension calls that repeat their main-flow anchor operation.
+
+    An extension describes the outcome of an already executed main step.  A
+    repeated command therefore looks like a second request rather than an
+    error branch.  Explicit ``loop`` fragments are retained because they are
+    the only valid representation of a genuine retry.
+    """
+    use_case_id = str(specification.get("use_case_id") or extracted.get("use_case_id") or "").strip()
+    if not use_case_id:
+        return
+    anchors: dict[str, int] = {}
+    for extension in specification.get("extensions") or []:
+        if not isinstance(extension, dict):
+            continue
+        label = str(extension.get("label") or "").strip()
+        branch_step = extension.get("branch_step")
+        if isinstance(branch_step, str) and branch_step.isdigit():
+            branch_step = int(branch_step)
+        if branch_step is None:
+            match = re.match(r"(\d+)", label)
+            branch_step = int(match.group(1)) if match else None
+        if label and isinstance(branch_step, int):
+            anchors[label] = branch_step
+    if not anchors:
+        return
+    messages = [item for item in extracted.get("Messages") or [] if isinstance(item, dict)]
+    call_types = {"sync", "async", "self"}
+    removed_call_ids: set[str] = set()
+    remove_indexes: set[int] = set()
+    for label, branch_step in anchors.items():
+        anchor_id = f"{use_case_id}:main:{branch_step}"
+        anchor_ops = {
+            (str(message.get("source") or "").strip(), str(message.get("target") or "").strip(), str(message.get("label") or "").strip())
+            for message in messages
+            if str(message.get("type") or "sync").lower() in call_types
+            and anchor_id in {str(step_id) for step_id in message.get("step_ids") or []}
+        }
+        prefix = f"{use_case_id}:extension:{label}:"
+        for index, message in enumerate(messages):
+            if str(message.get("type") or "sync").lower() not in call_types:
+                continue
+            if any(str(fragment.get("type") or "").lower() == "loop" for fragment in message.get("fragments") or []):
+                continue
+            if not any(str(step_id).startswith(prefix) for step_id in message.get("step_ids") or []):
+                continue
+            operation = (str(message.get("source") or "").strip(), str(message.get("target") or "").strip(), str(message.get("label") or "").strip())
+            if operation in anchor_ops:
+                remove_indexes.add(index)
+                call_id = str(message.get("call_id") or "").strip()
+                if call_id:
+                    removed_call_ids.add(call_id)
+    if not remove_indexes:
+        return
+    extracted["Messages"] = [
+        message for index, message in enumerate(messages)
+        if index not in remove_indexes
+        and str(message.get("reply_to") or "").strip() not in removed_call_ids
+    ]
 
 
 def _drop_unknown_flow_messages(
