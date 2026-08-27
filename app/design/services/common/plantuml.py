@@ -9,9 +9,12 @@ from __future__ import annotations
 import subprocess
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from app.design.observability import log_design_timing
 
 load_dotenv()
 
@@ -46,8 +49,14 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
     as ERROR / line number / message.
     """
     if not puml_text.strip():
+        log_design_timing(
+            "plantuml.syntax_check.skipped",
+            reason="empty_source",
+            source_chars=0,
+        )
         return ["PlantUML code is empty."]
 
+    started = time.perf_counter()
     local = shutil.which("puml")
     if local:
         try:
@@ -64,15 +73,38 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
                 )
                 rendered = list(Path(directory).glob("*.svg"))
                 if result.returncode == 0 and rendered:
+                    log_design_timing(
+                        "plantuml.syntax_check.completed",
+                        elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+                        exit_code=result.returncode,
+                        source_chars=len(puml_text),
+                        syntax_valid=True,
+                        renderer="local",
+                    )
                     return []
                 detail = "\n".join(
                     value.strip() for value in (result.stdout, result.stderr)
                     if value.strip()
                 )
-                return [detail or "Local PlantUML syntax check failed."]
+                errors = [detail or "Local PlantUML syntax check failed."]
+                log_design_timing(
+                    "plantuml.syntax_check.completed",
+                    elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+                    exit_code=result.returncode,
+                    source_chars=len(puml_text),
+                    syntax_valid=False,
+                    renderer="local",
+                )
+                return errors
         except subprocess.TimeoutExpired:
+            log_design_timing(
+                "plantuml.syntax_check.failed",
+                elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+                reason="timeout",
+                source_chars=len(puml_text),
+                renderer="local",
+            )
             return ["PlantUML syntax check timed out."]
-
     try:
         result = subprocess.run(
             plantuml_command("-syntax", "-pipe"),
@@ -83,8 +115,20 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
             check=False,
         )
     except FileNotFoundError:
+        log_design_timing(
+            "plantuml.syntax_check.failed",
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+            reason="docker_not_available",
+            source_chars=len(puml_text),
+        )
         return ["Docker is not installed or plantuml/plantuml cannot be executed."]
     except subprocess.TimeoutExpired:
+        log_design_timing(
+            "plantuml.syntax_check.failed",
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+            reason="timeout",
+            source_chars=len(puml_text),
+        )
         return ["PlantUML syntax check timed out."]
 
     stdout = result.stdout.decode("utf-8", errors="replace")
@@ -93,12 +137,35 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
     if lines and lines[0].upper() == "ERROR":
         location = f"line {lines[1]}" if len(lines) > 1 else "unknown line"
         message = " ".join(lines[2:]) or "Syntax error"
-        return [f"{location}: {message}"]
+        errors = [f"{location}: {message}"]
+        log_design_timing(
+            "plantuml.syntax_check.completed",
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+            exit_code=result.returncode,
+            source_chars=len(puml_text),
+            syntax_valid=False,
+        )
+        return errors
 
     if result.returncode != 0:
         detail = f"{stdout}\n{stderr}".strip()
-        return [detail or "PlantUML syntax check failed."]
+        errors = [detail or "PlantUML syntax check failed."]
+        log_design_timing(
+            "plantuml.syntax_check.completed",
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+            exit_code=result.returncode,
+            source_chars=len(puml_text),
+            syntax_valid=False,
+        )
+        return errors
 
+    log_design_timing(
+        "plantuml.syntax_check.completed",
+        elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        exit_code=result.returncode,
+        source_chars=len(puml_text),
+        syntax_valid=True,
+    )
     return []
 
 

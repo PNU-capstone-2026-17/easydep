@@ -168,6 +168,13 @@ def test_auto_mode_advances_only_when_user_input_is_not_required() -> None:
     assert "start_testing" in policy
 
 
+def test_implementation_retry_does_not_render_request_status_message() -> None:
+    composer = _source("src/lib/components/Composer.svelte")
+
+    assert "Implementation retry requested" not in composer
+    assert "Preparing a new implementation run" not in composer
+
+
 def test_sidebar_toggle_is_outside_the_clipped_content_boundary() -> None:
     source = _source("src/lib/components/AppSidebar.svelte")
 

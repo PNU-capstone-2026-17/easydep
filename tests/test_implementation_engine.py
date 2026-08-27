@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -11,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.design.services.deployment_diagram.bundle import build_deployment_diagram_bundle
 from app.implementation.generation.orchestrator import (
     PrototypeOrchestrator,
     find_undefined_bce_types,
@@ -19,12 +21,14 @@ from app.implementation.generation.orchestrator import (
 )
 from app.implementation.agents.runtime import (
     EventJournal,
+    _api_adapter_repair_contract,
     _requires_cross_phase_repair,
     _repair_missing_generated_model_imports,
     _render_missing_output_repair_prompt,
     _promote_changed_files,
     _restore_unauthorized_files,
     break_configuration_cycles,
+    enforce_spring_persistence_validation,
     execution_attempt,
     normalize_spring_boot_repository_discovery,
     remove_placeholder_comments,
@@ -52,15 +56,20 @@ from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
     production_placeholder_markers,
     production_test_library_markers,
+    api_adapter_contract_violations,
+    boundary_adapter_contract_violations,
     persistence_reserved_identifier_markers,
     ensure_persistence_schema_test,
     repair_persistence_schema_table_quoting,
+    repair_invalid_inverse_entity_associations,
+    persistence_entity_schema_violations,
     read_gradle_test_failures,
     summarize_test_failure,
     task_verification_command,
     verify_run_workspace,
 )
 from app.implementation.agents.prompts.feedback import (
+    render_frontend_verification_feedback,
     render_verification_feedback,
     verification_failure_hints,
 )
@@ -88,10 +97,15 @@ from app.implementation.planning.design_context import (
     render_persistence_schema_prompt,
     render_prompt,
     slice_sequence,
+    _e2e_persistence_paths,
 )
+from app.implementation.application.jobs import _unrepresentable_openapi_error_outcomes
 from app.implementation.workflows.completion import audit_run_completion
 from app.implementation.agents.verification.e2e import e2e_contract_violations
-from app.implementation.agents.verification.e2e import repair_nested_e2e_members
+from app.implementation.agents.verification.e2e import (
+    repair_nested_e2e_members,
+    repair_spring_boot3_test_compatibility,
+)
 from app.implementation.agents.verification.e2e import repair_orphaned_java_test_statements
 from app.implementation.delivery.kubernetes import (
     infer_intent,
@@ -99,6 +113,11 @@ from app.implementation.delivery.kubernetes import (
     validate_intent,
 )
 from app.implementation.delivery.terraform import render_iac, validate_terraform
+from scripts.generate_deployment_diagram_examples import (
+    DEPLOYMENT_CASES,
+    _graph as deployment_graph,
+    _resource_spec as deployment_resource_spec,
+)
 from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
     _implemented_interfaces,
@@ -124,6 +143,7 @@ from app.implementation.workflows.coordinator import (
     _execute_task_batch,
     _e2e_prerequisites_complete,
     _phase_task_batches,
+    _verify_phase,
     reconcile_workflow_state,
     _write_json_atomic,
     validate_approval,
@@ -133,6 +153,18 @@ from app.implementation.workflows.coordinator import (
 
 
 class ImplementationParallelismTest(unittest.TestCase):
+    def test_generation_progress_status_write_leaves_no_shared_temp_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            progress_path = Path(directory) / "generation-progress.json"
+            orchestrator = object.__new__(PrototypeOrchestrator)
+            orchestrator.spec = SimpleNamespace(progress_path=progress_path)
+            orchestrator.manifest = SimpleNamespace(status="")
+
+            orchestrator._set_status("RUNNING", "Generating sources")
+
+            self.assertEqual("RUNNING", json.loads(progress_path.read_text(encoding="utf-8"))["status"])
+            self.assertEqual(list(progress_path.parent.glob("*.tmp")), [])
+
     def test_atomic_state_write_uses_unique_temporary_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "reports" / "workflow-state.json"
@@ -340,6 +372,64 @@ class ImplementationParallelismTest(unittest.TestCase):
                 ]}),
                 encoding="utf-8",
             )
+            observed: list[tuple[str, list[str], str]] = []
+
+            def execute(root: Path, task_id: str) -> dict[str, object]:
+                persisted = json.loads(
+                    (root / "reports" / "workflow-state.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                durable_task = next(
+                    item for item in persisted["tasks"] if item["taskId"] == task_id
+                )
+                observed.append(
+                    (task_id, [str(task["status"]) for task in tasks], str(durable_task["status"]))
+                )
+                output = root / f"application/{task_id}.java"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("class Generated {}", encoding="utf-8")
+                return {"status": "SUCCEEDED"}
+
+            state: dict[str, object] = {"tasks": tasks, "status": "RUNNING"}
+            self.assertEqual([], _execute_task_batch(run, state, tasks, execute, max_workers=2))
+            self.assertTrue(observed)
+            self.assertTrue(
+                all(
+                    statuses[next(index for index, task in enumerate(tasks) if task["taskId"] == task_id)]
+                    == "RUNNING"
+                    and durable_status == "RUNNING"
+                    for task_id, statuses, durable_status in observed
+                )
+            )
+            self.assertTrue(
+                all(
+                    sum(status == "RUNNING" for status in statuses) <= 2
+                    for _, statuses, _ in observed
+                )
+            )
+
+    def test_sequential_batch_checkpoints_completion_before_next_task_starts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            tasks = [
+                self._task(f"task-{index}", "api-adapter", f"application/{index}.java")
+                for index in range(2)
+            ]
+            (reports / "run-manifest.json").write_text(
+                json.dumps({
+                    "implementation_tasks": [
+                        {
+                            "task_id": task["taskId"],
+                            "allowed_write_paths": task["allowedWritePaths"],
+                        }
+                        for task in tasks
+                    ]
+                }),
+                encoding="utf-8",
+            )
             observed: list[list[str]] = []
 
             def execute(root: Path, task_id: str) -> dict[str, object]:
@@ -350,9 +440,12 @@ class ImplementationParallelismTest(unittest.TestCase):
                 return {"status": "SUCCEEDED"}
 
             state: dict[str, object] = {"tasks": tasks, "status": "RUNNING"}
-            self.assertEqual([], _execute_task_batch(run, state, tasks, execute, max_workers=2))
-            self.assertTrue(observed)
-            self.assertLessEqual(sum(status == "RUNNING" for status in observed[0]), 2)
+            self.assertEqual(
+                [], _execute_task_batch(run, state, tasks, execute, max_workers=1)
+            )
+            self.assertEqual(
+                [["RUNNING", "PENDING"], ["SUCCEEDED", "RUNNING"]], observed
+            )
 
     def test_persistence_entities_finish_before_parallel_dependents(self) -> None:
         tasks = [
@@ -367,6 +460,16 @@ class ImplementationParallelismTest(unittest.TestCase):
         self.assertEqual([["entities"], ["repositories", "mapping", "schema"]], [
             [task["taskId"] for task in batch] for batch in batches
         ])
+
+    def test_non_integration_phase_skips_duplicate_full_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            result = _verify_phase(run, "persistence", verify_run_workspace)
+
+            self.assertEqual("SKIPPED", result["status"])
+            self.assertTrue(
+                (run / "reports/phase-persistence-verification.json").is_file()
+            )
 
     def test_persistence_entity_and_repository_tasks_are_split_per_file(self) -> None:
         from app.implementation.planning import design_context
@@ -418,6 +521,45 @@ class ImplementationParallelismTest(unittest.TestCase):
             entity_prompt = (run / entity_tasks[0].prompt_file).read_text(encoding="utf-8")
             self.assertIn("mappedBy", entity_prompt)
             self.assertIn("scalar foreign-key column", entity_prompt)
+
+    def test_related_persistence_entities_share_one_atomic_task(self) -> None:
+        from app.implementation.planning import design_context
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            erd = root / "erd.puml"
+            erd.write_text(
+                "entity Course {\n  course_id : String\n}\n"
+                "entity Enrollment {\n  enrollment_id : String\n}\n"
+                "Course ||--o{ Enrollment\n",
+                encoding="utf-8",
+            )
+            run = root / "run_sample"
+            run.mkdir()
+            spec = SimpleNamespace(
+                inputs={"erd": erd},
+                base_package="com.example.demo",
+                name="sample",
+                workspace_root=root,
+                agent_model="model",
+                agent_base_url="http://localhost",
+                agent_temperature=0.2,
+                agent_top_p=0.9,
+                agent_max_output_tokens=1000,
+                agent_reasoning_budget=100,
+            )
+            fake_ir = SimpleNamespace(persistent_entities=("Course", "Enrollment"))
+            with patch.object(design_context, "build_implementation_ir", return_value=fake_ir), \
+                patch.object(design_context, "read_generated_java_contracts", return_value="contract"), \
+                patch.object(design_context, "_llm_config", return_value={}):
+                tasks = generate_persistence_tasks(spec, run)
+
+            entity_tasks = [task for task in tasks if task.task_type == "persistence-entities"]
+            self.assertEqual(
+                ["implement-erd-persistence-entity-course-enrollment"],
+                [task.task_id for task in entity_tasks],
+            )
+            self.assertEqual(2, len(entity_tasks[0].allowed_write_paths))
 
     def test_overlapping_outputs_force_sequential_batches(self) -> None:
         tasks = [
@@ -516,6 +658,95 @@ class GeneratedContractImportRepairTest(unittest.TestCase):
 
 
 class PersistenceSchemaContractRepairTest(unittest.TestCase):
+    def test_entity_schema_mismatch_reports_columns_before_e2e(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            migration = sandbox / "application/src/main/resources/db/migration/V1__initial_schema.sql"
+            entity = sandbox / "application/src/main/java/com/example/persistence/entity/EnrollmentEntity.java"
+            migration.parent.mkdir(parents=True)
+            entity.parent.mkdir(parents=True)
+            migration.write_text(
+                """CREATE TABLE enrollment (
+  enrollment_id VARCHAR(255) NOT NULL,
+  student_id VARCHAR(255) NOT NULL,
+  course_id VARCHAR(255) NOT NULL,
+  enrollment_status VARCHAR(255)
+);\n""",
+                encoding="utf-8",
+            )
+            entity.write_text(
+                """@Entity
+@Table(name = "enrollment")
+class EnrollmentEntity {
+  @Id @Column(name = "enrollment_id") private String enrollmentId;
+  @Column(name = "enrollment_status") private String status;
+}
+""",
+                encoding="utf-8",
+            )
+
+            violations = persistence_entity_schema_violations(
+                sandbox,
+                ["application/src/main/java/com/example/persistence/entity/EnrollmentEntity.java"],
+            )
+
+            self.assertEqual(1, len(violations))
+            self.assertIn("course_id", violations[0])
+            self.assertIn("student_id", violations[0])
+
+            entity.write_text(
+                entity.read_text(encoding="utf-8").replace(
+                    '@Column(name = "enrollment_status") private String status;',
+                    '@Column(name = "enrollment_status") private String status;\n'
+                    '  @JoinColumn(name = "student_id") private Object student;',
+                ),
+                encoding="utf-8",
+            )
+            violations = persistence_entity_schema_violations(
+                sandbox,
+                ["application/src/main/java/com/example/persistence/entity/EnrollmentEntity.java"],
+            )
+            self.assertEqual(1, len(violations))
+            self.assertNotIn("student_id", violations[0])
+
+    def test_invalid_inverse_relationship_is_made_transient(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            student_relative = (
+                "application/src/main/java/com/example/app/persistence/entity/"
+                "StudentEntity.java"
+            )
+            enrollment_relative = (
+                "application/src/main/java/com/example/app/persistence/entity/"
+                "EnrollmentEntity.java"
+            )
+            student = sandbox / student_relative
+            enrollment = sandbox / enrollment_relative
+            student.parent.mkdir(parents=True)
+            student.write_text(
+                """import jakarta.persistence.OneToMany;
+import java.util.Set;
+class StudentEntity {
+  @OneToMany(mappedBy = \"student\")
+  private Set<EnrollmentEntity> enrollments;
+}
+""",
+                encoding="utf-8",
+            )
+            enrollment.write_text("class EnrollmentEntity { String studentId; }\n", encoding="utf-8")
+
+            repaired = repair_invalid_inverse_entity_associations(
+                sandbox, [student_relative, enrollment_relative]
+            )
+
+            self.assertEqual(
+                [student_relative + ": invalid inverse association marked transient"], repaired
+            )
+            source = student.read_text(encoding="utf-8")
+            self.assertIn("import jakarta.persistence.Transient;", source)
+            self.assertIn("@Transient", source)
+            self.assertNotIn("@OneToMany", source)
+
     def test_replaces_agent_schema_test_with_case_independent_metadata_check(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)
@@ -1112,6 +1343,26 @@ class LoadJobTest(unittest.TestCase):
         self.assertNotIn("inspect", prompt)
         self.assertNotIn("generatedJavaContracts", prompt)
 
+        contract_prompt = _render_missing_output_repair_prompt(
+            "control",
+            ["C:/agent/application/src/main/java/example/ControlService.java"],
+            "interface Control { String execute(String value); }",
+        )
+        self.assertIn("Exact generated contracts", contract_prompt)
+        self.assertIn("String execute(String value)", contract_prompt)
+
+        api_test_prompt = _render_missing_output_repair_prompt(
+            "api-adapter",
+            ["C:/agent/application/src/test/java/example/OrdersApiControllerTest.java"],
+            "interface OrdersApi { ResponseEntity<Object> getOrder(String orderId); }",
+            "### application/src/main/java/example/OrdersApiController.java\n"
+            "```java\nclass OrdersApiController {}\n```",
+        )
+        self.assertIn("JUnit/Mockito controller test", api_test_prompt)
+        self.assertIn("Do not modify production code", api_test_prompt)
+        self.assertIn("Existing contracted source", api_test_prompt)
+        self.assertIn("OrdersApiController", api_test_prompt)
+
     def test_task_verification_avoids_full_packaging_and_targets_owned_tests(self) -> None:
         command = task_verification_command(
             ["gradlew"],
@@ -1133,6 +1384,8 @@ class LoadJobTest(unittest.TestCase):
         final_command = task_verification_command(["gradlew"])
         self.assertIn("bootJar", final_command)
         self.assertIn("test", final_command)
+        self.assertNotIn("--no-daemon", command)
+        self.assertNotIn("--no-daemon", final_command)
 
     def test_agent_execution_history_preserves_attempt_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1330,6 +1583,84 @@ void use(String value) {}
             self.assertTrue(any("422" in item for item in violations))
             self.assertFalse(any("OrderRepository" in item for item in violations))
 
+    def test_api_adapter_gate_requires_generated_openapi_interface(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            relative = "application/src/main/java/com/example/StudentsApiController.java"
+            path = sandbox / relative
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                "public class StudentsApiController { }", encoding="utf-8"
+            )
+            violations = api_adapter_contract_violations(sandbox, [relative])
+            self.assertIn("must implement generated StudentsApi", violations[0])
+
+            path.write_text(
+                "public class StudentsApiController implements StudentsApi { }",
+                encoding="utf-8",
+            )
+            self.assertEqual([], api_adapter_contract_violations(sandbox, [relative]))
+
+            path.write_text(
+                "package com.example.adapter.in.web;\n"
+                "import com.example.bce.control.StudentsControl;\n"
+                "public class StudentsApiController implements StudentsApi { }",
+                encoding="utf-8",
+            )
+            violations = api_adapter_contract_violations(sandbox, [relative])
+            self.assertTrue(
+                any("imported project type does not exist" in item for item in violations)
+            )
+
+            api = sandbox / "application/src/main/java/com/example/StudentsApi.java"
+            api.write_text(
+                '@ApiResponse(responseCode = "204")\n'
+                '@ApiResponse(responseCode = "404")\n'
+                '@ApiResponse(responseCode = "409")\n'
+                'interface StudentsApi {}',
+                encoding="utf-8",
+            )
+            violations = api_adapter_contract_violations(sandbox, [relative])
+            # 204/404 may be handled by the normal command/null-result path;
+            # only a domain conflict requires an executable adapter outcome.
+            self.assertFalse(any("HTTP 204" in item for item in violations))
+            self.assertFalse(any("HTTP 404" in item for item in violations))
+            self.assertTrue(any("HTTP 409" in item for item in violations))
+
+            path.write_text(
+                "public class StudentsApiController implements StudentsApi { "
+                "ResponseEntity<Void> drop() { return ResponseEntity.noContent().build(); } "
+                "ResponseEntity<Void> missing() { return ResponseEntity.notFound().build(); } "
+                "ResponseEntity<Void> conflict() { return ResponseEntity.status(HttpStatus.CONFLICT).build(); } }",
+                encoding="utf-8",
+            )
+            self.assertEqual([], api_adapter_contract_violations(sandbox, [relative]))
+
+            api.write_text(
+                '@ApiResponse(responseCode = "400")\n'
+                '@ApiResponse(responseCode = "403")\n'
+                '@ApiResponse(responseCode = "500")\n'
+                '@ApiResponse(responseCode = "503")\n'
+                'interface StudentsApi {}',
+                encoding="utf-8",
+            )
+            path.write_text(
+                "public class StudentsApiController implements StudentsApi { }",
+                encoding="utf-8",
+            )
+            self.assertEqual([], api_adapter_contract_violations(sandbox, [relative]))
+
+    def test_workspace_verification_error_preserves_causal_output_edges(self) -> None:
+        error = WorkspaceVerificationError({
+            "command": ["gradlew", "test"],
+            "testResults": "ROOT CAUSE: assertion failed\n" + ("trace line\n" * 300),
+        })
+
+        message = str(error)
+        self.assertIn("ROOT CAUSE: assertion failed", message)
+        self.assertIn("verification output truncated", message)
+        self.assertTrue(message.endswith("trace line\ntrace line"))
+
     def test_semantic_gate_accepts_spring_http_status_enums(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "CourseFlowTest.java"
@@ -1349,6 +1680,29 @@ TestRestTemplate http; CourseRepository repository;
             }
 
             self.assertEqual([], e2e_contract_violations(path, contract))
+
+    def test_e2e_persistence_contract_requires_explicit_sequence_participant(self) -> None:
+        scenarios = [{"path": "/students/{studentId}/schedule"}]
+        self.assertEqual([], _e2e_persistence_paths("Student -> ScheduleBoundary: viewSchedule()", scenarios))
+        self.assertEqual(
+            ["/students/{studentId}/schedule"],
+            _e2e_persistence_paths("participant EnrollmentRepository\nScheduleControl -> EnrollmentRepository: find()", scenarios),
+        )
+
+    def test_e2e_persistence_contract_infers_repository_from_bce_erd_relation(self) -> None:
+        scenarios = [{"path": "/students/{studentId}/courses/{courseId}"}]
+        bce = """@startuml
+class RegistrationControl <<Control>> { registerStudent(courseId:String): Enrollment }
+class Enrollment <<Entity>> { enrollmentId:String }
+RegistrationControl ..> Enrollment
+@enduml"""
+        erd = 'entity "Enrollment" as Enrollment { enrollmentId : String }'
+        openapi = '{"Endpoints":[{"path":"/students/{studentId}/courses/{courseId}","control_binding":{"control":"RegistrationControl"}}]}'
+
+        self.assertEqual(
+            ["/students/{studentId}/courses/{courseId}"],
+            _e2e_persistence_paths("RegistrationControl -> Enrollment: registerStudent()", scenarios, bce=bce, erd=erd, openapi=openapi),
+        )
 
     def test_semantic_gate_pairs_dynamic_path_method_and_status_per_scenario(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1408,6 +1762,37 @@ TestRestTemplate http; CourseRepository repository;
                     {"method": "GET", "path": "/courses/{courseId}", "status": 200},
                     {"method": "DELETE", "path": "/enrollments/{courseId}", "status": 204},
                     {"method": "GET", "path": "/students/{studentId}/schedule", "status": 200},
+                ],
+            }
+
+            self.assertEqual([], e2e_contract_violations(path, contract))
+
+    def test_semantic_gate_accepts_static_mockmvc_request_builders(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CourseFlowTest.java"
+            path.write_text(
+                """import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+class CourseFlowTest {
+MockMvc mockMvc;
+@Test
+@Transactional
+void create() throws Exception {
+  mockMvc.perform(post("/courses")).andExpect(status().isCreated());
+}
+@Test
+@Transactional
+void list() throws Exception {
+  mockMvc.perform(get("/courses")).andExpect(status().isOk());
+}
+}""",
+                encoding="utf-8",
+            )
+            contract = {
+                "minimumTests": 2,
+                "scenarios": [
+                    {"method": "POST", "path": "/courses", "status": 201},
+                    {"method": "GET", "path": "/courses", "status": 200},
                 ],
             }
 
@@ -1496,6 +1881,32 @@ TestRestTemplate http; EnrollmentRepository repository;
             self.assertTrue(any("weak dual-outcome" in item for item in violations))
             self.assertTrue(any("purchase persistence" in item for item in violations))
 
+    def test_e2e_repair_normalizes_spring_boot3_legacy_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "FlowTest.java"
+            path.write_text(
+                """import org.springframework.boot.web.server.LocalServerPort;
+import javax.persistence.Entity;
+import javax.validation.Valid;
+import javax.servlet.http.HttpServletRequest;
+import javax.annotation.Nullable;
+import javax.transaction.Transactional;
+// javax.persistence.Entity must remain unchanged in this comment.
+""",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(repair_spring_boot3_test_compatibility(path))
+            rewritten = path.read_text(encoding="utf-8")
+            self.assertIn("org.springframework.boot.test.web.server.LocalServerPort", rewritten)
+            self.assertIn("jakarta.persistence.Entity", rewritten)
+            self.assertIn("jakarta.validation.Valid", rewritten)
+            self.assertIn("jakarta.servlet.http.HttpServletRequest", rewritten)
+            self.assertIn("jakarta.annotation.Nullable", rewritten)
+            self.assertIn("jakarta.transaction.Transactional", rewritten)
+            self.assertIn("// javax.persistence.Entity", rewritten)
+            self.assertFalse(repair_spring_boot3_test_compatibility(path))
+
     def test_e2e_semantic_gate_accepts_real_http_and_persistence_scenarios(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "StockPurchaseFlowTest.java"
@@ -1569,16 +1980,12 @@ TestRestTemplate http; CourseRepository courseRepository;
         self.assertIn("public no-argument constructor", prompt)
         self.assertIn("com.example.demo.bce.RegistrationControl", prompt)
         self.assertIn("Never derive a resource-named Control", prompt)
-
-    def test_workspace_verification_error_keeps_root_cause_and_tail(self) -> None:
-        error = WorkspaceVerificationError({
-            "testResults": "ROOT CAUSE: assertion failed\n" + ("trace line\n" * 300),
-        })
-
-        message = str(error)
-        self.assertIn("ROOT CAUSE: assertion failed", message)
-        self.assertIn("verification output truncated", message)
-        self.assertTrue(message.endswith("trace line\ntrace line"))
+        self.assertIn("resource-named substitute", prompt)
+        self.assertIn("transport-level failures", prompt)
+        self.assertIn("documentation only", prompt)
+        self.assertIn("exception expectation in a test", prompt)
+        self.assertIn("keep every generated source and\n  test compilable", prompt)
+        self.assertIn("Do not rely on Mockito's default `false`", prompt)
 
     def test_production_placeholder_gate_ignores_tests_and_rejects_main_java(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1692,6 +2099,25 @@ TestRestTemplate http; CourseRepository courseRepository;
                 },
             )
         )
+
+    def test_http_runtime_failure_in_integration_task_skips_local_llm_repair(self) -> None:
+        self.assertTrue(
+            _requires_cross_phase_repair(
+                "integration-test",
+                {
+                    "testResults": (
+                        "org.opentest4j.AssertionFailedError: expected: <201 CREATED> "
+                        "but was: <500 INTERNAL_SERVER_ERROR>"
+                    )
+                },
+            )
+        )
+        self.assertFalse(
+            _requires_cross_phase_repair(
+                "integration-test",
+                {"testResults": "error: cannot find symbol"},
+            )
+        )
         self.assertTrue(
             _requires_cross_phase_repair(
                 "integration-test",
@@ -1708,6 +2134,19 @@ TestRestTemplate http; CourseRepository courseRepository;
                         "AnnotationException: Collection 'StudentEntity.enrollments' "
                         "is 'mappedBy' a property named 'student' which does not exist "
                         "in target entity 'EnrollmentEntity'"
+                    )
+                },
+            )
+        )
+
+    def test_schema_type_failure_in_wiring_skips_local_llm_repair(self) -> None:
+        self.assertTrue(
+            _requires_cross_phase_repair(
+                "configuration",
+                {
+                    "testResults": (
+                        "SchemaManagementException: Schema-validation: wrong column type "
+                        "encountered in column [enrollment_date]"
                     )
                 },
             )
@@ -1746,6 +2185,25 @@ TestRestTemplate http; CourseRepository courseRepository;
 
         self.assertTrue(changed)
         self.assertEqual('return ""; \n', normalized)
+
+    def test_wiring_normalizer_enforces_jpa_schema_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            configuration = sandbox / "application/src/main/resources/application.yml"
+            configuration.parent.mkdir(parents=True)
+            configuration.write_text(
+                "spring:\n  jpa:\n    hibernate:\n      ddl-auto: none\n",
+                encoding="utf-8",
+            )
+
+            enforce_spring_persistence_validation(
+                sandbox,
+                {"allowed_write_paths": ["application/src/main/resources/application.yml"]},
+            )
+
+            self.assertIn(
+                "ddl-auto: validate", configuration.read_text(encoding="utf-8")
+            )
 
     def test_workflow_checkpoint_recovers_results_and_interrupted_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1887,6 +2345,68 @@ TestRestTemplate http; CourseRepository courseRepository;
             self.assertEqual("SUCCEEDED", state["tasks"][0]["status"])
             self.assertEqual("replanned-prompt", state["tasks"][0]["promptSha256"])
             self.assertEqual([], state["nextRunnableTasks"])
+
+    def test_workflow_replays_successful_checkpoint_for_repair_directive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run_repair_replay"
+            reports = run / "reports"
+            executions = reports / "agent-executions"
+            executions.mkdir(parents=True)
+            relative = "application/src/Stable.java"
+            output = run / relative
+            output.parent.mkdir(parents=True)
+            output.write_text("class Stable {}", encoding="utf-8")
+            output_hashes = {relative: hashlib.sha256(output.read_bytes()).hexdigest()}
+            (reports / "run-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "implementation_tasks": [
+                            {
+                                "task_id": "implement-stable",
+                                "task_type": "control",
+                                "prompt_sha256": "repair-prompt",
+                                "allowed_write_paths": [relative],
+                                "source_artifacts": {"repairEvidence": "reports/repair-plan.json"},
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (reports / "workflow-state.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "taskId": "implement-stable",
+                                "status": "SUCCEEDED",
+                                "promptSha256": "original-prompt",
+                                "outputHashes": output_hashes,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (executions / "implement-stable.result.json").write_text(
+                json.dumps({"status": "SUCCEEDED", "promptSha256": "original-prompt"}),
+                encoding="utf-8",
+            )
+            (reports / "repair-plan.json").write_text(
+                json.dumps(
+                    {
+                        "entries": [
+                            {"ownerTaskIds": ["implement-stable"], "revalidationTaskIds": []}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = reconcile_workflow_state(run)
+
+            self.assertEqual("PENDING", state["tasks"][0]["status"])
+            self.assertEqual(["implement-stable"], state["nextRunnableTasks"])
 
     def test_workflow_invalidates_failed_result_when_repair_prompt_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2768,7 +3288,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             )
 
             spec = load_job(job)
-            self.assertEqual([], generate_e2e_tasks(spec, run))
+            tasks = generate_e2e_tasks(spec, run)
+            self.assertEqual(["implement-end-to-end-flow"], [task.task_id for task in tasks])
             gaps = detect_e2e_design_gaps(spec, run)
             self.assertEqual(
                 {"OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED"},
@@ -2779,7 +3300,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                     encoding="utf-8"
                 )
             )
-            self.assertEqual("NEEDS_INPUT", report["status"])
+            self.assertEqual("WARNING", report["status"])
 
     def test_e2e_planner_emits_bounded_real_integration_test_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3014,6 +3535,39 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             )
             self.assertIn("verify-deployment.py", deploy)
 
+    def test_implementation_release_can_skip_kubernetes_manifests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            intent_path = root / "deployment-intent.json"
+            intent_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-deployment-intent/v1alpha1",
+                        "namespace": "demo",
+                        "workloads": [
+                            {
+                                "name": "demo-api",
+                                "kind": "Deployment",
+                                "image": "example/demo:1",
+                                "capabilities": {},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            run = root / "run"
+            report = render_deployment(
+                run,
+                SimpleNamespace(name="demo", inputs={"deploymentIntent": intent_path}),
+                include_kubernetes=False,
+            )
+
+            self.assertFalse(report["kubernetesManifests"])
+            self.assertIn("application/Dockerfile", report["renderedFiles"])
+            self.assertFalse((run / "application/k8s").exists())
+            self.assertTrue((run / "reports/deployment-intent.json").is_file())
+
     @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_deterministic_iac_renderer_matches_deployment_intent(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3039,6 +3593,101 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn('resource "azurerm_kubernetes_cluster"', source)
             self.assertIn('resource "azurerm_container_registry"', source)
             self.assertIn('resource "azurerm_key_vault"', source)
+
+    @patch(
+        "app.implementation.delivery.terraform.render_open_tofu",
+        return_value={
+            "easydep-provider.tf": 'terraform {}',
+            "main.tf": 'resource "azurerm_container_registry" "demoacr" {}',
+        },
+    )
+    @patch("app.implementation.delivery.terraform.validate_provider_resource_plan")
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_iac_renderer_uses_completed_deployment_bundle_resource_plan(
+        self,
+        _validation: object,
+        validate_resource_plan: object,
+        render_resource_plan: object,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource_spec = {
+                "provider": "azure",
+                "region": "koreacentral",
+            }
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps(resource_spec), encoding="utf-8")
+            bundle = root / "deployment-bundle.json"
+            bundle.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-deployment-diagram",
+                        "status": "completed",
+                        "resourceSpec": resource_spec,
+                        "projections": [
+                            {
+                                "status": "completed",
+                                "provider": "azure",
+                                "region": "koreacentral",
+                                "resourcePlanStructureDigest": "reviewed-plan",
+                                "resourcePlan": {"structureDigest": "reviewed-plan"},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = render_iac(
+                root / "run",
+                SimpleNamespace(
+                    inputs={"cloud": cloud, "deploymentBundle": bundle}
+                ),
+                include_kubernetes=False,
+            )
+
+            self.assertEqual(
+                "deployment_diagram_resource_plan",
+                report["sourceEvidence"]["resourceSpecSource"],
+            )
+            self.assertEqual(
+                "reviewed-plan",
+                report["sourceEvidence"]["deploymentDiagramResourcePlanDigest"],
+            )
+            self.assertTrue((root / "run/application/terraform/main.tf").is_file())
+            assert hasattr(validate_resource_plan, "assert_called_once_with")
+            validate_resource_plan.assert_called_once_with({"structureDigest": "reviewed-plan"})
+            assert hasattr(render_resource_plan, "assert_called_once_with")
+            render_resource_plan.assert_called_once_with({"structureDigest": "reviewed-plan"})
+
+    @patch(
+        "app.implementation.delivery.terraform.validate_terraform",
+        return_value={"status": "SUCCEEDED"},
+    )
+    def test_iac_renderer_renders_real_deployment_resource_plan(
+        self, _validation: object
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource_spec = deployment_resource_spec("aws")
+            self.assertNotIn("resources", resource_spec)
+            diagram = build_deployment_diagram_bundle(
+                deployment_graph(DEPLOYMENT_CASES[0]), resource_spec
+            )
+            cloud = root / "cloud.json"
+            bundle = root / "deployment-diagram-bundle.json"
+            cloud.write_text(json.dumps(resource_spec), encoding="utf-8")
+            bundle.write_text(json.dumps(diagram), encoding="utf-8")
+
+            report = render_iac(
+                root / "run",
+                SimpleNamespace(inputs={"cloud": cloud, "deploymentBundle": bundle}),
+                include_kubernetes=False,
+            )
+
+            self.assertEqual("resource_plan_exact_rendering", report["sourceConformance"]["mode"])
+            self.assertIn("application/terraform/easydep-provider.tf", report["renderedFiles"])
+            self.assertTrue((root / "run/application/terraform/bootstrap_compute_1.sh.tftpl").is_file())
 
     @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_deterministic_iac_renderer_supports_aws_and_gcp(self, _validation: object) -> None:
@@ -3616,6 +4265,33 @@ end
         self.assertIn("enclosing branch: alt valid", scoped)
         self.assertNotIn("ErrorScreen", scoped)
 
+    def test_scopes_sequence_messages_through_plantuml_aliases(self) -> None:
+        sequence = """@startuml UC1
+boundary "SignInBoundary" as SignInB
+control "SignInController" as SignInC
+StudentA -> SignInB : signIn(username:String,password:String)
+SignInB -> SignInC : authenticate(username:String,password:String)
+SignInC --> SignInB : AuthenticationToken
+@enduml
+"""
+        scoped = slice_sequence(sequence, {"SignInBoundary"})
+        self.assertIn("SignInB -> SignInC : authenticate", scoped)
+        self.assertNotIn("No directly matched sequence messages", scoped)
+
+    def test_boundary_gate_rejects_null_for_forward_sequence_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = "application/src/main/java/example/adapter/in/boundary/SignInBoundaryAdapter.java"
+            path = root / relative
+            path.parent.mkdir(parents=True)
+            path.write_text("class SignInBoundaryAdapter { Object signIn() { return null; } }", encoding="utf-8")
+            violations = boundary_adapter_contract_violations(
+                root,
+                [relative],
+                "boundary \"SignInBoundary\" as SignInB\ncontrol \"SignInController\" as SignInC\nSignInB -> SignInC : authenticate()",
+            )
+            self.assertEqual(1, len(violations))
+
     def test_parses_openapi_operations_without_yaml_dependency(self) -> None:
         source = """openapi: 3.0.3
 paths:
@@ -3695,6 +4371,35 @@ components: {}
         self.assertIn("void type not allowed here", feedback)
         self.assertIn("doAnswer", feedback)
 
+    def test_api_adapter_repair_feedback_includes_exact_contract_subset(self) -> None:
+        contracts = """// application/src/main/java/com/example/api/AuthApi.java
+interface AuthApi { }
+// application/src/main/java/com/example/api/model/LoginRequest.java
+class LoginRequest { }
+// application/src/main/java/com/example/bce/AuthControl.java
+interface AuthControl { String authenticate(String username, String password); }
+// application/src/main/java/com/example/bce/CatalogControl.java
+interface CatalogControl { }
+"""
+        context = {
+            "api": "Auth",
+            "operations": [{"controlBinding": {"control": "AuthControl"}}],
+            "generatedJavaContracts": contracts,
+        }
+        subset = _api_adapter_repair_contract(context)
+        self.assertIn("AuthApi", subset)
+        self.assertIn("LoginRequest", subset)
+        self.assertIn("AuthControl", subset)
+        self.assertNotIn("CatalogControl", subset)
+
+        feedback = render_verification_feedback(
+            {"stderr": "package com.example.bce.control does not exist"},
+            api_controls=["AuthControl"],
+            api_contracts=subset,
+        )
+        self.assertIn("Exact generated API/BCE contracts", feedback)
+        self.assertIn("authenticate(String username, String password)", feedback)
+
     def test_repair_feedback_includes_current_allowlisted_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)
@@ -3713,6 +4418,24 @@ components: {}
             self.assertIn("class Service {}", feedback)
             self.assertIn("class ServiceTest {}", feedback)
             self.assertIn("Do not call view or str_replace", feedback)
+
+    def test_repair_feedback_includes_generated_contracts_for_non_api_tasks(self) -> None:
+        feedback = render_verification_feedback(
+            {"stderr": "cannot find symbol"},
+            generated_contracts="interface CatalogControl { List<Course> getCourseCatalog(); }",
+        )
+
+        self.assertIn("Exact generated contracts for this repair", feedback)
+        self.assertIn("getCourseCatalog", feedback)
+
+    def test_frontend_repair_feedback_includes_generated_client_contracts(self) -> None:
+        feedback = render_frontend_verification_feedback(
+            {"stderr": "TypeScript error"},
+            generated_contracts="export type Course = { courseId: string };",
+        )
+
+        self.assertIn("Generated TypeScript client contracts", feedback)
+        self.assertIn("courseId", feedback)
 
     def test_reads_failed_gradle_test_xml(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3808,8 +4531,10 @@ class ApplicationConfiguration {
             "UnnecessaryStubbingException\nNotAMockException\n"
             "InvalidUseOfMatchersException: 2 matchers expected\n"
             "testStartPurchase_ConnectionFails_HandlesFailure(): Wanted but not invoked\n"
+            "Forbidden test bean configuration: @MockBean\n"
             'expected "identifier"; SQL statement:\n'
             "error: incompatible types: java.util.Date cannot be converted to com.easydep.app.bce.Date"
+            "package com.easydep.app.bce.control does not exist\n"
         )
         self.assertIn("exact argument", hints)
         self.assertIn("exact observed count", hints)
@@ -3822,6 +4547,9 @@ class ApplicationConfiguration {
         self.assertIn("SQL Syntax / Reserved Keyword", hints)
         self.assertIn("Incompatible types", hints)
         self.assertIn("API/BCE request conversion", hints)
+        self.assertIn("Project contract import", hints)
+        self.assertIn("real E2E test", hints)
+        self.assertIn("remove @MockBean", hints)
 
     def test_runtime_failure_hints_preserve_exact_e2e_http_contract(self) -> None:
         hints = verification_failure_hints(
@@ -3831,6 +4559,118 @@ class ApplicationConfiguration {
         self.assertIn("resolve exactly", hints)
         self.assertIn("remove any extra suffix", hints)
         self.assertIn("exact HTTP verb", hints)
+
+    def test_runtime_failure_hints_require_foreign_key_fixture_seed(self) -> None:
+        hints = verification_failure_hints(
+            'DataIntegrityViolationException: Referential integrity constraint violation: '
+            'FOREIGN KEY(RELATED_STUDENT_ID) REFERENCES STUDENT(STUDENT_ID) (\'alice\')'
+        )
+
+        self.assertIn("foreign-key target", hints)
+        self.assertIn("same identifier", hints)
+        self.assertIn("Do not disable constraints", hints)
+
+    def test_runtime_failure_hints_require_entity_migration_columns(self) -> None:
+        hints = verification_failure_hints(
+            "Persistence entity schema mismatch: EnrollmentEntity is missing migration column(s): student_id"
+        )
+
+        self.assertIn("entity contract", hints)
+        self.assertIn("exact snake_case name", hints)
+
+    def test_runtime_failure_hints_preserve_mapper_entity_constructor(self) -> None:
+        hints = verification_failure_hints(
+            "error: no suitable constructor found for EnrollmentEntity(String,StudentEntity,CourseEntity,String,String)"
+        )
+
+        self.assertIn("mapper constructor contract", hints)
+        self.assertIn("Preserve every existing public constructor", hints)
+        self.assertIn("Re-run the build", hints)
+
+    def test_runtime_failure_hints_explain_boundary_control_recursion(self) -> None:
+        hints = verification_failure_hints(
+            "StackOverflowError at CourseDetailsBoundaryAdapter.viewCourseDetails "
+            "CourseDetailsControllerService.getCourseDetails"
+        )
+
+        self.assertIn("Boundary/Control recursion", hints)
+        self.assertIn("must never call back into", hints)
+
+    def test_runtime_failure_hints_explain_jpa_schema_column_mismatch(self) -> None:
+        hints = verification_failure_hints(
+            'JdbcSQLSyntaxErrorException: Column "COURSE_ID" not found'
+        )
+
+        self.assertIn("Persistence schema mismatch", hints)
+        self.assertIn("lower snake_case", hints)
+
+    def test_runtime_failure_hints_explain_invalid_json_path(self) -> None:
+        hints = verification_failure_hints("InvalidPathException: Expected path: ")
+
+        self.assertIn("Invalid JSONPath assertion", hints)
+        self.assertIn("actual response body", hints)
+
+    def test_runtime_failure_hints_explain_executable_api_status_gate(self) -> None:
+        hints = verification_failure_hints(
+            "missing executable HTTP 409 mapping from CoursesApi; "
+            "@ApiResponse/@ApiResponses annotations are documentation only"
+        )
+        self.assertIn("documentation only", hints)
+        self.assertIn("Transport-level statuses", hints)
+        self.assertIn("409/422", hints)
+
+    def test_runtime_failure_hints_align_boolean_control_status_assertions(self) -> None:
+        hints = verification_failure_hints(
+            "StudentsApiControllerTest.registerStudentForCourse_success(): "
+            "AssertionFailedError: expected: <200> but was: <409>"
+        )
+
+        self.assertIn("HTTP status assertion mismatch", hints)
+        self.assertIn("stub the exact Control method", hints)
+        self.assertIn("success value", hints)
+
+    def test_runtime_failure_hints_reject_unexecutable_500_controller_tests(self) -> None:
+        hints = verification_failure_hints(
+            "RegistrationsApiControllerTest.registerCourse_returns500_andDoesNotInvokeControl(): "
+            "expected: <500> but was: <201>"
+        )
+
+        self.assertIn("Do not add a direct 500 test", hints)
+        self.assertIn("transport/global exception", hints)
+
+    def test_control_return_does_not_reject_domain_error_response(self) -> None:
+        class_diagram = """
+class RegistrationController <<Control>> {
+  +removeEnrollment(studentId : String, courseId : String): void
+  +enrollStudent(studentId : String, courseId : String): Enrollment
+}
+class Enrollment <<Entity>> {
+}
+"""
+        api_spec = {
+            "paths": {
+                "/enrollments": {
+                    "post": {
+                        "x-easydep-control": {
+                            "control": "RegistrationController",
+                            "method": "enrollStudent",
+                        },
+                        "responses": {"201": {}, "409": {}},
+                    },
+                    "delete": {
+                        "x-easydep-control": {
+                            "control": "RegistrationController",
+                            "method": "removeEnrollment",
+                        },
+                        "responses": {"204": {}, "403": {}, "500": {}},
+                    },
+                }
+            }
+        }
+
+        findings = _unrepresentable_openapi_error_outcomes(class_diagram, api_spec)
+
+        self.assertEqual([], findings)
 
     def test_event_journal_writes_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3921,6 +4761,144 @@ class ApplicationConfiguration {
             self.assertTrue(
                 (run / "reports/phase-control-verification.json").is_file()
             )
+
+    def test_phase_verification_skips_frontend_install_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = root / "generated" / "runs" / "run_abcdef1234567890"
+            source = run / "application" / "src" / "Main.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("class Main {}", encoding="utf-8")
+            frontend = run / "application" / "frontend"
+            frontend.mkdir()
+            (frontend / "package.json").write_text("{}", encoding="utf-8")
+            temp_root = root / "ascii-temp"
+            verification = {"exitCode": 0, "testResults": ""}
+
+            with (
+                patch(
+                    "app.implementation.agents.workspace.tempfile.gettempdir",
+                    return_value=str(temp_root),
+                ),
+                patch(
+                    "app.implementation.agents.verification.build.verify_agent_workspace",
+                    return_value=verification,
+                ),
+                patch(
+                    "app.implementation.agents.verification.build.verify_frontend_workspace"
+                ) as verify_frontend,
+            ):
+                result = verify_run_workspace(run, verify_frontend=False)
+
+            self.assertEqual("SUCCEEDED", result["status"])
+            self.assertIsNone(result["frontendVerification"])
+            verify_frontend.assert_not_called()
+
+    def test_verification_failure_is_persisted_in_workflow_state(self) -> None:
+        from app.implementation.workflows.coordinator import _record_workflow_failure
+
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            state = {
+                "status": "RUNNING",
+                "currentPhase": "persistence",
+                "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
+                "currentActivity": {
+                    "id": "verify-persistence",
+                    "label": "Repository 빌드 및 Unit Test",
+                    "status": "RUNNING",
+                },
+            }
+
+            _record_workflow_failure(run, state, RuntimeError("npm ci timed out"))
+
+            persisted = json.loads(
+                (run / "reports" / "workflow-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("FAILED", persisted["status"])
+            self.assertEqual("FAILED", persisted["phases"][0]["status"])
+            self.assertEqual("FAILED", persisted["currentActivity"]["status"])
+            self.assertIn("npm ci timed out", persisted["blockingReason"])
+
+    def test_frontend_timeout_retains_npm_diagnostics(self) -> None:
+        from app.implementation.agents.verification.frontend import (
+            run_frontend_verification,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            frontend = root / "application" / "frontend"
+            frontend.mkdir(parents=True)
+            (frontend / "package.json").write_text("{}", encoding="utf-8")
+            (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+            source = frontend / "src" / "main.tsx"
+            source.parent.mkdir()
+            source.write_text(
+                "import { HashRouter } from 'react-router-dom'; const app=<HashRouter />;",
+                encoding="utf-8",
+            )
+
+            def timeout(command: list[str], **_kwargs: object) -> object:
+                raise subprocess.TimeoutExpired(
+                    command,
+                    300,
+                    output=b"fetching packages",
+                    stderr=b"registry stalled",
+                )
+
+            result = run_frontend_verification(root, timeout, timeout_seconds=300)
+
+            self.assertEqual(1, result["exitCode"])
+            self.assertEqual("ci", result["command"][1])
+            self.assertIn("registry stalled", str(result["stderr"]))
+            self.assertIn("fetching packages", str(result["stdout"]))
+
+    def test_failed_job_overrides_stale_running_workflow_progress(self) -> None:
+        from app.workspace.service import WorkspaceService
+
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            (reports / "workflow-state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "RUNNING",
+                        "currentPhase": "persistence",
+                        "phases": [
+                            {"phaseId": "persistence", "status": "RUNNING"}
+                        ],
+                        "tasks": [
+                            {
+                                "taskId": "persistence-1",
+                                "phase": "persistence",
+                                "status": "SUCCEEDED",
+                            }
+                        ],
+                        "currentActivity": {
+                            "id": "verify-persistence",
+                            "status": "RUNNING",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            service = WorkspaceService()
+            try:
+                progress = service._implementation_progress_snapshot(
+                    {
+                        "status": "FAILED",
+                        "run_root": str(run),
+                        "error": "npm ci timed out",
+                    }
+                )
+            finally:
+                service.shutdown()
+
+            updates = {item["step"]: item for item in progress["updates"]}
+            self.assertEqual("failed", updates["phase-backend"]["status"])
+            self.assertEqual("failed", updates["implementation-result"]["status"])
+            self.assertEqual("failed", progress["progress_status"])
 
     def test_agent_workspace_uses_sibling_when_previous_workspace_is_locked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

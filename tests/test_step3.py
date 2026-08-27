@@ -528,6 +528,40 @@ def test_reflection_enforces_the_local_two_attempt_cap(monkeypatch):
     assert item["repair_iters"] == 2
     assert item["repair_stopped"] == "budget"
     assert calls["n"] == 3
+def test_reflection_loop_keeps_static_to_semantic_validation_progress(monkeypatch):
+    """확장 분기 참조를 고치면 새 의미 지적이 생겨도 후보를 버리지 않는다."""
+    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
+    calls = {"n": 0}
+
+    invalid_extension = Extension(
+        label="2a", branch_step=2, condition="criteria are absent",
+        handling_steps=[ExtensionHandlingStep(sub_step="2a1", sentence="System requests criteria")],
+        outcome="fail",
+    )
+    valid_extension = invalid_extension.model_copy(update={"branch_step": 1, "label": "1a"})
+
+    def fake(schema, messages):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _clean_spec(extensions=[invalid_extension])
+        if calls["n"] == 2:
+            return _clean_spec(extensions=[valid_extension], trigger="needs semantic review")
+        return _clean_spec()
+
+    def fake_check(item, *_context):
+        if item["trigger"] == "needs semantic review":
+            return ["[semantic] scenario wording needs review"], "ok"
+        return _validate_spec(item), "pending"
+
+    monkeypatch.setattr(s3, "invoke_structured", fake)
+    monkeypatch.setattr(s3, "_check", fake_check)
+    spec = s3.generate_specs(
+        {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
+    )["use_case_specs"][0]
+
+    assert calls["n"] == 3
+    assert spec["issues"] == []
+    assert spec["repair_stopped"] == "clean"
 
 
 def test_repair_stopped_is_aggregated_in_the_report(monkeypatch):

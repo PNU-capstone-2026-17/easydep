@@ -10,6 +10,8 @@ def render_verification_feedback(
     repair_targets: list[str] | None = None,
     semantic_contract: dict[str, object] | None = None,
     api_controls: list[str] | None = None,
+    api_contracts: str = "",
+    generated_contracts: str = "",
 ) -> str:
     output = (
         str(evidence.get("stdout", ""))
@@ -30,6 +32,26 @@ E2E semantic contract (immutable):
 For an E2E repair, preserve every existing passing test and append or correct the
 missing scenario tests. Do not replace the file with a smaller sample and do not
 remove scenarios that are not named in the current diagnostic.
+        """
+    api_contract_text = ""
+    if api_contracts:
+        api_contract_text = f"""
+Exact generated API/BCE contracts for this repair (immutable):
+```java
+{api_contracts}
+```
+Use only these declarations. If they cannot express a documented response,
+do not invent an exception, DTO, package, or Control method.
+"""
+    generated_contract_text = ""
+    if generated_contracts:
+        generated_contract_text = f"""
+Exact generated contracts for this repair (immutable):
+```text
+{generated_contracts}
+```
+Use only declarations that appear above. Do not invent a package, type, method,
+or accessor when the contract does not provide one.
 """
     api_control_text = ""
     if api_controls:
@@ -37,7 +59,8 @@ remove scenarios that are not named in the current diagnostic.
 API adapter collaborator contract (immutable):
 Use only these exact BCE Control interfaces: {", ".join(api_controls)}.
 Import them from the package shown in the embedded contracts. Do not derive a
-resource-named substitute from an API name and do not leave placeholder code.
+resource-named substitute such as `StudentsControl` from an API name, and do
+not leave TODO or placeholder code in the controller.
 """
     return f"""The orchestrator compiled and tested your files, and verification failed.
 Fix every reported error in the existing allowed files, including test compilation errors.
@@ -59,6 +82,10 @@ Failure-specific guidance:
 
 {api_control_text}
 
+{api_contract_text}
+
+{generated_contract_text}
+
 Gradle output:
 ```text
 {output}
@@ -73,6 +100,7 @@ def render_frontend_verification_feedback(
     evidence: dict[str, object],
     current_sources: str = "",
     repair_targets: list[str] | None = None,
+    generated_contracts: str = "",
 ) -> str:
     output = (
         str(evidence.get("stdout", ""))
@@ -80,6 +108,13 @@ def render_frontend_verification_feedback(
         + str(evidence.get("stderr", ""))
     )[-20000:]
     targets = "\n".join(f"- `{path}`" for path in (repair_targets or []))
+    contracts = (
+        "\nGenerated TypeScript client contracts (immutable):\n```text\n"
+        + generated_contracts
+        + "\n```\n"
+        if generated_contracts
+        else ""
+    )
     return f"""The TypeScript frontend contract gate or npm production build failed.
 Fix every reported error using only the repair targets below. Preserve project configuration
 and all files under src/generated. Use exact generated API/model exports; do not replace them
@@ -91,7 +126,8 @@ Repair targets:
 Marker-specific rule:
 - Remove every TODO, FIXME, or PLACEHOLDER token from the repair targets, including
   prose comments. Replace placeholder values or branches with the actual contracted UI
-  behavior; do not merely rename the marker or leave a hard-coded demo fallback.
+behavior; do not merely rename the marker or leave a hard-coded demo fallback.
+{contracts}
 
 Verification output:
 ```text
@@ -142,6 +178,59 @@ def verification_failure_hints(output: str) -> str:
             "(such as `year`, `order`, `group`, `user`, `status`, `key`, `value`, `offset`, `limit`, `check`, `date`). "
             "Quote the identifier with backticks/quotes (e.g. `\"year\"` or ``` `year` ```) or rename the column/table in the schema and entity mapping."
         )
+    if re.search(
+        r"Referential integrity constraint violation|DataIntegrityViolationException|FOREIGN KEY",
+        output,
+        re.IGNORECASE,
+    ):
+        hints.append(
+            "- Referential integrity failure: the E2E fixture uses an identifier that is a foreign-key "
+            "target but has not been persisted. Seed the referenced parent entity through the exact "
+            "Spring Data repository before issuing the HTTP request, using the same identifier that "
+            "the request sends. Do not disable constraints, alter production mappings, or substitute "
+            "a different fixture key."
+        )
+    if "Persistence entity schema mismatch" in output or "missing migration column" in output:
+        hints.append(
+            "- Persistence entity contract: the entity omits one or more columns declared by "
+            "the Flyway migration/ERD. Add every listed @Column with the exact snake_case name, "
+            "Java type, constructor argument, getter, and setter before allowing downstream "
+            "mapping or E2E work. Do not weaken NOT NULL constraints or patch only the test fixture."
+        )
+    if "no suitable constructor found for" in output:
+        hints.append(
+            "- Persistence mapper constructor contract: the compiler error identifies a mapper call "
+            "to an entity constructor. Preserve every existing public constructor used by "
+            "BcePersistenceMapper (including relationship arguments such as StudentEntity and "
+            "CourseEntity); add fields or an overloaded constructor instead of replacing that "
+            "signature. Re-run the build after the entity repair."
+        )
+    if "StackOverflowError" in output:
+        hints.append(
+            "- Boundary/Control recursion: the stack trace shows a Boundary adapter calling its Control "
+            "while that Control calls the same Boundary. Follow the sequence direction exactly: a "
+            "Boundary delegates inbound input to a Control, while the Control must read/write its "
+            "ERD-backed Repository or return a contract-supported value; it must never call back into "
+            "the Boundary. Remove the recursive edge in the affected production service/adapter."
+        )
+    missing_column = re.findall(
+        r'Column ["`]?([A-Za-z0-9_]+)["`]? not found', output, re.IGNORECASE
+    )
+    if missing_column:
+        columns = ", ".join(dict.fromkeys(missing_column))
+        hints.append(
+            "- Persistence schema mismatch: H2 reports missing column(s) "
+            f"{columns}. Align the JPA @Column names and migration columns using lower snake_case "
+            "for both sides. Do not quote camelCase migration identifiers while Hibernate expects "
+            "snake_case, and do not rename an ERD field arbitrarily."
+        )
+    if "InvalidPathException" in output:
+        hints.append(
+            "- Invalid JSONPath assertion: use a valid JsonPath expression against the actual "
+            "response body (for example `$.token` or `$.studentId`). Inspect the generated DTO "
+            "JSON shape first; do not pass a Java property expression, empty path, or fabricated "
+            "field to JsonPath."
+        )
     if "incompatible types" in output:
         hints.append(
             "- Incompatible types: Check package imports and exact contract types (e.g. java.time types vs domain models). "
@@ -161,6 +250,35 @@ def verification_failure_hints(output: str) -> str:
                 "exact BCE input using its public constructor/accessors; for an empty BCE DTO use "
                 "its public no-argument constructor, and map every shared field for non-empty DTOs."
             )
+    if re.search(r"expected:\s*<\d+>\s+but\s+was:\s*<\d+>", output, re.IGNORECASE):
+        hints.append(
+            "- HTTP status assertion mismatch: inspect the exact OpenAPI response contract and "
+            "the controller's Control-result mapping before changing production code. In the "
+            "success test, stub the exact Control method with exact converted arguments and its "
+            "success value (for boolean results, `true`); reserve `false` for the documented "
+            "conflict/failure scenario. Assert the contract's status, not a generic 200."
+        )
+    if "returns500" in output or "expected: <500>" in output:
+        hints.append(
+            "- Do not add a direct 500 test that expects a Control not to be invoked. "
+            "HTTP 500 is a transport/global exception outcome unless the reviewed BCE "
+            "contract exposes an explicit error result. Test only executable statuses "
+            "from the API binding and invoke the exact Control for the happy path."
+        )
+    if "missing executable HTTP" in output or "missing explicit HTTP" in output:
+        hints.append(
+            "- API response contract: @ApiResponse/@ApiResponses annotations are documentation only. "
+            "Transport-level statuses (400/401/403/404/500/503) may be handled by global exception "
+            "mapping and do not need fabricated controller branches. For a reported 409/422, add a "
+            "reachable ResponseEntity branch only when the exact Control contract exposes a domain "
+            "result/outcome; do not guess an error condition from a void, entity, or collection return."
+        )
+    if re.search(r"package\s+[\w.]+\s+does not exist|cannot find symbol", output):
+        hints.append(
+            "- Project contract import: remove invented project packages or types. Inspect the "
+            "generated BCE and API sources and import only the exact interfaces/models that exist "
+            "there; do not create aliases such as bce.control or web.dto."
+        )
     if "TooManyActualInvocations" in output:
         hints.append(
             "- TooManyActualInvocations: do not verify a broad matcher once when the "
@@ -188,6 +306,16 @@ def verification_failure_hints(output: str) -> str:
             "- InvalidUseOfMatchersException: if one argument uses a matcher, wrap every "
             "argument in that invocation with a matcher. For example, use "
             "verify(timer).startTimer(eq(30), anyString()), not startTimer(30, anyString())."
+        )
+    if "Forbidden test bean configuration" in output or any(
+        marker in output for marker in ("@mockbean", "@mockitobean", "@testconfiguration")
+    ):
+        hints.append(
+            "- Forbidden test bean configuration: this is a real E2E test, so remove "
+            "@MockBean, @MockitoBean, @TestConfiguration, @Bean, and @Primary from the "
+            "test. Do not replace application beans or enable bean overriding. Use the real "
+            "Spring application graph and autowire only concrete production adapters or "
+            "repositories already present in the generated source."
         )
     if "ConnectionFails_HandlesFailure" in output and "Wanted but not invoked" in output:
         hints.append(

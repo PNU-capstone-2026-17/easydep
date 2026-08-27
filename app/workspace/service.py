@@ -28,6 +28,7 @@ from app.design.api import (
 from app.design import progress as design_progress
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
+from app.design.observability import design_timing_context, log_design_timing
 from app.implementation.application.jobs import worker as implementation_worker
 from app.implementation.interfaces.http import (
     approve_job,
@@ -825,35 +826,52 @@ class WorkspaceService:
                 },
             )
 
-        record("running", "Started")
         try:
-            with design_progress.progress_scope(report):
-                response = operation()
-        except Exception as error:
+            with design_timing_context(
+                app_id=app_id,
+                command_id=command_id,
+                requested_stage=stage,
+            ):
+                record("running", "Started")
+                log_design_timing("workspace.design_operation.started", label=label)
+                try:
+                    with design_progress.progress_scope(report):
+                        response = operation()
+                except Exception as error:
+                    elapsed = time.perf_counter() - started
+                    log_design_timing(
+                        "workspace.design_operation.failed",
+                        elapsed_ms=round(elapsed * 1000, 1),
+                        error_type=type(error).__name__,
+                    )
+                    record(
+                        "failed",
+                        f"Failed after {elapsed:.1f}s: {WorkspaceService._error_text(error)}",
+                    )
+                    raise
             elapsed = time.perf_counter() - started
-            record(
-                "failed",
-                f"Failed after {elapsed:.1f}s: {WorkspaceService._error_text(error)}",
+            payload = _json_response(response) if isinstance(response, JSONResponse) else {}
+            validation = payload.get("validation") or {}
+            stage_validation = validation.get(stage) or {}
+            findings = [
+                *list(stage_validation.get("errors") or []),
+                *list(stage_validation.get("findings") or []),
+            ]
+            log_design_timing(
+                "workspace.design_operation.completed",
+                elapsed_ms=round(elapsed * 1000, 1),
+                findings_count=len(findings),
             )
+            if findings:
+                record(
+                    "needs_review",
+                    f"Draft generated in {elapsed:.1f}s; {len(findings)} findings require revision",
+                )
+            else:
+                record("completed", f"Completed in {elapsed:.1f}s")
+            return response
+        finally:
             live_previews.mark_terminal(app_id, command_id)
-            raise
-        elapsed = time.perf_counter() - started
-        payload = _json_response(response) if isinstance(response, JSONResponse) else {}
-        validation = payload.get("validation") or {}
-        stage_validation = validation.get(stage) or {}
-        findings = [
-            *list(stage_validation.get("errors") or []),
-            *list(stage_validation.get("findings") or []),
-        ]
-        if findings:
-            record(
-                "needs_review",
-                f"Draft generated in {elapsed:.1f}s; {len(findings)} findings require revision",
-            )
-        else:
-            record("completed", f"Completed in {elapsed:.1f}s")
-        live_previews.mark_terminal(app_id, command_id)
-        return response
 
     @staticmethod
     def _requirements_progress_reporter(app_id: str, command_id: str):
@@ -1267,6 +1285,18 @@ class WorkspaceService:
             )
 
         job_status = str(job.get("status") or private_job.get("status") or "")
+        terminal_failure = job_status in {"FAILED", "CANCELLED", "REJECTED"}
+        failure_error = str(
+            private_job.get("error") or job.get("error") or ""
+        ).strip()
+        failure_lines = [
+            line.strip() for line in failure_error.splitlines() if line.strip()
+        ]
+        failure_detail = (
+            failure_lines[-1][-500:]
+            if failure_lines
+            else "구현 작업이 완료되지 않았습니다."
+        )
         live_progress = job.get("progress")
         progress_status = (
             str(live_progress.get("status") or "")
@@ -1339,7 +1369,7 @@ class WorkspaceService:
             current_phase = str(workflow.get("currentPhase") or "")
             tasks = [item for item in workflow.get("tasks", []) if isinstance(item, dict)]
             phase_statuses = {
-                str(phase.get("phaseId") or ""): str(phase.get("status") or "")
+                str(phase.get("phaseId") or ""): str(phase.get("status") or "").upper()
                 for phase in workflow.get("phases", [])
                 if isinstance(phase, dict)
             }
@@ -1355,17 +1385,21 @@ class WorkspaceService:
                     if str(task.get("phase") or "") in phase_ids
                 ]
                 task_statuses = {
-                    str(task.get("status") or "") for task in display_tasks
+                    str(task.get("status") or "").upper() for task in display_tasks
                 }
-                all_succeeded = all(
-                    phase_statuses.get(phase_id) == "SUCCEEDED"
+                has_phase_work = bool(display_tasks) or any(
+                    phase_statuses.get(phase_id) not in {None, "UNPLANNED"}
+                    for phase_id in display_phases
+                )
+                all_succeeded = has_phase_work and all(
+                    phase_statuses.get(phase_id) in {"SUCCEEDED", "COMPLETED", "UNPLANNED"}
                     or (
                         any(
                             str(task.get("phase") or "") == phase_id
                             for task in display_tasks
                         )
                         and all(
-                            str(task.get("status") or "") == "SUCCEEDED"
+                            str(task.get("status") or "").upper() in {"SUCCEEDED", "COMPLETED"}
                             for task in display_tasks
                             if str(task.get("phase") or "") == phase_id
                         )
@@ -1374,13 +1408,22 @@ class WorkspaceService:
                 )
                 if all_succeeded:
                     add_update(f"phase-{display_id}", label, "completed")
-                elif "FAILED" in task_statuses or any(
-                    phase_statuses.get(phase_id) == "FAILED"
-                    for phase_id in display_phases
-                ):
-                    add_update(f"phase-{display_id}", label, "failed")
                 elif (
-                    workflow_status == "RUNNING"
+                    "FAILED" in task_statuses
+                    or any(
+                        phase_statuses.get(phase_id) in {"FAILED", "TIMEOUT"}
+                        for phase_id in display_phases
+                    )
+                    or (terminal_failure and current_phase in phase_ids)
+                ):
+                    add_update(
+                        f"phase-{display_id}",
+                        label,
+                        "failed",
+                        failure_detail if terminal_failure else "",
+                    )
+                elif (
+                    workflow_status.upper() == "RUNNING"
                     and current_phase in phase_ids
                 ) or "RUNNING" in task_statuses:
                     add_update(
@@ -1411,6 +1454,13 @@ class WorkspaceService:
                             continue
                         tasks_by_phase.setdefault(str(task.get("phase") or ""), []).append(task)
                     for task_phase, phase_tasks in tasks_by_phase.items():
+                        # Only expose tasks from the phase that is actually
+                        # executing.  Keeping completed persistence tasks in
+                        # the backend card while Application Setup (or a later
+                        # phase) is running makes the UI look as if the
+                        # workflow restarted at Repository.
+                        if current_phase and task_phase != current_phase:
+                            continue
                         statuses = {str(task.get("status") or "PENDING").lower() for task in phase_tasks}
                         if "failed" in statuses or "timeout" in statuses or "needs_review" in statuses:
                             task_status = next(
@@ -1445,7 +1495,8 @@ class WorkspaceService:
             )
             activity = workflow.get("currentActivity")
             if (
-                not workflow_complete
+                not terminal_failure
+                and not workflow_complete
                 and isinstance(activity, dict)
                 and str(activity.get("id") or "")
             ):
@@ -1454,27 +1505,53 @@ class WorkspaceService:
                     activity_status = "completed"
                 activity_id = str(activity["id"])
                 activity_phase = activity_id.removeprefix("verify-").removeprefix("audit-")
-                display_id, display_label, _ = next(
-                    (
-                        item
-                        for item in _IMPLEMENTATION_DISPLAY_PHASES
-                        if activity_phase in item[2]
-                    ),
-                    ("implementation", "Backend 구현", frozenset()),
-                )
+                # Some workflow runners report the aggregate backend phase as
+                # ``verify-backend``/``audit-backend`` instead of naming one
+                # concrete backend phase.  Keep that activity attached to the
+                # single Backend row; otherwise the fallback display id makes
+                # the UI render a duplicate "Backend 구현 구현 결과 확인" row
+                # while backend work is still running.
+                if activity_phase == "backend":
+                    display_id, display_label = "backend", "Backend 구현"
+                else:
+                    display_id, display_label, _ = next(
+                        (
+                            item
+                            for item in _IMPLEMENTATION_DISPLAY_PHASES
+                            if activity_phase in item[2]
+                        ),
+                        ("implementation", "Backend 구현", frozenset()),
+                    )
                 activity_prefix = "빌드 및 Unit Test" if activity_id.startswith("verify-") else "구현 결과 확인"
+                activity_label = f"{display_label} {activity_prefix}"
+                if display_label.endswith(" 구현") and activity_prefix.startswith("구현 "):
+                    activity_label = f"{display_label} {activity_prefix.removeprefix('구현 ')}"
                 # Backend already exposes its concrete workflow tasks under
                 # the Backend row.  Adding a second "Backend 구현 결과 확인"
                 # row duplicates the same phase in the timeline.
-                if display_id != "backend":
+                # ``completion-audit`` is an internal checkpoint between
+                # workflow phases.  The parent phase row already communicates
+                # that Backend work is being reconciled, so exposing this
+                # aggregate activity as a second result row creates the
+                # misleading "Backend 구현 구현 결과 확인" message just as
+                # the next API Adapter task begins.
+                if activity_id != "completion-audit" and display_id != "backend":
                     add_update(
                         "activity-" + display_id,
-                        f"{display_label} {activity_prefix}",
+                        activity_label,
                         activity_status,
                         str(activity.get("detail") or ""),
                     )
             elif workflow_complete:
                 add_update("release-verification", "최종 릴리스 검증", "completed")
+
+        if terminal_failure:
+            add_update(
+                "implementation-result",
+                "구현 작업 실패",
+                "failed",
+                failure_detail,
+            )
 
         current_file: str | None = None
         if workflow_complete or job_status in TERMINAL_JOB_STATUSES:

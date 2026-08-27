@@ -26,9 +26,9 @@ def write_release_manifest(
         "deployment": deployment is None
         or (
             deployment.get("validation", {}).get("status")
-            in {"SUCCEEDED", "SUCCEEDED_WITH_WARNINGS"}
+            in {"SUCCEEDED", "SUCCEEDED_WITH_WARNINGS", "SKIPPED"}
             and deployment.get("sourceConformance", {}).get("status")
-            in {"SUCCEEDED", "SUCCEEDED_WITH_WARNINGS"}
+            in {"SUCCEEDED", "SUCCEEDED_WITH_WARNINGS", "SKIPPED"}
         ),
         "iac": iac is None
         or (

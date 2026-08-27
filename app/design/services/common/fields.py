@@ -42,15 +42,20 @@ SQL_TYPES: dict[str, str] = {
     "boolean": "BOOLEAN",
     "bool": "BOOLEAN",
     "date": "DATE",
-    "datetime": "DATETIME",
+    # ``LocalDateTime`` has no offset.  Mapping it to a timezone-aware SQL
+    # column makes Hibernate schema validation fail even when the generated
+    # BCE model, mapper, and JPA entity agree on their Java type.
+    "datetime": "TIMESTAMP",
     "float": "FLOAT",
     "double": "DOUBLE",
     "bigdecimal": "DECIMAL(19,4)",
     # 이미 저장된 과거 BCE/외부 입력도 SQL 이름을 그대로 내보내지 않도록 방어한다.
     "decimal": "DECIMAL(19,4)",
     "localdate": "DATE",
-    "localdatetime": "TIMESTAMP WITH TIME ZONE",
+    "localdatetime": "TIMESTAMP",
     "instant": "TIMESTAMP WITH TIME ZONE",
+    "offsetdatetime": "TIMESTAMP WITH TIME ZONE",
+    "zoneddatetime": "TIMESTAMP WITH TIME ZONE",
     "localtime": "TIME",
     "timestamp": "TIMESTAMP WITH TIME ZONE",
 }

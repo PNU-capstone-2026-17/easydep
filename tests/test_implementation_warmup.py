@@ -6,7 +6,7 @@ from pathlib import Path
 from app.implementation.generation.warmup import warmup_implementation_runtime
 
 
-def test_startup_warmup_populates_the_shared_gradle_cache(
+def test_startup_warmup_uses_isolated_gradle_home(
     monkeypatch, tmp_path: Path
 ) -> None:
     tool_root = tmp_path / "app" / "implementation" / "tools" / "puml2code-bce"
@@ -25,10 +25,9 @@ def test_startup_warmup_populates_the_shared_gradle_cache(
     report = warmup_implementation_runtime(tmp_path, 60)
 
     assert report["status"] == "SUCCEEDED"
-    assert (tmp_path / ".easydep" / "gradle-cache").is_dir()
     # `gradle dependencies` only resolves POM metadata, which leaves the
-    # artifact jars unfetched.  Compiling a throwaway source is what actually
-    # materialises the compile classpath into the shared cache.
+    # artifact jars unfetched. Compiling a throwaway source validates the image
+    # classpath without touching a Windows-host Gradle journal.
     gradle = next(command for command in commands if "compileJava" in command)
     assert "dependencies" not in gradle
     assert "--build-cache" in gradle
@@ -44,8 +43,6 @@ def test_startup_warmup_populates_the_shared_gradle_cache(
         / "Warmup.java"
     )
     assert warmup_source.is_file()
-    assert any(
-        str(tmp_path / ".easydep" / "gradle-cache") in argument
-        for argument in gradle
-    )
+    assert gradle[gradle.index("-e") + 1] == "GRADLE_USER_HOME=/tmp/easydep-gradle-home"
+    assert "-Dorg.gradle.vfs.watch=false" in gradle
     assert (tmp_path / ".easydep" / "implementation-warmup" / "report.json").is_file()

@@ -212,6 +212,31 @@ def test_entities_only():
     ) == ""
 
 
+def test_local_datetime_uses_non_timezone_sql_timestamp():
+    puml = generate_erd_from_bce_json(
+        {
+            "Classes": [
+                {
+                    "className": "Enrollment",
+                    "stereotype": "Entity",
+                    "fields": [
+                        "enrolledAt : LocalDateTime",
+                        "recordedAt : Instant",
+                        "syncedAt : OffsetDateTime",
+                    ],
+                    "identifier": [],
+                    "methods": [],
+                }
+            ],
+            "Relationships": [],
+        }
+    )
+
+    assert "enrolledAt : TIMESTAMP" in puml
+    assert "recordedAt : TIMESTAMP WITH TIME ZONE" in puml
+    assert "syncedAt : TIMESTAMP WITH TIME ZONE" in puml
+
+
 # ---------------------------------------------------------------------------
 # 예전 데이터: 단정하지 않고 드러낸다
 # ---------------------------------------------------------------------------

@@ -33,6 +33,8 @@ from app.design.graphs.subgraphs import DESIGN_STAGES
 from app.design.knowledge import basis, detectors, rules
 from app.design.services.class_diagram.validation import diagram as class_validation
 from app.design.services.sequence_diagram import validation as sequence_validation
+from app.design.services.class_diagram.scenario import build_scenario_index
+from app.design.services.class_diagram.validation.model import validate_class_model
 
 
 @dataclass(frozen=True)
@@ -51,7 +53,13 @@ STAGES = (
         rules.CLASS_DIAGRAM,
         class_validation.class_diagram_findings,
         CLEAN,
-        SEEDED,
+        tuple(
+            case
+            for case in SEEDED
+            if case.rule_id in {
+                rule.id for rule in rules.rules_for(rules.CLASS_DIAGRAM, rules.DEFECT)
+            }
+        ),
         class_validation.CLASS_DIAGRAM_DETECTORS,
     ),
     StageUnderTest(
@@ -150,6 +158,134 @@ def test_legacy_structure_remains_viewable_without_execution_validation():
         "Relationships": [],
     }
     found = class_validation.class_diagram_findings(model, {"usecase_spec": {}})
+    assert found == []
+def test_typed_class_contract_requires_canonical_operation_ids():
+    """수락된 typed operation은 owner·signature 기반 ID를 가져야 한다."""
+    index = build_scenario_index({
+        "use_cases": [{"id": "UC1", "name": "Place order"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Place order",
+            "main_scenario": [{"step_number": 1, "sentence": "Buyer submits"}],
+            "extensions": [],
+        }],
+        "relationships": [],
+    })
+    model = {
+        "Classes": [{
+            "className": "OrderControl",
+            "stereotype": "Control",
+            "operations": [{
+                "operationId": "not-canonical",
+                "name": "submit",
+                "parameters": [],
+                "returnType": "void",
+                "stepRefs": ["UC1:main:1"],
+            }],
+        }],
+        "DataTypes": [],
+        "Relationships": [],
+        "Collaborations": [{
+            "collaborationId": "UC1:main:1",
+            "useCaseIds": ["UC1"],
+            "entryActor": "Buyer",
+            "calls": [],
+        }],
+    }
+
+    report = validate_class_model(model, index)
+
+    assert any(
+        finding.rule_id == "class.model.operation-ids"
+        for finding in report.findings
+    )
+
+
+def test_legacy_usecase_checks_stay_quiet_when_there_is_no_upstream_to_compare_against():
+    """대조할 상류가 없으면 검사하지 않는다.
+
+    유스케이스 id가 하나도 없는 입력에서 모든 id를 unknown으로 부르면, 그건 "LLM이
+    지어냈다"가 아니라 "대조할 것이 없다"는 뜻이다. 대조할 것이 없는데 전건 위반을 내면
+    재생성이 고칠 수 없는 지적으로 예산만 태운다.
+    """
+    model = {
+        "Classes": [{"className": "Order", "stereotype": "Entity", "use_case_ids": ["UC1"]}],
+        "Relationships": [],
+    }
+    found = class_validation.class_diagram_findings(model, {"usecase_spec": {}})
+    assert found == []
+
+
+def test_typed_class_model_allows_an_unrelated_single_class():
+    """현재 typed 계약은 관계 없는 단일 클래스도 구조적으로 허용한다."""
+    model = {
+        "Classes": [{"className": "Course", "stereotype": "Entity"}],
+        "DataTypes": [],
+        "Relationships": [],
+        "Collaborations": [],
+    }
+    index = build_scenario_index({"use_cases": [], "use_case_specs": [], "relationships": []})
+
+    report = validate_class_model(model, index)
+
+    assert not any(finding.rule_id == "class.model.schema" for finding in report.findings)
+
+
+def test_legacy_class_contract_types_are_outside_typed_validation():
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [
+                {
+                    "className": "CourseCatalogController",
+                    "stereotype": "Control",
+                    "methods": [
+                        "+ browseCourses(filter : CourseFilter): List<Course>",
+                        "+ findCourse(): MissingResult",
+                    ],
+                },
+                {"className": "Course", "stereotype": "Entity", "fields": ["- title : String"]},
+            ],
+            "Relationships": [],
+        }
+    }
+
+    # This legacy ``methods`` shape is intentionally read-only compatibility
+    # input.  Typed class validation is exercised by the canonical-operation
+    # test above; it does not revive the removed contract-types detector.
+    assert class_validation.class_diagram_findings(state["extracted_bce_classes"], {}) == []
+
+
+def test_isolated_classes_are_reported_but_a_single_class_model_is_allowed():
+    # The typed pipeline no longer invents an ``isolated_classes`` detector;
+    # relationship absence is valid for a partial inventory.
+    isolated = {
+        "Classes": [
+            {"className": "CatalogControl", "stereotype": "Control"},
+            {"className": "Course", "stereotype": "Entity"},
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+        "Collaborations": [],
+    }
+    index = build_scenario_index({"use_cases": [], "use_case_specs": [], "relationships": []})
+
+    report = validate_class_model(isolated, index)
+
+    assert not any(finding.rule_id == "class.model.schema" for finding in report.findings)
+
+
+def test_legacy_usecase_id_detector_stays_quiet_without_upstream_ids():
+    """대조할 상류가 없으면 검사하지 않는다.
+
+    유스케이스 id가 하나도 없는 입력에서 모든 id를 unknown으로 부르면, 그건 "LLM이
+    지어냈다"가 아니라 "대조할 것이 없다"는 뜻이다. 재생성이 고칠 수 없는 지적이므로
+    내지 않는다.
+    """
+    model = {
+        "Classes": [{"className": "Order", "stereotype": "Entity", "use_case_ids": ["UC1"]}],
+        "Relationships": [],
+    }
+    found = class_validation.usecase_ids(model, {"usecase_spec": {}})
     assert found == []
 
 

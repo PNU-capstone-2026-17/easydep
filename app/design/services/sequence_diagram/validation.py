@@ -2232,10 +2232,14 @@ def _sequence_rule_findings(model: dict, state: dict) -> list[Finding]:
 
 
 def _collection_contract(model: dict, _state: dict) -> list[Finding]:
-    return [
+    findings = [
         Finding("sequence.call-return-links", message, "SequenceDiagramCollection")
         for message in interaction_sequence_findings(model or {})
     ]
+    for diagram in model.get("Diagrams") or []:
+        if isinstance(diagram, dict):
+            findings.extend(sequence_call_return_links(diagram, _state))
+    return findings
 
 
 def _collection_class_version(model: dict, state: dict) -> list[Finding]:
@@ -2296,10 +2300,73 @@ def _collection_references(model: dict, state: dict) -> list[Finding]:
     ]
 
 
-# 현재 projection은 이미 typed call tree에서 나왔으므로 전체 legacy 의미 검사를 반복하지
-# 않는다. 저장 경계에서 깨질 수 있는 call/return, class hash, coverage, reference만 확인한다.
+def _collection_diagram_rule(
+    rule_id: str,
+    detector: Callable[[dict, dict], list[Finding]],
+) -> Callable[[dict, dict], list[Finding]]:
+    """Run one deterministic diagram rule across the typed collection."""
+
+    def check(model: dict, state: dict) -> list[Finding]:
+        findings: list[Finding] = []
+        for diagram in model.get("Diagrams") or []:
+            if not isinstance(diagram, dict):
+                continue
+            findings.extend(
+                finding
+                for finding in detector(diagram, state)
+                if finding.rule_id == rule_id
+            )
+        return findings
+
+    return check
+
+
+# Projection output is deterministic, but persisted/checkpoint state is still an external
+# boundary. Re-run the focused interaction invariants which can be broken by stale or
+# manually edited JSON without invoking repair or reconstructing calls from PlantUML.
 SEQUENCE_COLLECTION_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("sequence.call-return-links", _collection_contract),
+    CheckSpec(
+        "sequence.message-bce-flow",
+        _collection_diagram_rule("sequence.message-bce-flow", sequence_bce_flow),
+    ),
+    CheckSpec(
+        "sequence.initial-message-entry",
+        _collection_diagram_rule("sequence.initial-message-entry", sequence_initial_entry),
+    ),
+    CheckSpec(
+        "sequence.return-label-matches-method-return",
+        _collection_diagram_rule(
+            "sequence.return-label-matches-method-return",
+            sequence_return_values_match_methods,
+        ),
+    ),
+    CheckSpec(
+        "sequence.causal-call-chain",
+        _collection_diagram_rule("sequence.causal-call-chain", sequence_causal_call_chain),
+    ),
+    CheckSpec(
+        "sequence.usecase-step-coverage",
+        _collection_diagram_rule("sequence.usecase-step-coverage", sequence_usecase_coverage),
+    ),
+    CheckSpec(
+        "sequence.flow-order",
+        _collection_diagram_rule("sequence.flow-order", sequence_flow_order),
+    ),
+    CheckSpec(
+        "sequence.fragment-condition-consistency",
+        _collection_diagram_rule(
+            "sequence.fragment-condition-consistency",
+            sequence_fragment_condition_consistency,
+        ),
+    ),
+    CheckSpec(
+        "sequence.duplicate-consecutive-messages",
+        _collection_diagram_rule(
+            "sequence.duplicate-consecutive-messages",
+            sequence_duplicate_consecutive_messages,
+        ),
+    ),
     CheckSpec("sequence.class-diagram-version", _collection_class_version),
     CheckSpec("sequence.usecase-step-coverage", _collection_coverage),
     CheckSpec("sequence.references-exist", _collection_references),

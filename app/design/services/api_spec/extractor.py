@@ -285,8 +285,85 @@ def _control_parameter_types(
     return result
 
 
+def _control_return_types(
+    class_diagram_puml: str,
+    class_model: Any | None = None,
+) -> dict[tuple[str, str], str]:
+    """Read exact Control return contracts for response normalization."""
+    result: dict[tuple[str, str], str] = {}
+    payload = (
+        class_model.model_dump(by_alias=True)
+        if isinstance(class_model, BaseModel)
+        else class_model
+    )
+    if isinstance(payload, dict) and isinstance(payload.get("Classes"), list):
+        for class_item in payload["Classes"]:
+            if not isinstance(class_item, dict):
+                continue
+            if str(class_item.get("stereotype") or "").strip().casefold() != "control":
+                continue
+            class_name = str(class_item.get("className") or "").strip()
+            for operation in class_item.get("operations") or []:
+                if not isinstance(operation, dict):
+                    continue
+                method_name = str(operation.get("name") or "").strip()
+                return_type = str(operation.get("returnType") or "").strip()
+                if class_name and method_name and return_type:
+                    result[(class_name, method_name)] = return_type
+        return result
+    class_pattern = re.compile(
+        r"(?ms)^\s*class\s+(?P<class>[A-Za-z_]\w*)[^\{]*\{(?P<body>.*?)^\s*\}"
+    )
+    method_pattern = re.compile(
+        r"^\s*[+\-#]\s*(?P<name>[A-Za-z_]\w*)\s*\([^)]*\)\s*"
+        r":\s*(?P<return>[^\s]+(?:<[^>]+>)?)\s*$",
+        re.MULTILINE,
+    )
+    for match in class_pattern.finditer(class_diagram_puml or ""):
+        if not re.search(r"<<\s*Control\s*>>", match.group(0), re.IGNORECASE):
+            continue
+        for method in method_pattern.finditer(match.group("body")):
+            result[(match.group("class"), method.group("name"))] = method.group(
+                "return"
+            ).strip()
+    return result
+
+
+def _response_contract_for_control(return_type: str) -> tuple[str, bool]:
+    """Map a BCE return type to an OpenAPI response shape without inference."""
+    normalized = re.sub(r"\s+", "", return_type or "")
+    collection = re.fullmatch(
+        r"(?:java\.util\.)?(?:List|Set|Collection|Iterable)<(.+)>", normalized,
+        re.IGNORECASE,
+    )
+    item = collection.group(1) if collection else normalized
+    primitive = {
+        "string": "string",
+        "str": "string",
+        "boolean": "boolean",
+        "bool": "boolean",
+        "int": "integer",
+        "integer": "integer",
+        "long": "integer",
+        "short": "integer",
+        "float": "number",
+        "double": "number",
+        "bigdecimal": "number",
+        "number": "number",
+    }.get(item.lower())
+    return (primitive or item, collection is not None) if item and item.lower() != "void" else ("", False)
+
+
 def _api_field_type_for_control(type_name: str) -> str:
     token = re.sub(r"\s+", "", type_name).lower()
+    # Collection-valued Control parameters are JSON arrays on the wire.  The
+    # previous fallback treated ``List<Enrollment>`` as a string, producing a
+    # syntactically valid OpenAPI document that could never satisfy the BCE
+    # binding validator.
+    if re.match(r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>", token):
+        return "array"
+    if token.endswith("[]"):
+        return "array"
     if token in {"byte", "short", "int", "integer", "long"}:
         return "integer"
     if token in {"float", "double", "bigdecimal", "number"}:
@@ -330,6 +407,7 @@ def normalize_api_spec_model(
     if not isinstance(model, dict):
         return model
     control_parameters = _control_parameter_types(class_diagram_puml, class_model)
+    control_returns = _control_return_types(class_diagram_puml, class_model)
     for endpoint in model.get("Endpoints", []) or []:
         if not isinstance(endpoint, dict):
             continue
@@ -350,6 +428,9 @@ def normalize_api_spec_model(
                     binding["control"] = control
                     binding["method"] = method
             expected_parameters = control_parameters.get((control, method), {})
+            response_schema, response_is_array = _response_contract_for_control(
+                control_returns.get((control, method), "")
+            )
             source_classes = endpoint.setdefault("source_classes", [])
             if control and isinstance(source_classes, list) and control not in source_classes:
                 source_classes.append(control)
@@ -417,4 +498,20 @@ def normalize_api_spec_model(
                             "description": "",
                         })
                         known.add(name)
+            # Response types are not an API-design choice once the exact BCE
+            # Control binding is selected.  Fill omitted success schemas and
+            # correct a primitive-vs-object mismatch deterministically.  Named
+            # DTO/entity projections remain untouched because they can be an
+            # intentional HTTP representation distinct from a BCE return name.
+            for response in endpoint.get("responses", []) or []:
+                if not isinstance(response, dict):
+                    continue
+                status = int(response.get("status", 0) or 0)
+                if not (200 <= status < 300) or status == 204 or not response_schema:
+                    continue
+                current_schema = str(response.get("schema_name") or "").strip()
+                primitive_schema = response_schema in {"string", "integer", "number", "boolean"}
+                if not current_schema or primitive_schema:
+                    response["schema_name"] = response_schema
+                    response["is_array"] = response_is_array
     return model

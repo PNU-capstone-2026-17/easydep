@@ -128,6 +128,49 @@ def test_e2e_missing_repository_bean_targets_upstream_owners(tmp_path: Path) -> 
     ]
 
 
+def test_e2e_http_runtime_failure_targets_application_contract_owners(
+    tmp_path: Path,
+) -> None:
+    tasks = _tasks() + [
+        {
+            "task_id": "implement-registration-control",
+            "task_type": "control",
+            "allowed_write_paths": ["application/src/main/java/example/RegistrationControlService.java"],
+        },
+        {
+            "task_id": "implement-registration-boundary",
+            "task_type": "boundary-adapter",
+            "allowed_write_paths": ["application/src/main/java/example/RegistrationBoundaryAdapter.java"],
+        },
+        {
+            "task_id": "implement-e2e",
+            "task_type": "integration-test",
+            "allowed_write_paths": ["application/src/test/java/example/FlowTest.java"],
+        },
+    ]
+    _write_run(tmp_path, tasks)
+
+    repair = schedule_cross_phase_repair(
+        tmp_path,
+        "implement-e2e",
+        {
+            "testResults": (
+                "application/src/test/java/example/PortfolioApiControllerTest.java:42: "
+                "AssertionFailedError: expected: <201 CREATED> but was: "
+                "<500 INTERNAL_SERVER_ERROR>"
+            )
+        },
+    )
+
+    assert repair is not None
+    assert repair["ownerTaskIds"] == [
+        "implement-application-wiring",
+        "implement-portfolio-api-adapter",
+        "implement-registration-boundary",
+        "implement-registration-control",
+    ]
+
+
 def test_repair_budget_is_cumulative_across_changed_evidence(tmp_path: Path) -> None:
     _write_run(tmp_path, _tasks())
     for attempt in range(1, 4):
@@ -175,6 +218,43 @@ def test_warning_path_does_not_override_causal_owner(tmp_path: Path) -> None:
     )
     assert repair is not None
     assert repair["ownerTaskIds"] == ["implement-repositories"]
+
+
+def test_schema_type_failure_in_wiring_targets_persistence_owners(tmp_path: Path) -> None:
+    tasks = _tasks() + [
+        {
+            "task_id": "implement-entities",
+            "task_type": "persistence-entities",
+            "allowed_write_paths": ["application/src/main/java/example/EnrollmentEntity.java"],
+        },
+        {
+            "task_id": "implement-mapping",
+            "task_type": "persistence-mapping",
+            "allowed_write_paths": ["application/src/main/java/example/Mapper.java"],
+        },
+        {
+            "task_id": "implement-schema",
+            "task_type": "persistence-schema",
+            "allowed_write_paths": ["application/src/main/resources/db/migration/V1__init.sql"],
+        },
+    ]
+    _write_run(tmp_path, tasks)
+
+    repair = schedule_cross_phase_repair(
+        tmp_path,
+        "implement-application-wiring",
+        {
+            "testResults": (
+                "SchemaManagementException: Schema-validation: wrong column type "
+                "encountered in column [enrollment_date]"
+            )
+        },
+    )
+
+    assert repair is not None
+    assert repair["ownerTaskIds"] == [
+        "implement-entities", "implement-mapping", "implement-schema"
+    ]
 
 
 def test_repair_prompt_is_idempotent_and_uses_real_bounded_evidence(

@@ -494,7 +494,12 @@ def api_schema_references(model: dict, state: dict) -> list[Finding]:
         location = f"{endpoint.get('method', 'get').upper()} {endpoint.get('path', '')}"
         references = [endpoint.get("request_schema", "")] + [item.get("schema_name", "") for item in endpoint.get("responses", [])]
         for reference in references:
-            if reference and str(reference).strip() not in schemas:
+            if (
+                reference
+                and str(reference).strip().lower()
+                not in {"string", "integer", "number", "boolean"}
+                and str(reference).strip() not in schemas
+            ):
                 found.append(Finding("api.schema-references-exist", f"Schemas에 없는 참조 '{reference}'", location))
     return found
 
@@ -590,6 +595,11 @@ def _contract_types_compatible(actual: str, expected: str) -> bool:
     actual_normalized = _normalise_contract_type(actual)
     expected_normalized = _normalise_contract_type(expected)
     if actual_normalized == expected_normalized:
+        return True
+    if actual_normalized == "array" and re.match(
+        r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>",
+        expected_normalized,
+    ):
         return True
     # Java date/time values are serialized as ISO strings on the HTTP wire.
     # Treating them as incompatible would reject a valid JSON representation.
@@ -814,6 +824,52 @@ def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
                 f"{control}.{method}의 반환 타입 '{contract.get('returnType') or '<none>'}'은 문서화한 결과를 구분할 수 없음",
                 location,
             ))
+        for response in endpoint.get("responses", []) or []:
+            if not isinstance(response, dict) or not (
+                200 <= int(response.get("status", 0) or 0) < 300
+            ):
+                continue
+            schema_name = str(response.get("schema_name") or "").strip()
+            if not schema_name or return_type in {
+                "", "void", "object", "any", "map", "dict",
+            }:
+                continue
+            is_array = bool(response.get("is_array"))
+            is_collection = bool(re.match(
+                r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>",
+                return_type,
+            ))
+            if is_array != is_collection:
+                found.append(Finding(
+                    "api.control-outcomes-cover-responses",
+                    f"{control}.{method} 반환 타입 '{contract.get('returnType')}'과 성공 응답 schema '{schema_name}'의 배열 여부가 일치하지 않음",
+                    location,
+                ))
+                continue
+            primitive_return = return_type in {
+                "string", "integer", "number", "boolean", "char",
+                "byte", "short", "long", "float", "double",
+            }
+            if not is_array and primitive_return:
+                if _normalise_contract_type(schema_name) != return_type:
+                    found.append(Finding(
+                        "api.control-outcomes-cover-responses",
+                        f"{control}.{method} 반환 타입 '{contract.get('returnType')}'이 성공 응답 schema '{schema_name}'과 일치하지 않음",
+                        location,
+                    ))
+            elif is_array:
+                element = re.search(r"<([^>]+)>", return_type)
+                if (
+                    element
+                    and element.group(1).split(".")[-1].lower()
+                    != schema_name.lower()
+                ):
+                    found.append(Finding(
+                        "api.control-outcomes-cover-responses",
+                        f"{control}.{method} 요소 타입 '{element.group(1)}'이 성공 응답 schema '{schema_name}'과 일치하지 않음",
+                        location,
+                    ))
+            break
     return found
 
 
@@ -826,7 +882,7 @@ def _sequence_diagrams_for_api(state: dict) -> list[dict]:
 
 
 def api_control_sequence(model: dict, state: dict) -> list[Finding]:
-    """Prove the claimed API target is present in an actual sequence path."""
+    """Prove the API binding is represented by an executable sequence path."""
     controls = _control_method_contracts(state)
     diagrams = _sequence_diagrams_for_api(state)
     found: list[Finding] = []
@@ -846,6 +902,7 @@ def api_control_sequence(model: dict, state: dict) -> list[Finding]:
             str(item).strip() for item in endpoint.get("use_case_ids", []) or [] if str(item).strip()
         }
         matches = False
+        decomposed_path = False
         for diagram in diagrams:
             participant_classes = {
                 _participant_id(participant): str(
@@ -859,21 +916,54 @@ def api_control_sequence(model: dict, state: dict) -> list[Finding]:
                     continue
                 if participant_classes.get(str(message.get("target") or "").strip()) != control:
                     continue
-                if method_call_signature(str(message.get("label") or "")) != expected_signature:
-                    continue
                 message_use_cases = {
                     str(item).strip() for item in message.get("use_case_ids", []) or [] if str(item).strip()
                 }
                 if endpoint_use_cases and not (endpoint_use_cases & message_use_cases):
                     continue
-                matches = True
-                break
+                candidate_signature = method_call_signature(
+                    str(message.get("label") or "")
+                )
+                if candidate_signature == expected_signature:
+                    matches = True
+                    break
+                candidate_match = re.match(
+                    r"([A-Za-z_][A-Za-z0-9_]*)\(.*\)$", candidate_signature
+                )
+                expected_match = re.match(
+                    r"([A-Za-z_][A-Za-z0-9_]*)\(.*\)$", expected_signature
+                )
+                if not candidate_match or not expected_match:
+                    continue
+                candidate_contract = controls.get(control, {}).get(
+                    candidate_match.group(1)
+                )
+                if candidate_contract is None:
+                    continue
+                expected_tokens = set(re.findall(
+                    r"[a-z]+",
+                    re.sub(
+                        r"([a-z])([A-Z])", r"\1 \2", expected_match.group(1)
+                    ).lower(),
+                ))
+                candidate_tokens = set(re.findall(
+                    r"[a-z]+",
+                    re.sub(
+                        r"([a-z])([A-Z])", r"\1 \2", candidate_match.group(1)
+                    ).lower(),
+                ))
+                return_compatible = _contract_types_compatible(
+                    str(candidate_contract.get("returnType") or ""),
+                    str(contract.get("returnType") or ""),
+                )
+                if expected_tokens & candidate_tokens and return_compatible:
+                    decomposed_path = True
             if matches:
                 break
-        if not matches:
+        if not matches and not decomposed_path:
             found.append(Finding(
                 "api.control-call-in-sequence",
-                f"{control}.{expected_signature} 호출이 이 endpoint의 시퀀스 흐름에 없음",
+                f"{control}의 endpoint 유스케이스 경로에 Control 호출이 없음",
                 _api_location(endpoint),
             ))
     return found

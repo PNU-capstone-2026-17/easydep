@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -30,10 +33,22 @@ from .prototype import PrototypeClient
 # repair the result without inventing a persistence decision.
 _IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
     "api.operations-present",
+    # API traceability/type/outcome findings remain visible in the design
+    # report, but implementation may proceed so its bounded agents can expose
+    # the concrete repair evidence. Only an API with no operation at all is
+    # impossible to hand off to an implementation task.
     "erd.surrogate-key-collides",
+    "class.contract-types-exist",
 })
 _OPENAPI_HTTP_METHODS = frozenset({
     "delete", "get", "head", "options", "patch", "post", "put", "trace",
+})
+_JAVA_CONTRACT_TYPES = frozenset({
+    "String", "Object", "boolean", "Boolean", "byte", "Byte", "char", "Character",
+    "short", "Short", "int", "Integer", "long", "Long", "float", "Float", "double",
+    "Double", "void", "Void", "List", "Set", "Map", "Collection", "Iterable",
+    "Optional", "Page", "UUID", "Date", "LocalDate", "LocalDateTime", "OffsetDateTime",
+    "Instant", "BigDecimal",
 })
 
 
@@ -55,6 +70,67 @@ def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bo
         if isinstance(finding, dict)
         for rule_id in _IMPLEMENTATION_BLOCKING_DESIGN_RULES
     )
+
+
+def _missing_bce_contract_types(class_diagram: object) -> list[str]:
+    """Find custom Java types used by BCE signatures but not declared in the BCE diagram.
+
+    A missing request type is otherwise silently downgraded by OpenAPI generation to
+    ``Object``.  The API adapter cannot then convert the request to the Control input
+    without inventing a contract, so this must be reported before any LLM task starts.
+    """
+    source = str(class_diagram or "")
+    declarations = set(re.findall(
+        r"(?im)^\s*(?:class|interface|entity)\s+(?:\"[^\"]+\"\s+as\s+)?([A-Za-z_]\w*)",
+        source,
+    ))
+    if not declarations:
+        return []
+    missing: set[str] = set()
+    in_class = False
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if line.startswith(("class ", "interface ", "entity ")):
+            in_class = True
+            continue
+        if in_class and line == "}":
+            in_class = False
+            continue
+        if not in_class or not line.startswith(("+", "-", "#", "~")) or ":" not in line:
+            continue
+        # Only inspect the declared type portions of fields, parameters, and returns.
+        type_text = line.split(":", 1)[1]
+        for token in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", type_text):
+            if token not in declarations and token not in _JAVA_CONTRACT_TYPES:
+                missing.add(token)
+    return sorted(missing)
+
+
+def _append_bce_contract_type_report(
+    readiness: dict[str, Any], class_diagram: object
+) -> dict[str, Any]:
+    missing = _missing_bce_contract_types(class_diagram)
+    if not missing:
+        return readiness
+    finding = (
+        "BCE method signatures reference undeclared type(s): "
+        + ", ".join(missing)
+        + " — declare the type in the class diagram before implementation "
+        "[class.contract-types-exist]"
+    )
+    result = {**readiness, "status": "NEEDS_INPUT"}
+    result["findings"] = [*list(readiness.get("findings") or []), {
+        "stage": "class_diagram", "finding": finding,
+    }]
+    stages = [dict(item) for item in readiness.get("stages") or [] if isinstance(item, dict)]
+    stage = next((item for item in stages if item.get("stage") == "class_diagram"), None)
+    if stage is None:
+        stages.append({"stage": "class_diagram", "status": "NEEDS_INPUT", "findings": [finding]})
+    else:
+        stage["status"] = "NEEDS_INPUT"
+        stage["findings"] = [*list(stage.get("findings") or []), finding]
+    result["stages"] = stages
+    return result
 
 
 def _has_rendered_openapi_operation(api_spec: object) -> bool:
@@ -102,6 +178,59 @@ def _missing_openapi_operation_report(readiness: dict[str, Any]) -> dict[str, An
     return result
 
 
+def _unrepresentable_openapi_error_outcomes(
+    class_diagram: object, api_spec: object
+) -> list[str]:
+    """Retained compatibility hook; documented API outcomes are executable.
+
+    A BCE method's return type describes its successful value.  It does not
+    constrain documented HTTP failure outcomes: those can be produced by
+    validation, authorization, a domain exception, or a persistence exception
+    mapped by the web layer.  Requiring every 409/422 to use a synthetic
+    ``*Result`` return type incorrectly rejected ordinary commands returning
+    an entity (for example a successful enrollment) and encouraged fabricated
+    DTOs.  Binding/outcome completeness is already checked by the API design
+    validators, so this legacy implementation preflight must not add a second,
+    contradictory design finding.
+    """
+    del class_diagram, api_spec
+    return []
+
+
+def _append_api_error_outcome_report(
+    readiness: dict[str, Any], class_diagram: object, api_spec: object
+) -> dict[str, Any]:
+    findings = _unrepresentable_openapi_error_outcomes(class_diagram, api_spec)
+    if not findings:
+        return readiness
+    rule = "api.error-outcomes-representable"
+    if any(
+        rule in str(item.get("finding") or "")
+        for item in readiness.get("findings") or []
+        if isinstance(item, dict)
+    ):
+        return readiness
+    finding = (
+        "OpenAPI error outcome cannot be represented by its BCE Control: "
+        + "; ".join(findings)
+        + " — model an explicit BCE result/error outcome or remove the unsupported API response "
+        f"[{rule}]"
+    )
+    result = {**readiness, "status": "NEEDS_INPUT"}
+    result["findings"] = [*list(readiness.get("findings") or []), {
+        "stage": "api_spec", "finding": finding,
+    }]
+    stages = [dict(item) for item in readiness.get("stages") or [] if isinstance(item, dict)]
+    stage = next((item for item in stages if item.get("stage") == "api_spec"), None)
+    if stage is None:
+        stages.append({"stage": "api_spec", "status": "NEEDS_INPUT", "findings": [finding]})
+    else:
+        stage["status"] = "NEEDS_INPUT"
+        stage["findings"] = [*list(stage.get("findings") or []), finding]
+    result["stages"] = stages
+    return result
+
+
 class JobNotFound(KeyError):
     pass
 
@@ -134,7 +263,14 @@ class ImplementationWorker:
             )
             if not isinstance(design.get(key), dict) or not design[key]
         ]
-        readiness = design_readiness_report(design)
+        readiness = _append_bce_contract_type_report(
+            design_readiness_report(design), design.get("class_diagram_puml")
+        )
+        readiness = _append_api_error_outcome_report(
+            readiness,
+            design.get("class_diagram_puml"),
+            design.get("api_spec"),
+        )
         # Prefer the concrete rendered-contract defect over a generic missing
         # model report: this is the exact reason both OpenAPI generators would
         # reject the hand-off.
@@ -730,10 +866,37 @@ class ImplementationWorker:
     def _write(self, record: dict[str, Any]) -> None:
         path = self._record_path(record["job_id"])
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".tmp")
         with self.lock:
-            temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-            temporary.replace(path)
+            payload = json.dumps(record, ensure_ascii=False, indent=2)
+            # A fixed ``.tmp`` path is vulnerable to another server process or
+            # antivirus scanner opening it while Windows is replacing the
+            # durable state file.  Use a unique sibling and retry the replace;
+            # the final direct write is safe when the destination is writable
+            # but temporarily cannot be atomically replaced.
+            temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                temporary.write_text(payload, encoding="utf-8")
+                last_error: PermissionError | None = None
+                for attempt in range(3):
+                    try:
+                        os.replace(temporary, path)
+                        last_error = None
+                        break
+                    except PermissionError as error:
+                        last_error = error
+                        if attempt < 2:
+                            time.sleep(0.05 * (attempt + 1))
+                if last_error is not None:
+                    # Some Windows file-sharing configurations deny replacing
+                    # an existing file while still allowing it to be opened
+                    # for writing. Preserve a durable record instead of
+                    # aborting the entire implementation job.
+                    path.write_text(payload, encoding="utf-8")
+            finally:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     @staticmethod
     def public_record(record: dict[str, Any]) -> dict[str, Any]:

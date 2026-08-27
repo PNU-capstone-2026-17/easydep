@@ -6,8 +6,9 @@ from app.testing.utils.static_analysis import scan_stage
 def static_verification_node(state: TestingState) -> dict:
     """Static verification of the deployment files the implementation agent stored.
 
-    Scans the ``DEPLOYMENT_FILE`` snapshot — K8s manifests, Dockerfiles and
-    Helm charts — with Trivy's misconfiguration rules.
+    Scans the ``DEPLOYMENT_FILE`` snapshot — Docker and deployment support
+    files — with Trivy's misconfiguration rules. Kubernetes manifests are not
+    part of the current implementation release contract.
     """
     return scan_stage(
         node="static_verification",

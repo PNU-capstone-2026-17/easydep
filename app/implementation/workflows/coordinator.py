@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -44,6 +44,7 @@ from .conformance import (
 from .release import write_release_manifest
 from .repair import (
     apply_repair_directives,
+    repair_task_ids,
     repair_rounds,
     schedule_cross_phase_repair,
     schedule_source_conformance_repair,
@@ -80,6 +81,10 @@ PHASES = (
 PARALLEL_PHASES = frozenset(
     {"control", "api-adapters", "boundary-adapters", "outbound-adapters"}
 )
+# Individual tasks already compile their owned production sources and run only
+# their owned tests.  A full workspace build is valuable at integration seams,
+# but repeating it after every independent phase dominated the end-to-end run.
+FULL_VERIFICATION_PHASES = frozenset({"wiring", "end-to-end"})
 PHASE_LABELS = {
     "control": "Control",
     "persistence": "Repository",
@@ -200,6 +205,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         item.get("taskId"): item for item in previous.get("tasks", [])
         if isinstance(item, dict)
     }
+    repaired_tasks = repair_task_ids(run_root)
     tasks: list[dict[str, object]] = []
     for task in manifest.get("implementation_tasks", []):
         task_id = str(task["task_id"])
@@ -224,6 +230,10 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             and complete_outputs
             and result.get("promptSha256", prompt_sha) == prompt_sha
         )
+        repair_replay_required = (
+            task_id in repaired_tasks
+            and result.get("promptSha256") != prompt_sha
+        )
         if old.get("status") == "RUNNING":
             status = (
                 "SUCCEEDED"
@@ -234,6 +244,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             old.get("status") == "SUCCEEDED"
             and same_output_checkpoint
             and complete_outputs
+            and not repair_replay_required
         ):
             status = "SUCCEEDED"
         elif result_matches and not old:
@@ -401,8 +412,12 @@ def _run_workflow(
             "detail": "생성된 소스를 빌드하고 테스트하고 있습니다.",
         }
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-        verification = verifier(run_root)
-        audit = auditor(run_root)
+        try:
+            verification = verifier(run_root)
+            audit = auditor(run_root)
+        except Exception as error:
+            _record_workflow_failure(run_root, state, error)
+            raise
         state = reconcile_workflow_state(run_root)
         if audit.get("status") == "COMPLETE":
             state["currentActivity"] = {
@@ -493,15 +508,31 @@ def _run_workflow(
                         )
                         return repaired_state
                 raise error
+        full_phase_verification = (
+            verifier is not verify_run_workspace
+            or phase_id in FULL_VERIFICATION_PHASES
+        )
         state["currentActivity"] = {
             "id": f"verify-{phase_id}",
-            "label": f"{PHASE_LABELS[phase_id]} 빌드 및 Unit Test",
+            "label": (
+                f"{PHASE_LABELS[phase_id]} 통합 빌드 및 Test"
+                if full_phase_verification
+                else f"{PHASE_LABELS[phase_id]} 작업 단위 검증 확인"
+            ),
             "status": "RUNNING",
-            "detail": "변경된 소스를 빌드하고 Unit Test를 실행하고 있습니다.",
+            "detail": (
+                "전체 애플리케이션을 빌드하고 통합 테스트를 실행하고 있습니다."
+                if full_phase_verification
+                else "각 작업의 컴파일·소유 테스트가 완료되어 다음 통합 게이트에서 다시 검증합니다."
+            ),
         }
         state["updatedAt"] = _now()
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-        _verify_phase(run_root, phase_id, verifier)
+        try:
+            _verify_phase(run_root, phase_id, verifier)
+        except Exception as error:
+            _record_workflow_failure(run_root, state, error)
+            raise
         state["currentActivity"] = {
             "id": f"audit-{phase_id}",
             "label": f"{PHASE_LABELS[phase_id]} 구현 결과 확인",
@@ -510,7 +541,11 @@ def _run_workflow(
         }
         state["updatedAt"] = _now()
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-        auditor(run_root)
+        try:
+            auditor(run_root)
+        except Exception as error:
+            _record_workflow_failure(run_root, state, error)
+            raise
         next(
             phase for phase in state["phases"] if phase["phaseId"] == phase_id
         )["status"] = "SUCCEEDED"
@@ -528,7 +563,11 @@ def _run_workflow(
         "detail": "전체 구현 결과를 빌드하고 테스트하고 있습니다.",
     }
     _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
-    audit = auditor(run_root)
+    try:
+        audit = auditor(run_root)
+    except Exception as error:
+        _record_workflow_failure(run_root, final_state, error)
+        raise
     if audit.get("status") == "COMPLETE":
         final_state["currentActivity"] = {
             "id": "release-verification",
@@ -537,7 +576,11 @@ def _run_workflow(
             "detail": "설계 정합성과 실행 가능 여부를 확인하고 있습니다.",
         }
         _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
-        verification = verifier(run_root)
+        try:
+            verification = verifier(run_root)
+        except Exception as error:
+            _record_workflow_failure(run_root, final_state, error)
+            raise
         try:
             conformance = verify_source_design_conformance(run_root, spec)
         except SourceDesignConformanceError as error:
@@ -621,11 +664,10 @@ def _execute_task_batch(
     state_path = run_root / "reports" / "workflow-state.json"
     workers = min(max(1, max_workers), len(tasks))
     for task in tasks:
-        # Only worker slots are active at once.  Remaining tasks are submitted
-        # to the pool but stay pending in the durable state so the UI does not
-        # claim that the entire batch is executing concurrently.
-        task["status"] = "RUNNING" if tasks.index(task) < workers else "PENDING"
-        task["attempts"] = int(task.get("attempts", 0)) + 1
+        # A task is marked RUNNING only immediately before it is submitted to
+        # an available worker.  In particular, do not increment attempts for
+        # queued tasks: a pending task has not started yet.
+        task["status"] = "PENDING"
     state["updatedAt"] = _now()
     _write_json_atomic(state_path, state)
 
@@ -637,27 +679,17 @@ def _execute_task_batch(
             )
         return result
 
-    futures: list[Future[dict[str, object]]] = []
-    if workers == 1:
-        # Preserve the original calling-thread behavior when parallelism is
-        # disabled or a dependency/overlap reduced this to a singleton batch.
-        for task in tasks:
-            future: Future[dict[str, object]] = Future()
-            try:
-                future.set_result(run(task))
-            except Exception as error:
-                future.set_exception(error)
-            futures.append(future)
-    else:
-        with ThreadPoolExecutor(
-            max_workers=workers, thread_name_prefix="easydep-implementation-task"
-        ) as pool:
-            futures = [pool.submit(run, task) for task in tasks]
+    def mark_started(task: dict[str, object]) -> None:
+        task["status"] = "RUNNING"
+        task["attempts"] = int(task.get("attempts", 0)) + 1
+        state["updatedAt"] = _now()
+        _write_json_atomic(state_path, state)
 
     failures: list[tuple[dict[str, object], Exception]] = []
-    # Futures are consumed in manifest order, not completion order, so state and
-    # error selection remain deterministic even though the work runs in parallel.
-    for task, future in zip(tasks, futures):
+
+    def record_completion(
+        task: dict[str, object], future: Future[dict[str, object]]
+    ) -> None:
         try:
             future.result()
         except Exception as error:
@@ -676,6 +708,57 @@ def _execute_task_batch(
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
 
+    if workers == 1:
+        # Preserve the original calling-thread behavior when parallelism is
+        # disabled or a dependency/overlap reduced this to a singleton batch.
+        for task in tasks:
+            mark_started(task)
+            future: Future[dict[str, object]] = Future()
+            try:
+                future.set_result(run(task))
+            except Exception as error:
+                future.set_exception(error)
+            record_completion(task, future)
+    else:
+        next_index = 0
+        active: dict[Future[dict[str, object]], dict[str, object]] = {}
+
+        def submit_next(pool: ThreadPoolExecutor) -> None:
+            nonlocal next_index
+            if next_index >= len(tasks):
+                return
+            task = tasks[next_index]
+            next_index += 1
+            mark_started(task)
+            active[pool.submit(run, task)] = task
+
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="easydep-implementation-task"
+        ) as pool:
+            # Keep no more than ``workers`` futures submitted at once.  This
+            # makes the durable PENDING/RUNNING state reflect actual execution
+            # instead of the executor's private unbounded queue.
+            for _ in range(workers):
+                submit_next(pool)
+            while active:
+                completed, _ = wait(active, return_when=FIRST_COMPLETED)
+                # Completion order is nondeterministic; process a group in
+                # manifest order so the checkpoint and selected error remain
+                # stable across runs.
+                done_tasks = sorted(
+                    ((future, active[future]) for future in completed),
+                    key=lambda item: tasks.index(item[1]),
+                )
+                for future, task in done_tasks:
+                    active.pop(future, None)
+                    record_completion(task, future)
+                # Refill only after every completed task in this checkpoint
+                # group has transitioned out of RUNNING.  Otherwise a fast
+                # completion group could briefly show a finished task and its
+                # replacement as RUNNING at the same time in the UI.
+                for _ in done_tasks:
+                    submit_next(pool)
+
     if failures:
         failed_task, _ = failures[0]
         state["status"] = "FAILED"
@@ -691,10 +774,56 @@ def _verify_phase(
     verifier: Callable[[Path], dict[str, object]],
 ) -> dict[str, object]:
     if verifier is verify_run_workspace:
+        if phase_id not in FULL_VERIFICATION_PHASES:
+            result = {
+                "status": "SKIPPED",
+                "reason": (
+                    "Task-scoped verification already completed; full workspace "
+                    "verification runs at the next integration seam and final gate."
+                ),
+            }
+            _write_json_atomic(
+                run_root / "reports" / f"phase-{phase_id}-verification.json",
+                result,
+            )
+            return result
         return verify_run_workspace(
-            run_root, report_name=f"phase-{phase_id}-verification.json"
+            run_root,
+            report_name=f"phase-{phase_id}-verification.json",
+            verify_frontend=phase_id == "frontend",
         )
     return verifier(run_root)
+
+
+def _record_workflow_failure(
+    run_root: Path, state: dict[str, object], error: Exception
+) -> None:
+    """Persist a verifier/auditor failure before propagating it to the job."""
+    activity = state.get("currentActivity")
+    failed_activity = dict(activity) if isinstance(activity, dict) else {}
+    activity_id = str(failed_activity.get("id") or "")
+    phase_id = activity_id.removeprefix("verify-").removeprefix("audit-")
+    if phase_id in PHASE_LABELS:
+        for phase in state.get("phases", []):
+            if isinstance(phase, dict) and phase.get("phaseId") == phase_id:
+                phase["status"] = "FAILED"
+                break
+
+    detail = (str(error).strip() or type(error).__name__)[-1000:]
+    label = str(failed_activity.get("label") or "구현 결과 확인")
+    failed_activity.update(
+        {
+            "id": activity_id or "workflow-verification",
+            "label": label,
+            "status": "FAILED",
+            "detail": f"{label} 실패: {detail}",
+        }
+    )
+    state["currentActivity"] = failed_activity
+    state["status"] = "FAILED"
+    state["blockingReason"] = failed_activity["detail"]
+    state["updatedAt"] = _now()
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
 
 
 def workflow_status(run_root: Path) -> dict[str, object]:
@@ -767,18 +896,24 @@ def _render_deployment_if_configured(
     intent = spec.inputs.get("deploymentIntent")
     cloud = spec.inputs.get("cloud")
     deployment = spec.inputs.get("deployment")
+    deployment_bundle = spec.inputs.get("deploymentBundle")
     if (intent and intent.is_file()) or (cloud and cloud.is_file()):
-        deployment_report = render_deployment(run_root, spec)
-        iac_report = None
-        if cloud and cloud.is_file():
-            iac_report = render_iac(run_root, spec)
-        return deployment_report, iac_report
-    elif deployment and deployment.is_file():
+        deployment_report = render_deployment(
+            run_root, spec, include_kubernetes=False
+        )
+    elif deployment and deployment.is_file() and not (
+        deployment_bundle and deployment_bundle.is_file()
+    ):
         raise ValueError(
             "Deployment rendering requires deploymentIntent or a cloud resource "
             "specification"
         )
-    return None, None
+    else:
+        deployment_report = None
+    iac_report = None
+    if (cloud and cloud.is_file()) or (deployment_bundle and deployment_bundle.is_file()):
+        iac_report = render_iac(run_root, spec, include_kubernetes=False)
+    return deployment_report, iac_report
 
 
 def _complete_release(

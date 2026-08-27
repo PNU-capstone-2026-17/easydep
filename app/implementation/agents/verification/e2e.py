@@ -4,6 +4,48 @@ import re
 from pathlib import Path
 
 
+_SPRING_BOOT3_LEGACY_IMPORTS = {
+    "org.springframework.boot.web.server.": "org.springframework.boot.test.web.server.",
+    "javax.persistence.": "jakarta.persistence.",
+    "javax.validation.": "jakarta.validation.",
+    "javax.servlet.": "jakarta.servlet.",
+    "javax.annotation.": "jakarta.annotation.",
+    "javax.transaction.": "jakarta.transaction.",
+}
+
+
+def repair_spring_boot3_test_compatibility(path: Path) -> bool:
+    """Normalize legacy framework imports in generated Spring Boot 3 tests.
+
+    The generated Gradle project is pinned to Spring Boot 3.3.x.  LLMs can
+    nevertheless copy Spring Boot 2 or pre-Jakarta examples, which makes an
+    otherwise valid E2E flow fail at compilation.  Restrict the rewrite to
+    Java import declarations so comments, strings, and application behavior
+    are never changed.  This is a bounded compatibility migration, not a
+    substitute for semantic repair.
+    """
+    if not path.is_file():
+        return False
+    source = path.read_text(encoding="utf-8")
+    rewritten = source
+    for old_prefix, new_prefix in _SPRING_BOOT3_LEGACY_IMPORTS.items():
+        rewritten = re.sub(
+            rf"(?m)^(\s*import\s+(?:static\s+)?){re.escape(old_prefix)}",
+            rf"\g<1>{new_prefix}",
+            rewritten,
+        )
+    if rewritten == source:
+        return False
+    path.write_text(rewritten, encoding="utf-8")
+    return True
+
+
+# Kept as a compatibility alias for callers and plugins using the old helper
+# name.  The implementation now covers the complete bounded Spring Boot 3
+# import migration rather than only LocalServerPort.
+repair_spring_boot_test_compatibility = repair_spring_boot3_test_compatibility
+
+
 def repair_nested_e2e_members(path: Path) -> bool:
     """Unwrap class members accidentally nested in a synthetic test method."""
     if not path.is_file():
@@ -113,8 +155,10 @@ def _java_test_method_bodies(source: str) -> list[str]:
     """Return complete Java ``@Test`` bodies without assuming their formatting."""
     declaration = re.compile(
         r"(?ms)@Test(?:\s*\([^)]*\))?\s*"
+        r"(?:(?:@[A-Za-z_$][\w$]*(?:\([^)]*\))?\s*)*)"
         r"(?:(?:public|protected|private)\s+)?void\s+"
-        r"[A-Za-z_$][\w$]*\s*\([^)]*\)\s*\{"
+        r"[A-Za-z_$][\w$]*\s*\([^)]*\)"
+        r"(?:\s+throws\s+[^{]+)?\s*\{"
     )
     bodies: list[str] = []
     for match in declaration.finditer(source):
@@ -206,6 +250,21 @@ def _status_assertion_pattern(status: object) -> re.Pattern[str]:
     symbolic_name = _STATUS_ENUMS.get(value)
     if symbolic_name:
         alternatives.append(rf"(?:HttpStatus\.)?{symbolic_name}")
+    mockmvc_matcher = {
+        "200": "isOk",
+        "201": "isCreated",
+        "202": "isAccepted",
+        "204": "isNoContent",
+        "400": "isBadRequest",
+        "401": "isUnauthorized",
+        "403": "isForbidden",
+        "404": "isNotFound",
+        "409": "isConflict",
+        "422": "isUnprocessableEntity",
+        "500": "isInternalServerError",
+    }.get(value)
+    if mockmvc_matcher:
+        alternatives.append(mockmvc_matcher)
     return re.compile(
         rf"(?im)^.*(?:assert|expect|status).*\b(?:{'|'.join(alternatives)})\b.*$"
     )
@@ -219,7 +278,25 @@ def _http_method_evidence(method: str, source: str) -> bool:
         "PATCH": r"\bpatchForObject\s*\(|HttpMethod\.PATCH",
         "DELETE": r"\bdelete\s*\(|HttpMethod\.DELETE",
     }
-    pattern = verbs.get(method.upper(), rf"HttpMethod\.{re.escape(method.upper())}")
+    verb = method.upper()
+    pattern = verbs.get(verb, rf"HttpMethod\.{re.escape(verb)}")
+    # MockMvc tests commonly use a static wildcard import and invoke
+    # ``mockMvc.perform(post(...))`` directly.  Treat only calls inside a
+    # ``perform`` expression as evidence so unrelated methods such as
+    # ``repository.delete(...)`` cannot satisfy an HTTP scenario.
+    if verb in {"GET", "POST", "PUT", "DELETE", "PATCH"}:
+        builder = verb.lower()
+        mockmvc_pattern = rf"(?:MockMvcRequestBuilders\.)?{builder}\s*\("
+        if re.search(
+            rf"mockMvc\s*\.\s*perform\s*\(\s*(?:MockMvcRequestBuilders\.)?{builder}\s*\(",
+            source,
+        ):
+            return True
+        if re.search(
+            rf"import\s+static\s+org\.springframework\.test\.web\.servlet\.request\.MockMvcRequestBuilders\.(?:\*|{builder})\s*;",
+            source,
+        ) and re.search(mockmvc_pattern, source):
+            return True
     return bool(re.search(pattern, source))
 
 
@@ -280,7 +357,8 @@ def e2e_contract_violations(
             # cannot truthfully exercise every persistence aggregate. Require
             # at least one concrete repository evidence and let scenario-level
             # HTTP assertions cover the remaining aggregates.
-            required_groups["repository evidence"] = repositories
+            if "persistencePaths" not in contract or contract.get("persistencePaths"):
+                required_groups["repository evidence"] = repositories
         for gateway in contract.get("gatewayAdapters", []):
             required_groups[f"concrete gateway {gateway}"] = (str(gateway),)
     else:

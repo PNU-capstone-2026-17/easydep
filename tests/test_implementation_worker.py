@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -21,11 +22,175 @@ from app.implementation.interfaces.schemas import (
     CreateImplementationFeedbackJobRequest,
     CreateImplementationJobRequest,
 )
-from app.implementation.application.jobs import ImplementationWorker, InvalidJobState
+from app.implementation.application.jobs import (
+    ImplementationWorker,
+    InvalidJobState,
+    _unrepresentable_openapi_error_outcomes,
+    _missing_bce_contract_types,
+)
 
 
 def test_job_contract_preserves_automated_placeholder_policy() -> None:
     assert CreateImplementationJobRequest().allow_assumptions is True
+
+
+def test_missing_bce_signature_type_is_detected_before_implementation() -> None:
+    puml = """
+    @startuml
+    class CourseCatalogController <<Control>> {
+      + browseCourses(filter : CourseFilter): List<Course>
+      + findCourse(): MissingResult
+    }
+    class Course <<Entity>> {
+      - filter : CourseFilter
+    }
+    @enduml
+    """
+
+    assert _missing_bce_contract_types(puml) == ["CourseFilter", "MissingResult"]
+
+
+def test_control_return_does_not_reject_documented_openapi_error_outcomes() -> None:
+    class_diagram = """
+    @startuml
+    class DropControl <<Control>> {
+      + drop(studentId : String, courseId : String): void
+    }
+    @enduml
+    """
+    api_spec = {
+        "paths": {
+            "/students/{studentId}/enrollments/{courseId}": {
+                "delete": {
+                    "responses": {"204": {}, "404": {}, "409": {}, "422": {}, "500": {}},
+                    "x-easydep-control": {
+                        "control": "DropControl",
+                        "method": "drop",
+                    },
+                }
+            }
+        }
+    }
+
+    findings = _unrepresentable_openapi_error_outcomes(class_diagram, api_spec)
+
+    assert findings == []
+
+
+def test_initial_job_does_not_add_false_error_outcome_design_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = ImplementationWorker(settings(tmp_path))
+    worker._plan = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.design_readiness_report",
+        lambda _design: {"status": "READY", "findings": [], "stages": []},
+    )
+    try:
+        record = worker.create_job(
+            "app-1",
+            {
+                "class_diagram_puml": """
+                @startuml
+                class DropControl <<Control>> {
+                  + drop(studentId : String, courseId : String): void
+                }
+                @enduml
+                """,
+                "api_spec": {
+                    "openapi": "3.1.0",
+                    "paths": {
+                        "/students/{studentId}/enrollments/{courseId}": {
+                            "delete": {
+                                "responses": {"204": {}, "409": {}},
+                                "x-easydep-control": {
+                                    "control": "DropControl", "method": "drop"
+                                },
+                            }
+                        }
+                    },
+                },
+                "extracted_bce_classes": {"Classes": [{"className": "DropControl"}]},
+                "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
+                "api_spec_model": {"Endpoints": [{"path": "/students"}]},
+            },
+            "com.example",
+            False,
+        )
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "QUEUED"
+    assert record["design_validation"]["findings"] == []
+
+
+def test_void_control_allows_transport_level_openapi_error_outcomes() -> None:
+    class_diagram = """
+    @startuml
+    class DropControl <<Control>> {
+      + drop(studentId : String, courseId : String): void
+    }
+    @enduml
+    """
+    api_spec = {
+        "paths": {
+            "/students/{studentId}/enrollments/{courseId}": {
+                "delete": {
+                    "responses": {"204": {}, "400": {}, "403": {}, "404": {}, "500": {}},
+                    "x-easydep-control": {"control": "DropControl", "method": "drop"},
+                }
+            }
+        }
+    }
+
+    assert _unrepresentable_openapi_error_outcomes(class_diagram, api_spec) == []
+
+
+def test_initial_job_allows_void_control_with_transport_level_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = ImplementationWorker(settings(tmp_path))
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.design_readiness_report",
+        lambda _design: {"status": "READY", "findings": [], "stages": []},
+    )
+    worker.client.prepare_job = lambda job_id, *_args: tmp_path / job_id
+    worker.executor.submit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    try:
+        record = worker.create_job(
+            "app-1",
+            {
+                "class_diagram_puml": """
+                @startuml
+                class DropControl <<Control>> {
+                  + drop(studentId : String, courseId : String): void
+                }
+                @enduml
+                """,
+                "api_spec": {
+                    "openapi": "3.1.0",
+                    "paths": {
+                        "/students/{studentId}/enrollments/{courseId}": {
+                            "delete": {
+                                "responses": {"204": {}, "404": {}, "500": {}},
+                                "x-easydep-control": {
+                                    "control": "DropControl", "method": "drop"
+                                },
+                            }
+                        }
+                    },
+                },
+                "extracted_bce_classes": {"Classes": [{"className": "DropControl"}]},
+                "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
+                "api_spec_model": {"Endpoints": [{"path": "/students"}]},
+            },
+            "com.example",
+            False,
+        )
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "QUEUED"
 
 
 def test_needs_input_workflow_exposes_the_design_blocker_in_job_error(tmp_path: Path) -> None:
@@ -222,6 +387,34 @@ def test_cancel_terminates_active_process_and_preserves_cancelled_status(
     assert persisted["status"] == "CANCELLED"
 
 
+def test_write_uses_unique_temp_and_falls_back_when_windows_replace_is_denied(
+    monkeypatch, tmp_path: Path
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    record = {
+        "job_id": "job-replace-permission",
+        "status": "QUEUED",
+        "created_at": "now",
+    }
+    original_replace = os.replace
+    attempts = {"count": 0}
+
+    def deny_replace(source, destination):
+        attempts["count"] += 1
+        if attempts["count"] <= 3:
+            raise PermissionError(5, "Access is denied")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", deny_replace)
+    try:
+        implementation_worker._write(record)
+        assert implementation_worker._read(record["job_id"])["status"] == "QUEUED"
+        assert attempts["count"] == 3
+        assert not list((tmp_path / record["job_id"]).glob("*.tmp"))
+    finally:
+        implementation_worker.shutdown()
+
+
 def test_settings_ignore_legacy_external_project_paths(monkeypatch) -> None:
     monkeypatch.setenv("IMPLEMENTATION_AGENT_ROOT", "C:/old/prototype")
     monkeypatch.setenv("IMPLEMENTATION_AGENT_PYTHON", "C:/old/python.exe")
@@ -267,6 +460,12 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
             "api_spec": {"openapi": "3.0.3", "paths": {}},
             "erd_puml": "@startuml\nentity orders\n@enduml",
             "deployment_diagram_puml": "@startuml\nnode app\n@enduml",
+            "deployment_diagram_bundle": {
+                "schemaVersion": "easydep-deployment-diagram",
+                "status": "completed",
+                "resourceSpec": {"provider": "azure", "resources": []},
+                "projections": [],
+            },
             "resource_spec": {"cloud": "azure"},
         },
         "com.example.orders",
@@ -274,7 +473,8 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     )
     job = json.loads(path.read_text(encoding="utf-8"))
     assert set(job["inputs"]) == {
-        "bceClass", "sequence", "openapi", "erd", "deployment", "cloud",
+        "bceClass", "sequence", "openapi", "erd", "deployment",
+        "deploymentBundle", "cloud",
     }
     assert job["generation"]["basePackage"] == "com.example.orders"
     assert job["requiredInputs"] == ["bceClass", "sequence", "openapi"]

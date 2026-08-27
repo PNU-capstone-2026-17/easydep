@@ -67,16 +67,20 @@ def schedule_cross_phase_repair(
             and "mappedby" in causal_evidence.lower()
         )
     )
+    e2e_runtime_contract_failure = (
+        str(failed.get("task_type")) == "integration-test"
+        and _is_e2e_runtime_contract_failure(causal_evidence.lower())
+    )
     # A compiler path normally identifies one owner. Hibernate's mappedBy
     # error is different: it describes an inconsistent pair, so prefer the
     # pair-aware inference even when its stack trace happens to include only
     # one entity source path.
     owner_ids = (
         _infer_upstream_owners(tasks, failed, causal_evidence)
-        if mapped_by_failure
+        if mapped_by_failure or e2e_runtime_contract_failure
         else _owners_named_in_evidence(tasks, failed_task_id, causal_evidence)
     )
-    if not owner_ids and not mapped_by_failure:
+    if not owner_ids and not (mapped_by_failure or e2e_runtime_contract_failure):
         owner_ids = _infer_upstream_owners(tasks, failed, causal_evidence)
     if not owner_ids:
         return None
@@ -274,6 +278,29 @@ def apply_repair_directives(run_root: Path) -> None:
     _write_json(manifest_path, manifest)
 
 
+def repair_task_ids(run_root: Path) -> set[str]:
+    """Return tasks whose successful checkpoint must be replayed for a repair.
+
+    Normal replanning can change a downstream prompt after its dependencies
+    land; that is not a reason to rerun a durable successful checkpoint.
+    Repair directives are different: their evidence is an explicit request to
+    regenerate an owner or revalidate a dependent task.
+    """
+    plan_path = run_root / REPAIR_PLAN
+    if not plan_path.is_file():
+        return set()
+    plan = _read_json(plan_path)
+    return {
+        str(task_id)
+        for entry in plan.get("entries", [])
+        if isinstance(entry, dict)
+        for task_id in (
+            list(entry.get("ownerTaskIds", []))
+            + list(entry.get("revalidationTaskIds", []))
+        )
+    }
+
+
 def referenced_source_paths(evidence: dict[str, object]) -> list[str]:
     text = _evidence_text(evidence).replace("\\", "/")
     matches = re.findall(r"(?:[A-Za-z]:)?[^\r\n:]*?(application/(?:src|build)/[^\r\n:]+?\.(?:java|sql|yml))(?=:\d|:|\s|$)", text)
@@ -333,6 +360,18 @@ def _infer_upstream_owners(
             )
         }
         return named or {str(task["task_id"]) for task in entity_tasks}
+    if failed_type == "configuration" and (
+        "schema-validation: wrong column type" in lowered
+        or ("schemamanagementexception" in lowered and "wrong column type" in lowered)
+    ):
+        # The wiring task merely exposes the mismatch while the JPA entity,
+        # mapper, and Flyway migration jointly own its repair.
+        return {
+            str(task["task_id"])
+            for task in tasks
+            if task.get("task_type")
+            in {"persistence-entities", "persistence-mapping", "persistence-schema"}
+        }
     if failed_type == "configuration" and re.search(r"repository|jpa|entitymanager|bean", lowered):
         return {
             str(task["task_id"]) for task in tasks
@@ -372,6 +411,19 @@ def _infer_upstream_owners(
                 if task.get("task_type")
                 in {"persistence-entities", "persistence-mapping", "persistence-schema"}
             }
+        if _is_e2e_runtime_contract_failure(lowered):
+            # A real HTTP assertion means that the test reached the generated
+            # application graph.  Restricting the repair to API adapters
+            # leaves the common Control -> Boundary state/return contract
+            # untouched, which only repeats the E2E conversation.  These
+            # layers jointly own HTTP-observable behavior; persistence remains
+            # excluded unless the evidence names a persistence failure above.
+            return {
+                str(task["task_id"])
+                for task in tasks
+                if task.get("task_type")
+                in {"control", "api-adapter", "boundary-adapter", "configuration"}
+            }
         api_tasks = [task for task in tasks if task.get("task_type") == "api-adapter"]
         named = {
             str(task["task_id"]) for task in api_tasks
@@ -383,6 +435,26 @@ def _infer_upstream_owners(
         }
         return named or {str(task["task_id"]) for task in api_tasks}
     return set()
+
+
+def _is_e2e_runtime_contract_failure(evidence: str) -> bool:
+    """Return whether an E2E test exercised, but observed a broken, app contract.
+
+    Compile errors and static-contract violations stay local to the test.  This
+    narrow set instead identifies JUnit/HTTP execution evidence, for which the
+    test source cannot repair the responsible production collaboration.
+    """
+    return any(
+        marker in evidence
+        for marker in (
+            "assertionfailederror",
+            "expected: <",
+            "but was: <",
+            "expected http ",
+            "data integrity violation",
+            "dataintegrityviolationexception",
+        )
+    )
 
 
 def _phase(task: dict[str, object]) -> str:

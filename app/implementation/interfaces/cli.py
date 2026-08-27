@@ -60,12 +60,14 @@ def main() -> int:
         print(json.dumps({"tasks": [task["task_id"] for task in tasks]}, ensure_ascii=False))
         return 0
     if len(sys.argv) > 1 and sys.argv[1] == "plan-deployment":
-        parser = argparse.ArgumentParser(description="Plan Kubernetes deployment files")
+        parser = argparse.ArgumentParser(description="Plan Docker deployment files")
         parser.add_argument("command")
         parser.add_argument("run", type=Path)
         parser.add_argument("job", type=Path)
         args = parser.parse_args()
-        report = render_deployment(args.run.resolve(), load_job(args.job.resolve()))
+        report = render_deployment(
+            args.run.resolve(), load_job(args.job.resolve()), include_kubernetes=False
+        )
         print(json.dumps({"renderer": "deterministic", "files": report["renderedFiles"]}, ensure_ascii=False))
         return 0
     if len(sys.argv) > 1 and sys.argv[1] == "plan-iac":
@@ -74,7 +76,9 @@ def main() -> int:
         parser.add_argument("run", type=Path)
         parser.add_argument("job", type=Path)
         args = parser.parse_args()
-        report = render_iac(args.run.resolve(), load_job(args.job.resolve()))
+        report = render_iac(
+            args.run.resolve(), load_job(args.job.resolve()), include_kubernetes=False
+        )
         print(json.dumps({"renderer": report["renderer"], "files": report["renderedFiles"]}, ensure_ascii=False))
         return 0
     if len(sys.argv) > 1 and sys.argv[1] == "validate-iac":

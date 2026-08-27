@@ -200,34 +200,39 @@ def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         run_root, spec.base_package, set(entity_names)
     )
     package_path = spec.base_package.replace(".", "/")
-    entity_files = [
-        f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
-        for name in entity_names
-    ]
     repository_files = [
         f"application/src/main/java/{package_path}/persistence/repository/{name}Repository.java"
         for name in entity_names
     ]
-    # Keep one generated source file per agent task. A single LLM conversation
-    # can exhaust its iteration budget while creating a large entity set,
-    # leaving a partially generated workspace that fails the output gate.
+    # Keep independent entities separate so a large model turn remains
+    # bounded.  Entities joined by an ERD association, however, must be
+    # generated together: a per-file sandbox cannot safely create the two
+    # sides of a JPA relationship and tends to omit it merely to compile.
+    entity_groups = _persistence_entity_groups(entity_names, erd)
     groups = [
         *[
             (
-                f"implement-erd-persistence-entity-{camel_to_kebab(name)}",
+                "implement-erd-persistence-entity-"
+                + "-".join(camel_to_kebab(name) for name in names),
                 "persistence-entities",
-                [path],
+                [
+                    f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
+                    for name in names
+                ],
                 render_persistence_entity_prompt(
                     spec,
                     erd,
                     read_generated_java_contracts(
-                        run_root, spec.base_package, {name}
+                        run_root, spec.base_package, set(names)
                     ),
-                    [name],
-                    [path],
+                    names,
+                    [
+                        f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
+                        for name in names
+                    ],
                 ),
             )
-            for name, path in zip(entity_names, entity_files, strict=True)
+            for names in entity_groups
         ],
         *[
             (
@@ -414,10 +419,27 @@ def generate_boundary_adapter_tasks(
     tasks: list[ImplementationTask] = []
     for boundary in boundaries:
         sequence_context = slice_sequence(sequence, {boundary.name})
+        # Messages are written with PlantUML aliases, so discover collaborating
+        # BCE contracts from the original participant declarations rather than
+        # searching the sliced text for canonical class names.
+        participant_aliases: dict[str, str] = {}
+        for raw in sequence.splitlines():
+            match = re.match(
+                r"^\s*(?:actor|boundary|control|entity|participant|database)\s+"
+                r"(?:\"(?P<quoted>[^\"]+)\"\s+as\s+(?P<quoted_alias>[A-Za-z_]\w*)|"
+                r"(?P<plain>[A-Za-z_]\w*)(?:\s+as\s+(?P<plain_alias>[A-Za-z_]\w*))?)",
+                raw,
+            )
+            if match:
+                display = match.group("quoted") or match.group("plain")
+                alias = match.group("quoted_alias") or match.group("plain_alias") or display
+                participant_aliases[alias] = display
         peers = {
-            name for name in class_names
-            if name != boundary.name
-            and re.search(rf"\b{re.escape(name)}\b", sequence_context)
+            participant_aliases[alias]
+            for alias in participant_aliases
+            if re.search(rf"\b{re.escape(alias)}\b", sequence_context)
+            and participant_aliases[alias] != boundary.name
+            and participant_aliases[alias] in class_names
         }
         contracts = read_generated_java_contracts(
             run_root, spec.base_package, {boundary.name, *peers}
@@ -782,10 +804,19 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
     """Plan a domain-neutral real HTTP flow test or report executable gaps."""
     ir = build_implementation_ir(spec, run_root)
     gaps = detect_e2e_design_gaps(spec, run_root)
+    blocking_gaps = [
+        gap for gap in gaps
+        if str(gap.get("code") or "") != "OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED"
+    ]
     gap_report = {
         "schemaVersion": "implementation-design-gaps/v1alpha1",
         "phase": "end-to-end",
-        "status": "NEEDS_INPUT" if gaps else "READY",
+        # A missing executable error branch is retained as an audit warning.
+        # It must not prevent generation of the real HTTP test for the
+        # successful and already implemented paths. Structural gaps (missing
+        # production outputs or adapters) remain blocking because no test can
+        # be generated safely without those files.
+        "status": "NEEDS_INPUT" if blocking_gaps else ("WARNING" if gaps else "READY"),
         "gaps": gaps,
     }
     gap_path = run_root / "reports" / "design-gaps" / "end-to-end-flow.json"
@@ -796,7 +827,7 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
     # An integration test is immutable with respect to production sources.  It
     # cannot repair an unresolved API/controller implementation, so scheduling
     # it would only waste repair attempts and obscure the production defect.
-    if gaps:
+    if blocking_gaps:
         return []
     package_path = spec.base_package.replace(".", "/")
     package_root = run_root / "application" / "src" / "main" / "java" / package_path
@@ -829,6 +860,10 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
         {"method": item.method, "path": item.path, "status": item.status, "label": item.label}
         for item in ir.e2e_scenarios
     ]
+    persistence_paths = _e2e_persistence_paths(
+        sequence, scenarios, bce=_read(spec.inputs.get("bceClass")),
+        erd=erd, openapi=openapi,
+    )
     semantic_contract = {
         "paths": sorted({item.path for item in ir.e2e_scenarios}),
         "statuses": sorted({item.status for item in ir.e2e_scenarios}),
@@ -836,6 +871,7 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
         "gatewayAdapters": gateway_adapters,
         "minimumTests": max(1, len(ir.e2e_scenarios)),
         "scenarios": scenarios,
+        "persistencePaths": persistence_paths,
     }
     flow_name = ir.application_class.removesuffix("Application") + "FlowTest"
     allowed = [
@@ -883,6 +919,64 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return [task]
+
+
+def _e2e_persistence_paths(
+    sequence: str,
+    scenarios: list[dict[str, object]],
+    *,
+    bce: str = "",
+    erd: str = "",
+    openapi: str = "",
+) -> list[str]:
+    """Infer persistence flows from BCE↔ERD relationships, not UML participants.
+
+    BCE sequence diagrams intentionally contain only actor/Boundary/Control/
+    Entity participants. A Control related to an ERD-backed Entity therefore
+    implies the generated ``<Entity>Repository`` implementation contract even
+    when a Repository is not drawable in the BCE sequence.
+    """
+    if re.search(
+        r"(?im)^\s*(?:database|participant\s+\S*(?:repository|persistence)\S*)",
+        str(sequence or ""),
+    ):
+        return sorted({str(item.get("path") or "") for item in scenarios if item.get("path")})
+    classes = parse_design_classes(bce)
+    persistent_entities = parse_erd_entities(erd)
+    entity_names = {
+        item.name for item in classes
+        if item.stereotype.lower() == "entity" and item.name in persistent_entities
+    }
+    if not entity_names:
+        return []
+    related_controls = {
+        left if right in entity_names else right
+        for left, right, _ in parse_relations(bce)
+        if (left in entity_names) ^ (right in entity_names)
+        and any(
+            item.name == (left if right in entity_names else right)
+            and item.stereotype.lower() == "control"
+            for item in classes
+        )
+    }
+    if not related_controls:
+        return []
+    try:
+        model = json.loads(openapi) if str(openapi).lstrip().startswith("{") else {}
+    except json.JSONDecodeError:
+        model = {}
+    paths_by_control: dict[str, set[str]] = {}
+    for endpoint in model.get("Endpoints", []) if isinstance(model, dict) else []:
+        if not isinstance(endpoint, dict):
+            continue
+        binding = endpoint.get("control_binding") or {}
+        control = str(binding.get("control") or "").strip()
+        path = str(endpoint.get("path") or "").strip()
+        if control in related_controls and path:
+            paths_by_control.setdefault(control, set()).add(path)
+    if paths_by_control:
+        return sorted({path for paths in paths_by_control.values() for path in paths})
+    return sorted({str(item.get("path") or "") for item in scenarios if item.get("path")})
 
 
 def detect_e2e_design_gaps(spec: JobSpec, run_root: Path) -> list[dict[str, str]]:
@@ -1092,17 +1186,40 @@ Rules:
 - Follow the reviewed API-to-Control binding below when one is supplied. Its `arguments` map
   is the only permitted HTTP-to-Control value flow and its `outcomes` map is the required
   Control-result-to-HTTP-status mapping. Do not replace it with a resource-name guess.
-- Use only the exact Control collaborators listed below and import them from the shown BCE
-  package. Never derive a resource-named Control from the API name. If no reviewed binding
-  exists, report the design gap instead of guessing a collaborator.
+- The only permitted Control collaborators for this API are the exact types listed below.
+  Import them from the exact BCE package shown in the generated contracts.
+  Never derive a resource-named Control from the API name or create/import a
+  resource-named substitute such as `{api_port.name}Control`; an API name is not a Control contract. If an
+  operation has no reviewed binding, report that design gap in the task completion message
+  rather than guessing a collaborator. Do not encode a design gap as
+  an `UnsupportedOperationException` in production code or as an exception expectation in a test.
 - Map every documented OpenAPI response status below to an explicit, observable Control outcome.
   A null result must not be assigned an arbitrary status. If the generated contracts cannot
-  represent a documented response, fail compilation rather than concealing the design gap.
+  represent a documented response, report the design gap and keep every generated source and
+  test compilable; never manufacture a failing or contradictory implementation to expose it.
+- Make the focused test arrangement match the executable binding exactly: when a boolean
+  Control result maps to a success status, stub the exact method and exact converted request
+  arguments to return `true`; when the same result maps to a conflict status, use `false`.
+  Do not rely on Mockito's default `false`, and do not assert success after arranging the
+  conflict value. Assert the status declared by this operation's OpenAPI contract.
+- Successful commands with no response body use `204` and may keep transport-level failures
+  (400/401/403/404/500/503) in the API contract for global validation, authorization, or
+  exception handling. Do not invent controller branches for those statuses. Domain decisions
+  such as `409` or `422` require a dedicated BCE result/outcome type; a `void`, entity, scalar,
+  or collection return cannot represent them.
+- `@ApiResponse` and `@ApiResponses` are documentation only. They never satisfy an executable
+  response mapping. Add a reachable `ResponseEntity` branch only for a status represented by
+  the exact Control contract; never add annotations as a substitute for missing behavior.
 - Map BCE return values into generated API DTOs field by field using exact public accessors.
 - Unit tests must cover every documented status and verify exact Control arguments.
+- Do not manufacture a `500` test that expects the Control not to be called. A 500
+  response is transport/global exception handling unless the reviewed BCE contract
+  exposes an explicit error outcome; keep such handling out of focused controller
+  tests and test only executable statuses represented by the binding.
 - Never leave placeholder, empty fallback, or speculative response comments in production code.
-  If a Control cannot supply the documented response or error outcome, leave the contract
-  uncompilable and report the design gap; do not fabricate a response.
+  If a Control cannot supply the documented response or error outcome, report the design gap in
+  the task completion message. Do not fabricate a response, throw a placeholder exception, or
+  create a test that expects such an exception.
 - Create both contracted files, then finish immediately.
 
 ## OpenAPI response contract
@@ -1153,6 +1270,7 @@ Rules:
 - Do not add REST mappings or edit generated BCE/API contracts. OpenAPI web adapters remain the HTTP boundary.
 - Do not annotate the adapter as a Spring bean yet; production bean ownership and cycle-free wiring are decided by the wiring phase.
 - Follow direction in the sequence: a Boundary-to-Control message delegates to that exact Control operation; a Control-to-Boundary message stores or exposes presentation/input state and must not call back into the Control.
+- Treat `->` as a request and `-->` as its return message. When the sequence contains a Boundary-to-Control request and the Boundary method returns a value, never implement it as `return null`; provide one minimal deterministic configuration/submission seam for the exact return value and delegate the request through the exact Control port.
 - Retain values received by `on*`, `show*`, or equivalent methods. Return the last submitted/configured value from matching `get*`, `ask*`, or `prompt*` methods.
 - When the interface has a return method but no submission method, accept the return value through a constructor or one explicit adapter-only submission method. Do not invent methods on BCE contracts.
 - Reject only clearly invalid null input needed to preserve adapter state; do not invent business validation absent from the contracts.
@@ -1265,13 +1383,35 @@ def render_e2e_prompt(
     repositories = ", ".join(semantic_contract.get("repositories", [])) or "none"
     gateways = ", ".join(semantic_contract.get("gatewayAdapters", [])) or "none"
     minimum_tests = semantic_contract.get("minimumTests", 1)
+    persistence_paths = [
+        str(path) for path in semantic_contract.get("persistencePaths", [])
+        if str(path).strip()
+    ]
+    persistence_rule = (
+        "- Assert repository-backed persistence only for these explicitly traced flows: "
+        + ", ".join(persistence_paths)
+        + ".\n"
+        if persistence_paths
+        else "- Do not assert repository side effects for these flows: the sequence has no explicit persistence participant. A global repository inventory is not evidence that this endpoint writes state.\n"
+    )
     return f"""# Implementation task: {application_name} end-to-end flow
 
 Create one Spring Boot integration test that verifies the real application graph across HTTP/API
-adapters, Control services, Boundary adapters, and persistence.
+adapters, Control services, and Boundary adapters, including persistence only where the explicit
+sequence contract below proves that the flow reaches it.
 
 Rules:
 - Use package `{spec.base_package}.integration` and `@SpringBootTest` with the real H2/Flyway configuration.
+- The generated build is pinned to Spring Boot 3.3.13 and Java 21. Inspect its
+  `build.gradle` before writing imports or APIs; do not copy framework examples from memory.
+- Prefer `MockMvc` with `@AutoConfigureMockMvc` for the real HTTP contract so the test does not
+  need a random embedded port. If `TestRestTemplate` with `RANDOM_PORT` is required, import
+  `org.springframework.boot.test.web.server.LocalServerPort` (never the removed
+  Spring Boot 2.x package `org.springframework.boot.web.server.LocalServerPort`).
+- Spring Boot 3 uses Jakarta APIs. Use `jakarta.persistence`, `jakarta.validation`,
+  `jakarta.servlet`, `jakarta.annotation`, and `jakarta.transaction`; never import their
+  legacy `javax.*` counterparts in the generated test or test configuration.
+- Do not add an ad-hoc dependency or downgrade the Spring Boot version to make a stale import compile.
 - Do not mock application Controls, Boundary adapters, repositories, or the Spring context.
 - Use the production application graph exactly as wired. Never declare `@TestConfiguration`,
   `@Bean`, `@MockBean`, `@MockitoBean`, `@Primary`, or enable bean-definition overriding.
@@ -1291,9 +1431,28 @@ Rules:
   resolves exactly to the listed path template. A shared helper such as `performLogin()` is
   allowed when the calling `@Test` invokes that helper and the helper contains the exact HTTP
   request; do not omit the scenario because the request is factored into a helper.
-- Assert repository-backed persistence for the exercised flow. A test that only checks in-memory
-  UI state is invalid; unrelated repositories do not need to be injected into this single flow test.
-- Assert observable HTTP responses, Boundary state, and repository state; do not call private methods or reproduce service logic inside the test.
+{persistence_rule}- If a Boundary adapter exposes only an in-memory configured result, use its
+  public seam to configure a valid response or assert only the documented HTTP contract; never
+  invent identifiers, persistence side effects, or response fields that the implementation cannot
+  produce.
+- Assert observable HTTP responses and Boundary state; assert repository state only for the explicitly traced persistence flows above. Do not call private methods or reproduce service logic inside the test.
+- Before writing each scenario, inspect the generated API controller, Control, and concrete Boundary
+  adapter used by that request.  Seed and call the exact identifiers and inputs that those contracts
+  require; a repository seed is not visible to a Control that delegates to a Boundary adapter.
+- Include every required path, query, header, and body parameter from the generated API signature.
+  Do not omit a required query parameter merely because its value also appears elsewhere in the test.
+- When a concrete stateful Boundary adapter exposes a public deterministic configuration or submission
+  seam, use that existing seam to configure the exact response consumed by the real Control.  Do not
+  assume a non-null return value, fabricate a second bean, or modify production sources.
+- When a request causes persistence with a foreign-key reference, seed the referenced record using the
+  exact identifier that the request passes through the Control.  Do not substitute a display name,
+  username, or unrelated fixture key.
+- Before asserting response JSON, inspect the concrete return object and its accessors. Assert a
+  response field only when the generated contract and implementation can populate it; an empty
+  DTO or configured prototype result must be validated by status/content type rather than a
+  fabricated non-null field.
+- For a generic/Object request body, send JSON compatible with the generated controller's conversion
+  contract.  Do not assume Spring preserves a BCE input type placed inside `HttpEntity<Object>`.
 - Do not weaken or disable Flyway/JPA and do not modify production sources.
 - Do not leave TODO, disabled tests, unconditional success assertions, or tests that merely check context loading.
 - Never accept multiple outcomes, omit a strict assertion, describe the test as simplified,
@@ -1403,12 +1562,21 @@ Rules:
 - Use package `{spec.base_package}.persistence.entity` and Jakarta Persistence annotations.
 - Derive every table, column, primary key, foreign key, nullability rule, and relationship from the
   injected ERD. Do not assume a fixed number of entities or relationships.
+- Map `TIMESTAMP` to `LocalDateTime` and `TIMESTAMP WITH TIME ZONE` to `OffsetDateTime`,
+  `Instant`, or `ZonedDateTime`. Never map `LocalDateTime` directly to a timezone-aware
+  SQL column. If an immutable BCE contract disagrees with the ERD, do not alter either
+  contract or disable validation; let verification evidence report the contradiction.
 - Use a generated `Long id` only when the ERD declares a technical numeric key; preserve explicit
   natural-key Java types otherwise.
 - Map every ERD scalar column with its exact snake_case column name. Rename a reserved identifier
   only when required by H2/SQL and use the same normalized name in the migration.
 - Implement relationship ownership from the ERD cardinality and foreign-key direction. Add a
   bidirectional helper only when both navigation directions are represented in the contracts.
+- Keep the public constructor that accepts the entity's scalar ERD/BCE fields stable. When a
+  relationship, audit flag, or other persistence-only field is added, add an overloaded
+  constructor (or use the no-argument constructor plus setters) instead of replacing the
+  existing scalar constructor. Sibling Control tests, mappers, and schema tests may already
+  instantiate that constructor; never make their source incompatible by changing its arity.
 - A collection annotated with `@OneToMany(mappedBy = "property")` is valid only when the target
   entity declares that exact Java property as the owning `@ManyToOne` or `@OneToOne` association.
   Never use a scalar foreign-key column as the `mappedBy` target. If this entity cannot declare or
@@ -1434,6 +1602,41 @@ Rules:
 {contracts}
 ```
 """
+
+
+def _persistence_entity_groups(entity_names: list[str], erd: str) -> list[list[str]]:
+    """Return ERD-connected BCE entities as one atomic generation task each."""
+    names = list(dict.fromkeys(entity_names))
+    neighbors: dict[str, set[str]] = {name: set() for name in names}
+    for line in erd.splitlines():
+        if "--" not in line and ".." not in line:
+            continue
+        mentioned = [
+            name for name in names
+            if re.search(rf"\b{re.escape(name)}\b", line)
+        ]
+        if len(mentioned) != 2:
+            continue
+        left, right = mentioned
+        neighbors[left].add(right)
+        neighbors[right].add(left)
+
+    groups: list[list[str]] = []
+    remaining = set(names)
+    for root in names:
+        if root not in remaining:
+            continue
+        stack = [root]
+        component: set[str] = set()
+        while stack:
+            current = stack.pop()
+            if current in component:
+                continue
+            component.add(current)
+            remaining.discard(current)
+            stack.extend(neighbors[current] - component)
+        groups.append([name for name in names if name in component])
+    return groups
 
 
 def render_persistence_repository_prompt(
@@ -1594,7 +1797,32 @@ def select_openapi_operations(control: str, body: str, operations: list[str]) ->
 
 
 def slice_sequence(source: str, names: set[str]) -> str:
+    """Return messages involving the requested participants.
+
+    PlantUML sequence messages use aliases (``SignInB``), while the BCE
+    contract uses the participant's display name (``SignInBoundary``).  The
+    previous implementation only searched the raw message for the display
+    name, so a perfectly valid Boundary -> Control flow was reduced to
+    ``No directly matched sequence messages``.  That made the adapter prompt
+    explicitly forbid delegation and the generated adapter returned ``null``
+    at runtime.  Resolve participant aliases before selecting messages.
+    """
     lines = source.splitlines()
+    aliases: dict[str, set[str]] = {name: {name} for name in names}
+    participant_pattern = re.compile(
+        r"^\s*(?:actor|boundary|control|entity|participant|database)\s+"
+        r"(?:\"(?P<quoted>[^\"]+)\"\s+as\s+(?P<quoted_alias>[A-Za-z_]\w*)|"
+        r"(?P<plain>[A-Za-z_]\w*)(?:\s+as\s+(?P<plain_alias>[A-Za-z_]\w*))?)"
+    )
+    for raw in lines:
+        match = participant_pattern.match(raw)
+        if not match:
+            continue
+        display = match.group("quoted") or match.group("plain")
+        alias = match.group("quoted_alias") or match.group("plain_alias") or display
+        if display in aliases:
+            aliases[display].add(alias)
+    message_tokens = {alias for values in aliases.values() for alias in values}
     selected: list[str] = []
     active_blocks: list[str] = []
     emitted_blocks: set[str] = set()
@@ -1609,7 +1837,10 @@ def slice_sequence(source: str, names: set[str]) -> str:
         if stripped == "end" and active_blocks:
             active_blocks.pop()
             continue
-        if any(re.search(rf"\b{re.escape(name)}\b", raw) for name in names) and re.search(r"(?:->|-->)", raw):
+        if any(
+            re.search(rf"\b{re.escape(token)}\b", raw)
+            for token in message_tokens
+        ) and re.search(r"(?:->|-->)", raw):
             for block in active_blocks:
                 if block not in emitted_blocks:
                     selected.append(f"' enclosing branch: {block}")
@@ -1645,6 +1876,7 @@ def render_prompt(spec: JobSpec, context: dict[str, object], allowed: list[str])
     control_rules = (
         "- Implement all public operations defined in the Control contract.\n"
         + repository_rule
+        + "- When this Control is related to an ERD-backed Entity, that relationship is an implicit persistence contract: use the corresponding Repository for the Entity-backed operation. Do not delegate the operation to a state-only Boundary adapter or return a fabricated in-memory value.\n"
         + "- Treat each repository's generic ID type and the corresponding Entity ID "
         "accessor type as authoritative. Preserve incoming BCE identifier types; "
         "never parse or coerce a String identifier to Long or another inferred type.\n"

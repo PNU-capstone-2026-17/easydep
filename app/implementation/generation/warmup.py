@@ -137,8 +137,6 @@ def warmup_implementation_runtime(
         "}\n",
         encoding="utf-8",
     )
-    gradle_cache = repository_root / ".easydep" / "gradle-cache"
-    gradle_cache.mkdir(parents=True, exist_ok=True)
     run(
         "warm-gradle-dependencies",
         [
@@ -147,14 +145,15 @@ def warmup_implementation_runtime(
             "--rm",
             "-v",
             f"{gradle_project.resolve()}:/workspace",
-            "-v",
-            f"{gradle_cache.resolve()}:/home/gradle/.gradle",
+            "-e",
+            "GRADLE_USER_HOME=/tmp/easydep-gradle-home",
             "-w",
             "/workspace",
             GRADLE_GENERATOR_IMAGE,
             "gradle",
             "compileJava",
             "--no-daemon",
+            "-Dorg.gradle.vfs.watch=false",
             "--build-cache",
         ],
         gradle_project,

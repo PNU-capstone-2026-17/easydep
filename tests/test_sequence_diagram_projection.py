@@ -1,6 +1,8 @@
 """Deterministic sequence projections from accepted class designs."""
 from __future__ import annotations
 
+from copy import deepcopy
+
 from app.design.services.class_diagram import projections, service
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.proposals import (
@@ -14,6 +16,7 @@ from app.design.services.sequence_diagram.projection import (
     project_sequence_model,
     sequence_findings,
 )
+from app.design.services.sequence_diagram.validation import validate_sequence_model
 from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
@@ -85,3 +88,67 @@ def test_sequence_projection_adds_one_return_for_every_call_including_void(monke
 def test_nested_generic_is_a_valid_return_label():
     assert is_return_value_label("optional<list<CourseOfferingSummary>>")
     assert not is_return_value_label("optional<list<CourseOfferingSummary>")
+
+
+def _projected_contract(monkeypatch):
+    class_model = _accepted_model(monkeypatch)
+    scenario = single_use_case()
+    class_puml = generate_plantuml_from_bce_json(
+        class_model.model_dump(by_alias=True)
+    )
+    sequence = project_sequence_model(
+        build_scenario_index(scenario), class_model, class_puml,
+    )
+    state = {
+        "usecase_spec": scenario,
+        "extracted_bce_classes": class_model.model_dump(by_alias=True),
+        "class_diagram_puml": class_puml,
+    }
+    return sequence.model_dump(), state
+
+
+def test_collection_validation_rejects_duplicate_call_ids(monkeypatch):
+    sequence, state = _projected_contract(monkeypatch)
+    messages = sequence["Diagrams"][0]["Messages"]
+    messages.insert(1, deepcopy(messages[0]))
+
+    report = validate_sequence_model(sequence, state)
+
+    assert "sequence.call-return-links" in {
+        finding.rule_id for finding in report.findings
+    }
+
+
+def test_collection_validation_rejects_bce_handoff_and_main_flow_reordering(
+    monkeypatch,
+):
+    sequence, state = _projected_contract(monkeypatch)
+    messages = sequence["Diagrams"][0]["Messages"]
+    calls = [message for message in messages if message["call_id"]]
+    calls[1]["source"] = calls[0]["source"]
+    calls[0]["step_ids"], calls[1]["step_ids"] = (
+        calls[1]["step_ids"], calls[0]["step_ids"],
+    )
+
+    report = validate_sequence_model(sequence, state)
+    rules = {finding.rule_id for finding in report.findings}
+
+    assert "sequence.message-bce-flow" in rules
+    assert "sequence.flow-order" in rules
+
+
+def test_collection_validation_rejects_return_before_its_call(monkeypatch):
+    sequence, state = _projected_contract(monkeypatch)
+    messages = sequence["Diagrams"][0]["Messages"]
+    nested_return = next(
+        message for message in messages
+        if message["type"] == "return" and message["reply_to"].endswith("call:2")
+    )
+    messages.remove(nested_return)
+    messages.insert(0, nested_return)
+
+    report = validate_sequence_model(sequence, state)
+
+    assert "sequence.call-return-links" in {
+        finding.rule_id for finding in report.findings
+    }

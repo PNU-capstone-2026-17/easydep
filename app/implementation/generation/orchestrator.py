@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import threading
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -612,9 +613,34 @@ class PrototypeOrchestrator:
             "message": message,
             "updatedAt": datetime.now(timezone.utc).isoformat(),
         }
-        temporary = progress_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(progress_path)
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=progress_path.parent,
+                prefix=f".{progress_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary_name = handle.name
+                json.dump(payload, handle, ensure_ascii=False)
+            temporary = Path(temporary_name)
+            for attempt in range(5):
+                try:
+                    os.replace(temporary, progress_path)
+                    temporary_name = None
+                    return
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
+        finally:
+            if temporary_name:
+                try:
+                    Path(temporary_name).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _ensure_puml2code_image(self) -> None:
         """Build the BCE generator image with its npm dependencies included.
@@ -842,20 +868,23 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             )
 
     def _compile(self, application: Path) -> None:
-        # This cache must outlive individual jobs.  A per-job Gradle home made
-        # every new implementation request redownload the same Spring stack.
-        gradle_home = (self.spec.workspace_root / ".easydep" / "gradle-cache").resolve()
+        # Do not mount the Windows-host Gradle cache into the container. Gradle's
+        # FileAccessTimeJournal is lock-sensitive and can fail before compilation
+        # with WinError 5/I/O errors when the host cache is shared by jobs. The
+        # generator image keeps its own dependency layers; an isolated container
+        # home trades cache reuse for a reliable pre-approval compile gate.
         self._run_command(
             "gradle-compile",
             [
                 "docker", "run", "--rm",
                 "-v", self._workspace_volume(),
-                "-v", f"{gradle_home}:/home/gradle/.gradle",
+                "-e", "GRADLE_USER_HOME=/tmp/easydep-gradle-home",
                 "-w", self._container_path(application),
                 GRADLE_GENERATOR_IMAGE,
                 "gradle",
                 "compileJava",
                 "--no-daemon",
+                "-Dorg.gradle.vfs.watch=false",
                 "--build-cache",
             ],
             application,
@@ -998,16 +1027,18 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, obje
         item.get("task_id"): item
         for item in manifest.get("implementation_tasks", [])
     }
-    # Older runs used one aggregate entity/repository task. Remove those
-    # obsolete definitions when the planner is re-entered so a retry cannot
-    # execute the legacy task in addition to the new per-file tasks.
-    legacy_ids = {
-        "implement-erd-persistence-entities",
-        "implement-erd-persistence-repositories",
+    # The persistence planner can change task boundaries when the ERD gains
+    # relationships. Replace all of its previous tasks as a unit so an old
+    # per-file entity task never overlaps a new relationship-group task.
+    persistence_task_types = {
+        "persistence-entities",
+        "persistence-repositories",
+        "persistence-mapping",
+        "persistence-schema",
     }
     existing = {
         task_id: item for task_id, item in existing.items()
-        if task_id not in legacy_ids
+        if item.get("task_type") not in persistence_task_types
     }
     for task in tasks:
         existing[task.task_id] = task.to_dict()

@@ -263,10 +263,10 @@ def _spec_for(
     지시로 붙여 재생성한다(최대 settings.max_repair_iters). feedback이 있으면 최초 생성에
     사용자 지시를 반영한다.
 
-    **채택 규칙은 "결함이 줄었는가"다.** 예전에는 개수가 늘어날 때만 거절했기 때문에,
-    결함 3개가 다른 결함 3개로 바뀌어도 채택하고 다음 반복까지 돌았다 — 나아진 게 없는데
-    예산만 태우고, 마지막에 남는 것이 최선본이라는 보장도 없었다. 이제 줄지 않으면
-    직전본을 최선으로 보고 멈춘다.
+    **채택 규칙은 검증 단계가 전진했거나 결함이 줄었는가다.** 정적 무결성 결함을
+    해소하면 그때까지 실행하지 않았던 의미 검증이 처음으로 드러날 수 있다. 두 결함의
+    개수가 같더라도 이는 회귀가 아니라 정적 계약을 통과한 진전이므로 다음 수리 기회를
+    준다. 같은 검증 단계 안에서 결함 수가 줄지 않으면 직전본을 최선으로 보고 멈춘다.
 
     멈춘 이유는 `repair_stopped`에 남긴다. 수술적(부분) 수정으로 바꿀 값어치가 있는지는
     이 값의 분포를 봐야 알 수 있고, 지금은 그 근거가 없다.
@@ -330,7 +330,10 @@ def _spec_for(
             stopped = "error"
             break
         candidate_keys = _issue_keys(candidate["issues"])
-        if not candidate_keys < unresolved_keys:
+        current_static = _validate_spec(cast(dict, item))
+        candidate_static = _validate_spec(cast(dict, candidate))
+        advanced_to_semantic_review = bool(current_static) and not candidate_static
+        if not advanced_to_semantic_review and not candidate_keys < unresolved_keys:
             # Keep the better previous item, but use any remaining bounded attempt.
             continue
         item = candidate

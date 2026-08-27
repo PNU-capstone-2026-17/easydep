@@ -14,11 +14,16 @@ from app.implementation.config import (
     DEFAULT_AWS_LOG_RETENTION_DAYS,
     DEFAULT_AZURE_MYSQL_BACKUP_RETENTION_DAYS,
 )
+from app.design.services.deployment_diagram.planner import (
+    validate_provider_resource_plan,
+)
+from app.core.orchestration.iac_renderer import render_open_tofu
 from ..domain.implementation_ir import remove_readonly
 
 SCHEMA_VERSION = "easydep-iac-render/v1alpha1"
 MANAGED_FILES = ("terraform/main.tf", "terraform/variables.tf", "terraform/outputs.tf")
 SUPPORTED_PROVIDERS = ("azure", "aws", "gcp")
+DEPLOYMENT_BUNDLE_SCHEMA = "easydep-deployment-diagram"
 
 
 def _find_terraform() -> str | None:
@@ -46,30 +51,59 @@ def validate_terraform(application: Path) -> dict[str, object]:
     return {"status": "SUCCEEDED", "commands": ["fmt", "init -backend=false", "validate"]}
 
 
-def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
-    cloud_path = spec.inputs.get("cloud")
-    if cloud_path is None or not cloud_path.is_file():
-        raise ValueError("IaC rendering requires a cloud resource specification")
-    cloud = json.loads(cloud_path.read_text(encoding="utf-8"))
-    provider = str(cloud.get("provider", "azure")).lower()
+def render_iac(
+    run_root: Path, spec: Any, *, include_kubernetes: bool = True
+) -> dict[str, object]:
+    cloud, deployment_evidence, resource_plan = _iac_design_source(spec)
+    provider = str((resource_plan or cloud).get("provider", "azure")).lower()
     if provider not in SUPPORTED_PROVIDERS:
-        raise ValueError(f"Unsupported Terraform provider: {provider}. Supported: {', '.join(SUPPORTED_PROVIDERS)}")
-    resources = [item for item in cloud.get("resources", []) if isinstance(item, dict)]
-    if not resources:
-        raise ValueError("Cloud resource specification has no resources")
-    validate_resource_spec(provider, resources)
+        raise ValueError(
+            f"Unsupported Terraform provider: {provider}. Supported: {', '.join(SUPPORTED_PROVIDERS)}"
+        )
     application = run_root / "application"
     terraform = application / "terraform"
     terraform.mkdir(parents=True, exist_ok=True)
-    names = _names(resources)
-    files = {"main.tf": _main(provider, resources, names), "variables.tf": _variables(provider, resources), "outputs.tf": _outputs(provider, resources)}
+    if resource_plan is not None:
+        # The deployment diagram bundle's ResourcePlan is the reviewed,
+        # provider-specific source of truth.  The shared renderer consumes every
+        # created node and reference, and rejects any Terraform divergence.
+        files = render_open_tofu(resource_plan)
+        conformance = {
+            "status": "SUCCEEDED",
+            "errors": [],
+            "warnings": [],
+            "mode": "resource_plan_exact_rendering",
+        }
+        required_variables = _rendered_required_variables(files)
+    else:
+        resources = [item for item in cloud.get("resources", []) if isinstance(item, dict)]
+        if not resources:
+            raise ValueError("Cloud resource specification has no resources")
+        validate_resource_spec(provider, resources)
+        names = _names(resources)
+        files = {
+            "main.tf": _main(provider, resources, names),
+            "variables.tf": _variables(provider, resources),
+            "outputs.tf": _outputs(provider, resources),
+        }
+        intent_path = run_root / "reports" / "deployment-intent.json"
+        intent = (
+            json.loads(intent_path.read_text(encoding="utf-8"))
+            if intent_path.is_file()
+            else {}
+        )
+        required_variables = _required_variables(provider)
     for filename, content in files.items():
         (terraform / filename).write_text(content.rstrip() + "\n", encoding="utf-8")
-    intent_path = run_root / "reports" / "deployment-intent.json"
-    intent = json.loads(intent_path.read_text(encoding="utf-8")) if intent_path.is_file() else {}
-    conformance = validate_deployment_iac_conformance(cloud, intent, application)
+    if resource_plan is None:
+        conformance = validate_deployment_iac_conformance(
+            cloud,
+            intent,
+            application,
+            require_kubernetes_manifests=include_kubernetes,
+        )
     terraform_validation = validate_terraform(application)
-    report = {"schemaVersion": SCHEMA_VERSION, "renderer": f"deterministic-terraform-{provider}", "provider": provider, "renderedFiles": [f"application/terraform/{name}" for name in files], "requiredVariables": _required_variables(provider), "sourceConformance": conformance, "terraformValidation": terraform_validation, "sourceEvidence": {"cloudResourceSpecification": True, "deploymentIntent": bool(intent)}}
+    report = {"schemaVersion": SCHEMA_VERSION, "renderer": f"deterministic-terraform-{provider}", "provider": provider, "renderedFiles": [f"application/terraform/{name}" for name in files], "requiredVariables": required_variables, "sourceConformance": conformance, "terraformValidation": terraform_validation, "kubernetesManifests": include_kubernetes, "sourceEvidence": deployment_evidence}
     reports = run_root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -77,13 +111,119 @@ def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
         raise ValueError("Deployment/IaC conformance failed:\n- " + "\n- ".join(conformance["errors"]))
     if terraform_validation["status"] == "FAILED":
         raise ValueError("Terraform validation failed:\n- " + "\n- ".join(terraform_validation.get("errors", [])))
-    bundle = sync_deployment_bundle(application)
+    bundle = sync_deployment_bundle(
+        application, include_kubernetes=include_kubernetes
+    )
     report["deploymentBundle"] = bundle.relative_to(application.parent).as_posix()
     (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
 
 
-def sync_deployment_bundle(application: Path) -> Path:
+def _iac_design_source(
+    spec: Any,
+) -> tuple[dict[str, Any], dict[str, object], dict[str, Any] | None]:
+    """Load the reviewed deployment bundle before falling back to legacy input.
+
+    The bundle is the structured source of the runtime/provisioning diagram;
+    its PlantUML is only a view.  Keeping the legacy resource-spec fallback
+    permits runs created before bundles were persisted, without silently
+    treating a malformed current bundle as trustworthy.
+    """
+    cloud_path = spec.inputs.get("cloud")
+    legacy_cloud = (
+        json.loads(cloud_path.read_text(encoding="utf-8"))
+        if cloud_path is not None and cloud_path.is_file()
+        else None
+    )
+    bundle_path = spec.inputs.get("deploymentBundle")
+    if bundle_path is None or not bundle_path.is_file():
+        if not isinstance(legacy_cloud, dict):
+            raise ValueError(
+                "IaC rendering requires a deployment diagram bundle or cloud resource specification"
+            )
+        return legacy_cloud, {
+            "resourceSpecSource": "cloud_resource_spec_fallback",
+            "deploymentDiagramBundle": False,
+            "cloudResourceSpecification": True,
+        }, None
+
+    try:
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Deployment diagram bundle could not be read: {error}") from error
+    if not isinstance(bundle, dict) or bundle.get("schemaVersion") != DEPLOYMENT_BUNDLE_SCHEMA:
+        raise ValueError("IaC rendering requires a valid structured deployment diagram bundle")
+    if bundle.get("status") != "completed":
+        raise ValueError("IaC rendering requires a completed deployment diagram bundle")
+    resource_spec = bundle.get("resourceSpec")
+    if not isinstance(resource_spec, dict):
+        raise ValueError("Deployment diagram bundle has no resource specification")
+    provider = str(
+        resource_spec.get("provider")
+        or (legacy_cloud or {}).get("provider")
+        or ""
+    ).lower()
+    region = str(
+        resource_spec.get("region") or (legacy_cloud or {}).get("region") or ""
+    )
+    projection = _deployment_projection(bundle, provider, region)
+    resource_plan = projection.get("resourcePlan") if isinstance(projection, dict) else None
+    if not isinstance(resource_plan, dict):
+        raise ValueError("Deployment diagram bundle has no provider resource plan for Terraform")
+    try:
+        validate_provider_resource_plan(resource_plan)
+    except ValueError as error:
+        raise ValueError(f"Deployment diagram resource plan is invalid: {error}") from error
+    return resource_spec, {
+        "resourceSpecSource": "deployment_diagram_resource_plan",
+        "deploymentDiagramBundle": True,
+        "deploymentDiagramSchema": bundle.get("schemaVersion"),
+        "deploymentDiagramResourcePlanDigest": projection.get("resourcePlanStructureDigest")
+        or resource_plan.get("structureDigest"),
+        "cloudResourceSpecification": isinstance(legacy_cloud, dict),
+    }, resource_plan
+
+
+def _deployment_projection(
+    bundle: dict[str, Any], provider: str, region: str
+) -> dict[str, Any]:
+    projections = [
+        item for item in bundle.get("projections") or [] if isinstance(item, dict)
+    ]
+    matches = [
+        item
+        for item in projections
+        if (not provider or str(item.get("provider") or "").lower() == provider)
+        and (not region or str(item.get("region") or "") == region)
+        and item.get("status") == "completed"
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            "Deployment diagram bundle must contain exactly one completed provider projection for the selected resource specification"
+        )
+    return matches[0]
+
+
+def _rendered_required_variables(files: dict[str, str]) -> list[dict[str, str]]:
+    """Expose the variables emitted by the ResourcePlan renderer to the UI."""
+    variables = sorted(
+        set(
+            re.findall(
+                r'^variable\s+"([^"]+)"\s*\{',
+                "\n".join(files.values()),
+                flags=re.MULTILINE,
+            )
+        )
+    )
+    return [
+        {"name": name, "description": "required deployment input"}
+        for name in variables
+    ]
+
+
+def sync_deployment_bundle(
+    application: Path, *, include_kubernetes: bool = True
+) -> Path:
     """Create a self-contained, managed deployment bundle after IaC validation succeeds."""
     bundle = application / "deployment-bundle"
     marker = bundle / ".easydep-managed"
@@ -95,10 +235,15 @@ def sync_deployment_bundle(application: Path) -> Path:
             ignore=shutil.ignore_patterns("deployment-bundle", "build", ".gradle", "__pycache__", "test"),
         )
         (staging / ".easydep-managed").write_text("easydep deployment bundle\n", encoding="utf-8")
-        (staging / "README.md").write_text(
-            "# EasyDep deployment bundle\n\n"
+        instructions = (
             "Run `sh application/k8s/deploy.sh application/terraform -auto-approve` "
-            "from this directory after configuring provider credentials.\n",
+            "from this directory after configuring provider credentials."
+            if include_kubernetes
+            else "Apply the generated Terraform under `application/terraform` "
+            "after configuring provider credentials."
+        )
+        (staging / "README.md").write_text(
+            f"# EasyDep deployment bundle\n\n{instructions}\n",
             encoding="utf-8",
         )
         if bundle.exists():
@@ -113,7 +258,13 @@ def sync_deployment_bundle(application: Path) -> Path:
         raise
 
 
-def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str, Any], application: Path) -> dict[str, object]:
+def validate_deployment_iac_conformance(
+    cloud: dict[str, Any],
+    intent: dict[str, Any],
+    application: Path,
+    *,
+    require_kubernetes_manifests: bool = True,
+) -> dict[str, object]:
     source_path = application / "terraform" / "main.tf"
     errors: list[str] = []
     warnings: list[str] = []
@@ -148,12 +299,13 @@ def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str,
         errors.append("AWS subnet must reference the rendered VPC")
     if provider == "gcp" and any(_type(provider, item) == "google_compute_subnetwork" for item in resources) and "network = google_compute_network." not in source:
         errors.append("GCP subnetwork must reference the rendered network")
-    for workload in intent.get("workloads", []) if isinstance(intent, dict) else []:
-        name = str(workload.get("name", ""))
-        if name and not (application / "k8s" / name).is_dir():
-            errors.append(f"deployment workload {name} has no rendered Kubernetes manifests")
+    if require_kubernetes_manifests:
+        for workload in intent.get("workloads", []) if isinstance(intent, dict) else []:
+            name = str(workload.get("name", ""))
+            if name and not (application / "k8s" / name).is_dir():
+                errors.append(f"deployment workload {name} has no rendered Kubernetes manifests")
     unresolved_images = [workload for workload in intent.get("workloads", []) if "__EASYDEP_REGISTRY_" in str(workload.get("image", ""))] if isinstance(intent, dict) else []
-    if unresolved_images:
+    if unresolved_images and require_kubernetes_manifests:
         registries = {_resource_id(item) for item in resources if _role(provider, item) == "registry"}
         clusters = {_resource_id(item) for item in resources if _role(provider, item) == "cluster"}
         default_cluster = next(iter(clusters)) if len(clusters) == 1 else None

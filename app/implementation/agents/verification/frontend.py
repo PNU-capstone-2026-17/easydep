@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable
@@ -191,6 +192,86 @@ def _jsx_attribute_values(source: str, attribute: str) -> list[str]:
     return values
 
 
+def run_frontend_command(
+    command: list[str],
+    *,
+    cwd: Path,
+    capture_output: bool,
+    text: bool,
+    encoding: str,
+    errors: str,
+    timeout: int,
+    check: bool,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Run npm and terminate the complete command tree if it times out."""
+    if os.name != "nt":
+        return subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=capture_output,
+            text=text,
+            encoding=encoding,
+            errors=errors,
+            timeout=timeout,
+            check=check,
+            env=env,
+        )
+
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=text,
+        encoding=encoding,
+        errors=errors,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        env=env,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        try:
+            terminated = subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+                check=False,
+            )
+            if terminated.returncode != 0:
+                process.kill()
+        except (OSError, subprocess.SubprocessError):
+            process.kill()
+        stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(
+            command,
+            timeout,
+            output=stdout or error.output,
+            stderr=stderr or error.stderr,
+        ) from error
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def _timeout_output(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value or "")
+
+
+def _frontend_command_environment() -> dict[str, str]:
+    """Reuse a system cache instead of re-downloading each clean sandbox."""
+    environment = os.environ.copy()
+    environment.setdefault(
+        "NPM_CONFIG_CACHE",
+        str(Path(tempfile.gettempdir()) / "easydep-npm-cache"),
+    )
+    return environment
+
+
 def run_frontend_verification(
     sandbox: Path,
     run_command: Callable[..., subprocess.CompletedProcess[str]],
@@ -232,14 +313,24 @@ def run_frontend_verification(
         }
     executable = "npm.cmd" if os.name == "nt" else "npm"
     commands = [
-        [executable, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        [
+            executable,
+            "ci",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            "--prefer-offline",
+        ],
         [executable, "run", "build"],
     ]
     started = time.monotonic()
     outputs: list[str] = []
     errors: list[str] = []
     exit_code = 0
+    executed_command = commands[0]
+    environment = _frontend_command_environment()
     for command in commands:
+        executed_command = command
         try:
             result = run_command(
                 command,
@@ -250,8 +341,22 @@ def run_frontend_verification(
                 errors="replace",
                 timeout=timeout_seconds,
                 check=False,
+                env=environment,
             )
-        except (OSError, subprocess.TimeoutExpired) as error:
+        except subprocess.TimeoutExpired as error:
+            exit_code = 1
+            stdout = _timeout_output(error.stdout or error.output)
+            stderr = _timeout_output(error.stderr)
+            errors.append(
+                "Frontend command timed out after "
+                f"{timeout_seconds} seconds: {' '.join(command)}"
+            )
+            if stdout:
+                outputs.append(stdout[-12000:])
+            if stderr:
+                errors.append(stderr[-12000:])
+            break
+        except OSError as error:
             exit_code = 1
             errors.append(str(error))
             break
@@ -261,7 +366,7 @@ def run_frontend_verification(
         if exit_code != 0:
             break
     return {
-        "command": commands[-1],
+        "command": executed_command,
         "commands": commands,
         "exitCode": exit_code,
         "durationMs": int((time.monotonic() - started) * 1000),

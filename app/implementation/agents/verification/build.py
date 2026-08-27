@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ..workspace import prepare_agent_workspace
-from .frontend import run_frontend_verification
+from .frontend import run_frontend_command, run_frontend_verification
 
 
 SQL_RESERVED_IDENTIFIERS = (
@@ -25,6 +25,143 @@ SQL_RESERVED_IDENTIFIERS = (
     "check",
     "date",
 )
+
+
+def persistence_entity_schema_violations(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Detect persistence entities that omit columns required by the migration.
+
+    Compilation does not prove that a JPA entity can persist an ERD row.  A
+    generated entity can expose only its id/status fields while the migration
+    correctly declares non-null foreign keys; the first E2E insert then fails
+    with a misleading database ``NULL not allowed`` error.  Compare the
+    already-generated migration with the entity's explicit ``@Column`` names
+    while the entity task still owns the files, so repair is directed to the
+    source contract rather than an unrelated E2E fixture.
+    """
+    normalized = [path.replace("\\", "/") for path in relative_paths]
+    entity_paths = [
+        path for path in normalized
+        if "/persistence/entity/" in path and path.endswith("Entity.java")
+    ]
+    migration_candidates = list(
+        (sandbox / "application" / "src" / "main" / "resources").rglob(
+            "V1__initial_schema.sql"
+        )
+    )
+    if not entity_paths or not migration_candidates:
+        return []
+    migration = migration_candidates[0].read_text(encoding="utf-8")
+    table_columns: dict[str, set[str]] = {}
+    for table_match in re.finditer(
+        r"(?is)create\s+table(?:\s+if\s+not\s+exists)?\s+\"?(?P<table>[A-Za-z_]\w*)\"?\s*\((?P<body>.*?);",
+        migration,
+    ):
+        table = table_match.group("table").lower()
+        columns: set[str] = set()
+        for line in table_match.group("body").splitlines():
+            match = re.match(
+                r"\s*\"?(?P<column>[A-Za-z_]\w*)\"?\s+[A-Za-z][A-Za-z0-9_]*(?:\s*\([^)]*\))?",
+                line,
+            )
+            if match:
+                columns.add(match.group("column").lower())
+        if columns:
+            table_columns[table] = columns
+
+    violations: list[str] = []
+    for relative in entity_paths:
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        source = path.read_text(encoding="utf-8")
+        table_match = re.search(r'@Table\s*\(\s*name\s*=\s*"([^"]+)"', source)
+        if not table_match:
+            continue
+        table = table_match.group(1).lower()
+        expected = table_columns.get(table)
+        if not expected:
+            continue
+        mapped = {
+            match.group(1).lower()
+            for match in re.finditer(r'@Column\s*\(\s*name\s*=\s*"([^"]+)"', source)
+        }
+        mapped.update(
+            match.group(1).lower()
+            for match in re.finditer(
+                r'@JoinColumn\s*\(\s*name\s*=\s*"([^"]+)"', source
+            )
+        )
+        missing = sorted(expected - mapped)
+        if missing:
+            violations.append(
+                f"{relative}: @Table({table}) is missing migration column(s): {', '.join(missing)}"
+            )
+    return violations
+
+
+def repair_invalid_inverse_entity_associations(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Downgrade an invalid inverse JPA collection to transient state.
+
+    A generated ``@OneToMany(mappedBy = "x")`` is valid only if the target
+    entity declares an owning relationship property named ``x``.  The ERD can
+    describe a scalar foreign key without declaring that Java association.  In
+    that case retaining the inverse annotation makes Hibernate reject the
+    entire application context.  The collection is useful only as optional
+    in-memory convenience state, so mark it ``@Transient`` rather than
+    inventing a ``@ManyToOne`` relation not present in the generated contract.
+    """
+    repaired: list[str] = []
+    normalized = [path.replace("\\", "/") for path in relative_paths]
+    entity_paths = [
+        path for path in normalized
+        if "/persistence/entity/" in path and path.endswith("Entity.java")
+    ]
+    entity_root = sandbox / "application" / "src" / "main" / "java"
+    for relative in entity_paths:
+        source_path = sandbox / relative
+        if not source_path.is_file():
+            continue
+        source = source_path.read_text(encoding="utf-8")
+        original = source
+        pattern = re.compile(
+            r"@OneToMany\s*\(\s*mappedBy\s*=\s*\"(?P<owner>[A-Za-z_]\w*)\"[^)]*\)"
+            r"(?P<between>\s*(?:private|protected)\s+(?:[\w.]+\s*<\s*)?"
+            r"(?P<target>[A-Za-z_]\w*Entity)\s*>?\s+[A-Za-z_]\w*"
+            r"(?:\s*=\s*[^;]+)?\s*;)",
+            re.MULTILINE,
+        )
+        for match in list(pattern.finditer(source)):
+            target_name = match.group("target")
+            target_path = next(
+                (candidate for candidate in entity_root.rglob(f"{target_name}.java")), None
+            )
+            target_source = (
+                target_path.read_text(encoding="utf-8") if target_path and target_path.is_file() else ""
+            )
+            owner = match.group("owner")
+            owns_relation = bool(re.search(
+                rf"@(ManyToOne|OneToOne)\b[\s\S]{{0,300}}?\b{re.escape(owner)}\s*[;=]",
+                target_source,
+            ))
+            if owns_relation:
+                continue
+            source = source.replace(match.group(0), "@Transient" + match.group("between"), 1)
+        if source == original:
+            continue
+        if "@Transient" in source and not re.search(
+            r"(?m)^import\s+jakarta\.persistence\.Transient;", source
+        ):
+            imports = list(re.finditer(r"(?m)^import\s+[^;]+;", source))
+            if imports:
+                anchor = imports[-1]
+                source = source[:anchor.end()] + "\nimport jakarta.persistence.Transient;" + source[anchor.end():]
+        source_path.write_text(source, encoding="utf-8")
+        repaired.append(f"{relative}: invalid inverse association marked transient")
+    return repaired
 
 
 def ensure_persistence_schema_test(
@@ -143,8 +280,10 @@ class WorkspaceVerificationError(RuntimeError):
         if output == "No verification output was captured" and evidence.get("command"):
             output = f"command={evidence['command']}; {output}"
         if len(output) > 1000:
-            # The beginning normally contains the assertion/root exception,
-            # while the tail contains the final stack frames. Preserve both.
+            # The tail of a Gradle/JUnit trace is usually framework plumbing
+            # and can hide the assertion or root exception at the beginning.
+            # Preserve both ends so the repair prompt identifies the real
+            # failure without another retry just to recover evidence.
             output = (
                 output[:600]
                 + "\n... [verification output truncated] ...\n"
@@ -162,16 +301,28 @@ def verification_timeout_seconds() -> int:
 
 
 def verify_run_workspace(
-    run_root: Path, report_name: str = "final-verification.json"
+    run_root: Path,
+    report_name: str = "final-verification.json",
+    *,
+    verify_frontend: bool = True,
 ) -> dict[str, object]:
-    """Verify all promoted sources from a short ASCII-safe workspace."""
+    """Verify promoted sources from a short ASCII-safe workspace.
+
+    Frontend dependencies are intentionally installed only for the frontend
+    phase and the final release gate.  Running ``npm ci`` after every backend
+    phase creates an unrelated network-dependent bottleneck and can mask a
+    successful backend build.
+    """
     sandbox = prepare_agent_workspace(
         run_root,
         {"task_id": "final-verification", "allowed_write_paths": []},
     )
     verification = verify_agent_workspace(sandbox)
     frontend_verification = None
-    if (sandbox / "application" / "frontend" / "package.json").is_file():
+    if (
+        verify_frontend
+        and (sandbox / "application" / "frontend" / "package.json").is_file()
+    ):
         frontend_verification = verify_frontend_workspace(sandbox)
     result = {
         "status": "SUCCEEDED",
@@ -199,6 +350,16 @@ def verify_agent_workspace(
         executable, task_type, allowed_write_paths
     )
     started = time.monotonic()
+    # Windows workers occasionally fail before Gradle reaches the project when
+    # the shared cache's virtual-file-system journal is locked or unavailable
+    # (FileAccessTimeJournal / WinError 5 / I/O error).  Disable VFS watching
+    # for verification: the task gates are short-lived and correctness does not
+    # depend on Gradle's filesystem watcher.  Keep any caller-provided options.
+    environment = os.environ.copy()
+    gradle_opts = environment.get("GRADLE_OPTS", "").strip()
+    vfs_option = "-Dorg.gradle.vfs.watch=false"
+    if vfs_option not in gradle_opts:
+        environment["GRADLE_OPTS"] = f"{gradle_opts} {vfs_option}".strip()
     result = subprocess.run(
         command,
         cwd=sandbox / "application",
@@ -206,6 +367,7 @@ def verify_agent_workspace(
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=environment,
         timeout=verification_timeout_seconds(),
         check=False,
     )
@@ -235,7 +397,6 @@ def task_verification_command(
             "bootJar",
             "test",
             "--build-cache",
-            "--no-daemon",
         ]
 
     test_names = sorted(
@@ -251,15 +412,191 @@ def task_verification_command(
         command.extend(["testClasses", "test"])
         for test_name in test_names:
             command.extend(["--tests", f"*{test_name}"])
-    command.extend(["--build-cache", "--no-daemon"])
+    # These workspaces share Gradle's user home, so allowing the daemon to
+    # remain alive avoids starting a one-shot JVM for every agent task.
+    command.append("--build-cache")
     return command
 
 
 def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
-    evidence = run_frontend_verification(sandbox, subprocess.run)
+    evidence = run_frontend_verification(sandbox, run_frontend_command)
     if evidence["exitCode"] != 0:
         raise WorkspaceVerificationError(evidence)
     return evidence
+
+
+def api_adapter_contract_violations(
+    sandbox: Path, allowed_write_paths: list[str]
+) -> list[str]:
+    """Reject compilable web adapters that never implement their OpenAPI port.
+
+    Java permits a plain class with no mappings to compile, but Spring then
+    exposes no routes and every E2E request returns 404.  The generated
+    interface is the authoritative route contract, so require the adapter to
+    implement it before the task can be promoted.
+    """
+    violations: list[str] = []
+    for relative in allowed_write_paths:
+        normalized = relative.replace("\\", "/")
+        if "/src/main/" not in normalized or not normalized.endswith("Controller.java"):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        adapter = path.stem
+        api_name = adapter.removesuffix("Controller")
+        source = path.read_text(encoding="utf-8")
+        if not re.search(
+            rf"\bclass\s+{re.escape(adapter)}\b[^{{]*\bimplements\s+"
+            rf"{re.escape(api_name)}\b",
+            source,
+            flags=re.DOTALL,
+        ):
+            violations.append(
+                f"{normalized}: controller must implement generated {api_name}"
+            )
+            continue
+        # A compilable adapter can still hallucinate a project-local package
+        # (for example ``bce.control`` or ``web.dto``) that is not part of the
+        # generated contracts.  Resolve imports against the copied source tree
+        # before invoking Gradle so the agent receives a precise contract
+        # failure instead of spending a build/retry on invented types.
+        package_match = re.search(r"\bpackage\s+([\w.]+)\s*;", source)
+        package_root = package_match.group(1).split(".adapter.", 1)[0] if package_match else ""
+        if package_root:
+            source_root = sandbox / "application" / "src" / "main" / "java"
+            for imported in re.findall(
+                rf"\bimport\s+({re.escape(package_root)}\.[\w.]+)\s*;", source
+            ):
+                imported_path = source_root / Path(*imported.split(".")).with_suffix(".java")
+                if not imported_path.is_file():
+                    violations.append(
+                        f"{normalized}: imported project type does not exist: {imported}"
+                    )
+        api_sources = list(
+            (sandbox / "application" / "src" / "main" / "java").rglob(
+                f"{api_name}.java"
+            )
+        )
+        if not api_sources:
+            continue
+        api_contract = api_sources[0].read_text(encoding="utf-8")
+        statuses = sorted(
+            {
+                int(value)
+                for value in re.findall(
+                    r'@ApiResponse\s*\(\s*responseCode\s*=\s*"(\d{3})"',
+                    api_contract,
+                )
+            }
+        )
+        # Only domain decisions must be observable in the adapter.  Validation,
+        # authorization, not-found, and infrastructure failures can be mapped
+        # by Spring's global exception handling; requiring a branch for each of
+        # them makes a void BCE command look like it can manufacture outcomes it
+        # does not actually expose.  409/422 remain strict because they are
+        # business outcomes and must be represented by the Control contract.
+        required_statuses = {409, 422}
+        status_tokens = {
+            200: ("ResponseEntity.ok", "HttpStatus.OK", "status(200)"),
+            201: ("ResponseEntity.created", "HttpStatus.CREATED", "status(201)"),
+            202: (
+                "ResponseEntity.accepted",
+                "HttpStatus.ACCEPTED",
+                "status(202)",
+            ),
+            204: (
+                "ResponseEntity.noContent",
+                "HttpStatus.NO_CONTENT",
+                "status(204)",
+            ),
+            400: (
+                "ResponseEntity.badRequest",
+                "HttpStatus.BAD_REQUEST",
+                "status(400)",
+            ),
+            401: (
+                "ResponseEntity.status(HttpStatus.UNAUTHORIZED",
+                "HttpStatus.UNAUTHORIZED",
+                "status(401)",
+            ),
+            403: (
+                "ResponseEntity.status(HttpStatus.FORBIDDEN",
+                "HttpStatus.FORBIDDEN",
+                "status(403)",
+            ),
+            404: (
+                "ResponseEntity.notFound",
+                "HttpStatus.NOT_FOUND",
+                "status(404)",
+            ),
+            409: (
+                "ResponseEntity.status(HttpStatus.CONFLICT",
+                "HttpStatus.CONFLICT",
+                "status(409)",
+            ),
+            422: (
+                "ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY",
+                "HttpStatus.UNPROCESSABLE_ENTITY",
+                "status(422)",
+            ),
+            500: (
+                "ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR",
+                "HttpStatus.INTERNAL_SERVER_ERROR",
+                "status(500)",
+            ),
+            503: (
+                "ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE",
+                "HttpStatus.SERVICE_UNAVAILABLE",
+                "status(503)",
+            ),
+        }
+        for status in statuses:
+            if status not in required_statuses:
+                continue
+            tokens = status_tokens.get(status)
+            if tokens and not any(token in source for token in tokens):
+                violations.append(
+                    f"{normalized}: missing executable HTTP {status} mapping from {api_name}; "
+                    "@ApiResponse/@ApiResponses annotations are documentation only"
+                )
+    return violations
+
+
+def boundary_adapter_contract_violations(
+    sandbox: Path, allowed_write_paths: list[str], sequence: str = ""
+) -> list[str]:
+    """Reject a state adapter that discards a required Boundary -> Control flow.
+
+    A Boundary task may legitimately keep an optional value unset, but an
+    explicit request-to-Control message followed by a value response must not
+    be implemented as ``return null``.  That compiles and its focused adapter
+    test can still pass, only to make the first real E2E request return 401/404.
+    The sequence contract is used only to identify this required delegation;
+    no domain-specific method names are assumed.
+    """
+    if not sequence or "->" not in sequence:
+        return []
+    has_forward_flow = bool(
+        re.search(r"\b[A-Za-z_]\w*\s*->\s*[A-Za-z_]\w*\s*:", sequence)
+    )
+    if not has_forward_flow:
+        return []
+    violations: list[str] = []
+    for relative in allowed_write_paths:
+        normalized = relative.replace("\\", "/")
+        if "/src/main/" not in f"/{normalized}" or not normalized.endswith("Adapter.java"):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        source = path.read_text(encoding="utf-8")
+        if re.search(r"\breturn\s+null\s*;", source):
+            violations.append(
+                f"{normalized}: Boundary adapter discards a required sequence flow with `return null`; "
+                "delegate/configure the exact contract result instead"
+            )
+    return violations
 
 
 def production_placeholder_markers(
