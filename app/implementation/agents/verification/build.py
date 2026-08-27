@@ -346,6 +346,16 @@ def verify_agent_workspace(
         executable, task_type, allowed_write_paths
     )
     started = time.monotonic()
+    # Windows workers occasionally fail before Gradle reaches the project when
+    # the shared cache's virtual-file-system journal is locked or unavailable
+    # (FileAccessTimeJournal / WinError 5 / I/O error).  Disable VFS watching
+    # for verification: the task gates are short-lived and correctness does not
+    # depend on Gradle's filesystem watcher.  Keep any caller-provided options.
+    environment = os.environ.copy()
+    gradle_opts = environment.get("GRADLE_OPTS", "").strip()
+    vfs_option = "-Dorg.gradle.vfs.watch=false"
+    if vfs_option not in gradle_opts:
+        environment["GRADLE_OPTS"] = f"{gradle_opts} {vfs_option}".strip()
     result = subprocess.run(
         command,
         cwd=sandbox / "application",
@@ -353,6 +363,7 @@ def verify_agent_workspace(
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=environment,
         timeout=verification_timeout_seconds(),
         check=False,
     )
