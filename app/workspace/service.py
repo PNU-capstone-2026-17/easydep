@@ -1418,6 +1418,13 @@ class WorkspaceService:
                             continue
                         tasks_by_phase.setdefault(str(task.get("phase") or ""), []).append(task)
                     for task_phase, phase_tasks in tasks_by_phase.items():
+                        # Only expose tasks from the phase that is actually
+                        # executing.  Keeping completed persistence tasks in
+                        # the backend card while Application Setup (or a later
+                        # phase) is running makes the UI look as if the
+                        # workflow restarted at Repository.
+                        if current_phase and task_phase != current_phase:
+                            continue
                         statuses = {str(task.get("status") or "PENDING").lower() for task in phase_tasks}
                         if "failed" in statuses or "timeout" in statuses or "needs_review" in statuses:
                             task_status = next(
