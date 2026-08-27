@@ -55,10 +55,15 @@ def _field_schema(field: dict[str, Any], known: set[str]) -> dict[str, Any]:
 
 def _body_schema(name: str, known: set[str], is_array: bool = False) -> dict[str, Any]:
     ref_name = sanitize_schema_name(name)
+    primitive = ref_name.lower()
     inner: dict[str, Any] = (
-        {"$ref": f"#/components/schemas/{ref_name}"}
-        if ref_name in known
-        else {"type": "object"}
+        {"type": primitive}
+        if primitive in _PRIMITIVES - {"array", "object"}
+        else (
+            {"$ref": f"#/components/schemas/{ref_name}"}
+            if ref_name in known
+            else {"type": "object"}
+        )
     )
     return {"type": "array", "items": inner} if is_array else inner
 

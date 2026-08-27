@@ -655,6 +655,19 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_causal_call_chain",
     ),
     Rule(
+        id="sequence.declared-boundary-control-handoff",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "An Actor request entering a Boundary must be delegated to one of the "
+            "Controls explicitly depended on by that Boundary in the BCE class diagram."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (BCE route contract)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_declared_boundary_control_handoff",
+    ),
+    Rule(
         id="sequence.argument-data-flow",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,

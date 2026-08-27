@@ -1,4 +1,5 @@
 from app.design.services.api_spec.extractor import normalize_api_spec_model
+from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.api_spec import reviser
 
 
@@ -257,3 +258,62 @@ class ScheduleController <<Control>> {
     normalized = normalize_api_spec_model(model, class_diagram)
 
     assert normalized["Schemas"][0]["fields"][0]["type"] == "array"
+
+
+def test_success_response_missing_schema_uses_exact_collection_return_contract() -> None:
+    model = {
+        "Endpoints": [{
+            "path": "/catalog/criteria",
+            "method": "get",
+            "responses": [{"status": 200, "description": "Browsing criteria"}],
+            "control_binding": {
+                "control": "BrowseCatalogControl",
+                "method": "fetchBrowsingCriteria",
+                "arguments": [],
+            },
+        }],
+        "Schemas": [],
+    }
+    class_diagram = """@startuml
+class BrowseCatalogControl <<Control>> {
+  + fetchBrowsingCriteria(): List<String>
+}
+@enduml"""
+
+    normalized = normalize_api_spec_model(model, class_diagram)
+    response = normalized["Endpoints"][0]["responses"][0]
+
+    assert response["schema_name"] == "string"
+    assert response["is_array"] is True
+    openapi = build_openapi_from_model(normalized)
+    assert openapi["paths"]["/catalog/criteria"]["get"]["responses"]["200"][
+        "content"
+    ]["application/json"]["schema"] == {
+        "type": "array", "items": {"type": "string"}
+    }
+
+
+def test_success_response_primitive_return_replaces_invented_object_schema() -> None:
+    model = {
+        "Endpoints": [{
+            "path": "/auth/signin",
+            "method": "post",
+            "responses": [{"status": 200, "schema_name": "AuthToken"}],
+            "control_binding": {
+                "control": "SignInControl",
+                "method": "authenticate",
+                "arguments": [],
+            },
+        }],
+        "Schemas": [{"name": "AuthToken", "fields": []}],
+    }
+    class_diagram = """@startuml
+class SignInControl <<Control>> {
+  + authenticate(username : String, password : String): String
+}
+@enduml"""
+
+    normalized = normalize_api_spec_model(model, class_diagram)
+
+    assert normalized["Endpoints"][0]["responses"][0]["schema_name"] == "string"
+    assert normalized["Endpoints"][0]["responses"][0]["is_array"] is False

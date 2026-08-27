@@ -98,6 +98,7 @@ _SEQUENCE_REPAIR_RULE_GROUPS = (
     {
         "sequence.message-participants-exist",
         "sequence.message-bce-flow",
+        "sequence.declared-boundary-control-handoff",
         "sequence.boundary-operation-direction",
         "sequence.references-exist",
         "sequence.participant-classes-exist",

@@ -49,7 +49,7 @@ def test_missing_bce_signature_type_is_detected_before_implementation() -> None:
     assert _missing_bce_contract_types(puml) == ["CourseFilter", "MissingResult"]
 
 
-def test_void_control_cannot_represent_documented_openapi_error_outcomes() -> None:
+def test_control_return_does_not_reject_documented_openapi_error_outcomes() -> None:
     class_diagram = """
     @startuml
     class DropControl <<Control>> {
@@ -73,13 +73,10 @@ def test_void_control_cannot_represent_documented_openapi_error_outcomes() -> No
 
     findings = _unrepresentable_openapi_error_outcomes(class_diagram, api_spec)
 
-    assert findings == [
-        "DELETE /students/{studentId}/enrollments/{courseId}: DropControl.drop "
-        "returns void but OpenAPI declares error response(s) 409, 422"
-    ]
+    assert findings == []
 
 
-def test_initial_job_proceeds_with_unrepresentable_api_error_outcome(
+def test_initial_job_does_not_add_false_error_outcome_design_finding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     worker = ImplementationWorker(settings(tmp_path))
@@ -123,7 +120,7 @@ def test_initial_job_proceeds_with_unrepresentable_api_error_outcome(
         worker.shutdown()
 
     assert record["status"] == "QUEUED"
-    assert "api.error-outcomes-representable" in record["design_validation"]["findings"][0]["finding"]
+    assert record["design_validation"]["findings"] == []
 
 
 def test_void_control_allows_transport_level_openapi_error_outcomes() -> None:

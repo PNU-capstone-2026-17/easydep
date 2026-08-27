@@ -1411,7 +1411,7 @@ def _select_use_case_route(
         if not isinstance(step, dict):
             continue
         sentence = str(step.get("sentence") or step.get("description") or "").strip()
-        if _actor_led(sentence, actor) or (
+        if _actor_requires_system_input(sentence, actor) or (
             index == 0 and _system_receives_actor_trigger(sentence, trigger, actor)
         ):
             actor_steps.append(sentence)
@@ -1567,6 +1567,37 @@ def _actor_led(sentence: str, actor_name: str) -> bool:
         )
         for subject in subjects
     )
+
+
+_PASSIVE_ACTOR_OBSERVATION = re.compile(
+    r"\b(?:review|reviews|reviewing|inspect|inspects|inspecting|read|reads|reading|"
+    r"examine|examines|examining|view|views|viewing|confirm|confirms|confirming|"
+    r"acknowledge|acknowledges|acknowledging)\b",
+    re.IGNORECASE,
+)
+_ACTIVE_ACTOR_INPUT = re.compile(
+    r"\b(?:select|selects|selecting|choose|chooses|choosing|enter|enters|entering|"
+    r"submit|submits|submitting|request|requests|requesting|send|sends|sending|"
+    r"provide|provides|providing|upload|uploads|uploading)\b",
+    re.IGNORECASE,
+)
+
+
+def _actor_requires_system_input(sentence: str, actor_name: str) -> bool:
+    """Whether an actor-led step needs a new Boundary operation.
+
+    A use-case often ends with the actor reviewing or confirming data that the
+    preceding system response already displayed.  Treating that passive
+    observation as a fresh system input invents a BCE method solely to satisfy
+    step coverage.  It remains traceable as a narrative step instead.
+    """
+    if not _actor_led(sentence, actor_name):
+        return False
+    # A sentence can combine observation and a new command (for example,
+    # “reviews the list and selects a course”).  The explicit input verb wins.
+    if _ACTIVE_ACTOR_INPUT.search(sentence or ""):
+        return True
+    return not _PASSIVE_ACTOR_OBSERVATION.search(sentence or "")
 
 
 def _system_receives_actor_trigger(
@@ -1819,7 +1850,7 @@ def _build_sequence_plans(
         )
         trigger = str(specification.get("trigger") or summary.get("trigger") or "")
         for record in records:
-            actor_step = _actor_led(record["sentence"], actor) or (
+            actor_step = _actor_requires_system_input(record["sentence"], actor) or (
                 str(record.get("step_id") or "") == first_main_step_id
                 and _system_receives_actor_trigger(record["sentence"], trigger, actor)
             )
@@ -1883,7 +1914,7 @@ def _supplementary_actor_selection_routes(
     extractor.  It never picks the method or invents an operation.
     """
     has_actor_selection = any(
-        _actor_led(str(record.get("sentence") or ""), actor)
+        _actor_requires_system_input(str(record.get("sentence") or ""), actor)
         and _ACTOR_SELECTION_PATTERN.search(str(record.get("sentence") or ""))
         for record in _flow_records(specification)
     )
@@ -2488,7 +2519,10 @@ def _generate_llm_use_case_diagram(
         }
         for record in _flow_records(specification)
         if record["step_id"] not in accounted_step_ids
-        and _actor_led(record["sentence"], str(specification.get("primary_actor") or summary.get("primary_actor") or "User"))
+        and _actor_requires_system_input(
+            record["sentence"],
+            str(specification.get("primary_actor") or summary.get("primary_actor") or "User"),
+        )
     ]
     narrative = [
         *existing_narrative,
@@ -2501,7 +2535,10 @@ def _generate_llm_use_case_diagram(
             }
             for record in _flow_records(specification)
             if record["step_id"] not in accounted_step_ids
-            and not _actor_led(record["sentence"], str(specification.get("primary_actor") or summary.get("primary_actor") or "User"))
+            and not _actor_requires_system_input(
+                record["sentence"],
+                str(specification.get("primary_actor") or summary.get("primary_actor") or "User"),
+            )
         ],
     ]
     return {
@@ -2609,7 +2646,7 @@ def _recover_explicit_actor_retries(
             not step_id
             or step_id in covered
             or ":extension:" not in step_id
-            or not _actor_led(str(record.get("sentence") or ""), actor)
+            or not _actor_requires_system_input(str(record.get("sentence") or ""), actor)
             or not _ACTOR_RETRY_PATTERN.search(str(record.get("sentence") or ""))
         ):
             continue

@@ -25,6 +25,7 @@ from .verification.frontend import (
 from .verification.build import (
     WorkspaceVerificationError,
     ensure_persistence_schema_test,
+    repair_invalid_inverse_entity_associations,
     persistence_reserved_identifier_markers,
     repair_persistence_schema_table_quoting,
     production_placeholder_markers,
@@ -615,6 +616,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     )
                 if task_type == "persistence-entities":
                     ensure_mapper_accessible_persistence_constructor(
+                        sandbox, list(task["allowed_write_paths"])
+                    )
+                    repair_invalid_inverse_entity_associations(
                         sandbox, list(task["allowed_write_paths"])
                     )
                 if task_type == "control":
