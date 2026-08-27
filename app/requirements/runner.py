@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import cast
 
 from app.orchestration.run_identity import identity_manifest, make_run_id
-from app.requirements.traceability import build_requirement_trace
 from app.requirements.agent import stages, supervisor
 from app.requirements.agent.state import AgentState
 
@@ -50,6 +49,7 @@ from app.requirements.agent.steps.step_cloud_inputs import analyze_cloud_inputs 
 from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
 from app.requirements.common import telemetry
 from app.requirements.config import settings
+from app.requirements.traceability import build_requirement_trace
 
 # app/requirements/runner.py 에서 저장소 루트까지는 세 단계 위다.
 _ROOT = Path(__file__).parent.parent.parent

@@ -13,7 +13,6 @@ import json
 from dataclasses import asdict, dataclass
 
 from app.cloudkb import regions
-from app.requirements.resources import cloud_contract, input_registry
 from app.requirements import prompts
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
@@ -21,6 +20,7 @@ from app.requirements.agent.steps.resource_tools import LOOKUP_TOOLS, convert_to
 from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
+from app.requirements.resources import cloud_contract, input_registry
 from app.requirements.schemas import CloudConstraintExtraction
 
 #: 계약 판. 스키마가 `const`로 못 박아 둔 값이라 **옮겨 적지 않고 읽는다** —

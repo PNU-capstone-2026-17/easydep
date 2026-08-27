@@ -11,9 +11,9 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.config import settings
 from langgraph.graph import END, START, StateGraph
 
+from app.config import settings
 from app.orchestration.adapters.testing import TestingAdapter
 from app.orchestration.artifacts import persist_run_artifacts, restore_run_application
 from app.orchestration.contracts import (
@@ -45,12 +45,12 @@ from app.orchestration.providers import (
 )
 from app.orchestration.registry import ProviderRegistry
 from app.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
+from app.orchestration.run_identity import make_run_id
 from app.orchestration.store import RunStore
 from app.orchestration.worker_lock import (
     exclusive_implementation_worker,
     exclusive_run_execution,
 )
-from app.orchestration.run_identity import make_run_id
 
 IMPLEMENTATION_STEP_ORDER = (
     "implementation.scaffold",

@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 from app.design.services.class_diagram.scenario import ExecutionGroup, ScenarioIndex, text
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
@@ -18,6 +17,7 @@ from app.design.services.class_diagram.validation.model import (
     runtime_value_source,
     type_can_default,
 )
+from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 
 
 @dataclass(frozen=True)

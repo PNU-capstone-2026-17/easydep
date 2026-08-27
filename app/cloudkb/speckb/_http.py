@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 USER_AGENT = "easydep-speckb/1.0 (raw cloud VM catalog collector)"
@@ -162,15 +162,17 @@ def save_gz(path: Path, body: bytes, url: str, *, headers: dict[str, str] | None
     """응답 본문을 gzip으로 저장하고 provenance 사이드카를 남긴다."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".part")
-    with open(temporary, "wb") as raw_file:
+    with (
+        open(temporary, "wb") as raw_file,
+        gzip.GzipFile(
+            filename=path.name, fileobj=raw_file, mode="wb", mtime=0
+        ) as gzip_file,
+    ):
         # `filename`을 반드시 넘긴다. 생략하면 파이썬 gzip이 `fileobj.name`을 헤더에
         # 적는데, 여기서는 그게 `<이름>.json.gz.part`라서 압축을 풀면 `.part` 파일이
         # 나온다(`.gz`로 끝날 때만 잘라내는 로직이라 `.part`는 안 걸린다).
         # 최종 이름을 넘기면 gzip이 `.gz`를 떼어 `<이름>.json`으로 적는다.
-        with gzip.GzipFile(
-            filename=path.name, fileobj=raw_file, mode="wb", mtime=0
-        ) as gzip_file:
-            gzip_file.write(body)
+        gzip_file.write(body)
     os.replace(temporary, path)
 
     source_headers = headers or {}
@@ -178,7 +180,7 @@ def save_gz(path: Path, body: bytes, url: str, *, headers: dict[str, str] | None
         "url": redact(url),
         "sha256": hashlib.sha256(body).hexdigest(),
         "bytes": len(body),
-        "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "etag": source_headers.get("etag"),
         "last_modified": source_headers.get("last-modified"),
         "note": "sha256과 bytes는 압축 전 원본 응답 본문 기준이다.",
@@ -197,7 +199,7 @@ def load_gz_json(path: Path):
 
 def write_manifest(path: Path, manifest: dict) -> None:
     manifest = dict(manifest)
-    manifest["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    manifest["generated_at"] = datetime.now(UTC).isoformat(timespec="seconds")
     _write_json(path, manifest)
 
 

@@ -8,15 +8,15 @@ from pathlib import Path
 
 from app.config import settings
 
-from .frontend_contracts import GeneratedClientContracts
 from ..domain.implementation_ir import (
     ApiPortIR,
     GatewayIR,
     build_implementation_ir,
     parse_erd_entities,
 )
-from ..generation.frontend_scaffold import frontend_page_names, operation_ids
 from ..domain.models import JobSpec
+from ..generation.frontend_scaffold import frontend_page_names, operation_ids
+from .frontend_contracts import GeneratedClientContracts
 
 
 @dataclass(frozen=True)

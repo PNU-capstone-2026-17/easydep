@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -563,4 +563,3 @@ def _safe_json_object(value: str) -> dict[str, Any]:
         return decoded if isinstance(decoded, dict) else {}
     except json.JSONDecodeError:
         return {}
-

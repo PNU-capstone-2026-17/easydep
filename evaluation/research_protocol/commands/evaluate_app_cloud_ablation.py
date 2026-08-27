@@ -11,7 +11,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.orchestration.app_cloud_contracts import (
+from app.requirements.resources.application_cloud import (
     ApplicationRuntimeContract,
     BindingEndpoint,
     CloudCapabilityContract,

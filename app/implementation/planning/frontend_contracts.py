@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-
 DEFAULT_FRONTEND_CONTRACT_BUDGET = 100_000
 
 
@@ -19,7 +18,7 @@ class GeneratedClientContracts:
     files: tuple[Path, ...]
 
     @classmethod
-    def discover(cls, generated_root: Path) -> "GeneratedClientContracts":
+    def discover(cls, generated_root: Path) -> GeneratedClientContracts:
         generated_root = generated_root.resolve()
         if not generated_root.is_dir():
             raise ValueError(

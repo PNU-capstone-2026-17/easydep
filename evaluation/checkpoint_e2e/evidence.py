@@ -10,8 +10,8 @@ from typing import Any
 
 import hcl2
 
-from app.implementation.delivery.iac_renderer import render_open_tofu
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
+from app.implementation.delivery.iac_renderer import render_open_tofu
 from evaluation.easydep.requirements.evaluate import (
     preclassified_errors,
     requirements_semantic_oracle,

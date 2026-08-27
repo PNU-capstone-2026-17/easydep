@@ -18,7 +18,6 @@ from copy import deepcopy
 from typing import Any
 
 from app.config import settings
-from app.validation import run_checks
 from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import collaboration, inventory
 from app.design.services.class_diagram.models import (
@@ -44,6 +43,7 @@ from app.design.services.class_diagram.type_system import (
 from app.design.services.class_diagram.validation.inventory import INVENTORY_CHECKS
 from app.design.services.class_diagram.validation.model import class_name
 from app.design.services.common.structured import parse_structured
+from app.validation import run_checks
 
 
 def _inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
@@ -570,6 +570,3 @@ __all__ = [
     "revise_inventory",
     "run_selected_groups",
 ]
-
-
-

@@ -16,13 +16,6 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from app.validation import (
-    CheckSpec,
-    FindingOrigin,
-    ValidationReport,
-    run_checks,
-)
-from app.validation import Finding as ValidationFinding
 from app.design.knowledge import rules
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
@@ -39,6 +32,13 @@ from app.design.services.sequence_diagram.methods import (
 from app.design.services.sequence_diagram.projection import (
     sequence_findings as interaction_sequence_findings,
 )
+from app.validation import (
+    CheckSpec,
+    FindingOrigin,
+    ValidationReport,
+    run_checks,
+)
+from app.validation import Finding as ValidationFinding
 
 
 def _known_use_case_ids_from_state(state: dict[str, Any]) -> set[str]:

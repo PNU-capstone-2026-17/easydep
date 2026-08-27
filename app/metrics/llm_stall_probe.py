@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
-from typing import Any
 from time import perf_counter
 
 from app.config import settings
@@ -18,6 +16,7 @@ def _emit(event: str, **fields: object) -> None:
 
 def _probe(operation: str, timeout_seconds: float) -> None:
     from openai import OpenAI
+
     from app.config import settings
 
     started = perf_counter()

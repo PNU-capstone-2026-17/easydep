@@ -54,4 +54,4 @@ chain is explicitly promoted.
 산출물은 PUML과 SVG를 함께 기록하며, LLM 표현은 바이트가 아니라 구조 signature로 비교한다.
 OpenTofu 검증은 E2E 전용 캐시를 만들지 않고 시스템 공용
 `.easydep/provider-plugin-cache`를 사용한다. 이 캐시는 고정된 AWS·Azure·GCP provider를
-각각 하나씩만 보존하며 `app.core.cloudkb.depkb.provider_cache`가 허용 버전을 검사한다.
+각각 하나씩만 보존하며 `app.cloudkb.depkb.provider_cache`가 허용 버전을 검사한다.

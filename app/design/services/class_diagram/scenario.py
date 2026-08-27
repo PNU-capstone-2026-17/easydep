@@ -319,6 +319,3 @@ def build_scenario_index(raw: dict[str, Any]) -> ScenarioIndex:
     accepted = tuple(use_cases)
     relationships = _relationships(raw, accepted)
     return ScenarioIndex(raw, accepted, relationships, _groups(accepted, relationships))
-
-
-

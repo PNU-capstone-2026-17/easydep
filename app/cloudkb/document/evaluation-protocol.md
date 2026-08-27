@@ -13,7 +13,7 @@
 
 ## 모델의 역할
 
-`load-balanced-ingress` 같은 capability는 AWS, Azure, GCP에서 서로 다른 수의 독립 리소스와 내장 블록으로 실현된다. 정본은 `app/core/cloudkb/depkb/provider-realizations.json`이며 다음을 보존한다.
+`load-balanced-ingress` 같은 capability는 AWS, Azure, GCP에서 서로 다른 수의 독립 리소스와 내장 블록으로 실현된다. 정본은 `app/cloudkb/depkb/provider-realizations.json`이며 다음을 보존한다.
 
 - `independent`, `embedded`, `composite-member` 표현 방식
 - capability 하나를 함께 실현하는 native 구성요소 집합

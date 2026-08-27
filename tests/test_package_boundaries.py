@@ -112,5 +112,5 @@ def test_design_services_do_not_import_legacy_graph_or_repository_modules():
 def test_implementation_does_not_import_design_service_internals():
     _assert_no_forbidden_imports(
         IMPLEMENTATION_ROOT,
-        ("app.design.services",),
+        ("app.design.services", "app.orchestration"),
     )

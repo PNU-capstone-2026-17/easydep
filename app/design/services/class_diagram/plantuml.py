@@ -1,4 +1,4 @@
-﻿"""BCE 추출 결과(JSON)를 클래스 다이어그램 PlantUML로 변환한다.
+"""BCE 추출 결과(JSON)를 클래스 다이어그램 PlantUML로 변환한다.
 
 jar 실행·렌더는 common.plantuml이 맡고, 여기서는 클래스 다이어그램 고유의
 "무엇을 그릴지"(스테레오타입·필드·메서드·관계 매핑)만 다룬다.
@@ -202,4 +202,3 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
 
     final_puml = "\n".join(puml_lines)
     return final_puml.replace("\xa0", " ").replace("\u200b", "")
-

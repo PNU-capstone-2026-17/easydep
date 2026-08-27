@@ -14,14 +14,32 @@ from typing import Any
 from openai import OpenAI
 
 from app.config import settings
-
+from app.implementation.application.prototype import PrototypeClient
+from app.implementation.config import ImplementationSettings
+from app.implementation.delivery.vm_delivery import BindingMismatchError, VmDeliveryAdapter
+from app.implementation.planning.provider_target import resolve_resource_spec
+from app.implementation.planning.vm_selection import select_vm_candidates
+from app.implementation.runtime.linux_runner_transport import (
+    configured_runner_image,
+    runner_command,
+    to_container_path,
+    to_host_path,
+)
+from app.implementation.runtime.process import run_process_tree
 from app.orchestration.adapters.cloud_design import CloudDesignAdapter
 from app.orchestration.adapters.design import DesignAdapter
 from app.orchestration.adapters.requirements import RequirementsAdapter
 from app.orchestration.adapters.testing import TestingAdapter
-from app.implementation.delivery.vm_delivery import BindingMismatchError, VmDeliveryAdapter
 from app.orchestration.api_traceability import missing_explicit_fields
-from app.orchestration.app_cloud_contracts import (
+from app.orchestration.contracts import (
+    Diagnostic,
+    ProviderKind,
+    RunMode,
+    StepContext,
+    StepResult,
+    StepStatus,
+)
+from app.requirements.resources.application_cloud import (
     CloudCapabilityContract,
     DeploymentBindingContract,
     application_intent_contract_from_requirements,
@@ -33,25 +51,6 @@ from app.orchestration.app_cloud_contracts import (
     validate_application_consistency,
     validate_binding_consistency,
 )
-from app.orchestration.contracts import (
-    Diagnostic,
-    ProviderKind,
-    RunMode,
-    StepContext,
-    StepResult,
-    StepStatus,
-)
-from app.implementation.runtime.linux_runner_transport import (
-    configured_runner_image,
-    runner_command,
-    to_container_path,
-    to_host_path,
-)
-from app.implementation.runtime.process import run_process_tree
-from app.implementation.planning.provider_target import resolve_resource_spec
-from app.implementation.planning.vm_selection import select_vm_candidates
-from app.implementation.application.prototype import PrototypeClient
-from app.implementation.config import ImplementationSettings
 from app.requirements.schemas import ResourceAnswer
 
 

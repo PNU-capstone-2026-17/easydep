@@ -132,4 +132,3 @@ def rehydrated_check_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
         }
         result[check_key] = check
     return result
-

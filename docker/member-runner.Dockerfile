@@ -44,9 +44,9 @@ COPY app/implementation/tools/puml2code-bce /opt/easydep/puml2code-bce
 RUN cd /opt/easydep/puml2code-bce && npm ci --omit=dev
 
 RUN printf '%s\n' '#!/bin/sh' \
-      'exec python -B -m app.core.orchestration.runner_docker_shim "$@"' \
+      'exec python -B -m app.implementation.runtime.runner_docker_shim "$@"' \
       > /usr/local/bin/docker \
     && chmod 0755 /usr/local/bin/docker
 
 WORKDIR /easydep-workspace
-ENTRYPOINT ["python", "-B", "-m", "app.core.orchestration.member_linux_runner"]
+ENTRYPOINT ["python", "-B", "-m", "app.implementation.runtime.member_linux_runner"]

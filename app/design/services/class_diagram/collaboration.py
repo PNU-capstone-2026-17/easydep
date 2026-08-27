@@ -15,7 +15,6 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from app.config import settings
-from app.validation import Finding, run_checks
 from app.design.schemas.class_model import BCEModel, Collaboration, canonical_call_id
 from app.design.services.class_diagram.models import CollaborationResult
 from app.design.services.class_diagram.proposals import (
@@ -44,6 +43,7 @@ from app.design.services.class_diagram.validation.model import (
     type_can_default,
 )
 from app.design.services.common.structured import parse_structured
+from app.validation import Finding, run_checks
 
 CALL_PLAN_PROMPT = """
 Build the ordered call tree for exactly one execution group. Select only the
@@ -541,6 +541,3 @@ __all__ = [
     "propose_call_plan",
     "select_ambiguous_bindings",
 ]
-
-
-

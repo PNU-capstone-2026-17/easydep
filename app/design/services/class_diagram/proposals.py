@@ -1,4 +1,4 @@
-﻿"""LLM이 한정된 선택 공간에서 반환하는 일시적 제안 계약이다.
+"""LLM이 한정된 선택 공간에서 반환하는 일시적 제안 계약이다.
 
 ``BCEModel``과 ``SequenceCollection``만 저장한다. 이 작은 계약들은 LLM의 결정 하나를
 유한한 후보로 제한하며 repair telemetry나 호환성 필드를 포함하지 않는다.
@@ -143,6 +143,3 @@ class FeedbackScope(Proposal):
     """피드백을 한 단계 종류와 허용된 소유 ID 목록에 배정한 결과다."""
     kind: Literal["inventory", "operation", "collaboration"]
     ids: list[str] = Field(default_factory=list)
-
-
-

@@ -19,7 +19,7 @@
 - `app/design/services/sequence_diagram/README.md`: 결정론적 시퀀스 투영과 피드백 경로
 - [상호작용 설계 개선과 LLM 호출 최적화](interaction-design-improvements.md): 남은 개선,
   호출 운영 원칙과 측정 항목
-- `app/core/orchestration/README.md`: 오케스트레이터 명령과 provider 계약
+- `app/orchestration/README.md`: 오케스트레이터 명령과 provider 계약
 - `evaluation/README.md`: 평가 실행 명령
 - `evaluation/experiment-contract.md`: 실패·검열 분류
 - FastAPI `/docs`: 현재 HTTP API 계약

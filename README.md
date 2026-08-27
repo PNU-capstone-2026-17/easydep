@@ -24,8 +24,8 @@ Docker-on-VM 애플리케이션이다.
 | 설계 | `app/design/` | 클래스·시퀀스·ERD·OpenAPI·배포 설계 |
 | 구현 | `app/implementation/` | 애플리케이션 소스, 테스트, Dockerfile, Terraform 생성 |
 | 테스팅 | `app/testing/` | 생성 애플리케이션 검증 |
-| 오케스트레이션 | `app/core/orchestration/` | 4단계 provider 연결, 실행·재개·상태 저장 |
-| 클라우드 지식 | `app/core/cloudkb/` | VM 자원 의존성, 가격 및 성능 데이터 |
+| 오케스트레이션 | `app/orchestration/` | 4단계 provider 연결, 실행·재개·상태 저장 |
+| 클라우드 지식 | `app/cloudkb/` | VM 자원 의존성, 가격 및 성능 데이터 |
 | 평가 | `evaluation/` | EasyDep·CoT·MetaGPT 공통 비교 평가 |
 
 실행 결과는 `artifacts/runs/<run-id>/` 아래에 단계별로 저장되며, 오케스트레이션 상태는
@@ -144,9 +144,9 @@ python -m pytest
 - [문서 안내](docs/README.md): 활성 문서와 이력 문서 구분
 - [HTTP API](docs/api.md): 요구사항·설계·구현 API 계약
 - [LangSmith 관측](docs/langsmith-observability.md): 전 에이전트 기본 trace·대시보드 설정
-- [오케스트레이션](app/core/orchestration/README.md): 4단계 실행과 provider 계약
+- [오케스트레이션](app/orchestration/README.md): 4단계 실행과 provider 계약
 - [비교실험 계약](evaluation/experiment-contract.md): 공통 평가 기준
-- [클라우드 지식베이스](app/core/cloudkb/document/README.md): DepKB 및 VM 지식 문서
+- [클라우드 지식베이스](app/cloudkb/document/README.md): DepKB 및 VM 지식 문서
 
 ## 현재 주의점
 

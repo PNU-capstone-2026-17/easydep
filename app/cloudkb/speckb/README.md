@@ -23,7 +23,7 @@ python -c "import json;print(json.load(open('raw/aws/region_index.json.gz.proven
 > 수집 결과이고, 재생성은 명령 하나다:
 >
 > ```
-> python -m app.core.cloudkb.speckb.fetch_aws
+> python -m app.cloudkb.speckb.fetch_aws
 > ```
 >
 > 리전 표시명 매핑(`aws_locations.json`)은 가격이 없어서 커밋한다. 그 덕에 재수집 시
@@ -245,7 +245,7 @@ Locations API가 놓치는 15개는 `eastus3` `taiwannorth` `saudiarabiaeast`
 > 아래 수치는 실제 수집 결과이고, 재생성은 명령 하나다:
 >
 > ```
-> python -m app.core.cloudkb.speckb.fetch_gcp
+> python -m app.cloudkb.speckb.fetch_gcp
 > ```
 
 **사양과 가격이 다른 API로 분리돼 있다.** 두 파일 어느 쪽도 단독으로 vCPU+가격을 주지 않는다.

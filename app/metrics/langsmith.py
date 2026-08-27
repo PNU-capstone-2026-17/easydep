@@ -134,27 +134,25 @@ def trace_scope(
     span = TraceRun()
     body_error: BaseException | None = None
     try:
-        with trace_metadata(metadata):
-            with tracing_context(
-                enabled=True,
-                client=client,
-                project_name=os.getenv("LANGSMITH_PROJECT", "easydep"),
-            ):
-                with trace(
-                    name=name,
-                    run_type=run_type,
-                    metadata={"service": "easydep", **_TRACE_METADATA.get()},
-                    project_name=os.getenv("LANGSMITH_PROJECT", "easydep"),
-                    client=client,
-                ) as run:
-                    span.run = run
-                    try:
-                        yield span
-                    except BaseException as error:
-                        body_error = error
-                        raise
-                    finally:
-                        span._flush()
+        with trace_metadata(metadata), tracing_context(
+            enabled=True,
+            client=client,
+            project_name=os.getenv("LANGSMITH_PROJECT", "easydep"),
+        ), trace(
+            name=name,
+            run_type=run_type,
+            metadata={"service": "easydep", **_TRACE_METADATA.get()},
+            project_name=os.getenv("LANGSMITH_PROJECT", "easydep"),
+            client=client,
+        ) as run:
+            span.run = run
+            try:
+                yield span
+            except BaseException as error:
+                body_error = error
+                raise
+            finally:
+                span._flush()
     except BaseException:
         if body_error is not None:
             raise

@@ -628,6 +628,3 @@ def normalize_sequence_model(model: dict[str, Any]) -> dict[str, Any]:
     """
 
     return SequenceCollection.model_validate(model).model_dump()
-
-
-

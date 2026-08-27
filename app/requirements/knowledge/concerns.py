@@ -72,8 +72,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.requirements.knowledge import advisory
-from app.requirements.knowledge import basis
+from app.requirements.knowledge import advisory, basis
 
 #: **메타 특성** — 무엇이 관심사가 될 수 있는지를 정하는 단일 기준(Nickerson 외 2013).
 #:

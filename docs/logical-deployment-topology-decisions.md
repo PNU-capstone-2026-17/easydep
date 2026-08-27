@@ -40,8 +40,8 @@ CloudDesignAdapter → 구현/테스트 → runtime contract 관찰
 | bundle 조립 | [`app/design/services/deployment_diagram/bundle.py`](../app/design/services/deployment_diagram/bundle.py) |
 | CSP 리소스 폐쇄성 | [`app/design/services/deployment_diagram/provider_template.py`](../app/design/services/deployment_diagram/provider_template.py) |
 | PlantUML 두 view | [`app/design/services/deployment_diagram/provider_plantuml.py`](../app/design/services/deployment_diagram/provider_plantuml.py) |
-| 구현 단계 인계 | [`app/core/orchestration/adapters/cloud_design.py`](../app/core/orchestration/adapters/cloud_design.py), [`app/core/orchestration/adapters/vm_delivery.py`](../app/core/orchestration/adapters/vm_delivery.py) |
-| OpenTofu 생성 | [`app/core/orchestration/iac_renderer.py`](../app/core/orchestration/iac_renderer.py) |
+| 구현 단계 인계 | [`app/orchestration/adapters/cloud_design.py`](../app/orchestration/adapters/cloud_design.py), [`app/implementation/delivery/vm_delivery.py`](../app/implementation/delivery/vm_delivery.py) |
+| OpenTofu 생성 | [`app/implementation/delivery/iac_renderer.py`](../app/implementation/delivery/iac_renderer.py) |
 
 ## 1. 계약과 진실의 원천
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -10,14 +9,15 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from app.design.contracts.deployment import (
+    validate_provider_resource_plan,
+)
 from app.implementation.config import (
     DEFAULT_AWS_LOG_RETENTION_DAYS,
     DEFAULT_AZURE_MYSQL_BACKUP_RETENTION_DAYS,
 )
-from app.design.contracts.deployment import (
-    validate_provider_resource_plan,
-)
 from app.implementation.delivery.iac_renderer import render_open_tofu
+
 from ..domain.implementation_ir import remove_readonly
 
 SCHEMA_VERSION = "easydep-iac-render/v1alpha1"

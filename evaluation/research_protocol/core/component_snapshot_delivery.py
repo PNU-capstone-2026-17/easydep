@@ -9,7 +9,7 @@ from time import perf_counter
 from typing import Any
 
 from app.orchestration.adapters.cloud_design import CloudDesignAdapter
-from app.orchestration.app_cloud_contracts import (
+from app.requirements.resources.application_cloud import (
     cloud_contract_from_legacy,
     derive_deployment_bindings,
     infer_application_contract,

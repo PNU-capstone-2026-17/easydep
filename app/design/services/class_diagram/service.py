@@ -15,7 +15,6 @@ from collections.abc import Set as AbstractSet
 from typing import Any
 
 from app.config import settings
-from app.validation import run_checks
 from app.design.schemas.class_model import BCEModel, Collaboration
 from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram import inventory, operations
@@ -34,6 +33,7 @@ from app.design.services.class_diagram.validation.collaboration import (
     CollaborationContext,
 )
 from app.design.services.class_diagram.validation.model import validate_class_model
+from app.validation import run_checks
 
 logger = logging.getLogger(__name__)
 

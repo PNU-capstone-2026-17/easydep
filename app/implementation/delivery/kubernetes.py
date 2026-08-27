@@ -4,8 +4,9 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator

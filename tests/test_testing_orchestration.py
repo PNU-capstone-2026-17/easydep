@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import app.testing.runtime.adapter as testing_module
-from app.orchestration.app_cloud_contracts import infer_application_contract
+from app.requirements.resources.application_cloud import infer_application_contract
 from app.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
 from app.testing.runtime.adapter import TestingAdapter as VerificationAdapter
 

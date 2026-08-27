@@ -120,7 +120,9 @@ def iter_table_rows(dump_path: Path, table: str) -> Iterator[dict]:
         (e for e in dump.entries if e.desc == "TABLE DATA" and e.tag == table), None
     )
     if entry is None:
-        available = sorted({e.tag for e in dump.entries if e.desc == "TABLE DATA"})
+        available = sorted(
+            {e.tag for e in dump.entries if e.desc == "TABLE DATA" and e.tag is not None}
+        )
         raise RuntimeError(
             f"덤프에 {table} 테이블이 없습니다. 있는 것: {available}. "
             "업스트림이 스키마를 바꿨을 수 있습니다(94MB→32.8MB 축소 전례 있음)."

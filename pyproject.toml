@@ -1,7 +1,7 @@
 # 도구 설정의 단일 소스 — 단, **검사 범위는 이 저장소 전체가 아니다.**
 #
 # easydep은 에이전트별 저장소를 하나로 합친 팀 저장소다. 여기 설정은
-# `app/requirements/`(요구사항 분석)와 `app/core/cloudkb/`(지식베이스)만 검사한다.
+# `app/requirements/`(요구사항 분석)와 `app/cloudkb/`(지식베이스)를 검사한다.
 # 나머지 경로는 다른 사람이 관리하므로, 규칙을 걸어 남의 코드를 빨갛게 만들지 않는다.
 # 범위를 넓히려면 그 코드 담당자와 합의한 뒤 아래 include/files에 추가한다.
 #
@@ -15,9 +15,15 @@ line-length = 100
 # 검사 대상. 여기 없는 경로는 `ruff check .` 를 돌려도 건드리지 않는다.
 include = [
     "app/requirements/**/*.py",
-    "app/core/cloudkb/**/*.py",
-    # 두 에이전트가 공유하는 얇은 층. 둘 다 내 범위라 여기도 같이 검사한다.
-    "app/core/**/*.py",
+    "app/cloudkb/**/*.py",
+    # 단계 조정과 이전 공용 계층에서 이동한 구현 leaf도 같은 경계 게이트로 검사한다.
+    "app/orchestration/**/*.py",
+    "app/implementation/planning/**/*.py",
+    "app/implementation/delivery/**/*.py",
+    "app/implementation/runtime/**/*.py",
+    "app/metrics/**/*.py",
+    "app/config.py",
+    "app/validation.py",
     # Class-diagram authoring contracts and its sequence projection adapter.
     # Keep this list explicit so enabling Ruff here does not format unrelated design code.
     "app/design/services/class_diagram/**/*.py",
@@ -30,7 +36,7 @@ include = [
     "tests/test_design_service_documentation.py",
 ]
 extend-exclude = [
-    "app/core/cloudkb/.cache",
+    "app/cloudkb/.cache",
 ]
 
 [tool.ruff.lint]
@@ -68,7 +74,7 @@ ignore = [
     # 아래는 "고쳐야 하지만 지금 이 커밋에서 고치지 않는" 것들이다. 숫자는 도입
     # 시점(2026-07-26) 실측이고, 줄이면서 하나씩 지운다.
     "BLE001",  # 31건 — 광범위 except. 에러 모델을 정하고 나서 한꺼번에 좁힌다.
-    # RUF100은 BLE001과 한 쌍이다. app/core/cloudkb/ 는 이미 BLE001을 켜고 의도적인
+    # RUF100은 BLE001과 한 쌍이다. app/cloudkb/ 는 이미 BLE001을 켜고 의도적인
     # 광범위 catch에 `# noqa: BLE001`을 30곳 달아 뒀는데, 위에서 BLE001을 끄면 그
     # 주석들이 "쓸모없는 noqa"로 잡힌다. 둘은 같이 다시 켠다.
     "RUF100",
@@ -118,7 +124,12 @@ known-first-party = ["app"]
 
 [tool.ruff.lint.per-file-ignores]
 # 테스트는 픽스처 이름 재사용·긴 리터럴이 정상이다.
-"app/core/cloudkb/tests/**" = ["S105", "S106", "S108"]
+"app/cloudkb/tests/**" = ["S105", "S106", "S108"]
+# 이동 전부터 유지된 provider renderer의 한 줄 분기와 ValueError는 출력·예외 계약을
+# 보존한다. renderer 분해 브랜치에서 구조를 나눌 때 함께 제거한다.
+"app/implementation/delivery/terraform.py" = ["E701", "TRY004"]
+# Java 구현 지시문 속 SQL 단어를 실행되는 SQL f-string으로 오인하는 보안 오탐이다.
+"app/implementation/planning/design_context.py" = ["S608"]
 # 랜덤은 예시 샘플링용이지 암호용이 아니다.
 "app/requirements/legacy/example_sampler.py" = ["S311"]
 
@@ -133,13 +144,13 @@ python_version = "3.13"          # Dockerfile·로컬 venv가 쓰는 버전
 # 지식베이스 공통 모델 — 부터 켜고, 초록인 모듈을 하나씩 추가하며 넓힌다.
 #
 # 지금 뺀 것:
-#  - app/core/cloudkb/capacitykb/model/records.py: 데이터클래스 필드 이름이
+#  - app/cloudkb/capacitykb/model/records.py: 데이터클래스 필드 이름이
 #    `property`라 클래스 본문에서 빌트인 `property`를 가린다. 런타임에는 애너테이션만
 #    있어 문제가 없지만 mypy는 오류로 본다. 필드 이름을 바꾸면 schema.json과 질의까지
 #    번지므로 그 리네이밍을 할 때 같이 켠다.
 files = [
     # 에이전트 사이의 문. 여기가 틀리면 `RESOURCE_SPEC` 계약이 통째로 틀린다.
-    # "app/core",
+    # "app/orchestration",
     # 공통 기반 계층. 다른 에이전트가 쓸 코드라 여기부터 타입을 지킨다.
     "app/requirements/common",
     "app/requirements/schemas.py",
@@ -158,7 +169,7 @@ files = [
     "app/design/services/sequence_diagram",
     "app/design/schemas/class_model.py",
     "app/design/graphs/subgraphs.py",
-    "app/core/cloudkb/kbcommon",
+    "app/cloudkb/kbcommon",
 ]
 ignore_missing_imports = true    # 벤더 SDK 상당수가 스텁을 내놓지 않는다
 follow_imports = "silent"        # files 밖 모듈은 해석만 하고 검사하지 않는다

@@ -35,7 +35,7 @@ def _worker(arguments: list[str]) -> int:
 
 def _test(arguments: list[str]) -> int:
     _configure_runner_tools()
-    from app.orchestration.adapters.testing import TestingAdapter
+    from app.testing.runtime.adapter import TestingAdapter
 
     if len(arguments) != 1:
         raise SystemExit("test requires an input JSON path")
@@ -68,7 +68,7 @@ def _preflight(arguments: list[str]) -> int:
     }
     observed: dict[str, dict[str, object]] = {}
     for name, command in commands.items():
-        result = subprocess.run(
+        process_result = subprocess.run(
             command,
             capture_output=True,
             text=True,
@@ -76,21 +76,21 @@ def _preflight(arguments: list[str]) -> int:
             timeout=120,
         )
         observed[name] = {
-            "passed": result.returncode == 0,
-            "version": (result.stdout or result.stderr).strip()[:1000],
+            "passed": process_result.returncode == 0,
+            "version": (process_result.stdout or process_result.stderr).strip()[:1000],
         }
     jars = {
         "openapiGenerator7.24.0": Path("/opt/easydep/openapi-generator-7.24.0.jar").is_file(),
         "openapiGenerator7.14.0": Path("/opt/easydep/openapi-generator-7.14.0.jar").is_file(),
     }
-    result = {
+    preflight_result = {
         "schemaVersion": "easydep-member-runner-preflight/v1",
         "workspaceBindPassed": (RUNNER_WORKSPACE / "pyproject.toml").is_file(),
         "tools": observed,
         "artifacts": jars,
     }
-    print(json.dumps(result, ensure_ascii=False))
-    return 0 if result["workspaceBindPassed"] and all(
+    print(json.dumps(preflight_result, ensure_ascii=False))
+    return 0 if preflight_result["workspaceBindPassed"] and all(
         item["passed"] for item in observed.values()
     ) and all(jars.values()) else 1
 

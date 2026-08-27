@@ -29,7 +29,7 @@ output/
 # (1페이지당 506회). 응답 본문 자체라 지우려면 원본을 고쳐야 하는데, 그러면
 # speckb의 무가공 보장이 깨진다. 그래서 원본을 그대로 두고 커밋만 하지 않는다.
 #
-# 둘 다 `python -m app.core.cloudkb.speckb.fetch_{aws,gcp}` 한 번이면 재생성된다.
+# 둘 다 `python -m app.cloudkb.speckb.fetch_{aws,gcp}` 한 번이면 재생성된다.
 speckb/raw/aws/
 speckb/raw/gcp/
 

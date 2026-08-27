@@ -13,7 +13,6 @@ import json
 from typing import Any
 
 from app.config import settings
-from app.validation import Finding, run_checks
 from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram.models import AcceptedInventory
 from app.design.services.class_diagram.proposals import InventoryProposal
@@ -26,6 +25,7 @@ from app.design.services.class_diagram.type_system import (
 from app.design.services.class_diagram.validation.inventory import INVENTORY_CHECKS
 from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
+from app.validation import Finding, run_checks
 
 INVENTORY_PROMPT = ("""
 Build one fixed BCE inventory for the supplied accepted use-case
@@ -271,6 +271,3 @@ def inventory_model(inventory: AcceptedInventory) -> BCEModel:
                       for item in payload["DataTypes"] if isinstance(item, dict)],
         "Relationships": payload["Relationships"], "Collaborations": [],
     })
-
-
-

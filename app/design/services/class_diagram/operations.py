@@ -18,7 +18,6 @@ from copy import deepcopy
 from typing import Any
 
 from app.config import settings
-from app.validation import run_checks
 from app.design import progress as design_progress
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
 from app.design.services.class_diagram.inventory import finding_text
@@ -61,6 +60,7 @@ from app.design.services.class_diagram.validation.model import (
 )
 from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
+from app.validation import run_checks
 
 logger = logging.getLogger(__name__)
 
@@ -1112,6 +1112,3 @@ __all__ = [
     "repair_failed_operations",
     "reserved_operations",
 ]
-
-
-

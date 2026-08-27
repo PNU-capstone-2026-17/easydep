@@ -8,7 +8,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from app.orchestration.app_cloud_contracts import (
+from app.requirements.resources.application_cloud import (
     contract_value,
     infer_application_contract,
     validate_application_consistency,

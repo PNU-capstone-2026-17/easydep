@@ -1,12 +1,13 @@
 # Requirements resources
 
-`app.requirements.resources`는 사용자가 제공하는 `RESOURCE_SPEC`의 모양과 질문
-계약을 소유한다. 질문을 생성하는 에이전트나 클라우드 지식베이스의 사실을 소유하지
-않는다.
+`app.requirements.resources`는 사용자가 제공하는 `RESOURCE_SPEC`의 모양과 질문,
+application/cloud 일관성 계약을 소유한다. 질문을 생성하는 에이전트나 클라우드
+지식베이스의 사실을 소유하지 않는다.
 
 ## 계약
 
-- **입력:** JSON Schema에 맞춰 작성된 ResourceSpec 사전, CSP와 workload 맥락,
+- **입력:** JSON Schema에 맞춰 작성된 ResourceSpec 사전, application/runtime 사실,
+  cloud capability와 binding, CSP와 workload 맥락,
   `input_registry`가 선언한 질문·근거·소비자 목록.
 - **출력:** 스키마 필드·타입·enum 조회, 누락/권고/맥락 질문(`Ask`), gap 목록,
   그리고 빈 목록이 성공을 뜻하는 결정론적 검증 오류 목록.
@@ -21,3 +22,7 @@
 
 `input_registry`는 무엇을 물을지와 왜 필요한지를, `cloud_contract`는 값의 기계적
 모양을 담당한다. 둘을 합치거나 에이전트 단계에서 별도 계약을 만들지 않는다.
+
+`input_registry`의 일부 `Basis(CODE, "app/core/...")` 값은 기존 저장 JSON과 checkpoint의
+감사 식별자를 보존하기 위한 레거시 provenance ID다. 실행 가능한 import나 현재 파일 링크가
+아니며, canonical Python 경로를 이 문자열로부터 유도하지 않는다.

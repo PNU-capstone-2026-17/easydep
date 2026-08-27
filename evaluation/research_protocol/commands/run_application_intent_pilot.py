@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
-from app.orchestration.app_cloud_contracts import (
+from app.requirements.resources.application_cloud import (
     DeploymentBindingContract,
     application_intent_contract_from_requirements,
     cloud_contract_from_legacy,

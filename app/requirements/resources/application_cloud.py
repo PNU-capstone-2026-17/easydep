@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -185,9 +185,27 @@ def _dependency_rule_matches(text: str, rule: dict[str, Any]) -> bool:
         marker in text for marker in all_markers
     )
 
+
+class _DatabaseOrmRule(TypedDict):
+    id: str
+    databaseMarkers: tuple[str, ...]
+    ormMarkers: tuple[str, ...]
+    requiredAnyMarkers: tuple[str, ...]
+    message: str
+
+
+class _DatabaseDialectRule(TypedDict):
+    id: str
+    databaseMarkers: tuple[str, ...]
+    invalidClasses: tuple[str, ...]
+    supportedClass: str
+    coordinate: str
+    evidence: str
+
+
 # Cross-layer runtime requirements are registry data so another database/ORM pair can be
 # added without changing the contract schema or tying validation to a benchmark case.
-_DATABASE_ORM_RULES = (
+_DATABASE_ORM_RULES: tuple[_DatabaseOrmRule, ...] = (
     {
         "id": "java.jpa-sqlite",
         "databaseMarkers": ("jdbc:sqlite:", "org.sqlite."),
@@ -199,7 +217,7 @@ _DATABASE_ORM_RULES = (
 
 # Official runtime integrations whose configured class and providing artifact must agree.
 # Keep these mappings in replaceable registry data rather than the contract schema.
-_DATABASE_DIALECT_RULES = (
+_DATABASE_DIALECT_RULES: tuple[_DatabaseDialectRule, ...] = (
     {
         "id": "hibernate-community.sqlite",
         "databaseMarkers": ("jdbc:sqlite:", "org.sqlite."),
@@ -1009,27 +1027,31 @@ def validate_application_consistency(
                     },
                 )
             )
-    for rule in _DATABASE_ORM_RULES:
-        database_present = any(marker in text for marker in rule["databaseMarkers"])
-        orm_present = any(marker in text for marker in rule["ormMarkers"])
-        has_runtime_integration = any(marker in text for marker in rule["requiredAnyMarkers"])
+    for orm_rule in _DATABASE_ORM_RULES:
+        database_present = any(marker in text for marker in orm_rule["databaseMarkers"])
+        orm_present = any(marker in text for marker in orm_rule["ormMarkers"])
+        has_runtime_integration = any(
+            marker in text for marker in orm_rule["requiredAnyMarkers"]
+        )
         if database_present and orm_present and not has_runtime_integration:
             diagnostics.append(
                 ConsistencyDiagnostic(
                     code="APP-DB-002",
-                    message=rule["message"],
+                    message=orm_rule["message"],
                     locations=files,
                     details={
-                        "rule": rule["id"],
-                        "requiredAnyMarkers": list(rule["requiredAnyMarkers"]),
+                        "rule": orm_rule["id"],
+                        "requiredAnyMarkers": list(orm_rule["requiredAnyMarkers"]),
                     },
                 )
             )
-    for rule in _DATABASE_DIALECT_RULES:
-        if not any(marker in text for marker in rule["databaseMarkers"]):
+    for dialect_rule in _DATABASE_DIALECT_RULES:
+        if not any(marker in text for marker in dialect_rule["databaseMarkers"]):
             continue
         configured_invalid = [
-            class_name for class_name in rule["invalidClasses"] if class_name in text
+            class_name
+            for class_name in dialect_rule["invalidClasses"]
+            if class_name in text
         ]
         if configured_invalid:
             diagnostics.append(
@@ -1041,24 +1063,27 @@ def validate_application_consistency(
                     ),
                     locations=files,
                     details={
-                        "rule": rule["id"],
+                        "rule": dialect_rule["id"],
                         "configuredClasses": configured_invalid,
-                        "supportedClass": rule["supportedClass"],
-                        "requiredCoordinate": rule["coordinate"],
-                        "evidence": rule["evidence"],
+                        "supportedClass": dialect_rule["supportedClass"],
+                        "requiredCoordinate": dialect_rule["coordinate"],
+                        "evidence": dialect_rule["evidence"],
                     },
                 )
             )
-        elif rule["supportedClass"] in text and rule["coordinate"] not in build_text:
+        elif (
+            dialect_rule["supportedClass"] in text
+            and dialect_rule["coordinate"] not in build_text
+        ):
             diagnostics.append(
                 ConsistencyDiagnostic(
                     code="APP-DEP-001",
                     message="Configured ORM dialect class has no providing build dependency.",
                     locations=files,
                     details={
-                        "rule": rule["id"],
-                        "missingCoordinates": [rule["coordinate"]],
-                        "evidence": rule["evidence"],
+                        "rule": dialect_rule["id"],
+                        "missingCoordinates": [dialect_rule["coordinate"]],
+                        "evidence": dialect_rule["evidence"],
                     },
                 )
             )

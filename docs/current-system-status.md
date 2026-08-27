@@ -302,7 +302,7 @@ LLM 생성·수정은 35.66초뿐이어서 나머지 약 128초가 공급자 초
 
 ## 구현 경계와 사용 인터페이스
 
-새 종단 실행은 `app/core/orchestration/`을 기준으로 한다. 구현 단계는 다음 순서다.
+새 종단 실행은 `app/orchestration/`을 기준으로 한다. 구현 단계는 다음 순서다.
 
 ```text
 소프트웨어·클라우드 설계
@@ -315,10 +315,10 @@ LLM 생성·수정은 35.66초뿐이어서 나머지 약 128초가 공급자 초
 
 | 위치 | 역할 |
 |---|---|
-| `app/core/orchestration/` | 4단계 그래프, checkpoint, provider와 실행 상태 |
-| `app/core/orchestration/adapters/` | 멤버 구현·테스트·VM 선택 연결 |
+| `app/orchestration/` | 4단계 그래프, checkpoint, provider와 실행 상태 |
+| `app/orchestration/adapters/` | 각 단계의 공개 경계 연결 |
 | `app/implementation/` | 구현 IR, 품질 gate, Docker·IaC renderer |
-| `app/core/cloudkb/` | 리소스 의존성·VM 가격·성능 근거 |
+| `app/cloudkb/` | 리소스 의존성·VM 가격·성능 근거 |
 | `evaluation/` | 모든 시스템에 적용하는 외부 공통 평가 |
 
 웹 UI용 비동기 구현 job은 별도 호환 경로다. 정확한 요청·응답 스키마는 실행 중인
@@ -340,7 +340,7 @@ Docker와 OpenTofu다. 생성·검증 도구의 고정 버전과 실제 provider
 
 ## 유지되는 외부 기술 문서
 
-- `app/core/orchestration/README.md`: 실행 명령과 provider 계약
+- `app/orchestration/README.md`: 실행 명령과 provider 계약
 - `evaluation/experiment-contract.md`: subject·harness·environment failure 분류
 - FastAPI `/docs`: 현재 HTTP 계약
 

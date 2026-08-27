@@ -10,8 +10,6 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from app.validation import CheckSpec, FindingOrigin, ValidationReport, run_checks
-from app.validation import Finding as ValidationFinding
 from app.design.knowledge import rules
 from app.design.schemas.class_model import operation_method_signature
 from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
@@ -21,6 +19,8 @@ from app.design.services.class_diagram.scenario import (
 from app.design.services.class_diagram.validation.model import validate_class_model
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
+from app.validation import CheckSpec, FindingOrigin, ValidationReport, run_checks
+from app.validation import Finding as ValidationFinding
 
 BOUNDARY = "boundary"
 CONTROL = "control"

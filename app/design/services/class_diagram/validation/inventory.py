@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 from app.design.services.class_diagram.scenario import ScenarioIndex, text
 from app.design.services.class_diagram.type_system import (
     field_name,
@@ -12,6 +11,7 @@ from app.design.services.class_diagram.type_system import (
     type_is_resolved,
 )
 from app.design.services.class_diagram.validation.model import class_name
+from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 
 
 def _inventory_names(

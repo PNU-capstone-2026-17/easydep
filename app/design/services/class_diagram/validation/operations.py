@@ -5,7 +5,6 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 from app.design.services.class_diagram.scenario import (
     ScenarioIndex,
     UseCase,
@@ -25,6 +24,7 @@ from app.design.services.class_diagram.validation.model import (
     optional_inner_type,
     runtime_value_source,
 )
+from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 
 
 @dataclass(frozen=True)
