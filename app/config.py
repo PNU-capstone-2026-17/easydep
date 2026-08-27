@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     design_class_inventory_reasoning_effort: str = "medium"
     design_class_operation_reasoning_effort: str = "medium"
     design_class_call_plan_reasoning_effort: str = "medium"
-    design_class_compact_operation_payload: bool = True
+    design_class_compact_operation_payload: bool = False
     llm_timeout_seconds: float = 300.0
     llm_wall_timeout_seconds: float = 330.0
     llm_max_retries: int = 0

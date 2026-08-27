@@ -22,7 +22,10 @@ from typing import Any
 
 from app.config import settings
 from app.design.schemas.class_model import BCEModel
-from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
+from app.design.services.class_diagram.cache import (
+    AcceptedUnitCacheMiss,
+    ProcessLocalAcceptedUnitCache,
+)
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.service import generate_class_model
 from app.design.services.common.structured import capture_llm_timings
@@ -39,6 +42,17 @@ from evaluation.class_design_evaluation import (
 SCHEMA_VERSION = "easydep-class-design-live-optimization/v1"
 OUTPUT_TIERS = (2048, 4096, 8192, 16384)
 MAX_COLD_GENERATIONS = 9
+_COLD_CELL_ORDER = (
+    "baseline-1",
+    "baseline-2",
+    "baseline-3",
+    "compact",
+    "call-plan-low",
+    "operation-low",
+    "candidate-1",
+    "candidate-2",
+    "candidate-3",
+)
 
 
 @contextmanager
@@ -198,16 +212,13 @@ def _p95(runs: list[dict[str, Any]], field: str) -> float:
 def _next_tier(value: float, existing: int) -> int:
     for tier in OUTPUT_TIERS:
         if value <= tier:
-            return min(tier, existing)
+            return tier
     return existing
 
 
-def _candidate_caps(baselines: list[dict[str, Any]]) -> dict[str, int]:
-    existing = {
-        "inventory": settings.design_class_inventory_max_completion_tokens,
-        "operation": settings.design_class_operation_max_completion_tokens,
-        "callPlan": settings.design_class_call_plan_max_completion_tokens,
-    }
+def _candidate_caps(
+    baselines: list[dict[str, Any]], *, existing: Mapping[str, int]
+) -> dict[str, int]:
     result: dict[str, int] = {}
     for stage, current in existing.items():
         failed = any(
@@ -227,10 +238,18 @@ def execute_live_e1(
     generator: Callable[..., BCEModel] = generate_class_model,
     run_id_factory: Callable[[str], str] = _default_run_id,
     cell_runner: Callable[..., dict[str, Any]] = _run_cell,
+    resume_report: Mapping[str, Any] | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Run nine bounded cold cells and one zero-provider warm cache verification."""
+    """Run bounded cold cells and one zero-provider warm cache verification.
 
-    baseline_settings = {
+    ``resume_report`` may contain a successfully persisted prefix. A report with an
+    ``inFlight`` cell is rejected because the process cannot prove whether that
+    physical request reached the provider; repeating it could exceed the cold-call
+    budget.
+    """
+
+    baseline_settings: dict[str, Any] = {
         "design_class_compact_operation_payload": False,
         "design_class_inventory_reasoning_effort": "medium",
         "design_class_operation_reasoning_effort": "medium",
@@ -239,20 +258,56 @@ def execute_live_e1(
         "design_class_operation_max_completion_tokens": 8192,
         "design_class_call_plan_max_completion_tokens": 8192,
     }
+    if resume_report is not None:
+        terminal = _validate_resume_report(resume_report)
+        if terminal:
+            return deepcopy(dict(resume_report))
+        resume_runs = deepcopy(list(resume_report["runs"]))
+    else:
+        resume_runs = []
     runs: list[dict[str, Any]] = []
 
-    def cold(key: str, treatment: str, overrides: Mapping[str, Any]) -> dict[str, Any]:
+    def checkpoint(*, in_flight: str | None = None) -> None:
+        if progress is None:
+            return
+        progress(
+            _report(
+                runs,
+                stopped_at=None,
+                decision={"adopted": False, "status": "in_progress"},
+                status="in_progress",
+                in_flight=in_flight,
+            )
+        )
+
+    def cold(
+        key: str,
+        treatment: str,
+        overrides: Mapping[str, Any],
+        *,
+        cache: ProcessLocalAcceptedUnitCache | None = None,
+        persist_after: bool = True,
+    ) -> dict[str, Any]:
+        position = len(runs)
+        if position < len(resume_runs):
+            existing = resume_runs[position]
+            _validate_reused_cell(existing, key, treatment, overrides)
+            runs.append(existing)
+            return existing
         if len(runs) >= MAX_COLD_GENERATIONS:
             raise RuntimeError("frozen E1 cold generation budget exceeded")
+        checkpoint(in_flight=key)
         run = cell_runner(
             key,
             treatment,
             overrides,
-            cache=ProcessLocalAcceptedUnitCache(capacity=256),
+            cache=cache or ProcessLocalAcceptedUnitCache(capacity=256),
             generator=generator,
             run_id_factory=run_id_factory,
         )
         runs.append(run)
+        if persist_after:
+            checkpoint()
         return run
 
     baselines = [cold(f"baseline-{index}", "baseline", baseline_settings) for index in range(1, 4)]
@@ -294,7 +349,20 @@ def execute_live_e1(
         and operation_low["metrics"]["repairs"] <= baseline_repairs
         and operation_low["metrics"]["handoffs"] <= baseline_handoffs
     )
-    caps = _candidate_caps(baselines)
+    caps = _candidate_caps(
+        baselines,
+        existing={
+            "inventory": int(baseline_settings[
+                "design_class_inventory_max_completion_tokens"
+            ]),
+            "operation": int(baseline_settings[
+                "design_class_operation_max_completion_tokens"
+            ]),
+            "callPlan": int(baseline_settings[
+                "design_class_call_plan_max_completion_tokens"
+            ]),
+        },
+    )
     candidate_settings = {
         **baseline_settings,
         "design_class_compact_operation_payload": accepted_compact,
@@ -312,15 +380,16 @@ def execute_live_e1(
     stopped_at: str | None = None
     for ordinal in range(1, 4):
         last_cache = ProcessLocalAcceptedUnitCache(capacity=256)
-        run = cell_runner(
+        run = cold(
             f"candidate-{ordinal}",
             "candidate",
             candidate_settings,
             cache=last_cache,
-            generator=generator,
-            run_id_factory=run_id_factory,
+            # Candidate 3 and its process-local warm verification are one atomic
+            # cell. Persisting candidate 3 alone would make a safe warm resume
+            # impossible without another physical generation.
+            persist_after=False,
         )
-        runs.append(run)
         candidate_runs.append(run)
         if run["metrics"]["totalTokens"] > token_limit:
             run["status"] = "failed"
@@ -329,22 +398,34 @@ def execute_live_e1(
                 "limit": token_limit,
                 "observed": run["metrics"]["totalTokens"],
             }
+        if ordinal != 3:
+            checkpoint()
         if run["status"] != "passed":
             stopped_at = run["cell"]
             break
 
     warm: dict[str, Any] | None = None
     if stopped_at is None and len(candidate_runs) == 3 and last_cache is not None:
-        warm = cell_runner(
-            "candidate-warm-verification",
-            "cache-warm",
-            candidate_settings,
-            cache=last_cache,
-            generator=generator,
-            run_id_factory=run_id_factory,
-        )
+        last_cache.seal()
+        try:
+            warm = cell_runner(
+                "candidate-warm-verification",
+                "cache-warm",
+                candidate_settings,
+                cache=last_cache,
+                generator=generator,
+                run_id_factory=run_id_factory,
+            )
+        except AcceptedUnitCacheMiss as error:
+            warm = _failed_warm_cache_miss(
+                error,
+                settings_values=candidate_settings,
+                run_id_factory=run_id_factory,
+            )
         if warm["metrics"]["physicalLlmCalls"] != 0:
             warm["status"] = "failed"
+            stopped_at = warm["cell"]
+        elif warm["status"] != "passed":
             stopped_at = warm["cell"]
 
     decision = _decision(
@@ -355,7 +436,77 @@ def execute_live_e1(
         candidate_caps=caps,
         warm=warm,
     )
-    return _report(runs, stopped_at=stopped_at, decision=decision, warm=warm)
+    report = _report(runs, stopped_at=stopped_at, decision=decision, warm=warm)
+    if progress is not None:
+        progress(report)
+    return report
+
+
+def _failed_warm_cache_miss(
+    error: AcceptedUnitCacheMiss,
+    *,
+    settings_values: Mapping[str, Any],
+    run_id_factory: Callable[[str], str],
+) -> dict[str, Any]:
+    key = "candidate-warm-verification"
+    return {
+        "runId": run_id_factory(key),
+        "cell": key,
+        "treatment": "cache-warm",
+        "settings": dict(settings_values),
+        "metrics": _event_metrics([], 0.0),
+        "timingEvents": [],
+        "machineGates": {
+            "status": "failed",
+            "cacheWarm": {
+                "status": "failed",
+                "reason": "sealed-cache-miss",
+                "cacheKey": error.key,
+            },
+        },
+        "artifacts": {},
+        "status": "failed",
+    }
+
+
+def _validate_reused_cell(
+    run: Mapping[str, Any],
+    key: str,
+    treatment: str,
+    overrides: Mapping[str, Any],
+) -> None:
+    if run.get("cell") != key or run.get("treatment") != treatment:
+        raise ValueError(f"resume cell does not match {key}")
+    if run.get("settings") != dict(overrides):
+        raise ValueError(f"resume settings do not match {key}")
+
+
+def _validate_resume_report(report: Mapping[str, Any]) -> bool:
+    if report.get("schemaVersion") != SCHEMA_VERSION or report.get("caseId") != CASE_ID:
+        raise ValueError("resume report identity does not match the frozen E1 protocol")
+    if report.get("maxColdGenerations") != MAX_COLD_GENERATIONS:
+        raise ValueError("resume report has a different cold generation budget")
+    if report.get("retryBudget") != 0:
+        raise ValueError("resume report has a non-zero retry budget")
+    if report.get("inFlight"):
+        raise RuntimeError(
+            "resume report contains an ambiguous inFlight cell; refusing an "
+            "automatic physical retry"
+        )
+    runs = report.get("runs")
+    if not isinstance(runs, list) or len(runs) > MAX_COLD_GENERATIONS:
+        raise ValueError("resume report has an invalid cold run list")
+    cells = [run.get("cell") for run in runs if isinstance(run, Mapping)]
+    if len(cells) != len(runs) or cells != list(_COLD_CELL_ORDER[: len(runs)]):
+        raise ValueError("resume report cold cells are not a valid completed prefix")
+    if report.get("coldGenerationCount") != len(runs):
+        raise ValueError("resume report cold generation count is inconsistent")
+    status = report.get("status")
+    if status in {"completed", "stopped"}:
+        return True
+    if status != "in_progress":
+        raise ValueError("resume report status is not resumable")
+    return False
 
 
 def _decision(
@@ -432,6 +583,8 @@ def _report(
     stopped_at: str | None,
     decision: Mapping[str, Any],
     warm: dict[str, Any] | None = None,
+    status: str | None = None,
+    in_flight: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -439,8 +592,9 @@ def _report(
         "maxColdGenerations": MAX_COLD_GENERATIONS,
         "coldGenerationCount": len(runs),
         "retryBudget": 0,
-        "status": "stopped" if stopped_at else "completed",
+        "status": status or ("stopped" if stopped_at else "completed"),
         "stoppedAt": stopped_at,
+        "inFlight": in_flight,
         "runs": runs,
         "warmVerification": warm,
         "decision": dict(decision),
@@ -454,13 +608,30 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _write_json(path: Path, value: Mapping[str, Any]) -> None:
+    """Atomically replace one experiment report without accumulating temp files."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name(f".{path.name}.easydep-class-opt.tmp")
+    try:
+        pending.write_text(
+            json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        pending.replace(path)
+    finally:
+        pending.unlink(missing_ok=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--review-report", type=Path)
+    parser.add_argument("--resume-report", type=Path)
     parser.add_argument("--baseline-issues", type=int, default=0)
     parser.add_argument("--candidate-issues", type=int, default=0)
     args = parser.parse_args(argv)
+    if args.review_report and args.resume_report:
+        parser.error("--review-report and --resume-report are mutually exclusive")
     if args.review_report:
         report = apply_qualitative_review(
             _read_json(args.review_report),
@@ -468,11 +639,12 @@ def main(argv: list[str] | None = None) -> int:
             candidate_issues=args.candidate_issues,
         )
     else:
-        report = execute_live_e1()
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+        resume = _read_json(args.resume_report) if args.resume_report else None
+        report = execute_live_e1(
+            resume_report=resume,
+            progress=lambda partial: _write_json(args.output, partial),
+        )
+    _write_json(args.output, report)
     return 0 if report["decision"].get("adopted") else 1
 
 

@@ -24,6 +24,18 @@ schema/reference/call/sequence gate를 실행한다. 실제 LLM 호출은 live r
 - baseline 한 run의 최대 total token 중 125%를 candidate별 누적 token 상한으로 사용한다.
   이 상한을 넘긴 후보는 실패이며 다음 후보 반복을 실행하지 않는다.
 
+## Checkpoint와 재개
+
+live runner는 각 cold cell 직전에 `inFlight`를 원자적으로 기록하고, 성공한 cell 직후
+완료 prefix를 같은 report에 교체 저장한다. `--resume-report`는 schema version, case ID,
+retry budget, cold-cell 순서와 설정이 현재 프로토콜에 정확히 일치하는 완료 prefix만
+재사용한다. 완료된 cell에는 provider를 다시 호출하지 않는다.
+
+프로세스가 `inFlight` 상태에서 종료되면 해당 요청이 provider에 도달했는지를 증명할 수
+없으므로 runner는 자동 재호출을 거부한다. candidate 3 cold와 process-local warm 확인은
+하나의 원자적 cell로 취급하며 둘이 모두 끝나기 전에는 candidate 3을 완료 prefix로
+기록하지 않는다. 이 정책은 불확실한 재호출로 9회 상한을 넘기는 것보다 중단을 우선한다.
+
 ## Gate와 즉시 중단
 
 각 run은 아래 순서로 평가하고, 필수 gate가 하나라도 실패하면 해당 run을 즉시 중단한다.
@@ -38,6 +50,11 @@ schema 오류, digest 불일치, 허용되지 않은 후보 ID, retry 발생, to
 중단 조건이다. bounded schema/semantic repair와 handoff는 기존 범위에서 허용하되 횟수를
 기록하고 candidate 중앙값이 baseline보다 증가하면 채택하지 않는다. 실패한 run을 재시도해
 성공한 것처럼 대체하지 않으며, 이미 완료된 다른 cell은 보존한다.
+
+`compact`, `call-plan-low`, `operation-low` singleton은 서로 독립된 정책 측정이므로 한
+singleton의 gate 실패가 뒤 singleton을 생략하지는 않는다. 각 결과 중 gate를 통과한 정책만
+합성 candidate 설정에 포함한다. 합성 candidate 반복은 한 번이라도 실패하면 남은 반복을
+즉시 중단한다.
 
 baseline의 단계별 최대 output token에 50% 여유를 더하고 2K/4K/8K/16K 중 가장 작은
 수용 tier를 후보 cap으로 쓴다. 어느 baseline에서든 `finish_reason=length`, schema failure가

@@ -23,6 +23,7 @@ from app.design.schemas.class_model import BCEModel, canonical_operation_id
 from app.design.services.class_diagram.cache import (
     AcceptedUnitCache,
     accepted_unit_key,
+    configured_provider_identity,
     record_cache_outcome,
 )
 from app.design.services.class_diagram.inventory import finding_text
@@ -636,7 +637,7 @@ def _operation_cache_key(
         },
         prompt=_OPERATION_PROMPT,
         schema=OperationFragment,
-        provider="nvidia-nim",
+        provider=configured_provider_identity(settings.base_url),
         model=settings.model,
         seed=settings.seed,
         temperature=settings.temperature,

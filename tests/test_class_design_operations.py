@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from app.config import settings
 from app.design.services.class_diagram import service
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
@@ -46,6 +47,7 @@ def test_operation_generation_keeps_signature_data_types_in_the_persisted_model(
 
 
 def test_operation_public_payload_keeps_context_without_repeating_full_scenario(monkeypatch):
+    monkeypatch.setattr(settings, "design_class_compact_operation_payload", True)
     payloads: list[dict] = []
 
     def fake_parse(messages, schema, **_kwargs):

@@ -20,6 +20,14 @@ CacheStatus = Literal["hit", "miss", "coalesced"]
 MAX_ACCEPTED_UNIT_CACHE_ENTRIES = 256
 
 
+class AcceptedUnitCacheMiss(LookupError):
+    """sealed cache에서 provider 계산이 필요함을 나타낸다."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"accepted unit cache miss while sealed: {key}")
+        self.key = key
+
+
 def _canonical_value(value: Any) -> Any:
     """digest 입력을 순서와 구현 객체에 영향받지 않는 JSON 값으로 바꾼다."""
 
@@ -57,6 +65,15 @@ def canonical_digest_key(namespace: str, value: Any) -> str:
         allow_nan=False,
     ).encode("utf-8")
     return f"{namespace}:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def configured_provider_identity(base_url: str | None) -> str:
+    """OpenAI-compatible endpoint identity를 원문 노출 없는 digest로 만든다."""
+
+    return canonical_digest_key(
+        "easydep.class-diagram.provider",
+        {"kind": "openai-compatible", "baseUrl": base_url or "provider-default"},
+    )
 
 
 CACHE_VERSION_DIGEST = canonical_digest_key(
@@ -156,6 +173,7 @@ class ProcessLocalAcceptedUnitCache:
         self._values: OrderedDict[str, Any] = OrderedDict()
         self._inflight: dict[str, _InFlight] = {}
         self._lock = RLock()
+        self._sealed = False
 
     @property
     def capacity(self) -> int:
@@ -169,6 +187,14 @@ class ProcessLocalAcceptedUnitCache:
         with self._lock:
             self._values.clear()
 
+    def seal(self) -> None:
+        """새 계산을 금지해 warm 검증이 provider를 호출하기 전에 실패하게 한다."""
+
+        with self._lock:
+            if self._inflight:
+                raise RuntimeError("cannot seal accepted unit cache with in-flight work")
+            self._sealed = True
+
     def get_or_compute(
         self, key: str, compute: Callable[[], T],
     ) -> CacheResult[T]:
@@ -179,6 +205,8 @@ class ProcessLocalAcceptedUnitCache:
                 value = self._values.pop(key)
                 self._values[key] = value
                 return CacheResult(deepcopy(value), "hit", key)
+            if self._sealed:
+                raise AcceptedUnitCacheMiss(key)
             flight = self._inflight.get(key)
             owner = flight is None
             if owner:
@@ -249,9 +277,11 @@ __all__ = [
     "CACHE_VERSION_DIGEST",
     "MAX_ACCEPTED_UNIT_CACHE_ENTRIES",
     "AcceptedUnitCache",
+    "AcceptedUnitCacheMiss",
     "CacheResult",
     "ProcessLocalAcceptedUnitCache",
     "accepted_unit_key",
     "canonical_digest_key",
+    "configured_provider_identity",
     "record_cache_outcome",
 ]

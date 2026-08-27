@@ -19,6 +19,8 @@ from app.design.schemas.class_model import BCEModel, Collaboration, canonical_ca
 from app.design.services.class_diagram.cache import (
     AcceptedUnitCache,
     accepted_unit_key,
+    canonical_digest_key,
+    configured_provider_identity,
     record_cache_outcome,
 )
 from app.design.services.class_diagram.models import CollaborationResult
@@ -581,12 +583,29 @@ def _collaboration_cache_key(
         feedback=" ".join(directive.split()),
         prompt=CALL_PLAN_PROMPT,
         schema=CallPlanProposal,
-        provider="nvidia-nim",
+        provider=configured_provider_identity(settings.base_url),
         model=settings.model,
         seed=settings.seed,
         temperature=settings.temperature,
         reasoning_effort=call_plan_reasoning_effort(),
         max_completion_tokens=call_plan_max_completion_tokens(),
+        extra={
+            "bindingPromptDigest": canonical_digest_key(
+                "easydep.class-diagram.binding-prompt", BINDING_PROMPT,
+            ),
+            "bindingSchemaDigest": canonical_digest_key(
+                "easydep.class-diagram.binding-schema-template",
+                {
+                    "version": 1,
+                    "extra": "forbid",
+                    "fieldType": "Literal[finite-source-candidates]",
+                },
+            ),
+            "bindingReasoningEffort": "low",
+            "bindingMaxCompletionTokens": min(
+                settings.design_class_collaboration_max_completion_tokens, 2048,
+            ),
+        },
     )
 
 

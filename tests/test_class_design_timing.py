@@ -12,24 +12,51 @@ from app.orchestration.contracts import RunMode, StepContext
 from app.orchestration.providers import MemberDesignProvider
 
 
-def test_design_invocation_replaces_session_events_between_start_and_resume():
+def test_design_invocation_replaces_session_events_between_start_and_resume(tmp_path):
     """A resumed invocation exposes only its own events, not session history."""
 
-    adapter = object.__new__(DesignAdapter)
-    adapter._timings = {}
+    class GraphState:
+        next = ()
 
-    adapter._invoke_with_timings(
-        "session-1",
-        lambda: record_llm_timing("start", status="completed"),
-    )
+    class RecordingGraph:
+        def __init__(self):
+            self.calls = 0
+
+        def invoke(self, _value, _config):
+            self.calls += 1
+            operation = "start" if self.calls == 1 else "resume"
+            record_llm_timing(operation, status="completed")
+            return {}
+
+        def get_state(self, _config):
+            return GraphState()
+
+    adapter = DesignAdapter(tmp_path / "design-checkpoint.sqlite")
+    adapter.graph = RecordingGraph()
+    requirements_result = {
+        "actors": [{"name": "Member"}],
+        "requirements": [{"id": "FR1"}],
+        "use_cases": [{
+            "id": "UC1",
+            "primary_actor": "Member",
+            "requirement_ids": ["FR1"],
+        }],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "trigger": "The member submits a request.",
+            "main_scenario": [{"covered_req_ids": ["FR1"]}],
+            "success_guarantee": "The request is accepted.",
+            "generated": True,
+        }],
+        "relationships": {},
+    }
+
+    adapter.start(session_id="session-1", requirements_result=requirements_result)
     assert [event["operation"] for event in adapter.timing_events("session-1")] == [
         "start",
     ]
 
-    adapter._invoke_with_timings(
-        "session-1",
-        lambda: record_llm_timing("resume", status="completed"),
-    )
+    adapter.resume(session_id="session-1", feedback="continue")
     assert [event["operation"] for event in adapter.timing_events("session-1")] == [
         "resume",
     ]

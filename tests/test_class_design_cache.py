@@ -1,42 +1,19 @@
-"""Contract tests for accepted class-design unit caching.
-
-The cache is intentionally loaded lazily while the class-design optimization
-API is being introduced. This keeps the existing offline suite runnable on a
-checkout without the optional cache module; once ``AcceptedUnitCache`` exists,
-these tests become the executable contract for its public surface.
-"""
+"""Contract tests for the required accepted class-design unit cache."""
 
 from __future__ import annotations
 
-import importlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
 
-
-def _cache_type():
-    module_name = "app.design.services.class_diagram.cache"
-    try:
-        module = importlib.import_module(module_name)
-    except ModuleNotFoundError as error:
-        if error.name == module_name:
-            pytest.skip("AcceptedUnitCache API is not present yet")
-        raise
-    cache_type = getattr(module, "ProcessLocalAcceptedUnitCache", None)
-    if cache_type is None:
-        pytest.skip("ProcessLocalAcceptedUnitCache API is not present yet")
-    return cache_type
+from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 
 
 @pytest.fixture
 def accepted_cache():
-    cache_type = _cache_type()
-    try:
-        return cache_type(capacity=2)
-    except TypeError as error:
-        pytest.fail(f"ProcessLocalAcceptedUnitCache needs capacity=2: {error}")
+    return ProcessLocalAcceptedUnitCache(capacity=2)
 
 
 def _get_or_compute(cache: Any):
@@ -125,6 +102,23 @@ def test_accepted_cache_does_not_store_a_failed_computation(accepted_cache):
     assert value.status == "miss"
     assert value.value == {"status": "accepted"}
     assert calls == 1
+
+
+def test_sealed_cache_refuses_a_miss_before_running_the_producer(accepted_cache):
+    produced = 0
+    _compute(accepted_cache, "accepted", lambda: {"status": "accepted"})
+    accepted_cache.seal()
+
+    assert _compute(accepted_cache, "accepted", lambda: {"bad": True}).status == "hit"
+
+    def produce_missing():
+        nonlocal produced
+        produced += 1
+        return {"status": "unexpected"}
+
+    with pytest.raises(LookupError, match="cache miss while sealed"):
+        _compute(accepted_cache, "missing", produce_missing)
+    assert produced == 0
 
 
 def test_operation_cache_hit_is_revalidated_before_it_is_accepted():

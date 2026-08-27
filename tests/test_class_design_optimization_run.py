@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
+
+import pytest
 
 from evaluation.class_design_optimization_run import (
     apply_qualitative_review,
@@ -105,3 +108,141 @@ def test_live_protocol_stops_candidate_repetitions_after_a_failed_gate():
     assert report["stoppedAt"] == "candidate-2"
     assert "candidate-3" not in called
     assert "candidate-warm-verification" not in called
+
+
+def test_live_protocol_resumes_only_after_a_completed_prefix():
+    calls: list[str] = []
+    saved: dict[str, Any] | None = None
+
+    def cell_runner(key, treatment, overrides, **_kwargs):
+        calls.append(key)
+        physical = 0 if key == "candidate-warm-verification" else 3
+        return {
+            "runId": f"run:{key}",
+            "cell": key,
+            "treatment": treatment,
+            "settings": dict(overrides),
+            "metrics": _metrics(
+                input_tokens=0 if physical == 0 else (800 if key == "compact" else 750),
+                total_tokens=0 if physical == 0 else (900 if key == "compact" else 850),
+                wall=0.1 if physical == 0 else 8,
+                physical=physical,
+            ),
+            "timingEvents": [],
+            "machineGates": {"status": "passed"},
+            "artifacts": {},
+            "status": "passed",
+        }
+
+    class StopAfterCompact(RuntimeError):
+        pass
+
+    def progress(report):
+        nonlocal saved
+        saved = deepcopy(report)
+        if [run["cell"] for run in report["runs"]][-1:] == ["compact"]:
+            raise StopAfterCompact
+
+    with pytest.raises(StopAfterCompact):
+        execute_live_e1(cell_runner=cell_runner, progress=progress)
+
+    assert saved is not None
+    assert saved["status"] == "in_progress"
+    assert saved["inFlight"] is None
+    assert saved["coldGenerationCount"] == 4
+    calls.clear()
+
+    report = execute_live_e1(cell_runner=cell_runner, resume_report=saved)
+
+    assert calls[:2] == ["call-plan-low", "operation-low"]
+    assert not any(key.startswith("baseline-") or key == "compact" for key in calls)
+    assert report["coldGenerationCount"] == 9
+    assert report["warmVerification"]["metrics"]["physicalLlmCalls"] == 0
+
+
+def test_live_protocol_refuses_to_repeat_an_ambiguous_in_flight_cell():
+    report = {
+        "schemaVersion": "easydep-class-design-live-optimization/v1",
+        "caseId": "e1-aws",
+        "maxColdGenerations": 9,
+        "coldGenerationCount": 0,
+        "retryBudget": 0,
+        "status": "in_progress",
+        "stoppedAt": None,
+        "inFlight": "baseline-1",
+        "runs": [],
+        "warmVerification": None,
+        "decision": {"adopted": False, "status": "in_progress"},
+    }
+
+    with pytest.raises(RuntimeError, match="ambiguous inFlight"):
+        execute_live_e1(resume_report=report)
+
+
+def test_warm_cache_miss_fails_before_any_provider_computation():
+    provider_computations = 0
+
+    def cell_runner(key, treatment, overrides, **kwargs):
+        nonlocal provider_computations
+        if key == "candidate-warm-verification":
+            def unexpected_provider_call():
+                nonlocal provider_computations
+                provider_computations += 1
+                return {"unexpected": True}
+
+            kwargs["cache"].get_or_compute("not-accepted-during-cold", unexpected_provider_call)
+            raise AssertionError("sealed cache miss must stop before this line")
+        metrics = (
+            _metrics(input_tokens=800, total_tokens=900, wall=9)
+            if key == "compact"
+            else _metrics(input_tokens=750, total_tokens=850, wall=8)
+        )
+        return {
+            "runId": f"run:{key}",
+            "cell": key,
+            "treatment": treatment,
+            "settings": dict(overrides),
+            "metrics": metrics,
+            "timingEvents": [],
+            "machineGates": {"status": "passed"},
+            "artifacts": {},
+            "status": "passed",
+        }
+
+    report = execute_live_e1(cell_runner=cell_runner)
+
+    assert provider_computations == 0
+    assert report["status"] == "stopped"
+    assert report["stoppedAt"] == "candidate-warm-verification"
+    warm = report["warmVerification"]
+    assert warm["metrics"]["physicalLlmCalls"] == 0
+    assert warm["machineGates"]["cacheWarm"]["reason"] == "sealed-cache-miss"
+
+
+def test_candidate_cap_uses_the_next_tier_even_when_it_exceeds_the_old_cap():
+    def cell_runner(key, treatment, overrides, **_kwargs):
+        physical = 0 if key == "candidate-warm-verification" else 3
+        if physical == 0:
+            metrics = _metrics(input_tokens=0, total_tokens=0, wall=0.1, physical=0)
+        elif key == "compact":
+            metrics = _metrics(input_tokens=800, total_tokens=7500, wall=9)
+        elif key.startswith("candidate-"):
+            metrics = _metrics(input_tokens=750, total_tokens=7000, wall=8)
+        else:
+            metrics = _metrics(input_tokens=1000, total_tokens=8000, wall=10)
+        metrics["stageOutputMax"]["operation"] = 7000
+        return {
+            "runId": f"run:{key}",
+            "cell": key,
+            "treatment": treatment,
+            "settings": dict(overrides),
+            "metrics": metrics,
+            "timingEvents": [],
+            "machineGates": {"status": "passed"},
+            "artifacts": {},
+            "status": "passed",
+        }
+
+    report = execute_live_e1(cell_runner=cell_runner)
+
+    assert report["decision"]["candidateCaps"]["operation"] == 16384

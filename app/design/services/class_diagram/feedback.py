@@ -23,6 +23,7 @@ from app.design.services.class_diagram import collaboration, inventory
 from app.design.services.class_diagram.cache import (
     AcceptedUnitCache,
     accepted_unit_key,
+    configured_provider_identity,
     record_cache_outcome,
 )
 from app.design.services.class_diagram.models import (
@@ -569,7 +570,7 @@ def propose_inventory_revision(
             },
             prompt=inventory.INVENTORY_PROMPT,
             schema=InventoryProposal,
-            provider="nvidia-nim",
+            provider=configured_provider_identity(settings.base_url),
             model=settings.model,
             seed=settings.seed,
             temperature=settings.temperature,

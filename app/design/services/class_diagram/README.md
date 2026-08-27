@@ -299,8 +299,10 @@ finding이 남을 때 최대 한 번만 교체된다.
 thread-safe LRU다. 서비스에서 `cache=`를 생략하면 기존처럼 cache를 우회하며,
 graph adapter가 application-scope 인스턴스를 명시적으로 주입한다.
 
-- 입력: 정규화 slice, 고정 inventory, feedback/findings, prompt/schema digest, provider와
-  model, seed/temperature/reasoning 설정, completion cap을 포함한 canonical cache key다.
+- 입력: 정규화 slice, 고정 inventory, feedback/findings, prompt/schema digest, endpoint를
+  포함한 provider identity와 model, seed/temperature/reasoning 설정, completion cap을 포함한
+  canonical cache key다. collaboration은 call-plan뿐 아니라 동적 binding selector의
+  prompt/schema-template/low-reasoning/effective-cap도 key에 포함한다.
 - 출력: `CacheResult(value, status, key)`이며 status는 `hit`, `miss`, `coalesced` 중 하나다.
 - 부작용: 같은 key의 동시 계산은 single-flight로 합치고, 성공한 accepted value만 깊은
   복사해 LRU에 저장한다. 용량을 넘으면 가장 오래 사용하지 않은 완료 항목을 제거한다.
@@ -308,6 +310,8 @@ graph adapter가 application-scope 인스턴스를 명시적으로 주입한다.
   비공개 추론을 저장하지 않는다. cache hit도 typed schema와 결정론 검사를 다시 수행한다.
 - 실패: producer 예외는 저장하지 않고 모든 대기 호출에 전달한다. hit 재검증 실패는
   `cached ... is invalid` 오류로 반환하며 오래된 값을 조용히 채택하지 않는다.
+- warm 검증 전에 process-local cache를 seal한다. seal 이후 miss는 producer를 실행하지
+  않고 실패하므로, warm 확인 자체가 새 provider 요청을 만들 수 없다.
 
 `generate`, `resume`, `revise` 모두 같은 cache 경계를 받는다. 같은 입력으로 generate를
 다시 실행하거나 누락된 collaboration을 resume할 때 accepted inventory/operation/call-plan
@@ -320,6 +324,8 @@ inventory, operation, call-plan은 각각 `design_class_inventory_reasoning_effo
 `design_class_operation_reasoning_effort`, `design_class_call_plan_reasoning_effort`를
 읽는다. 값이 없는 구버전 설정은 기존 `design_reasoning_effort`로 fallback한다. 이 설정은
 호출 수, 각 제안의 최대 1회 replacement, handoff 범위와 병렬도 정책을 바꾸지 않는다.
+`design_class_compact_operation_payload`의 운영 기본값은 평가 채택 전까지 `false`이며,
+live protocol의 compact/candidate cell에서만 명시적으로 활성화한다.
 
 모든 호출은 `capture_llm_timings()`의 invocation별 ContextVar 수집기를 사용한다. worker는
 `bind_context`로 collector를 전달하고, concurrent event는 유실 없이 합쳐진다. cache event는
