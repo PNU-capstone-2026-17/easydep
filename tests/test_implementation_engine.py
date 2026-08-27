@@ -60,6 +60,7 @@ from app.implementation.agents.verification.build import (
     persistence_reserved_identifier_markers,
     ensure_persistence_schema_test,
     repair_persistence_schema_table_quoting,
+    repair_invalid_inverse_entity_associations,
     read_gradle_test_failures,
     summarize_test_failure,
     task_verification_command,
@@ -605,6 +606,44 @@ class GeneratedContractImportRepairTest(unittest.TestCase):
 
 
 class PersistenceSchemaContractRepairTest(unittest.TestCase):
+    def test_invalid_inverse_relationship_is_made_transient(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            student_relative = (
+                "application/src/main/java/com/example/app/persistence/entity/"
+                "StudentEntity.java"
+            )
+            enrollment_relative = (
+                "application/src/main/java/com/example/app/persistence/entity/"
+                "EnrollmentEntity.java"
+            )
+            student = sandbox / student_relative
+            enrollment = sandbox / enrollment_relative
+            student.parent.mkdir(parents=True)
+            student.write_text(
+                """import jakarta.persistence.OneToMany;
+import java.util.Set;
+class StudentEntity {
+  @OneToMany(mappedBy = \"student\")
+  private Set<EnrollmentEntity> enrollments;
+}
+""",
+                encoding="utf-8",
+            )
+            enrollment.write_text("class EnrollmentEntity { String studentId; }\n", encoding="utf-8")
+
+            repaired = repair_invalid_inverse_entity_associations(
+                sandbox, [student_relative, enrollment_relative]
+            )
+
+            self.assertEqual(
+                [student_relative + ": invalid inverse association marked transient"], repaired
+            )
+            source = student.read_text(encoding="utf-8")
+            self.assertIn("import jakarta.persistence.Transient;", source)
+            self.assertIn("@Transient", source)
+            self.assertNotIn("@OneToMany", source)
+
     def test_replaces_agent_schema_test_with_case_independent_metadata_check(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)
@@ -1837,6 +1876,8 @@ TestRestTemplate http; CourseRepository courseRepository;
         self.assertIn("resource-named substitute", prompt)
         self.assertIn("transport-level failures", prompt)
         self.assertIn("documentation only", prompt)
+        self.assertIn("exception expectation in a test", prompt)
+        self.assertIn("keep every generated source and\n  test compilable", prompt)
 
     def test_production_placeholder_gate_ignores_tests_and_rejects_main_java(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -4314,6 +4355,39 @@ class ApplicationConfiguration {
         self.assertIn("remove any extra suffix", hints)
         self.assertIn("exact HTTP verb", hints)
 
+    def test_runtime_failure_hints_require_foreign_key_fixture_seed(self) -> None:
+        hints = verification_failure_hints(
+            'DataIntegrityViolationException: Referential integrity constraint violation: '
+            'FOREIGN KEY(RELATED_STUDENT_ID) REFERENCES STUDENT(STUDENT_ID) (\'alice\')'
+        )
+
+        self.assertIn("foreign-key target", hints)
+        self.assertIn("same identifier", hints)
+        self.assertIn("Do not disable constraints", hints)
+
+    def test_runtime_failure_hints_explain_boundary_control_recursion(self) -> None:
+        hints = verification_failure_hints(
+            "StackOverflowError at CourseDetailsBoundaryAdapter.viewCourseDetails "
+            "CourseDetailsControllerService.getCourseDetails"
+        )
+
+        self.assertIn("Boundary/Control recursion", hints)
+        self.assertIn("must never call back into", hints)
+
+    def test_runtime_failure_hints_explain_jpa_schema_column_mismatch(self) -> None:
+        hints = verification_failure_hints(
+            'JdbcSQLSyntaxErrorException: Column "COURSE_ID" not found'
+        )
+
+        self.assertIn("Persistence schema mismatch", hints)
+        self.assertIn("lower snake_case", hints)
+
+    def test_runtime_failure_hints_explain_invalid_json_path(self) -> None:
+        hints = verification_failure_hints("InvalidPathException: Expected path: ")
+
+        self.assertIn("Invalid JSONPath assertion", hints)
+        self.assertIn("actual response body", hints)
+
     def test_runtime_failure_hints_explain_executable_api_status_gate(self) -> None:
         hints = verification_failure_hints(
             "missing executable HTTP 409 mapping from CoursesApi; "
@@ -4323,7 +4397,7 @@ class ApplicationConfiguration {
         self.assertIn("Transport-level statuses", hints)
         self.assertIn("409/422", hints)
 
-    def test_void_or_entity_control_cannot_back_domain_error_response(self) -> None:
+    def test_control_return_does_not_reject_domain_error_response(self) -> None:
         class_diagram = """
 class RegistrationController <<Control>> {
   +removeEnrollment(studentId : String, courseId : String): void
@@ -4355,9 +4429,7 @@ class Enrollment <<Entity>> {
 
         findings = _unrepresentable_openapi_error_outcomes(class_diagram, api_spec)
 
-        self.assertEqual(1, len(findings))
-        self.assertIn("enrollStudent", findings[0])
-        self.assertIn("409", findings[0])
+        self.assertEqual([], findings)
 
     def test_event_journal_writes_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

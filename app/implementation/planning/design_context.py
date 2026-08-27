@@ -1184,11 +1184,13 @@ Rules:
 - The only permitted Control collaborators for this API are the exact types listed below.
   Import them from the exact BCE package shown in the generated contracts. Never create or
   import a resource-named substitute such as `{api_port.name}Control`; an API name is not a
-  Control contract. If an operation has no reviewed binding, leave that design gap explicit
-  rather than guessing a collaborator.
+  Control contract. If an operation has no reviewed binding, report that design gap in the
+  task completion message rather than guessing a collaborator. Do not encode a design gap as
+  an `UnsupportedOperationException` in production code or as an exception expectation in a test.
 - Map every documented OpenAPI response status below to an explicit, observable Control outcome.
   A null result must not be assigned an arbitrary status. If the generated contracts cannot
-  represent a documented response, fail compilation rather than concealing the design gap.
+  represent a documented response, report the design gap and keep every generated source and
+  test compilable; never manufacture a failing or contradictory implementation to expose it.
 - Successful commands with no response body use `204` and may keep transport-level failures
   (400/401/403/404/500/503) in the API contract for global validation, authorization, or
   exception handling. Do not invent controller branches for those statuses. Domain decisions
@@ -1200,8 +1202,9 @@ Rules:
 - Map BCE return values into generated API DTOs field by field using exact public accessors.
 - Unit tests must cover every documented status and verify exact Control arguments.
 - Never leave placeholder, empty fallback, or speculative response comments in production code.
-  If a Control cannot supply the documented response or error outcome, leave the contract
-  uncompilable and report the design gap; do not fabricate a response.
+  If a Control cannot supply the documented response or error outcome, report the design gap in
+  the task completion message. Do not fabricate a response, throw a placeholder exception, or
+  create a test that expects such an exception.
 - Create both contracted files, then finish immediately.
 
 ## OpenAPI response contract

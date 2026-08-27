@@ -178,6 +178,44 @@ def verification_failure_hints(output: str) -> str:
             "(such as `year`, `order`, `group`, `user`, `status`, `key`, `value`, `offset`, `limit`, `check`, `date`). "
             "Quote the identifier with backticks/quotes (e.g. `\"year\"` or ``` `year` ```) or rename the column/table in the schema and entity mapping."
         )
+    if re.search(
+        r"Referential integrity constraint violation|DataIntegrityViolationException|FOREIGN KEY",
+        output,
+        re.IGNORECASE,
+    ):
+        hints.append(
+            "- Referential integrity failure: the E2E fixture uses an identifier that is a foreign-key "
+            "target but has not been persisted. Seed the referenced parent entity through the exact "
+            "Spring Data repository before issuing the HTTP request, using the same identifier that "
+            "the request sends. Do not disable constraints, alter production mappings, or substitute "
+            "a different fixture key."
+        )
+    if "StackOverflowError" in output:
+        hints.append(
+            "- Boundary/Control recursion: the stack trace shows a Boundary adapter calling its Control "
+            "while that Control calls the same Boundary. Follow the sequence direction exactly: a "
+            "Boundary delegates inbound input to a Control, while the Control must read/write its "
+            "ERD-backed Repository or return a contract-supported value; it must never call back into "
+            "the Boundary. Remove the recursive edge in the affected production service/adapter."
+        )
+    missing_column = re.findall(
+        r'Column ["`]?([A-Za-z0-9_]+)["`]? not found', output, re.IGNORECASE
+    )
+    if missing_column:
+        columns = ", ".join(dict.fromkeys(missing_column))
+        hints.append(
+            "- Persistence schema mismatch: H2 reports missing column(s) "
+            f"{columns}. Align the JPA @Column names and migration columns using lower snake_case "
+            "for both sides. Do not quote camelCase migration identifiers while Hibernate expects "
+            "snake_case, and do not rename an ERD field arbitrarily."
+        )
+    if "InvalidPathException" in output:
+        hints.append(
+            "- Invalid JSONPath assertion: use a valid JsonPath expression against the actual "
+            "response body (for example `$.token` or `$.studentId`). Inspect the generated DTO "
+            "JSON shape first; do not pass a Java property expression, empty path, or fabricated "
+            "field to JsonPath."
+        )
     if "incompatible types" in output:
         hints.append(
             "- Incompatible types: Check package imports and exact contract types (e.g. java.time types vs domain models). "

@@ -27,6 +27,69 @@ SQL_RESERVED_IDENTIFIERS = (
 )
 
 
+def repair_invalid_inverse_entity_associations(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Downgrade an invalid inverse JPA collection to transient state.
+
+    A generated ``@OneToMany(mappedBy = "x")`` is valid only if the target
+    entity declares an owning relationship property named ``x``.  The ERD can
+    describe a scalar foreign key without declaring that Java association.  In
+    that case retaining the inverse annotation makes Hibernate reject the
+    entire application context.  The collection is useful only as optional
+    in-memory convenience state, so mark it ``@Transient`` rather than
+    inventing a ``@ManyToOne`` relation not present in the generated contract.
+    """
+    repaired: list[str] = []
+    normalized = [path.replace("\\", "/") for path in relative_paths]
+    entity_paths = [
+        path for path in normalized
+        if "/persistence/entity/" in path and path.endswith("Entity.java")
+    ]
+    entity_root = sandbox / "application" / "src" / "main" / "java"
+    for relative in entity_paths:
+        source_path = sandbox / relative
+        if not source_path.is_file():
+            continue
+        source = source_path.read_text(encoding="utf-8")
+        original = source
+        pattern = re.compile(
+            r"@OneToMany\s*\(\s*mappedBy\s*=\s*\"(?P<owner>[A-Za-z_]\w*)\"[^)]*\)"
+            r"(?P<between>\s*(?:private|protected)\s+(?:[\w.]+\s*<\s*)?"
+            r"(?P<target>[A-Za-z_]\w*Entity)\s*>?\s+[A-Za-z_]\w*"
+            r"(?:\s*=\s*[^;]+)?\s*;)",
+            re.MULTILINE,
+        )
+        for match in list(pattern.finditer(source)):
+            target_name = match.group("target")
+            target_path = next(
+                (candidate for candidate in entity_root.rglob(f"{target_name}.java")), None
+            )
+            target_source = (
+                target_path.read_text(encoding="utf-8") if target_path and target_path.is_file() else ""
+            )
+            owner = match.group("owner")
+            owns_relation = bool(re.search(
+                rf"@(ManyToOne|OneToOne)\b[\s\S]{{0,300}}?\b{re.escape(owner)}\s*[;=]",
+                target_source,
+            ))
+            if owns_relation:
+                continue
+            source = source.replace(match.group(0), "@Transient" + match.group("between"), 1)
+        if source == original:
+            continue
+        if "@Transient" in source and not re.search(
+            r"(?m)^import\s+jakarta\.persistence\.Transient;", source
+        ):
+            imports = list(re.finditer(r"(?m)^import\s+[^;]+;", source))
+            if imports:
+                anchor = imports[-1]
+                source = source[:anchor.end()] + "\nimport jakarta.persistence.Transient;" + source[anchor.end():]
+        source_path.write_text(source, encoding="utf-8")
+        repaired.append(f"{relative}: invalid inverse association marked transient")
+    return repaired
+
+
 def ensure_persistence_schema_test(
     sandbox: Path, relative_paths: list[str], *, overwrite: bool = False
 ) -> list[str]:
