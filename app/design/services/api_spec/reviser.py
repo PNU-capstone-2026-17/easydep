@@ -34,6 +34,13 @@ same schema. Rules:
   Control method, map each Control argument from an explicit HTTP request source,
   and name one outcome for every documented response status. Preserve an existing
   binding unchanged unless the feedback or a reported contract issue requires it.
+- For `api.control-arguments-match` findings, compare every binding argument with
+  the selected BCE method's exact parameter name and Java type. Repair the HTTP
+  parameter or request schema type when necessary; never leave a string source
+  bound to an `int`/`long` Control parameter and never silently omit a required
+  parameter. For `api.control-call-in-sequence`, select an operation whose exact
+  Control call is present in the sequence; do not invent a call or keep an
+  endpoint that has no actor-to-Boundary flow.
 - A Control parameter that is an aggregate filter or request value object must
   remain one explicit HTTP value with the same type (for example,
   `filter : CourseFilter` maps from `$query.filter`, with a `query_params`

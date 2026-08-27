@@ -49,6 +49,7 @@ from app.design.nodes.artifact import (
     NEEDS_INPUT,
     NO_IMPROVEMENT,
     _sequence_repair_score,
+    _repairable_findings,
     check_node,
     merge_model,
     render_node,
@@ -2071,6 +2072,16 @@ def test_sequence_check_retries_only_batch_with_remaining_budget(monkeypatch):
     assert all("sequence.flow-order" in feedback for feedback in attempts)
     assert result["sequence_diagram_model"] == repaired
     assert result["sequence_diagram_check"]["stopped"] == CLEAN
+
+
+def test_invalid_extension_anchor_is_left_for_user_input() -> None:
+    finding = Finding(
+        "sequence.flow-order",
+        "확장 흐름 '5a'의 분기 기준인 주 흐름 단계 5가 없어 배치 위치를 검증할 수 없음",
+        "UC2:extension:5a",
+    )
+
+    assert _repairable_findings([finding]) == []
 
 
 def test_sequence_collection_repairs_each_use_case_with_its_own_budget(monkeypatch):

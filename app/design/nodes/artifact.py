@@ -479,7 +479,22 @@ def _dedupe_findings(findings: list[Finding]) -> list[Finding]:
 
 
 def _repairable_findings(findings: list[Finding]) -> list[Finding]:
-    return [finding for finding in findings if finding.rule_id not in NON_REPAIRABLE_RULES]
+    repairable: list[Finding] = []
+    for finding in findings:
+        if finding.rule_id in NON_REPAIRABLE_RULES:
+            continue
+        # An extension whose declared branch_step does not exist in the main
+        # scenario has no deterministic placement. Asking the LLM to move it
+        # repeatedly encourages invented anchor steps; this is an input defect
+        # and must remain visible for the user to correct.
+        message = finding.message.lower()
+        if finding.rule_id == "sequence.flow-order" and (
+            "no main step" in message
+            or ("주 흐름 단계" in finding.message and "없어" in finding.message)
+        ):
+            continue
+        repairable.append(finding)
+    return repairable
 
 
 def _repair_batch(
