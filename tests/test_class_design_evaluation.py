@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from evaluation.class_design_evaluation import CASE_ID, compare, evaluate_candidate
 from evaluation.class_design_optimization import (
     MAX_E1_RUNS,
     RETRY_BUDGET,
@@ -10,7 +11,6 @@ from evaluation.class_design_optimization import (
     frozen_e1_schedule,
     run_e1,
 )
-from evaluation.class_design_evaluation import CASE_ID, compare, evaluate_candidate
 
 ROOT = Path(__file__).parent.parent
 GOLD = ROOT / "evaluation" / "baselines" / "course-registration-cases" / "goldset" / "e1-aws"

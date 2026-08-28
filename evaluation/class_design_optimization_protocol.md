@@ -86,3 +86,7 @@ median 10% 이상 개선, wall p95 악화 10% 이하, warm physical call 0을 �
 product-contract와 qualitative rubric은 생성 뒤 오프라인으로 검토하며 issue 수가 baseline보다
 늘지 않았을 때만 `--review-report`로 결과를 확정한다. 검토 확정은 LLM generation을 다시
 실행하지 않는다.
+
+2026-08-28 live 실행의 셀별 결과와 미채택 근거는
+[`class_design_optimization_result_20260828.md`](class_design_optimization_result_20260828.md)에
+기록한다.
