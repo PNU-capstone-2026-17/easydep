@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.validation import ValidationReport
 from app.design import validation
 from app.design.knowledge import detectors, rules
 from app.design.services.class_diagram.validation import diagram as class_validation
 from app.design.services.sequence_diagram import validation as sequence_validation
+from app.validation import ValidationReport
 
 
 def _catalog_rule_ids(stage: str) -> tuple[str, ...]:
@@ -130,3 +130,30 @@ def test_class_readiness_keeps_semantic_relationship_checks() -> None:
         finding["ruleId"] == "class.no-boundary-entity-link"
         for finding in report["findingRecords"]
     )
+
+
+def test_readiness_normalizes_findings_from_a_sibling_stage_model(monkeypatch) -> None:
+    checked = ValidationReport(
+        status="findings",
+        findings=(
+            sequence_validation.Finding(
+                "sequence.call-target-exists",
+                "The call target is missing.",
+                location="UC1:main:1",
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        validation,
+        "_CHECKED_STAGES",
+        (("sequence_diagram", "sequence_model", "sequence_check", lambda *_: checked),),
+    )
+
+    report = validation.design_readiness_report(
+        {"sequence_model": {"diagrams": [{}]}},
+        stages=("sequence_diagram",),
+    )
+
+    assert report["status"] == "BLOCKED"
+    assert report["findingRecords"][0]["ruleId"] == "sequence.call-target-exists"

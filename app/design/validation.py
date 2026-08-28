@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from app.validation import ValidationReport
 from app.design.knowledge.detectors import (
     Finding,
     api_spec_validation_report,
@@ -16,6 +15,7 @@ from app.design.services.class_diagram.validation.diagram import (
 from app.design.services.sequence_diagram.validation import (
     validate_sequence_model as _validate_sequence_model,
 )
+from app.validation import ValidationReport
 
 DESIGN_READINESS_SCHEMA = "easydep-design-readiness/v1alpha1"
 
@@ -83,7 +83,15 @@ def design_readiness_report(
             continue
         checked = check(model, state)
         validation_status = checked.status
-        findings = [Finding.model_validate(finding) for finding in checked.findings]
+        # ValidationReport stores the shared base finding. Stage validators add
+        # presentation-specific ``as_issue`` subclasses, and a sequence finding is
+        # therefore not an instance of the class-diagram presentation subclass
+        # imported above. Cross that boundary through the public data shape instead
+        # of asking Pydantic to reinterpret a sibling model instance.
+        findings = [
+            Finding.model_validate(finding.model_dump())
+            for finding in checked.findings
+        ]
         reports.append(
             {
                 "stage": stage,
