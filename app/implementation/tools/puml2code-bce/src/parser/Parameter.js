@@ -1,3 +1,6 @@
+const toJavaType = require('./JavaType');
+
+
 class Parameter {
   constructor(returnType, memberName, defaultValue) {
     this.sReturnType = returnType;
@@ -14,12 +17,7 @@ class Parameter {
   }
 
   getJavaType() {
-    return String(this.sReturnType)
-      .replace(/\bstring\b/gi, 'String')
-      .replace(/\bdatetime\b/gi, 'OffsetDateTime')
-      .replace(/\bfloat\b/gi, 'double')
-      // Legacy BCE diagrams can still contain the old non-Java alias.
-      .replace(/\bdecimal\b/gi, 'BigDecimal');
+    return toJavaType(this.sReturnType);
   }
 
   getName() {

@@ -11,6 +11,7 @@ class Class {
     this.nNamespace = null;
     this.stereotype = stereotype;
     this.basePackage = null;
+    this.knownEnumerations = new Map();
   }
 
   static splitArrays(acc, dep) {
@@ -84,6 +85,10 @@ class Class {
     this.basePackage = basePackage || null;
   }
 
+  setKnownEnumerations(enumerations) {
+    this.knownEnumerations = enumerations || new Map();
+  }
+
   getBasePackage() {
     return this.basePackage;
   }
@@ -136,7 +141,7 @@ class Class {
 
   getJavaImports() {
     const types = this.members
-      .map(member => [member.getReturnType(), ...member.getParameters().map(param => param.getReturnType())])
+      .map(member => [member.getJavaType(), ...member.getParameters().map(param => param.getJavaType())])
       .reduce((all, values) => all.concat(values), []);
     const imports = [];
     if (types.some(type => /(^|[<, ])List</.test(type) || type === 'List')) imports.push('java.util.List');
@@ -154,6 +159,11 @@ class Class {
       && types.some(type => /(^|[<, ])Set</.test(type) || type === 'Set')) {
       imports.push('java.util.HashSet');
     }
+    if (types.some(type => /(^|[<, ])Optional</.test(type) || type === 'Optional')) {
+      imports.push('java.util.Optional');
+    }
+    if (types.some(type => /\bUUID\b/.test(type))) imports.push('java.util.UUID');
+    if (types.some(type => /\bBigInteger\b/.test(type))) imports.push('java.math.BigInteger');
     const hasType = name => types.some(type => new RegExp(`\\b${name}\\b`).test(String(type)));
     if (hasType('Instant')) imports.push('java.time.Instant');
     if (hasType('LocalDate')) imports.push('java.time.LocalDate');
@@ -301,7 +311,15 @@ class Class {
     }
     const mark = name.match(/^markAs([A-Z].*)$/);
     if (mark && fieldNames.has('status')) {
+      const status = fields.find(field => field.getName() === 'status');
+      const assignment = this.getJavaEnumStateAssignment(status, mark[1]);
+      if (assignment) return assignment;
       return `this.status = "${mark[1].toLowerCase()}";`;
+    }
+    if (parameters.length === 0 && method.getJavaType() === 'void') {
+      const state = fields.find(field => ['status', 'state'].includes(field.getName().toLowerCase()));
+      const assignment = this.getJavaEnumStateAssignment(state, name);
+      if (assignment) return assignment;
     }
     const add = name.match(/^add([A-Z].*)$/);
     if (add && parameters.length === 1) {
@@ -309,11 +327,38 @@ class Class {
       const plural = `${singular}s`;
       if (fieldNames.has(plural)) return `this.${plural}.add(${parameters[0].getName()});`;
     }
+    const collectionResult = method.getJavaType().match(/^List<([^>]+)>$/);
+    if (
+      collectionResult
+      && collectionResult[1] === this.getName()
+      && /^(?:find|list|search)/i.test(name)
+      && parameters.length === 1
+      && ['int', 'long', 'short'].includes(parameters[0].getJavaType())
+    ) {
+      const limit = parameters[0].getName();
+      return `return ${limit} > 0 ? List.of(this) : List.of();`;
+    }
     if (name === 'toString' && parameters.length === 0) {
       const values = fields.map(field => `"${field.getName()}=" + ${field.getName()}`);
       return `return "${this.getName()}{" + ${values.join(' + ", " + ')} + '}';`;
     }
     throw new Error(`No executable Java entity strategy for ${this.getName()}.${name}`);
+  }
+
+  getJavaEnumStateAssignment(field, action) {
+    if (!field) return null;
+    const enumType = field.getJavaType();
+    const values = this.knownEnumerations.get(enumType) || [];
+    const normalizedAction = String(action).replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+    if (normalizedAction.length < 3) return null;
+    const matches = values.filter((value) => {
+      const normalizedValue = String(value).replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+      return normalizedValue === normalizedAction
+        || normalizedValue.startsWith(normalizedAction)
+        || normalizedAction.startsWith(normalizedValue);
+    });
+    if (matches.length !== 1) return null;
+    return `this.${field.getName()} = ${enumType}.${matches[0]};`;
   }
 
   getOutputPath() {

@@ -143,9 +143,16 @@ class PlantUmlToCode {
       allowProtoPropertiesByDefault: false,
     };
     aUMLBlocks.forEach((project) => {
-      project.getClasses().forEach((element) => {
+      const classes = project.getClasses();
+      const enumerations = new Map(
+        classes
+          .filter(element => element.isEnumeration())
+          .map(element => [element.getName(), element.getValues()]),
+      );
+      classes.forEach((element) => {
         if (lang === 'java') {
           element.setBasePackage(options.basePackage);
+          element.setKnownEnumerations(enumerations);
           if (!element.shouldGenerate()) return;
           if (element.hasUnresolvedPlaceholder && element.hasUnresolvedPlaceholder()) {
             throw new Error(

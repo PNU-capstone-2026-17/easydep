@@ -1,3 +1,6 @@
+const toJavaType = require('./JavaType');
+
+
 class Field {
   constructor(accessType, returnType, fieldName, abstract) {
     this.sAccessType = accessType;
@@ -49,12 +52,7 @@ class Field {
   }
 
   getJavaType() {
-    return String(this.sReturnType)
-      .replace(/\bstring\b/gi, 'String')
-      .replace(/\bdatetime\b/gi, 'OffsetDateTime')
-      .replace(/\bfloat\b/gi, 'double')
-      // Legacy BCE diagrams can still contain the old non-Java alias.
-      .replace(/\bdecimal\b/gi, 'BigDecimal');
+    return toJavaType(this.sReturnType);
   }
 
   getName() {

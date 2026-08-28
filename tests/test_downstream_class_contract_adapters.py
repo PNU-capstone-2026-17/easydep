@@ -428,6 +428,70 @@ Puml.fromString(source).generate('java', {basePackage: 'example.types'})
     shutil.which("node") is None or not _PUML2CODE_READY,
     reason="Node.js and generated puml2code parser are required",
 )
+def test_puml2code_generates_typed_entity_state_transition():
+    tool_root = _PUML2CODE_ROOT
+    script = r'''
+const Puml = require('./src');
+const source = `@startuml
+class CalculatorService <<Entity>> {
+  - status : ServiceStatus
+  + stop(): void
+}
+enum ServiceStatus { RUNNING, STOPPED }
+@enduml`;
+Puml.fromString(source).generate('java', {basePackage: 'example.types'})
+  .then(output => output.print(value => process.stdout.write(value + '\n')))
+  .catch(error => { console.error(error); process.exitCode = 1; });
+'''
+    result = subprocess.run(
+        ["node", "-e", script], cwd=tool_root, text=True, capture_output=True, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "public void stop()" in result.stdout
+    assert "this.status = ServiceStatus.STOPPED;" in result.stdout
+
+
+@pytest.mark.skipif(
+    shutil.which("node") is None or not _PUML2CODE_READY,
+    reason="Node.js and generated puml2code parser are required",
+)
+def test_puml2code_generates_closed_java_types_and_bounded_self_query():
+    tool_root = _PUML2CODE_ROOT
+    script = r'''
+const Puml = require('./src');
+const source = `@startuml
+class LogEntry <<Entity>> {
+  - logId : uuid
+  - timestamp : instant
+  + findRecent(limit : int): list<LogEntry>
+}
+class Result <<ValueObject>> {
+  - amount : number
+  - error : optional<String>
+}
+@enduml`;
+Puml.fromString(source).generate('java', {basePackage: 'example.types'})
+  .then(output => output.print(value => process.stdout.write(value + '\n')))
+  .catch(error => { console.error(error); process.exitCode = 1; });
+'''
+    result = subprocess.run(
+        ["node", "-e", script], cwd=tool_root, text=True, capture_output=True, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "private UUID logId;" in result.stdout
+    assert "private Instant timestamp;" in result.stdout
+    assert "List<LogEntry> findRecent(int limit)" in result.stdout
+    assert "return limit > 0 ? List.of(this) : List.of();" in result.stdout
+    assert "private final BigDecimal amount;" in result.stdout
+    assert "private final Optional<String> error;" in result.stdout
+
+
+@pytest.mark.skipif(
+    shutil.which("node") is None or not _PUML2CODE_READY,
+    reason="Node.js and generated puml2code parser are required",
+)
 def test_puml2code_blocks_unknown_class_placeholder_source():
     tool_root = _PUML2CODE_ROOT
     script = r'''
