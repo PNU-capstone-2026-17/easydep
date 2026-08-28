@@ -110,6 +110,23 @@ PUBLIC_CONTRACTS = {
         "deployment_plan_structure_digest",
         "resource_plan_structure_digest",
     ),
+    ROOT / "app/design/services/deployment_diagram/provider_template_generation.py": (
+        "build_complete_provider_template",
+        "provider_template_structure_digest",
+    ),
+    ROOT / "app/design/services/deployment_diagram/provider_template_validation.py": (
+        "validate_complete_provider_template",
+    ),
+    ROOT / "app/design/services/deployment_diagram/runtime_renderer.py": (
+        "render_runtime_deployment",
+    ),
+    ROOT / "app/design/services/deployment_diagram/provisioning_renderer.py": (
+        "render_provisioning_dependencies",
+    ),
+    ROOT / "app/design/services/deployment_diagram/provider_plantuml.py": (
+        "deployment_bundle_runtime_puml",
+        "deployment_bundle_provisioning_puml",
+    ),
 }
 
 

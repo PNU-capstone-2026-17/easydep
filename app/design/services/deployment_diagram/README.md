@@ -138,6 +138,38 @@ issue·관측값처럼 구조를 바꾸지 않는 필드를 제외하는 기존 
 facts, normalized graph, DeploymentPlan, runtime binding, ResourcePlan, invalid graph와 bundle의
 전체 canonical hash뿐 아니라 배열 순서와 모든 structure digest를 함께 보존한다.
 
+## Provider projection과 renderer 경계
+
+provider 단계는 이미 수락된 DeploymentPlan과 WorkloadGraph만 소비한다. 새 workload,
+placement, provider 선택을 추론하지 않는다.
+
+| module | 입력 | 출력과 소유 책임 |
+|---|---|---|
+| `provider_template_generation.py` | DeploymentPlan·WorkloadGraph·provider·region | ResourcePlan node·reference·binding과 structure digest |
+| `provider_template_validation.py` | ResourcePlan | schema, ID, reference, network, compute, storage 완결성 검사 |
+| `runtime_renderer.py` | 단일 projection bundle | workload placement·traffic·mount 중심 runtime PlantUML |
+| `provisioning_renderer.py` | 단일 projection bundle | IaC prerequisite·association 중심 provisioning PlantUML |
+| `renderer_support.py` | bundle·ResourcePlan | 두 renderer가 공유하는 읽기 전용 context와 표기 도우미 |
+
+`provider_template.py`와 `provider_plantuml.py`는 기존 public import와 wrapper validation을
+보존하는 compatibility facade다. facade는 새 generation·validation·renderer의 같은 공개 함수에
+위임하며 자체 projection 규칙을 갖지 않는다. implementation의 OpenTofu renderer는 완결된
+ResourcePlan만 소비하고 provider resource나 dependency를 새로 선택하지 않는다.
+
+### Projection baseline provenance
+
+[projection baseline fixture](../../../../tests/fixtures/deployment_projection_baseline.json)는
+부모 기준점 `bb6ecab8385dc56868c597e6c6a6876321e3f420`의 기존 provider template,
+runtime/provisioning PlantUML, OpenTofu renderer를 AWS·Azure·GCP 대표 입력에 직접 실행해
+캡처했다. 입력 SHA-256은
+`bfe0340ce4fd3142722e71b73b756664ad5c5fbe686a979165c03d3e3138eecd`다.
+
+fixture는 provider별 bundle·ResourcePlan canonical hash, PlantUML UTF-8 byte hash와 byte 길이,
+OpenTofu 전체·파일별 hash와 파일 순서를 고정한다. ResourcePlan key·node·runtime binding·binding
+slot·late binding·derivation 순서, reference edge ID 순서 hash, node/reference/binding sourceRef
+순서 hash와 structure digest도 함께 비교한다. 따라서 이름이나 내용뿐 아니라 배열과 문자열의
+byte-level 계약까지 분리 전과 같아야 한다.
+
 `extractor.extract_deployment_model`과 `reviser.revise_deployment_model`은 이전 내부 호출자를 위한
 dict compatibility facade다. facade는 canonical typed 서비스에 위임하고 자체 prompt나 repair
 규칙을 소유하지 않는다.
@@ -158,6 +190,8 @@ dict compatibility facade다. facade는 canonical typed 서비스에 위임하�
 - typed generation/revision은 planner, provider template, IaC renderer를 호출하지 않는다.
 - planning fact 이후 module은 structured adapter, prompt, LLM service를 import하거나 호출하지
   않는다.
+- provider generation·validation과 runtime/provisioning renderer도 LLM, prompt, graph state,
+  repository, requirements 내부 state, implementation service를 역참조하지 않는다.
 - planner와 renderer는 graph state, repository, requirements 내부 state, implementation service를
   역참조하지 않는다.
 - 테스트는 prompt literal, private helper, 내부 문자열 조립 방식에 결합하지 않는다.
