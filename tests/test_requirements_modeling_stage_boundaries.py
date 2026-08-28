@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints
 
+from app.requirements.config import Settings
 from app.requirements.contracts.state import AgentState
 from app.requirements.knowledge import rules
 from app.requirements.modeling import (
@@ -40,6 +41,12 @@ from app.requirements.schemas import (
 
 ROOT = Path(__file__).resolve().parent.parent
 MODELING_DIR = ROOT / "app" / "requirements" / "modeling"
+
+
+def test_requirements_llm_concurrency_default_matches_measured_nim_limit() -> None:
+    """요구사항 LLM 병렬도 기본값은 NIM에서 실측한 8개 호출을 유지한다."""
+
+    assert Settings.model_fields["spec_concurrency"].default == 8
 
 
 def _actor_result() -> ActorResult:

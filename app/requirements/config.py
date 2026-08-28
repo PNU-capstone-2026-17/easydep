@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     # 분류할 수는 없으며, 실행 입력이 이미 FR/NFR로 분류된 체크포인트여야 한다.
     enable_bert_verify: bool = True
     # (2~4단계는 항상 실행한다. 예전 enable_pipeline_stubs 게이트는 제거됨.)
-    # UC별 명세 생성·의미 검토처럼 긴 LLM 호출의 동시 실행 상한.
-    # 공급자 한계보다 관찰 가능성과 안정성을 우선해 두 건으로 제한한다.
-    spec_concurrency: int = 2
+    # step3 명세 생성·semantic 커버리지 채점의 동시 LLM 호출 상한(UC별 병렬).
+    # hosted NIM(integrate.api)에서 8 동시까지 429 없이 견딤을 실측했다.
+    spec_concurrency: int = 8
     # step3 명세 반성(reflection) 루프: 검증 실패 시 수술적 지시로 재생성하는 최대 횟수.
     max_repair_iters: int = 2
     # 파이프라인 되돌아가기(supervisor) 최대 횟수. 0이면 끈다.
