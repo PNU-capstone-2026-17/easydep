@@ -17,15 +17,17 @@ classified는 FR/NFR 분류가 아니라 추적용 번호(R1..)일 뿐이라 커
 """
 from __future__ import annotations
 
+from typing import cast
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.requirements import prompts
-from app.requirements.agent.steps.step1_requirements import intake
-from app.requirements.agent.steps.step2_usecases import _uc_dict
-from app.requirements.agent.steps.step3_specifications import _assemble
-from app.requirements.agent.steps.step4_diagram import render_diagram
 from app.requirements.contracts.state import ActorItem, AgentState, UseCaseItem, UseCaseSpecItem
+from app.requirements.modeling.diagram import render_diagram
+from app.requirements.modeling.refinement import intake
+from app.requirements.modeling.specifications import normalize_specification
+from app.requirements.modeling.use_cases import normalize_use_case
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import BaselineModelResult, BaselineRelationshipModel
 
@@ -119,27 +121,28 @@ def baseline_generate(state: AgentState) -> dict:
         for a in result.actors
     ]
     use_cases: list[UseCaseItem] = [
-        _uc_dict(uc, f"UC{i}") for i, uc in enumerate(result.use_cases, start=1)
+        normalize_use_case(uc, f"UC{i}")
+        for i, uc in enumerate(result.use_cases, start=1)
     ]
     accepted_by_name: dict[str, UseCaseItem | None] = {}
     for use_case in use_cases:
         name = use_case["name"]
         accepted_by_name[name] = use_case if name not in accepted_by_name else None
 
-    # 명세를 UC에 이름으로 매칭해 상태 dict로 조립(_assemble 재사용). 매칭 실패 시 임시 id 부여.
+    # 명세를 UC에 이름으로 매칭해 상태 dict로 조립한다. 매칭 실패 시 임시 id를 부여한다.
     specs: list[UseCaseSpecItem] = []
     extra = len(use_cases)
     for spec in result.specs:
         accepted = accepted_by_name.get(spec.use_case_name)
         if accepted is None:
             extra += 1
-            accepted = {
+            accepted = cast(UseCaseItem, {
                 "id": f"UC{extra}",
                 "name": spec.use_case_name,
                 "requirement_ids": [],
                 "nfr_ids": [],
-            }
-        specs.append(_assemble(spec, accepted))  # type: ignore[arg-type]
+            })
+        specs.append(normalize_specification(spec, accepted))
 
     return {"classified": classified, "actors": actors, "use_cases": use_cases,
             "use_case_specs": specs, "phase": "baseline_generate"}

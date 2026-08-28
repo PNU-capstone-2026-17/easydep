@@ -20,18 +20,20 @@ from typing import cast
 
 from langgraph.types import interrupt
 
-from app.requirements.agent.steps.step1_requirements import classify
-from app.requirements.agent.steps.step3_specifications import check_specs
-from app.requirements.agent.steps.step4_diagram import check_relationships
 from app.requirements.contracts.request import (
     DeploymentPreferences,
     FeedbackEdit,
     ResourceAnswer,
 )
 from app.requirements.contracts.state import AgentState
+from app.requirements.modeling.refinement import classify
+from app.requirements.modeling.relationships import check_relationships
+from app.requirements.modeling.specifications import check_specs
 
 
-def apply_feedback_upto(state: dict, feedback: str, up_to: str):
+def apply_feedback_upto(
+    state: dict, feedback: str | FeedbackEdit, up_to: str
+):
     """app.requirements.feedback.apply_feedback_upto 로의 지연 위임.
 
     app.feedback가 app.requirements.agent.* 를 임포트하므로 모듈 상단에서 직접 임포트하면 순환 참조가 된다
@@ -80,7 +82,7 @@ def _empty(answer) -> bool:
     return not str(answer or "").strip()
 
 
-def _has_blocking_resource_question(state: dict) -> bool:
+def _has_blocking_resource_question(state: AgentState) -> bool:
     """Return whether a resource question must be answered before advancing.
 
     ``suggested`` questions improve a later recommendation but are not required to
@@ -183,7 +185,7 @@ def gate_use_cases(state: AgentState) -> dict:
     if _empty(answer):
         return {"gate_route": "advance"}
     st = dict(state)
-    apply_feedback_upto(st, answer, up_to="coverage")
+    apply_feedback_upto(st, cast(str | FeedbackEdit, answer), up_to="coverage")
     return {
         **_pick(st, (
             "actors", "use_cases", "constraint_applicability", "coverage", "traceability"
@@ -204,7 +206,7 @@ def gate_specs(state: AgentState) -> dict:
     if _empty(answer):
         return {"gate_route": "advance"}
     st = dict(state)
-    apply_feedback_upto(st, answer, up_to="specs")
+    apply_feedback_upto(st, cast(str | FeedbackEdit, answer), up_to="specs")
     st.update(check_specs(cast(AgentState, st)))  # spec_report 갱신
     upd = _pick(st, (
         "actors", "use_cases", "constraint_applicability", "coverage", "traceability",
@@ -222,7 +224,7 @@ def gate_relationships(state: AgentState) -> dict:
     if _empty(answer):
         return {"gate_route": "advance"}
     st = dict(state)
-    apply_feedback_upto(st, answer, up_to="diagram")
+    apply_feedback_upto(st, cast(str | FeedbackEdit, answer), up_to="diagram")
     st.update(check_specs(cast(AgentState, st)))          # 상위 stage 편집 시 명세도 바뀔 수 있어 갱신
     st.update(check_relationships(cast(AgentState, st)))  # relationship_report 갱신
     upd = _pick(st, (

@@ -183,15 +183,22 @@ _REQUIREMENTS = [
 ]
 
 
-#: 검증자가 받는 명세의 칸들. `step3._REVIEWED_FIELDS`와 같아야 한다.
-_REVIEWED_FIELDS = ("trigger", "preconditions", "main_scenario", "extensions",
-                    "success_guarantee", "minimal_guarantee")
+#: 검증자가 받는 명세의 공개 필드 계약.
+SPECIFICATION_REVIEW_FIELDS = (
+    "trigger",
+    "preconditions",
+    "main_scenario",
+    "extensions",
+    "success_guarantee",
+    "minimal_guarantee",
+)
 
 
-def _spec_payload(spec: dict) -> dict:
+def specification_review_payload(spec: dict) -> dict:
     """검증자가 받는 모양.
 
-    ⚠ `step3.spec_review_payload`를 **부르지 않고** 같은 모양을 여기서 조립한다. 그 모듈을
+    ⚠ `modeling.specifications.spec_review_payload`를 **부르지 않고** 같은 모양을 여기서
+    조립한다. 그 모듈을
     import하면 설정·LLM 스택이 딸려 와, 이 파일이 **자격증명 없이 도는 성질**을 잃는다
     (`SEEDED_SEMANTIC`이 모듈 로드 시 조립되기 때문이다). 그건 CI 게이트의 전제다.
 
@@ -199,7 +206,7 @@ def _spec_payload(spec: dict) -> dict:
     (`tests/test_evaluation.py::test_the_seeded_payload_matches_what_the_pipeline_sends`).
     눈금이 파이프라인과 다른 것을 보여 주면 그 수치는 파이프라인에 대한 말이 아니다.
     """
-    payload = {k: spec[k] for k in _REVIEWED_FIELDS}
+    payload = {key: spec[key] for key in SPECIFICATION_REVIEW_FIELDS}
     if spec.get("name"):
         payload["use_case_name"] = spec["name"]
     payload["requirements_it_must_cover"] = _REQUIREMENTS
@@ -207,7 +214,12 @@ def _spec_payload(spec: dict) -> dict:
 
 
 def _spec_case(rule_id: str, seeded: str, spec: dict) -> SeededSemantic:
-    return SeededSemantic(rule_id, rules.WRITE_SPECIFICATIONS, seeded, _spec_payload(spec))
+    return SeededSemantic(
+        rule_id,
+        rules.WRITE_SPECIFICATIONS,
+        seeded,
+        specification_review_payload(spec),
+    )
 
 
 def _broken_remerge() -> dict:
@@ -378,7 +390,7 @@ SEEDED_SEMANTIC: tuple[SeededSemantic, ...] = (
 def clean_artifacts() -> dict[str, dict]:
     """단계별 대조군(결함 없음). 오탐률을 재는 자리다."""
     return {
-        rules.WRITE_SPECIFICATIONS: _spec_payload(CLEAN),
+        rules.WRITE_SPECIFICATIONS: specification_review_payload(CLEAN),
         rules.DRAW_DIAGRAM: copy.deepcopy(CLEAN_RELATIONSHIPS),
         rules.MODEL_USE_CASES: copy.deepcopy(CLEAN_MODEL),
     }

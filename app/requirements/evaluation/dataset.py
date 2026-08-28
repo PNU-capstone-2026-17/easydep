@@ -78,7 +78,7 @@ def build(rule_id: str, run_dirs: list[str], per_domain: int = 5) -> dict:
 
     **모델 판정을 넣지 않는다.** 넣으면 라벨이 그 답의 함수가 된다.
     """
-    from app.requirements.agent.steps.step3_specifications import (
+    from app.requirements.modeling.specifications import (
         requirement_view,
         spec_review_payload,
     )

@@ -1,9 +1,12 @@
-"""Focused contracts for bounded Step 4 relationship generation."""
+"""STEP 4 관계 선택과 결정론적 PlantUML 공개 계약을 검증한다."""
 from __future__ import annotations
+
+import re
 
 import pytest
 
-from app.requirements.agent.steps import step4_diagram as s4
+from app.requirements.modeling import diagram as diagram_service
+from app.requirements.modeling import relationships as s4
 from app.requirements.schemas import (
     ExistingIncludeModel,
     ExistingIncludeSelection,
@@ -81,15 +84,34 @@ def _shared_state() -> dict:
     }
 
 
-def test_include_is_identified_once_from_exact_shared_step_coverage(monkeypatch):
-    state = _shared_state()
-    candidate = s4._include_candidates(
-        state,
-        state["use_cases"],
-        {item["use_case_id"]: item for item in state["use_case_specs"]},
-    )[0]
+def _shared_candidate() -> dict:
+    """공개 selection 계약에 주입하는 근거 제한 include candidate다."""
 
-    def decide(schema, messages):
+    return {
+        "candidate_id": "shared-validation",
+        "requirement_id": "FR-SHARED",
+        "participating_use_case_ids": ["UC-1", "UC-2"],
+        "step_refs": [
+            {
+                "use_case_id": "UC-1",
+                "step_ref": "main:2",
+                "sentence": "System validates enrollment eligibility.",
+            },
+            {
+                "use_case_id": "UC-2",
+                "step_ref": "main:4",
+                "sentence": "System validates enrollment eligibility for the replacement.",
+            },
+        ],
+        "derived_use_case_id": "UC_INC_SHARED",
+    }
+
+
+def test_public_selection_materializes_one_include_from_exact_shared_step_coverage():
+    state = _shared_state()
+    candidate = _shared_candidate()
+
+    def decide(_schema, _messages):
         return RelationshipModel(
             includes=[
                 IncludeSelection(
@@ -100,18 +122,25 @@ def test_include_is_identified_once_from_exact_shared_step_coverage(monkeypatch)
             ]
         )
 
-    monkeypatch.setattr(s4, "invoke_structured", decide)
-    rel = s4.identify_relationships(state)["relationships"]
+    includes, extends, derived, dropped = s4.select_relationship_parts(
+        state,
+        state["use_cases"],
+        {item["use_case_id"]: item for item in state["use_case_specs"]},
+        [candidate],
+        [],
+        "",
+        proposal_call=decide,
+    )
 
-    assert len(rel["includes"]) == 2
-    assert len(rel["derived_use_cases"]) == 1
-    assert {item["base_use_case_id"] for item in rel["includes"]} == {"UC-1", "UC-2"}
+    assert len(includes) == 2
+    assert len(derived) == 1
+    assert {item["base_use_case_id"] for item in includes} == {"UC-1", "UC-2"}
     assert {ref["step_ref"] for ref in candidate["step_refs"]} == {
         "main:2",
         "main:4",
     }
-    assert rel["derived_use_cases"][0]["use_case_id"].startswith("UC_INC_")
-    assert "candidates" not in rel and "candidate_decisions" not in rel
+    assert derived[0]["use_case_id"] == "UC_INC_SHARED"
+    assert extends == [] and dropped == []
 
 
 def test_same_words_without_shared_covered_fr_do_not_form_include_candidate(monkeypatch):
@@ -138,7 +167,7 @@ def test_same_words_without_shared_covered_fr_do_not_form_include_candidate(monk
     assert rel["derived_use_cases"] == []
 
 
-def test_existing_use_case_can_be_included_from_different_requirement_steps(monkeypatch):
+def test_existing_use_case_can_be_included_from_different_requirement_steps():
     state = {
         "actors": _actors(),
         "classified": [
@@ -184,11 +213,24 @@ def test_existing_use_case_can_be_included_from_different_requirement_steps(monk
             ),
         ],
     }
-    options = s4._existing_include_options(
-        state,
-        state["use_cases"],
-        {item["use_case_id"]: item for item in state["use_case_specs"]},
-    )
+    options = [{
+        "included_use_case_id": "UC-VIEW",
+        "name": "Inspect status",
+        "base_step_options": [
+            {
+                "use_case_id": "UC-SUBMIT",
+                "step_ref": "main:2",
+                "sentence": "Member inspects the published status before submitting.",
+                "requirement_ids": ["FR-SUBMIT"],
+            },
+            {
+                "use_case_id": "UC-REPORT",
+                "step_ref": "main:3",
+                "sentence": "Member inspects the published status before opening the report.",
+                "requirement_ids": ["FR-REPORT"],
+            },
+        ],
+    }]
     assert [(item["included_use_case_id"], item["name"]) for item in options] == [
         ("UC-VIEW", "Inspect status")
     ]
@@ -197,10 +239,8 @@ def test_existing_use_case_can_be_included_from_different_requirement_steps(monk
         for item in options[0]["base_step_options"]
     } == {("UC-SUBMIT", "main:2"), ("UC-REPORT", "main:3")}
 
-    monkeypatch.setattr(
-        s4,
-        "invoke_structured",
-        lambda *_: ExistingIncludeModel(
+    def decide(_schema, _messages):
+        return ExistingIncludeModel(
             existing_includes=[
                 ExistingIncludeSelection(
                     included_use_case_id="UC-VIEW",
@@ -210,19 +250,26 @@ def test_existing_use_case_can_be_included_from_different_requirement_steps(monk
                     ],
                 )
             ]
-        ),
-    )
+        )
 
-    relationships = s4.identify_relationships(state)["relationships"]
+    includes, _extends, derived, dropped = s4.select_relationship_parts(
+        state,
+        state["use_cases"],
+        {item["use_case_id"]: item for item in state["use_case_specs"]},
+        [],
+        options,
+        "",
+        proposal_call=decide,
+    )
 
     assert {
         (item["base_use_case_id"], item["included_use_case_id"])
-        for item in relationships["includes"]
+        for item in includes
     } == {("UC-SUBMIT", "UC-VIEW"), ("UC-REPORT", "UC-VIEW")}
-    assert relationships["derived_use_cases"] == []
+    assert derived == [] and dropped == []
     assert {
         ref["requirement_id"]
-        for ref in relationships["includes"][0]["requirement_refs"]
+        for ref in includes[0]["requirement_refs"]
     } == {"FR-SUBMIT", "FR-REPORT"}
 
 
@@ -252,26 +299,34 @@ def test_existing_include_rejects_a_base_step_outside_the_accepted_options():
             ],
         }
     ]
-    model = ExistingIncludeModel(
-        existing_includes=[
-            ExistingIncludeSelection(
-                included_use_case_id="UC-A",
-                base_step_refs=[
-                    IncludeBaseStepRef(use_case_id="UC-B", step_ref="main:99"),
-                    IncludeBaseStepRef(use_case_id="UC-C", step_ref="main:1"),
-                ],
-            )
-        ]
-    )
+    def decide(_schema, _messages):
+        return ExistingIncludeModel(
+            existing_includes=[
+                ExistingIncludeSelection(
+                    included_use_case_id="UC-A",
+                    base_step_refs=[
+                        IncludeBaseStepRef(use_case_id="UC-B", step_ref="main:99"),
+                        IncludeBaseStepRef(use_case_id="UC-C", step_ref="main:1"),
+                    ],
+                )
+            ]
+        )
 
-    includes, dropped = s4._materialize_existing_includes(model, options, use_cases)
+    includes, _extends, _derived, dropped = s4.select_relationship_parts(
+        {},
+        use_cases,
+        {"UC-A": {"main_scenario": []}},
+        [],
+        options,
+        "",
+        proposal_call=decide,
+    )
 
     assert includes == []
     assert any("not supplied" in item for item in dropped)
 
 
 def test_existing_include_uses_a_focused_call_separate_from_derived_candidates(
-    monkeypatch,
 ):
     state = {
         "actors": _actors(),
@@ -302,55 +357,40 @@ def test_existing_include_uses_a_focused_call_separate_from_derived_candidates(
         schemas.append(schema)
         return ExistingIncludeModel() if schema is ExistingIncludeModel else RelationshipModel()
 
-    monkeypatch.setattr(s4, "invoke_structured", decide)
-
-    relationships = s4.identify_relationships(state)["relationships"]
+    relationships = s4.identify_relationships(
+        state, proposal_call=decide
+    )["relationships"]
 
     assert schemas == [RelationshipModel, ExistingIncludeModel]
     assert relationships["includes"] == []
 
 
-def test_semantic_include_rejection_does_not_create_a_diagram_node(monkeypatch):
-    def reject(schema, messages):
-        candidate = s4._include_candidates(
-            _shared_state(),
-            _shared_state()["use_cases"],
-            {item["use_case_id"]: item for item in _shared_state()["use_case_specs"]},
-        )[0]
+def test_public_selection_rejection_does_not_create_a_diagram_node():
+    candidate = _shared_candidate()
+
+    def reject(_schema, _messages):
         return RelationshipModel(
             includes=[
                 IncludeSelection(candidate_id=candidate["candidate_id"], decision="reject")
             ]
         )
 
-    monkeypatch.setattr(s4, "invoke_structured", reject)
-    rel = s4.identify_relationships(_shared_state())["relationships"]
-
-    assert rel["includes"] == []
-    assert rel["derived_use_cases"] == []
-    assert "candidate_decisions" not in rel
-
-
-def test_materialized_relationships_are_independently_reviewed(monkeypatch):
     state = _shared_state()
-    candidate = s4._include_candidates(
+    includes, _extends, derived, dropped = s4.select_relationship_parts(
         state,
         state["use_cases"],
         {item["use_case_id"]: item for item in state["use_case_specs"]},
-    )[0]
-    monkeypatch.setattr(
-        s4,
-        "invoke_structured",
-        lambda *_: RelationshipModel(
-            includes=[
-                IncludeSelection(
-                    candidate_id=candidate["candidate_id"],
-                    decision="approve",
-                    included_use_case_name="Validate enrollment eligibility",
-                )
-            ]
-        ),
+        [candidate],
+        [],
+        "",
+        proposal_call=reject,
     )
+
+    assert includes == [] and derived == [] and dropped == []
+
+
+def test_materialized_relationships_are_independently_reviewed():
+    state = _shared_state()
     reviewed = {}
 
     def review(stage, artifact, **kwargs):
@@ -361,9 +401,11 @@ def test_materialized_relationships_are_independently_reviewed(monkeypatch):
             unexamined=("rel.generalization-keeps-meaning",),
         )
 
-    monkeypatch.setattr(s4.validator, "review", review)
-
-    rel = s4.identify_relationships(state)["relationships"]
+    rel = s4.identify_relationships(
+        state,
+        proposal_call=lambda _schema, _messages: RelationshipModel(),
+        review_call=review,
+    )["relationships"]
 
     assert reviewed["stage"] == s4.rules.DRAW_DIAGRAM
     assert reviewed["confirm_violations"] is True
@@ -377,24 +419,8 @@ def test_materialized_relationships_are_independently_reviewed(monkeypatch):
     assert rel["repair_stopped"] == "unresolved"
 
 
-def test_confirmed_relationship_defect_gets_one_bounded_selection_repair(monkeypatch):
+def test_confirmed_relationship_defect_gets_one_bounded_selection_repair():
     state = _shared_state()
-    candidate = s4._include_candidates(
-        state,
-        state["use_cases"],
-        {item["use_case_id"]: item for item in state["use_case_specs"]},
-    )[0]
-    selections = iter([
-        RelationshipModel(includes=[IncludeSelection(
-            candidate_id=candidate["candidate_id"],
-            decision="approve",
-            included_use_case_name="Validate enrollment eligibility",
-        )]),
-        RelationshipModel(includes=[IncludeSelection(
-            candidate_id=candidate["candidate_id"], decision="reject",
-        )]),
-    ])
-    monkeypatch.setattr(s4, "invoke_structured", lambda *_args, **_kwargs: next(selections))
     reviews = iter([
         s4.validator.Review(
             findings=["[rel] Invalid include [rel.include-is-the-default-relationship · p.81]"],
@@ -402,15 +428,24 @@ def test_confirmed_relationship_defect_gets_one_bounded_selection_repair(monkeyp
         ),
         s4.validator.Review(status=s4.validator.OK),
     ])
-    monkeypatch.setattr(s4.validator, "review", lambda *_args, **_kwargs: next(reviews))
+    calls = {"n": 0}
 
-    relationships = s4.identify_relationships(state)["relationships"]
+    def propose(_schema, _messages):
+        calls["n"] += 1
+        return RelationshipModel()
+
+    relationships = s4.identify_relationships(
+        state,
+        proposal_call=propose,
+        review_call=lambda *_args, **_kwargs: next(reviews),
+    )["relationships"]
 
     assert relationships["includes"] == []
     assert relationships["derived_use_cases"] == []
     assert relationships["relationship_issues"] == []
     assert relationships["repair_iters"] == 1
     assert relationships["repair_stopped"] == "clean"
+    assert calls["n"] == 2
 
 
 def test_extend_selection_is_bounded_to_existing_ids_and_exact_base_step(monkeypatch):
@@ -528,18 +563,17 @@ def test_renderer_preserves_input_order_and_previous_extend_notation():
         },
     }
 
-    diagram = s4.render_diagram(state)["diagram"]
+    diagram = diagram_service.render_diagram(state)["diagram"]
 
-    declarations = [diagram.index(f'as {s4._san(identifier)}') for identifier in ("UC-10", "UC-2", "UC-1")]
+    declarations = [diagram.index(f'usecase "{name}') for name in ("Tenth", "Second", "First")]
     assert declarations == sorted(declarations)
     assert 'Second\\n-- extension points --\\nafter schedule presented' in diagram
-    assert (
-        f"{s4._san('UC-2')} <.. {s4._san('UC-1')} : "
-        "<<extend>>\\n[while viewing the schedule]"
-    ) in diagram
+    second_alias = re.search(r'usecase "Second.* as (\S+)', diagram).group(1)
+    first_alias = re.search(r'usecase "First.* as (\S+)', diagram).group(1)
+    assert f"{second_alias} <.. {first_alias} : <<extend>>\\n[while viewing the schedule]" in diagram
 
 
-def test_grounded_extend_condition_can_be_wrapped_instead_of_rejected():
+def test_grounded_extend_condition_is_wrapped_by_the_public_renderer():
     condition = (
         "registration is rejected because the offering is full and its waitlist is enabled"
     )
@@ -554,7 +588,21 @@ def test_grounded_extend_condition_can_be_wrapped_instead_of_rejected():
 
     assert len(condition) > 60
     assert selection.condition == condition
-    assert "\\n" in s4._extend_label({"condition": selection.condition})
+    rendered = diagram_service.render_diagram({
+        "actors": [],
+        "use_cases": [
+            _use_case("UC-register", "Register"),
+            _use_case("UC-waitlist", "Waitlist"),
+        ],
+        "relationships": {
+            "extends": [{
+                "base_use_case_id": "UC-register",
+                "extending_use_case_id": "UC-waitlist",
+                "condition": selection.condition,
+            }]
+        },
+    })["diagram"]
+    assert "registration is rejected because\\nthe offering is full and its\\nwaitlist is enabled" in rendered
 
 
 def test_unaccepted_specs_do_not_reach_the_model(monkeypatch):
@@ -571,18 +619,49 @@ def test_unaccepted_specs_do_not_reach_the_model(monkeypatch):
 
 
 def test_aliases_are_collision_proof_and_empty_projection_is_complete():
-    assert s4._san("actor-one") != s4._san("actor one")
+    collision_diagram = diagram_service.render_diagram({
+        "actors": [
+            {"name": "actor-one", "description": "a"},
+            {"name": "actor one", "description": "b"},
+        ],
+        "use_cases": [_use_case("UC-1", "Compare", actor="actor-one")],
+        "relationships": {},
+    })["diagram"]
+    aliases = re.findall(r'actor "actor(?:-| )one" as (\S+)', collision_diagram)
+    assert len(aliases) == len(set(aliases)) == 2
     rel = s4.identify_relationships({"actors": [], "use_cases": []})["relationships"]
 
     assert all(not value for value in rel.values())
-    assert s4.render_diagram(
+    assert diagram_service.render_diagram(
         {"actors": [], "use_cases": [], "relationships": rel}
     )["diagram"] == "@startuml\n@enduml"
 
 
 def test_relationship_text_cleanup_removes_invisible_format_characters():
-    assert s4._clean_text("after validation\u200b\u2060  completes") == "after validation completes"
+    rendered = diagram_service.render_diagram({
+        "actors": [],
+        "use_cases": [_use_case("UC-1", "after validation\u200b\u2060  completes")],
+        "relationships": {},
+    })["diagram"]
+    assert 'usecase "after validation completes"' in rendered
 
 
 def test_derived_use_case_name_is_rendered_as_plain_words():
-    assert s4._humanize_name("ValidateEnrollmentEligibility") == "Validate Enrollment Eligibility"
+    candidate = _shared_candidate()
+    state = _shared_state()
+    _includes, _extends, derived, _dropped = s4.select_relationship_parts(
+        state,
+        state["use_cases"],
+        {item["use_case_id"]: item for item in state["use_case_specs"]},
+        [candidate],
+        [],
+        "",
+        proposal_call=lambda _schema, _messages: RelationshipModel(includes=[
+            IncludeSelection(
+                candidate_id=candidate["candidate_id"],
+                decision="approve",
+                included_use_case_name="ValidateEnrollmentEligibility",
+            )
+        ]),
+    )
+    assert derived[0]["name"] == "Validate Enrollment Eligibility"

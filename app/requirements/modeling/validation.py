@@ -31,9 +31,9 @@ from dataclasses import dataclass, field
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
-from app.requirements.agent import grounding
 from app.requirements.config import settings
 from app.requirements.knowledge import rules
+from app.requirements.modeling import grounding
 from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import Critique, RuleVerdict
@@ -60,7 +60,11 @@ class Review:
     unexamined: tuple[str, ...] = ()
 
 
-def _ask(stage: str, artifact: dict, only: str | Sequence[str] | None = None) -> Critique:
+def _ask(
+    stage: str,
+    artifact: dict[str, object],
+    only: str | Sequence[str] | None = None,
+) -> Critique:
     """검증자에게 한 번 묻는다. `only`면 그 규칙 하나만 묻는다."""
     return invoke_structured(
         Critique,
@@ -75,7 +79,7 @@ def _ask(stage: str, artifact: dict, only: str | Sequence[str] | None = None) ->
 
 def _collect_ballots(
     stage: str,
-    artifact: dict,
+    artifact: dict[str, object],
     *,
     source: str,
     subject: str | None,
@@ -151,7 +155,7 @@ def _tally(
 
 def review(
     stage: str,
-    artifact: dict,
+    artifact: dict[str, object],
     *,
     prefix: str,
     source: str,

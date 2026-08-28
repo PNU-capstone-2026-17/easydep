@@ -33,25 +33,25 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from app.requirements.agent.steps.step1_requirements import (
+from app.requirements.common.state_contract import StateContract, state_contract_of
+from app.requirements.modeling.diagram import render_diagram
+from app.requirements.modeling.refinement import (
     clarify,
     classify,
     expand_requirements,
     intake,
 )
-from app.requirements.agent.steps.step2_usecases import (
+from app.requirements.modeling.relationships import (
+    check_relationships,
+    identify_relationships,
+)
+from app.requirements.modeling.specifications import check_specs, generate_specs
+from app.requirements.modeling.use_cases import (
     check_coverage,
     identify_actors,
     identify_use_cases,
     review_model,
 )
-from app.requirements.agent.steps.step3_specifications import check_specs, generate_specs
-from app.requirements.agent.steps.step4_diagram import (
-    check_relationships,
-    identify_relationships,
-    render_diagram,
-)
-from app.requirements.common.state_contract import StateContract, state_contract_of
 from app.requirements.resources.cloud_inputs import analyze_cloud_inputs
 from app.requirements.resources.service import build_resource_spec
 

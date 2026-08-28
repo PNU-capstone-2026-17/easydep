@@ -49,9 +49,7 @@ def scripted_llm(monkeypatch):
         def fake(schema, messages):
             return next(seq)
 
-        monkeypatch.setattr(
-            "app.requirements.agent.steps.step1_requirements.invoke_structured", fake
-        )
+        monkeypatch.setattr("app.requirements.modeling.refinement.invoke_structured", fake)
 
     return _install
 
@@ -65,10 +63,8 @@ def fake_bert(monkeypatch):
 
     def _install(fn):
         monkeypatch.setattr(
-            "app.requirements.agent.steps.step1_requirements.bert_available", lambda: True
+            "app.requirements.modeling.refinement.bert_available", lambda: True
         )
-        monkeypatch.setattr(
-            "app.requirements.agent.steps.step1_requirements.classify_bert", fn
-        )
+        monkeypatch.setattr("app.requirements.modeling.refinement.classify_bert", fn)
 
     return _install

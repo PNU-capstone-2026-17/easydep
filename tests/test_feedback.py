@@ -5,8 +5,6 @@
   3. specs local 재생성이 형제 spec을 보존.
   4. 구조화 편집(FeedbackEdit)이 분류 LLM을 건너뛴다 — 자연어 경로는 그대로.
 """
-import json
-
 import pytest
 
 from app.requirements import feedback as fb
@@ -164,15 +162,26 @@ def test_apply_feedback_upto_clamps_downstream_stage(monkeypatch):
 # ---------------------------------------------------------------------------
 # 3. specs local 재생성 — 형제 보존
 # ---------------------------------------------------------------------------
-def test_generate_specs_local_target_preserves_siblings(monkeypatch):
-    from app.requirements.agent.steps import step3_specifications as s3
+def test_generate_specs_local_target_preserves_siblings():
+    from app.requirements.modeling import specifications as s3
+    from app.requirements.schemas import MainScenarioStep, UseCaseSpec
 
     # UC2만 재생성, UC1은 기존 유지.
-    def fake_spec_for(uc, by_id, actors, feedback=""):
-        return {"use_case_id": uc["id"], "name": uc["name"], "main_scenario": [],
-                "extensions": [], "issues": [], "repair_iters": 0, "trigger": f"regen:{feedback}"}
+    calls = 0
 
-    monkeypatch.setattr(s3, "_spec_for", fake_spec_for)
+    def propose(_schema, _messages):
+        nonlocal calls
+        calls += 1
+        return UseCaseSpec(
+            preconditions=["The user is ready."],
+            trigger="regenerated",
+            main_scenario=[MainScenarioStep(
+                step_number=1,
+                sentence="User acts",
+                covered_req_ids=["R1"],
+            )],
+            success_guarantee=["Done"],
+        )
     state = {
         "classified": [{"id": "R1", "text": "x", "type": "FR"}],
         "use_cases": [{"id": "UC1", "name": "A", "primary_actor": "U", "requirement_ids": ["R1"], "nfr_ids": []},
@@ -180,11 +189,18 @@ def test_generate_specs_local_target_preserves_siblings(monkeypatch):
         "use_case_specs": [{"use_case_id": "UC1", "name": "A", "trigger": "OLD", "issues": []},
                            {"use_case_id": "UC2", "name": "B", "trigger": "OLD", "issues": []}],
     }
-    out = s3.generate_specs(state, feedback="시나리오 보강", target_ids=["UC2"])
+    out = s3.generate_specs(
+        state,
+        feedback="시나리오 보강",
+        target_ids=["UC2"],
+        proposal_call=propose,
+        review_call=lambda *_args, **_kwargs: s3.validator.Review(),
+    )
     specs = {s["use_case_id"]: s for s in out["use_case_specs"]}
 
     assert specs["UC1"]["trigger"] == "OLD"                # 형제 보존
-    assert specs["UC2"]["trigger"] == "regen:시나리오 보강"   # 대상만 재생성
+    assert specs["UC2"]["trigger"] == "regenerated"       # 대상만 재생성
+    assert calls == 1
 
 
 # ---------------------------------------------------------------------------

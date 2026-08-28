@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 
 from app.requirements.config import settings
 from app.requirements.knowledge import rules
+from app.requirements.modeling.feedback import feedback_for  # noqa: F401 - public facade
 from app.requirements.resources import cloud_contract
 from app.requirements.runtime import telemetry
 
@@ -247,18 +248,6 @@ class Decision:
     escalated: bool = False
     #: 이 판단의 근거가 된 규칙 id들.
     rule_ids: tuple[str, ...] = field(default_factory=tuple)
-
-
-def feedback_for(state: dict, key: str, given: str = "") -> str:
-    """그 단계가 쓸 지시. 인자로 받은 것이 있으면 그것이 먼저다.
-
-    되돌리기는 그래프 엣지로 일어나므로 인자를 넘길 자리가 없다 — 그래서 감독자가
-    `stage_feedback`에 써 두고 단계가 여기서 읽는다. 사람이 준 피드백(인자)이 있으면
-    그쪽을 쓴다: 기계가 붙인 지시가 사람 지시를 덮어써서는 안 된다.
-    """
-    if given:
-        return given
-    return (state.get("stage_feedback") or {}).get(key, "")
 
 
 def _issues_by_owner(state: dict) -> dict[str, list[str]]:

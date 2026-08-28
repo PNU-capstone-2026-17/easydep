@@ -20,9 +20,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.requirements import prompts
 from app.requirements.agent.baseline import build_baseline_graph
 from app.requirements.agent.graph import build_graph
-from app.requirements.agent.steps.step2_usecases import check_coverage
-from app.requirements.agent.steps.step3_specifications import _validate_spec
 from app.requirements.config import settings
+from app.requirements.modeling.specifications import validate_specification
+from app.requirements.modeling.use_cases import check_coverage
 from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import CoverageJudgment
@@ -177,7 +177,10 @@ def score_run(state: dict, semantic: bool = False) -> dict:
 
     coverage = check_coverage(state)["coverage"]
     # 명세 정적 검증을 양쪽에 fresh 적용(우리 파이프라인이 저장한 issues에 의존하지 않음 → 공정).
-    issues_by_uc = {s.get("use_case_id", f"UC{i}"): _validate_spec(s) for i, s in enumerate(specs, 1)}
+    issues_by_uc = {
+        spec.get("use_case_id", f"UC{index}"): validate_specification(spec)
+        for index, spec in enumerate(specs, 1)
+    }
     steps = [len(s.get("main_scenario", [])) for s in specs]
     rel_score = score_relationships(rel, actors, use_cases)
     compound = compound_fr_issues(state.get("classified") or [])

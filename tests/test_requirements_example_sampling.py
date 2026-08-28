@@ -1,4 +1,4 @@
-from app.requirements.legacy.auto_clarify import (
+from app.requirements.modeling.refinement_prompts import (
     extract_examples_from_xlsx,
     refine_requirements_prompt,
 )

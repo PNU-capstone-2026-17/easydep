@@ -37,11 +37,11 @@ from concurrent.futures import ThreadPoolExecutor
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
-from app.requirements.agent import validator
 from app.requirements.config import settings
 from app.requirements.evaluation import seeded
 from app.requirements.evaluation.scorecard import rule_of
 from app.requirements.knowledge import rules
+from app.requirements.modeling import validation as validator
 from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import Critique
@@ -172,7 +172,7 @@ def payloads_from_run(run_dir: str) -> list[tuple[str, dict]]:
     payload는 파이프라인과 **같은 함수**로 조립한다(`step3.spec_review_payload`) — 눈금이
     다른 것을 보여 주면 그 수치는 파이프라인에 대한 말이 아니다.
     """
-    from app.requirements.agent.steps.step3_specifications import (
+    from app.requirements.modeling.specifications import (
         requirement_view,
         spec_review_payload,
     )

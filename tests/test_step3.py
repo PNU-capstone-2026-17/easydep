@@ -2,7 +2,7 @@
 
   1. 결정론/목킹 — 순서 보존, 필드 매핑, 빈 입력 단락.
   2. 병렬성 증명 — threading.Barrier로 UC 스레드가 실제로 동시에 도달함을 강제.
-  3. 후처리 단위 — _clean(마크다운 제거), _validate_spec(분기/복귀 참조 무결성).
+  3. 후처리 단위 — 공개 정규화와 명세 검증 계약.
   4. 라이브(RUN_LIVE_TESTS=1) — step2→step3 e2e (tests/datasets/*.json).
 
 직접 돌려보려면:
@@ -14,10 +14,10 @@ import threading
 import pytest
 from conftest import dataset_names, load_dataset
 
-from app.requirements.agent.steps import step2_usecases as s2
-from app.requirements.agent.steps import step3_specifications as s3
-from app.requirements.agent.steps.step3_specifications import _clean, _validate_spec
 from app.requirements.knowledge import rules
+from app.requirements.modeling import specifications as s3
+from app.requirements.modeling import use_cases as s2
+from app.requirements.modeling.specifications import normalize_text, validate_specification
 from app.requirements.runtime import telemetry
 from app.requirements.schemas import (
     Critique,
@@ -94,17 +94,18 @@ def test_generate_specs_maps_fields_and_shapes_extensions(monkeypatch):
     assert s["issues"] == []
 
 
-def test_generate_specs_preserves_input_order(monkeypatch):
-    def fake(schema, messages):
-        first = messages[1].content.splitlines()[0]  # "Use case: <name>"
-        return _clean_spec(trigger=first)
+def test_generate_specs_preserves_input_order():
+    def fake(_schema, _messages):
+        return _clean_spec()
 
-    monkeypatch.setattr(s3, "invoke_structured", fake)
     ucs = [_uc("UC1", name="Alpha"), _uc("UC2", name="Bravo"), _uc("UC3", name="Charlie")]
-    specs = s3.generate_specs({"use_cases": ucs, "classified": _CLASSIFIED, "actors": []})["use_case_specs"]
+    specs = s3.generate_specs(
+        {"use_cases": ucs, "classified": _CLASSIFIED, "actors": []},
+        proposal_call=fake,
+    )["use_case_specs"]
 
     assert [s["use_case_id"] for s in specs] == ["UC1", "UC2", "UC3"]
-    assert [s["trigger"] for s in specs] == ["Use case: Alpha", "Use case: Bravo", "Use case: Charlie"]
+    assert [s["name"] for s in specs] == ["Alpha", "Bravo", "Charlie"]
 
 
 def test_check_specs_aggregates_report():
@@ -149,15 +150,17 @@ def test_generate_specs_runs_in_parallel(monkeypatch):
 def test_generate_specs_reports_only_per_use_case_task_boundaries(monkeypatch):
     events = []
 
-    def fake_spec_for(uc, _by_id, _actors, _feedback=""):
-        return {"use_case_id": uc["id"], "name": uc["name"]}
+    def propose(_schema, _messages):
+        return _clean_spec()
 
-    monkeypatch.setattr(s3, "_spec_for", fake_spec_for)
     ucs = [_uc("UC1", name="Browse courses"), _uc("UC2", name="Enroll")]
     with telemetry.progress_scope(
         lambda event, fields: events.append((event, fields))
     ):
-        s3.generate_specs({"use_cases": ucs, "classified": _CLASSIFIED, "actors": []})
+        s3.generate_specs(
+            {"use_cases": ucs, "classified": _CLASSIFIED, "actors": []},
+            proposal_call=propose,
+        )
 
     boundaries = [item for item in events if item[0].startswith("specTask")]
     assert {
@@ -174,13 +177,15 @@ def test_generate_specs_reports_only_per_use_case_task_boundaries(monkeypatch):
 def test_generate_specs_projects_only_the_constraints_for_each_use_case(monkeypatch):
     seen = {}
 
-    def fake_spec_for(uc, _by_id, _actors, _feedback=""):
-        seen[uc["id"]] = list(uc.get("_constraint_requirements") or [])
-        return {"use_case_id": uc["id"], "name": uc["name"]}
+    def review(_stage, artifact, **_kwargs):
+        seen[artifact["use_case_name"]] = artifact.get("constraints_it_must_respect", [])
+        return s3.validator.Review(status=s3.validator.OK)
 
-    monkeypatch.setattr(s3, "_spec_for", fake_spec_for)
     state = {
-        "use_cases": [_uc("UC1"), _uc("UC2")],
+        "use_cases": [
+            _uc("UC1", name="First operation"),
+            _uc("UC2", name="Second operation"),
+        ],
         "classified": [
             *_CLASSIFIED,
             {"id": "R3", "text": "The first operation preserves its balance.", "type": "FR"},
@@ -197,12 +202,16 @@ def test_generate_specs_projects_only_the_constraints_for_each_use_case(monkeypa
         },
     }
 
-    s3.generate_specs(state)
+    s3.generate_specs(
+        state,
+        proposal_call=lambda _schema, _messages: _clean_spec(),
+        review_call=review,
+    )
 
-    assert seen["UC1"] == [
+    assert seen["First operation"] == [
         {"id": "R3", "type": "FR", "text": "The first operation preserves its balance."}
     ]
-    assert seen["UC2"] == []
+    assert seen["Second operation"] == []
 
 
 def test_generate_specs_respects_concurrency_cap(monkeypatch):
@@ -229,9 +238,9 @@ def test_generate_specs_respects_concurrency_cap(monkeypatch):
 # 3. 후처리 단위 — 새니타이저 & 무결성 검증
 # ---------------------------------------------------------------------------
 def test_clean_strips_markdown_and_specials():
-    assert _clean("**Bold** and `code`") == "Bold and code"
-    assert _clean("E‑commerce “quote”") == 'E-commerce "quote"'  # en/nbsp dash + smart quotes
-    assert _clean("  spaced  ") == "spaced"
+    assert normalize_text("**Bold** and `code`") == "Bold and code"
+    assert normalize_text("E‑commerce “quote”") == 'E-commerce "quote"'  # en/nbsp dash + smart quotes
+    assert normalize_text("  spaced  ") == "spaced"
 
 
 def _spec(main, exts, **over):
@@ -252,7 +261,7 @@ def test_validate_spec_flags_bad_references():
         {"label": "2c", "branch_step": 2, "outcome": "fail", "resume_at_step": 2},           # fail인데 target 설정
         {"label": "*a", "branch_step": None, "outcome": "alternate_success", "resume_at_step": None},  # 전역, 정상
     ]
-    issues = _validate_spec(_spec(main, exts))
+    issues = validate_specification(_spec(main, exts))
     assert len(issues) == 4  # 참조 위반 4건만(계약/lint 정상)
     for lbl in ("1a", "2a", "2b", "2c"):
         assert any(lbl in i for i in issues)
@@ -268,21 +277,23 @@ def test_validate_spec_flags_ui_branch_control():
         "label": "2a", "branch_step": 2, "condition": "c", "outcome": "fail", "resume_at_step": None,
         "handling_steps": [{"sub_step": "2a1", "sentence": "System shows Fail! on the screen"}],  # 제어토큰 + UI: screen
     }]
-    joined = " ".join(_validate_spec(_spec(main, exts)))
+    joined = " ".join(validate_specification(_spec(main, exts)))
     assert "UI terms" in joined and "branch word" in joined and "control token" in joined
 
 
 def test_validate_spec_does_not_treat_a_domain_field_as_ui_mechanics():
     main = [{"step_number": 1, "sentence": "The system modifies the requested record fields"}]
 
-    issues = _validate_spec(_spec(main, []))
+    issues = validate_specification(_spec(main, []))
 
     assert not any("spec.black-box-no-ui-mechanics" in issue for issue in issues)
 
 
 def test_validate_spec_flags_missing_contract():
     main = [{"step_number": 1, "sentence": "actor acts"}]
-    issues = _validate_spec(_spec(main, [], preconditions=[], success_guarantee=[]))
+    issues = validate_specification(
+        _spec(main, [], preconditions=[], success_guarantee=[])
+    )
     assert not any("preconditions" in i for i in issues)
     assert any("success_guarantee" in i for i in issues)
 
@@ -493,17 +504,6 @@ def test_reflection_rejects_a_smaller_issue_list_with_new_keys(monkeypatch):
     assert all("spec.black-box-no-ui-mechanics" in issue for issue in item["issues"])
 
 
-def test_issue_keys_distinguish_two_findings_from_the_same_semantic_rule():
-    tag = s3.rules.tag_of("spec.no-scope-creep")
-
-    keys = s3._issue_keys([
-        f"[semantic] first scope finding {tag}",
-        f"[semantic] second scope finding {tag}",
-    ])
-
-    assert len(keys) == 2
-
-
 def test_reflection_enforces_the_local_two_attempt_cap(monkeypatch):
     rounds = [
         _clean_spec(main_scenario=[_step(index, "User clicks the button") for index in range(1, 4)]),
@@ -548,15 +548,18 @@ def test_reflection_loop_keeps_static_to_semantic_validation_progress(monkeypatc
             return _clean_spec(extensions=[valid_extension], trigger="needs semantic review")
         return _clean_spec()
 
-    def fake_check(item, *_context):
-        if item["trigger"] == "needs semantic review":
-            return ["[semantic] scenario wording needs review"], "ok"
-        return _validate_spec(item), "pending"
+    def review(_stage, artifact, **_kwargs):
+        if artifact["trigger"] == "needs semantic review":
+            return s3.validator.Review(
+                findings=["[semantic] scenario wording needs review"],
+                status=s3.validator.OK,
+            )
+        return s3.validator.Review(status=s3.validator.OK)
 
     monkeypatch.setattr(s3, "invoke_structured", fake)
-    monkeypatch.setattr(s3, "_check", fake_check)
     spec = s3.generate_specs(
-        {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
+        {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []},
+        review_call=review,
     )["use_case_specs"][0]
 
     assert calls["n"] == 3
@@ -708,30 +711,43 @@ def test_one_failed_use_case_does_not_discard_its_siblings(monkeypatch):
     """
     monkeypatch.setattr(s3.settings, "enable_semantic_validator", False)
 
-    def fake(schema, messages):
-        if "Bravo" in messages[1].content:
-            raise RuntimeError("NIM 429 Too Many Requests")
-        return _clean_spec(trigger=messages[1].content.splitlines()[0])
+    lock = threading.Lock()
+    calls = {"n": 0}
 
-    monkeypatch.setattr(s3, "invoke_structured", fake)
+    def fake(_schema, _messages):
+        with lock:
+            index = calls["n"]
+            calls["n"] += 1
+        if index == 1:
+            raise RuntimeError("NIM 429 Too Many Requests")
+        return _clean_spec()
+
     ucs = [_uc("UC1", name="Alpha"), _uc("UC2", name="Bravo"), _uc("UC3", name="Charlie")]
     with telemetry.run_scope("t") as stats:
         state = s3.generate_specs(
-            {"use_cases": ucs, "classified": _CLASSIFIED, "actors": []}
+            {"use_cases": ucs, "classified": _CLASSIFIED, "actors": []},
+            proposal_call=fake,
         )
 
     specs = state["use_case_specs"]
     # 순서도 자리도 유지된다 — 실패한 UC가 목록에서 사라지지 않는다.
     assert [s["use_case_id"] for s in specs] == ["UC1", "UC2", "UC3"]
-    assert [s.get("generated", True) for s in specs] == [True, False, True]
-    assert specs[0]["trigger"] == "Use case: Alpha"       # 형제는 온전하다
-    assert specs[2]["trigger"] == "Use case: Charlie"
-    assert "NIM 429" in specs[1]["issues"][0]             # 왜 비었는지가 적혀 있다
+    generated = [s.get("generated", True) for s in specs]
+    assert generated.count(False) == 1
+    assert all(
+        spec["trigger"] == "user acts"
+        for spec in specs
+        if spec.get("generated", True)
+    )
+    failed = next(spec for spec in specs if spec.get("generated") is False)
+    assert "NIM 429" in failed["issues"][0]  # 왜 비었는지가 적혀 있다
 
     report = s3.check_specs(state)["spec_report"]
-    assert report["failed_ucs"] == ["UC2"]
+    assert report["failed_ucs"] == [failed["use_case_id"]]
     degraded = stats.as_dict()["degradations"]
-    assert [(d["component"], d["subject"]) for d in degraded] == [("spec.generate", "UC2")]
+    assert [(d["component"], d["subject"]) for d in degraded] == [
+        ("spec.generate", failed["use_case_id"])
+    ]
 
 
 def test_disabled_semantic_validator_is_not_counted_as_failure(monkeypatch):

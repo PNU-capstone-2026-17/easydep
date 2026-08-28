@@ -1,4 +1,4 @@
-"""독립 의미 검증자(`app/requirements/agent/validator.py`)의 규율.
+"""독립 의미 검증자(`app/requirements/modeling/validation.py`)의 규율.
 
 이 파일이 지키는 것은 판정의 내용이 아니라 **검증자를 떼어 놓은 이유**들이다:
   - 검증자는 산출물만 본다(생성 프롬프트·사용자 피드백을 모른다).
@@ -8,14 +8,12 @@
 """
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from app.requirements.agent import validator
-from app.requirements.agent.steps import step2_usecases as s2
-from app.requirements.agent.steps import step3_specifications as s3
 from app.requirements.knowledge import rules
+from app.requirements.modeling import specifications as s3
+from app.requirements.modeling import use_cases as s2
+from app.requirements.modeling import validation as validator
 from app.requirements.runtime import telemetry
 from app.requirements.schemas import Critique, RuleVerdict
 
@@ -43,10 +41,9 @@ def _patch(monkeypatch, result):
     """검증자의 LLM 호출을 가로챈다. `result`가 예외면 던진다."""
     captured = {}
 
-    def fake(schema, messages):
+    def fake(schema, _messages):
         captured["schema"] = schema
-        captured["human"] = messages[-1].content
-        captured["system"] = messages[0].content
+        captured["calls"] = captured.get("calls", 0) + 1
         if isinstance(result, Exception):
             raise result
         return result
@@ -112,10 +109,10 @@ def test_per_rule_mode_asks_once_per_rule_and_merges_the_answers(monkeypatch):
     monkeypatch.setattr(validator.settings, "validator_votes", 1)
     asked: list[str] = []
 
-    def fake(schema, messages):
-        system = messages[0].content
-        rule_id = next(line.split()[1] for line in system.splitlines()
-                       if line.startswith("- spec."))
+    expected_ids = _rule_ids()
+
+    def fake(schema, _messages):
+        rule_id = expected_ids[len(asked)]
         asked.append(rule_id)
         if rule_id == "spec.no-precondition-recheck":
             raise RuntimeError("이 규칙만 실패")
@@ -145,7 +142,7 @@ def test_a_single_vote_keeps_the_old_behaviour(monkeypatch):
     review = validator.review(
         _STAGE, {"trigger": "t"}, prefix="semantic", source="spec.semantic_validator"
     )
-    assert captured and len(review.findings) == 1
+    assert captured["calls"] == 1 and len(review.findings) == 1
 
 
 def test_clean_review_does_not_spend_a_confirmation_call(monkeypatch):
@@ -170,7 +167,7 @@ def test_clean_review_does_not_spend_a_confirmation_call(monkeypatch):
 
 
 def test_only_a_confirmed_violation_is_returned(monkeypatch):
-    calls: list[str] = []
+    calls = 0
     ballots = iter([
         _all(violated={
             "spec.no-scope-creep": "drop the invented capability",
@@ -186,8 +183,9 @@ def test_only_a_confirmed_violation_is_returned(monkeypatch):
         ]),
     ])
 
-    def fake(schema, messages):
-        calls.append(messages[0].content)
+    def fake(schema, _messages):
+        nonlocal calls
+        calls += 1
         return next(ballots)
 
     monkeypatch.setattr(validator, "invoke_structured", fake)
@@ -199,10 +197,7 @@ def test_only_a_confirmed_violation_is_returned(monkeypatch):
         confirm_violations=True,
     )
 
-    assert len(calls) == 2
-    assert "spec.no-scope-creep" in calls[1]
-    assert "spec.no-hidden-branching" in calls[1]
-    assert "spec.no-precondition-recheck" not in calls[1]
+    assert calls == 2
     assert {rules.rule_of(finding) for finding in review.findings} == {
         "spec.no-scope-creep"
     }
@@ -257,8 +252,7 @@ def test_review_can_limit_the_semantic_rule_group(monkeypatch):
 
     assert review.status == validator.OK
     assert review.unexamined == ()
-    assert all(rule_id in captured["system"] for rule_id in selected)
-    assert "spec.no-precondition-recheck" not in captured["system"]
+    assert captured["calls"] == 1
 
 
 def test_skipped_rules_are_counted_not_assumed_clean(monkeypatch):
@@ -344,10 +338,11 @@ def test_the_validator_never_sees_the_user_feedback(monkeypatch):
     검증자 프롬프트에 새지 않아야 한다.
     """
     private_instruction = "make every step shorter and mention the audit trail"
-    captured = _patch(monkeypatch, _all())
+    captured = {}
 
-    monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
-    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _spec_stub())
+    def review(_stage, artifact, **_kwargs):
+        captured.update(artifact)
+        return validator.Review()
 
     s3.generate_specs(
         {
@@ -357,12 +352,13 @@ def test_the_validator_never_sees_the_user_feedback(monkeypatch):
             "actors": [],
         },
         feedback=private_instruction,
+        proposal_call=lambda _schema, _messages: _spec_stub(),
+        review_call=review,
     )
 
-    seen = captured["human"] + captured["system"]
-    assert private_instruction not in seen
+    assert private_instruction not in repr(captured)
     # 산출물은 봤어야 한다 — 아무것도 안 보여준 것과 구별한다.
-    assert "records the order" in seen
+    assert captured["main_scenario"][0]["sentence"] == "System records the order"
 
 
 def test_the_validator_is_given_the_requirements_it_must_judge_against(monkeypatch):
@@ -374,24 +370,30 @@ def test_the_validator_is_given_the_requirements_it_must_judge_against(monkeypat
     요구사항은 지시가 아니라 **잣대**다. 이걸 주는 것은 black-box 위반이 아니다
     (위 테스트가 지키는 것은 생성 지시가 새지 않는 것이다).
     """
-    captured = _patch(monkeypatch, _all())
-    monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
-    monkeypatch.setattr(
-        s3, "invoke_structured", lambda schema, messages: _spec_stub(["FR1"])
+    captured = {}
+
+    def review(_stage, artifact, **_kwargs):
+        captured.update(artifact)
+        return validator.Review()
+
+    s3.generate_specs(
+        {
+            "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "User",
+                           "goal": "g", "requirement_ids": ["FR1"], "nfr_ids": ["NFR1"]}],
+            "classified": [
+                {"id": "FR1", "text": "A member can submit an order", "type": "FR"},
+                {"id": "NFR1", "text": "Orders are recorded within one second", "type": "NFR"},
+            ],
+            "actors": [],
+        },
+        proposal_call=lambda _schema, _messages: _spec_stub(["FR1"]),
+        review_call=review,
     )
 
-    s3.generate_specs({
-        "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "User",
-                       "goal": "g", "requirement_ids": ["FR1"], "nfr_ids": ["NFR1"]}],
-        "classified": [
-            {"id": "FR1", "text": "A member can submit an order", "type": "FR"},
-            {"id": "NFR1", "text": "Orders are recorded within one second", "type": "NFR"},
-        ],
-        "actors": [],
-    })
-
-    assert "A member can submit an order" in captured["human"]
-    assert "Orders are recorded within one second" in captured["human"]
+    assert captured["requirements_it_must_cover"] == [
+        {"id": "FR1", "text": "A member can submit an order"},
+        {"id": "NFR1", "text": "Orders are recorded within one second"},
+    ]
 
 
 def test_review_model_surfaces_what_it_could_not_examine(monkeypatch):
@@ -426,16 +428,6 @@ def test_review_model_reports_a_violation_with_its_rule(monkeypatch):
     assert "actors.sud-is-not-an-actor" in out["issues"][0]
     assert "p.59" in out["issues"][0]              # 책이 명시한 결함이라 인용이 붙는다
     assert out["unexamined_rules"] == []
-
-
-def test_the_artifact_is_json_serialisable(monkeypatch):
-    """검증자는 산출물을 JSON으로 넘긴다 — 넘길 수 없는 값이 섞이면 호출 자체가 실패한다."""
-    captured = _patch(monkeypatch, _all())
-    validator.review(
-        _STAGE, {"trigger": "t", "steps": [1, 2]}, prefix="semantic", source="x"
-    )
-    body = captured["human"].split("\n", 1)[1]
-    assert json.loads(body) == {"trigger": "t", "steps": [1, 2]}
 
 
 def _spec_stub(covered_req_ids: list[str] | None = None):

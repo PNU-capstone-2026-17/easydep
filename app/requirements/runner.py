@@ -30,23 +30,23 @@ from app.requirements.agent import supervisor
 # `globals()[노드이름]`으로 찾기 때문이다(이유는 그 함수 docstring). 린터에게는 안 쓰는
 # import로 보이지만 지우면 배치 실행이 죽고, 테스트의 monkeypatch도 여기에 건다.
 # 자동 수정(`ruff --fix`)이 지우지 않도록 명시적으로 막는다.
-from app.requirements.agent.steps.step2_usecases import (  # noqa: F401
+from app.requirements.config import settings
+from app.requirements.contracts.state import AgentState
+from app.requirements.modeling.diagram import render_diagram  # noqa: F401
+from app.requirements.modeling.relationships import (  # noqa: F401
+    check_relationships,
+    identify_relationships,
+)
+from app.requirements.modeling.specifications import (  # noqa: F401
+    check_specs,
+    generate_specs,
+)
+from app.requirements.modeling.use_cases import (  # noqa: F401
     check_coverage,
     identify_actors,
     identify_use_cases,
     review_model,
 )
-from app.requirements.agent.steps.step3_specifications import (  # noqa: F401
-    check_specs,
-    generate_specs,
-)
-from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
-    check_relationships,
-    identify_relationships,
-    render_diagram,
-)
-from app.requirements.config import settings
-from app.requirements.contracts.state import AgentState
 from app.requirements.resources.cloud_inputs import analyze_cloud_inputs  # noqa: F401
 from app.requirements.resources.service import build_resource_spec  # noqa: F401
 from app.requirements.runtime import telemetry

@@ -13,19 +13,17 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.requirements import prompts
 from app.requirements import stage_registry as stages
 from app.requirements.agent import playbook
-from app.requirements.agent.steps.step2_usecases import (
+from app.requirements.config import settings
+from app.requirements.contracts.request import FeedbackEdit
+from app.requirements.contracts.state import AgentState
+from app.requirements.modeling.diagram import render_diagram  # noqa: F401
+from app.requirements.modeling.relationships import identify_relationships
+from app.requirements.modeling.specifications import generate_specs
+from app.requirements.modeling.use_cases import (
     check_coverage,  # noqa: F401 — _STAGE_FN_NAME이 globals()로 찾는다
     identify_actors,
     identify_use_cases,
 )
-from app.requirements.agent.steps.step3_specifications import generate_specs
-from app.requirements.agent.steps.step4_diagram import (
-    identify_relationships,
-    render_diagram,  # noqa: F401 — _STAGE_FN_NAME이 globals()로 찾는다
-)
-from app.requirements.config import settings
-from app.requirements.contracts.request import FeedbackEdit
-from app.requirements.contracts.state import AgentState
 from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import FeedbackIntent

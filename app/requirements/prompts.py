@@ -42,7 +42,7 @@ def _validator_system(
     안 고치면 검증자가 이미 잡힌 것을 다시 지적했다.
 
     4번은 early victory 방어다. "깨끗하다" 한 줄로 끝낼 수 있으면 검증자는 그렇게 한다 —
-    규칙마다 판정을 받으면 무엇을 안 봤는지가 응답에서 드러난다(`agent/validator.py`).
+    규칙마다 판정을 받으면 무엇을 안 봤는지가 응답에서 드러난다(`modeling/validation.py`).
 
     `only`를 주면 **그 규칙 묶음만** 담는다. 6개를 한 번에 판정하게 하면 판정이 흔들린다는
     측정(흔들림 90%, `docs/requirements-agent-improvements.md` §7) 때문에 생긴 갈래다 —
@@ -436,7 +436,7 @@ RELATIONSHIP_VALIDATOR_SYSTEM = _validator_system(
     _rules.DRAW_DIAGRAM, *_VALIDATOR_ROLES[_rules.DRAW_DIAGRAM]
 )
 
-#: 단계 → 검증 프롬프트. `agent/validator.py`가 단계 이름만 알고 프롬프트를 찾도록 한다 —
+#: 단계 → 검증 프롬프트. `modeling/validation.py`가 단계 이름만 알고 프롬프트를 찾도록 한다 —
 #: 검증자가 단계별 상수 이름을 직접 알면 단계를 하나 더 넣을 때 그쪽도 고쳐야 한다.
 _VALIDATOR_SYSTEMS = {
     _rules.MODEL_USE_CASES: MODEL_VALIDATOR_SYSTEM,

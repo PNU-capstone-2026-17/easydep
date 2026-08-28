@@ -1,7 +1,7 @@
-"""Focused STEP 1 expansion, provenance, and BERT-classification tests."""
+"""STEP 1 요구사항 확장·provenance·BERT 분류 공개 계약을 검증한다."""
 import pytest
 
-from app.requirements.agent.steps import step1_requirements as s1
+from app.requirements.modeling import refinement as s1
 from app.requirements.schemas import ClarifyOnlyResult, ExpandedRequirementsResult
 
 
@@ -45,10 +45,11 @@ def test_expand_requirements_preserves_an_existing_requirement_set(monkeypatch):
 
 
 def test_clarify_maps_expanded_items_back_to_the_immutable_raw_source(monkeypatch):
-    seen = {}
+    calls = 0
 
-    def fake_structured(_schema, messages):
-        seen["source_message"] = messages[-1].content
+    def fake_structured(_schema, _messages):
+        nonlocal calls
+        calls += 1
         return ClarifyOnlyResult.model_validate(
             {
                 "requirementDrafts": [
@@ -73,14 +74,14 @@ def test_clarify_maps_expanded_items_back_to_the_immutable_raw_source(monkeypatc
     )
 
     assert raw == ["I want to build a shopping mall service."]
-    assert seen["source_message"].count("RAW1:") == 2
+    assert calls == 1
     assert [item["sourceRefs"] for item in result["requirement_drafts"]] == [
         ["RAW1"],
         ["RAW1"],
     ]
 
 
-def test_source_mapping_assigns_stable_refs_and_reports_missing_sources():
+def test_normalize_refinement_assigns_stable_refs_and_reports_missing_sources():
     result = ClarifyOnlyResult.model_validate(
         {
             "requirementDrafts": [
@@ -91,7 +92,9 @@ def test_source_mapping_assigns_stable_refs_and_reports_missing_sources():
         }
     )
 
-    drafts, issues = s1._source_mapping(result, ["first", "second", "third"])
+    drafts, issues, links = s1.normalize_refinement(
+        result, ["first", "second", "third"]
+    )
 
     assert [(item["ref"], item["sourceRefs"]) for item in drafts] == [
         ("RR1", ["RAW1"]),
@@ -100,6 +103,7 @@ def test_source_mapping_assigns_stable_refs_and_reports_missing_sources():
     ]
     assert any("RAW9" in issue for issue in issues)
     assert any("RAW3" in issue for issue in issues)
+    assert links == []
 
 
 def test_classify_rejects_unclassified_input_when_bert_unavailable(monkeypatch):

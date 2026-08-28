@@ -90,10 +90,10 @@ class Campaign:
     # -- 페이싱 ------------------------------------------------------------
     def measure_pace(self) -> float:
         """호출당 지연을 재고 동시성을 정한다. 재는 값도 로그에 남긴다."""
-        from app.requirements.agent import validator
         from app.requirements.config import settings
         from app.requirements.evaluation import seeded
         from app.requirements.knowledge import rules
+        from app.requirements.modeling import validation as validator
         from app.requirements.runtime import telemetry
 
         settings.spec_concurrency = self.concurrency

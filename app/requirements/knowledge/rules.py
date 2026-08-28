@@ -756,7 +756,7 @@ RULES: tuple[Rule, ...] = (
             "Capping include hints at six is a prompt-size guard, not a limit on how "
             "many includes the model may produce."
         ),
-        citation="app/requirements/agent/steps/step4_diagram.py (_MAX_INCLUDE_HINTS)",
+        citation="app/requirements/modeling/relationships.py (_MAX_INCLUDE_HINTS)",
         evidence="engineering-guard",
         caveat=(
             "순수 공학적 가드다 — 규칙이 아니고 판정 근거로 쓰면 안 된다. 출력 개수를 "

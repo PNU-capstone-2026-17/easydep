@@ -1,3 +1,5 @@
+"""요구사항 정제의 few-shot sampling과 system prompt 조립을 소유한다."""
+
 from app.requirements.legacy.example_sampler import (
     DEFAULT_DATASET,
     format_examples,
@@ -51,7 +53,7 @@ def refine_requirements_prompt(
     abstract_text: str,
     dataset_path: str = DEFAULT_DATASET,
     method: str = "none",
-):
+) -> str:
     """
     데이터셋을 참고하여 추상적 요구사항을 분석하고 JSON 딕셔너리로 반환합니다.
 

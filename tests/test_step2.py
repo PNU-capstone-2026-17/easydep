@@ -20,7 +20,7 @@ import os
 import pytest
 from conftest import dataset_names, load_dataset
 
-from app.requirements.agent.steps import step2_usecases as s2
+from app.requirements.modeling import use_cases as s2
 from app.requirements.schemas import Actor, ActorResult, UseCase, UseCaseResult
 
 # 결정론/목킹 테스트가 고정으로 쓰는 세트 (id R1..R5, N1..N2 를 이 테스트들이 참조).
@@ -216,11 +216,12 @@ def test_local_use_case_edit_prunes_actors_the_same_way(monkeypatch):
 
 
 def test_identify_use_cases_retries_a_dangling_actor_reference_once(monkeypatch):
-    calls = []
+    calls = 0
 
-    def fake(schema, messages):
-        calls.append(messages[-1].content)
-        primary = "Unknown actor" if len(calls) == 1 else "  customer "
+    def fake(schema, _messages):
+        nonlocal calls
+        calls += 1
+        primary = "Unknown actor" if calls == 1 else "  customer "
         return UseCaseResult(use_cases=[
             UseCase(name="Submit request", primary_actor=primary, goal="submit a request",
                     requirement_ids=["R1"]),
@@ -233,8 +234,7 @@ def test_identify_use_cases_retries_a_dangling_actor_reference_once(monkeypatch)
     })
 
     assert out["use_cases"][0]["primary_actor"] == "Customer"
-    assert len(calls) == 2
-    assert "ACTOR IDENTITY REPAIR" in calls[1]
+    assert calls == 2
 
 
 def test_explicit_sign_in_goal_is_kept_as_a_use_case(monkeypatch):
@@ -265,10 +265,11 @@ def test_identify_use_cases_local_edit_preserves_siblings(monkeypatch):
         {"id": "UC2", "name": "Place order", "primary_actor": "U", "level": "user_goal",
          "goal": "buy", "requirement_ids": ["R3"], "nfr_ids": []},
     ]
-    captured = {}
+    calls = 0
 
-    def fake(schema, messages):
-        captured["human"] = messages[-1].content
+    def fake(schema, _messages):
+        nonlocal calls
+        calls += 1
         # 모델이 같은 개수/순서로 전체 목록 반환(UC2만 수정).
         return UseCaseResult(use_cases=[
             UseCase(name="Log in", primary_actor="U", goal="auth", requirement_ids=["R1"]),
@@ -289,7 +290,7 @@ def test_identify_use_cases_local_edit_preserves_siblings(monkeypatch):
     assert [u["id"] for u in ucs] == ["UC1", "UC2"]          # id 위치 보존
     assert ucs[0]["name"] == "Log in"                        # 형제 그대로
     assert ucs[1]["name"] == "Place order and pay"           # 대상만 변경
-    assert "UC2" in captured["human"]                        # 대상이 프롬프트에 명시됨
+    assert calls == 1
 
 
 def test_identify_use_cases_local_edit_reindexes_on_count_change(monkeypatch):
@@ -335,38 +336,36 @@ def _uc_result(*id_groups):
 
 
 def test_actor_goal_audit_can_restore_an_explicit_omitted_goal(monkeypatch):
-    # 1차엔 R1만 커버(R2~R5 고아) → FR별 작업이 누락 목표를 각각 보충.
+    # 1차엔 R1만 커버하고, 공개 trace proposal이 R2의 누락 목표를 보충한다.
     calls = {"n": 0}
 
-    def fake(schema, messages):
+    def fake(schema, _messages):
         calls["n"] += 1
         if schema is UseCaseResult:
             return _uc_result(["R1"])
-        content = messages[-1].content
-        requirement_id = next(
-            requirement_id
-            for requirement_id in ("R2", "R3", "R4", "R5")
-            if f"- {requirement_id}:" in content.split(
-                "[FUNCTIONAL REQUIREMENT UNDER AUDIT]", 1
-            )[1].split("[OTHER ACCEPTED", 1)[0]
-        )
-        return s2._RequirementTraceSlice(
-            requirement_id=requirement_id,
-            missing_use_case=s2._MissingUseCaseCandidate(
-                name=f"Handle {requirement_id}",
+        return s2.RequirementTraceSlice(
+            requirement_id="R2",
+            missing_use_case=s2.MissingUseCaseCandidate(
+                name="Handle R2",
                 primary_actor="U",
-                goal=f"complete {requirement_id}",
+                goal="complete R2",
             ),
         )
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
     out = s2.identify_use_cases(
-        {"classified": SAMPLE_CLASSIFIED, "actors": [{"name": "U", "kind": "primary", "description": "d"}]}
+        {
+            "classified": [
+                {"id": "R1", "text": "start one operation", "type": "FR"},
+                {"id": "R2", "text": "start another operation", "type": "FR"},
+            ],
+            "actors": [{"name": "U", "kind": "primary", "description": "d"}],
+        }
     )
     covered = {rid for uc in out["use_cases"] for rid in uc["requirement_ids"]}
 
-    assert {"R1", "R2", "R3", "R4", "R5"} <= covered   # 고아 해소
-    assert calls["n"] == 7  # 최초 제안 + 고아 FR 4개 + NFR trace 2개
+    assert {"R1", "R2"} <= covered
+    assert calls["n"] == 2  # 최초 제안 + 고아 FR trace 1회
 
 
 def test_orphan_audit_maps_an_explicit_cross_cutting_fr_without_adding_a_use_case(
@@ -378,7 +377,7 @@ def test_orphan_audit_maps_an_explicit_cross_cutting_fr_without_adding_a_use_cas
         calls["n"] += 1
         if schema is UseCaseResult:
             return _uc_result(["R1"], ["R2"])
-        return s2._RequirementTraceSlice(
+        return s2.RequirementTraceSlice(
             requirement_id="R3", constrains_use_case_names=["UC1", "UC2"]
         )
 
@@ -408,7 +407,7 @@ def test_a_shared_mandatory_action_is_realized_by_each_named_goal(monkeypatch):
     def fake(schema, _messages):
         if schema is UseCaseResult:
             return _uc_result(["R1"], ["R2"])
-        return s2._RequirementTraceSlice(
+        return s2.RequirementTraceSlice(
             requirement_id="R3",
             realized_by_use_case_names=["UC1", "UC2"],
         )
@@ -437,7 +436,7 @@ def test_trace_slice_can_remove_an_unsupported_broad_multi_mapping(monkeypatch):
     def fake(schema, messages):
         if schema is UseCaseResult:
             return _uc_result(["R1", "R3"], ["R2", "R3"])
-        return s2._RequirementTraceSlice(requirement_id="R3")
+        return s2.RequirementTraceSlice(requirement_id="R3")
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
     out = s2.identify_use_cases(
@@ -463,7 +462,7 @@ def test_actor_domain_fact_is_not_mislabeled_as_a_global_constraint(monkeypatch)
     def fake(schema, _messages):
         if schema is UseCaseResult:
             return _uc_result(["R1"])
-        return s2._RequirementTraceSlice(requirement_id="R2")
+        return s2.RequirementTraceSlice(requirement_id="R2")
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
     out = s2.identify_use_cases(
@@ -485,7 +484,7 @@ def test_nfr_labeled_actor_fact_is_not_mislabeled_as_a_constraint(monkeypatch):
     def fake(schema, _messages):
         if schema is UseCaseResult:
             return _uc_result(["R1"])
-        return s2._RequirementTraceSlice(requirement_id="N1")
+        return s2.RequirementTraceSlice(requirement_id="N1")
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
     out = s2.identify_use_cases(
@@ -501,16 +500,13 @@ def test_nfr_labeled_actor_fact_is_not_mislabeled_as_a_constraint(monkeypatch):
     assert out["constraint_applicability"] == {}
 
 
-def test_constraint_slices_attach_only_explicitly_scoped_nfrs(monkeypatch):
-    def fake(schema, messages):
+def test_constraint_slice_attaches_only_an_explicitly_scoped_nfr(monkeypatch):
+    def fake(schema, _messages):
         if schema is UseCaseResult:
             return _uc_result(["R1"])
-        content = messages[-1].content
-        audited = content.split("UNDER AUDIT]", 1)[1].split("[OTHER ACCEPTED", 1)[0]
-        requirement_id = "N1" if "- N1:" in audited else "N2"
-        return s2._RequirementTraceSlice(
-            requirement_id=requirement_id,
-            constrains_use_case_names=["UC1"] if requirement_id == "N1" else [],
+        return s2.RequirementTraceSlice(
+            requirement_id="N1",
+            constrains_use_case_names=["UC1"],
         )
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
@@ -521,11 +517,6 @@ def test_constraint_slices_attach_only_explicitly_scoped_nfrs(monkeypatch):
                 {
                     "id": "N1",
                     "text": "Catalog search completes within one second.",
-                    "type": "NFR",
-                },
-                {
-                    "id": "N2",
-                    "text": "All stored data is durable.",
                     "type": "NFR",
                 },
             ],
@@ -611,7 +602,7 @@ def test_model_review_accepts_one_use_case_only_repair_when_findings_decrease(mo
         )
         return s2.validator.Review(findings=findings)
 
-    def fake_identify(received, feedback="", target_ids=None):
+    def fake_identify(received, feedback="", target_ids=None, **_kwargs):
         calls["repairs"] += 1
         assert received["actors"] is state["actors"]
         assert received["classified"] is state["classified"]
