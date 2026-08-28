@@ -267,6 +267,8 @@ def public_actions(command: Mapping[str, Any]) -> tuple[PublicAction, ...]:
     result = raw_result if isinstance(raw_result, dict) else {}
 
     if status in {"FAILED", "INTERRUPTED"}:
+        if stage == "requirements":
+            return (PublicAction("retry_requirements", {"action_id": command_id}),)
         if stage == "design":
             return (PublicAction("retry_design", {"action_id": command_id}),)
         if stage == "implementation":
@@ -486,6 +488,36 @@ class ScenarioFailureReport:
             "reason": self.reason,
         }
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> ScenarioFailureReport:
+        """저장한 JSON 보고서를 같은 앱 재개에 사용할 typed 값으로 읽는다."""
+        raw_versions = value.get("artifact_versions")
+        versions = raw_versions if isinstance(raw_versions, dict) else {}
+        return cls(
+            app_id=str(value.get("app_id") or ""),
+            last_command_id=(
+                str(value["last_command_id"])
+                if value.get("last_command_id")
+                else None
+            ),
+            current_stage=(
+                str(value["current_stage"]) if value.get("current_stage") else None
+            ),
+            event_cursor=int(value.get("event_cursor") or 0),
+            implementation_job_id=(
+                str(value["implementation_job_id"])
+                if value.get("implementation_job_id")
+                else None
+            ),
+            testing_job_id=(
+                str(value["testing_job_id"])
+                if value.get("testing_job_id")
+                else None
+            ),
+            artifact_versions={str(key): int(item) for key, item in versions.items()},
+            reason=str(value.get("reason") or ""),
+        )
+
 
 class ProductScenarioStopped(RuntimeError):
     """사용자 입력이나 실행 실패 때문에 자동 진행을 멈췄음을 나타낸다."""
@@ -520,6 +552,35 @@ class ProductScenarioResult:
     events: tuple[Mapping[str, Any], ...]
 
 
+@dataclass(frozen=True)
+class ProductScenarioCheckpoint:
+    """요청한 공개 단계까지 완료했을 때 저장하는 재개 가능한 실행 결과다."""
+
+    app_id: str
+    last_command_id: str
+    current_stage: str
+    event_cursor: int
+    implementation_job_id: str | None
+    testing_job_id: str | None
+    artifact_references: Mapping[str, ArtifactReference]
+    events: tuple[Mapping[str, Any], ...]
+
+    def as_dict(self) -> JsonObject:
+        """평가 manifest에 저장할 JSON 호환 dict를 만든다."""
+        return {
+            "app_id": self.app_id,
+            "last_command_id": self.last_command_id,
+            "current_stage": self.current_stage,
+            "event_cursor": self.event_cursor,
+            "implementation_job_id": self.implementation_job_id,
+            "testing_job_id": self.testing_job_id,
+            "artifact_versions": {
+                name: reference.version_no
+                for name, reference in self.artifact_references.items()
+            },
+        }
+
+
 class ProductScenarioRunner:
     """앱 생성부터 테스트와 산출물 조회까지 공개 API 흐름을 조율한다."""
 
@@ -547,24 +608,131 @@ class ProductScenarioRunner:
         self.sleep = sleep
         self.progress = ScenarioProgress()
         self._events: list[Mapping[str, Any]] = []
+        self._initial_snapshot: Mapping[str, Any] | None = None
 
     def run(self, message: str) -> ProductScenarioResult:
         """새 앱을 만들고 테스트가 통과할 때까지 화면의 공개 command를 실행한다."""
+        completed = self.run_until(message, stop_after_stage="testing")
+        implementation_job_id = completed.implementation_job_id
+        testing_job_id = completed.testing_job_id
+        if not implementation_job_id:
+            self._raise_failed("완료 응답에 implementation job ID가 없습니다.")
+        if not testing_job_id:
+            self._raise_failed("완료 응답에 testing job ID가 없습니다.")
+        return ProductScenarioResult(
+            app_id=completed.app_id,
+            last_command_id=completed.last_command_id,
+            event_cursor=completed.event_cursor,
+            implementation_job_id=implementation_job_id,
+            testing_job_id=testing_job_id,
+            artifact_references=completed.artifact_references,
+            events=completed.events,
+        )
+
+    def run_until(
+        self,
+        message: str,
+        *,
+        stop_after_stage: str,
+    ) -> ProductScenarioCheckpoint:
+        """새 앱을 만들고 지정한 공개 단계가 완료될 때까지 실행한다.
+
+        빠른 평가는 ``design``에서 멈춰 deployment 산출물까지 확인하고, 전체 제품 평가는
+        ``testing``까지 진행한다. 단계 내부 함수가 아니라 Workspace command의 완료 상태를
+        기준으로 멈추므로 화면과 평가의 경로가 갈라지지 않는다.
+        """
         if not message.strip():
             raise ValueError("message must not be empty")
+        self._validate_terminal_stage(stop_after_stage)
         self.progress = ScenarioProgress()
         self._events = []
-        deadline = self.monotonic() + self.timeout_seconds
+        self._initial_snapshot = None
 
         created = self.transport.create_app(message.strip())
         self.progress.app_id = str(created.get("app_id") or "")
         if not self.progress.app_id:
             raise ValueError("Workspace create response did not include app_id.")
         self._record_command(created.get("command"))
+        return self._drive(stop_after_stage)
+
+    def resume_from(
+        self,
+        report: ScenarioFailureReport | Mapping[str, Any],
+        *,
+        stop_after_stage: str = "testing",
+    ) -> ProductScenarioCheckpoint:
+        """새 앱을 만들지 않고 실패 보고서의 app과 event cursor에서 실행을 잇는다.
+
+        실제 재개 위치는 서버의 최신 Workspace command가 결정한다. 보고서의 ID는 다른
+        구현·Testing job이 섞였는지 검사하고 이전 event를 다시 읽지 않는 데 사용한다.
+        실패 재실행처럼 사용자 판단이 필요한 버튼은 전달한 ``ScenarioPolicy``가 명시적으로
+        선택해야 하며, 기본 Auto 정책이 임의로 누르지 않는다.
+        """
+        self._validate_terminal_stage(stop_after_stage)
+        saved = (
+            report
+            if isinstance(report, ScenarioFailureReport)
+            else ScenarioFailureReport.from_dict(report)
+        )
+        if not saved.app_id:
+            raise ValueError("resume report did not include app_id")
+        self.progress = ScenarioProgress(
+            app_id=saved.app_id,
+            last_command_id=saved.last_command_id,
+            current_stage=saved.current_stage,
+            event_cursor=saved.event_cursor,
+            implementation_job_id=saved.implementation_job_id,
+            testing_job_id=saved.testing_job_id,
+            artifact_versions=dict(saved.artifact_versions),
+        )
+        self._events = []
+        current = self.transport.get_workspace(saved.app_id)
+        observed_app_id = str(current.get("app_id") or "")
+        if observed_app_id != saved.app_id:
+            raise ValueError(
+                "resume workspace가 실패 보고서와 다른 앱을 가리킵니다: "
+                f"expected={saved.app_id}, actual={observed_app_id or 'missing'}"
+            )
+        command = current.get("command")
+        command_stage = (
+            str(command.get("stage") or "") if isinstance(command, dict) else ""
+        )
+        observed_stage = str(current.get("current_stage") or command_stage)
+        stage_order = {
+            "requirements": 0,
+            "design": 1,
+            "implementation": 2,
+            "testing": 3,
+        }
+        if (
+            saved.current_stage in stage_order
+            and observed_stage in stage_order
+            and stage_order[observed_stage] < stage_order[saved.current_stage]
+        ):
+            raise ValueError(
+                "resume workspace가 기록된 단계보다 이전 단계에 있습니다: "
+                f"recorded={saved.current_stage}, actual={observed_stage}"
+            )
+        self._initial_snapshot = current
+        return self._drive(stop_after_stage)
+
+    @staticmethod
+    def _validate_terminal_stage(stage: str) -> None:
+        """공개 Workspace의 완료 상태로 관찰할 수 있는 단계 이름인지 확인한다."""
+        if stage not in {"requirements", "design", "implementation", "testing"}:
+            raise ValueError(f"unsupported terminal stage: {stage}")
+
+    def _drive(self, stop_after_stage: str) -> ProductScenarioCheckpoint:
+        """현재 progress의 앱을 polling하며 선택한 단계 완료까지 command를 보낸다."""
+        deadline = self.monotonic() + self.timeout_seconds
 
         while True:
             self._ensure_time(deadline)
-            snapshot = self.transport.get_workspace(self.progress.app_id)
+            if self._initial_snapshot is not None:
+                snapshot = self._initial_snapshot
+                self._initial_snapshot = None
+            else:
+                snapshot = self.transport.get_workspace(self.progress.app_id)
             self.progress.current_stage = str(
                 snapshot.get("current_stage") or self.progress.current_stage or ""
             )
@@ -578,20 +746,19 @@ class ProductScenarioRunner:
 
             status = str(command.get("status") or "")
             stage = str(command.get("stage") or "")
-            if stage == "testing" and status == "COMPLETED":
-                references = self._collect_artifacts(verify_files=True)
-                implementation_job_id = self.progress.implementation_job_id
-                testing_job_id = self.progress.testing_job_id
-                if not implementation_job_id:
-                    self._raise_failed("완료 응답에 implementation job ID가 없습니다.")
-                if not testing_job_id:
-                    self._raise_failed("완료 응답에 testing job ID가 없습니다.")
-                return ProductScenarioResult(
+            if stage == stop_after_stage and status == "COMPLETED":
+                references = self._collect_artifacts(
+                    verify_files=stop_after_stage == "testing",
+                    include_file_artifacts=stop_after_stage
+                    in {"implementation", "testing"},
+                )
+                return ProductScenarioCheckpoint(
                     app_id=self.progress.app_id,
                     last_command_id=str(self.progress.last_command_id or ""),
+                    current_stage=stage,
                     event_cursor=self.progress.event_cursor,
-                    implementation_job_id=implementation_job_id,
-                    testing_job_id=testing_job_id,
+                    implementation_job_id=self.progress.implementation_job_id,
+                    testing_job_id=self.progress.testing_job_id,
                     artifact_references=references,
                     events=tuple(self._events),
                 )
@@ -606,6 +773,9 @@ class ProductScenarioRunner:
             selected = self.policy.choose(actions, command)
             if selected is None:
                 names = ", ".join(action.action for action in actions)
+                # 여기까지 완성된 단계의 산출물 버전도 재개 보고서에 남긴다. 사용자가
+                # 선택한 뒤 이어갈 때 새 앱을 만들지 않았는지 확인하는 근거가 된다.
+                self._refresh_artifact_versions()
                 raise ProductScenarioNeedsInput(
                     self._failure_report(f"사용자 선택이 필요합니다: {names}")
                 )
@@ -757,7 +927,10 @@ class ProductScenarioRunner:
             return
 
     def _collect_artifacts(
-        self, *, verify_files: bool
+        self,
+        *,
+        verify_files: bool,
+        include_file_artifacts: bool = True,
     ) -> dict[str, ArtifactReference]:
         """최종 구조화 산출물과 구현 파일을 공개 endpoint에서 조회하고 출처를 검사한다."""
         document = self.transport.get_artifacts(self.progress.app_id)
@@ -781,7 +954,7 @@ class ProductScenarioRunner:
             references[stage] = ArtifactReference(stage, version_no, digest)
             self.progress.artifact_versions[stage] = version_no
 
-        for artifact_type in FILE_ARTIFACT_TYPES:
+        for artifact_type in FILE_ARTIFACT_TYPES if include_file_artifacts else ():
             snapshot = self.transport.get_file_artifact(
                 self.progress.app_id, artifact_type
             )

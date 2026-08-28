@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.db.models import Base
 from app.design import progress as design_progress
+from app.design.services.common.structured import record_llm_timing
 from app.repositories import artifact_repository
 from app.workspace import api as workspace_api
 from app.workspace import repository
@@ -520,6 +521,40 @@ def test_design_operation_emits_a_named_progress_card(monkeypatch) -> None:
     assert events[-1]["metadata"]["progress_card_label"] == "Design generation"
 
 
+def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> None:
+    events = []
+    monkeypatch.setattr(
+        repository,
+        "append_event",
+        lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
+    )
+
+    def operation():
+        record_llm_timing(
+            "ClassInventory",
+            status="cache_hit",
+            metadata={"physicalRequest": False, "cacheStatus": "hit"},
+        )
+        return "done"
+
+    WorkspaceService._run_design_operation(
+        {"app_id": "app-1", "command_id": "command-1"},
+        stage="class_diagram",
+        label="Generating the class diagram",
+        operation=operation,
+    )
+
+    metrics = next(
+        event
+        for event in events
+        if event["metadata"].get("progress_event") == "designLlmMetrics"
+    )
+    assert metrics["metadata"]["llm_timing_events"][0]["operation"] == (
+        "ClassInventory"
+    )
+    assert metrics["metadata"]["llm_timing_events"][0]["cacheStatus"] == "hit"
+
+
 def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -> None:
     events = []
     live_previews.clear()
@@ -917,6 +952,32 @@ def test_requirements_handoff_exposes_llm_repair_without_allowing_advance() -> N
     assert result["requires_revision"] is True
     assert result["can_delegate_repair"] is True
     assert result["repair_state"]["attempt_count"] == 3
+
+
+def test_retry_requirements_accepts_only_a_failed_requirements_command(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda _command_id: {
+            "command_id": "failed-requirements",
+            "app_id": "app-1",
+            "stage": "requirements",
+            "status": "FAILED",
+            "result": None,
+        },
+    )
+
+    service = WorkspaceService()
+    try:
+        service._validate_action_reference(
+            "app-1",
+            "retry_requirements",
+            {"action_id": "failed-requirements"},
+        )
+    finally:
+        service.shutdown()
 
 
 def test_delegated_repair_stalls_when_the_same_blockers_return() -> None:

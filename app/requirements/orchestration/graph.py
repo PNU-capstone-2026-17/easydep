@@ -334,6 +334,19 @@ def _invoke(gates: bool, thread_id: str, graph_input, persistent: bool):
     return _compiled(gates, persistent).invoke(graph_input, config)  # type: ignore[attr-defined]
 
 
+def _has_checkpoint(gates: bool, thread_id: str, persistent: bool) -> bool:
+    """이 실행 ID로 다시 시작할 수 있는 요구사항 checkpoint가 있는지 확인한다.
+
+    LangGraph는 저장된 상태가 없는 상태에서 ``invoke(None, ...)``을 호출해도 곧바로
+    오류를 내지 않을 수 있다. 그러면 재시도 요청이 새 빈 실행처럼 처리되어 원래
+    요구사항과 관계없는 결과를 만들 수 있다. 따라서 재시도 전에 저장된 값이 실제로
+    있는지 먼저 확인한다.
+    """
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    snapshot = _compiled(gates, persistent).get_state(config)  # type: ignore[attr-defined]
+    return bool(snapshot.values)
+
+
 # ----------------------------------------------------------------------------
 # 서빙 헬퍼 (main.py에서 사용)
 # ----------------------------------------------------------------------------
@@ -482,4 +495,21 @@ def resume_analysis(
     gates = _recall_mode(thread_id, persist)
     with telemetry.run_scope(f"resume:{thread_id}") as stats:
         result = _invoke(gates, thread_id, Command(resume=answer), persist)
+        return result_payload(cast(dict[str, object], result), thread_id, stats)
+
+
+def retry_analysis(thread_id: str, *, persist: bool = False) -> dict[str, object]:
+    """실패한 요구사항 node를 같은 MySQL checkpoint에서 다시 실행한다.
+
+    새 요구사항을 넣지 않고 ``None``으로 graph를 호출하면 마지막으로 성공한 node 다음부터
+    재개한다. 따라서 이미 완료해 저장한 단계와 LLM 호출을 처음부터 반복하지 않는다. 공개
+    Workspace는 사용자가 명시적으로 ``retry_requirements``를 선택했을 때만 이 함수를 쓴다.
+    """
+    gates = _recall_mode(thread_id, persist)
+    if not _has_checkpoint(gates, thread_id, persist):
+        raise ValueError(
+            f"요구사항 실행 {thread_id!r}의 저장된 checkpoint를 찾을 수 없습니다."
+        )
+    with telemetry.run_scope(f"retry:{thread_id}") as stats:
+        result = _invoke(gates, thread_id, None, persist)
         return result_payload(cast(dict[str, object], result), thread_id, stats)

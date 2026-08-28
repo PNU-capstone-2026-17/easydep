@@ -24,6 +24,9 @@
 
 - graph는 gate 설정에 따라 interrupt를 만들고 같은 `thread_id`의 checkpoint를
   저장하거나 재개한다.
+- 공개 Workspace의 `retry_requirements`는 실패한 command를 사용자가 다시 실행하라고
+  선택했을 때만 저장된 checkpoint 다음 node부터 실행한다. checkpoint가 없으면 빈 요구사항
+  실행으로 바꾸지 않고 거절한다.
 - runner와 API persistence는 명시된 artifact 디렉터리 또는 repository에 현재 단계
   산출물을 저장한다.
 - runner의 run ID·manifest 정책은 상위 composition root가 callback으로 주입하며,

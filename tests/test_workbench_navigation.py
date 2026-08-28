@@ -86,6 +86,14 @@ def test_failed_design_step_can_be_retried_from_the_composer() -> None:
     assert "Completed design artifacts will be kept." in composer
 
 
+def test_failed_requirements_step_can_be_retried_from_the_composer() -> None:
+    composer = _source("src/lib/components/Composer.svelte")
+
+    assert "command?.status === 'FAILED' && command.stage === 'requirements'" in composer
+    assert "onAction('retry_requirements'" in composer
+    assert "saved checkpoint will be reused" in composer
+
+
 def test_workspace_focuses_each_new_or_revised_artifact_result() -> None:
     workspace = _source("src/routes/workspace/+page.svelte")
     pane = _source("src/lib/components/ArtifactPane.svelte")

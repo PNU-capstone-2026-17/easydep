@@ -11,6 +11,7 @@ from evaluation.easydep.product_scenario import (
     ProductScenarioFailed,
     ProductScenarioRunner,
     ProductScenarioTimeout,
+    ScenarioFailureReport,
     public_actions,
 )
 
@@ -272,6 +273,62 @@ def test_runner_uses_the_public_command_flow_and_collects_provenance() -> None:
     assert transport.file_queries == [("SOURCE_CODE", "src/Main.java")]
 
 
+def test_runner_can_stop_after_design_without_starting_implementation() -> None:
+    snapshots = _completed_scenario_snapshots()[:5]
+    transport = FakePublicTransport(snapshots)
+    runner = ProductScenarioRunner(
+        transport,
+        policy=AutoActionPolicy(lambda _command: "AWS 서울 리전을 사용합니다."),
+        poll_interval_seconds=0,
+        event_wait_seconds=0.01,
+    )
+
+    result = runner.run_until(
+        "온라인 주문 서비스를 만들어 주세요.", stop_after_stage="design"
+    )
+
+    assert result.current_stage == "design"
+    assert result.implementation_job_id is None
+    assert [command["action"] for command in transport.commands] == [
+        "message",
+        "delegate_repair",
+        "start_design",
+        "advance",
+    ]
+
+
+def test_runner_resumes_the_same_app_without_creating_another_one() -> None:
+    transport = FakePublicTransport(_completed_scenario_snapshots()[4:])
+
+    def fail_if_created(_message: str) -> Mapping[str, Any]:
+        pytest.fail("resume must not create a new app")
+
+    transport.create_app = fail_if_created  # type: ignore[method-assign]
+    runner = ProductScenarioRunner(
+        transport,
+        policy=AutoActionPolicy(),
+        poll_interval_seconds=0,
+        event_wait_seconds=0.01,
+    )
+    report = ScenarioFailureReport(
+        app_id="app-1",
+        last_command_id="command-4",
+        current_stage="design",
+        event_cursor=4,
+        implementation_job_id=None,
+        testing_job_id=None,
+        artifact_versions={},
+        reason="평가 process가 중단됨",
+    )
+
+    result = runner.resume_from(report)
+
+    assert result.app_id == "app-1"
+    assert result.current_stage == "testing"
+    assert result.implementation_job_id == "implementation-1"
+    assert result.testing_job_id == "testing-2"
+
+
 class FakeClock:
     """실제로 기다리지 않고 polling 시간만 앞으로 보내는 테스트용 시계다."""
 
@@ -372,6 +429,7 @@ def test_auto_policy_does_not_turn_manual_repair_message_into_a_question_answer(
 @pytest.mark.parametrize(
     ("stage", "payload", "expected_action"),
     [
+        ("requirements", {}, "retry_requirements"),
         ("design", {}, "retry_design"),
         ("implementation", {}, "rerun_implementation"),
         (

@@ -44,6 +44,23 @@ POST /api/workspace/apps/{app_id}/commands
 이미 허용된 선택을 클릭하는 기능이다. 질문에 답을 발명하거나 실패를 성공으로 바꾸지 않는다.
 LLM에게 repair를 맡기는 선택지가 있을 때만 `delegate_repair`를 보낼 수 있다.
 
+## 실패한 단계 다시 실행하기
+
+요구사항 command가 `FAILED` 또는 `INTERRUPTED`로 끝나면 화면은
+`retry_requirements` 버튼을 보여 준다. 이 동작은 새 요구사항 분석을 만들지 않고 같은
+`app_id`의 MySQL checkpoint를 읽어 실패한 node부터 다시 실행한다. checkpoint가 없으면
+빈 입력으로 새 실행을 시작하지 않고 오류로 멈춘다. 설계 단계의 `retry_design`도 같은 원칙으로
+저장된 설계 checkpoint를 사용한다. 자동 모드는 실패 재실행을 임의로 선택하지 않으며 사용자가
+버튼을 누른 경우에만 실행한다.
+
+## LLM 사용량 관찰
+
+요구사항 단계는 각 LLM 호출의 완료 event에 시간과 token 사용량을 넣는다. 설계 단계는 기존
+설계 timing event를 `designLlmMetrics` progress event로 전달한다. 여기에는 호출 종류,
+logical/physical 요청 구분, token, schema·의미 repair와 cache 결과가 들어가지만 prompt와
+응답 원문은 들어가지 않는다. 평가 도구는 이 공개 event만 읽으므로 내부 단계 함수를 따로
+호출하지 않는다.
+
 ## 계약
 
 - **입력:** `app_id`, action, 메시지·선택·승인 payload.

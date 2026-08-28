@@ -29,6 +29,7 @@ from app.design.api import (
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
 from app.design.observability import design_timing_context, log_design_timing
+from app.design.services.common.structured import capture_llm_timings
 from app.implementation.application.jobs import worker as implementation_worker
 from app.implementation.interfaces.http import (
     approve_job,
@@ -43,7 +44,10 @@ from app.implementation.interfaces.schemas import (
 )
 from app.repositories import artifact_repository
 from app.requirements.config import settings as requirements_settings
-from app.requirements.orchestration.api import analyze_endpoint
+from app.requirements.orchestration.api import (
+    analyze_endpoint,
+    retry_analysis_endpoint,
+)
 from app.requirements.runtime import telemetry as requirements_telemetry
 from app.requirements.schemas import (
     AnalyzeRequest,
@@ -418,6 +422,7 @@ class WorkspaceService:
         required = {
             "advance": ("action_id",),
             "delegate_repair": ("action_id",),
+            "retry_requirements": ("action_id",),
             "retry_design": ("action_id",),
             "rerun_implementation": (),
             "confirm_change": ("action_id",),
@@ -444,9 +449,18 @@ class WorkspaceService:
         prior = repository.get_command(action_id)
         if prior is None or prior["app_id"] != app_id:
             raise ValueError("The command to answer could not be found.")
-        if action == "retry_design":
-            if prior["status"] not in {"FAILED", "INTERRUPTED"} or prior["stage"] != "design":
-                raise ValueError("Only a failed or interrupted design command can be retried.")
+        if action in {"retry_requirements", "retry_design"}:
+            expected_stage = (
+                "requirements" if action == "retry_requirements" else "design"
+            )
+            if (
+                prior["status"] not in {"FAILED", "INTERRUPTED"}
+                or prior["stage"] != expected_stage
+            ):
+                raise ValueError(
+                    "Only a failed or interrupted "
+                    f"{expected_stage} command can be retried."
+                )
             return
         if prior["status"] != "AWAITING_INPUT":
             raise ValueError("The command was already handled or is not awaiting a response.")
@@ -456,6 +470,8 @@ class WorkspaceService:
 
     def infer_stage(self, app_id: str, action: str, payload: dict[str, Any]) -> str:
         if action == "apply_deployment_preferences":
+            return "requirements"
+        if action == "retry_requirements":
             return "requirements"
         if action in {"start_design", "retry_design"}:
             return "design"
@@ -623,6 +639,17 @@ class WorkspaceService:
             return self._stage_message(delegated, advance=False)
         if action == "start_design":
             return self._stage_message(command, advance=True)
+        if action == "retry_requirements":
+            app_id = str(command["app_id"])
+            progress = self._requirements_progress_reporter(
+                app_id, str(command["command_id"])
+            )
+            with requirements_telemetry.progress_scope(progress):
+                result = retry_analysis_endpoint(
+                    app_id,
+                    app_id=app_id,
+                ).model_dump(mode="json")
+            return self._requirements_result(result)
         if action == "retry_design":
             app_id = str(command["app_id"])
             status = session_status(app_id)
@@ -994,6 +1021,7 @@ class WorkspaceService:
         app_id = str(command["app_id"])
         command_id = str(command["command_id"])
         started = time.perf_counter()
+        llm_timing_events: list[dict[str, Any]] = []
 
         def record(
             status: str, detail: str, metadata: dict[str, Any] | None = None,
@@ -1050,7 +1078,7 @@ class WorkspaceService:
                 app_id=app_id,
                 command_id=command_id,
                 requested_stage=stage,
-            ):
+            ), capture_llm_timings() as llm_timing_events:
                 record("running", "Started")
                 log_design_timing("workspace.design_operation.started", label=label)
                 try:
@@ -1090,6 +1118,24 @@ class WorkspaceService:
                 record("completed", f"Completed in {elapsed:.1f}s")
             return response
         finally:
+            if llm_timing_events:
+                # 상세 timing 수집기는 원래 class 최적화 실험에서도 사용하는 event 모양을
+                # 그대로 제공한다. 공개 Workspace event에 같은 dict를 넣어 평가 도구가
+                # 내부 설계 함수를 직접 호출하지 않고도 호출·token·repair·cache를 셀 수
+                # 있게 한다. prompt나 LLM 응답 원문은 이 목록에 포함되지 않는다.
+                repository.append_event(
+                    app_id,
+                    command_id=command_id,
+                    stage="design",
+                    kind="progress",
+                    actor="system",
+                    text="Design LLM metrics recorded.",
+                    metadata={
+                        "progress_event": "designLlmMetrics",
+                        "analysis_step": stage,
+                        "llm_timing_events": list(llm_timing_events),
+                    },
+                )
             live_previews.mark_terminal(app_id, command_id)
 
     @staticmethod

@@ -22,7 +22,11 @@ from app.requirements.contracts.request import (
     FeedbackEdit,
     ResourceAnswer,
 )
-from app.requirements.orchestration.graph import resume_analysis, start_analysis
+from app.requirements.orchestration.graph import (
+    resume_analysis,
+    retry_analysis,
+    start_analysis,
+)
 from app.requirements.runtime import telemetry
 from app.requirements.schemas import AnalyzeResponse
 
@@ -174,4 +178,22 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
         except artifact_repository.AppNotFound:
             raise HTTPException(status_code=404, detail=f"app_id {req.app_id} 를 찾을 수 없습니다.")
 
+    return AnalyzeResponse.model_validate(payload)
+
+
+def retry_analysis_endpoint(thread_id: str, *, app_id: str | None = None) -> AnalyzeResponse:
+    """저장된 요구사항 checkpoint를 재개하고 새로 생긴 산출물만 저장한다."""
+    with langsmith_metrics.trace_metadata({"app_id": app_id} if app_id else None):
+        payload = retry_analysis(
+            thread_id,
+            persist=settings.enable_session_persistence,
+        )
+    if app_id:
+        try:
+            payload["saved_stages"] = persist_analysis(app_id, payload)
+        except artifact_repository.AppNotFound as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"app_id {app_id} 를 찾을 수 없습니다.",
+            ) from error
     return AnalyzeResponse.model_validate(payload)

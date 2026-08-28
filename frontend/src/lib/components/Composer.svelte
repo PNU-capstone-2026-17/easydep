@@ -166,6 +166,13 @@
         </Button>
       {/if}
     </div>
+  {:else if command?.status === 'FAILED' && command.stage === 'requirements'}
+    <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">
+      <Button size="sm" onclick={() => onAction('retry_requirements', { action_id: command?.command_id })} disabled={busy}>
+        <RotateCcw size={13} /> Retry failed requirements step
+      </Button>
+      <span class="text-xs text-[#85524c]">Completed requirements artifacts and the saved checkpoint will be reused.</span>
+    </div>
   {:else if command?.status === 'FAILED' && command.stage === 'design'}
     <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">
       <Button size="sm" onclick={() => onAction('retry_design', { action_id: command?.command_id })} disabled={busy}>

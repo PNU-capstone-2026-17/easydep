@@ -293,6 +293,79 @@ def test_analyze_routes_a_structured_edit_to_resume(monkeypatch):
     assert seen["persist"] is True  # 서빙 경로는 세션을 DB에 남긴다
 
 
+def test_retry_analysis_reuses_the_persistent_checkpoint_without_new_input(
+    monkeypatch,
+):
+    from app.requirements.orchestration import graph
+
+    captured = {}
+    monkeypatch.setattr(graph, "_recall_mode", lambda _thread_id, _persist: True)
+    monkeypatch.setattr(
+        graph,
+        "_has_checkpoint",
+        lambda _gates, _thread_id, _persist: True,
+    )
+
+    def invoke(gates, thread_id, graph_input, persistent):
+        captured.update(
+            gates=gates,
+            thread_id=thread_id,
+            graph_input=graph_input,
+            persistent=persistent,
+        )
+        return {"phase": "completed", "classified": []}
+
+    monkeypatch.setattr(graph, "_invoke", invoke)
+
+    result = graph.retry_analysis("app-1", persist=True)
+
+    assert captured == {
+        "gates": True,
+        "thread_id": "app-1",
+        "graph_input": None,
+        "persistent": True,
+    }
+    assert result["status"] == "completed"
+
+
+def test_retry_analysis_rejects_a_missing_checkpoint(monkeypatch):
+    from app.requirements.orchestration import graph
+
+    monkeypatch.setattr(graph, "_recall_mode", lambda _thread_id, _persist: False)
+    monkeypatch.setattr(
+        graph,
+        "_has_checkpoint",
+        lambda _gates, _thread_id, _persist: False,
+    )
+
+    with pytest.raises(ValueError, match="저장된 checkpoint를 찾을 수 없습니다"):
+        graph.retry_analysis("missing-run", persist=True)
+
+
+def test_retry_analysis_endpoint_persists_only_new_stage_versions(monkeypatch):
+    from app.requirements.orchestration import api
+
+    monkeypatch.setattr(
+        api,
+        "retry_analysis",
+        lambda thread_id, *, persist: {
+            "thread_id": thread_id,
+            "phase": "completed",
+            "status": "completed",
+        },
+    )
+    monkeypatch.setattr(api.settings, "enable_session_persistence", True)
+    monkeypatch.setattr(
+        api,
+        "persist_analysis",
+        lambda app_id, _payload: [f"saved-for-{app_id}"],
+    )
+
+    result = api.retry_analysis_endpoint("app-1", app_id="app-1")
+
+    assert result.saved_stages == ["saved-for-app-1"]
+
+
 def test_every_artifact_key_survives_the_response_schema():
     """응답 스키마에 없는 산출물 키는 **조용히 사라진다** — pydantic이 모르는 키를 버린다.
 
