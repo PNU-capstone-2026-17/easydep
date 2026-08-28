@@ -14,7 +14,9 @@ class ArchitectureState(TypedDict, total=False):
     resource_constraints_text: str
 
     # Requirements analysis artifacts.
-    refined_requirements: dict[str, Any]
+    # Current orchestration supplies the classified requirement list. Some direct
+    # design callers retain the named wrapper used by deployment planning facts.
+    refined_requirements: list[dict[str, Any]] | dict[str, Any]
     capability_contract: dict[str, Any]
     resource_intake: dict[str, Any]
     usecase_spec: dict[str, Any]

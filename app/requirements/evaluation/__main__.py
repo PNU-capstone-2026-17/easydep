@@ -318,8 +318,8 @@ def _cmd_playbook(args) -> int:
     쌓는 것과 쓰는 것을 갈라 둔다. 여기서 파일을 만들어도 파이프라인은 `PLAYBOOK_ENABLED=1`
     이어야 읽는다 — 배운 것이 조용히 프롬프트에 들어가지 않도록.
     """
-    from app.requirements.agent import playbook
     from app.requirements.knowledge import rules
+    from app.requirements.orchestration import playbook
 
     entries = playbook.load(args.path)
     for run_dir in args.runs or []:

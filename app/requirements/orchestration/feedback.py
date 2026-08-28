@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import cast
 
 from app.requirements import stage_registry as stages
-from app.requirements.agent import playbook
 from app.requirements.config import settings
 from app.requirements.contracts.request import FeedbackEdit
 from app.requirements.contracts.state import AgentState
@@ -25,6 +24,7 @@ from app.requirements.modeling.use_cases import (
     identify_actors,
     identify_use_cases,
 )
+from app.requirements.orchestration import playbook
 from app.requirements.schemas import FeedbackIntent
 
 # 선형 stage 순서·재실행 함수 이름·편집 가능 stage는 전부 단계 목록에서 파생한다
@@ -126,7 +126,8 @@ def apply_feedback(
 
     **적용과 동시에 배운다.** 과제 목표 1의 후반부가 "사용자 피드백을 위한 에이전트 갱신"인데,
     지금까지 피드백은 **산출물만 고치고 사라졌다** — 같은 지적을 세 번 받아도 네 번째 실행이
-    같은 것을 냈다. 여기서 플레이북에 남겨야 다음 실행이 읽는다(`agent/playbook.py`).
+    같은 것을 냈다. 여기서 플레이북에 남겨야 다음 실행이 읽는다
+    (`orchestration/playbook.py`).
 
     쌓는 것과 쓰는 것은 갈라져 있다: 여기서는 항상 쌓고, 생성 프롬프트에 실릴지는
     `settings.playbook_enabled`가 정한다.

@@ -500,7 +500,7 @@ def generation_system_for(stage: str) -> str:
     if not settings.playbook_enabled:
         return _generation_system(stage, shape)
 
-    from app.requirements.agent import playbook
+    from app.requirements.orchestration import playbook
 
     try:
         learned = playbook.render(

@@ -6,7 +6,11 @@ from app.requirements.resources.capability_contract import (
     REALIZATION_CHANGING_FIELDS,
     RECOGNIZED_DEPENDENCY_CAPABILITY_IDS,
     SCHEMA_VERSION,
+    CalibrationBlock,
     CalibrationPoint,
+    CapabilityPolicy,
+    PolicyNoInferenceQualification,
+    PolicyQualification,
     accepted_needs,
     calibrated_score,
     decide,
@@ -15,6 +19,7 @@ from app.requirements.resources.capability_contract import (
     load_policy,
     requires_load_balanced_ingress,
     requires_persistent_storage,
+    validate_policy,
     wilson_lower,
 )
 
@@ -24,7 +29,11 @@ __all__ = [
     "REALIZATION_CHANGING_FIELDS",
     "RECOGNIZED_DEPENDENCY_CAPABILITY_IDS",
     "SCHEMA_VERSION",
+    "CalibrationBlock",
     "CalibrationPoint",
+    "CapabilityPolicy",
+    "PolicyNoInferenceQualification",
+    "PolicyQualification",
     "accepted_needs",
     "calibrated_score",
     "decide",
@@ -33,5 +42,6 @@ __all__ = [
     "load_policy",
     "requires_load_balanced_ingress",
     "requires_persistent_storage",
+    "validate_policy",
     "wilson_lower",
 ]
