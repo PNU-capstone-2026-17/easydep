@@ -87,6 +87,7 @@ PUBLIC_CONTRACTS = {
     ROOT / "app/design/services/erd/plantuml.py": ("render_logical_model",),
     ROOT / "app/design/services/deployment_diagram/service.py": (
         "generate_workload_graph",
+        "propose_workload_graph",
         "revise_workload_graph",
     ),
     ROOT / "app/design/services/deployment_diagram/planning_facts.py": (

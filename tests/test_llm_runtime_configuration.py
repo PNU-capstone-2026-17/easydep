@@ -32,11 +32,11 @@ def test_deployment_prompt_prefers_structured_models_over_rendered_duplicates(
 ) -> None:
     captured: dict = {}
 
-    def parse(messages, _schema):
-        captured.update(json.loads(messages[1]["content"]))
-        return {"schemaVersion": "easydep-workload-graph"}
+    def propose(structured_inputs, _proposal_call=None):
+        captured.update(structured_inputs)
+        return deployment_extractor.WorkloadGraph()
 
-    monkeypatch.setattr(deployment_extractor, "parse_structured", parse)
+    monkeypatch.setattr(deployment_extractor, "propose_workload_graph", propose)
     deployment_extractor.extract_deployment_model(
         "scenario",
         "class puml",

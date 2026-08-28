@@ -28,10 +28,24 @@ class WorkloadGraphProposalCall(Protocol):
     ) -> dict[str, Any]: ...
 
 
-def _propose_workload_graph(
+def propose_workload_graph(
     structured_inputs: dict[str, Any],
     proposal_call: WorkloadGraphProposalCall | None = None,
 ) -> WorkloadGraph:
+    """호환 adapter가 조립한 구조화 입력을 한 번 제안하고 typed graph로 검증한다.
+
+    Args:
+        structured_inputs: canonical 또는 legacy adapter가 조립한 입력 payload다.
+        proposal_call: 테스트에서 주입할 선택적 structured LLM 호출이다.
+
+    Returns:
+        schema 검증을 통과한 ``WorkloadGraph``다.
+
+    Notes:
+        prompt와 schema repair는 공통 structured 경계가 소유하며 이 함수는 추가 loop를
+        만들지 않는다.
+    """
+
     propose = proposal_call or parse_structured
     return WorkloadGraph.model_validate(
         propose(generation_messages(structured_inputs), WorkloadGraph)
@@ -89,7 +103,7 @@ def generate_workload_graph(
         structured["sequenceModel"] = sequence_model
     if erd_model:
         structured["erdModel"] = erd_model
-    return _propose_workload_graph(structured, proposal_call)
+    return propose_workload_graph(structured, proposal_call)
 
 
 def revise_workload_graph(

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.design.services.common.structured import parse_structured
 from app.design.services.deployment_diagram.models import DeploymentModel, WorkloadGraph
 from app.design.services.deployment_diagram.prompts import (
     DEPLOYMENT_REVISION_SYSTEM_PROMPT,
@@ -26,7 +25,6 @@ def revise_deployment_model(
         feedback,
         context_text,
         targets,
-        proposal_call=parse_structured,
     )
     return revised.model_dump()
 

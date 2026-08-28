@@ -386,3 +386,28 @@ def test_workload_service_does_not_import_outer_stage_state() -> None:
     assert not violations, "forbidden workload service imports: " + ", ".join(
         violations
     )
+
+
+def test_compatibility_facades_use_only_public_service_seams() -> None:
+    package = _ROOT / "app/design/services/deployment_diagram"
+    violations: list[str] = []
+
+    for name in ("extractor.py", "reviser.py"):
+        path = package / name
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            module = node.module or ""
+            if module == "app.design.services.common.structured":
+                violations.append(f"{name}:{node.lineno}:structured")
+            if module == "app.design.services.deployment_diagram.service":
+                violations.extend(
+                    f"{name}:{node.lineno}:{alias.name}"
+                    for alias in node.names
+                    if alias.name.startswith("_")
+                )
+
+    assert not violations, "compatibility facade bypasses public service: " + ", ".join(
+        violations
+    )

@@ -102,25 +102,3 @@ def resource_plan_structure_digest(plan: dict[str, Any]) -> str:
     )
 
     return provider_template_structure_digest(plan)
-
-    structural = copy.deepcopy(plan)
-    for field in (
-        "issues",
-        "unresolved",
-        "derivations",
-        "lateBindings",
-        "structureDigest",
-    ):
-        structural.pop(field, None)
-    for node in structural.get("nodes") or []:
-        node.pop("port", None)
-    for workload in structural.get("workloads") or []:
-        artifact = workload.get("artifact") or {}
-        artifact.pop("imageDigest", None)
-        for interface in workload.get("interfaces") or []:
-            interface.pop("port", None)
-            interface.pop("healthPath", None)
-        for configuration in workload.get("configuration") or []:
-            configuration.pop("value", None)
-            configuration.pop("secretRef", None)
-    return _canonical_digest(structural)

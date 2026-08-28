@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.design.services.common.structured import parse_structured
 from app.design.services.deployment_diagram.models import (
     DeploymentModel,
     ExternalDependency,
@@ -21,7 +20,7 @@ from app.design.services.deployment_diagram.models import (
 from app.design.services.deployment_diagram.prompts import (
     WORKLOAD_GRAPH_EXTRACTION_SYSTEM_PROMPT,
 )
-from app.design.services.deployment_diagram.service import _propose_workload_graph
+from app.design.services.deployment_diagram.service import propose_workload_graph
 
 
 def extract_deployment_model(
@@ -63,9 +62,7 @@ def extract_deployment_model(
         structured["erdModel"] = erd_model
     else:
         structured["erdPlantUML"] = erd_puml
-    return _propose_workload_graph(
-        structured, proposal_call=parse_structured
-    ).model_dump()
+    return propose_workload_graph(structured).model_dump()
 
 
 __all__ = [
