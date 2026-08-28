@@ -65,12 +65,17 @@ from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
     hydrate_deployment_diagram_bundle,
 )
-from app.design.services.deployment_diagram.extractor import extract_deployment_model
+from app.design.services.deployment_diagram.models import WorkloadGraph
 from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
 )
-from app.design.services.deployment_diagram.reviser import revise_deployment_model
+from app.design.services.deployment_diagram.service import (
+    generate_workload_graph as extract_deployment_model,
+)
+from app.design.services.deployment_diagram.service import (
+    revise_workload_graph as revise_deployment_model,
+)
 from app.design.services.erd.plantuml import render_logical_model
 from app.design.services.erd.projection import project_logical_model
 from app.design.services.erd.service import revise_erd_model as revise_erd_classes
@@ -209,6 +214,16 @@ def _stored_class_model(value: object) -> BCEModel:
     if not isinstance(value, dict):
         raise TypeError("stored class model must be an object")
     return BCEModel.model_validate(value)
+
+
+def _stored_workload_graph(value: object) -> WorkloadGraph:
+    """상태의 deployment candidate를 typed WorkloadGraph 계약으로 검증한다."""
+
+    if isinstance(value, WorkloadGraph):
+        return value
+    if not isinstance(value, dict):
+        raise TypeError("stored workload graph must be an object")
+    return WorkloadGraph.model_validate(value)
 
 
 def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
@@ -563,7 +578,9 @@ ERD_SPEC = DesignArtifactSpec(
 
 
 def _finalize_deployment_diagram(state: ArchitectureState) -> dict[str, Any]:
-    candidate = dict(state.get("deployment_diagram_model") or {})
+    candidate = _stored_workload_graph(
+        state.get("deployment_diagram_model") or {}
+    ).model_dump()
     bundle = build_deployment_diagram_bundle(
         candidate,
         dict(state.get("resource_spec") or {}),
@@ -590,6 +607,42 @@ def _finalize_deployment_diagram(state: ArchitectureState) -> dict[str, Any]:
         ),
     }
 
+
+def _extract_deployment_state(state: ArchitectureState) -> dict[str, Any]:
+    """graph 원시 상태를 canonical WorkloadGraph 생성 서비스에 연결한다."""
+
+    generated = extract_deployment_model(
+        usecase_spec_text(state),
+        dict(state.get("api_spec") or {}),
+        refined_requirements=state.get("refined_requirements") or [],
+        capability_contract=dict(state.get("capability_contract") or {}),
+        resource_intake=dict(state.get("resource_intake") or {}),
+        class_model=state.get("extracted_bce_classes") or {},
+        sequence_model=state.get("sequence_diagram_model") or {},
+        erd_model=state.get("erd_bce_classes") or {},
+        deployment_planning_facts=list(
+            state.get("deployment_planning_facts") or []
+        ),
+    )
+    return _stored_workload_graph(generated).model_dump()
+
+
+def _revise_deployment_state(
+    current: dict[str, Any],
+    feedback: str,
+    state: ArchitectureState,
+    targets: set[str],
+) -> dict[str, Any]:
+    """저장 JSON을 검증하고 typed WorkloadGraph 수정 결과만 다시 dump한다."""
+
+    revised = revise_deployment_model(
+        _stored_workload_graph(current),
+        feedback,
+        _design_context(state, "deployment_diagram"),
+        targets,
+    )
+    return _stored_workload_graph(revised).model_dump()
+
 DEPLOYMENT_DIAGRAM_SPEC = DesignArtifactSpec(
     stage="deployment_diagram",
     model_key="deployment_diagram_model",
@@ -598,23 +651,8 @@ DEPLOYMENT_DIAGRAM_SPEC = DesignArtifactSpec(
     errors_key="deployment_diagram_syntax_errors",
     feedback_key="deployment_diagram_feedback",
     empty="",
-    extract=lambda state: extract_deployment_model(
-        usecase_spec_text(state),
-        state.get("class_diagram_puml", ""),
-        state.get("sequence_diagram_puml", ""),
-        state.get("api_spec", {}),
-        state.get("erd_puml", ""),
-        refined_requirements=state.get("refined_requirements") or [],
-        capability_contract=state.get("capability_contract") or {},
-        resource_intake=state.get("resource_intake") or {},
-        class_model=state.get("extracted_bce_classes") or {},
-        sequence_model=state.get("sequence_diagram_model") or {},
-        erd_model=state.get("erd_bce_classes") or {},
-        deployment_planning_facts=list(state.get("deployment_planning_facts") or []),
-    ),
-    revise=lambda current, feedback, state, targets: revise_deployment_model(
-        current, feedback, _design_context(state, "deployment_diagram"), targets
-    ),
+    extract=_extract_deployment_state,
+    revise=_revise_deployment_state,
     render=lambda _model: "",
     render_with_state=lambda _model, state: deployment_bundle_runtime_puml(
         dict(state.get("deployment_diagram_bundle") or {})

@@ -1,4 +1,4 @@
-"""클래스·시퀀스·API 설계의 설명 계약이 코드 구조와 함께 유지되는지 검사한다."""
+"""설계 단계별 설명 계약이 코드 구조와 함께 유지되는지 검사한다."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ LOCAL_READMES = (
     ROOT / "app/design/services/sequence_diagram/README.md",
     ROOT / "app/design/services/api_spec/README.md",
     ROOT / "app/design/services/erd/README.md",
+    ROOT / "app/design/services/deployment_diagram/README.md",
 )
 CENTRAL_GUIDES = (
     ROOT / "docs/README.md",
@@ -27,6 +28,7 @@ PYTHON_MODULES = tuple(
         ROOT / "app/design/services/sequence_diagram",
         ROOT / "app/design/services/api_spec",
         ROOT / "app/design/services/erd",
+        ROOT / "app/design/services/deployment_diagram",
     )
     for path in directory.rglob("*.py")
     if path.name != "__init__.py"
@@ -83,6 +85,10 @@ PUBLIC_CONTRACTS = {
         "map_relationship",
     ),
     ROOT / "app/design/services/erd/plantuml.py": ("render_logical_model",),
+    ROOT / "app/design/services/deployment_diagram/service.py": (
+        "generate_workload_graph",
+        "revise_workload_graph",
+    ),
 }
 
 
