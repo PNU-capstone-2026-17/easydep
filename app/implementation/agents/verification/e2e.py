@@ -179,7 +179,8 @@ def _java_method_bodies(source: str) -> dict[str, str]:
     """Return named Java method bodies so tests can reuse HTTP helpers."""
     declaration = re.compile(
         r"(?ms)(?:(?:public|protected|private|static|final|synchronized)\s+)*"
-        r"[\w<>?, \[\]]+\s+(?P<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{"
+        r"[\w<>?, \[\]]+\s+(?P<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)"
+        r"(?:\s+throws\s+[^\{]+)?\s*\{"
     )
     methods: dict[str, str] = {}
     for match in declaration.finditer(source):
