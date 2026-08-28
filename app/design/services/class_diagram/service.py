@@ -10,7 +10,6 @@ raw JSON 직렬화는 하지 않는다. 외부 state와 typed 모델 사이 변�
 """
 from __future__ import annotations
 
-import logging
 from collections.abc import Set as AbstractSet
 from typing import Any
 
@@ -36,9 +35,7 @@ from app.design.services.class_diagram.validation.collaboration import (
     CollaborationContext,
 )
 from app.design.services.class_diagram.validation.model import validate_class_model
-from app.validation import run_checks
-
-logger = logging.getLogger(__name__)
+from app.validation import RepairAttempt, RepairLedger, run_checks, stable_digest
 
 
 def _payload(model: BCEModel) -> dict[str, Any]:
@@ -82,7 +79,7 @@ def _replace_groups(
     workers: int | None = None,
     cache: AcceptedUnitCache | None = None,
 ) -> list[CollaborationResult]:
-    """선택된 collaboration 그룹만 feedback 단계의 bounded runner에 위임한다.
+    """선택된 collaboration 그룹만 feedback 단계의 병렬 runner에 위임한다.
 
     서비스가 직접 executor나 repair loop를 만들지 않아 generate, resume, revise가 동일한
     호출 횟수·오류 격리 규약을 공유한다.
@@ -105,6 +102,110 @@ def _workers(count: int) -> int:
     ))
 
 
+def _repair_collaboration_handoffs(
+    index: ScenarioIndex,
+    accepted_inventory: AcceptedInventory,
+    fragments: dict[str, AcceptedFragment],
+    skeleton: BCEModel,
+    results: dict[str, CollaborationResult],
+    active_group_ids: set[str],
+    *,
+    workers: int,
+    cache: AcceptedUnitCache | None,
+) -> tuple[BCEModel, dict[str, CollaborationResult], set[str]]:
+    """실패 collaboration의 operation handoff를 진전이 있는 동안 반복한다.
+
+    숫자 횟수로 중단하지 않는다. 각 실패 상태를 전체 skeleton, 실패 group·issue의 digest로
+    기록하고 같은 상태가 다시 나타날 때만 정체로 판단한다. 정체된 실패 결과는 명시적으로
+    남기고, operation repair가 영향을 주는 형제 group만 다시 계획한다. 이미 수락된 비영향
+    group은 그대로 보존한다.
+    """
+
+    ledger = RepairLedger()
+    input_digest = stable_digest({
+        "scenario": index.raw,
+        "initialSkeleton": _payload(skeleton),
+        "initialGroups": sorted(active_group_ids, key=id_key),
+    })
+    while True:
+        failures = [
+            results[group.id]
+            for group in index.groups
+            if group.id in active_group_ids
+            and group.id in results
+            and results[group.id].collaboration is None
+        ]
+        if not failures:
+            ledger.status = "COMPLETED"
+            return skeleton, results, active_group_ids
+
+        finding_keys = tuple(
+            f"{result.group_id}: {result.issue}" for result in failures
+        )
+        candidate_digest = stable_digest({
+            "skeleton": _payload(skeleton),
+            "failures": finding_keys,
+        })
+        repeated = ledger.candidate_seen(
+            input_digest=input_digest,
+            candidate_digest=candidate_digest,
+        )
+        ledger.record(RepairAttempt(
+            stage="design.class.operation-handoff",
+            target_ids=tuple(result.group_id for result in failures),
+            strategy_key=f"failed-slice-replacement-{len(ledger.attempts) + 1}",
+            input_digest=input_digest,
+            candidate_digest=candidate_digest,
+            finding_keys_before=finding_keys,
+            finding_keys_after=finding_keys,
+            outcome="repeated_candidate" if repeated else "no_improvement",
+            detail="; ".join(finding_keys),
+        ))
+        if repeated:
+            ledger.status = "STALLED"
+            ledger.stall_reason = (
+                "The collaboration operation handoff repeated an unchanged failed state."
+            )
+            return skeleton, results, active_group_ids
+
+        history = ledger.prompt_context()
+        contextual_failures = [
+            CollaborationResult(
+                result.group_id,
+                None,
+                result.issue
+                + "\n\nAccumulated operation handoff repair history:\n"
+                + history,
+            )
+            for result in failures
+        ]
+        repaired_use_cases = operations.repair_failed_operations(
+            index,
+            accepted_inventory,
+            fragments,
+            contextual_failures,
+            cache=cache,
+        )
+        skeleton = operations.compose_fragments(accepted_inventory, fragments)
+        affected = [
+            group for group in index.groups
+            if set(group.trace_use_case_ids) & repaired_use_cases
+        ]
+        if not affected:
+            raise ValueError(
+                "class collaboration operation handoff found no affected execution group"
+            )
+        active_group_ids.update(group.id for group in affected)
+        retried = _replace_groups(
+            index,
+            skeleton,
+            affected,
+            workers=workers,
+            cache=cache,
+        )
+        results.update({result.group_id: result for result in retried})
+
+
 def generate_class_model(
     index: ScenarioIndex, *, cache: AcceptedUnitCache | None = None,
 ) -> BCEModel:
@@ -117,11 +218,11 @@ def generate_class_model(
         인벤토리, 연산, 협업을 포함한 저장 가능한 BCE 모델이다.
 
     Raises:
-        ValueError: LLM 제안이 제한된 repair 뒤에도 단계 계약을 만족하지 못한 경우다.
+        ValueError: LLM이 거절된 후보나 실패 상태를 반복해 더 진전할 수 없는 경우다.
 
     Notes:
         인벤토리와 연산을 먼저 수락하고 실행 그룹별 협업을 최대 설정 병렬도 2로 만든다.
-        실패한 그룹은 소유 연산 조각만 한 번 repair하며 다른 그룹은 보존한다.
+        실패한 그룹은 소유 연산 조각만 이력 기반으로 repair하며 다른 그룹은 보존한다.
     """
     if not index.use_cases:
         return BCEModel()
@@ -130,44 +231,23 @@ def generate_class_model(
     skeleton, accepted_inventory, fragments = _build_skeleton(index, cache=cache)
     # 2. 독립 execution group을 설정 상한 안에서 처리한다. 결과는 입력 그룹 순서다.
     workers = _workers(len(index.groups))
-    results = _replace_groups(
+    initial_results = _replace_groups(
         index, skeleton, list(index.groups), workers=workers, cache=cache,
     )
-    failures = [result for result in results if result.collaboration is None]
-    if failures:
-        try:
-            # 3. collaboration 실패가 operation 계약 부족을 가리키면 실패 group이 추적한
-            # 유스케이스 fragment만 handoff repair한다. 성공한 비영향 group은 보존한다.
-            repaired_use_cases = operations.repair_failed_operations(
-                index, accepted_inventory, fragments, failures,
-                cache=cache,
-            )
-            skeleton = operations.compose_fragments(accepted_inventory, fragments)
-            affected = [
-                group for group in index.groups
-                if set(group.trace_use_case_ids) & repaired_use_cases
-            ]
-            affected_ids = {group.id for group in affected}
-            retained = {
-                result.group_id: result for result in results
-                if result.collaboration is not None and result.group_id not in affected_ids
-            }
-            retried = _replace_groups(
-                index, skeleton, affected, workers=workers, cache=cache,
-            )
-            results = [
-                retained.get(group.id)
-                or next(result for result in retried if result.group_id == group.id)
-                for group in index.groups
-            ]
-        except Exception as error:
-            # 구조·operation skeleton 자체는 이미 수락됐다. handoff 실패를 이유로 그것까지
-            # 폐기하지 않고 누락 collaboration을 최종 검증 finding으로 명시한다.
-            logger.warning(
-                "class collaboration operation handoff failed during generation: %s",
-                error,
-                exc_info=True,
-            )
+    # 3. collaboration 실패가 operation 계약 부족을 가리키면 실패 group이 추적한
+    # 유스케이스 fragment만 handoff repair한다. 수치 상한 대신 누적 이력과 반복 상태로
+    # 종료하며 성공한 비영향 group은 다시 호출하지 않는다.
+    skeleton, results_by_id, _ = _repair_collaboration_handoffs(
+        index,
+        accepted_inventory,
+        fragments,
+        skeleton,
+        {result.group_id: result for result in initial_results},
+        {group.id for group in index.groups},
+        workers=workers,
+        cache=cache,
+    )
+    results = [results_by_id[group.id] for group in index.groups]
     # 4. 완료 preview는 수락된 collaboration만 누적한다. 실패 객체나 repair telemetry는
     # 저장 JSON 계약에 들어가지 않는다.
     collaborations: list[Collaboration] = []
@@ -239,41 +319,27 @@ def resume_class_model(
     if not selected:
         return current
     workers = _workers(len(selected))
-    results = _replace_groups(
+    initial_results = _replace_groups(
         index, current, selected, workers=workers, cache=cache,
     )
     selected_ids = {group.id for group in selected}
     working_model = current
-    failures = [result for result in results if result.collaboration is None]
-    if failures:
-        try:
-            # 3. 영속 모델에서 inventory와 fragment를 역투영하므로 별도 checkpoint
-            # migration 없이 generate와 같은 operation handoff를 재사용한다.
-            accepted_inventory = feedback_stage.inventory_from_model(current)
-            fragments = feedback_stage.fragments_from_model(index, current)
-            repaired_use_cases = operations.repair_failed_operations(
-                index, accepted_inventory, fragments, failures,
-                cache=cache,
-            )
-            working_model = operations.compose_fragments(accepted_inventory, fragments)
-            affected = [
-                group for group in index.groups
-                if set(group.trace_use_case_ids) & repaired_use_cases
-            ]
-            retried = _replace_groups(
-                index, working_model, affected, workers=workers, cache=cache,
-            )
-            affected_ids = {group.id for group in affected}
-            results = [
-                result for result in results if result.group_id not in affected_ids
-            ] + retried
-            selected_ids.update(affected_ids)
-        except Exception as error:
-            logger.warning(
-                "class collaboration operation handoff failed during resume: %s",
-                error,
-                exc_info=True,
-            )
+    results_by_id = {result.group_id: result for result in initial_results}
+    if any(result.collaboration is None for result in initial_results):
+        # 3. 영속 모델에서 inventory와 fragment를 역투영하므로 별도 checkpoint migration
+        # 없이 generate와 같은 history-aware operation handoff를 재사용한다.
+        accepted_inventory = feedback_stage.inventory_from_model(current)
+        fragments = feedback_stage.fragments_from_model(index, current)
+        working_model, results_by_id, selected_ids = _repair_collaboration_handoffs(
+            index,
+            accepted_inventory,
+            fragments,
+            working_model,
+            results_by_id,
+            selected_ids,
+            workers=workers,
+            cache=cache,
+        )
     # 4. 선택되지 않은 기존 collaboration과 새 수락 결과를 원래 group 순서로 합친다.
     # 실패한 선택 그룹을 오래된 값으로 되돌리지 않는 것이 resume의 핵심 실패 계약이다.
     accepted = {
@@ -284,7 +350,7 @@ def resume_class_model(
         },
         **{
             result.group_id: result.collaboration
-            for result in results if result.collaboration is not None
+            for result in results_by_id.values() if result.collaboration is not None
         },
     }
     return BCEModel.model_validate({
@@ -348,7 +414,7 @@ def revise_class_model(
         selected_groups = list(index.groups)
     elif scope.kind == "operation":
         # 2b. 선택 use case에 execution group이 있으면 기존 handoff repair 경로를 쓴다.
-        # group이 없는 slice도 같은 checked_fragment 계약으로 한 번만 교체한다.
+        # group이 없는 slice도 같은 history-aware checked_fragment 계약으로 교체한다.
         selected_use_cases = set(scope.ids) or {use_case.id for use_case in index.use_cases}
         selected_operation_groups = [
             group for group in index.groups if group.use_case_id in selected_use_cases

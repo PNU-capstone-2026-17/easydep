@@ -4,8 +4,9 @@ LLM에는 한 ``OperationUnit``의 단계, 고정 클래스·구조 타입과 �
 전달한다. ``OperationFragment`` 응답은 actor-entry 소유권과 타입을 정규화하고
 ``OPERATION_CHECKS``를 통과한 뒤에만 ``AcceptedFragment``가 된다.
 
-이 모듈의 부작용은 제한된 LLM 호출, 최대 병렬도 2의 wave 실행과 클래스 미리보기 이벤트
-발행이다. collaboration을 만들거나 graph state·저장소를 직접 읽지 않는다.
+이 모듈의 부작용은 이력 기반 LLM 수리, 최대 병렬도 2의 wave 실행과 클래스 미리보기 이벤트
+발행이다. 숫자 수리 상한은 없고 동일 후보가 반복될 때만 중단한다. collaboration을 만들거나
+graph state·저장소를 직접 읽지 않는다.
 """
 from __future__ import annotations
 
@@ -66,7 +67,7 @@ from app.design.services.class_diagram.validation.model import (
 )
 from app.design.services.common import fields
 from app.design.services.common.structured import bind_context, parse_structured
-from app.validation import run_checks
+from app.validation import RepairAttempt, RepairLedger, run_checks, stable_digest
 
 logger = logging.getLogger(__name__)
 
@@ -438,7 +439,7 @@ def _propose_fragment(
     """한 연산 unit을 LLM에 요청하고 저장 직전 fragment shape로 정규화한다.
 
     응답은 ``OperationFragment``로 제한된다. 이 함수는 규칙 finding을 판단하지 않으며,
-    deterministic normalization까지만 소유한다. 검사와 한 번의 replacement는
+    deterministic normalization까지만 소유한다. 검사와 이력 기반 replacement는
     ``_checked_fragment``가 담당한다.
     """
     # 1. 허용 step, 고정 타입과 예약 이름을 먼저 payload로 좁힌다. LLM이 전체 모델을
@@ -525,24 +526,11 @@ def _checked_fragment_uncached(
     execution_group_id: str = "",
     operation: str = "InteractionOperations",
 ) -> dict[str, Any]:
-    """연산 fragment를 제안·검사하고 현재 unit만 최대 한 번 교체한다.
+    """연산 fragment를 제안·검사하고 현재 unit만 이력 기반으로 교체한다.
 
-    첫 보고서의 finding은 ``previousFragment``와 함께 repair 호출에 전달한다. 두 번째
-    보고서가 깨끗하지 않으면 더 넓은 재생성으로 승격하지 않고 명시적으로 실패한다.
+    각 보고서의 finding과 거절 후보 이력을 ``previousFragment``와 함께 다음 repair 호출에
+    전달한다. 숫자 상한은 없으며 같은 후보가 반복될 때만 명시적으로 실패한다.
     """
-    # 최초 후보에는 caller가 전달한 피드백이나 collision finding만 포함된다.
-    candidate = _propose_fragment(
-        index,
-        inventory,
-        use_case,
-        previous=previous,
-        findings=findings,
-        reserved=reserved,
-        reserved_types=reserved_types,
-        allowed_step_ids=allowed_step_ids,
-        execution_group_id=execution_group_id,
-        operation=operation,
-    )
     validation_inventory = {
         **inventory,
         "DataTypes": [
@@ -567,34 +555,78 @@ def _checked_fragment_uncached(
         allowed_step_ids,
         (execution_group_id,) if execution_group_id else (),
     )
-    report = run_checks(OPERATION_CHECKS, candidate, context)
-    if report.errors:
-        raise RuntimeError("; ".join(report.errors))
-    if report.findings:
-        # 같은 입력 범위와 같은 rule set으로 full replacement를 한 번만 요청한다.
+    ledger = RepairLedger()
+    input_digest = stable_digest({
+        "useCaseId": use_case.id,
+        "inventory": inventory,
+        "reserved": reserved or [],
+        "reservedTypes": reserved_types or [],
+        "allowedStepIds": allowed_step_ids,
+        "executionGroupId": execution_group_id,
+        "initialFindings": findings or [],
+    })
+    candidate = previous
+    repair_findings = list(findings or [])
+    attempt = 0
+    while True:
         candidate = _propose_fragment(
             index,
             inventory,
             use_case,
             previous=candidate,
-            findings=finding_text(report.findings),
+            findings=repair_findings or None,
             reserved=reserved,
             reserved_types=reserved_types,
             allowed_step_ids=allowed_step_ids,
             execution_group_id=execution_group_id,
             operation=(
-                "InteractionOperationsRepair"
+                operation
+                if attempt == 0
+                else "InteractionOperationsRepair"
                 if operation == "InteractionOperations"
                 else f"{operation}Repair"
             ),
         )
         report = run_checks(OPERATION_CHECKS, candidate, context)
-    if report.errors or report.findings:
-        raise ValueError(
-            f"operation fragment {use_case.id} remains invalid: "
-            + "; ".join([*report.errors, *finding_text(report.findings)])
+        if report.errors:
+            raise RuntimeError("; ".join(report.errors))
+        if not report.findings:
+            return candidate
+
+        current_findings = tuple(sorted(set(finding_text(report.findings))))
+        candidate_digest = stable_digest(candidate)
+        repeated = ledger.candidate_seen(
+            input_digest=input_digest,
+            candidate_digest=candidate_digest,
         )
-    return candidate
+        ledger.record(RepairAttempt(
+            stage="design.class.operations",
+            target_ids=(execution_group_id or use_case.id,),
+            strategy_key=f"full-fragment-replacement-{attempt + 1}",
+            input_digest=input_digest,
+            candidate_digest=candidate_digest,
+            finding_keys_before=current_findings,
+            finding_keys_after=current_findings,
+            outcome="repeated_candidate" if repeated else "no_improvement",
+            detail="; ".join(current_findings),
+        ))
+        if repeated:
+            ledger.status = "STALLED"
+            ledger.stall_reason = (
+                "The operation LLM repeated an already rejected fragment."
+            )
+            raise ValueError(
+                f"operation fragment {use_case.id} repair stalled on a repeated candidate: "
+                + "; ".join(current_findings)
+            )
+        repair_findings = [
+            *current_findings,
+            (
+                "Accumulated repair history (do not repeat any strategy or candidate):\n"
+                + ledger.prompt_context()
+            ),
+        ]
+        attempt += 1
 
 
 def _operation_cache_key(
@@ -1020,30 +1052,70 @@ def _build_fragments(
                 ]
                 proposals = [future.result() for future in futures]
         for unit, fragment in zip(wave, proposals, strict=True):
-            try:
-                candidate = _compose(
-                    inventory, [*committed, (unit.use_case.id, fragment)],
-                )
-            except (_Collision, _DataTypeCollision) as collision:
-                # 충돌의 후발 소유자인 현재 unit만 한 번 교체한다. 이미 committed된 형제
-                # fragment를 다시 호출하지 않는 것이 국소성 보장의 핵심이다.
-                current = _compose(inventory, committed)
-                fragment = _checked_fragment(
-                    index,
-                    inventory,
-                    unit.use_case,
-                    previous=fragment,
-                    findings=[str(collision)],
-                    reserved=_reserved_operations(current),
-                    reserved_types=list(current.get("DataTypes") or []),
-                    allowed_step_ids=unit.step_ids,
-                    execution_group_id=unit.execution_group_id,
-                    operation="InteractionOperationCollisionRepair",
-                    cache=cache,
-                )
-                candidate = _compose(
-                    inventory, [*committed, (unit.use_case.id, fragment)],
-                )
+            collision_ledger = RepairLedger()
+            collision_input_digest = stable_digest({
+                "inventory": inventory,
+                "committed": committed,
+                "unit": unit.id,
+            })
+            while True:
+                try:
+                    candidate = _compose(
+                        inventory, [*committed, (unit.use_case.id, fragment)],
+                    )
+                    break
+                except (_Collision, _DataTypeCollision) as collision:
+                    # 충돌의 후발 소유자인 현재 unit만 이력 기반으로 교체한다. 이미 committed된
+                    # 형제 fragment를 다시 호출하지 않는 것이 국소성 보장의 핵심이다.
+                    candidate_digest = stable_digest(fragment)
+                    repeated = collision_ledger.candidate_seen(
+                        input_digest=collision_input_digest,
+                        candidate_digest=candidate_digest,
+                    )
+                    finding_keys = (str(collision),)
+                    collision_ledger.record(RepairAttempt(
+                        stage="design.class.operation-collision",
+                        target_ids=(unit.id,),
+                        strategy_key=(
+                            "replace-colliding-fragment-"
+                            f"{len(collision_ledger.attempts) + 1}"
+                        ),
+                        input_digest=collision_input_digest,
+                        candidate_digest=candidate_digest,
+                        finding_keys_before=finding_keys,
+                        finding_keys_after=finding_keys,
+                        outcome="repeated_candidate" if repeated else "no_improvement",
+                        detail=str(collision),
+                    ))
+                    if repeated:
+                        collision_ledger.status = "STALLED"
+                        collision_ledger.stall_reason = (
+                            "The operation collision repair repeated a rejected fragment."
+                        )
+                        raise ValueError(
+                            f"operation fragment {unit.id} collision repair stalled on a "
+                            f"repeated candidate: {collision}"
+                        ) from collision
+                    current = _compose(inventory, committed)
+                    fragment = _checked_fragment(
+                        index,
+                        inventory,
+                        unit.use_case,
+                        previous=fragment,
+                        findings=[
+                            str(collision),
+                            (
+                                "Accumulated collision repair history (do not repeat any "
+                                "candidate):\n" + collision_ledger.prompt_context()
+                            ),
+                        ],
+                        reserved=_reserved_operations(current),
+                        reserved_types=list(current.get("DataTypes") or []),
+                        allowed_step_ids=unit.step_ids,
+                        execution_group_id=unit.execution_group_id,
+                        operation="InteractionOperationCollisionRepair",
+                        cache=cache,
+                    )
             committed.append((unit.use_case.id, fragment))
             position += 1
             emit_preview(candidate, "operations", unit.id, position + 1, len(units) + 1)
@@ -1233,7 +1305,7 @@ def checked_fragment(
     use_case: UseCase,
     **kwargs: Any,
 ) -> AcceptedFragment:
-    """검사와 최대 한 번의 replacement를 거친 연산 fragment를 생성한다.
+    """검사와 이력 기반 replacement를 거친 연산 fragment를 생성한다.
 
     Args:
         index: 시나리오와 허용 단계의 기준이다.
@@ -1246,7 +1318,7 @@ def checked_fragment(
 
     Raises:
         RuntimeError: 검사기 자체가 완료되지 못한 경우다.
-        ValueError: 최초 후보와 한 번의 replacement가 모두 유효하지 않은 경우다.
+        ValueError: 이미 거절된 동일 후보를 반복해 더 진전할 수 없는 경우다.
     """
     previous = kwargs.pop("previous", None)
     candidate = _checked_fragment(

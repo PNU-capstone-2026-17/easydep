@@ -618,7 +618,7 @@ def replace_selected_groups(
         입력 그룹 순서의 수락 collaboration 또는 명시적 실패 결과다.
 
     Notes:
-        각 그룹의 최초 제안과 최대 한 번 repair 규약은 ``process_group``이 소유한다.
+        각 그룹의 이력 기반 repair와 반복 후보 종료 규약은 ``process_group``이 소유한다.
     """
     return _replace_selected_groups(
         index, model, groups, feedback=feedback, workers=workers, cache=cache,

@@ -223,6 +223,35 @@ def test_repaired_fragment_drops_actor_entry_refs_from_delegated_operations(monk
     assert control["operations"][0]["stepRefs"] == ["UC1:main:2"]
 
 
+def test_operation_repair_continues_past_one_replacement(monkeypatch):
+    invalid_one = operation_fragment()
+    invalid_one["Classes"][0]["operations"][0]["stepRefs"] = ["UC9:main:1"]
+    invalid_two = operation_fragment()
+    invalid_two["Classes"][0]["operations"][0]["stepRefs"] = ["UC8:main:1"]
+    candidates = [invalid_one, invalid_two, operation_fragment()]
+    operation_calls = 0
+
+    def fake_parse(messages, schema, **_kwargs):
+        nonlocal operation_calls
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is OperationFragment:
+            candidate = candidates[operation_calls]
+            operation_calls += 1
+            if operation_calls == 3:
+                assert "Accumulated repair history" in messages[-1]["content"]
+            return candidate
+        if issubclass(schema, CallPlanProposal):
+            return call_plan()
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+
+    assert operation_calls == 3
+    assert len(model.Collaborations) == 1
+
+
 def test_entity_receiver_cannot_accept_its_own_complete_entity_type():
     index = build_scenario_index(single_use_case())
     inventory = {

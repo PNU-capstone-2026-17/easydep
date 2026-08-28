@@ -91,7 +91,8 @@ execution group을 고정한다.
 필수 필드 `total`이 없다면 `class.operation.value-flow` finding이 된다. 자유로운 기본값을
 발명하지 않는다.
 
-Finding이 있으면 현재 fragment와 finding 목록만 `previousFragment`에 넣어 한 번 교체한다.
+Finding이 있으면 현재 fragment, finding 목록과 누적 거절 이력을 `previousFragment`와 함께
+전달해 교체한다. 숫자 상한은 두지 않고 동일 후보가 반복될 때 정체로 종료한다.
 다른 use case의 수락된 fragment는 prompt에도 replacement 대상에도 포함하지 않는다.
 
 ## Collaboration 규칙

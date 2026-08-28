@@ -1,16 +1,20 @@
 <script lang="ts">
-  import { AlertTriangle, CheckCircle2, Circle } from '@lucide/svelte';
-  import type { ArtifactDocument, FileArtifactSnapshot } from '$lib/types';
+  import { AlertTriangle, CheckCircle2, Circle, LoaderCircle } from '@lucide/svelte';
+  import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview } from '$lib/types';
   import { artifactLabels, artifactPresent, fileArtifactTypes } from '$lib/artifacts';
 
   let {
     document,
     fileArtifacts,
+    classPreview,
+    classGenerating = false,
     selected,
     onSelect
   }: {
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
+    classPreview?: LiveDiagramPreview | null;
+    classGenerating?: boolean;
     selected: string;
     onSelect: (stage: string) => void;
   } = $props();
@@ -28,7 +32,15 @@
   ];
 
   function available(stage: string) {
-    return Boolean(fileArtifacts[stage]) || artifactPresent(document?.artifacts?.[stage]);
+    return (
+      Boolean(fileArtifacts[stage]) ||
+      artifactPresent(document?.artifacts?.[stage]) ||
+      (stage === 'class_diagram' && (classGenerating || Boolean(classPreview)))
+    );
+  }
+
+  function generating(stage: string) {
+    return stage === 'class_diagram' && (classGenerating || Boolean(classPreview)) && !artifactPresent(document?.artifacts?.[stage]);
   }
 
   function hasFindings(stage: string) {
@@ -54,7 +66,9 @@
               disabled={!ready}
               onclick={() => onSelect(stage)}
             >
-              {#if !ready}
+              {#if generating(stage)}
+                <LoaderCircle size={14} class="shrink-0 animate-spin text-[#39745a]" />
+              {:else if !ready}
                 <Circle size={13} class="shrink-0" />
               {:else if hasFindings(stage)}
                 <AlertTriangle size={14} class="shrink-0 text-[#a64a40]" />

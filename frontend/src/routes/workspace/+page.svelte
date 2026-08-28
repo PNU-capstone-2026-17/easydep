@@ -70,6 +70,11 @@
   );
 
   let busy = $derived(actionBusy || ['QUEUED', 'RUNNING'].includes(command?.status ?? ''));
+  let classGenerating = $derived(
+    command?.stage === 'design' &&
+      ['QUEUED', 'RUNNING'].includes(command?.status ?? '') &&
+      !artifactPresent(artifacts?.artifacts?.class_diagram)
+  );
   let selectedStage = $derived(
     fileArtifactTypes.includes(selectedArtifact)
       ? 'implementation'
@@ -453,6 +458,7 @@
             {fileArtifacts}
             {events}
             {classPreview}
+            {classGenerating}
             selected={selectedArtifact}
             onSelect={reviewArtifact}
             onSequenceFeedbackSubmit={submitSequenceFeedback}

@@ -8,7 +8,14 @@ from app.config import settings
 from app.design.services.class_diagram import collaboration, inventory, operations
 from app.design.services.class_diagram.proposals import InventoryProposal
 from app.design.services.class_diagram.scenario import build_scenario_index
-from tests.class_design_fixtures import scenario
+from tests.class_design_fixtures import (
+    call_plan,
+    inventory_proposal,
+    operation_fragment,
+    patch_class_design_parser,
+    scenario,
+    single_use_case,
+)
 
 
 def test_scenario_index_splits_actor_entries_and_attaches_extension_steps():
@@ -94,3 +101,36 @@ def test_class_design_reasoning_effort_is_independent_per_owned_stage(monkeypatc
     # Stage-specific reasoning is only a model policy. Repair termination is
     # owned by validation progress and the append-only repair history.
     assert not hasattr(settings, "design_max_repair_iters")
+
+
+def test_inventory_repair_continues_past_one_replacement(monkeypatch):
+    candidates = []
+    missing_control = inventory_proposal()
+    missing_control["items"] = [missing_control["items"][0]]
+    candidates.append(missing_control)
+    missing_boundary = inventory_proposal()
+    missing_boundary["items"] = [missing_boundary["items"][1]]
+    candidates.append(missing_boundary)
+    candidates.append(inventory_proposal())
+    inventory_calls = 0
+
+    def fake_parse(messages, schema, **_kwargs):
+        nonlocal inventory_calls
+        if schema.__name__ == "InventoryProposal":
+            candidate = candidates[inventory_calls]
+            inventory_calls += 1
+            if inventory_calls == 3:
+                assert "repairHistory" in messages[-1]["content"]
+            return candidate
+        if schema.__name__ == "OperationFragment":
+            return operation_fragment()
+        return call_plan()
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    accepted = inventory.inventory_proposal(build_scenario_index(single_use_case()))
+
+    assert inventory_calls == 3
+    assert {item["className"] for item in accepted.classes} == {
+        "RequestBoundary",
+        "RequestControl",
+    }

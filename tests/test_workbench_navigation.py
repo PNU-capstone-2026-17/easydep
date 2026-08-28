@@ -120,6 +120,11 @@ def test_artifacts_are_conversational_and_open_in_the_detail_sidebar() -> None:
     assert "indexOpen" in pane
     assert "absolute left-3 right-3 top-12" in pane
     assert "grid-cols-3" in navigator
+    assert "stage === 'class_diagram' && (classGenerating || Boolean(classPreview))" in navigator
+    assert "generating(stage)" in navigator
+    assert "<ArtifactNavigator {document} {fileArtifacts} {classPreview} {classGenerating}" in pane
+    assert "The first accepted snapshot will appear here." in pane
+    assert "{classGenerating}" in workspace
 
 
 def test_diagrams_can_be_opened_in_an_expanded_view() -> None:

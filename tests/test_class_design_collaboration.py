@@ -41,6 +41,35 @@ def test_vertical_service_persists_calls_and_derives_parameter_provenance(monkey
     assert all(item.get("type") != "Dependency" for item in model["Relationships"])
 
 
+def test_call_plan_repair_continues_past_one_replacement(monkeypatch):
+    invalid_one = call_plan()
+    invalid_one["calls"][1]["receiverOperationId"] = "MissingControl::first()"
+    invalid_two = call_plan()
+    invalid_two["calls"][1]["receiverOperationId"] = "MissingControl::second()"
+    candidates = [invalid_one, invalid_two, call_plan()]
+    call_plan_calls = 0
+
+    def fake_parse(messages, schema, **_kwargs):
+        nonlocal call_plan_calls
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is OperationFragment:
+            return operation_fragment()
+        if issubclass(schema, CallPlanProposal):
+            candidate = candidates[call_plan_calls]
+            call_plan_calls += 1
+            if call_plan_calls == 3:
+                assert "Accumulated repair history" in messages[-1]["content"]
+            return candidate
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+
+    assert call_plan_calls == 3
+    assert len(model.Collaborations) == 1
+
+
 def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(monkeypatch):
     inventory_candidate = inventory_proposal()
     inventory_candidate["items"].append({

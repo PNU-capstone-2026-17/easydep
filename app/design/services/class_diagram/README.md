@@ -18,8 +18,9 @@ raw use-case JSON
 ```
 
 각 화살표는 수락 경계다. LLM의 구조화 응답을 그대로 다음 단계로 넘기지 않고 정규화와
-결정론 검증을 통과시킨다. 실패하면 finding이 가리키는 가장 작은 소유 단위만 한 번
-교체하며, 이미 수락된 형제 단위는 유지한다.
+결정론 검증을 통과시킨다. 실패하면 finding이 가리키는 가장 작은 소유 단위만 교체하며,
+숫자 상한 없이 수락될 때까지 누적 수리 이력을 다음 요청에 전달한다. 이미 거절된 후보나
+동일한 실패 상태가 반복되면 `STALLED`로 끝내고, 이미 수락된 형제 단위는 유지한다.
 
 ## 공개 입력과 출력
 
@@ -215,21 +216,22 @@ parameter의 실제 후보 enum에서 하나를 선택한다. 후보가 없으�
 - `revise`: 피드백을 inventory, operation, collaboration 중 가장 작은 소유자에 적용한다.
 
 협업이 필요한 메서드를 찾지 못하면 해당 그룹이 추적하는 유스케이스의 연산 조각만 보완한
-뒤 영향을 받은 그룹만 다시 계획한다. 이 handoff가 실패해도 성공한 형제 협업을 버리지 않는다.
+뒤 영향을 받은 그룹만 다시 계획한다. handoff도 누적 실패 이력을 operation prompt에 전달해
+진전하는 동안 반복하며, 정체되어도 성공한 형제 협업을 버리지 않는다.
 
 ## LLM 호출 계약
 
 | operation | 호출 조건 | 구조화 출력 | 검사와 후속 동작 |
 |---|---|---|---|
 | `InteractionInventory` | 새 전역 구조가 필요할 때 | `InventoryProposal` | inventory 검사 후 수락 |
-| `InteractionInventoryRepair` | 최초 inventory finding 발생 | `InventoryProposal` | 전체 inventory를 한 번 교체 후 재검사 |
+| `InteractionInventoryRepair` | inventory finding 발생 | `InventoryProposal` | 누적 이력과 함께 전체 inventory를 교체 후 재검사 |
 | `InteractionOperations` | 새 연산 조각 생성 | `OperationFragment` | 현재 조각만 검사 |
-| `InteractionOperationsRepair` | 조각 finding 발생 | `OperationFragment` | 현재 조각을 한 번 교체 |
+| `InteractionOperationsRepair` | 조각 finding 발생 | `OperationFragment` | 누적 이력과 함께 현재 조각을 교체 |
 | `InteractionOperationCollisionRepair` | 같은 이름의 수락 연산·타입과 정의 충돌 | `OperationFragment` | 충돌한 현재 조각만 다시 검사 |
 | `InteractionOperationHandoff` | 협업이 필요한 연산을 찾지 못함 | `OperationFragment` | 실패 그룹 소유 조각만 보완 |
 | `InteractionOperationFeedback` | operation 소유 피드백 | `OperationFragment` | 선택 use case 조각만 교체 |
 | `InteractionCallPlan` | execution group의 호출 트리 생성 | 유한 `CallPlanProposal` | materialize 후 collaboration 검사 |
-| `InteractionCallPlanRepair` | 최초 계획·materialize 실패 | 유한 `CallPlanProposal` | 같은 그룹만 한 번 교체 |
+| `InteractionCallPlanRepair` | 계획·materialize 실패 | 유한 `CallPlanProposal` | 누적 이력과 함께 같은 그룹만 교체 |
 | `InteractionBindingSelection` | parameter 출처 후보가 복수 | 동적 유한 선택 schema | 모든 선택을 materialize에 병합 |
 | `InteractionFeedbackScope` | targets와 이름으로 소유자를 확정 못함 | `FeedbackScope` | 허용 candidate ID인지 재검사 |
 | `InteractionInventoryFeedback` | inventory 소유 피드백 | `InventoryProposal` | 지정되지 않은 item을 원본과 병합 후 검사 |
@@ -237,22 +239,22 @@ parameter의 실제 후보 enum에서 하나를 선택한다. 후보가 없으�
 정확한 prompt 문구의 진실 공급원은 `inventory.py`, `operations.py`, `collaboration.py`의 상수와
 `feedback.py`의 호출부다. 이 README의 예제는 shape를 설명하기 위한 축약본이며 prompt를
 복제하지 않는다. collision·handoff·feedback 전용 제안에도 validation finding이 남으면
-`_checked_fragment`가 같은 이름에 `Repair` 접미사를 붙여 한 번 전체 교체한다. 예를 들어
-`InteractionOperationHandoffRepair`는 handoff 제안의 재검사 실패에서만 호출된다.
+`_checked_fragment`가 같은 이름에 `Repair` 접미사를 붙여 누적 이력 기반 전체 교체를 한다.
+예를 들어 `InteractionOperationHandoffRepair`는 handoff 제안의 재검사 실패에서만 호출된다.
 
-## 검증과 repair 예산
+## 검증과 repair 종료 조건
 
-| 소유 단위 | 주요 검사 | 자동 교체 예산 | 실패 시 |
+| 소유 단위 | 주요 검사 | 숫자 상한 | 종료 조건 |
 |---|---|---:|---|
-| Inventory | 이름·타입·관계·유스케이스 범위 | 1회 | 생성 중단 |
-| Operation fragment | 참조·단계 커버리지·실행 그룹·값 흐름 | 제안 1건당 1회 | 해당 조각 실패 |
-| Collaboration | 호출 계약·순서·binding provenance | 1회 | `CollaborationResult`에 명시적 실패 |
-| Operation handoff | 실패 그룹이 요구한 연산 보완 | 1회 | 성공한 skeleton을 보존하고 경고 |
-| Final model | schema·canonical ID·협업 커버리지 | 추가 repair 없음 | revise에서는 실패 반환 |
+| Inventory | 이름·타입·관계·유스케이스 범위 | 없음 | 수락 또는 거절 후보 반복 |
+| Operation fragment | 참조·단계 커버리지·실행 그룹·값 흐름 | 없음 | 수락 또는 거절 후보 반복 |
+| Collaboration | 호출 계약·순서·binding provenance | 없음 | 수락 또는 거절 call-plan 반복 |
+| Operation handoff | 실패 그룹이 요구한 연산 보완 | 없음 | 수락 또는 skeleton+실패 상태 반복 |
+| Final model | schema·canonical ID·협업 커버리지 | 해당 없음 | revise에서는 finding 반환 |
 
 commit 시 발견되는 이름 충돌과 collaboration 실패 뒤의 handoff는 앞선 proposal 검사의 반복이
-아니라 새로운 소유 사건이다. 둘 다 현재 fragment만 대상으로 하며, 각 사건의 제안도 검사
-finding이 남을 때 최대 한 번만 교체된다.
+아니라 새로운 소유 사건이다. 둘 다 현재 fragment만 대상으로 하며, 각 사건의 제안은 검사
+finding과 이전 거절 후보 digest를 누적해 materially different replacement를 요청한다.
 
 검증 구현과 rule별 의미는 [validation README](validation/README.md)를 따른다.
 
@@ -323,7 +325,7 @@ collaboration slice와 feedback을 key에 포함해 영향받은 단위만 교�
 inventory, operation, call-plan은 각각 `design_class_inventory_reasoning_effort`,
 `design_class_operation_reasoning_effort`, `design_class_call_plan_reasoning_effort`를
 읽는다. 값이 없는 구버전 설정은 기존 `design_reasoning_effort`로 fallback한다. 이 설정은
-호출 수, 각 제안의 최대 1회 replacement, handoff 범위와 병렬도 정책을 바꾸지 않는다.
+수리 종료 조건, handoff 범위와 병렬도 정책을 바꾸지 않는다.
 `design_class_compact_operation_payload`의 운영 기본값은 평가 채택 전까지 `false`이며,
 live protocol의 compact/candidate cell에서만 명시적으로 활성화한다.
 

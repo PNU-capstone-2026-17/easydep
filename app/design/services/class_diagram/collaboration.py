@@ -50,7 +50,7 @@ from app.design.services.class_diagram.validation.model import (
     type_can_default,
 )
 from app.design.services.common.structured import parse_structured
-from app.validation import Finding, run_checks
+from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, stable_digest
 
 CALL_PLAN_PROMPT = """
 Build the ordered call tree for exactly one execution group. Select only the
@@ -176,7 +176,7 @@ def _propose_call_plan(
     """유한 operation ID enum으로 한 execution group의 호출 계획을 요청한다.
 
     최초 호출은 ``previous``와 ``finding``이 없다. materialize 또는 validation 실패 뒤에는
-    이전 전체 계획과 오류를 함께 보내 같은 group의 full replacement를 한 번 요청한다.
+    이전 전체 계획과 오류·누적 이력을 함께 보내 같은 group의 full replacement를 요청한다.
     """
     # 1. 현재 group의 단계와 수락 operation만 payload에 포함한다.
     payload = _group_payload(index, model, group)
@@ -533,7 +533,7 @@ def materialize(
 
 
 class _CollaborationUnitFailure(RuntimeError):
-    """한 execution group의 두 번째 수리도 실패했음을 cache 밖으로 전달한다."""
+    """한 execution group이 반복 후보로 정체됐음을 cache 밖으로 전달한다."""
 
     def __init__(self, issue: str) -> None:
         super().__init__(issue)
@@ -546,26 +546,65 @@ def _accepted_collaboration_payload(
     group: ExecutionGroup,
     directive: str = "",
 ) -> dict[str, Any]:
-    """한 execution group을 수락하거나 두 번째 실패를 cache 밖으로 보낸다."""
+    """한 execution group을 수락하거나 반복 실패를 cache 밖으로 보낸다."""
 
-    plan: CallPlanProposal | None = None
-    try:
-        plan = propose_call_plan(index, model, group, finding=directive)
-        return materialize(index, model, group, plan).model_dump(by_alias=True)
-    except Exception as first_error:
+    ledger = RepairLedger()
+    input_digest = stable_digest(_group_payload(
+        index, model.model_dump(by_alias=True), group,
+    ))
+    previous: CallPlanProposal | None = None
+    finding = directive
+    attempt = 0
+    while True:
+        candidate: CallPlanProposal | None = None
         try:
-            repaired = propose_call_plan(
+            candidate = propose_call_plan(
                 index,
                 model,
                 group,
-                previous=plan,
-                finding=str(first_error),
+                previous=previous,
+                finding=finding,
             )
-            return materialize(index, model, group, repaired).model_dump(by_alias=True)
-        except Exception as second_error:
-            raise _CollaborationUnitFailure(
-                f"{type(second_error).__name__}: {second_error}"
-            ) from second_error
+            return materialize(index, model, group, candidate).model_dump(by_alias=True)
+        except Exception as error:
+            error_text = f"{type(error).__name__}: {error}"
+            candidate_digest = stable_digest(
+                candidate.model_dump(mode="json", by_alias=True)
+                if candidate is not None
+                else {"error": error_text}
+            )
+            repeated = ledger.candidate_seen(
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+            )
+            finding_keys = (error_text,)
+            ledger.record(RepairAttempt(
+                stage="design.class.collaboration",
+                target_ids=(group.id,),
+                strategy_key=f"full-call-plan-replacement-{attempt + 1}",
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+                finding_keys_before=finding_keys,
+                finding_keys_after=finding_keys,
+                outcome="repeated_candidate" if repeated else "no_improvement",
+                detail=error_text,
+            ))
+            if repeated:
+                ledger.status = "STALLED"
+                ledger.stall_reason = (
+                    "The collaboration LLM repeated an already rejected call plan."
+                )
+                raise _CollaborationUnitFailure(
+                    "repair stalled on a repeated candidate: " + error_text
+                ) from error
+            previous = candidate
+            finding = (
+                f"{error_text}\n\n"
+                "Return a materially different full call plan. Do not repeat any rejected "
+                "strategy or candidate. Accumulated repair history:\n"
+                + ledger.prompt_context()
+            )
+            attempt += 1
 
 
 def _collaboration_cache_key(
@@ -638,7 +677,7 @@ def process_group(
     *,
     cache: AcceptedUnitCache | None = None,
 ) -> CollaborationResult:
-    """한 실행 그룹을 제안·materialize하고 최대 한 번 국소 교체한다.
+    """한 실행 그룹을 제안·materialize하고 이력 기반으로 국소 교체한다.
 
     Args:
         index: 실행 그룹의 단계와 추적 범위를 제공한다.
@@ -648,7 +687,7 @@ def process_group(
         cache: 수락된 collaboration만 공유하는 선택적 process-local cache다.
 
     Returns:
-        수락된 ``Collaboration`` 또는 두 번째 실패의 명시적 issue를 담은 결과다.
+        수락된 ``Collaboration`` 또는 반복 후보의 명시적 issue를 담은 결과다.
 
     Notes:
         예외를 전역으로 전파하지 않고 실패 결과로 바꾸는 이유는 형제 worker의 성공을

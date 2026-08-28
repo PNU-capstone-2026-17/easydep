@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Braces, Check, CheckCircle2, Clock3, Copy, FileCode2, FileText, Image, Layers3, Maximize2, ShieldCheck, X } from '@lucide/svelte';
+  import { Braces, Check, CheckCircle2, Clock3, Copy, FileCode2, FileText, Image, Layers3, LoaderCircle, Maximize2, ShieldCheck, X } from '@lucide/svelte';
   import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
   import { getArtifactFile, getFileArtifactVersions, getSequenceDiagrams, getVersions } from '$lib/api';
   import { errorMessage } from '$lib/utils';
@@ -15,6 +15,7 @@
     fileArtifacts,
     events,
     classPreview,
+    classGenerating = false,
     selected,
     onSelect,
     onSequenceFeedbackSubmit,
@@ -28,6 +29,7 @@
     fileArtifacts: Record<string, FileArtifactSnapshot>;
     events: WorkspaceEvent[];
     classPreview?: LiveDiagramPreview | null;
+    classGenerating?: boolean;
     selected: string;
     onSelect: (stage: string) => void;
     onSequenceFeedbackSubmit?: (
@@ -77,7 +79,7 @@
     Object.keys(document?.artifacts ?? {})
       .filter((key) => key in artifactLabels && artifactPresent(document?.artifacts?.[key]))
       .concat(Object.keys(fileArtifacts))
-      .concat(classPreview ? ['class_diagram'] : [])
+      .concat(classPreview || classGenerating ? ['class_diagram'] : [])
       .filter((stage, index, stages) => stages.indexOf(stage) === index)
   );
 
@@ -282,7 +284,7 @@
         <strong class="text-xs">Artifact index</strong>
         <span class="text-[10px] text-[#85877e]">Select an output</span>
       </div>
-      <ArtifactNavigator {document} {fileArtifacts} {selected} onSelect={selectFromIndex} />
+      <ArtifactNavigator {document} {fileArtifacts} {classPreview} {classGenerating} {selected} onSelect={selectFromIndex} />
     </div>
   {/if}
 
@@ -298,14 +300,20 @@
           ? 'border-[#1f5d45] text-[#1f5d45]'
           : 'border-transparent text-[#7c7e75]'}"
         onclick={() => (tab = item[0] as typeof tab)}
-        disabled={Boolean(liveClassPreview) && item[0] !== 'artifact'}
+        disabled={(classGenerating || Boolean(liveClassPreview)) && item[0] !== 'artifact'}
       >{item[1]}</button>
     {/each}
   </div>
 
   <div class="scrollbar-thin flex-1 overflow-auto bg-[#fbfbf8] p-4 md:p-5">
     <div class="mx-auto w-full max-w-6xl">
-    {#if !displayContent && !fileArtifact}
+    {#if classGenerating && selected === 'class_diagram' && !displayContent}
+      <div class="mt-16 text-center text-[#5d7565]" role="status">
+        <LoaderCircle class="mx-auto mb-3 animate-spin" size={25} strokeWidth={1.5} />
+        <p class="text-xs font-semibold">Generating the class diagram</p>
+        <p class="mt-1 text-[11px] text-[#898b83]">The first accepted snapshot will appear here.</p>
+      </div>
+    {:else if !displayContent && !fileArtifact}
       <div class="mt-16 text-center text-[#898b83]">
         <FileText class="mx-auto mb-3" size={25} strokeWidth={1.5} />
         <p class="text-xs">This artifact has not been generated yet.</p>

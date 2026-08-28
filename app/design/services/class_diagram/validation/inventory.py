@@ -208,7 +208,7 @@ def validate_inventory(
         이름, 타입, 관계, 범위 규칙을 등록 순서로 담은 보고서다.
 
     Notes:
-        finding은 inventory service가 최대 한 번의 전체 교체 repair 입력으로 바꾼다.
+        finding은 inventory service가 누적 이력을 포함한 전체 교체 repair 입력으로 바꾼다.
         이 함수 자체는 LLM 호출이나 repair 예산을 소유하지 않는다.
     """
     return run_checks(INVENTORY_CHECKS, inventory or {}, index)

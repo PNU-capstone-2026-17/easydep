@@ -310,8 +310,8 @@ def validate_collaboration(
         호출 계약, 순서와 binding 규칙의 finding을 담은 보고서다.
 
     Notes:
-        materialize 단계가 이 보고서를 한 문자열로 만들어 같은 group의 call plan을 최대
-        한 번 전체 교체한다. 검사 함수는 새 sourceRef를 발명하지 않는다.
+        materialize 단계가 이 보고서를 한 문자열로 만들어 같은 group의 call plan을 누적
+        이력 기반으로 전체 교체한다. 검사 함수는 새 sourceRef를 발명하지 않는다.
     """
     return run_checks(COLLABORATION_CHECKS, collaboration or {}, context)
 

@@ -4,8 +4,9 @@
 유스케이스 관계만 압축해 전달한다. 응답 ``InventoryProposal``은 저장 shape로 정규화한 뒤
 ``INVENTORY_CHECKS``를 통과해야 ``AcceptedInventory``가 된다.
 
-이 모듈은 LLM 호출과 최대 한 번의 inventory replacement라는 부작용을 가진다. 연산,
-협업, graph state와 저장소를 직접 참조하지 않는다.
+이 모듈은 LLM 호출과 이력 기반 inventory replacement라는 부작용을 가진다. 숫자 수리
+상한은 두지 않지만 같은 후보를 다시 받으면 반복 실패로 중단한다. 연산, 협업, graph state와
+저장소를 직접 참조하지 않는다.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ from app.design.services.class_diagram.type_system import (
 from app.design.services.class_diagram.validation.inventory import INVENTORY_CHECKS
 from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
-from app.validation import Finding, run_checks
+from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, stable_digest
 
 INVENTORY_PROMPT = ("""
 Build one fixed BCE inventory for the supplied accepted use-case
@@ -206,7 +207,7 @@ def inventory_payload(index: ScenarioIndex) -> dict[str, Any]:
 
 
 def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
-    """전역 inventory를 생성하고 최대 한 번의 전체 replacement로 수락한다.
+    """전역 inventory를 생성하고 이력 기반 전체 replacement로 수락한다.
 
     Args:
         index: inventory의 허용 이름·유스케이스 범위를 제공하는 시나리오 인덱스다.
@@ -216,11 +217,11 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
 
     Raises:
         RuntimeError: 검사기 자체가 예외를 내 검증을 완료하지 못한 경우다.
-        ValueError: 최초 제안과 한 번의 replacement가 모두 finding을 남긴 경우다.
+        ValueError: LLM이 이미 거절한 동일 후보를 반복한 경우다.
 
     Notes:
-        repair에는 최초 messages, 전체 candidate와 모든 finding을 함께 보낸다. 부분 patch는
-        허용하지 않으며 두 번째 결과도 같은 schema와 규칙을 통과해야 한다.
+        repair에는 최초 messages, 현재 전체 candidate, 모든 finding과 누적 실패 이력을 함께
+        보낸다. 부분 patch는 허용하지 않으며 모든 결과는 같은 schema와 규칙을 통과해야 한다.
     """
 
     # 1. 원문을 재전송하지 않고 inventory 결정에 필요한 압축 payload를 한 번 만든다.
@@ -229,45 +230,72 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
         {"role": "system", "content": INVENTORY_PROMPT},
         {"role": "user", "content": json.dumps(source_payload, ensure_ascii=False)},
     ]
-    # 2. 응답 타입을 InventoryProposal로 고정해 설명문이나 임의 필드를 받지 않는다.
-    parsed = parse_structured(
-        messages, InventoryProposal, reasoning_effort=inventory_reasoning_effort(),
-        max_completion_tokens=inventory_max_completion_tokens(),
-        operation="InteractionInventory",
-        metadata={
-            "executionSlice": "inventory",
-            "candidateCount": len(source_payload["useCases"]),
-        },
-    )
-    # 3. LLM shape를 저장 shape로 바꾼 뒤에야 결정론 규칙이 후보를 판단한다.
-    candidate = _normalize_inventory(InventoryProposal.model_validate(parsed))
-    report = run_checks(INVENTORY_CHECKS, candidate, index)
-    if report.errors:
-        raise RuntimeError("; ".join(report.errors))
-    if report.findings:
-        # 4. finding이 있으면 같은 소유 단위 전체만 한 번 교체한다. 부분 결과를 합치면
-        # 관계와 타입 scope가 서로 다른 버전이 될 수 있어 full replacement만 허용한다.
+    ledger = RepairLedger()
+    input_digest = stable_digest(source_payload)
+    candidate: dict[str, Any] | None = None
+    attempt = 0
+    while True:
+        operation = "InteractionInventory" if attempt == 0 else "InteractionInventoryRepair"
+        prompt = messages
+        if candidate is not None:
+            prompt = [*messages, {"role": "user", "content": json.dumps({
+                "task": (
+                    "Return one materially different full repaired inventory. Preserve valid "
+                    "decisions, resolve every finding, and do not repeat a rejected candidate."
+                ),
+                "candidate": candidate,
+                "findings": list(ledger.attempts[-1].finding_keys_after),
+                "repairHistory": json.loads(ledger.prompt_context()),
+            }, ensure_ascii=False)}]
         parsed = parse_structured(
-            [*messages, {"role": "user", "content": json.dumps({
-                "task": "Return one full repaired inventory. Preserve valid decisions and resolve every finding.",
-                "candidate": candidate, "findings": finding_text(report.findings),
-            }, ensure_ascii=False)}],
-            InventoryProposal, reasoning_effort=inventory_reasoning_effort(),
+            prompt,
+            InventoryProposal,
+            reasoning_effort=inventory_reasoning_effort(),
             max_completion_tokens=inventory_max_completion_tokens(),
-            operation="InteractionInventoryRepair",
+            operation=operation,
             metadata={
                 "executionSlice": "inventory",
-                "candidateCount": len(candidate["Classes"]) + len(candidate["DataTypes"]),
+                "candidateCount": (
+                    len(source_payload["useCases"])
+                    if candidate is None
+                    else len(candidate["Classes"]) + len(candidate["DataTypes"])
+                ),
+                "semanticRepair": attempt > 0,
+                "repairAttempt": attempt,
             },
         )
         candidate = _normalize_inventory(InventoryProposal.model_validate(parsed))
         report = run_checks(INVENTORY_CHECKS, candidate, index)
-    if report.errors or report.findings:
-        raise ValueError("class inventory remains invalid: " + "; ".join(
-            [*report.errors, *finding_text(report.findings)]
+        if report.errors:
+            raise RuntimeError("; ".join(report.errors))
+        if not report.findings:
+            return AcceptedInventory.from_payload(candidate)
+
+        findings = tuple(sorted(set(finding_text(report.findings))))
+        candidate_digest = stable_digest(candidate)
+        repeated = ledger.candidate_seen(
+            input_digest=input_digest,
+            candidate_digest=candidate_digest,
+        )
+        ledger.record(RepairAttempt(
+            stage="design.class.inventory",
+            target_ids=("inventory",),
+            strategy_key=f"full-replacement-{attempt + 1}",
+            input_digest=input_digest,
+            candidate_digest=candidate_digest,
+            finding_keys_before=findings,
+            finding_keys_after=findings,
+            outcome="repeated_candidate" if repeated else "no_improvement",
+            detail="; ".join(findings),
         ))
-    # 5. raw dict가 하위 단계로 새지 않도록 frozen 수락 경계로 닫는다.
-    return AcceptedInventory.from_payload(candidate)
+        if repeated:
+            ledger.status = "STALLED"
+            ledger.stall_reason = "The inventory LLM repeated an already rejected candidate."
+            raise ValueError(
+                "class inventory repair stalled on a repeated candidate: "
+                + "; ".join(findings)
+            )
+        attempt += 1
 
 
 def _inventory_cache_key(index: ScenarioIndex) -> str:

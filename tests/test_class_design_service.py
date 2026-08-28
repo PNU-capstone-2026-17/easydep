@@ -48,6 +48,43 @@ def test_resume_only_plans_missing_collaborations(monkeypatch):
     assert all(schema is not OperationFragment for schema in calls)
 
 
+def test_operation_handoff_repair_continues_past_one_round(monkeypatch):
+    operation_calls = 0
+    call_plan_calls = 0
+
+    def fake_parse(messages, schema, **_kwargs):
+        nonlocal operation_calls, call_plan_calls
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is OperationFragment:
+            operation_calls += 1
+            if operation_calls == 1:
+                return operation_fragment(unsourceable=True)
+            if operation_calls == 3:
+                assert "Accumulated operation handoff repair history" in messages[-1][
+                    "content"
+                ]
+            return operation_fragment()
+        if issubclass(schema, CallPlanProposal):
+            call_plan_calls += 1
+            plan = call_plan()
+            if call_plan_calls <= 2:
+                plan["calls"][1]["receiverOperationId"] = (
+                    "RequestControl::process(other:Boolean)"
+                )
+            elif call_plan_calls <= 4:
+                plan["calls"][1]["parentCallIndex"] = None
+            return plan
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+
+    assert operation_calls == 3
+    assert call_plan_calls == 5
+    assert len(model.Collaborations) == 1
+
+
 def test_operation_feedback_rebuilds_only_the_owned_contract(monkeypatch):
     operation_fragment_calls = 0
     revised = False
