@@ -4,8 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from app.orchestration.adapters.cloud_design import CloudDesignAdapter
-from app.design.graphs.subgraphs import _finalize_deployment_diagram
+from app.design.graphs.subgraphs import DEPLOYMENT_DIAGRAM_SPEC
 from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
     hydrate_deployment_diagram_bundle,
@@ -21,6 +20,7 @@ from app.design.services.deployment_diagram.planner import (
     planning_inputs_stale,
     validate_provider_resource_plan,
 )
+from app.orchestration.adapters.cloud_design import CloudDesignAdapter
 
 
 def workload(
@@ -629,7 +629,8 @@ def test_cloud_adapter_passes_current_bundle_and_blocks_unknown_schema() -> None
 
 
 def test_deployment_subgraph_finalizer_carries_structured_upstream_models() -> None:
-    result = _finalize_deployment_diagram(
+    assert DEPLOYMENT_DIAGRAM_SPEC.finalize is not None
+    result = DEPLOYMENT_DIAGRAM_SPEC.finalize(
         {
             "deployment_diagram_model": graph(workload("web", public=True)),
             "resource_spec": {

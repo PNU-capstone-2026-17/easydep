@@ -14,6 +14,7 @@
 코드와 함께 갱신되는 실행 상세는 문서 수에 포함하지 않는다.
 
 - [클래스·시퀀스 설계 생성 로직](class-design-pipeline.md): 현재 생성 계약과 단계별 책임
+- [유지보수성 rollup 계약](maintainability-rollup.md): bounded context 소유권, 현재 checkpoint 정책과 최종 회귀 gate
 - `app/design/services/README.md`: 설계 서비스 디렉터리 지도와 경계 규칙
 - `app/design/services/class_diagram/README.md`: LLM 입출력, 검증, repair와 typed 클래스 계약
 - `app/design/services/sequence_diagram/README.md`: 결정론적 시퀀스 투영과 피드백 경로
