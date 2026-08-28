@@ -207,7 +207,31 @@ def _run_cell(
             "status": "failed",
         }
     wall_seconds = time.perf_counter() - started
-    gates, artifacts = _machine_gates(index, model)
+    try:
+        gates, artifacts = _machine_gates(index, model)
+    except (StructuredLlmError, ValueError) as error:
+        payload = model.model_dump(by_alias=True)
+        return {
+            "runId": run_id,
+            "cell": key,
+            "treatment": treatment,
+            "settings": dict(overrides),
+            "metrics": _event_metrics(events, wall_seconds),
+            "timingEvents": list(events),
+            "machineGates": {
+                "status": "failed",
+                "projection": {
+                    "status": "failed",
+                    "errorType": type(error).__name__,
+                    "message": " ".join(str(error).split())[:4000],
+                },
+            },
+            "artifacts": {
+                "classModel": payload,
+                "classPuml": generate_plantuml_from_bce_json(payload),
+            },
+            "status": "failed",
+        }
     return {
         "runId": run_id,
         "cell": key,
@@ -624,32 +648,60 @@ def apply_qualitative_review(
     return reviewed
 
 
-def record_failed_baseline_inflight(
-    report: Mapping[str, Any], *, error_type: str, error_message: str
-) -> dict[str, Any]:
-    """Close one observed failed baseline without repeating its provider calls.
+def _failed_cell_treatment_settings(cell: str) -> tuple[str, dict[str, Any]]:
+    baseline = _baseline_settings()
+    if cell.startswith("baseline-"):
+        return "baseline", baseline
+    if cell == "compact":
+        return "compact", {
+            **baseline,
+            "design_class_compact_operation_payload": True,
+        }
+    if cell == "call-plan-low":
+        return "call-plan-low", {
+            **baseline,
+            "design_class_call_plan_reasoning_effort": "low",
+        }
+    if cell == "operation-low":
+        return "operation-low", {
+            **baseline,
+            "design_class_operation_reasoning_effort": "low",
+        }
+    raise ValueError("candidate failures must be recorded by the current runner")
 
-    This recovery is intentionally limited to a terminated baseline process. New
-    executions record generation failures directly in ``_run_cell``; this adapter
-    exists for a checkpoint written by an older runner before that boundary.
+
+def record_failed_inflight(
+    report: Mapping[str, Any],
+    *,
+    error_type: str,
+    error_message: str,
+    failure_phase: str = "generation",
+) -> dict[str, Any]:
+    """Close one observed failed pre-candidate cell without repeating provider calls.
+
+    New executions record generation and projection failures directly in
+    ``_run_cell``. This adapter exists for a checkpoint written by an older runner
+    before those boundaries and is deliberately unavailable for adaptive candidates.
     """
 
     if report.get("schemaVersion") != SCHEMA_VERSION or report.get("caseId") != CASE_ID:
-        raise ValueError("failed baseline report identity does not match")
+        raise ValueError("failed cell report identity does not match")
     if report.get("status") != "in_progress" or report.get("retryBudget") != 0:
-        raise ValueError("failed baseline report is not recoverable")
+        raise ValueError("failed cell report is not recoverable")
     runs = deepcopy(report.get("runs"))
     if not isinstance(runs, list) or report.get("coldGenerationCount") != len(runs):
-        raise ValueError("failed baseline report run count is inconsistent")
+        raise ValueError("failed cell report run count is inconsistent")
     cell = report.get("inFlight")
     expected = _COLD_CELL_ORDER[len(runs)] if len(runs) < len(_COLD_CELL_ORDER) else None
-    if cell != expected or not isinstance(cell, str) or not cell.startswith("baseline-"):
-        raise ValueError("only the next in-flight baseline can be recorded as failed")
+    if cell != expected or not isinstance(cell, str):
+        raise ValueError("only the next in-flight cell can be recorded as failed")
+    treatment, settings_values = _failed_cell_treatment_settings(cell)
+    phase_key = "projection" if failure_phase == "machine-gate" else "generation"
     run = {
         "runId": f"recovered-failure:{CASE_ID}:{cell}",
         "cell": cell,
-        "treatment": "baseline",
-        "settings": _baseline_settings(),
+        "treatment": treatment,
+        "settings": settings_values,
         "metrics": {
             **_event_metrics([], 0.0),
             "measurementStatus": "unavailable-after-process-exit",
@@ -657,7 +709,7 @@ def record_failed_baseline_inflight(
         "timingEvents": [],
         "machineGates": {
             "status": "failed",
-            "generation": {
+            phase_key: {
                 "status": "failed",
                 "errorType": error_type,
                 "message": " ".join(error_message.split())[:4000],
@@ -726,26 +778,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--review-report", type=Path)
     parser.add_argument("--resume-report", type=Path)
-    parser.add_argument("--record-failed-baseline", type=Path)
+    parser.add_argument("--record-failed-cell", type=Path)
     parser.add_argument("--failure-type")
     parser.add_argument("--failure-message")
+    parser.add_argument(
+        "--failure-phase",
+        choices=("generation", "machine-gate"),
+        default="generation",
+    )
     parser.add_argument("--baseline-issues", type=int, default=0)
     parser.add_argument("--candidate-issues", type=int, default=0)
     args = parser.parse_args(argv)
     selected_modes = sum(bool(value) for value in (
         args.review_report,
         args.resume_report,
-        args.record_failed_baseline,
+        args.record_failed_cell,
     ))
     if selected_modes > 1:
         parser.error("review, resume, and failed-baseline modes are mutually exclusive")
-    if args.record_failed_baseline:
+    if args.record_failed_cell:
         if not args.failure_type or not args.failure_message:
-            parser.error("failed-baseline mode requires --failure-type and --failure-message")
-        report = record_failed_baseline_inflight(
-            _read_json(args.record_failed_baseline),
+            parser.error("failed-cell mode requires --failure-type and --failure-message")
+        report = record_failed_inflight(
+            _read_json(args.record_failed_cell),
             error_type=args.failure_type,
             error_message=args.failure_message,
+            failure_phase=args.failure_phase,
         )
     elif args.review_report:
         report = apply_qualitative_review(

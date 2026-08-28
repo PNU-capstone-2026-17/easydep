@@ -7,10 +7,11 @@ from typing import Any
 
 import pytest
 
+from app.design.schemas.class_model import BCEModel
 from evaluation.class_design_optimization_run import (
     apply_qualitative_review,
     execute_live_e1,
-    record_failed_baseline_inflight,
+    record_failed_inflight,
 )
 
 
@@ -270,6 +271,29 @@ def test_generation_value_error_is_a_failed_cell_without_a_provider_retry():
     )
 
 
+def test_projection_value_error_is_a_failed_cell_with_the_class_artifact_retained():
+    calls = 0
+
+    def generator(_index, *, cache):
+        nonlocal calls
+        calls += 1
+        return BCEModel()
+
+    report = execute_live_e1(generator=generator)
+
+    assert calls == 7
+    first = report["runs"][0]
+    assert first["status"] == "failed"
+    assert first["machineGates"]["projection"]["errorType"] == "ValueError"
+    assert first["artifacts"]["classModel"] == {
+        "Classes": [],
+        "DataTypes": [],
+        "Relationships": [],
+        "Collaborations": [],
+    }
+    assert isinstance(first["artifacts"]["classPuml"], str)
+
+
 def test_recorded_failed_baseline_resumes_at_the_next_cell_without_repeating_it():
     saved: dict[str, Any] | None = None
 
@@ -305,7 +329,7 @@ def test_recorded_failed_baseline_resumes_at_the_next_cell_without_repeating_it(
     assert saved is not None
     saved["inFlight"] = "baseline-2"
 
-    recovered = record_failed_baseline_inflight(
+    recovered = record_failed_inflight(
         saved,
         error_type="ValueError",
         error_message="operation fragment remains invalid",
