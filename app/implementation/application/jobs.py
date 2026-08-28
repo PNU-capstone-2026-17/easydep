@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,13 +18,13 @@ from app.db.models import (
     TYPE_SOURCE_CODE,
     TYPE_TEST_CODE,
 )
-from app.repositories import artifact_repository
 from app.design.validation import design_readiness_report
+from app.repositories import artifact_repository
+
 from ..config import ImplementationSettings
 from ..workflows.repair import repair_rounds
 from .feedback import assess_feedback_eligibility
 from .prototype import PrototypeClient
-
 
 # Most design findings can remain visible while implementation proceeds: they
 # may concern an incomplete alternate sequence path or a review preference.
@@ -53,7 +53,7 @@ _JAVA_CONTRACT_TYPES = frozenset({
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bool:
@@ -81,7 +81,8 @@ def _missing_bce_contract_types(class_diagram: object) -> list[str]:
     """
     source = str(class_diagram or "")
     declarations = set(re.findall(
-        r"(?im)^\s*(?:class|interface|entity)\s+(?:\"[^\"]+\"\s+as\s+)?([A-Za-z_]\w*)",
+        r"(?im)^\s*(?:class|interface|entity|enum)\s+"
+        r"(?:\"[^\"]+\"\s+as\s+)?([A-Za-z_]\w*)",
         source,
     ))
     if not declarations:

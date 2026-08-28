@@ -12,21 +12,21 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.implementation.interfaces.http import router
-from app.implementation.config import ImplementationSettings
 from app.implementation.agents.verification.build import gradle_command
-from app.implementation.generation.orchestrator import PrototypeOrchestrator, load_job
 from app.implementation.application.feedback import assess_feedback_eligibility
-from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
-from app.implementation.interfaces.schemas import (
-    CreateImplementationFeedbackJobRequest,
-    CreateImplementationJobRequest,
-)
 from app.implementation.application.jobs import (
     ImplementationWorker,
     InvalidJobState,
-    _unrepresentable_openapi_error_outcomes,
     _missing_bce_contract_types,
+    _unrepresentable_openapi_error_outcomes,
+)
+from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
+from app.implementation.config import ImplementationSettings
+from app.implementation.generation.orchestrator import PrototypeOrchestrator, load_job
+from app.implementation.interfaces.http import router
+from app.implementation.interfaces.schemas import (
+    CreateImplementationFeedbackJobRequest,
+    CreateImplementationJobRequest,
 )
 
 
@@ -48,6 +48,23 @@ def test_missing_bce_signature_type_is_detected_before_implementation() -> None:
     """
 
     assert _missing_bce_contract_types(puml) == ["CourseFilter", "MissingResult"]
+
+
+def test_declared_bce_enum_satisfies_signature_and_field_references() -> None:
+    puml = """
+    @startuml
+    class CalculatorService <<Entity>> {
+      - status : ServiceStatus
+      + setStatus(status : ServiceStatus): ServiceStatus
+    }
+    enum ServiceStatus {
+      RUNNING
+      STOPPED
+    }
+    @enduml
+    """
+
+    assert _missing_bce_contract_types(puml) == []
 
 
 def test_control_return_does_not_reject_documented_openapi_error_outcomes() -> None:
