@@ -1,7 +1,7 @@
-"""One Trivy misconfiguration stage, shared by the K8s and IaC nodes.
+"""Kubernetes와 IaC node가 함께 사용하는 Trivy 설정 오류 검사 stage다.
 
-Both nodes ask the same question of a different artifact type, so the source
-resolution, the scan and the report shape live here once.
+두 node는 산출물 종류만 다르고 같은 방식으로 설정 오류를 검사한다. 산출물 위치 선택,
+Trivy 실행과 보고서 형식을 이 모듈에서 공통으로 처리한다.
 """
 
 from __future__ import annotations
@@ -36,14 +36,11 @@ def scan_stage(
     subject: str,
     report_key: str,
 ) -> dict[str, Any]:
-    """Scan one artifact type, preferring the snapshot the implementation agent stored.
+    """구현 agent가 저장한 snapshot을 우선하여 한 종류의 산출물을 검사한다.
 
-    The database is the source of truth: it is what the implementation agent
-    published and what the user can inspect afterwards.  ``workspace_dir`` is
-    the fallback for runs whose implementation output was never persisted (the
-    legacy orchestration path writes a workspace but no snapshot), and the
-    report always records which one was scanned so a stale workspace cannot
-    masquerade as a verified artifact.
+    DB snapshot은 구현 agent가 게시했고 사용자가 나중에 조회할 수 있는 기준 결과다.
+    ``workspace_dir``은 구현 결과가 DB에 저장되지 않은 실행을 위한 fallback이다. 보고서에
+    실제로 검사한 위치를 기록해 오래된 workspace를 최신 산출물로 오인하지 않게 한다.
     """
     if app_id:
         try:
@@ -56,7 +53,7 @@ def scan_stage(
             }
         except ArtifactSourceUnavailable as error:
             unavailable = str(error)
-        except ValueError as error:  # An unsafe path in the stored snapshot.
+        except ValueError as error:  # 저장 snapshot에 상위 경로로 나가는 안전하지 않은 경로가 있다.
             return {
                 "current_node": node,
                 "errors": [str(error)],
@@ -71,8 +68,8 @@ def scan_stage(
         unavailable = f"No app_id was supplied, so no stored {artifact_type} snapshot could be read."
 
     if not workspace_dir or not os.path.exists(workspace_dir):
-        # Nothing was scanned. That is not the same as "scanned and clean", and
-        # it is not a misconfiguration either — say which it is.
+        # 검사할 경로가 없다는 것은 "검사했고 문제가 없음"과 다르다. 설정 오류로도
+        # 분류하지 않고 UNAVAILABLE로 표시해 검사를 실행하지 못했다는 사실을 남긴다.
         return {
             "current_node": node,
             "errors": [unavailable],

@@ -1,3 +1,9 @@
+"""workspace command와 event를 MySQL에 저장하고 API용 dict로 변환한다.
+
+이 모듈은 action이 무엇을 실행할지 판단하지 않는다. command의 동시 실행 방지, 상태 저장과
+시간 직렬화처럼 데이터베이스에 가까운 규칙만 담당하며 HTTP status code도 결정하지 않는다.
+"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
@@ -29,17 +35,23 @@ KST = timezone(timedelta(hours=9), name="KST")
 
 
 def now() -> datetime:
+    """MySQL의 timezone 없는 DATETIME 열에 넣을 UTC 현재 시각을 반환한다."""
     return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _timestamp_in_kst(value: datetime | None) -> str | None:
-    """Serialize UTC database timestamps as explicit Korea Standard Time."""
+    """UTC로 저장한 DATETIME을 timezone이 표시된 한국 시각 문자열로 바꾼다.
+
+    DB 값에는 timezone 정보가 없지만 EasyDep는 UTC로 저장한다는 규칙을 사용한다. 먼저 UTC를
+    명시한 뒤 KST로 변환해야 단순히 9시간을 더하면서 생길 수 있는 중복 변환을 피할 수 있다.
+    """
     if value is None:
         return None
     return value.replace(tzinfo=UTC).astimezone(KST).isoformat()
 
 
 def workflow_stage(stage: str | None) -> str:
+    """세부 artifact stage를 UI가 사용하는 네 개의 큰 stage로 묶는다."""
     if stage in REQUIREMENTS_ARTIFACT_STAGES:
         return "requirements"
     if stage in DESIGN_ARTIFACT_STAGES:
@@ -50,6 +62,7 @@ def workflow_stage(stage: str | None) -> str:
 
 
 def command_dict(row: WorkspaceCommand) -> dict[str, Any]:
+    """ORM command 행을 DB Session 밖에서도 안전하게 쓸 수 있는 dict로 복사한다."""
     return {
         "command_id": row.command_id,
         "app_id": row.app_id,
@@ -66,6 +79,7 @@ def command_dict(row: WorkspaceCommand) -> dict[str, Any]:
 
 
 def event_dict(row: WorkspaceEvent) -> dict[str, Any]:
+    """ORM event 행을 API와 SSE가 공유하는 dict 형태로 복사한다."""
     return {
         "event_id": row.event_id,
         "app_id": row.app_id,
@@ -86,6 +100,11 @@ def create_command(
     stage: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
+    """앱에 활성 command가 없을 때만 새 QUEUED command를 만든다.
+
+    한 앱에서 두 command가 동시에 단계 state를 수정하면 checkpoint와 artifact 버전이 서로
+    섞일 수 있다. 따라서 QUEUED 또는 RUNNING command가 있으면 새 command를 거절한다.
+    """
     with session_scope() as session:
         active = session.scalar(
             select(WorkspaceCommand).where(
@@ -109,6 +128,7 @@ def create_command(
 
 
 def get_command(command_id: str) -> dict[str, Any] | None:
+    """command ID로 한 건을 조회하며 없으면 `None`을 반환한다."""
     with session_scope() as session:
         row = session.get(WorkspaceCommand, command_id)
         return command_dict(row) if row is not None else None
@@ -117,6 +137,7 @@ def get_command(command_id: str) -> dict[str, Any] | None:
 def latest_command(
     app_id: str, *, exclude_command_id: str | None = None
 ) -> dict[str, Any] | None:
+    """앱의 가장 최근 command를 조회하되 필요하면 현재 command 한 건을 제외한다."""
     with session_scope() as session:
         query = select(WorkspaceCommand).where(WorkspaceCommand.app_id == app_id)
         if exclude_command_id:
@@ -126,6 +147,7 @@ def latest_command(
 
 
 def update_command(command_id: str, **changes: Any) -> dict[str, Any]:
+    """command의 지정된 필드만 갱신하고 갱신 직후 snapshot을 반환한다."""
     with session_scope() as session:
         row = session.get(WorkspaceCommand, command_id)
         if row is None:
@@ -146,6 +168,11 @@ def append_event(
     command_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """workspace timeline 끝에 event 한 건을 추가한다.
+
+    event는 append-only 기록이므로 과거 행을 수정하는 함수는 제공하지 않는다. 화면에 보낼
+    추가 정보는 `metadata` JSON에 넣되, 검색에 필요한 stage·kind·actor는 별도 열로 유지한다.
+    """
     with session_scope() as session:
         row = WorkspaceEvent(
             app_id=app_id,
@@ -162,6 +189,11 @@ def append_event(
 
 
 def list_events(app_id: str, *, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+    """지정한 event ID 뒤의 기록을 오래된 순서로 반환한다.
+
+    SSE client는 마지막으로 받은 ID를 `after`에 넣어 중복 전송을 줄인다. `limit`은 오랫동안
+    접속하지 않은 client가 한 번에 지나치게 많은 행을 읽지 않도록 한다.
+    """
     with session_scope() as session:
         rows = session.scalars(
             select(WorkspaceEvent)
@@ -176,6 +208,7 @@ def list_events(app_id: str, *, after: int = 0, limit: int = 500) -> list[dict[s
 
 
 def get_app_summary(app_id: str) -> dict[str, Any]:
+    """workspace 첫 화면에 필요한 앱 식별자·현재 단계·생성 시각만 조회한다."""
     with session_scope() as session:
         row = session.get(App, app_id)
         if row is None:
@@ -188,7 +221,11 @@ def get_app_summary(app_id: str) -> dict[str, Any]:
 
 
 def save_deployment_preferences(app_id: str, selection: dict[str, Any]) -> dict[str, Any]:
-    """Upsert one versionless intake draft without touching an active command."""
+    """활성 command와 별개로 최신 배포 선택 초안을 insert 또는 update한다.
+
+    사용자가 요구사항 분석 중에 지역을 바꿀 수 있으므로 이 값은 artifact 버전을 만들지 않는
+    draft다. 다음 requirements command가 시작될 때 읽어 정식 resource 입력에 반영한다.
+    """
     with session_scope() as session:
         if session.get(App, app_id) is None:
             raise KeyError(app_id)
@@ -203,12 +240,14 @@ def save_deployment_preferences(app_id: str, selection: dict[str, Any]) -> dict[
 
 
 def get_deployment_preferences(app_id: str) -> dict[str, Any] | None:
+    """저장된 최신 배포 선택 초안을 반환한다."""
     with session_scope() as session:
         row = session.get(DeploymentPreference, app_id)
         return dict(row.selection or {}) if row is not None else None
 
 
 def list_workspace_apps(limit: int = 50) -> list[dict[str, Any]]:
+    """사이드바에 표시할 최근 앱과 각 앱의 최신 command를 조회한다."""
     with session_scope() as session:
         rows = session.scalars(
             select(App).order_by(App.created_at.desc()).limit(limit)
@@ -241,6 +280,12 @@ def list_workspace_apps(limit: int = 50) -> list[dict[str, Any]]:
 
 
 def interrupt_unfinished() -> int:
+    """서버 재시작 전에 끝나지 않은 command를 INTERRUPTED로 표시한다.
+
+    process-local worker는 재시작 후 존재하지 않으므로 QUEUED/RUNNING 상태를 그대로 두면 UI가
+    영원히 진행 중으로 보인다. 성공으로 추정하지 않고, 검증된 checkpoint에서 재개하라는
+    명시적인 오류를 남긴다.
+    """
     changed = 0
     with session_scope() as session:
         rows = session.scalars(

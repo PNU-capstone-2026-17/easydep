@@ -6,6 +6,8 @@ Docker-on-VM 애플리케이션이다.
 
 현재 구현 수준과 알려진 한계는 [현재 시스템 상태](docs/current-system-status.md)를 기준으로 한다.
 문서 전체의 역할은 [문서 안내](docs/README.md)에서 확인할 수 있다.
+코드를 처음 읽는다면 [초보자용 코드 탐색 순서](docs/code-reading-guide.md)와
+[백엔드 코드 길잡이](app/README.md)부터 보는 것을 권장한다.
 
 ## 파이프라인
 
@@ -143,6 +145,8 @@ python -m pytest
 - [현재 시스템 상태](docs/current-system-status.md): 구현 범위, 검증 결과, 부족한 점
 - [문서 안내](docs/README.md): 활성 문서와 이력 문서 구분
 - [HTTP API](docs/api.md): 요구사항·설계·구현 API 계약
+- [초보자용 코드 탐색 순서](docs/code-reading-guide.md): UI 요청부터 단계 서비스까지 따라가는 방법
+- [백엔드 코드 길잡이](app/README.md): bounded context와 의존성 방향
 - [LangSmith 관측](docs/langsmith-observability.md): 전 에이전트 기본 trace·대시보드 설정
 - [오케스트레이션](app/orchestration/README.md): 4단계 실행과 provider 계약
 - [비교실험 계약](evaluation/experiment-contract.md): 공통 평가 기준

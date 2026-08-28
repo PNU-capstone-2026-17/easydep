@@ -26,7 +26,7 @@ HANGUL = re.compile(r"[가-힣]")
 
 
 def test_new_bounded_context_readmes_cover_the_five_operational_sections() -> None:
-    """각 canonical 경계가 입력·출력·부수효과·실패·금지 의존성을 설명한다."""
+    """각 canonical 경계가 입력·출력·부수효과·실패와 import 제한을 설명한다."""
 
     missing: list[str] = []
     for context, path in BOUNDARY_READMES.items():
@@ -38,7 +38,7 @@ def test_new_bounded_context_readmes_cover_the_five_operational_sections() -> No
             "## 입력",
             "## 출력",
             "## 부수효과",
-            "## 금지 의존성",
+            "## 사용하면 안 되는 import",
             "## 실패 조건",
         ):
             if heading not in text:

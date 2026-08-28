@@ -80,7 +80,7 @@ type을 다시 추론하지 않는다.
 - persistence, raw state 검증, observational validation 실행, JSON dump, stage checkpoint와
   feedback cascade는 graph adapter가 소유한다.
 
-## 금지 의존성
+## 사용하면 안 되는 import
 
 - API 서비스는 `app.design.graphs`, artifact repository, `ArchitectureState`를 import하지 않는다.
 - API 서비스는 requirements 내부 state나 implementation service를 import하지 않는다.

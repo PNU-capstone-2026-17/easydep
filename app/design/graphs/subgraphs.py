@@ -315,7 +315,7 @@ def _revise_sequence_state(
     """상호작용 원본인 클래스 모델을 국소 수정한 뒤 시퀀스를 다시 투영한다.
 
     시퀀스에는 독립 LLM 편집 경로가 없다. feedback은 class inventory/operation/collaboration
-    소유 단위에 적용되고 class validation과 PlantUML 검증을 통과한 뒤 결정론적으로 새
+    수정 대상에 적용되고 class validation과 PlantUML 검증을 통과한 뒤 코드로 새
     ``SequenceCollection``을 만든다.
     """
 

@@ -371,7 +371,7 @@ def test_resource_boundary_documentation_covers_operational_contract() -> None:
         "## 입력",
         "## 출력",
         "## 부수효과와 호출 범위",
-        "## 금지 의존성",
+        "## 사용하면 안 되는 import",
         "## 실패 조건",
         "## 보존 중인 tool-agent 경로",
     ):

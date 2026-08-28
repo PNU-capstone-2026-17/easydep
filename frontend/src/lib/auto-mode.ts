@@ -1,11 +1,16 @@
 import type { WorkspaceCommand } from '$lib/types';
 
+// 자동 모드는 별도의 판단 규칙을 가진 실행기가 아니다. 현재 화면에서 사용자가 누를 수
+// 있는 action 가운데 추가 판단이 필요 없는 것을 골라 같은 API 요청을 대신 보내는 helper다.
+
 export interface AutoModeAction {
   action: string;
   extra?: Record<string, unknown>;
 }
 
 function currentResourceQuestion(result: Record<string, any>) {
+  // 백엔드는 현재 질문 한 건과 질문 목록 형식을 모두 지원한다. 자동 모드는 첫 질문만
+  // 확인하되, 사용자의 직접 선택이 필요한 질문에는 답을 추측하지 않는다.
   if (result.resource_question && typeof result.resource_question === 'object') {
     return result.resource_question;
   }
@@ -20,6 +25,8 @@ function currentResourceQuestion(result: Record<string, any>) {
 export function nextAutoAction(
   command: WorkspaceCommand | null | undefined
 ): AutoModeAction | null {
+  // null은 자동 모드가 멈춰야 한다는 뜻이다. 호출자는 임의의 기본 action을 만들지 말고
+  // 화면에 백엔드가 보낸 선택지를 그대로 표시해야 한다.
   if (!command) return null;
   const result = command.result ?? {};
   const hasPendingMethodProposals =
@@ -64,8 +71,8 @@ export function nextAutoAction(
         action: 'advance',
         extra: {
           action_id: command.command_id,
-          // A sequence MethodProposal normally needs an architectural choice.
-          // Auto mode is the user's opt-in to apply pending, traceable proposals.
+          // MethodProposal은 백엔드가 "이 제안을 적용"이라는 선택지로 공개한 상태다.
+          // 자동 모드는 사용자가 켠 경우 그 선택지를 대신 누를 뿐, 새 method를 판단하지 않는다.
           ...(hasPendingMethodProposals
             ? { auto_approve_method_proposals: true }
             : {})

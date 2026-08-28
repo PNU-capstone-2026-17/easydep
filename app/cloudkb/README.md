@@ -9,7 +9,7 @@
 | `depkb` | 실측 기반 VM 리소스 의존관계 |
 | `costkb` | VM 사양·가격과 비용 계산 |
 | `perfkb` | VM 성능 특성과 추천 보강 |
-| `kbcommon` | 공통 데이터 로더·출처·불변식 |
+| `kbcommon` | 공통 데이터 로더·출처·데이터 일관성 검사 |
 | `speckb` | CSP가 발행한 VM 카탈로그 원본 응답 (무가공 보관) |
 
 `speckb`는 위 규칙의 예외다. 다른 KB가 제3자 가공본(cb-tumblebug 덤프, Cyclenerd·
@@ -72,7 +72,7 @@ application requirements
   공급자별 후보. 연구 산출물은 `experiments/`·`replications/` 아래에만 남긴다.
 - **부수효과:** 기본 조회는 저장소의 번들 데이터를 읽기만 한다. fetch/rebuild CLI가
   요청된 경우에만 네트워크를 읽고 `output/`·`.cache/`에 작업 산출물을 쓴다.
-- **금지 의존성:** `app.requirements`, `app.design`, `app.implementation`을 import하지
+- **사용하면 안 되는 import:** `app.requirements`, `app.design`, `app.implementation`을 import하지
   않는다. 애플리케이션 단계의 상태·프롬프트·LLM 호출을 알지 못하며, 패키지 내부
   연결은 `app.cloudkb`의 canonical 경로를 사용한다.
 - **실패 조건:** 번들·스키마가 없거나 손상됨, 공급자 응답이 계약을 위반함, 고정된

@@ -32,7 +32,7 @@
   병렬도, retry 및 progress-aware repair 범위를 늘리거나 다시 소유하지 않는다.
 - 테스트는 모든 LLM·repository 경계를 대체하며 실제 NIM 호출을 하지 않는다.
 
-## 금지 의존성
+## 사용하면 안 되는 import
 
 - modeling·resources 서비스의 prompt literal, private helper 또는 repair 구현을
   import하지 않는다.

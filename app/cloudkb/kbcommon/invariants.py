@@ -37,7 +37,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Violation:
-    """불변식 위반 하나. `where`는 사람이 원본을 찾아갈 수 있는 좌표다."""
+    """데이터 일관성 규칙 위반 하나. ``where``는 사람이 원본을 찾을 수 있는 위치다."""
 
     where: str
     detail: str

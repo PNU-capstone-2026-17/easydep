@@ -13,7 +13,7 @@
 - **부수효과:** 실행 디렉터리와 artifact를 만들고 SQLite/메모리 체크포인트를
   읽고 쓴다. 선택된 provider가 subprocess·LLM·파일 출력을 수행할 수 있으며,
   orchestration 자체는 그 결과를 계약으로 포장한다.
-- **금지 의존성:** `app.core`의 이전 경로를 사용하지 않는다. 단계 내부 구현을
+- **사용하면 안 되는 import:** `app.core`의 이전 경로를 사용하지 않는다. 단계 내부 구현을
   직접 호출하거나 요구사항·설계·구현 모델을 조정 계층에 복제하지 않고, 공개
   `contracts`와 `adapters` 경계만 사용한다.
 - **실패 조건:** 요청/ provider 설정이 계약을 위반하거나, lock·checkpoint가

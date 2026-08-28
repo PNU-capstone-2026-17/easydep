@@ -2,7 +2,7 @@
 
 이 디렉터리는 클래스 설계의 순수 검증 규칙을 소유한다. 검사는 입력을 수정하지 않고,
 저장소·graph state를 직접 읽지 않으며, LLM이나 repair를 호출하지 않는다. 서비스가 typed
-`ValidationReport`를 보고 어떤 소유 단위를 다시 생성할지 결정한다.
+`ValidationReport`를 보고 어떤 부분을 다시 생성할지 결정한다.
 
 ## 공통 실행 계약
 
@@ -145,6 +145,6 @@ readiness가 이 보고서를 소비하고 transport-safe finding record로 바�
 2. 함수가 반환하는 모든 finding에 등록할 하나의 `rule_id`만 사용한다.
 3. `CheckSpec`을 값싼 것부터 의미 의존 순서로 등록한다.
 4. 정상, 단일 위반, 형제 규칙과 함께 실행되는 경우를 테스트한다.
-5. 자동 repair가 필요하면 검사기가 아니라 해당 stage service에서 finding을 소유 단위로
+5. 자동 repair가 필요하면 검사기가 아니라 해당 stage service에서 finding을 수정 대상으로
    변환한다.
 6. 이 README의 해당 lane과 실패 예제를 갱신한다.

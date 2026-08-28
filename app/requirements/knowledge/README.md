@@ -12,7 +12,7 @@
 - **부수효과:** 일반 규칙 조회·검출은 순수하다. citation/concern 검증 CLI는
   로컬 증거를 읽고 결과를 표준 출력으로 보고할 수 있지만 제품 산출물이나 실행
   상태를 쓰지 않는다.
-- **금지 의존성:** `app.requirements`의 agent/state/prompt 모듈을 import하지
+- **사용하면 안 되는 import:** `app.requirements`의 agent/state/prompt 모듈을 import하지
   않는다. 설계·구현 서비스와 LLM 호출에도 의존하지 않는다. 규칙의 문장·근거를
   소비자 모듈에 복사하지 말고 이 패키지의 단일 레코드를 사용한다.
 - **실패 조건:** 알 수 없는 rule/evidence ID, 요구사항에서 찾을 수 없는 참조,

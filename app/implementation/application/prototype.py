@@ -1,3 +1,10 @@
+"""EasyDep 서버와 독립 실행 가능한 구현 CLI 사이를 연결한다.
+
+서버가 받은 설계 산출물을 작업 디렉터리에 UTF-8 파일로 준비하고, 구현 CLI를 별도
+프로세스로 실행한 뒤 표준 출력의 JSON 결과를 읽는다. 프로세스를 분리하면 코드 생성이나
+빌드가 오래 걸리거나 실패해도 FastAPI 프로세스의 상태와 분리해서 취소할 수 있다.
+"""
+
 from __future__ import annotations
 
 import json
@@ -19,19 +26,20 @@ _OPENAPI_OPERATIONS = frozenset({"delete", "get", "head", "options", "patch", "p
 
 
 class PrototypeExecutionError(RuntimeError):
-    pass
+    """구현 CLI를 준비하거나 실행하는 과정에서 발생한 오류."""
 
 
 def _normalize_openapi_path_parameters(api_spec: Any) -> Any:
-    """Supply missing OpenAPI path parameters required by code generators.
+    """코드 생성기에 필요한 OpenAPI path parameter 선언을 보완한다.
 
-    Design artifacts may describe a templated endpoint without repeating its path
-    parameter in every operation.  OpenAPI Generator rejects that otherwise useful
-    artifact, so add a conservative string parameter only where it is absent.
+    설계 산출물에는 ``/courses/{courseId}`` 같은 path가 있지만 각 operation의 parameter
+    목록에는 같은 이름이 빠질 수 있다. OpenAPI Generator는 이런 문서를 거부하므로,
+    선언이 없는 이름만 필수 문자열 parameter로 추가한다. 원본 dict는 수정하지 않는다.
     """
     if not isinstance(api_spec, dict) or not isinstance(api_spec.get("paths"), dict):
         return api_spec
 
+    # 중첩된 dict/list까지 복사해 호출자가 가진 원본 설계 산출물이 바뀌지 않게 한다.
     normalized = json.loads(json.dumps(api_spec))
     _normalize_empty_object_schemas(normalized)
     for path, path_item in normalized["paths"].items():
@@ -70,14 +78,12 @@ def _normalize_openapi_path_parameters(api_spec: Any) -> Any:
 
 
 def _normalize_empty_object_schemas(api_spec: dict[str, Any]) -> None:
-    """Keep named empty DTOs as closed schemas for OpenAPI generators.
+    """필드가 없는 이름 있는 DTO가 ``Object``로 바뀌지 않도록 닫힌 schema로 표시한다.
 
-    OpenAPI Generator treats ``type: object`` schemas with no properties and
-    no ``additionalProperties`` declaration as free-form ``Object`` values.
-    That erases the name of a design DTO (for example ``CourseFilter``), so an
-    API adapter can no longer map it to the corresponding BCE type.  An empty
-    design DTO is a closed value, not an arbitrary JSON map; explicitly marking
-    it as closed preserves the generated model type without inventing fields.
+    OpenAPI Generator는 ``properties``와 ``additionalProperties``가 모두 없는 object
+    schema를 자유 형식 ``Object``로 처리한다. 그러면 ``CourseFilter`` 같은 설계 DTO의
+    이름이 사라져 API adapter와 BCE 타입을 연결할 수 없다. 필드를 임의로 추가하지 않고
+    ``additionalProperties: false``만 넣어 이름 있는 빈 DTO라는 의미를 보존한다.
     """
     components = api_spec.get("components")
     schemas = components.get("schemas") if isinstance(components, dict) else None
@@ -95,14 +101,16 @@ def _normalize_empty_object_schemas(api_spec: dict[str, Any]) -> None:
 
 
 class PrototypeClient:
-    """Narrow subprocess boundary around the independently runnable prototype."""
+    """독립 실행 가능한 구현 CLI의 입력 준비와 하위 프로세스 실행을 담당한다."""
 
     def __init__(self, settings: ImplementationSettings):
+        """실행 설정을 보관하고 작업 ID별 하위 프로세스 registry를 준비한다."""
         self.settings = settings
         self._process_lock = threading.RLock()
         self._processes: dict[str, subprocess.Popen[str]] = {}
 
     def prepare_job(self, job_id: str, app_id: str, design: dict[str, Any], base_package: str, allow_assumptions: bool) -> Path:
+        """설계 파일과 실행 옵션을 작업 디렉터리에 쓰고 ``job.json`` 경로를 반환한다."""
         if not self.settings.python_executable.is_file():
             raise PrototypeExecutionError(
                 f"Current EasyDep Python executable does not exist: {self.settings.python_executable}"
@@ -120,6 +128,7 @@ class PrototypeClient:
         inputs: dict[str, str] = {}
 
         def write(name: str, filename: str, value: Any) -> None:
+            """값이 있는 설계 산출물만 UTF-8 파일로 쓰고 job input에 등록한다."""
             if value in (None, "", {}):
                 return
             path = context / filename
@@ -135,9 +144,8 @@ class PrototypeClient:
         write("openapi", "openapi.json", _normalize_openapi_path_parameters(design.get("api_spec")))
         write("erd", "erd.puml", design.get("erd_puml"))
         write("deployment", "deployment-diagram.puml", design.get("deployment_diagram_puml"))
-        # The PlantUML deployment diagram is a rendered view.  Preserve its
-        # structured bundle as an implementation input so deterministic IaC
-        # generation can use the same resource projection reviewed in design.
+        # PlantUML 배포 다이어그램은 사람이 보는 표현이다. IaC 생성기가 설계에서 검토한
+        # 같은 resource 구성을 사용하도록 구조화된 deployment bundle도 함께 전달한다.
         write(
             "deploymentBundle",
             "deployment-diagram-bundle.json",
@@ -179,6 +187,7 @@ class PrototypeClient:
         base_package: str,
         allow_assumptions: bool,
     ) -> Path:
+        """기존 파일 snapshot과 피드백을 사용하는 수정 작업의 ``job.json``을 만든다."""
         path = self.prepare_job(
             job_id, app_id, design, base_package, allow_assumptions
         )
@@ -211,26 +220,30 @@ class PrototypeClient:
         return path
 
     def generate(self, job_path: Path) -> Path:
+        """구현 CLI의 기본 생성 명령을 실행하고 새 run 디렉터리를 반환한다."""
         generated = self._call([str(job_path)], job_path.parent.name)
         return Path(str(generated["output"])).resolve()
 
     def plan_workflow(self, run_root: Path, job_path: Path) -> dict[str, Any]:
+        """생성 결과를 실행·검증하기 위한 workflow를 계획한다."""
         return self._call(
             ["plan-workflow", str(run_root), str(job_path)], job_path.parent.name
         )
 
     def generate_and_plan(self, job_path: Path) -> tuple[Path, dict[str, Any]]:
-        """Compatibility helper for callers outside the web-worker boundary."""
+        """Web worker 밖의 호출자가 생성과 planning을 연속 실행할 때 사용하는 helper."""
         run_root = self.generate(job_path)
         return run_root, self.plan_workflow(run_root, job_path)
 
     def run_phase(self, run_root: Path, job_path: Path, approval_path: Path, retry_failed: bool) -> dict[str, Any]:
+        """승인 파일을 전달해 workflow의 실행 가능한 phase를 수행한다."""
         args = ["run-workflow", str(run_root), str(job_path), "--approval", str(approval_path)]
         if retry_failed:
             args.append("--retry-failed")
         return self._call(args, job_path.parent.name)
 
     def transmission_request(self, run_root: Path) -> dict[str, Any] | None:
+        """외부 전송 승인이 필요한 현재 요청을 읽으며, 없으면 ``None``을 반환한다."""
         path = run_root / "reports" / "external-transmission-request.json"
         if not path.is_file():
             return None
@@ -238,7 +251,7 @@ class PrototypeClient:
         return value if value.get("status") == "AWAITING_APPROVAL" else None
 
     def warmup_runtime(self) -> dict[str, Any]:
-        """Preload tools and shared dependency caches before the first job."""
+        """첫 작업 전에 도구와 공용 dependency cache를 미리 준비한다."""
         from ..generation.warmup import warmup_implementation_runtime
 
         return warmup_implementation_runtime(
@@ -247,6 +260,7 @@ class PrototypeClient:
         )
 
     def cancel(self, job_id: str) -> bool:
+        """작업 ID에 해당하는 실행 중 프로세스 tree를 종료한다."""
         with self._process_lock:
             process = self._processes.get(job_id)
         if process is None or process.poll() is not None:
@@ -257,7 +271,9 @@ class PrototypeClient:
     def _call(
         self, args: list[str], operation_id: str | None = None
     ) -> dict[str, Any]:
+        """구현 CLI를 UTF-8 하위 프로세스로 실행하고 마지막 JSON 응답을 반환한다."""
         env = os.environ.copy()
+        # Windows 기본 code page와 관계없이 한글 설계 파일과 JSON 로그를 읽도록 강제한다.
         env["PYTHONUTF8"] = "1"
         env.setdefault(
             "GRADLE_USER_HOME",
@@ -298,6 +314,8 @@ class PrototypeClient:
                     if self._processes.get(operation_id) is process:
                         self._processes.pop(operation_id, None)
         if process.returncode != 0:
+            # 일반 stderr보다 run manifest의 ERROR 진단이 사용자에게 더 구체적이다. CLI가
+            # 출력 디렉터리를 JSON으로 남겼다면 manifest를 찾아 마지막 오류를 우선 사용한다.
             evidence = (stderr or stdout)[-4000:]
             for line in reversed(stdout.splitlines()):
                 try:
@@ -317,6 +335,7 @@ class PrototypeClient:
                         evidence = "; ".join(messages)[-4000:]
                 break
             raise PrototypeExecutionError(f"Implementation prototype exited with {process.returncode}: {evidence}")
+        # 빌드 도구의 일반 로그가 앞에 섞일 수 있으므로 뒤에서부터 유효한 JSON 객체를 찾는다.
         for line in reversed(stdout.splitlines()):
             try:
                 value = json.loads(line)
@@ -328,6 +347,7 @@ class PrototypeClient:
 
     @staticmethod
     def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+        """부모 프로세스뿐 아니라 그 프로세스가 시작한 빌드·도구 프로세스도 종료한다."""
         if process.poll() is not None:
             return
         try:

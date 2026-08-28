@@ -1,3 +1,14 @@
+"""앱 입력과 단계별 산출물을 MySQL에 저장하고 다시 읽는다.
+
+요구사항부터 테스트까지 각 단계의 결과는 ``Artifact``와 ``ArtifactVersion``으로
+버전을 나누어 보관한다. 설계 단계는 편집 가능한 JSON 모델을 저장하고, 조회할 때 그
+모델로 PlantUML 또는 OpenAPI를 다시 만든다. 따라서 그림과 JSON을 따로 수정해서 서로
+내용이 달라지는 일을 막을 수 있다.
+
+이 모듈은 저장 형식과 SQLAlchemy transaction만 책임진다. HTTP 상태 코드를 결정하거나
+LLM을 호출하는 일은 상위 계층에서 처리한다.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -46,20 +57,18 @@ from app.design.validation import rehydrated_check_state
 
 
 class AppNotFound(Exception):
-    """Raised when an app_id has no row in the apps table."""
+    """요청한 ``app_id``가 ``apps`` 테이블에 없을 때 발생한다."""
 
 
-# Every stage the workflow can persist, and how it maps onto ArchitectureState.
-# state_key is what the web response and downstream stages read. A stage may also
-# declare a source_key: the structured model that is the real source of truth and
-# what actually gets stored, from which state_key is re-derived on load through the
-# stage's `derive` function.
+# 파이프라인이 저장할 수 있는 stage와 ArchitectureState 필드의 대응표다.
 #
-# All five design artifacts work this way. The LLM only ever produces and edits the
-# structured model; the diagram or OpenAPI document is a pure projection of it. So
-# feedback edits the model, the artifact is re-rendered deterministically, and the
-# two cannot drift apart. The requirements-analysis stages have no such model —
-# they are stored as they arrive.
+# * state_key: 프론트엔드와 다음 stage가 읽는 결과 필드
+# * source_key: 실제로 DB에 저장하는 편집 가능한 JSON 모델
+# * derive/derive_state: source_key에서 화면용 문서를 다시 만드는 함수
+#
+# 설계 산출물은 LLM이 만든 구조화 모델만 저장한다. PlantUML과 OpenAPI는 조회할 때
+# 같은 모델로 다시 만들기 때문에 사용자의 피드백도 그림 문자열이 아니라 모델에
+# 적용된다. 요구사항 분석 산출물은 별도 변환 모델이 없으므로 받은 JSON을 그대로 저장한다.
 STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
     "refined_requirements": {
         "artifact_type": TYPE_REFINE_REQ,
@@ -109,11 +118,10 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "class_diagram_puml",
         "valid_key": "class_diagram_syntax_valid",
         "errors_key": "class_diagram_syntax_errors",
-        # 결정론 규칙 검사 결과(`app/design/knowledge/`). 문법 검증과 다른 질문이라
-        # 칸이 따로 있다 — 문법은 렌더러가 보장하고, 이건 아무도 보장하지 않는다.
-        # 이 키가 없는 스테이지는 검사할 규칙이 아직 없다는 뜻이다(빈 결과가 아니라).
+        # 설계 규칙 검사 결과(`app/design/knowledge/`)다. PlantUML 문법 검사와는 확인하는
+        # 내용이 다르므로 별도 필드에 둔다. 이 키가 없는 stage는 규칙 검사를 하지 않는다.
         "check_key": "class_diagram_check",
-        # Stored as its BCE model; the PlantUML in state_key is derived from this.
+        # BCE 모델을 저장하고 state_key의 PlantUML은 조회할 때 다시 만든다.
         "source_key": "extracted_bce_classes",
         "source_format": FORMAT_JSON,
         "derive": generate_plantuml_from_bce_json,
@@ -125,7 +133,7 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "valid_key": "sequence_diagram_syntax_valid",
         "errors_key": "sequence_diagram_syntax_errors",
         "check_key": "sequence_diagram_check",
-        # Stored as its interaction model; the PlantUML is derived from this.
+        # 호출 순서를 담은 모델을 저장하고 PlantUML은 조회할 때 다시 만든다.
         "source_key": "sequence_diagram_model",
         "source_format": FORMAT_JSON,
         "derive": generate_sequence_from_model,
@@ -137,7 +145,7 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "valid_key": "api_spec_syntax_valid",
         "errors_key": "api_spec_syntax_errors",
         "check_key": "api_spec_check",
-        # Stored as its endpoint model; the OpenAPI document is assembled from this.
+        # endpoint 모델을 저장하고 OpenAPI 문서는 조회할 때 다시 조립한다.
         "source_key": "api_spec_model",
         "source_format": FORMAT_JSON,
         "derive": build_openapi_from_model,
@@ -148,10 +156,10 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "erd_puml",
         "valid_key": "erd_syntax_valid",
         "errors_key": "erd_syntax_errors",
-        # Rule check over the BCE model and the data model mapped from it.
+        # BCE 모델과 여기서 변환한 데이터 모델의 대응 관계를 검사한 결과다.
         "check_key": "erd_check",
-        # Stored as its own BCE entity copy; the PlantUML in state_key is derived
-        # from this, so ERD feedback edits the model, not the diagram text.
+        # ERD 전용 BCE Entity 사본을 저장한다. 피드백은 PlantUML 문자열이 아니라 이
+        # 모델을 수정하며, 수정된 모델에서 새 PlantUML을 만든다.
         "source_key": "erd_bce_classes",
         "source_format": FORMAT_JSON,
         "derive": generate_erd_from_bce_json,
@@ -162,9 +170,9 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "deployment_diagram_puml",
         "valid_key": "deployment_diagram_syntax_valid",
         "errors_key": "deployment_diagram_syntax_errors",
-        # Store the editable logical model together with the deterministic provider
-        # projection.  Both runtime and provisioning views are derived from this
-        # one bundle, so refresh cannot fall back to the old logical-only picture.
+        # 편집 가능한 논리 모델과 CSP별 변환 결과를 한 bundle로 저장한다. 실행 구조도와
+        # provisioning 구조도를 같은 bundle에서 만들므로 새로고침 후에도 두 그림이 같은
+        # 배포 모델을 사용한다.
         "source_key": "deployment_diagram_bundle",
         "source_format": FORMAT_JSON,
         "derive_state": lambda bundle: {
@@ -183,7 +191,7 @@ STAGE_BY_ARTIFACT_TYPE = {
 
 
 def create_app(requirements_text: str = "", resource_constraints_text: str = "") -> str:
-    """Issue a new app id and store the inputs the workflow starts from."""
+    """새 앱 ID를 만들고 파이프라인이 시작할 입력을 저장한다."""
     app_id = str(uuid.uuid4())
     with session_scope() as session:
         session.add(
@@ -197,6 +205,7 @@ def create_app(requirements_text: str = "", resource_constraints_text: str = "")
 
 
 def list_apps(limit: int = 50) -> list[dict[str, Any]]:
+    """최근 생성한 앱을 최신순으로 최대 ``limit``개 반환한다."""
     with session_scope() as session:
         rows = session.scalars(
             select(App).order_by(App.created_at.desc()).limit(limit)
@@ -216,6 +225,11 @@ def update_inputs(
     requirements_text: str | None = None,
     resource_constraints_text: str | None = None,
 ) -> None:
+    """값이 전달된 입력 필드만 수정한다.
+
+    ``None``은 변경하지 않는다는 뜻이고 빈 문자열은 값을 비우라는 뜻이다. 두 경우를
+    구분해야 배포 조건만 수정할 때 원래 요구사항이 사라지지 않는다.
+    """
     with session_scope() as session:
         app = _require_app(session, app_id)
         if requirements_text is not None:
@@ -225,18 +239,17 @@ def update_inputs(
 
 
 def ensure_app_exists(app_id: str) -> None:
-    """Raise AppNotFound unless the app row exists. One row read, nothing built.
+    """앱 행의 존재만 확인하고, 없으면 :class:`AppNotFound`를 발생시킨다.
 
-    For callers that only need the 404 check. load_state() answers the same
-    question, but on the way it reads every artifact and re-renders every diagram
-    from its model — wasted work when the result is thrown away.
+    404 응답 여부만 판단할 호출자가 사용한다. ``load_state()``로도 확인할 수 있지만,
+    그 함수는 모든 산출물을 읽고 그림까지 다시 만들므로 단순 존재 확인에는 비용이 크다.
     """
     with session_scope() as session:
         _require_app(session, app_id)
 
 
 def load_state(app_id: str) -> ArchitectureState:
-    """Rebuild the workflow state for an app from its stored artifacts."""
+    """저장된 최신 산출물로 앱의 ``ArchitectureState``를 다시 구성한다."""
     with session_scope() as session:
         app = _require_app(session, app_id)
 
@@ -263,6 +276,8 @@ def load_state(app_id: str) -> ArchitectureState:
 
             source_key = config.get("source_key")
             if source_key:
+                # 설계 산출물은 JSON 모델을 먼저 복원한 다음 사람이 보는 문서를 만든다.
+                # DB에 PlantUML/OpenAPI 사본을 따로 저장하지 않아 두 표현이 어긋나지 않는다.
                 source_value = _decode_content(version.content, config["source_format"])
                 if config.get("hydrate"):
                     state.update(config["hydrate"](source_value))
@@ -271,7 +286,7 @@ def load_state(app_id: str) -> ArchitectureState:
                 if config.get("derive_state"):
                     state.update(config["derive_state"](source_value))
                 else:
-                    # PlantUML is a pure projection of the stored model.
+                    # 같은 저장 모델에서 항상 같은 PlantUML/OpenAPI를 만든다.
                     state[config["state_key"]] = config["derive"](source_value)
             else:
                 state[config["state_key"]] = _decode_content(
@@ -286,8 +301,8 @@ def load_state(app_id: str) -> ArchitectureState:
             artifact_status[stage] = "implemented"
 
         state["artifact_status"] = artifact_status
-        # Revalidate the persisted current contract. Old sequence shapes are
-        # regenerated from the class stage rather than reconstructed from PUML.
+        # 저장 당시와 현재의 sequence schema가 달라도 클래스 모델과 호출 모델을 기준으로
+        # 현재 형식에 맞춘다. PlantUML 문자열을 해석해 모델을 역으로 만들지는 않는다.
         sequence_model = state.get("sequence_diagram_model")
         class_model = state.get("extracted_bce_classes")
         class_puml = str(state.get("class_diagram_puml") or "")
@@ -299,9 +314,8 @@ def load_state(app_id: str) -> ArchitectureState:
             state["sequence_diagram_puml"] = generate_sequence_from_model(
                 normalized_sequence
             )
-        # Check reports are derived evidence, not a second source of truth.
-        # Rebuild them from stored models so a page refresh cannot turn an
-        # unresolved mismatch into a deceptively clean implementation hand-off.
+        # 검사 결과는 저장 모델에서 다시 계산할 수 있는 값이다. 새로고침할 때 다시 검사해
+        # 해결되지 않은 설계 오류가 사라진 것처럼 보인 채 구현 단계로 넘어가지 않게 한다.
         state.update(rehydrated_check_state(state))
         return state
 
@@ -312,9 +326,10 @@ def save_stage(
     state: ArchitectureState,
     origin: str = ORIGIN_GENERATED,
 ) -> int | None:
-    """Persist a stage result as a new artifact version.
+    """stage 결과를 새 산출물 버전으로 저장한다.
 
-    Returns the new version id, or None when the stage produced no content.
+    저장할 내용이 있으면 새 version ID를 반환한다. stage가 비어 있으면 버전을 만들지
+    않고 ``None``을 반환하지만, 앱의 현재 stage 표시는 요청받은 값으로 갱신한다.
     """
     with session_scope() as session:
         app = _require_app(session, app_id)
@@ -325,7 +340,7 @@ def save_stage(
 
 
 def list_versions(app_id: str, stage: str) -> list[dict[str, Any]]:
-    """Revision history of one artifact, oldest first."""
+    """한 산출물의 변경 이력을 오래된 버전부터 반환한다."""
     config = STAGE_ARTIFACTS[stage]
     with session_scope() as session:
         _require_app(session, app_id)
@@ -352,7 +367,7 @@ def list_versions(app_id: str, stage: str) -> list[dict[str, Any]]:
 
 
 def get_version_content(app_id: str, stage: str, version_no: int) -> Any:
-    """Content of one specific revision, or None when it does not exist."""
+    """지정한 버전의 저장 내용을 반환하며, 없으면 ``None``을 반환한다."""
     config = STAGE_ARTIFACTS[stage]
     with session_scope() as session:
         _require_app(session, app_id)
@@ -382,7 +397,11 @@ def save_file_snapshot(
     origin: str = ORIGIN_GENERATED,
     metadata: dict[str, Any] | None = None,
 ) -> int:
-    """Save a whole file tree as one immutable artifact version."""
+    """여러 파일을 한 묶음으로 저장하고 수정하지 않는 새 버전을 만든다.
+
+    구현 코드처럼 파일이 여러 개인 산출물은 일부만 최신 버전으로 섞이면 실행할 수 없다.
+    따라서 전체 파일 tree를 한 ``ArtifactVersion`` 아래에 저장하고 한 번에 교체한다.
+    """
     if not files:
         raise ValueError("A file artifact snapshot cannot be empty")
     normalized = {_normalize_file_path(path): content for path, content in files.items()}
@@ -422,7 +441,7 @@ def save_file_snapshot(
 
 
 def load_file_snapshot(app_id: str, artifact_type: str) -> dict[str, Any] | None:
-    """Load the current multi-file snapshot without mixing it into design state."""
+    """현재 파일 snapshot을 설계 상태와 섞지 않고 별도 구조로 반환한다."""
     with session_scope() as session:
         _require_app(session, app_id)
         artifact = _find_artifact(session, app_id, artifact_type)
@@ -444,6 +463,7 @@ def load_file_snapshot(app_id: str, artifact_type: str) -> dict[str, Any] | None
 
 
 def list_file_artifact_versions(app_id: str, artifact_type: str) -> list[dict[str, Any]]:
+    """파일 산출물의 버전, 파일 수와 metadata를 오래된 순서로 반환한다."""
     with session_scope() as session:
         _require_app(session, app_id)
         artifact = _find_artifact(session, app_id, artifact_type)
@@ -476,7 +496,7 @@ def _write_version(
     config = STAGE_ARTIFACTS[stage]
     source_key = config.get("source_key")
     if source_key:
-        # Persist the structured source of truth; state_key is derived from it.
+        # 구조화 모델을 저장하고 state_key의 표시용 문서는 조회할 때 다시 만든다.
         content = _encode_content(state.get(source_key), config["source_format"])
     else:
         content = _encode_content(state.get(config["state_key"]), config["format"])

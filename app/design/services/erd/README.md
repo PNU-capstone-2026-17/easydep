@@ -139,7 +139,7 @@ PlantUML 문자열 계약을 고정한다.
   순수 함수이며 네트워크, 설정, 저장소, graph state를 읽거나 쓰지 않는다.
 - checkpoint 저장, feedback repair 예산과 semantic finding 비교는 graph가 소유한다.
 
-## 금지 의존성
+## 사용하면 안 되는 import
 
 - ERD 서비스는 `app.design.graphs`, `ArchitectureState`, artifact repository를 import하지 않는다.
 - ERD 서비스는 requirements 내부 state나 implementation service를 import하지 않는다.

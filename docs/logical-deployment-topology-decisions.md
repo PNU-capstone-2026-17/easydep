@@ -43,7 +43,7 @@ CloudDesignAdapter → 구현/테스트 → runtime contract 관찰
 | 구현 단계 인계 | [`app/orchestration/adapters/cloud_design.py`](../app/orchestration/adapters/cloud_design.py), [`app/implementation/delivery/vm_delivery.py`](../app/implementation/delivery/vm_delivery.py) |
 | OpenTofu 생성 | [`app/implementation/delivery/iac_renderer.py`](../app/implementation/delivery/iac_renderer.py) |
 
-## 1. 계약과 진실의 원천
+## 1. 계약과 기준 데이터
 
 | 계층 | `schemaVersion` | 역할 |
 |---|---|---|

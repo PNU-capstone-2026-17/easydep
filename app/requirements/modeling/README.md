@@ -43,7 +43,7 @@ state patch를 반환한다. graph 순서, feedback cascade, supervisor 재실�
   않는다. logical/physical 호출 집계는 `runtime.telemetry`의 기존 operation 이름과
   shape를 사용한다.
 
-## 금지 의존성
+## 사용하면 안 되는 import
 
 - modeling 서비스는 requirements graph, HTTP API, runner, session/checkpoint 또는
   artifact repository를 import하지 않는다.

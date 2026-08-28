@@ -9,10 +9,15 @@
 | 2 | [배포 다이어그램과 리소스 의존성 통합 기준](logical-deployment-topology-decisions.md) | 범위, 토폴로지, ResourcePlan, 멀티 AZ·VM 그룹·LB, CSP 생성 의존성, 앱·guest 바인딩, 셋업과 검증 |
 | 3 | [비교평가 계획과 현재 결과](comparison-experiment-plan.md) | E1·E2·D1, 기준군, 공통 gate, 실행 규모와 주장 한계 |
 
-[연구 배경](research.md)은 이미 승인된 진실 원천으로 보존하며 수정하지 않는다.
+[연구 배경](research.md)은 이미 승인된 연구 기록으로 보존하며 수정하지 않는다.
 
 코드와 함께 갱신되는 실행 상세는 문서 수에 포함하지 않는다.
 
+- [처음 읽는 사람을 위한 코드 탐색 순서](code-reading-guide.md): 서버·워크스페이스·단계·저장 경계를 따라가는 순서
+- [HTTP API 길잡이](api.md): workspace 중심 호출 순서와 router 책임
+- `app/README.md`: 백엔드 bounded context 지도와 의존성 방향
+- `frontend/README.md`: 워크벤치 상태 흐름과 자동 모드 원칙
+- `scripts/README.md`: 개발·운영 스크립트 용도와 안전 규칙
 - [클래스·시퀀스 설계 생성 로직](class-design-pipeline.md): 현재 생성 계약과 단계별 책임
 - [유지보수성 rollup 계약](maintainability-rollup.md): bounded context 소유권, 현재 checkpoint 정책과 최종 회귀 gate
 - `app/design/services/README.md`: 설계 서비스 디렉터리 지도와 경계 규칙

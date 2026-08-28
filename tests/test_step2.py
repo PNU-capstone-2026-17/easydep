@@ -708,7 +708,7 @@ def test_live_step2(dataset_name):
     """데이터셋별로 액터→유스케이스→커버리지를 실제 NIM으로 도출한다.
 
     출력을 보려면 -s 옵션을 붙여라. LLM 비결정성 때문에 개수/이름 대신
-    구조 불변식만 검증한다. 특정 데이터셋만 돌리려면 -k 또는 STEP2_DATASET 사용.
+    데이터 구조가 항상 지켜야 할 조건만 검증한다. 특정 데이터셋만 돌리려면 -k 또는 STEP2_DATASET 사용.
     """
     selected = os.getenv("STEP2_DATASET")
     if selected and dataset_name not in [s.strip() for s in selected.split(",")]:
@@ -732,7 +732,7 @@ def test_live_step2(dataset_name):
     print("== COVERAGE ==")
     print(json.dumps(cov, indent=2, ensure_ascii=False))
 
-    # 구조 불변식 (데이터셋 무관)
+    # 모든 데이터셋에 공통인 구조 검사
     assert len(state["actors"]) >= 1
     assert all(a["kind"] in ("primary", "supporting") for a in state["actors"])
     assert len(state["use_cases"]) >= 1

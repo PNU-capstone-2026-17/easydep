@@ -2,7 +2,7 @@
 
 이 문서는 단계 경계 리팩터링 뒤에도 외부 산출물과 실행 범위가 유지되는지 확인할 최종
 색인이다. 세부 prompt·repair 규칙을 복제하지 않고 각 bounded context의 README와 공개
-contract test를 진실 원천으로 삼는다.
+contract test를 호환 여부를 판단하는 기준으로 삼는다.
 
 ## origin/main 최종 감사
 

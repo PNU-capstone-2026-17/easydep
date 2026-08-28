@@ -1,4 +1,4 @@
-"""Deterministic Terraform rendering for Azure, AWS, and GCP."""
+"""검토를 마친 ResourcePlan에서 Azure, AWS, GCP용 Terraform을 생성한다."""
 from __future__ import annotations
 
 import json
@@ -33,7 +33,7 @@ def _find_terraform() -> str | None:
 
 
 def validate_terraform(application: Path) -> dict[str, object]:
-    """Run Terraform's parser/provider validation in an isolated copy when available."""
+    """Terraform 실행 파일이 있으면 격리된 사본에서 format과 provider 검사를 실행한다."""
     executable = _find_terraform()
     source = application / "terraform"
     if executable is None:
@@ -64,9 +64,9 @@ def render_iac(
     terraform = application / "terraform"
     terraform.mkdir(parents=True, exist_ok=True)
     if resource_plan is not None:
-        # The deployment diagram bundle's ResourcePlan is the reviewed,
-        # provider-specific source of truth.  The shared renderer consumes every
-        # created node and reference, and rejects any Terraform divergence.
+        # deployment bundle의 ResourcePlan은 사용자가 검토한 CSP별 기준 계획이다. 공용
+        # renderer는 계획에 있는 모든 node와 reference를 사용하며, 다른 Terraform 구성을
+        # 임의로 추가하지 않는다.
         files = render_open_tofu(resource_plan)
         conformance = {
             "status": "SUCCEEDED",
@@ -122,12 +122,11 @@ def render_iac(
 def _iac_design_source(
     spec: Any,
 ) -> tuple[dict[str, Any], dict[str, object], dict[str, Any] | None]:
-    """Load the reviewed deployment bundle before falling back to legacy input.
+    """검토된 deployment bundle을 우선 읽고, 없을 때만 이전 cloud 입력을 사용한다.
 
-    The bundle is the structured source of the runtime/provisioning diagram;
-    its PlantUML is only a view.  Keeping the legacy resource-spec fallback
-    permits runs created before bundles were persisted, without silently
-    treating a malformed current bundle as trustworthy.
+    bundle은 실행 구조도와 provisioning 구조도를 만드는 구조화 데이터이고 PlantUML은
+    표시용 결과다. 현재 bundle이 있는데 형식이 잘못된 경우에는 조용히 이전 입력으로
+    바꾸지 않고 오류를 발생시킨다.
     """
     cloud_path = spec.inputs.get("cloud")
     legacy_cloud = (
@@ -205,7 +204,7 @@ def _deployment_projection(
 
 
 def _rendered_required_variables(files: dict[str, str]) -> list[dict[str, str]]:
-    """Expose the variables emitted by the ResourcePlan renderer to the UI."""
+    """ResourcePlan renderer가 만든 필수 Terraform variable을 UI용 목록으로 반환한다."""
     variables = sorted(
         set(
             re.findall(
@@ -224,7 +223,7 @@ def _rendered_required_variables(files: dict[str, str]) -> list[dict[str, str]]:
 def sync_deployment_bundle(
     application: Path, *, include_kubernetes: bool = True
 ) -> Path:
-    """Create a self-contained, managed deployment bundle after IaC validation succeeds."""
+    """IaC 검사가 성공하면 다른 파일 없이 실행 가능한 deployment bundle을 만든다."""
     bundle = application / "deployment-bundle"
     marker = bundle / ".easydep-managed"
     staging = Path(tempfile.mkdtemp(prefix="easydep-bundle-"))
@@ -617,7 +616,7 @@ def _resource_id(item: dict[str, Any]) -> str:
 
 
 def _reference_index(resources: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Accept explicit IDs; accept names only when they identify one resource."""
+    """명시적 ID를 색인하고, 이름은 resource 하나를 가리킬 때만 색인한다."""
     result = {_resource_id(item): item for item in resources}
     names: dict[str, list[dict[str, Any]]] = {}
     for item in resources:
@@ -647,7 +646,7 @@ def _ancestor_names(item: dict[str, Any], references: dict[str, dict[str, Any]],
 
 
 def _related_resources(item: dict[str, Any], resources: list[dict[str, Any]], provider: str, terraform_type: str) -> list[dict[str, Any]]:
-    """Find resources connected by explicit dependencies, never by list position."""
+    """list 순서가 아니라 명시된 dependency를 따라 연결된 resource를 찾는다."""
     candidates = [candidate for candidate in resources if _type(provider, candidate) == terraform_type]
     references = _reference_index(resources)
     ancestors = _ancestor_names(item, references)
@@ -670,7 +669,7 @@ def _single_related_resource(item: dict[str, Any], resources: list[dict[str, Any
 
 
 def _expected_attributes(provider: str, item: dict[str, Any]) -> list[str]:
-    """Stable source-spec values that must survive deterministic rendering."""
+    """Terraform 생성 뒤에도 원래 resource spec과 같아야 하는 주요 속성을 반환한다."""
     kind = _type(provider, item)
     if kind == "azurerm_virtual_network":
         return [f'address_space = [{json.dumps(item.get("addressSpace", "10.0.0.0/16"))}]']

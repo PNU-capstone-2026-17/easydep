@@ -1,3 +1,11 @@
+"""구현 작업의 생성, 승인, 실행, 결과 저장을 관리한다.
+
+설계 산출물이 구현에 필요한 수준인지 먼저 확인한 뒤 별도 프로세스에서 코드 생성과
+검증을 실행한다. 각 작업의 상태는 ``easydep-job-state.json``에 저장하므로 서버가
+재시작되어도 승인 정보가 남아 있는 작업은 이어서 실행할 수 있다. 여러 요청이 동시에
+들어올 수 있어 실제 실행은 크기가 제한된 thread pool에 맡긴다.
+"""
+
 from __future__ import annotations
 
 import json
@@ -26,17 +34,13 @@ from ..workflows.repair import repair_rounds
 from .feedback import assess_feedback_eligibility
 from .prototype import PrototypeClient
 
-# Most design findings can remain visible while implementation proceeds: they
-# may concern an incomplete alternate sequence path or a review preference.
-# These rules are different.  Their mapping deterministically removes or
-# changes a BCE scalar before Java contracts are generated, so no mapper can
-# repair the result without inventing a persistence decision.
+# 일부 설계 finding은 구현을 진행하면서 구체적인 코드와 함께 확인할 수 있다. 그러나
+# 아래 규칙의 오류는 입력 계약 자체를 만들 수 없게 하거나 BCE 필드와 JPA 필드의 대응을
+# 잃게 만든다. 구현기가 임의로 데이터 저장 방식을 정하지 않도록 이 경우만 시작 전에 막는다.
 _IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
     "api.operations-present",
-    # API traceability/type/outcome findings remain visible in the design
-    # report, but implementation may proceed so its bounded agents can expose
-    # the concrete repair evidence. Only an API with no operation at all is
-    # impossible to hand off to an implementation task.
+    # API 추적, 타입, 응답 finding은 보고서에 남긴 채 구현을 진행할 수 있다. 다만 HTTP
+    # operation이 하나도 없으면 구현할 endpoint가 없으므로 작업 자체를 시작할 수 없다.
     "erd.surrogate-key-collides",
     "class.contract-types-exist",
 })
@@ -53,16 +57,16 @@ _JAVA_CONTRACT_TYPES = frozenset({
 
 
 def _now() -> str:
+    """작업 기록에 사용할 현재 UTC 시각을 ISO 8601 문자열로 반환한다."""
     return datetime.now(UTC).isoformat()
 
 
 def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bool:
-    """Return whether a design finding would make generated contracts lossy.
+    """구현 계약을 안전하게 만들 수 없는 설계 finding이 있는지 확인한다.
 
-    This intentionally checks stable rule IDs embedded in the readiness text,
-    not field-name heuristics.  The ERD checker has already established that a
-    scalar field would be displaced by a generated surrogate key; proceeding
-    would otherwise create an unrepresentable BCE-to-JPA mapper.
+    필드 이름을 추측하지 않고 검사기가 finding에 넣은 rule ID를 확인한다. 예를 들어 ERD
+    검사기가 자동 생성 surrogate key와 기존 필드의 충돌을 보고했다면, 그대로 진행할 경우
+    BCE 객체를 JPA Entity로 옮기는 mapper가 어느 값을 보존해야 할지 결정할 수 없다.
     """
     return any(
         rule_id in str(finding.get("finding") or "")
@@ -73,11 +77,11 @@ def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bo
 
 
 def _missing_bce_contract_types(class_diagram: object) -> list[str]:
-    """Find custom Java types used by BCE signatures but not declared in the BCE diagram.
+    """BCE method signature에서 사용했지만 다이어그램에 선언하지 않은 타입을 찾는다.
 
-    A missing request type is otherwise silently downgraded by OpenAPI generation to
-    ``Object``.  The API adapter cannot then convert the request to the Control input
-    without inventing a contract, so this must be reported before any LLM task starts.
+    요청 DTO가 빠진 상태로 OpenAPI를 만들면 구체적인 타입 대신 ``Object``가 될 수 있다.
+    그러면 API adapter가 HTTP 요청을 Control 입력으로 변환하는 방법을 알 수 없으므로,
+    LLM 구현 작업을 시작하기 전에 누락된 이름을 알려 준다.
     """
     source = str(class_diagram or "")
     declarations = set(re.findall(
@@ -99,7 +103,8 @@ def _missing_bce_contract_types(class_diagram: object) -> list[str]:
             continue
         if not in_class or not line.startswith(("+", "-", "#", "~")) or ":" not in line:
             continue
-        # Only inspect the declared type portions of fields, parameters, and returns.
+        # 필드, parameter, return type이 적힌 콜론 오른쪽만 검사한다. 메서드 이름이나
+        # 설명에 우연히 들어간 대문자 단어를 타입으로 잘못 판단하지 않기 위해서다.
         type_text = line.split(":", 1)[1]
         for token in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", type_text):
             if token not in declarations and token not in _JAVA_CONTRACT_TYPES:
@@ -110,6 +115,7 @@ def _missing_bce_contract_types(class_diagram: object) -> list[str]:
 def _append_bce_contract_type_report(
     readiness: dict[str, Any], class_diagram: object
 ) -> dict[str, Any]:
+    """누락된 BCE 타입을 구현 준비도 보고서에 추가한다."""
     missing = _missing_bce_contract_types(class_diagram)
     if not missing:
         return readiness
@@ -135,7 +141,7 @@ def _append_bce_contract_type_report(
 
 
 def _has_rendered_openapi_operation(api_spec: object) -> bool:
-    """Check the rendered artifact, not just the intermediate endpoint model."""
+    """중간 endpoint 모델이 아니라 최종 OpenAPI에 HTTP operation이 있는지 확인한다."""
     if not isinstance(api_spec, dict):
         return False
     paths = api_spec.get("paths")
@@ -151,7 +157,7 @@ def _has_rendered_openapi_operation(api_spec: object) -> bool:
 
 
 def _missing_openapi_operation_report(readiness: dict[str, Any]) -> dict[str, Any]:
-    """Add a deterministic rendered-contract finding to a readiness report."""
+    """OpenAPI에 operation이 없다는 finding을 구현 준비도 보고서에 추가한다."""
     finding = (
         "OpenAPI paths에 구현 가능한 HTTP operation이 없음 — 유스케이스·BCE Control·"
         "시퀀스 호출에 근거한 endpoint를 생성해야 함 [api.operations-present]"
@@ -182,17 +188,13 @@ def _missing_openapi_operation_report(readiness: dict[str, Any]) -> dict[str, An
 def _unrepresentable_openapi_error_outcomes(
     class_diagram: object, api_spec: object
 ) -> list[str]:
-    """Retained compatibility hook; documented API outcomes are executable.
+    """이전 호출 경로와의 호환을 위해 남겨 둔 API 오류 응답 검사 hook이다.
 
-    A BCE method's return type describes its successful value.  It does not
-    constrain documented HTTP failure outcomes: those can be produced by
-    validation, authorization, a domain exception, or a persistence exception
-    mapped by the web layer.  Requiring every 409/422 to use a synthetic
-    ``*Result`` return type incorrectly rejected ordinary commands returning
-    an entity (for example a successful enrollment) and encouraged fabricated
-    DTOs.  Binding/outcome completeness is already checked by the API design
-    validators, so this legacy implementation preflight must not add a second,
-    contradictory design finding.
+    BCE method의 return type은 성공했을 때 돌려주는 값을 설명한다. HTTP 실패 응답은 입력
+    검사, 권한 확인, domain exception 또는 저장 오류를 Web 계층에서 변환해 만들 수도 있다.
+    따라서 모든 409/422 응답에 인위적인 ``*Result`` 타입을 요구하면 정상적인 Entity 반환
+    method까지 잘못 거부하게 된다. API 설계 검사가 binding과 응답 구성을 이미 확인하므로,
+    이 구현 사전 검사는 별도의 finding을 추가하지 않는다.
     """
     del class_diagram, api_spec
     return []
@@ -233,17 +235,18 @@ def _append_api_error_outcome_report(
 
 
 class JobNotFound(KeyError):
-    pass
+    """요청한 구현 작업 ID의 상태 파일이 없을 때 발생한다."""
 
 
 class InvalidJobState(RuntimeError):
-    pass
+    """현재 작업 상태에서는 요청한 동작을 수행할 수 없을 때 발생한다."""
 
 
 class ImplementationWorker:
-    """Persistent job registry plus a bounded local execution queue."""
+    """구현 작업 상태 파일과 크기가 제한된 로컬 실행 queue를 관리한다."""
 
     def __init__(self, settings: ImplementationSettings | None = None):
+        """실행 경로와 worker pool을 준비하고 중단된 작업을 복구한다."""
         self.settings = settings or ImplementationSettings.from_env()
         self.settings.work_root.mkdir(parents=True, exist_ok=True)
         self.client = PrototypeClient(self.settings)
@@ -255,6 +258,7 @@ class ImplementationWorker:
         self._recover_pending_jobs()
 
     def create_job(self, app_id: str, design: dict[str, Any], base_package: str, allow_assumptions: bool) -> dict[str, Any]:
+        """설계를 검사한 뒤 새 구현 작업을 등록하고 비동기 planning을 시작한다."""
         missing = [key for key in ("class_diagram_puml", "api_spec") if design.get(key) in (None, "", {})]
         if missing:
             raise InvalidJobState("Missing required design artifacts: " + ", ".join(missing))
@@ -272,9 +276,8 @@ class ImplementationWorker:
             design.get("class_diagram_puml"),
             design.get("api_spec"),
         )
-        # Prefer the concrete rendered-contract defect over a generic missing
-        # model report: this is the exact reason both OpenAPI generators would
-        # reject the hand-off.
+        # 중간 모델 누락보다 최종 OpenAPI의 operation 누락을 먼저 알린다. 사용자가 실제
+        # 산출물에서 확인할 수 있고, 두 OpenAPI 생성 경로가 모두 거부하는 직접적인 이유다.
         if not _has_rendered_openapi_operation(design.get("api_spec")):
             return self._create_design_blocked_job(
                 app_id,
@@ -292,8 +295,7 @@ class ImplementationWorker:
         record = {
             "job_id": job_id, "app_id": app_id, "status": "QUEUED", "base_package": base_package,
             "job_path": str(job_path), "run_root": None, "workflow": None,
-            # Deterministic design findings remain visible to the implementation
-            # run, but a complete design artifact set is sufficient to proceed.
+            # 시작을 막지 않는 설계 finding도 구현 보고서에서 확인할 수 있도록 함께 넘긴다.
             "design_validation": readiness,
             "transmission_request": None, "error": None, "created_at": _now(), "updated_at": _now(),
         }
@@ -303,13 +305,12 @@ class ImplementationWorker:
 
     @staticmethod
     def _has_substantial_rendered_design(design: dict[str, Any]) -> bool:
-        """Allow implementation to proceed when rendered artifacts are usable.
+        """최종 출력된 설계 산출물만으로도 구현을 진행할 수 있는지 판단한다.
 
-        Derived design models are useful for readiness checks, but their absence
-        must not discard a complete class diagram/OpenAPI pair.  The generator
-        consumes those rendered artifacts directly and records any remaining
-        contract gaps in its reports.  Tiny placeholder inputs (or an OpenAPI
-        document with no operations) remain blocked.
+        구조화 설계 모델은 자세한 준비도 검사에 유용하지만, 모델이 없다는 이유만으로 완성된
+        클래스 다이어그램과 OpenAPI까지 버리지는 않는다. 구현기는 두 최종 산출물을 직접
+        사용할 수 있으며 남은 계약 문제를 보고서에 기록한다. 내용이 거의 없는 placeholder나
+        HTTP operation이 없는 OpenAPI는 사용할 수 없으므로 계속 차단한다.
         """
         class_diagram = design.get("class_diagram_puml")
         api_spec = design.get("api_spec")
@@ -322,7 +323,7 @@ class ImplementationWorker:
     def _create_design_blocked_job(
         self, app_id: str, base_package: str, readiness: dict[str, Any]
     ) -> dict[str, Any]:
-        """Persist an actionable hand-off block without starting any generator."""
+        """코드 생성기를 실행하지 않고, 해결할 설계 문제를 작업 기록으로 남긴다."""
         job_id = uuid.uuid4().hex
         report_path = self.settings.work_root / job_id / "design-readiness.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -361,7 +362,7 @@ class ImplementationWorker:
 
     @staticmethod
     def _missing_design_model_report(missing_models: list[str]) -> dict[str, Any]:
-        """Old rendered-only artifacts cannot prove the API-to-Control contract."""
+        """구조화 모델이 없어 API와 Control의 연결을 검사할 수 없다는 보고서를 만든다."""
         findings = [
             {
                 "stage": "api_spec",
@@ -389,6 +390,11 @@ class ImplementationWorker:
         base_package: str,
         allow_assumptions: bool,
     ) -> dict[str, Any]:
+        """저장된 구현 파일에 사용자 피드백을 적용하는 새 작업을 만든다.
+
+        먼저 피드백이 구현 코드만 고쳐서 해결할 수 있는지 확인한다. 설계 변경이 필요하면
+        코드를 생성하지 않고 어느 설계 단계로 돌아가야 하는지 사용자에게 알려 준다.
+        """
         source_snapshot = artifact_repository.load_file_snapshot(
             app_id, TYPE_SOURCE_CODE
         )
@@ -484,15 +490,15 @@ class ImplementationWorker:
         return self.public_record(record)
 
     def get(self, job_id: str) -> dict[str, Any]:
+        """호스트 내부 경로를 제외한 구현 작업 상태를 반환한다."""
         return self.public_record(self._with_live_generation_progress(self._read(job_id)))
 
     def get_testing_input(self, job_id: str) -> dict[str, Any]:
-        """Return the minimum private execution context needed by the test adapter.
+        """테스트 adapter가 사용하는 최소한의 내부 실행 정보를 반환한다.
 
-        ``get`` deliberately removes ``run_root`` from the browser-facing job
-        record.  The testing API is a trusted in-process consumer, so it gets a
-        narrow context instead of relying on the public record or exposing the
-        workspace path over HTTP.
+        일반 ``get`` 응답은 브라우저에 전달되므로 ``run_root``를 의도적으로 제거한다.
+        테스트 API는 같은 프로세스 안에서 실행되는 신뢰된 호출자이므로, 공개 응답을 거치지
+        않고 필요한 workspace 경로만 제한적으로 받는다.
         """
         record = self._read(job_id)
         return {
@@ -503,6 +509,7 @@ class ImplementationWorker:
         }
 
     def cancel(self, job_id: str) -> dict[str, Any]:
+        """종료되지 않은 작업을 취소하고 실행 중인 하위 프로세스도 중지한다."""
         record = self._read(job_id)
         if record["status"] in {"COMPLETED", "FAILED", "CANCELLED", "REJECTED"}:
             raise InvalidJobState(f"Job is already in a terminal state: {record['status']}")
@@ -514,6 +521,11 @@ class ImplementationWorker:
         return self.public_record(record)
 
     def approve(self, job_id: str, request_id: str, approved: bool, approved_by: str, retry_failed: bool, delegate_repair_approvals: bool = True) -> dict[str, Any]:
+        """현재 전송 요청을 승인하거나 거절하고, 승인 시 실행 phase를 시작한다.
+
+        ``request_id``가 현재 요청과 같은지 확인해 오래된 화면에서 누른 승인이 새 요청에
+        적용되지 않게 한다. 자동 repair 승인 범위도 파일에 기록해 재시작 뒤 검증할 수 있다.
+        """
         record = self._read(job_id)
         request = record.get("transmission_request") or {}
         if record["status"] != "AWAITING_APPROVAL":
@@ -548,21 +560,21 @@ class ImplementationWorker:
         return self.public_record(record)
 
     def _plan(self, job_id: str) -> None:
+        """하위 프로세스에서 코드를 생성한 뒤 실행할 task와 phase를 계획한다."""
         record = self._read(job_id)
         try:
             self._set_status(record, "GENERATING")
             run_root = self.client.generate(Path(record["job_path"]))
-            # Generation runs in a separate process.  Do not revive a job the
-            # user cancelled while that process was finishing.
+            # 생성은 별도 프로세스에서 실행된다. 프로세스가 끝나기 직전에 사용자가 취소했을
+            # 수 있으므로 결과를 반영하기 전에 최신 상태를 다시 읽는다.
             if self._read(job_id).get("status") == "CANCELLED":
                 return
             record["run_root"] = str(run_root)
             manifest_path = run_root / "reports" / "run-manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if manifest.get("status") == "NEEDS_INPUT":
-                # Input-contract defects are expected and actionable.  Keep
-                # their immutable report and hand the job back to design
-                # instead of attempting planners that require generated code.
+                # 입력 계약 오류는 사용자가 설계를 고쳐 해결할 수 있는 정상적인 중단이다.
+                # 오류 보고서를 보존하고, 생성된 코드가 필요한 planner는 실행하지 않는다.
                 diagnostics = [
                     str(item.get("message") or "")
                     for item in manifest.get("diagnostics") or []
@@ -592,6 +604,7 @@ class ImplementationWorker:
             self._fail(record, error)
 
     def _run(self, job_id: str, approval_path: str, retry_failed: bool) -> None:
+        """승인된 workflow를 실행하고 완료된 파일을 산출물 저장소에 보관한다."""
         record = self._read(job_id)
         try:
             self._set_status(record, "RUNNING")
@@ -612,6 +625,7 @@ class ImplementationWorker:
             self._fail(record, error)
 
     def _apply_workflow(self, record: dict[str, Any], workflow: dict[str, Any]) -> None:
+        """외부 실행기의 workflow 상태를 EasyDep 구현 작업 상태로 변환한다."""
         record["workflow"] = workflow
         request = self.client.transmission_request(Path(record["run_root"]))
         record["transmission_request"] = request
@@ -641,12 +655,11 @@ class ImplementationWorker:
 
     @staticmethod
     def _workflow_is_complete(workflow: dict[str, Any]) -> bool:
-        """Treat a fully drained READY workflow as a completed execution.
+        """남은 task가 없는 ``READY`` workflow를 완료로 판단한다.
 
-        Older workflow runners return ``READY`` after the final audit even
-        though every task has succeeded.  ``READY`` is also used for a newly
-        planned workflow, so only a task-bearing workflow with no runnable or
-        blocked work can be promoted to the job's terminal COMPLETED state.
+        일부 workflow runner는 모든 task가 성공한 뒤에도 ``COMPLETE``가 아니라 ``READY``를
+        반환한다. 새로 계획만 끝난 때도 같은 값을 사용하므로, 실제 task와 phase가 있고
+        실행 가능하거나 차단된 일이 하나도 없을 때만 ``COMPLETED``로 바꾼다.
         """
         tasks = workflow.get("tasks")
         phases = workflow.get("phases")
@@ -668,6 +681,7 @@ class ImplementationWorker:
         )
 
     def _persist_outputs(self, record: dict[str, Any]) -> None:
+        """생성된 파일을 종류별 snapshot으로 나누어 산출물 저장소에 저장한다."""
         application = Path(record["run_root"]) / "application"
         groups: dict[str, dict[str, str]] = {
             kind: {}
@@ -680,12 +694,14 @@ class ImplementationWorker:
             )
         }
         for path in application.rglob("*"):
+            # build 결과와 Gradle cache는 소스 산출물이 아니며 크기도 크므로 제외한다.
             if not path.is_file() or "build" in path.parts or ".gradle" in path.parts:
                 continue
             relative = path.relative_to(application).as_posix()
             try:
                 content = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
+                # 파일 산출물 계약은 UTF-8 text다. 이미지나 binary 파일은 저장하지 않는다.
                 continue
             lowered = relative.lower()
             if relative.startswith("frontend/"):
@@ -722,6 +738,11 @@ class ImplementationWorker:
 
     @staticmethod
     def _delegated_execution_is_active(record: dict[str, Any], approval_path: str) -> bool:
+        """현재 repair 요청이 사용자가 위임한 자동 승인 범위 안인지 확인한다.
+
+        승인 파일의 run ID와 입력 hash가 현재 실행과 같아야 한다. 최초 task 또는 검증된
+        repair plan에 포함된 task만 허용해 이전 실행의 승인이 다른 코드에 재사용되지 않게 한다.
+        """
         try:
             approval = json.loads(Path(approval_path).read_text(encoding="utf-8"))
             if approval.get("delegatedRepairApprovals") is not True:
@@ -762,11 +783,13 @@ class ImplementationWorker:
             return False
 
     def _set_status(self, record: dict[str, Any], status: str) -> None:
+        """상태와 수정 시각을 함께 바꾸고 즉시 디스크에 저장한다."""
         record["status"] = status
         record["updated_at"] = _now()
         self._write(record)
 
     def _fail(self, record: dict[str, Any], error: Exception) -> None:
+        """취소된 작업은 되살리지 않고 나머지 오류를 ``FAILED``로 기록한다."""
         try:
             if self._read(str(record["job_id"])).get("status") == "CANCELLED":
                 return
@@ -781,7 +804,7 @@ class ImplementationWorker:
         return self.settings.work_root / job_id / "easydep-job-state.json"
 
     def start_warmup(self) -> bool:
-        """Start best-effort warm-up without consuming a user-job worker slot."""
+        """사용자 작업용 worker를 차지하지 않는 별도 thread에서 warm-up을 시작한다."""
         if not self.settings.startup_warmup:
             return False
         with self._warmup_lock:
@@ -796,11 +819,16 @@ class ImplementationWorker:
             report = self.client.warmup_runtime()
             print(f"[startup] 구현 런타임 워밍업: {report['status']}")
         except Exception as error:
-            # Warming improves latency but must never make the service unhealthy.
+            # warm-up은 첫 요청의 지연을 줄이는 보조 작업이다. 실패해도 서버 시작이나 이후
+            # 사용자 요청을 막지 않고 실제 요청이 들어왔을 때 다시 준비하도록 둔다.
             print(f"[startup] 구현 런타임 워밍업 실패(요청 시 재시도): {error}")
 
     def _recover_pending_jobs(self) -> None:
-        """Resume queued work after a server restart using only durable approvals."""
+        """서버 재시작 뒤 디스크에 남은 승인 파일을 확인해 중단된 작업을 재개한다.
+
+        실행을 이미 시작한 작업은 승인 파일이 있을 때만 이어 간다. 메모리에만 있던 승인을
+        추측해 실행하지 않으며, 승인 파일이 없으면 이유를 남기고 실패 처리한다.
+        """
         for path in self.settings.work_root.glob("*/easydep-job-state.json"):
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
@@ -821,6 +849,7 @@ class ImplementationWorker:
                 self.executor.submit(self._plan, record["job_id"])
 
     def _read(self, job_id: str) -> dict[str, Any]:
+        """작업 상태 JSON을 읽으며 파일이 없으면 :class:`JobNotFound`를 발생시킨다."""
         path = self._record_path(job_id)
         if not path.is_file():
             raise JobNotFound(job_id)
@@ -829,7 +858,7 @@ class ImplementationWorker:
 
     @staticmethod
     def _with_live_generation_progress(record: dict[str, Any]) -> dict[str, Any]:
-        """Overlay subprocess progress without exposing its host-side path."""
+        """호스트 경로를 숨긴 채 하위 프로세스의 세부 진행 상태를 응답에 합친다."""
         if record.get("status") not in {"GENERATING", "PLANNING"}:
             return record
         job_path = record.get("job_path")
@@ -849,8 +878,8 @@ class ImplementationWorker:
             for key in ("status", "message", "updatedAt")
             if isinstance(progress.get(key), str)
         }
-        # Once generation returns, the durable job status becomes PLANNING.
-        # Before then, expose the finer phase emitted by the child process.
+        # 생성 함수가 반환하면 저장 상태가 PLANNING으로 바뀐다. 그전에는 하위 프로세스가
+        # 기록한 자세한 phase를 보여 주어 긴 생성 구간을 한 상태로만 표시하지 않게 한다.
         if record.get("status") == "GENERATING" and status in {
             "VALIDATING_INPUT",
             "REUSING_GENERATED_RUN",
@@ -865,15 +894,14 @@ class ImplementationWorker:
         return result
 
     def _write(self, record: dict[str, Any]) -> None:
+        """작업 상태를 UTF-8 JSON으로 쓰고 가능한 경우 원자적으로 교체한다."""
         path = self._record_path(record["job_id"])
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock:
             payload = json.dumps(record, ensure_ascii=False, indent=2)
-            # A fixed ``.tmp`` path is vulnerable to another server process or
-            # antivirus scanner opening it while Windows is replacing the
-            # durable state file.  Use a unique sibling and retry the replace;
-            # the final direct write is safe when the destination is writable
-            # but temporarily cannot be atomically replaced.
+            # 고정된 .tmp 이름은 다른 서버 프로세스나 백신이 파일을 여는 순간 충돌할 수 있다.
+            # 매번 고유한 임시 파일을 만들고 os.replace를 재시도한다. Windows가 기존 파일의
+            # 교체만 잠시 거부하면 마지막 수단으로 대상 파일에 직접 덮어쓴다.
             temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
             try:
                 temporary.write_text(payload, encoding="utf-8")
@@ -888,10 +916,8 @@ class ImplementationWorker:
                         if attempt < 2:
                             time.sleep(0.05 * (attempt + 1))
                 if last_error is not None:
-                    # Some Windows file-sharing configurations deny replacing
-                    # an existing file while still allowing it to be opened
-                    # for writing. Preserve a durable record instead of
-                    # aborting the entire implementation job.
+                    # 일부 Windows 파일 공유 설정은 기존 파일을 열어 쓰는 것은 허용하면서
+                    # 교체는 거부한다. 작업 전체를 실패시키지 않고 상태 기록을 남기는 쪽을 택한다.
                     path.write_text(payload, encoding="utf-8")
             finally:
                 try:
@@ -901,6 +927,7 @@ class ImplementationWorker:
 
     @staticmethod
     def public_record(record: dict[str, Any]) -> dict[str, Any]:
+        """내부 경로와 전체 source 내용을 제거한 HTTP 응답용 작업 정보를 만든다."""
         result = {key: value for key, value in record.items() if key not in {"job_path", "run_root"}}
         request = result.get("transmission_request")
         if isinstance(request, dict):
@@ -917,6 +944,7 @@ class ImplementationWorker:
         return result
 
     def shutdown(self) -> None:
+        """새 작업 접수를 멈추고 대기 중인 future를 취소한다."""
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.warmup_executor.shutdown(wait=False, cancel_futures=True)
 

@@ -283,7 +283,7 @@ def erd_table_names_unique(model: dict, logical: dict) -> list[Finding]:
 
 # 기본키 유무와 외래키 참조를 보는 검출기는 **일부러 없다.** 사상이 그 둘을 구성에 의해
 # 보장하므로 어떤 모델로도 위반이 안 나오고, 그러면 그 검출기의 "0건"은 아무 정보가
-# 아니다. 불변식은 `tests/test_erd_mapping.py`가 지킨다 — 사상이 깨지면 그쪽이 운다.
+# 아니다. 변환 코드의 조건은 `tests/test_erd_mapping.py`가 확인한다. 매핑이 깨지면 그 테스트가 실패한다.
 
 
 def erd_entity_typed_field_needs_relationship(model: dict, logical: dict) -> list[Finding]:

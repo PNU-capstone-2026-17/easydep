@@ -13,6 +13,8 @@ import type {
 } from '$lib/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // JSON API의 공통 처리 지점이다. HTTP 오류 응답도 가능한 경우 JSON으로 읽어 백엔드가
+  // 보낸 detail을 사용자에게 보여 주고, JSON이 아니면 상태 코드를 포함한 기본 오류를 만든다.
   const response = await fetch(path, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) }
@@ -113,6 +115,8 @@ export async function downloadImplementationArtifacts(appId: string) {
     throw new Error(body.detail?.message ?? body.detail ?? `Request failed (${response.status})`);
   }
   const blob = await response.blob();
+  // 서버가 만든 ZIP을 브라우저 memory URL로 연결해 다운로드한다. 클릭이 끝나면 DOM과
+  // object URL을 정리해 여러 번 다운로드해도 메모리가 계속 남지 않게 한다.
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -129,6 +133,8 @@ export function connectEvents(
   onEvent: (event: WorkspaceEvent) => void,
   onError: () => void
 ) {
+  // EventSource는 연결이 끊기면 브라우저가 자동으로 다시 연결한다. after에는 마지막으로
+  // 화면에 반영한 event ID를 전달하며 서버는 그 다음 이벤트부터 보내 중복을 줄인다.
   const source = new EventSource(`/api/workspace/apps/${appId}/events?after=${after}`);
   source.addEventListener('workspace', (raw) => {
     onEvent(JSON.parse((raw as MessageEvent).data));

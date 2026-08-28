@@ -559,14 +559,14 @@ def test_modeling_import_direction_and_public_annotations_are_bounded() -> None:
 
 
 def test_modeling_documentation_covers_the_operational_contract() -> None:
-    """README가 입력·출력·부수효과·실패·금지 의존성을 모두 기록한다."""
+    """README가 입력·출력·부수효과·실패와 import 제한을 모두 기록한다."""
 
     readme = (MODELING_DIR / "README.md").read_text(encoding="utf-8")
     for heading in (
         "## 입력",
         "## 출력",
         "## 부수효과와 호출 범위",
-        "## 금지 의존성",
+        "## 사용하면 안 되는 import",
         "## 실패 조건",
         "## 호환 경계",
     ):

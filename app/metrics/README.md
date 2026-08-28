@@ -22,7 +22,7 @@
 전송을 수행한다. probe는 retry 0과 독립 timeout을 사용하며, 관찰 실패를 본 작업으로
 전파하지 않는다.
 
-## 금지 의존성
+## 사용하면 안 되는 import
 
 - requirements·design·implementation 단계 서비스와 graph state
 - artifact repository, checkpoint 및 workspace

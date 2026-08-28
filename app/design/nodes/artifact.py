@@ -188,7 +188,7 @@ class DesignArtifactSpec:
     """
 
     stage: str
-    #: 진실의 원천 — LLM이 편집하고 저장소가 저장하는 구조화 모델.
+    #: LLM이 편집하고 저장소가 보관하는 기준 구조화 모델.
     model_key: str
     #: 모델에서 렌더된 산출물(PlantUML 문자열 또는 OpenAPI dict).
     content_key: str
@@ -234,10 +234,10 @@ class DesignArtifactSpec:
     #: None이면 대사 노드가 생기지 않는다 — 그 산출물은 다른 것을 고칠 일이 없다는 뜻이고,
     #: 그래프에 빈 노드가 뜨지 않는다.
     reconcile: Callable[[ArchitectureState], dict] | None = None
-    #: 검사·수리가 모델을 바꾼 뒤 렌더 직전에 다시 강제할 산출물 불변식.
+    #: 검사·수리가 모델을 바꾼 뒤 렌더 직전에 다시 적용할 산출물 구성 규칙.
     finalize: Callable[[ArchitectureState], dict] | None = None
-    #: Feedback may revise an upstream source-of-truth and deterministically
-    #: reproject this artifact. The returned delta must include ``model_key``.
+    #: 피드백이 앞 stage의 기준 모델을 수정했을 때 이 산출물을 코드로 다시 만드는 함수.
+    #: 반환하는 변경값에는 반드시 ``model_key``가 있어야 한다.
     revise_state: Callable[
         [Any, str, ArchitectureState, set[str]], dict[str, Any]
     ] | None = None
@@ -381,7 +381,7 @@ def extract_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict
 
 
 def revise_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
-    """사용자 피드백을 모델(진실의 원천)에 적용한다.
+    """사용자 피드백을 기준 모델에 적용한다.
 
     산출물은 convert 노드가 같은 변환으로 재렌더하므로, 피드백이 렌더된 텍스트를 직접
     건드리는 일이 없고 모델과 산출물이 어긋나지 않는다.

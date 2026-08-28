@@ -1,7 +1,7 @@
 """API 제안과 승인 endpoint가 공유하는 타입 계약이다.
 
 LLM은 OpenAPI 대신 의도적으로 얕은 이 모델만 제안한다. 같은 Pydantic 계약을 제안
-경계와 결정론적 정규화 뒤에 사용하며, 렌더된 OpenAPI는 진실의 원천이 아닌 투영이다.
+경계와 코드 기반 정규화 뒤에 사용하며, 렌더된 OpenAPI가 아니라 이 모델을 수정 기준으로 삼는다.
 """
 from __future__ import annotations
 

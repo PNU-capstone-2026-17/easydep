@@ -1,4 +1,4 @@
-"""피드백을 가장 작은 설계 소유 단위에 배정하고 그 단위만 교체한다.
+"""피드백을 가장 작은 설계 수정 대상에 배정하고 그 부분만 교체한다.
 
 입력은 현재 ``BCEModel``, 이를 만든 ``ScenarioIndex``, 사용자 피드백과 선택적 target
 ID다. 출력은 inventory·operation·collaboration 중 하나로 좁혀진 ``FeedbackScope``와
@@ -538,7 +538,7 @@ def propose_inventory_revision(
         정규화와 ``INVENTORY_CHECKS``를 통과한 새 수락 단위다.
 
     Raises:
-        ValueError: target이 없거나 교체안이 inventory 불변식을 위반한 경우다.
+        ValueError: target이 없거나 교체안이 inventory 구성 규칙을 위반한 경우다.
 
     Notes:
         LLM은 전체 교체안을 반환하지만 target 밖 item은 코드가 원본으로 복원한다.

@@ -1,4 +1,4 @@
-"""완성된 BCE 클래스 모델의 저장 계약과 협업 불변식을 검증한다."""
+"""완성된 BCE 클래스 모델의 저장 계약과 클래스 간 협업 규칙을 검증한다."""
 from __future__ import annotations
 
 import re
@@ -220,7 +220,7 @@ def validate_class_model(
 
     Notes:
         검증은 모델을 수정하거나 repair를 시작하지 않는다. repair 여부는 서비스가
-        보고서를 받은 뒤 소유 단위별로 결정한다.
+        보고서를 받은 뒤 수정 대상별로 결정한다.
     """
     if isinstance(model, BCEModel):
         payload = model.model_dump(by_alias=True)

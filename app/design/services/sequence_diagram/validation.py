@@ -497,7 +497,7 @@ def sequence_boundary_operation_direction(model: dict, state: dict) -> list[Find
     if isinstance(
         (state.get("extracted_bce_classes") or {}).get("Collaborations"), list,
     ) and (state.get("extracted_bce_classes") or {}).get("Collaborations"):
-        # 저장 collaboration이 actor entry와 위임 방향을 명시하면 그것이 진실 원천이다.
+        # 저장된 collaboration에 actor entry와 위임 방향이 있으면 그 값을 검사 기준으로 쓴다.
         # method 이름 prefix 판정은 collaboration이 없는 과거 모델에만 적용한다.
         return []
     rule_id = "sequence.boundary-operation-direction"
@@ -1272,7 +1272,7 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
             }
         else:
             # 과거 class 모델은 collaboration graph와 operation ID가 없을 수 있다. 위의
-            # collaboration 진실 원천 경로를 약화하지 않으면서 과거 step trace 검사는 보존한다.
+            # collaboration을 우선하는 현재 경로를 유지하면서 이전 step trace 검사도 보존한다.
             required_families = {
                 (
                     f"{str(class_item.get('className') or '').strip().casefold()}::"

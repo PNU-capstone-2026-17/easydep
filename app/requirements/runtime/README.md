@@ -29,7 +29,7 @@ LLM endpoint 네트워크 호출, process-local client cache, 로그·progress e
 ContextVar 실행 집계가 있다. telemetry는 디스크·checkpoint·세션에 직접
 저장하지 않는다.
 
-## 금지 의존성
+## 사용하면 안 되는 import
 
 - requirements agent 단계 구현·prompt·validator·repair loop
 - stage registry·graph·runner·supervisor·feedback cascade

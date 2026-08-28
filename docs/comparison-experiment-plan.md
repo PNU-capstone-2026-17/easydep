@@ -37,7 +37,7 @@ EasyDep의 평가 대상은 기계 판독 계약, 요구사항–설계–code/t
 
 수강신청 자체가 cloud-native이기 때문이 아니라, 제한 수량에 대한 동시 변경과 공유 영속
 상태를 한 사례에서 시험할 수 있어 합성 통합 벤치마크로 사용한다. 모델과 평가기는 도메인
-이름이 아니라 Workload·Endpoint·Connection·영속성·업무 불변식을 입력받는다.
+이름이 아니라 Workload·Endpoint·Connection·영속성·반드시 지켜야 할 업무 규칙을 입력받는다.
 
 ### 2.1 고정 업무 범위
 
@@ -62,7 +62,7 @@ EasyDep의 평가 대상은 기계 판독 계약, 요구사항–설계–code/t
 |---|---|---|---|
 | E1 | 위 업무 전체 | App 1개 + 자체 운영 상태 Workload 1개 + Volume | 산출물 연쇄, 동시성, 영속성 |
 | E2 | E1과 동일 | CSP 관리형 앱 VM 그룹 replica 2개 + LB + 같은 상태 Workload | 공유 상태 연결, 앱 VM 장애 중 업무와 자동 교체 |
-| D1 | 제한 수량 예약으로 용어만 변경 | E2와 같은 불변식 | 수강신청 문자열 오버피팅 탐지 |
+| D1 | 제한 수량 예약으로 용어만 변경 | E2와 같은 업무 규칙 | 수강신청 문자열 오버피팅 탐지 |
 
 첫 PoC의 상세 요구사항과 실행 입력은
 [`evaluation/baselines/course-registration-cases/README.md`](../evaluation/baselines/course-registration-cases/README.md)에
@@ -98,7 +98,7 @@ runner가 종료하고 공통 평가기가 성공 또는 실패를 정상 분류
 
 ### 4.1 산출물 연쇄
 
-실행 전에 요구사항별 기대 불변식과 필수 연결을 동결한다. subject가 적은 trace ID를 그대로
+실행 전에 요구사항별 필수 동작 조건과 연결 관계를 확정한다. subject가 적은 trace ID를 그대로
 신뢰하지 않고 공통 evaluator가 다음을 의미 단위로 대조한다.
 
 ```text
@@ -113,10 +113,10 @@ runner가 종료하고 공통 평가기가 성공 또는 실패를 정상 분류
 
 ### 4.2 사전 배포와 로컬 기능
 
-- 구조·schema와 불변식 검사
+- 구조·schema와 데이터 일관성 검사
 - compile, unit·integration test와 테스트 0개 성공 거부
 - Docker image build, readiness와 black-box 업무 oracle
-- 동시성 불변식
+- 동시 요청에서도 지켜야 할 업무 규칙
 - Volume을 유지한 새 container/VM에서 데이터 재조회
 - 실행이 만든 container·volume의 정리
 
@@ -140,7 +140,7 @@ dropped request, p95, error rate를 합격 지표로 기록한다. CPU·memory·
 threshold가 없으면 병목 진단값이다.
 
 App VM 장애 시험은 요청을 계속 보내면서 한 instance를 중지하고, 허용 복구시간 동안 업무
-불변식과 SLO를 만족하는지 및 CSP 관리형 VM 그룹이 instance를 교체하는지 확인한다.
+업무 규칙과 SLO를 만족하는지 및 CSP 관리형 VM 그룹이 instance를 교체하는지 확인한다.
 
 ### 4.5 효율과 부분수정
 

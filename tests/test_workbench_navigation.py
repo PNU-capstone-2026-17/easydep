@@ -194,8 +194,15 @@ def test_runtime_frontend_uses_english_ui_text() -> None:
         for path in sorted((FRONTEND / "src").rglob("*"))
         if path.is_file() and path.suffix in {".js", ".svelte", ".ts"}
     )
+    # 주석은 개발자가 읽는 문서이므로 한국어로 쓸 수 있다. 실제 실행 코드의 문자열과
+    # Svelte markup만 검사해 사용자에게 표시되는 문구가 영어인지 확인한다.
+    runtime_source = "\n".join(
+        line
+        for line in source.splitlines()
+        if not line.lstrip().startswith(("//", "/*", "*", "<!--"))
+    )
 
-    assert not any("가" <= character <= "힣" for character in source)
+    assert not any("가" <= character <= "힣" for character in runtime_source)
 
 
 def test_generated_application_frontend_is_not_replaced_by_workbench_stack() -> None:

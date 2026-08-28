@@ -14,7 +14,7 @@
 - **부수효과:** subprocess/container를 만들고 timeout 시 전체 자식 트리를 종료한다.
   scaffold와 runner는 요청받은 작업공간에 파일을 만들거나 갱신할 수 있으며,
   runtime hook은 프로세스 환경에 경로 어댑터를 설치한다.
-- **금지 의존성:** `app.core` 레거시 경로와 요구사항/설계 서비스 내부, Cloud KB,
+- **사용하면 안 되는 import:** `app.core` 레거시 경로와 요구사항/설계 서비스 내부, Cloud KB,
   LLM 호출이나 orchestration graph에 의존하지 않는다. 구현 runtime은 계획·delivery 결과를 해석하지 않고
   실행 경계만 제공한다.
 - **실패 조건:** command/cwd가 없거나 경로가 container 규칙과 맞지 않음,

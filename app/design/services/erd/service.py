@@ -1,4 +1,4 @@
-"""사용자 피드백을 ERD의 BCE 엔티티 모델(진실의 원천)에 적용한다.
+"""사용자 피드백을 ERD의 기준 BCE Entity 모델에 적용한다.
 
 클래스 다이어그램 reviser와 같은 원리다: LLM은 PlantUML 텍스트를 만지지 않고
 구조화된 BCE만 편집하고, ERD는 그 뒤 결정론적 변환(plantuml.generate_erd_from_bce_json)

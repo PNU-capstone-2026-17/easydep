@@ -40,10 +40,10 @@ def _declared_dependencies(package_json: dict[str, Any]) -> dict[str, str]:
 
 
 def render_package_lock(package_json_text: str) -> str | None:
-    """Return the template lock renamed for this app, or None if it has drifted.
+    """template lock의 앱 이름을 바꿔 반환하며, 내용이 맞지 않으면 ``None``을 반환한다.
 
-    Returning None is a signal to fall back to a real npm resolution rather
-    than an error: the template is a cache, never the source of truth.
+    ``None``은 오류가 아니라 실제 npm dependency 해석을 실행하라는 신호다. template은
+    속도를 높이기 위한 cache일 뿐이며 ``package.json``보다 우선하지 않는다.
     """
     try:
         package_json = json.loads(package_json_text)
@@ -129,7 +129,7 @@ def write_react_scaffold(
 def resolve_api_base_url(
     api_spec: dict[str, Any], override: str | None = None
 ) -> str:
-    """Resolve the generated client base URL without inventing an API prefix."""
+    """API prefix를 임의로 붙이지 않고 생성할 client의 base URL을 결정한다."""
     if override is not None and override.strip():
         return override.strip().rstrip("/")
     servers = api_spec.get("servers", [])

@@ -14,7 +14,7 @@
 - **부수효과:** 순수 renderer/validator는 메모리에서 동작한다. delivery CLI가
   명시적으로 호출될 때만 작업 디렉터리·artifact를 쓰고 Terraform/OpenTofu 또는
   Kubernetes 도구를 subprocess로 실행한다.
-- **금지 의존성:** `app.core` 레거시 경로, 요구사항 agent의 실행 상태, LLM 호출,
+- **사용하면 안 되는 import:** `app.core` 레거시 경로, 요구사항 agent의 실행 상태, LLM 호출,
   설계 서비스 내부 모듈에 의존하지 않는다. 선택되지 않은 provider나 숨은 기본값을
   산출물에 추가하지 않는다.
 - **실패 조건:** plan schema/primitive가 없거나 binding이 dangling·중복·불일치,

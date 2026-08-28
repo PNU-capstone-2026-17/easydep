@@ -1147,7 +1147,8 @@ RULES: tuple[Rule, ...] = (
     # 규칙으로 적어 봤다가 뺐다 — **사상이 구성에 의해 보장하므로 어떤 모델로도 위반을
     # 만들 수 없다.** 걸 수 없는 규칙은 "0건"이 "없다"인지 "못 잡는다"인지 구별되지 않아
     # 눈금이 아니다(`app/design/evaluation/seeded.py`가 세우려는 것이 그 눈금이다).
-    # 그 둘은 모델에 대한 규칙이 아니라 **우리 코드의 불변식**이고, 불변식의 자리는
+    # 그 둘은 모델의 오류를 찾는 규칙이 아니라 **변환 코드가 항상 지켜야 할 조건**이고,
+    # 그 조건은
     # 테스트다(`tests/test_erd_mapping.py`).
     Rule(
         id="erd.entity-typed-field-needs-relationship",

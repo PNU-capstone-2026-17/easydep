@@ -181,13 +181,13 @@ def test_only_current_checkpoint_schema_is_supported() -> None:
 
 
 def test_orchestration_readme_records_the_operational_contract() -> None:
-    """조율 경계의 입력·출력·부수효과·실패와 금지 의존성을 문서화한다."""
+    """조율 경계의 입력·출력·부수효과·실패와 import 제한을 문서화한다."""
     text = (_PACKAGE / "README.md").read_text(encoding="utf-8")
     for heading in (
         "## 입력",
         "## 출력",
         "## 부수효과와 호출 범위",
-        "## 금지 의존성",
+        "## 사용하면 안 되는 import",
         "## 실패 조건",
         "## 호환 경계",
     ):

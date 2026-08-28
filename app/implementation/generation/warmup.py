@@ -1,8 +1,8 @@
-"""Best-effort implementation-runtime warm-up run at web-server startup.
+"""Web 서버 시작 시 구현 runtime을 가능한 범위에서 미리 준비한다.
 
-This module intentionally never raises to the web server.  Missing Docker or an
-offline registry is still reported in a local diagnostic file, while the normal
-job path remains the source of truth and can retry the same command later.
+Docker가 없거나 image registry에 연결할 수 없어도 Web 서버 시작을 실패시키지 않는다.
+오류는 로컬 진단 파일에 기록하며, 실제 사용자 작업은 정식 job 경로에서 같은 준비 명령을
+다시 실행할 수 있다.
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ dependencies {
 def warmup_implementation_runtime(
     repository_root: Path, command_timeout_seconds: int
 ) -> dict[str, Any]:
-    """Warm reusable images and dependency caches without blocking startup."""
+    """서버 시작을 막지 않으면서 재사용할 image와 dependency cache를 준비한다."""
     repository_root = repository_root.resolve()
     root = repository_root / ".easydep" / "implementation-warmup"
     root.mkdir(parents=True, exist_ok=True)

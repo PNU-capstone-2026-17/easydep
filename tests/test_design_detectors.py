@@ -102,7 +102,7 @@ def test_every_defect_rule_has_a_seeded_case(stage):
     거꾸로도 본다: 심을 수 없는 규칙은 결함 규칙이 아니다. 실제로 ERD 쪽에서 "모든
     테이블에 기본키가 있다"·"외래키는 실재 테이블을 가리킨다"를 규칙으로 적었다가 뺐다 —
     사상이 구성에 의해 보장해서 **어떤 모델로도 위반을 만들 수 없었다.** 그 둘은 모델에
-    대한 규칙이 아니라 우리 코드의 불변식이고, 지금은 `test_erd_mapping.py`가 지킨다.
+    대한 규칙이 아니라 변환 코드가 지켜야 할 조건이고, 지금은 `test_erd_mapping.py`가 확인한다.
     """
     declared = {r.id for r in rules.rules_for(stage.stage, rules.DEFECT)}
     seeded = {case.rule_id for case in stage.seeded}

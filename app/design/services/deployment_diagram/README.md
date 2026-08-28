@@ -182,7 +182,7 @@ dict compatibility facade다. facade는 canonical typed 서비스에 위임하�
 - graph가 실행 순서, feedback 대상, bundle 저장과 checkpoint persistence를 소유한다.
 - implementation은 수락된 ResourcePlan만 소비하며 WorkloadGraph를 다시 제안하지 않는다.
 
-## 금지 의존성
+## 사용하면 안 되는 import
 
 - deployment service는 `app.design.graphs`, `ArchitectureState`, artifact repository를 import하지
   않는다.

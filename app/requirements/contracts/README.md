@@ -26,7 +26,7 @@
 repository를 호출하지 않는다. `TypedDict`는 실행 검증을 하지 않으므로
 단계 호출 시점의 키 존재 검사는 `StateContract`가 담당한다.
 
-## 금지 의존성
+## 사용하면 안 되는 import
 
 - agent 단계 구현과 graph·runner·supervisor
 - runtime structured LLM·telemetry

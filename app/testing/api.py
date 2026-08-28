@@ -1,3 +1,11 @@
+"""구현 결과의 테스트와 실패 이력 기반 재시도를 제공하는 HTTP API다.
+
+완료된 구현 작업의 로컬 workspace를 받아 unit test, 정적 검사와 실행 검증을 차례로
+수행한다. 실패 후 다시 실행할 때는 이전 finding과 repair 이력을 넘겨 같은 결과를 반복했는지
+판단한다. 테스트 작업 registry는 현재 프로세스 메모리에 있으므로 서버 재시작 후에는
+구현 작업에서 새 테스트를 시작해야 한다.
+"""
+
 from __future__ import annotations
 
 import threading
@@ -18,15 +26,20 @@ from app.validation import RepairAttempt, RepairLedger, repair_makes_progress, s
 router = APIRouter(prefix="/api/testing", tags=["testing"])
 
 _testing_jobs: dict[str, dict[str, Any]] = {}
+# HTTP 조회 thread와 백그라운드 테스트 thread가 같은 dict를 사용하므로 모든 접근을
+# RLock으로 감싼다. 읽을 때도 사본을 반환해 caller가 registry를 직접 바꾸지 못하게 한다.
 _testing_jobs_lock = threading.RLock()
 
 
 class CreateTestingJobRequest(BaseModel):
+    """테스트할 구현 작업과 선택적인 이전 실패 작업 ID."""
+
     implementation_job_id: str
     repair_testing_job_id: str | None = None
 
 
 def _job(job_id: str) -> dict[str, Any]:
+    """테스트 작업 사본을 반환하고, 없으면 HTTP 404를 발생시킨다."""
     with _testing_jobs_lock:
         try:
             return dict(_testing_jobs[job_id])
@@ -35,11 +48,13 @@ def _job(job_id: str) -> dict[str, Any]:
 
 
 def _update(job_id: str, **changes: Any) -> None:
+    """백그라운드 thread에서 테스트 작업의 일부 필드를 안전하게 갱신한다."""
     with _testing_jobs_lock:
         _testing_jobs[job_id].update(changes)
 
 
 def _finding_keys(report: dict[str, Any]) -> tuple[str, ...]:
+    """형태가 다른 테스트 보고서를 비교 가능한 finding key 목록으로 정리한다."""
     findings: list[str] = []
     unit_passed = report.get("unitPassed")
     if unit_passed is None:
@@ -55,6 +70,7 @@ def _finding_keys(report: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _repair_state(ledger: RepairLedger, *, passed: bool) -> dict[str, Any]:
+    """내부 repair ledger를 프론트엔드가 표시할 수 있는 간단한 상태로 바꾼다."""
     if passed:
         status = "COMPLETED"
     elif ledger.status == "WAITING_EXTERNAL":
@@ -69,6 +85,8 @@ def _repair_state(ledger: RepairLedger, *, passed: bool) -> dict[str, Any]:
         "accepted_count": sum(
             attempt.outcome in {"improved", "clean"} for attempt in ledger.attempts
         ),
+        # 전체 이력은 다음 repair 입력에 유지하지만 HTTP 응답에는 최근 다섯 건만 싣는다.
+        # 작업을 오래 반복해도 화면 응답이 계속 커지지 않게 하기 위해서다.
         "recent_attempts": [
             attempt.model_dump(mode="json") for attempt in ledger.attempts[-5:]
         ],
@@ -91,16 +109,16 @@ def _repair_state(ledger: RepairLedger, *, passed: bool) -> dict[str, Any]:
 
 
 def _run_test(job_id: str, app_id: str, run_root: Path) -> None:
+    """백그라운드 thread에서 테스트와 실행 검증을 수행하고 결과를 registry에 기록한다."""
     _update(job_id, status="RUNNING")
     job = _job(job_id)
     repair_history = job.get("repair_history") or {}
     previous_findings = tuple(job.get("previous_findings") or ())
     ledger = RepairLedger.model_validate(repair_history or {})
     try:
-        # The web testing boundary owns its runner and does not invoke the
-        # legacy orchestration graph — but it does run the same verification
-        # stages: unit tests here, then static analysis and the dynamic checks
-        # against a live instance built from the stored artifacts.
+        # Web testing API는 이전 orchestration graph를 거치지 않고 자체 runner를 사용한다.
+        # 검증 범위는 유지한다. 먼저 unit test를 실행하고, 이어서 정적 검사와 저장된
+        # 산출물로 실제 인스턴스를 띄우는 동적 검증을 수행한다.
         with langsmith_metrics.trace_metadata({"app_id": app_id}):
             report = TestingAdapter().run(implementation_result={"run_root": str(run_root)})
             unit_passed = bool(report.get("passed"))
@@ -122,6 +140,8 @@ def _run_test(job_id: str, app_id: str, run_root: Path) -> None:
         findings = _finding_keys(report)
         dynamic = (verification.get("reports") or {}).get("dynamicFunctional") or {}
         candidate_digest = str(dynamic.get("candidateDigest") or stable_digest(report))
+        # 최초 실패는 이후 repair와 비교할 기준으로 기록한다. 재시도라면 결과 digest와
+        # finding 집합을 이전 이력과 비교해 같은 후보 반복, 개선, 악화를 구분한다.
         if findings and not previous_findings:
             ledger.record(
                 RepairAttempt(
@@ -196,12 +216,20 @@ def _run_test(job_id: str, app_id: str, run_root: Path) -> None:
             result=report,
             repair_history=ledger.model_dump(mode="json"),
         )
-    except Exception as error:  # The job itself failed before a test report existed.
+    except Exception as error:
+        # 테스트 결과가 만들어지기 전에 runner 자체가 실패한 경우다. 오류가 지나치게 커져
+        # 작업 조회 응답을 압도하지 않도록 마지막 4,000자만 보관한다.
         _update(job_id, status="FAILED", error=str(error)[-4000:])
 
 
 @router.post("/apps/{app_id}/jobs", status_code=202)
 def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
+    """완료된 구현 작업을 검사하고 새 테스트 thread를 시작한다.
+
+    ``repair_testing_job_id``가 있으면 같은 앱과 같은 구현 작업의 완료된 실패 결과인지
+    확인한 뒤 finding과 repair 이력을 이어받는다. 성공한 작업이나 실행 중인 작업을 repair
+    기준으로 쓰지 않는다.
+    """
     try:
         implementation = implementation_worker.get_testing_input(request.implementation_job_id)
     except JobNotFound as error:
@@ -236,6 +264,8 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
         repair_history = previous.get("repair_history") or {}
         previous_findings = _finding_keys(previous_result)
 
+    # registry에 QUEUED 상태를 먼저 넣은 뒤 thread를 시작한다. 반대로 하면 빠른 thread가
+    # 아직 등록되지 않은 job_id를 갱신하려다 실패할 수 있다.
     job_id = uuid.uuid4().hex
     record = {
         "job_id": job_id,
@@ -258,4 +288,5 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
 
 @router.get("/jobs/{job_id}")
 def get_testing_job(job_id: str) -> dict:
+    """테스트 작업의 현재 상태와 완료된 보고서를 반환한다."""
     return _job(job_id)

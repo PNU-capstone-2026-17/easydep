@@ -147,7 +147,7 @@ def _fold_regions(records: list[dict]) -> dict:
 
     - 리전 불변인 필드(`sustainedCpu` 등)는 그대로 쓴다. 실측상 다리전 스펙
       3,221종 전부에서 값이 같다 — 다만 그게 **참이라고 가정하지 않고**
-      `region-invariant-signals` 불변식이 매 빌드 확인한다.
+      `region-invariant-signals`라는 데이터 일관성 규칙이 매 빌드 확인한다.
     - 리전마다 갈리는 수치는 **가장 작은 값**을 쓰고 `<필드>Range`에 실제 범위를
       남긴다. 감춘 것이 아니라 보수적으로 답하고 폭을 함께 밝히는 것이다.
       (실측: `aws c8gn.48xlarge` 한 종뿐. IOPS가 리전에 따라 240,000 / 480,000)

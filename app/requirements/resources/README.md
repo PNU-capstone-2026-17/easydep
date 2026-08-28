@@ -58,7 +58,7 @@
 실제 dead path라는 별도 근거, 도구 관찰 대체, 호환 영향 검증이 확보될 때까지
 생산 경계의 일부로 보존한다.
 
-## 금지 의존성
+## 사용하면 안 되는 import
 
 - requirements graph·runner·supervisor·feedback cascade·HTTP API·session store
 - artifact repository, design service, implementation service, workspace

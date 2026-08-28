@@ -2,7 +2,7 @@
 
 이 패키지는 유스케이스 명세에서 BCE 클래스 구조뿐 아니라 실행 가능한 메서드 계약,
 호출 트리와 parameter provenance까지 확정한다. 최종 결과인 `BCEModel`은 클래스
-PlantUML, 시퀀스 투영, API와 ERD가 함께 소비하는 상호작용 진실 공급원이다.
+PlantUML, 시퀀스 생성, API와 ERD가 함께 사용하는 상호작용 기준 모델이다.
 
 ## 한눈에 보는 실행 흐름
 
@@ -18,7 +18,7 @@ raw use-case JSON
 ```
 
 각 화살표는 수락 경계다. LLM의 구조화 응답을 그대로 다음 단계로 넘기지 않고 정규화와
-결정론 검증을 통과시킨다. 실패하면 finding이 가리키는 가장 작은 소유 단위만 교체하며,
+같은 입력에 같은 결과를 내는 코드 검사를 통과시킨다. 실패하면 finding이 가리키는 가장 작은 수정 대상만 교체하며,
 숫자 상한 없이 수락될 때까지 누적 수리 이력을 다음 요청에 전달한다. 이미 거절된 후보나
 동일한 실패 상태가 반복되면 `STALLED`로 끝내고, 이미 수락된 형제 단위는 유지한다.
 
@@ -236,7 +236,7 @@ parameter의 실제 후보 enum에서 하나를 선택한다. 후보가 없으�
 | `InteractionFeedbackScope` | targets와 이름으로 소유자를 확정 못함 | `FeedbackScope` | 허용 candidate ID인지 재검사 |
 | `InteractionInventoryFeedback` | inventory 소유 피드백 | `InventoryProposal` | 지정되지 않은 item을 원본과 병합 후 검사 |
 
-정확한 prompt 문구의 진실 공급원은 `inventory.py`, `operations.py`, `collaboration.py`의 상수와
+정확한 prompt 문구는 `inventory.py`, `operations.py`, `collaboration.py`의 상수와
 `feedback.py`의 호출부다. 이 README의 예제는 shape를 설명하기 위한 축약본이며 prompt를
 복제하지 않는다. collision·handoff·feedback 전용 제안에도 validation finding이 남으면
 `_checked_fragment`가 같은 이름에 `Repair` 접미사를 붙여 누적 이력 기반 전체 교체를 한다.
@@ -244,7 +244,7 @@ parameter의 실제 후보 enum에서 하나를 선택한다. 후보가 없으�
 
 ## 검증과 repair 종료 조건
 
-| 소유 단위 | 주요 검사 | 숫자 상한 | 종료 조건 |
+| 수정 대상 | 주요 검사 | 숫자 상한 | 종료 조건 |
 |---|---|---:|---|
 | Inventory | 이름·타입·관계·유스케이스 범위 | 없음 | 수락 또는 거절 후보 반복 |
 | Operation fragment | 참조·단계 커버리지·실행 그룹·값 흐름 | 없음 | 수락 또는 거절 후보 반복 |

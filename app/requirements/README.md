@@ -21,7 +21,7 @@
 - **출력:** `Traceability` 색인, coverage/orphan/unknown 참조 계산, 그리고 요구사항
   추적 스냅샷. UC 하나에 필요한 제약을 뽑는 `constraints_for_use_case`도 제공한다.
 - **부수효과:** 메모리에서만 색인을 계산하며 파일·네트워크·LLM 호출이 없다.
-- **금지 의존성:** 설계·구현 서비스와 agent 실행기를 import하지 않는다. 구현 엔진의
+- **사용하면 안 되는 import:** 설계·구현 서비스와 agent 실행기를 import하지 않는다. 구현 엔진의
   `source_artifact → generated_file` provenance와 합치지 않는다.
 - **실패 조건:** 상태 구조가 없거나 링크가 존재하지 않는 요구사항/Use Case를
   가리키면 해당 참조를 unknown으로 노출해 호출자가 판정하게 한다. 조용히 링크를

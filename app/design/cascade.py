@@ -82,7 +82,7 @@ def _apply(
     assert_untargeted_elements_preserved(spec, original, merged, targets)
 
     # 지목 수정은 비대상 보존이 계약이므로 전체 흐름 재추출을 포함하는 reconcile은
-    # 실행하지 않는다. 대신 최종 불변식은 반드시 적용해, 새 시퀀스 호출의 메서드는
+    # 실행하지 않는다. 대신 최종 구성 규칙은 반드시 적용해, 새 시퀀스 호출의 메서드는
     # 수신 클래스에 결정론적으로 보강한 뒤에만 렌더한다.
     working: ArchitectureState = {**state, spec.model_key: merged}
     patch: dict[str, Any] = {spec.model_key: merged}
