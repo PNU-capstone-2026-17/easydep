@@ -32,7 +32,6 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from app.requirements import session_store
-from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.feedback_gates import (
     apply_feedback_upto,
     gate_relationships,
@@ -46,9 +45,14 @@ from app.requirements.agent.steps.step3_specifications import check_specs
 from app.requirements.agent.steps.step4_diagram import check_relationships
 from app.requirements.agent.subgraphs import build_stage_subgraphs
 from app.requirements.agent.supervisor import blocking_issues, route_redo, supervise_for
-from app.requirements.common import telemetry
 from app.requirements.config import settings
-from app.requirements.schemas import DeploymentPreferences, FeedbackEdit, ResourceAnswer
+from app.requirements.contracts.request import (
+    DeploymentPreferences,
+    FeedbackEdit,
+    ResourceAnswer,
+)
+from app.requirements.contracts.state import AgentState
+from app.requirements.runtime import telemetry
 from app.requirements.session_store import SqlCheckpointSaver
 
 

@@ -24,8 +24,7 @@ from itertools import pairwise
 
 from langgraph.graph import END, START, StateGraph
 
-from app.requirements.agent import stages
-from app.requirements.agent.state import AgentState
+from app.requirements import stage_registry as stages
 
 # ⚠ 아래 단계 함수들은 **이 모듈의 이름으로 존재해야 한다.** `build_stage`가
 # `globals()[노드이름]`으로 찾기 때문이다(이유는 그 함수 docstring). 린터에게는 안 쓰는
@@ -54,7 +53,8 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
 )
 from app.requirements.agent.steps.step_cloud_inputs import analyze_cloud_inputs  # noqa: F401
 from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
-from app.requirements.common import telemetry
+from app.requirements.contracts.state import AgentState
+from app.requirements.runtime import telemetry
 
 
 def _observed_node(name: str, fn):

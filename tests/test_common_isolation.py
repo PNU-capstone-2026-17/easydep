@@ -1,8 +1,8 @@
-"""`app/requirements/common/` 이 요구사항 에이전트를 모른다는 규약을 고정한다.
+"""`app/requirements/common/`의 상류 import 0건 규약을 고정한다.
 
-이 패키지는 다른 에이전트가 쓰게 되면 `app/core/` 로 옮길 것이고, 그때 바뀌는 것이
-import 경로뿐이려면 지금부터 상류를 참조하지 않아야 한다. 규약은 문서가 아니라
-여기서 지킨다 — 문서에 적어 두면 조용히 깨진다.
+`common/`은 단계 함수에 적용할 상태 계약처럼 실행 조정과 무관한 순수 기반만
+소유한다. LLM 계측과 ContextVar 전파는 `runtime/`의 책임이므로 이 패키지가
+`app.*` 상류를 다시 import하면 경계 통합으로 간주한다.
 """
 import ast
 from pathlib import Path
@@ -44,5 +44,5 @@ def test_common_does_not_import_the_requirements_agent(path: Path):
     )
     assert not offenders, (
         f"{path.name} 이 상류를 참조한다: {offenders}. "
-        "common/ 은 app/core/ 로 옮길 수 있어야 하므로 에이전트 코드를 import 하지 않는다."
+        "common/ 은 실행·단계·외부 인프라 코드를 import 하지 않는다."
     )

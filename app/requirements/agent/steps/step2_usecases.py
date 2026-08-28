@@ -10,12 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.requirements import prompts, traceability
 from app.requirements.agent import supervisor, validator
-from app.requirements.agent.llm import invoke_structured
-from app.requirements.agent.state import ActorItem, AgentState, RequirementItem, UseCaseItem
-from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings  # re-exported test/configuration seam
+from app.requirements.contracts.state import ActorItem, AgentState, RequirementItem, UseCaseItem
 from app.requirements.knowledge import rules
+from app.requirements.runtime import telemetry
+from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import ActorResult, UseCase, UseCaseResult
 
 

@@ -10,11 +10,11 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step_cloud import derive_deployment_needs
 from app.requirements.agent.steps.step_resource import extract_resource_constraints
-from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
+from app.requirements.contracts.state import AgentState
+from app.requirements.runtime import telemetry
 
 
 def _observed_branch(name: str, fn, state: AgentState) -> dict:

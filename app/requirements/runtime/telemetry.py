@@ -1,4 +1,4 @@
-"""실행 관측 계층 — 로깅 · LLM 호출 계측 · 실행 단위 집계.
+"""요구사항 runtime 관측 계층 — 로깅·LLM 호출 계측·실행 단위 집계.
 
 **이 모듈이 막으려는 것은 조용한 실패다.**
 
@@ -21,6 +21,7 @@ LLM 파이프라인의 부가 기능(의미 검증, 재생성, 워밍업)은 실
 않으므로, 워커에서도 같은 실행에 집계하려면 `bind_context()`로 감싸 submit 한다.
 집계 객체 자체는 락으로 보호되므로 여러 스레드가 동시에 더해도 된다.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -66,9 +67,7 @@ def _log_fields(fields: dict[str, Any]) -> dict[str, Any]:
     예약된 이름은 `field_` 를 붙여 피한다. 조용히 버리지 않는 이유는, 계측 필드가
     소리 없이 사라지는 것이 이 모듈이 막으려는 바로 그 실패이기 때문이다.
     """
-    return {
-        (f"field_{k}" if k in _RESERVED_LOG_FIELDS else k): v for k, v in fields.items()
-    }
+    return {(f"field_{k}" if k in _RESERVED_LOG_FIELDS else k): v for k, v in fields.items()}
 
 
 def _progress(event: str, **fields: Any) -> None:
@@ -393,7 +392,9 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
                 "completion_tokens": call.completion_tokens,
             }
             if failed is not None:
-                _log.warning("llm call failed", extra=_log_fields({**record, "error": repr(failed)}))
+                _log.warning(
+                    "llm call failed", extra=_log_fields({**record, "error": repr(failed)})
+                )
             elif call.fallback_reason is not None:
                 _log.warning(
                     "llm structured output fell back to json mode",

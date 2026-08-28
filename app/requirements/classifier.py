@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import threading
 
-from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.model_assets import ensure_model_dir
+from app.requirements.runtime import telemetry
 
 # 0 = NFR, 1 = FR  (학습 시 {'NFR': 0, 'FR': 1} 매핑과 동일)
 _ID2LABEL = {0: "NFR", 1: "FR"}

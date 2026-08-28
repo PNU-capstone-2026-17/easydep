@@ -17,8 +17,8 @@ from conftest import dataset_names, load_dataset
 from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.agent.steps import step3_specifications as s3
 from app.requirements.agent.steps.step3_specifications import _clean, _validate_spec
-from app.requirements.common import telemetry
 from app.requirements.knowledge import rules
+from app.requirements.runtime import telemetry
 from app.requirements.schemas import (
     Critique,
     Extension,

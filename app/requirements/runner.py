@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import cast
 
 from app.orchestration.run_identity import identity_manifest, make_run_id
-from app.requirements.agent import stages, supervisor
-from app.requirements.agent.state import AgentState
+from app.requirements import stage_registry as stages
+from app.requirements.agent import supervisor
 
 # ⚠ 아래 단계 함수들은 **이 모듈의 이름으로 존재해야 한다.** `_run_stages`가
 # `globals()[노드이름]`으로 찾기 때문이다(이유는 그 함수 docstring). 린터에게는 안 쓰는
@@ -47,8 +47,9 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
 )
 from app.requirements.agent.steps.step_cloud_inputs import analyze_cloud_inputs  # noqa: F401
 from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
-from app.requirements.common import telemetry
 from app.requirements.config import settings
+from app.requirements.contracts.state import AgentState
+from app.requirements.runtime import telemetry
 from app.requirements.traceability import build_requirement_trace
 
 # app/requirements/runner.py 에서 저장소 루트까지는 세 단계 위다.
@@ -149,7 +150,7 @@ def run_pipeline(
         "resource_answers": resource_answers or {},
     }
     # 정방향 패스는 `stages.batch_order()`에서 파생한다 — 파이프라인 모양을 말하는 곳은
-    # `agent/stages.py` 하나다. 여기 손으로 적으면 그 목록의 두 번째 사본이 된다.
+    # `stage_registry.py` 하나다. 여기 손으로 적으면 그 목록의 두 번째 사본이 된다.
     _run_stages(state, stages.batch_order())
 
     # 되돌아가기. 상한은 그래프와 같은 설정을 쓴다(`settings.max_redo_rounds`).

@@ -17,7 +17,7 @@
 지적 문구는 규칙 id를 들고 다니고(`Rule.tag`), 규칙은 자기를 **낸 단계**를 안다(`Rule.owner`).
 그래서 "이 결함을 누구에게 돌려보낼지"는 **찾아보면 되는 사실**이고 LLM에 물을 일이 아니다.
 여기에 LLM 라우터를 두면 유도할 수 있는 판단에 비결정성을 더하는 셈이 된다
-(`gpt-oss-120b`는 결정론적이지 않다 — `agent/llm.py` 참고).
+(`gpt-oss-120b`는 결정론적이지 않다 — `runtime/structured_llm.py` 참고).
 
 LLM 감독자로 바꾸고 싶으면 갈아끼울 자리는 `decide()` 하나다. 그때 필요한 것은 라우팅
 품질을 재는 눈금인데, 그건 아직 없다(`evaluation/`은 산출물 품질을 잰다).
@@ -39,10 +39,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.knowledge import rules
 from app.requirements.resources import cloud_contract
+from app.requirements.runtime import telemetry
 
 ADVANCE = "advance"
 REDO = "redo"
@@ -210,14 +210,14 @@ def blocking_issues(state: dict, through: str = "relationships") -> list[str]:
 # 끌어오면 순환이 된다 — `feedback_gates.py`가 `feedback`을 지연 import하는 것과 같은 이유다.
 def _editable_in_order() -> tuple[str, ...]:
     """되돌릴 수 있는 단계를 cascade 순서로. `stages.py`에서 파생한다(손으로 적지 않는다)."""
-    from app.requirements.agent import stages
+    from app.requirements import stage_registry as stages
 
     return tuple(k for k in stages.cascade_order() if k in stages.editable_keys())
 
 
 def group_of(owner: str) -> str | None:
     """단계의 논리 이름 → 그 단계가 속한 그래프 그룹. `stages.py`에서 파생한다."""
-    from app.requirements.agent import stages
+    from app.requirements import stage_registry as stages
 
     return next((s.group for s in stages.PIPELINE if s.key == owner), None)
 

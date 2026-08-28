@@ -1,4 +1,4 @@
-"""app/requirements/common/telemetry.py — 관측 계층 테스트.
+"""app/requirements/runtime/telemetry.py — 관측 계층 테스트.
 
 이 계층의 목적은 **조용한 실패를 만들지 않는 것**이라, 테스트도 "실패가 성공과
 구별되는가"를 중심으로 본다. 네트워크는 쓰지 않는다.
@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from app.requirements.common import telemetry
+from app.requirements.runtime import telemetry
 
 
 def test_stats_only_accumulate_inside_a_scope():
@@ -18,9 +18,8 @@ def test_stats_only_accumulate_inside_a_scope():
         call.observe_usage({"input_tokens": 5, "output_tokens": 7})
     # 예외 없이 통과하면 된다.
 
-    with telemetry.run_scope("inside") as stats:
-        with telemetry.record_llm_call("op") as call:
-            call.observe_usage({"input_tokens": 5, "output_tokens": 7})
+    with telemetry.run_scope("inside") as stats, telemetry.record_llm_call("op") as call:
+        call.observe_usage({"input_tokens": 5, "output_tokens": 7})
     assert stats.as_dict()["llm_calls"] == 1
     assert stats.as_dict()["prompt_tokens"] == 5
     assert stats.as_dict()["completion_tokens"] == 7
@@ -41,9 +40,11 @@ def test_scope_is_restored_after_exit():
 def test_progress_scope_receives_llm_start_and_finish_events():
     events = []
 
-    with telemetry.progress_scope(lambda event, fields: events.append((event, fields))):
-        with telemetry.record_llm_call("structured:Example") as call:
-            call.observe_usage({"input_tokens": 3, "output_tokens": 2})
+    with (
+        telemetry.progress_scope(lambda event, fields: events.append((event, fields))),
+        telemetry.record_llm_call("structured:Example") as call,
+    ):
+        call.observe_usage({"input_tokens": 3, "output_tokens": 2})
 
     assert [event for event, _fields in events] == [
         "llmOperationStarted",
@@ -57,17 +58,15 @@ def test_progress_sink_failure_does_not_fail_the_observed_work():
     def fail(_event, _fields):
         raise RuntimeError("observer unavailable")
 
-    with telemetry.progress_scope(fail):
-        with telemetry.record_llm_call("op"):
-            pass
+    with telemetry.progress_scope(fail), telemetry.record_llm_call("op"):
+        pass
 
 
 def test_usage_accumulates_across_retries_in_one_call():
     """논리적 호출 1건이 실제 요청 2건일 수 있다(폴백). 토큰은 합산돼야 한다."""
-    with telemetry.run_scope("run") as stats:
-        with telemetry.record_llm_call("op") as call:
-            call.observe_usage({"input_tokens": 10, "output_tokens": 1})
-            call.observe_usage({"input_tokens": 20, "output_tokens": 2})
+    with telemetry.run_scope("run") as stats, telemetry.record_llm_call("op") as call:
+        call.observe_usage({"input_tokens": 10, "output_tokens": 1})
+        call.observe_usage({"input_tokens": 20, "output_tokens": 2})
     summary = stats.as_dict()
     assert summary["llm_calls"] == 1          # 호출은 한 건
     assert summary["prompt_tokens"] == 30     # 토큰은 양쪽 다 나갔다
@@ -76,28 +75,28 @@ def test_usage_accumulates_across_retries_in_one_call():
 
 def test_missing_usage_metadata_is_not_an_error():
     """사용량을 안 주는 게이트웨이가 계측 때문에 본 작업을 죽이면 안 된다."""
-    with telemetry.run_scope("run") as stats:
-        with telemetry.record_llm_call("op") as call:
-            call.observe_usage(None)
-            call.observe_usage({"input_tokens": None, "output_tokens": None})
+    with telemetry.run_scope("run") as stats, telemetry.record_llm_call("op") as call:
+        call.observe_usage(None)
+        call.observe_usage({"input_tokens": None, "output_tokens": None})
     assert stats.as_dict()["prompt_tokens"] == 0
 
 
 def test_failure_is_counted_and_reraised():
     """계측은 예외를 삼키지 않는다 — 삼킬지는 부르는 쪽이 정한다."""
-    with telemetry.run_scope("run") as stats:
-        with pytest.raises(RuntimeError):
-            with telemetry.record_llm_call("op"):
-                raise RuntimeError("boom")
+    with (
+        telemetry.run_scope("run") as stats,
+        pytest.raises(RuntimeError),
+        telemetry.record_llm_call("op"),
+    ):
+        raise RuntimeError("boom")
     summary = stats.as_dict()
     assert summary["llm_calls"] == 1
     assert summary["llm_failures"] == 1
 
 
 def test_fallback_is_counted_separately_from_failure():
-    with telemetry.run_scope("run") as stats:
-        with telemetry.record_llm_call("op") as call:
-            call.mark_fallback("parsed 없음")
+    with telemetry.run_scope("run") as stats, telemetry.record_llm_call("op") as call:
+        call.mark_fallback("parsed 없음")
     summary = stats.as_dict()
     assert summary["structured_fallbacks"] == 1
     assert summary["llm_failures"] == 0
@@ -117,9 +116,8 @@ def test_thread_pool_loses_the_scope_without_bind_context():
     ThreadPoolExecutor는 contextvars를 복사하지 않으므로, 감싸지 않고 submit 하면
     워커의 계측이 통째로 사라진다 — 조용히.
     """
-    with telemetry.run_scope("run") as stats:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            list(pool.map(lambda _: telemetry.current_run(), range(2)))
+    with telemetry.run_scope("run") as stats, ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda _: telemetry.current_run(), range(2)))
     assert stats.as_dict()["llm_calls"] == 0
 
 
@@ -128,11 +126,10 @@ def test_bind_context_carries_the_scope_into_worker_threads():
         with telemetry.record_llm_call(f"op{index}") as call:
             call.observe_usage({"input_tokens": 1, "output_tokens": 1})
 
-    with telemetry.run_scope("run") as stats:
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = [pool.submit(telemetry.bind_context(work), i) for i in range(8)]
-            for fut in futures:
-                fut.result()
+    with telemetry.run_scope("run") as stats, ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(telemetry.bind_context(work), i) for i in range(8)]
+        for fut in futures:
+            fut.result()
 
     summary = stats.as_dict()
     assert summary["llm_calls"] == 8          # 락이 걸려 있어 세다가 유실되지 않는다
@@ -157,9 +154,11 @@ def test_run_summary_does_not_crash_the_logger(caplog):
     모든 분석 요청이 스코프를 닫으면서 죽었다. 예약 이름은 접두사로 피한다.
     """
     telemetry.configure_logging()
-    with caplog.at_level(logging.INFO, logger=telemetry.LOGGER_NAME):
-        with telemetry.run_scope("analyze:t1"):
-            pass
+    with (
+        caplog.at_level(logging.INFO, logger=telemetry.LOGGER_NAME),
+        telemetry.run_scope("analyze:t1"),
+    ):
+        pass
     record = next(r for r in caplog.records if r.message == "run finished")
     assert record.field_name == "analyze:t1"   # 접두사가 붙어 살아남았다
     assert record.name.startswith(telemetry.LOGGER_NAME)  # 로거 이름은 그대로
@@ -198,11 +197,10 @@ def test_backend_change_mid_run_is_a_degradation():
 
 
 def test_metadata_without_a_fingerprint_is_ignored():
-    with telemetry.run_scope("run") as stats:
-        with telemetry.record_llm_call("a") as call:
-            call.observe_metadata(None)
-            call.observe_metadata({"model_name": "x"})
-            call.observe_metadata({"system_fingerprint": ""})
+    with telemetry.run_scope("run") as stats, telemetry.record_llm_call("a") as call:
+        call.observe_metadata(None)
+        call.observe_metadata({"model_name": "x"})
+        call.observe_metadata({"system_fingerprint": ""})
     assert stats.as_dict()["model_fingerprints"] == []
 
 

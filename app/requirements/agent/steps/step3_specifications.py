@@ -29,12 +29,17 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
 from app.requirements.agent import supervisor, validator
-from app.requirements.agent.llm import invoke_structured
-from app.requirements.agent.state import AgentState, RequirementItem, UseCaseItem, UseCaseSpecItem
-from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
+from app.requirements.contracts.state import (
+    AgentState,
+    RequirementItem,
+    UseCaseItem,
+    UseCaseSpecItem,
+)
 from app.requirements.knowledge import detectors, rules
+from app.requirements.runtime import telemetry
+from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import UseCaseSpec
 from app.requirements.traceability import constraints_for_use_case
 

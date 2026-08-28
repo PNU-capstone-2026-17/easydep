@@ -20,10 +20,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
 from app.requirements.agent import supervisor, validator
-from app.requirements.agent.llm import invoke_structured
-from app.requirements.agent.state import AgentState
 from app.requirements.common.state_contract import contract
+from app.requirements.contracts.state import AgentState
 from app.requirements.knowledge import rules
+from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import ExistingIncludeModel, RelationshipModel
 
 _EXTEND_CUE = re.compile(r"\b(?:may|optionally|when|while|after|once|unless)\b", re.IGNORECASE)

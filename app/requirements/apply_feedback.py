@@ -12,10 +12,10 @@ import argparse
 import json
 from pathlib import Path
 
-from app.requirements.common import telemetry
 from app.requirements.common.console import use_utf8_stdout
 from app.requirements.feedback import apply_feedback
 from app.requirements.runner import ARTIFACTS_DIR, load_state, persist_run
+from app.requirements.runtime import telemetry
 
 
 def main(argv: list[str] | None = None) -> int:

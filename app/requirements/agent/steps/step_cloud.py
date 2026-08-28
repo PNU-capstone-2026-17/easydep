@@ -11,17 +11,17 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.requirements.agent.llm import invoke_structured
-from app.requirements.agent.state import AgentState
 from app.requirements.capability_contract import (
     OUT_OF_SCOPE_DEPENDENCY_CAPABILITY_IDS,
     decide,
     link_dependency_capability,
     load_policy,
 )
-from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
+from app.requirements.contracts.state import AgentState
+from app.requirements.runtime import telemetry
+from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import CapabilityContract, DeploymentNeed, DeploymentNeedsResult
 
 _KEY = re.compile(r"^[a-z][a-z0-9_]*$")

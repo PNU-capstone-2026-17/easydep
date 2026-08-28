@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
+from app.design import progress as design_progress
 from app.design.api import (
     BatchReviseRequest,
     FeedbackRequest,
@@ -25,7 +26,6 @@ from app.design.api import (
     rewind_design_session,
     start_design_session,
 )
-from app.design import progress as design_progress
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
 from app.design.observability import design_timing_context, log_design_timing
@@ -43,8 +43,8 @@ from app.implementation.interfaces.schemas import (
 )
 from app.repositories import artifact_repository
 from app.requirements.api import analyze_endpoint
-from app.requirements.common import telemetry as requirements_telemetry
 from app.requirements.config import settings as requirements_settings
+from app.requirements.runtime import telemetry as requirements_telemetry
 from app.requirements.schemas import (
     AnalyzeRequest,
     DeploymentPreferences,

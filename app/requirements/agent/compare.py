@@ -20,11 +20,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.requirements import prompts
 from app.requirements.agent.baseline import build_baseline_graph
 from app.requirements.agent.graph import build_graph
-from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.steps.step2_usecases import check_coverage
 from app.requirements.agent.steps.step3_specifications import _validate_spec
-from app.requirements.common import telemetry
 from app.requirements.config import settings
+from app.requirements.runtime import telemetry
+from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import CoverageJudgment
 
 # --- D. 복합 FR 가드 ---------------------------------------------------------

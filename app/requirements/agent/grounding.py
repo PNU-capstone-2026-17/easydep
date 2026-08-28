@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from app.requirements.common import telemetry
 from app.requirements.knowledge import rules
+from app.requirements.runtime import telemetry
 from app.requirements.schemas import RuleVerdict
 
 

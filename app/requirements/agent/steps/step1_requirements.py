@@ -11,12 +11,12 @@ from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.requirements.agent.llm import invoke_structured
-from app.requirements.agent.state import AgentState, RequirementItem
 from app.requirements.classifier import bert_available, classify_bert
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
+from app.requirements.contracts.state import AgentState, RequirementItem
 from app.requirements.legacy.auto_clarify import *
+from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import *
 
 _EXPAND_REQUIREMENTS_SYSTEM = """You expand an initial software-product description into a

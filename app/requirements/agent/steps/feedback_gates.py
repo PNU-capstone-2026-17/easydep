@@ -20,11 +20,15 @@ from typing import cast
 
 from langgraph.types import interrupt
 
-from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step1_requirements import classify
 from app.requirements.agent.steps.step3_specifications import check_specs
 from app.requirements.agent.steps.step4_diagram import check_relationships
-from app.requirements.schemas import DeploymentPreferences, FeedbackEdit, ResourceAnswer
+from app.requirements.contracts.request import (
+    DeploymentPreferences,
+    FeedbackEdit,
+    ResourceAnswer,
+)
+from app.requirements.contracts.state import AgentState
 
 
 def apply_feedback_upto(state: dict, feedback: str, up_to: str):

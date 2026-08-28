@@ -14,7 +14,88 @@ import pytest
 
 from app.requirements import feedback as fb
 from app.requirements import runner
-from app.requirements.agent import stages, subgraphs
+from app.requirements import stage_registry as stages
+from app.requirements.agent import stages as legacy_stages
+from app.requirements.agent import subgraphs
+from app.requirements.common.state_contract import StateContract, state_contract_of
+
+
+def test_pipeline_group_batch_and_key_order_is_exact() -> None:
+    """graph·batch·cascade가 공유하는 단일 순서 계약을 고정한다."""
+
+    nodes = (
+        "expand_requirements",
+        "intake",
+        "clarify",
+        "classify",
+        "analyze_cloud_inputs",
+        "build_resource_spec",
+        "identify_actors",
+        "identify_use_cases",
+        "review_model",
+        "check_coverage",
+        "generate_specs",
+        "check_specs",
+        "identify_relationships",
+        "check_relationships",
+        "render_diagram",
+    )
+    assert tuple(stage.node for stage in stages.PIPELINE) == nodes
+    assert stages.GROUPS == (
+        "refine_requirements",
+        "analyze_cloud_inputs",
+        "structure_constraints",
+        "model_use_cases",
+        "write_specifications",
+        "draw_diagram",
+    )
+    assert tuple(stage.node for stage in stages.batch_order()) == nodes[4:]
+    assert stages.cascade_order() == (
+        "actors",
+        "use_cases",
+        "coverage",
+        "specs",
+        "relationships",
+        "diagram",
+    )
+    assert stages.node_by_key() == {
+        "actors": "identify_actors",
+        "use_cases": "identify_use_cases",
+        "coverage": "check_coverage",
+        "specs": "generate_specs",
+        "relationships": "identify_relationships",
+        "diagram": "render_diagram",
+    }
+    assert stages.editable_keys() == (
+        "actors",
+        "use_cases",
+        "specs",
+        "relationships",
+    )
+
+
+def test_legacy_stage_registry_is_the_canonical_public_registry() -> None:
+    """기존 agent.stages 경로가 사본 pipeline을 만들지 않는다."""
+
+    assert legacy_stages.Stage is stages.Stage
+    assert legacy_stages.PIPELINE is stages.PIPELINE
+    assert legacy_stages.GROUPS is stages.GROUPS
+    assert legacy_stages.batch_order is stages.batch_order
+    assert legacy_stages.cascade_order is stages.cascade_order
+
+
+def test_stage_contract_public_shape_is_attached_to_every_registered_stage() -> None:
+    """단계 registry가 실행 함수의 공개 입·출력 계약을 그대로 노출한다."""
+
+    assert tuple(StateContract.__dataclass_fields__) == (
+        "stage",
+        "requires",
+        "requires_any",
+        "produces",
+    )
+    for stage in stages.PIPELINE:
+        assert isinstance(stage.contract, StateContract)
+        assert stage.contract is state_contract_of(stage.fn)
 
 
 def _linear_order(compiled) -> list[str]:
@@ -71,9 +152,9 @@ def test_batch_order_skips_exactly_the_preclassified_group():
 
 
 def test_feedback_cascade_is_derived_not_restated():
-    assert fb._ORDER == list(stages.cascade_order())
-    assert fb._STAGE_FN_NAME == stages.node_by_key()
-    assert fb._EDITABLE == stages.editable_keys()
+    assert list(stages.cascade_order()) == fb._ORDER
+    assert stages.node_by_key() == fb._STAGE_FN_NAME
+    assert stages.editable_keys() == fb._EDITABLE
 
 
 def test_cascade_targets_exist_as_functions_in_feedback():

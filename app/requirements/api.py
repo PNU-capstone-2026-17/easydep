@@ -16,9 +16,10 @@ from fastapi import APIRouter, HTTPException
 from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
 from app.requirements.agent import resume_analysis, start_analysis
-from app.requirements.common import telemetry
 from app.requirements.config import settings
-from app.requirements.schemas import AnalyzeRequest, AnalyzeResponse, ResourceAnswer
+from app.requirements.contracts.request import AnalyzeRequest, ResourceAnswer
+from app.requirements.runtime import telemetry
+from app.requirements.schemas import AnalyzeResponse
 
 # 서버 진입점(server.py)은 이 에이전트의 것이 아니라 로깅 설정을 거기 둘 수 없다.
 # 라우터가 로드되는 시점에 한 번 설정한다 — 여러 번 불러도 핸들러가 겹치지 않는다.

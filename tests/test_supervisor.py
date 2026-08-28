@@ -311,7 +311,7 @@ def test_advancing_clears_a_stale_instruction():
 
 def test_an_unreachable_target_is_surfaced_not_crashed(monkeypatch):
     """엣지 맵에 없는 곳으로 되돌리려 하면 죽지도, 조용히 넘기지도 않는다."""
-    from app.requirements.common import telemetry
+    from app.requirements.runtime import telemetry
 
     monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
     # 이 자리(supervise_model)에서는 write_specifications로 되돌릴 수 없다.

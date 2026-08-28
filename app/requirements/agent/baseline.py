@@ -21,12 +21,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.requirements import prompts
-from app.requirements.agent.llm import invoke_structured
-from app.requirements.agent.state import ActorItem, AgentState, UseCaseItem, UseCaseSpecItem
 from app.requirements.agent.steps.step1_requirements import intake
 from app.requirements.agent.steps.step2_usecases import _uc_dict
 from app.requirements.agent.steps.step3_specifications import _assemble
 from app.requirements.agent.steps.step4_diagram import render_diagram
+from app.requirements.contracts.state import ActorItem, AgentState, UseCaseItem, UseCaseSpecItem
+from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import BaselineModelResult, BaselineRelationshipModel
 
 

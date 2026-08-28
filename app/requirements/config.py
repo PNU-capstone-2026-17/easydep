@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # 같은 입력에 같은 표본을 **요청**한다. None이면 파라미터를 보내지 않는다.
     #
     # ⚠ 이 둘로 출력이 고정되지는 않는다. 이유는 서버가 seed를 무시할 수 있다는 정도가
-    # 아니라 구조적이다(MoE 라우팅이 배치 구성에 좌우된다) — `agent/llm.py`의
+    # 아니라 구조적이다(MoE 라우팅이 배치 구성에 좌우된다) — `runtime/structured_llm.py`의
     # "재현성 — 여기서 얻을 수 없는 것"에 한 곳에만 적어 둔다.
     seed: int | None = 42
     # few-shot 예시 코사인 샘플링용 NIM 임베딩 모델(OpenAI 호환 embeddings 엔드포인트).

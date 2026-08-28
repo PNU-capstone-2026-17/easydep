@@ -38,12 +38,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
 from app.requirements.agent import validator
-from app.requirements.agent.llm import invoke_structured
-from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.evaluation import seeded
 from app.requirements.evaluation.scorecard import rule_of
 from app.requirements.knowledge import rules
+from app.requirements.runtime import telemetry
+from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import Critique
 
 #: 이 측정에서 지적 문구에 붙이는 머리표(파이프라인 실행과 섞이지 않게).
@@ -269,7 +269,7 @@ def probe_rule(
         하필 여기서만 그 구분이 없었다.
 
         걸린 자리가 실제로 있었다: 요청 일부가 ~9.4분씩 멈추는데 클라이언트 상한이
-        600초였다(`agent/llm.py`). 상한을 내리면 그 요청들이 실패로 바뀌는데, 실패가
+        600초였다(`runtime/structured_llm.py`). 상한을 내리면 그 요청들이 실패로 바뀌는데, 실패가
         `False`로 세어지면 **상한을 내릴수록 규칙이 깨끗해 보인다.**
         """
         try:

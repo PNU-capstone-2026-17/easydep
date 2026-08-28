@@ -16,7 +16,6 @@ import argparse
 import sys
 from pathlib import Path
 
-from app.requirements.common import telemetry
 from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
 from app.requirements.runner import (
@@ -26,6 +25,7 @@ from app.requirements.runner import (
     persist_run,
     run_pipeline,
 )
+from app.requirements.runtime import telemetry
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -164,7 +164,7 @@ def _stage_group_of(cascade_key: str) -> str | None:
 
     함수 안에서 import하는 것은 import 순서 때문이다(이 모듈은 프롬프트 조립에서 불린다).
     """
-    from app.requirements.agent import stages
+    from app.requirements import stage_registry as stages
 
     return next((s.group for s in stages.PIPELINE if s.key == cascade_key), None)
 
@@ -399,7 +399,7 @@ def record_feedback(path: Path | str, intent, run_id: str, dataset: str = "") ->
         lessons = observe_feedback(load_feedback(path), intent, run_id, dataset)
         save(path, load(path), lessons)
     except Exception:  # noqa: BLE001 - 배우기 실패가 응답을 망가뜨리면 안 된다
-        from app.requirements.common import telemetry
+        from app.requirements.runtime import telemetry
 
         telemetry.record_degradation("playbook.feedback", "피드백을 플레이북에 못 남겼다")
 

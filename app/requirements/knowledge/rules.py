@@ -86,7 +86,7 @@ JUDGED_NOWHERE = "nowhere"
 JUDGES = (JUDGED_DETECTOR, JUDGED_VALIDATOR, JUDGED_STAGE, JUDGED_NOWHERE)
 
 # --- 단계 -------------------------------------------------------------------
-# 이름은 `agent/stages.py`의 `group`과 같다. import하지 않는 이유는 순환이다
+# 이름은 `stage_registry.py`의 `group`과 같다. import하지 않는 이유는 순환이다
 # (stages → steps → knowledge). 두 목록이 맞는지는 테스트가 확인한다.
 MODEL_USE_CASES = "model_use_cases"
 WRITE_SPECIFICATIONS = "write_specifications"
@@ -114,7 +114,7 @@ class Rule:
     judged_by: str = JUDGED_NOWHERE
     #: 결정론 검출기 이름(`detectors.py`에 등록). `judged_by`가 검출기일 때만 있다.
     detector: str | None = None
-    #: 이 결함을 **낸 단계**의 논리 이름(`agent/stages.py`의 `key`). 되돌릴 대상이다.
+    #: 이 결함을 **낸 단계**의 논리 이름(`stage_registry.py`의 `key`). 되돌릴 대상이다.
     #:
     #: `stage`(그룹)와 다른 사실이다. `model_use_cases` 그룹에는 되돌릴 수 있는 단계가
     #: 둘(actors·use_cases) 있고, 어느 쪽이 낸 결함인지는 규칙마다 다르다. 규칙 id 접두사로

@@ -18,9 +18,9 @@ import uuid
 from collections.abc import Callable
 
 from app.requirements.agent import resume_analysis, start_analysis
-from app.requirements.common import telemetry
 from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
+from app.requirements.runtime import telemetry
 
 
 def format_results(items: list[dict]) -> str:

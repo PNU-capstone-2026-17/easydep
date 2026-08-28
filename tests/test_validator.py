@@ -15,8 +15,8 @@ import pytest
 from app.requirements.agent import validator
 from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.agent.steps import step3_specifications as s3
-from app.requirements.common import telemetry
 from app.requirements.knowledge import rules
+from app.requirements.runtime import telemetry
 from app.requirements.schemas import Critique, RuleVerdict
 
 _STAGE = rules.WRITE_SPECIFICATIONS
@@ -106,7 +106,7 @@ def test_per_rule_mode_asks_once_per_rule_and_merges_the_answers(monkeypatch):
 
     한 규칙의 호출이 실패해도 나머지는 살아야 한다 — 형제를 버리면 그 표가 통째로 사라진다.
     """
-    from app.requirements.common import telemetry
+    from app.requirements.runtime import telemetry
 
     monkeypatch.setattr(validator.settings, "validator_per_rule", True)
     monkeypatch.setattr(validator.settings, "validator_votes", 1)

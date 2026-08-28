@@ -13,7 +13,7 @@ from app.orchestration.checkpoint import (
     SqliteMemorySaver,
 )
 from app.requirements.agent.state import AgentState
-from app.requirements.common import telemetry
+from app.requirements.runtime import telemetry
 
 
 class RequirementsAdapter:

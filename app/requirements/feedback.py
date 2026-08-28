@@ -11,9 +11,8 @@ from typing import cast
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
-from app.requirements.agent import playbook, stages
-from app.requirements.agent.llm import invoke_structured
-from app.requirements.agent.state import AgentState
+from app.requirements import stage_registry as stages
+from app.requirements.agent import playbook
 from app.requirements.agent.steps.step2_usecases import (
     check_coverage,  # noqa: F401 — _STAGE_FN_NAME이 globals()로 찾는다
     identify_actors,
@@ -24,14 +23,17 @@ from app.requirements.agent.steps.step4_diagram import (
     identify_relationships,
     render_diagram,  # noqa: F401 — _STAGE_FN_NAME이 globals()로 찾는다
 )
-from app.requirements.common import telemetry
 from app.requirements.config import settings
-from app.requirements.schemas import FeedbackEdit, FeedbackIntent
+from app.requirements.contracts.request import FeedbackEdit
+from app.requirements.contracts.state import AgentState
+from app.requirements.runtime import telemetry
+from app.requirements.runtime.structured_llm import invoke_structured
+from app.requirements.schemas import FeedbackIntent
 
 _log = telemetry.get_logger("feedback")
 
 # 선형 stage 순서·재실행 함수 이름·편집 가능 stage는 전부 단계 목록에서 파생한다
-# (app/requirements/agent/stages.py). 예전엔 여기 손으로 적혀 있어서, 파이프라인을
+# (app/requirements/stage_registry.py). 예전엔 여기 손으로 적혀 있어서, 파이프라인을
 # 바꾸면 그래프와 여기가 조용히 어긋날 수 있었다.
 #
 # 함수는 이름으로 찾아 globals()에서 꺼낸다 — 테스트가 이 모듈의 stage 함수를

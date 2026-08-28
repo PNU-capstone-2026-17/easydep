@@ -32,10 +32,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
 from app.requirements.agent import grounding
-from app.requirements.agent.llm import invoke_structured
-from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.knowledge import rules
+from app.requirements.runtime import telemetry
+from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import Critique, RuleVerdict
 
 #: 검증을 실제로 거쳤는가. **"결함 없음"과 "확인 못 함"을 같은 값으로 두지 않기 위해 있다.**

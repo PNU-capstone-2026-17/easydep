@@ -91,10 +91,10 @@ class Campaign:
     def measure_pace(self) -> float:
         """호출당 지연을 재고 동시성을 정한다. 재는 값도 로그에 남긴다."""
         from app.requirements.agent import validator
-        from app.requirements.common import telemetry
         from app.requirements.config import settings
         from app.requirements.evaluation import seeded
         from app.requirements.knowledge import rules
+        from app.requirements.runtime import telemetry
 
         settings.spec_concurrency = self.concurrency
         artifact = seeded.clean_artifacts()[rules.WRITE_SPECIFICATIONS]
@@ -146,7 +146,7 @@ def _stamped(row: dict, paths: list[str]) -> dict:
     (`prompts.fingerprint` docstring).
     """
     from app.requirements import prompts
-    from app.requirements.agent.llm import build_llm
+    from app.requirements.runtime.structured_llm import build_llm
 
     # 클라이언트 상한도 조건이다. 2026-07-27에 600→90으로 내렸더니 **어떤 요청이 성공하는지가
     # 달라졌다**(9분대에 멈추던 요청이 실패·재시도로 바뀐다). 프롬프트가 같아도 이 값이 다르면
