@@ -28,7 +28,7 @@ from app.design.services.class_diagram.cache import (
 )
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.service import generate_class_model
-from app.design.services.common.structured import capture_llm_timings
+from app.design.services.common.structured import StructuredLlmError, capture_llm_timings
 from app.design.services.common.validation import validate_puml_artifact
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.projection import project_sequence_model
@@ -183,8 +183,29 @@ def _run_cell(
     index = frozen_e1_scenario_index()
     configured = {**dict(overrides), "llm_max_retries": 0, "easydep_experiment_session": run_id}
     started = time.perf_counter()
-    with _override_settings(configured), capture_llm_timings() as events:
-        model = generator(index, cache=cache)
+    try:
+        with _override_settings(configured), capture_llm_timings() as events:
+            model = generator(index, cache=cache)
+    except (StructuredLlmError, ValueError) as error:
+        wall_seconds = time.perf_counter() - started
+        return {
+            "runId": run_id,
+            "cell": key,
+            "treatment": treatment,
+            "settings": dict(overrides),
+            "metrics": _event_metrics(events, wall_seconds),
+            "timingEvents": list(events),
+            "machineGates": {
+                "status": "failed",
+                "generation": {
+                    "status": "failed",
+                    "errorType": type(error).__name__,
+                    "message": " ".join(str(error).split())[:4000],
+                },
+            },
+            "artifacts": {},
+            "status": "failed",
+        }
     wall_seconds = time.perf_counter() - started
     gates, artifacts = _machine_gates(index, model)
     return {
@@ -201,11 +222,25 @@ def _run_cell(
 
 
 def _median(runs: list[dict[str, Any]], field: str) -> float:
-    return float(statistics.median(float(run["metrics"][field]) for run in runs))
+    measured = [
+        run for run in runs
+        if run["metrics"].get("measurementStatus")
+        != "unavailable-after-process-exit"
+    ]
+    if not measured:
+        return 0.0
+    return float(statistics.median(float(run["metrics"][field]) for run in measured))
 
 
 def _p95(runs: list[dict[str, Any]], field: str) -> float:
-    values = sorted(float(run["metrics"][field]) for run in runs)
+    values = sorted(
+        float(run["metrics"][field])
+        for run in runs
+        if run["metrics"].get("measurementStatus")
+        != "unavailable-after-process-exit"
+    )
+    if not values:
+        return 0.0
     return values[max(0, math.ceil(len(values) * 0.95) - 1)]
 
 
@@ -233,6 +268,18 @@ def _default_run_id(key: str) -> str:
     return f"class-opt-{CASE_ID}-{key}-{uuid.uuid4().hex[:12]}"
 
 
+def _baseline_settings() -> dict[str, Any]:
+    return {
+        "design_class_compact_operation_payload": False,
+        "design_class_inventory_reasoning_effort": "medium",
+        "design_class_operation_reasoning_effort": "medium",
+        "design_class_call_plan_reasoning_effort": "medium",
+        "design_class_inventory_max_completion_tokens": 16384,
+        "design_class_operation_max_completion_tokens": 8192,
+        "design_class_call_plan_max_completion_tokens": 8192,
+    }
+
+
 def execute_live_e1(
     *,
     generator: Callable[..., BCEModel] = generate_class_model,
@@ -249,15 +296,7 @@ def execute_live_e1(
     budget.
     """
 
-    baseline_settings: dict[str, Any] = {
-        "design_class_compact_operation_payload": False,
-        "design_class_inventory_reasoning_effort": "medium",
-        "design_class_operation_reasoning_effort": "medium",
-        "design_class_call_plan_reasoning_effort": "medium",
-        "design_class_inventory_max_completion_tokens": 16384,
-        "design_class_operation_max_completion_tokens": 8192,
-        "design_class_call_plan_max_completion_tokens": 8192,
-    }
+    baseline_settings = _baseline_settings()
     if resume_report is not None:
         terminal = _validate_resume_report(resume_report)
         if terminal:
@@ -311,8 +350,6 @@ def execute_live_e1(
         return run
 
     baselines = [cold(f"baseline-{index}", "baseline", baseline_settings) for index in range(1, 4)]
-    if any(run["status"] != "passed" for run in baselines):
-        return _report(runs, stopped_at="baseline", decision={"adopted": False})
 
     compact = cold(
         "compact",
@@ -502,6 +539,15 @@ def _validate_resume_report(report: Mapping[str, Any]) -> bool:
     if report.get("coldGenerationCount") != len(runs):
         raise ValueError("resume report cold generation count is inconsistent")
     status = report.get("status")
+    if (
+        status == "stopped"
+        and report.get("stoppedAt") == "baseline"
+        and len(runs) == 3
+    ):
+        # v1 initially treated any baseline failure as an experiment-wide stop.
+        # The protocol only stops the failed run; singleton treatments remain
+        # independent and candidate repetitions stop on their own gate.
+        return False
     if status in {"completed", "stopped"}:
         return True
     if status != "in_progress":
@@ -525,9 +571,10 @@ def _decision(
     candidate_wall = _median(candidates, "wallSeconds") if candidates else float("inf")
     token_gain = 1.0 - candidate_tokens / baseline_tokens if baseline_tokens else 0.0
     wall_gain = 1.0 - candidate_wall / baseline_wall if baseline_wall else 0.0
+    baseline_wall_p95 = _p95(baselines, "wallSeconds")
     p95_ratio = (
-        _p95(candidates, "wallSeconds") / _p95(baselines, "wallSeconds")
-        if candidates
+        _p95(candidates, "wallSeconds") / baseline_wall_p95
+        if candidates and baseline_wall_p95
         else float("inf")
     )
     checks = {
@@ -575,6 +622,58 @@ def apply_qualitative_review(
     }
     decision["adopted"] = all(decision["checks"].values())
     return reviewed
+
+
+def record_failed_baseline_inflight(
+    report: Mapping[str, Any], *, error_type: str, error_message: str
+) -> dict[str, Any]:
+    """Close one observed failed baseline without repeating its provider calls.
+
+    This recovery is intentionally limited to a terminated baseline process. New
+    executions record generation failures directly in ``_run_cell``; this adapter
+    exists for a checkpoint written by an older runner before that boundary.
+    """
+
+    if report.get("schemaVersion") != SCHEMA_VERSION or report.get("caseId") != CASE_ID:
+        raise ValueError("failed baseline report identity does not match")
+    if report.get("status") != "in_progress" or report.get("retryBudget") != 0:
+        raise ValueError("failed baseline report is not recoverable")
+    runs = deepcopy(report.get("runs"))
+    if not isinstance(runs, list) or report.get("coldGenerationCount") != len(runs):
+        raise ValueError("failed baseline report run count is inconsistent")
+    cell = report.get("inFlight")
+    expected = _COLD_CELL_ORDER[len(runs)] if len(runs) < len(_COLD_CELL_ORDER) else None
+    if cell != expected or not isinstance(cell, str) or not cell.startswith("baseline-"):
+        raise ValueError("only the next in-flight baseline can be recorded as failed")
+    run = {
+        "runId": f"recovered-failure:{CASE_ID}:{cell}",
+        "cell": cell,
+        "treatment": "baseline",
+        "settings": _baseline_settings(),
+        "metrics": {
+            **_event_metrics([], 0.0),
+            "measurementStatus": "unavailable-after-process-exit",
+        },
+        "timingEvents": [],
+        "machineGates": {
+            "status": "failed",
+            "generation": {
+                "status": "failed",
+                "errorType": error_type,
+                "message": " ".join(error_message.split())[:4000],
+                "recoveredFromTerminatedProcess": True,
+            },
+        },
+        "artifacts": {},
+        "status": "failed",
+    }
+    runs.append(run)
+    return _report(
+        runs,
+        stopped_at=None,
+        decision={"adopted": False, "status": "in_progress"},
+        status="in_progress",
+    )
 
 
 def _report(
@@ -627,12 +726,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--review-report", type=Path)
     parser.add_argument("--resume-report", type=Path)
+    parser.add_argument("--record-failed-baseline", type=Path)
+    parser.add_argument("--failure-type")
+    parser.add_argument("--failure-message")
     parser.add_argument("--baseline-issues", type=int, default=0)
     parser.add_argument("--candidate-issues", type=int, default=0)
     args = parser.parse_args(argv)
-    if args.review_report and args.resume_report:
-        parser.error("--review-report and --resume-report are mutually exclusive")
-    if args.review_report:
+    selected_modes = sum(bool(value) for value in (
+        args.review_report,
+        args.resume_report,
+        args.record_failed_baseline,
+    ))
+    if selected_modes > 1:
+        parser.error("review, resume, and failed-baseline modes are mutually exclusive")
+    if args.record_failed_baseline:
+        if not args.failure_type or not args.failure_message:
+            parser.error("failed-baseline mode requires --failure-type and --failure-message")
+        report = record_failed_baseline_inflight(
+            _read_json(args.record_failed_baseline),
+            error_type=args.failure_type,
+            error_message=args.failure_message,
+        )
+    elif args.review_report:
         report = apply_qualitative_review(
             _read_json(args.review_report),
             baseline_issues=args.baseline_issues,

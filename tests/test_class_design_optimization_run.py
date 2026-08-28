@@ -10,6 +10,7 @@ import pytest
 from evaluation.class_design_optimization_run import (
     apply_qualitative_review,
     execute_live_e1,
+    record_failed_baseline_inflight,
 )
 
 
@@ -246,3 +247,88 @@ def test_candidate_cap_uses_the_next_tier_even_when_it_exceeds_the_old_cap():
     report = execute_live_e1(cell_runner=cell_runner)
 
     assert report["decision"]["candidateCaps"]["operation"] == 16384
+
+
+def test_generation_value_error_is_a_failed_cell_without_a_provider_retry():
+    calls = 0
+
+    def generator(_index, *, cache):
+        nonlocal calls
+        calls += 1
+        raise ValueError("accepted fragment remains invalid")
+
+    report = execute_live_e1(generator=generator)
+
+    assert calls == 7
+    assert report["status"] == "stopped"
+    assert report["stoppedAt"] == "candidate-1"
+    assert report["coldGenerationCount"] == 7
+    assert all(run["status"] == "failed" for run in report["runs"])
+    assert all(
+        run["machineGates"]["generation"]["errorType"] == "ValueError"
+        for run in report["runs"]
+    )
+
+
+def test_recorded_failed_baseline_resumes_at_the_next_cell_without_repeating_it():
+    saved: dict[str, Any] | None = None
+
+    class StopAfterBaselineOne(RuntimeError):
+        pass
+
+    def successful_cell(key, treatment, overrides, **_kwargs):
+        metrics = (
+            _metrics(input_tokens=0, total_tokens=0, wall=0.1, physical=0)
+            if key == "candidate-warm-verification"
+            else _metrics(input_tokens=1000, total_tokens=1200, wall=10)
+        )
+        return {
+            "runId": f"run:{key}",
+            "cell": key,
+            "treatment": treatment,
+            "settings": dict(overrides),
+            "metrics": metrics,
+            "timingEvents": [],
+            "machineGates": {"status": "passed"},
+            "artifacts": {},
+            "status": "passed",
+        }
+
+    def progress(report):
+        nonlocal saved
+        if report["coldGenerationCount"] == 1 and report["inFlight"] is None:
+            saved = deepcopy(report)
+            raise StopAfterBaselineOne
+
+    with pytest.raises(StopAfterBaselineOne):
+        execute_live_e1(cell_runner=successful_cell, progress=progress)
+    assert saved is not None
+    saved["inFlight"] = "baseline-2"
+
+    recovered = record_failed_baseline_inflight(
+        saved,
+        error_type="ValueError",
+        error_message="operation fragment remains invalid",
+    )
+    calls: list[str] = []
+
+    def remaining_cell(key, treatment, overrides, **kwargs):
+        calls.append(key)
+        return successful_cell(key, treatment, overrides, **kwargs)
+
+    report = execute_live_e1(
+        resume_report=recovered,
+        cell_runner=remaining_cell,
+    )
+
+    assert calls[0] == "baseline-3"
+    assert "baseline-1" not in calls
+    assert "baseline-2" not in calls
+    assert report["coldGenerationCount"] == 9
+    assert report["status"] == "completed"
+    assert report["runs"][1]["machineGates"]["generation"] == {
+        "status": "failed",
+        "errorType": "ValueError",
+        "message": "operation fragment remains invalid",
+        "recoveredFromTerminatedProcess": True,
+    }

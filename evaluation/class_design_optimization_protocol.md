@@ -55,6 +55,9 @@ schema 오류, digest 불일치, 허용되지 않은 후보 ID, retry 발생, to
 singleton의 gate 실패가 뒤 singleton을 생략하지는 않는다. 각 결과 중 gate를 통과한 정책만
 합성 candidate 설정에 포함한다. 합성 candidate 반복은 한 번이라도 실패하면 남은 반복을
 즉시 중단한다.
+세 baseline도 서로 독립된 측정이며 baseline 하나의 gate 실패가 singleton 측정을 생략하게
+하지 않는다. 실패 baseline은 채택 가능한 결과로 세지 않되, 확보된 timing/token 관측은
+비교 기준에 남긴다. 프로세스 종료로 계측을 회수하지 못한 cell은 중앙값 계산에서 제외한다.
 
 baseline의 단계별 최대 output token에 50% 여유를 더하고 2K/4K/8K/16K 중 가장 작은
 수용 tier를 후보 cap으로 쓴다. 어느 baseline에서든 `finish_reason=length`, schema failure가
