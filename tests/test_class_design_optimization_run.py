@@ -10,9 +10,89 @@ import pytest
 from app.design.schemas.class_model import BCEModel
 from evaluation.class_design_optimization_run import (
     apply_qualitative_review,
+    audit_live_cache_verification,
+    execute_live_cache_verification,
     execute_live_e1,
     record_failed_inflight,
 )
+
+
+def test_live_cache_verification_seals_warm_path_before_provider_computation():
+    """cold accepted unit을 warm에서 재사용하며 provider 계산은 한 번만 일어난다."""
+
+    provider_computations = 0
+
+    def cell_runner(key, treatment, overrides, **kwargs):
+        nonlocal provider_computations
+
+        def compute():
+            nonlocal provider_computations
+            provider_computations += 1
+            return {"Classes": [{"className": "CatalogBoundary"}]}
+
+        value = kwargs["cache"].get_or_compute("accepted-unit", compute).value
+        physical = 1 if key.endswith("cold") else 0
+        return {
+            "runId": f"run:{key}",
+            "cell": key,
+            "treatment": treatment,
+            "settings": dict(overrides),
+            "metrics": _metrics(
+                input_tokens=10 if physical else 0,
+                total_tokens=20 if physical else 0,
+                wall=1 if physical else 0.01,
+                physical=physical,
+            ),
+            "timingEvents": [],
+            "machineGates": {"status": "passed"},
+            "artifacts": {"classModel": value, "classPuml": "@startuml\n@enduml"},
+            "status": "passed",
+        }
+
+    report = execute_live_cache_verification(cell_runner=cell_runner)
+
+    assert provider_computations == 1
+    assert report["checks"] == {
+        "coldGeneratedAcceptedModel": True,
+        "coldUsedProvider": True,
+        "coldMachineGatesPassed": True,
+        "warmPhysicalCallsZero": True,
+        "warmReusedAcceptedUnits": True,
+        "warmMachineGatesPassed": True,
+        "artifactsByteEquivalent": True,
+    }
+    assert report["status"] == "passed"
+    assert report["coldGenerationCount"] == 1
+
+
+def test_cache_report_audit_rejects_zero_call_warm_when_product_gates_failed():
+    """warm 0-call만으로 실패한 frozen product gate를 성공으로 분류하지 않는다."""
+
+    report = {
+        "schemaVersion": "easydep-class-design-live-cache-verification/v1",
+        "caseId": "e1-aws",
+        "coldGenerationCount": 1,
+        "retryBudget": 0,
+        "status": "passed",
+        "cold": {
+            "status": "failed",
+            "metrics": {"physicalLlmCalls": 3, "logicalCacheEvents": 2},
+            "artifacts": {"classModel": {"Classes": []}},
+        },
+        "warm": {
+            "status": "failed",
+            "metrics": {"physicalLlmCalls": 0, "logicalCacheEvents": 2},
+            "artifacts": {"classModel": {"Classes": []}},
+        },
+        "checks": {},
+    }
+
+    audited = audit_live_cache_verification(report)
+
+    assert audited["status"] == "failed"
+    assert audited["checks"]["warmPhysicalCallsZero"] is True
+    assert audited["checks"]["coldMachineGatesPassed"] is False
+    assert audited["checks"]["warmMachineGatesPassed"] is False
 
 
 def _metrics(*, input_tokens: int, total_tokens: int, wall: float, physical: int = 3):

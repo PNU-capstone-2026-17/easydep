@@ -1,4 +1,4 @@
-"""Shared run identifiers and manifest identity fields."""
+"""cross-stage 실행이 공유하는 run ID와 manifest identity field를 만든다."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from typing import Any
 
 
 def safe_segment(value: str, fallback: str) -> str:
+    """임의 문자열을 파일시스템에 안전한 run ID segment로 정규화한다."""
+
     segment = re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-").lower()
     return segment or fallback
 
@@ -21,7 +23,7 @@ def make_run_id(
     now: datetime | None = None,
     short_id: str | None = None,
 ) -> str:
-    """Return ``system-variant-case-UTC-shortid`` with filesystem-safe segments."""
+    """안전한 ``system-variant-case-UTC-shortid`` 형식의 실행 ID를 만든다."""
     stamp = (now or datetime.now(UTC)).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     suffix = safe_segment(short_id or uuid.uuid4().hex[:6], "run")
     return "-".join(
@@ -44,7 +46,7 @@ def identity_manifest(
     purpose: str = "normal",
     completed_stages: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Return the identity fields shared by EasyDep and baseline manifests."""
+    """EasyDep와 baseline manifest가 공유하는 identity field를 반환한다."""
     return {
         "runId": run_id,
         "system": system,

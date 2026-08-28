@@ -89,6 +89,8 @@ class UseCaseSpecItem(TypedDict):
 
 
 class AgentState(TypedDict):
+    """요구사항 PIPELINE 단계가 공유하는 current 실행 상태 계약이다."""
+
     messages: Annotated[list, add_messages]
     raw_requirements: list[str]
     # Expansion is a working set only.  Never overwrite raw_requirements: RAW

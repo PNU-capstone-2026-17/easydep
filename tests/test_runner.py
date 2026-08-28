@@ -7,7 +7,13 @@
 
 import json
 
+from app.orchestration.run_identity import identity_manifest, make_run_id
 from app.requirements.orchestration import runner
+
+IDENTITY_KWARGS = {
+    "run_id_factory": make_run_id,
+    "identity_manifest_factory": identity_manifest,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +190,7 @@ def test_persist_run_writes_expected_tree(tmp_path):
         dataset_name="demo",
         artifact_root=tmp_path,
         run_metrics={"llm_calls": 9, "prompt_tokens": 100},
+        **IDENTITY_KWARGS,
     )
 
     # 최상위 산출물
@@ -234,8 +241,12 @@ def test_persist_run_writes_expected_tree(tmp_path):
 
 def test_persist_run_input_sha_is_deterministic(tmp_path):
     input_obj = {"name": "demo", "classified": [{"id": "R1", "text": "x", "type": "FR"}]}
-    d1 = runner.persist_run(input_obj, _sample_state(), artifact_root=tmp_path / "a")
-    d2 = runner.persist_run(input_obj, _sample_state(), artifact_root=tmp_path / "b")
+    d1 = runner.persist_run(
+        input_obj, _sample_state(), artifact_root=tmp_path / "a", **IDENTITY_KWARGS
+    )
+    d2 = runner.persist_run(
+        input_obj, _sample_state(), artifact_root=tmp_path / "b", **IDENTITY_KWARGS
+    )
     sha1 = json.loads((d1 / "manifest.json").read_text(encoding="utf-8"))["input_sha256"]
     sha2 = json.loads((d2 / "manifest.json").read_text(encoding="utf-8"))["input_sha256"]
     assert sha1 == sha2  # 같은 입력 → 같은 해시
@@ -248,7 +259,9 @@ def test_load_state_restores_cloud_requirement_artifacts(tmp_path):
         "resource_spec": {"schemaVersion": "3", "workloads": ["vm"]},
         "resource_intake": {"valid": True, "questions": []},
     }
-    run_dir = runner.persist_run(input_obj, state, artifact_root=tmp_path)
+    run_dir = runner.persist_run(
+        input_obj, state, artifact_root=tmp_path, **IDENTITY_KWARGS
+    )
 
     restored = runner.load_state(run_dir)
 
@@ -269,7 +282,9 @@ def test_load_state_preserves_an_explicit_global_constraint(tmp_path):
         "classified": input_obj["classified"],
         "constraint_applicability": {"R1": []},
     }
-    run_dir = runner.persist_run(input_obj, state, artifact_root=tmp_path)
+    run_dir = runner.persist_run(
+        input_obj, state, artifact_root=tmp_path, **IDENTITY_KWARGS
+    )
 
     restored = runner.load_state(run_dir)
 

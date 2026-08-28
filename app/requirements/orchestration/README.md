@@ -26,6 +26,8 @@
   저장하거나 재개한다.
 - runner와 API persistence는 명시된 artifact 디렉터리 또는 repository에 현재 단계
   산출물을 저장한다.
+- runner의 run ID·manifest 정책은 상위 composition root가 callback으로 주입하며,
+  이 경계가 cross-stage orchestration 구현을 직접 import하지 않는다.
 - orchestration은 단계 서비스를 정해진 순서로 호출할 뿐, 단계 내부 LLM 호출 수,
   병렬도, retry 및 bounded repair 범위를 늘리거나 다시 소유하지 않는다.
 - 테스트는 모든 LLM·repository 경계를 대체하며 실제 NIM 호출을 하지 않는다.
@@ -35,6 +37,7 @@
 - modeling·resources 서비스의 prompt literal, private helper 또는 repair 구현을
   import하지 않는다.
 - 설계·구현 서비스(`app.design`, `app.implementation`)를 역참조하지 않는다.
+- 상위 cross-stage 조정 계층(`app.orchestration`)을 역참조하지 않는다.
 - `PIPELINE` 순서를 graph·runner·feedback에 다시 하드코딩하지 않는다.
 - 현재 계약에 없는 `Any`, bare `dict` 공개 signature를 새로 만들지 않는다.
 

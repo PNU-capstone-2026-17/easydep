@@ -1,8 +1,10 @@
-"""Class-design service orchestration and owned-unit resume behavior."""
+"""클래스 설계 서비스의 호출 수와 accepted-unit cache 경계를 검증한다."""
 from __future__ import annotations
 
 import inspect
+import json
 
+from app.design.schemas.architecture_state import ArchitectureState
 from app.design.services.class_diagram import service
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 from app.design.services.class_diagram.proposals import (
@@ -113,7 +115,7 @@ def test_operation_feedback_rebuilds_only_the_owned_contract(monkeypatch):
 
 
 def test_generate_and_resume_reuse_accepted_units_without_warm_llm_calls(monkeypatch):
-    """The process cache is threaded through public services and warm hits are offline."""
+    """공개 service가 cache를 전달하고 warm hit에서는 외부 호출을 생략한다."""
 
     calls: list[type] = []
 
@@ -131,7 +133,10 @@ def test_generate_and_resume_reuse_accepted_units_without_warm_llm_calls(monkeyp
     cache = ProcessLocalAcceptedUnitCache(capacity=32)
     index = build_scenario_index(single_use_case())
     generated = service.generate_class_model(index, cache=cache)
-    assert calls
+    assert len(calls) == 3
+    assert calls[0] is InventoryProposal
+    assert calls[1] is OperationFragment
+    assert issubclass(calls[2], CallPlanProposal)
 
     calls.clear()
     warm = service.generate_class_model(index, cache=cache)
@@ -150,3 +155,29 @@ def test_generate_and_resume_reuse_accepted_units_without_warm_llm_calls(monkeyp
     # Revision is also a first-class cache boundary, even when no feedback is
     # ultimately applied by this no-op request.
     assert "cache" in inspect.signature(service.revise_class_model).parameters
+
+
+def test_accepted_unit_cache_is_outside_checkpoint_and_artifact_json_contract() -> None:
+    """프로세스 cache 객체와 key metadata를 저장 state에 직렬화하지 않는다."""
+
+    cache = ProcessLocalAcceptedUnitCache(capacity=32)
+    state: ArchitectureState = {
+        "extracted_bce_classes": {
+            "Classes": [],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        },
+        "class_diagram_puml": "@startuml\n@enduml",
+    }
+
+    assert all("cache" not in key.lower() for key in ArchitectureState.__annotations__)
+    assert not any(
+        hasattr(cache, serializer)
+        for serializer in ("model_dump", "model_dump_json", "to_json", "save")
+    )
+
+    stored_json = json.dumps(state, ensure_ascii=False, sort_keys=True)
+    assert "accepted-unit" not in stored_json
+    assert "cacheVersionDigest" not in stored_json
+    assert "_values" not in stored_json

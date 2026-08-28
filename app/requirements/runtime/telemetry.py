@@ -82,13 +82,13 @@ def _progress(event: str, **fields: Any) -> None:
 
 
 def emit_progress(event: str, **fields: Any) -> None:
-    """Publish non-sensitive execution progress to the active observer, if any."""
+    """민감하지 않은 실행 진행 상황을 현재 observer에 전달한다."""
     _progress(event, **fields)
 
 
 @contextmanager
 def progress_scope(sink: ProgressSink) -> Iterator[None]:
-    """Bind one progress observer to the current execution context."""
+    """현재 실행 context에 진행 상황 observer 하나를 결합한다."""
     token = _progress_sink.set(sink)
     try:
         yield
@@ -152,6 +152,8 @@ class Degradation:
     subject: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
+        """저하 기록을 API·artifact에 저장할 JSON shape로 바꾼다."""
+
         return {"component": self.component, "reason": self.reason, "subject": self.subject}
 
 

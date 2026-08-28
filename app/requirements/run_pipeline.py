@@ -15,9 +15,12 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import cast
 
+from app.orchestration.run_identity import identity_manifest, make_run_id
 from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
+from app.requirements.contracts.state import RequirementItem
 from app.requirements.orchestration.runner import (
     ARTIFACTS_DIR,
     INPUTS_DIR,
@@ -61,7 +64,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"모델: {settings.model} | 아티팩트: {args.out}")
     for name, path in targets:
         obj = load_input(path or name)
-        classified = obj.get("classified") or []
+        classified = cast(list[RequirementItem], obj.get("classified") or [])
+        resource_answers = cast(
+            dict[str, str], obj.get("resource_answers") or {}
+        )
         print(f"\n[run] {name}: 요구사항 {len(classified)}개 실행 중...")
         # 데이터셋마다 스코프를 연다 — 합계가 "무엇 하나에 대한 것"인지 분명해야
         # 실행끼리 비교할 수 있다.
@@ -69,14 +75,16 @@ def main(argv: list[str] | None = None) -> int:
             state = run_pipeline(
                 classified,
                 resource_constraints_text=str(obj.get("resource_constraints_text") or ""),
-                resource_answers=obj.get("resource_answers") or {},
+                resource_answers=resource_answers,
             )
         run_dir = persist_run(
             obj,
             state,
-            dataset_name=obj.get("name", name),
+            dataset_name=str(obj.get("name") or name),
             artifact_root=Path(args.out),
             run_metrics=stats.as_dict(),
+            run_id_factory=make_run_id,
+            identity_manifest_factory=identity_manifest,
         )
         cov = state.get("coverage", {})
         print(f"  → {run_dir}")

@@ -96,6 +96,8 @@ class Entry:
         return len(set(self.validator_runs)) >= MIN_RUNS_VALIDATOR
 
     def as_dict(self) -> dict:
+        """규칙 위반 항목을 중복 제거된 저장 JSON shape로 바꾼다."""
+
         return {
             "rule_id": self.rule_id,
             "stage": self.stage,
@@ -107,6 +109,8 @@ class Entry:
 
     @classmethod
     def from_dict(cls, raw: dict) -> Entry:
+        """저장 JSON shape에서 규칙 위반 항목을 복원한다."""
+
         return cls(
             rule_id=raw["rule_id"],
             stage=raw["stage"],
@@ -135,13 +139,19 @@ class FeedbackLesson:
 
     @property
     def times(self) -> int:
+        """서로 다른 실행에서 같은 feedback이 관찰된 횟수를 반환한다."""
+
         return len(set(self.runs))
 
     @property
     def qualifies(self) -> bool:
+        """feedback이 다음 prompt에 실릴 최소 반복 수를 넘었는지 판단한다."""
+
         return self.times >= MIN_RUNS_FEEDBACK
 
     def as_dict(self) -> dict:
+        """사용자 feedback lesson을 중복 제거된 저장 JSON shape로 바꾼다."""
+
         return {
             "stage": self.stage,
             "instruction": self.instruction,
@@ -151,6 +161,8 @@ class FeedbackLesson:
 
     @classmethod
     def from_dict(cls, raw: dict) -> FeedbackLesson:
+        """저장 JSON shape에서 사용자 feedback lesson을 복원한다."""
+
         return cls(
             stage=raw["stage"],
             instruction=raw["instruction"],
@@ -342,6 +354,8 @@ def _trim(sentence: str) -> str:
 # 저장 — 사람이 읽고 지울 수 있는 한 파일
 # ---------------------------------------------------------------------------
 def load(path: Path | str) -> list[Entry]:
+    """저장된 규칙 위반 playbook을 읽고 파일이 없으면 빈 목록을 반환한다."""
+
     path = Path(path)
     if not path.exists():
         return []
@@ -350,6 +364,8 @@ def load(path: Path | str) -> list[Entry]:
 
 
 def load_feedback(path: Path | str) -> list[FeedbackLesson]:
+    """저장된 사용자 feedback lesson을 읽고 파일이 없으면 빈 목록을 반환한다."""
+
     path = Path(path)
     if not path.exists():
         return []

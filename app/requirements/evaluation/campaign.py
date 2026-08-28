@@ -36,6 +36,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from app.requirements.common.console import use_utf8_stdout
 from app.requirements.evaluation import jsonl
@@ -215,6 +216,7 @@ def phase_dataset_score(c: Campaign, labels_path: Path, repeats: int) -> None:
 
 def phase_pure_runs(c: Campaign, names: list[str], limit: int | None) -> None:
     """PURE 외부 입력으로 파이프라인을 돌린다. 도메인마다 한 번, 이미 한 것은 건너뛴다."""
+    from app.orchestration.run_identity import identity_manifest, make_run_id
     from app.requirements import prompts
     from app.requirements.evaluation import pure
     from app.requirements.orchestration.runner import persist_run, run_pipeline
@@ -234,6 +236,8 @@ def phase_pure_runs(c: Campaign, names: list[str], limit: int | None) -> None:
             payload, state, dataset_name=payload["name"],
             artifact_root=c.out_dir / "pure-artifacts",
             purpose="evaluation",
+            run_id_factory=make_run_id,
+            identity_manifest_factory=identity_manifest,
         )
         jsonl.append(out, _stamped({
             "document": name, "dataset": payload["name"], "run_dir": str(run_dir),
@@ -273,7 +277,9 @@ def phase_input_runs(c: Campaign, names: list[str]) -> None:
     §9의 내부 입력 수치는 옛 판이고 네 규칙은 조합 프롬프트에서 나왔다 — 그대로 PURE 표와
     나란히 놓으면 코퍼스가 바꾼 것과 판이 바꾼 것이 섞인다.
     """
+    from app.orchestration.run_identity import identity_manifest, make_run_id
     from app.requirements import prompts
+    from app.requirements.contracts.state import RequirementItem
     from app.requirements.orchestration.runner import load_input, persist_run, run_pipeline
 
     out = c.out_dir / "input-runs.jsonl"
@@ -285,12 +291,15 @@ def phase_input_runs(c: Campaign, names: list[str]) -> None:
             c.log("예산 소진 — 내부 입력 실행 중단")
             return
         payload = load_input(name)
-        c.log(f"내부 실행 시작 {name} (요구 {len(payload.get('classified', []))}건)")
-        state = run_pipeline(payload["classified"])
+        classified = cast(list[RequirementItem], payload.get("classified") or [])
+        c.log(f"내부 실행 시작 {name} (요구 {len(classified)}건)")
+        state = run_pipeline(classified)
         run_dir = persist_run(
             payload, state, dataset_name=name,
             artifact_root=c.out_dir / "input-artifacts",
             purpose="evaluation",
+            run_id_factory=make_run_id,
+            identity_manifest_factory=identity_manifest,
         )
         jsonl.append(out, _stamped({
             "dataset": name, "run_dir": str(run_dir),

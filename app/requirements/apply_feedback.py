@@ -12,6 +12,7 @@ import argparse
 import json
 from pathlib import Path
 
+from app.orchestration.run_identity import identity_manifest, make_run_id
 from app.requirements.common.console import use_utf8_stdout
 from app.requirements.orchestration.feedback import apply_feedback
 from app.requirements.orchestration.runner import ARTIFACTS_DIR, load_state, persist_run
@@ -38,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
         input_obj, state,
         dataset_name=f"{input_obj.get('name', '')}+feedback",
         artifact_root=Path(args.out),
+        run_id_factory=make_run_id,
+        identity_manifest_factory=identity_manifest,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     print(f"→ {new_dir}")

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from app.requirements.agent import llm as legacy_llm
 from app.requirements.config import settings
@@ -108,6 +109,72 @@ def test_client_preserves_sampling_timeout_and_retry_configuration(monkeypatch) 
     assert created[0]["max_completion_tokens"] == settings.requirements_max_completion_tokens
     assert created[0]["timeout"] == 90
     assert created[0]["max_retries"] == 2
+
+
+def test_transient_provider_failures_use_two_sdk_retries_in_one_logical_call(
+    monkeypatch,
+) -> None:
+    """두 번의 500 응답 뒤 성공할 때 SDK retry와 logical telemetry를 함께 고정한다."""
+
+    attempts = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            return httpx.Response(
+                500,
+                headers={"retry-after-ms": "0"},
+                json={"error": {"message": "transient", "type": "server_error"}},
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-retry-test",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "retry-test",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"value":"retried"}',
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                },
+            },
+            request=request,
+        )
+
+    transport_client = httpx.Client(transport=httpx.MockTransport(respond))
+    client = structured_llm.ChatOpenAI(
+        model="retry-test",
+        base_url="https://nim.invalid/v1",
+        api_key=SecretStr("test-key"),
+        temperature=0,
+        max_retries=2,
+        http_client=transport_client,
+    )
+    monkeypatch.setattr(structured_llm, "build_llm", lambda **_kwargs: client)
+
+    try:
+        with telemetry.run_scope("retry") as stats:
+            result = structured_llm.invoke_structured(StructuredResult, [])
+    finally:
+        transport_client.close()
+
+    assert result == StructuredResult(value="retried")
+    assert attempts == 3
+    assert stats.llm_calls == 1
+    assert stats.structured_fallbacks == 0
 
 
 def test_legacy_llm_imports_are_the_canonical_runtime_api() -> None:

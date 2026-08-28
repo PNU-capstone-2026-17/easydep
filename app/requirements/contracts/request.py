@@ -74,7 +74,7 @@ class InitialCloudConstraints(BaseModel):
 
 
 class DeploymentTarget(BaseModel):
-    """One provider-specific alternative selected from the deployment map."""
+    """배포 대안 지도에서 선택한 단일 provider·region 대상이다."""
 
     provider: Literal["aws", "azure", "gcp"]
     region: str = Field(min_length=1, max_length=100)
@@ -98,7 +98,7 @@ class DeploymentTarget(BaseModel):
 
 
 class DeploymentPreferences(BaseModel):
-    """Cloud alternatives entered independently from application requirements."""
+    """애플리케이션 요구사항과 분리해 입력하는 클라우드 배포 대안이다."""
 
     mode: Literal["alternatives"] = "alternatives"
     targets: list[DeploymentTarget] = Field(min_length=1, max_length=3)

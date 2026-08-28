@@ -1,4 +1,4 @@
-"""EasyDep-owned, evolvable contracts for application/cloud consistency."""
+"""EasyDep가 소유하고 진화시키는 애플리케이션·클라우드 정합성 계약이다."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ModelProvenance(BaseModel):
-    """Make proposal ownership explicit; this is not a standards claim."""
+    """제안 모델의 소유권과 표준 준수 주장 범위를 명시한다."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -21,7 +21,7 @@ class ModelProvenance(BaseModel):
 
 
 class ContractFact(BaseModel):
-    """Small stable core around open, namespaced attributes."""
+    """열린 namespaced 속성을 감싸는 작고 안정적인 계약 사실이다."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -47,18 +47,24 @@ class _FactContract(BaseModel):
 
 
 class ApplicationRuntimeContract(_FactContract):
+    """애플리케이션이 소비하는 runtime 사실의 typed 계약이다."""
+
     schema_version: Literal["ApplicationRuntimeContract/v1"] = Field(
         default="ApplicationRuntimeContract/v1", alias="schemaVersion"
     )
 
 
 class CloudCapabilityContract(_FactContract):
+    """클라우드가 제공하는 capability 사실의 typed 계약이다."""
+
     schema_version: Literal["CloudCapabilityContract/v1"] = Field(
         default="CloudCapabilityContract/v1", alias="schemaVersion"
     )
 
 
 class BindingEndpoint(BaseModel):
+    """binding이 참조하는 계약 사실과 속성의 끝점이다."""
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     contract: Literal["application", "cloud"]
@@ -67,6 +73,8 @@ class BindingEndpoint(BaseModel):
 
 
 class ContractBinding(BaseModel):
+    """애플리케이션 소비와 클라우드 제공을 연결하는 단일 binding이다."""
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     id: str
@@ -83,6 +91,8 @@ class ContractBinding(BaseModel):
 
 
 class DeploymentBindingContract(BaseModel):
+    """배포 계획에 수락된 binding 목록과 provenance를 담는 계약이다."""
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     schema_version: Literal["DeploymentBindingContract/v1"] = Field(
@@ -96,6 +106,8 @@ class DeploymentBindingContract(BaseModel):
 
 
 class ConsistencyDiagnostic(BaseModel):
+    """애플리케이션·클라우드 계약 정합성 위반 하나를 설명한다."""
+
     code: str
     message: str
     locations: list[str] = Field(default_factory=list)
@@ -295,7 +307,7 @@ def _application_text(application: Path) -> tuple[str, list[str]]:
 def infer_application_contract(
     application: Path, declared: dict[str, Any] | None = None
 ) -> ApplicationRuntimeContract:
-    """Combine an optional agent declaration with deterministic artifact observations."""
+    """선택적 agent 선언과 결정론적 산출물 관찰을 합쳐 앱 계약을 만든다."""
     contract = ApplicationRuntimeContract.model_validate(
         declared
         or {
@@ -487,7 +499,7 @@ def derive_deployment_bindings(
     cloud: CloudCapabilityContract,
     declared: dict[str, Any] | None = None,
 ) -> tuple[CloudCapabilityContract, DeploymentBindingContract]:
-    """Choose deployment-side values from app consumers without fixing technologies in schema."""
+    """schema에 기술을 고정하지 않고 앱 소비값에 맞는 배포 binding을 도출한다."""
     binding = DeploymentBindingContract.model_validate(declared or {})
     cloud_facts = {fact.id: fact for fact in cloud.facts if not fact.id.startswith("planned.")}
     bindings = {item.id: item for item in binding.bindings if not item.id.startswith("planned.")}
@@ -585,6 +597,8 @@ def contract_value(
     attribute: str,
     default: Any = None,
 ) -> Any:
+    """계약에서 kind·attribute가 일치하는 첫 값을 조회한다."""
+
     fact = next((item for item in contract.facts if item.kind == kind), None)
     return fact.attributes.get(attribute, default) if fact else default
 
@@ -592,6 +606,8 @@ def contract_value(
 def test_environment(
     contract: ApplicationRuntimeContract, temporary_directory: Path
 ) -> dict[str, str]:
+    """계약이 허용한 EASYDEP 전용 테스트 환경 변수를 구성한다."""
+
     environment: dict[str, str] = {}
     for fact in contract.facts:
         if fact.kind != "runtime.environment":
@@ -608,6 +624,8 @@ def test_environment(
 def dependency_declarations(
     contract: ApplicationRuntimeContract,
 ) -> list[tuple[str, str]]:
+    """앱 계약의 검증된 Gradle dependency 선언을 중복 없이 반환한다."""
+
     declarations: set[tuple[str, str]] = set()
     allowed_configurations = {
         "implementation",
@@ -844,6 +862,8 @@ def merge_application_contracts(
 def validate_application_consistency(
     application: Path, contract: ApplicationRuntimeContract
 ) -> list[ConsistencyDiagnostic]:
+    """생성 애플리케이션이 runtime intent와 일치하는지 결정론적으로 검사한다."""
+
     text, files = _application_text(application)
     build_files = [
         path
@@ -1108,6 +1128,8 @@ def validate_binding_consistency(
     cloud: CloudCapabilityContract,
     binding: DeploymentBindingContract,
 ) -> list[ConsistencyDiagnostic]:
+    """애플리케이션 소비값과 클라우드 제공값의 binding 불일치를 검사한다."""
+
     facts = {
         "application": {fact.id: fact for fact in application.facts},
         "cloud": {fact.id: fact for fact in cloud.facts},

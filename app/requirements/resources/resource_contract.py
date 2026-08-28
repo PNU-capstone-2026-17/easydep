@@ -1,4 +1,4 @@
-"""RESOURCE_SPEC JSON Schema loading and validation."""
+"""RESOURCE_SPEC JSON Schema를 읽고 current 요청을 검증한다."""
 
 from __future__ import annotations
 
@@ -13,10 +13,14 @@ _SCHEMA_PATH = Path(__file__).with_name("resource_spec.schema.json")
 
 @lru_cache(maxsize=1)
 def request_schema() -> dict:
+    """고정 RESOURCE_SPEC 요청 schema를 프로세스 cache에서 반환한다."""
+
     return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 def validate_request(spec: dict) -> list[str]:
+    """요청 spec의 schema·필수 field 오류를 안정된 순서로 반환한다."""
+
     if not isinstance(spec, dict):
         return [f"[schema] the constraint must be an object (got {type(spec).__name__})"]
 

@@ -7,6 +7,7 @@
 """
 import pytest
 
+from app.orchestration.run_identity import identity_manifest, make_run_id
 from app.requirements.orchestration import feedback as fb
 from app.requirements.orchestration import runner
 from app.requirements.schemas import FeedbackEdit, FeedbackIntent
@@ -27,7 +28,14 @@ def test_load_state_roundtrip(tmp_path):
                           "orphan_actors": [], "dropped_refs": []},
         "diagram": "@startuml\n@enduml",
     }
-    run_dir = runner.persist_run(input_obj, state, dataset_name="demo", artifact_root=tmp_path)
+    run_dir = runner.persist_run(
+        input_obj,
+        state,
+        dataset_name="demo",
+        artifact_root=tmp_path,
+        run_id_factory=make_run_id,
+        identity_manifest_factory=identity_manifest,
+    )
     loaded = runner.load_state(run_dir)
 
     assert loaded["classified"] == input_obj["classified"]

@@ -9,7 +9,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import cast
 
+from app.orchestration.run_identity import identity_manifest, make_run_id
+from app.requirements.contracts.state import RequirementItem
 from app.requirements.orchestration.runner import (
     ARTIFACTS_DIR,
     load_input,
@@ -51,14 +54,21 @@ def main() -> int:
     for relative in targets:
         path = ROOT / relative
         obj = load_input(str(path))
-        dataset = obj["name"]
-        classified = require_preclassified(obj.get("classified"))
+        dataset = str(obj["name"])
+        classified = cast(
+            list[RequirementItem],
+            require_preclassified(obj.get("classified")),
+        )
+        resource_answers = cast(
+            dict[str, str],
+            obj.get("resource_answers") or {},
+        )
         print(f"[run] {dataset}")
         with telemetry.run_scope(f"benchmark:{args.split}:{dataset}") as stats:
             state = run_pipeline(
                 classified,
                 resource_constraints_text=str(obj.get("resource_constraints_text") or ""),
-                resource_answers=obj.get("resource_answers") or {},
+                resource_answers=resource_answers,
             )
         run_dir = persist_run(
             obj,
@@ -67,6 +77,8 @@ def main() -> int:
             artifact_root=args.output,
             run_metrics=stats.as_dict(),
             purpose="evaluation",
+            run_id_factory=make_run_id,
+            identity_manifest_factory=identity_manifest,
         )
         print(f"  artifact: {run_dir}")
         if dataset in oracle:

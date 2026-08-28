@@ -62,6 +62,8 @@ class Candidate:
     via: str = ""
 
     def as_dict(self) -> dict[str, object]:
+        """후보 값과 provenance를 저장 가능한 JSON shape로 바꾼다."""
+
         # **손으로 나열하지 않는다.** 칸을 하나 늘리면 감사 추적에서 조용히 빠지는데,
         # 그게 이 클래스가 존재하는 이유다.
         return asdict(self)
@@ -260,6 +262,8 @@ class ResourceIntakeSession:
             self.seen.append(text)
 
     def contract_status(self) -> str:
+        """현재 draft가 계약을 충족하는지와 남은 필수값을 설명한다."""
+
         missing = cloud_contract.missing_fields(self.draft)
         if not missing:
             return "The contract is satisfied. Say back what you understood, then call finish."
@@ -277,6 +281,8 @@ class ResourceIntakeSession:
 
     # --- 행동 ---------------------------------------------------------------
     def record(self, field_name: str, raw: object, evidence: str) -> str:
+        """근거가 확인된 field 후보만 현재 resource draft에 기록한다."""
+
         name = (field_name or "").strip()
         as_written = (evidence or "").strip()
 
@@ -337,6 +343,8 @@ class ResourceIntakeSession:
         return f"Rejected ({name}): {why}"
 
     def ask(self, field_name: str, question: str) -> str:
+        """계약이 아는 field에 대한 사용자 질문만 pending 목록에 기록한다."""
+
         name = (field_name or "").strip()
         text = (question or "").strip()
         if not text:
@@ -385,6 +393,8 @@ class ResourceIntakeSession:
         self.understanding = body
 
     def finish(self, understanding: str) -> str:
+        """모든 미충족 필수값을 질문했을 때만 resource 수집을 종료한다."""
+
         pending = [
             n
             for n in cloud_contract.missing_fields(self.draft)

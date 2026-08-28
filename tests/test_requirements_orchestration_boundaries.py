@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 
@@ -126,16 +127,32 @@ def test_public_orchestration_signatures_do_not_add_bare_dict_or_any() -> None:
         supervisor.blocking_issues,
         supervisor.supervise_for,
     )
+    def contains_unbounded(annotation: object) -> bool:
+        """중첩 generic과 forward annotation까지 bare dict·Any를 찾는다."""
+
+        from typing import Any, get_args, get_origin
+
+        if annotation in (dict, Any, "dict", "Any"):
+            return True
+        if isinstance(annotation, str):
+            return "Any" in annotation or annotation.strip() == "dict"
+        origin = get_origin(annotation)
+        return (origin is dict and not get_args(annotation)) or any(
+            contains_unbounded(item) for item in get_args(annotation)
+        )
+
     violations: list[str] = []
     for function in public_functions:
         signature = inspect.signature(function)
+        hints = get_type_hints(function)
         annotations = [
-            parameter.annotation for parameter in signature.parameters.values()
-        ] + [signature.return_annotation]
+            hints.get(parameter.name, parameter.annotation)
+            for parameter in signature.parameters.values()
+        ] + [hints.get("return", signature.return_annotation)]
         if inspect.Signature.empty in annotations:
             violations.append(f"{function.__module__}.{function.__name__}: missing")
         for annotation in annotations:
-            if annotation in (dict, "dict", "Any"):
+            if contains_unbounded(annotation):
                 violations.append(
                     f"{function.__module__}.{function.__name__}: {annotation!r}"
                 )

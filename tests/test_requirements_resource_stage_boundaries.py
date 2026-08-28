@@ -11,11 +11,16 @@ import ast
 import inspect
 import threading
 from pathlib import Path
-from typing import get_type_hints
+from typing import cast, get_type_hints
 
 from app.requirements.contracts.request import AnalyzeRequest
 from app.requirements.contracts.state import AgentState
-from app.requirements.resources import capability_extraction, cloud_inputs, service
+from app.requirements.resources import (
+    capability_extraction,
+    cloud_inputs,
+    input_registry,
+    service,
+)
 from app.requirements.runtime import telemetry
 from app.requirements.schemas import (
     AnalyzeResponse,
@@ -31,6 +36,16 @@ CANONICAL_STAGE_MODULES = (
     cloud_inputs,
     service,
 )
+
+
+def test_decision_questions_use_the_current_depkb_condition_contract() -> None:
+    """DepKB decision은 존재하지 않는 legacy detail 대신 current condition을 사용한다."""
+
+    questions = input_registry.asks_for("gcp", ("vm",))
+    decision = next(item for item in questions if item.id.startswith("decision.gcp."))
+
+    assert decision.question.startswith("How should subnet be selected for nic?")
+    assert "custom에선 필수" in decision.question
 
 
 def test_capability_public_seam_preserves_sample_call_count_and_output_shape() -> None:
@@ -96,12 +111,18 @@ def test_resource_proposal_is_called_once_then_cached_projection_calls_zero(
             understanding="AWS Seoul, up to 100 USD per month.",
         )
 
-    state = {"classified": [], "resource_constraints_text": constraints}
+    state = cast(
+        AgentState,
+        {"classified": [], "resource_constraints_text": constraints},
+    )
     intermediate = service.extract_resource_constraints(state, proposal_call=propose)
 
     assert len(calls) == 1
     assert constraints in calls[0]
-    assert intermediate["resource_constraint_extraction"]["status"] == "completed"
+    extraction = cast(
+        dict[str, object], intermediate["resource_constraint_extraction"]
+    )
+    assert extraction["status"] == "completed"
 
     def unexpected(_briefing: str) -> CloudConstraintExtraction:
         raise AssertionError("cached extraction must not call the proposal adapter")
@@ -119,7 +140,7 @@ def test_resource_proposal_is_called_once_then_cached_projection_calls_zero(
         "region": "ap-northeast-2",
         "monthlyBudgetUSD": 100.0,
     }
-    intake = result["resource_intake"]
+    intake = cast(dict[str, object], result["resource_intake"])
     assert set(intake) == {
         "draft",
         "valid",
@@ -145,7 +166,10 @@ def test_disabled_resource_extraction_has_zero_proposal_calls(monkeypatch) -> No
         raise AssertionError("disabled extraction must not call the proposal adapter")
 
     result = service.extract_resource_constraints(
-        {"classified": [], "resource_constraints_text": "Deploy to AWS."},
+        cast(
+            AgentState,
+            {"classified": [], "resource_constraints_text": "Deploy to AWS."},
+        ),
         proposal_call=unexpected,
     )
 

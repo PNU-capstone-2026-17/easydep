@@ -20,9 +20,8 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
-from app.orchestration.run_identity import identity_manifest, make_run_id
 from app.requirements import stage_registry as stages
 
 # ⚠ 아래 단계 함수들은 **이 모듈의 이름으로 존재해야 한다.** `_run_stages`가
@@ -56,6 +55,27 @@ from app.requirements.traceability import build_requirement_trace
 _ROOT = Path(__file__).parent.parent.parent.parent
 INPUTS_DIR = _ROOT / "inputs"
 ARTIFACTS_DIR = _ROOT / "artifacts" / "runs"
+
+
+class RunIdFactory(Protocol):
+    """상위 composition root가 주입하는 run ID 생성 계약이다."""
+
+    def __call__(self, system: str, variant: str, case_id: str) -> str: ...
+
+
+class IdentityManifestFactory(Protocol):
+    """상위 composition root가 주입하는 manifest identity 생성 계약이다."""
+
+    def __call__(
+        self,
+        run_id: str,
+        *,
+        system: str,
+        variant: str,
+        case_id: str,
+        purpose: str,
+        completed_stages: list[str],
+    ) -> dict[str, object]: ...
 
 
 def load_input(name_or_path: str) -> dict[str, object]:
@@ -232,13 +252,21 @@ def persist_run(
     run_metrics: dict[str, object] | None = None,
     variant: str = "full",
     purpose: str = "normal",
+    *,
+    run_id_factory: RunIdFactory,
+    identity_manifest_factory: IdentityManifestFactory,
 ) -> Path:
-    """실행 결과를 artifacts/runs/<run-id>에 저장하고 그 디렉토리를 반환한다."""
+    """실행 결과를 artifacts/runs/<run-id>에 저장하고 그 디렉토리를 반환한다.
+
+    실행 ID 정책은 상위 composition root가 주입한다. 요구사항 단계가 전역
+    ``app.orchestration``을 역참조하지 않으면서도 모든 진입점이 같은 ID·manifest
+    규칙을 쓰게 하는 의존성 역전 경계다.
+    """
     artifact_root = Path(artifact_root)
     sha = _sha256(input_obj)
     created = _now_utc()
     case_id = dataset_name or str(input_obj.get("name") or "adhoc")
-    run_id = make_run_id("easydep", variant, case_id)
+    run_id = run_id_factory("easydep", variant, case_id)
     run_dir = artifact_root / run_id
     (run_dir / "use_cases").mkdir(parents=True, exist_ok=True)
 
@@ -278,7 +306,7 @@ def persist_run(
         if spec is not None:
             _dump(uc_dir / "spec.json", spec)
 
-    manifest = identity_manifest(
+    manifest = identity_manifest_factory(
         run_id,
         system="easydep",
         variant=variant,

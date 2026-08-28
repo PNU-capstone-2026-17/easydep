@@ -268,11 +268,15 @@ HANDOFF: dict[str, str] = {
 
 @lru_cache(maxsize=1)
 def by_id() -> dict[str, Ask]:
+    """질문 ID로 cloud input registry를 조회하는 불변 index를 만든다."""
+
     return {a.id: a for a in ASKS}
 
 
 @lru_cache(maxsize=1)
 def by_field() -> dict[str, Ask]:
+    """resource spec field로 registry 질문을 조회하는 불변 index를 만든다."""
+
     return {a.spec_field: a for a in ASKS if a.spec_field}
 
 
@@ -318,13 +322,17 @@ def _decision_asks(csp: str, workloads: tuple[str, ...]) -> tuple[Ask, ...]:
             continue  # 이 CSP에서 미측정인 앵커 — 계획 쪽이 따로 말한다
         for decision in plan.decisions:
             subject, _, obj = decision.about.partition("→")
+            detail = str(decision.condition.get("description") or "").strip()
             ask = Ask(
                 id=f"decision.{csp}.{subject}.{obj.replace('|', '-or-')}",
                 spec_field="",
                 tier=DECISION,
                 csp=csp,
                 needs_resource=subject,
-                question=f"How should {obj} be selected for {subject}? {decision.detail}",
+                question=(
+                    f"How should {obj} be selected for {subject}?"
+                    f"{' ' + detail if detail else ''}"
+                ),
                 opens=f"The {subject} creation flow requires this control-plane decision "
                 f"({decision.kind}).",
                 basis=(Basis(CLAIM, f"{csp}/{decision.about}/existence"),),

@@ -61,3 +61,20 @@ report에 계산된 compact input reduction은 compact cell 계측을 프로세�
 못했으므로 채택 근거가 아니다. token/wall 개선은 각각 음수였고, repair/handoff 비증가,
 전체 machine gate, warm physical call 0, qualitative issue 비증가 조건도 충족하지 못했다.
 따라서 qualitative review를 별도로 확정하지 않고 `pending`으로 남긴다.
+
+## 별도 cache transport 실측
+
+후보 실험을 재개하지 않고 현재 baseline 설정에서 cold 1회와 같은 프로세스의 sealed-cache
+warm 1회를 추가로 실행했다. report는
+`artifacts/runs/easydep-class-cache-verification-20260828/live.json`이며 SHA-256은
+`751bfccf2fba448b7039c294861aa8c29452d90a0bd3e89a89faa4f009264d5b`다.
+
+- cold: physical LLM 21회, accepted-unit cache miss를 채운 뒤 class model 생성
+- warm: physical LLM 0회, cache hit 9회, cold와 외부 class/sequence artifact byte-equivalent
+- 실행 조건: UTF-8 mode, 독립 run ID, SDK retry budget 0
+
+warm의 provider 0회는 실측으로 확인됐지만 cold와 warm 모두 E1 product machine gate에서
+누락된 collaboration projection 때문에 실패했다. 오프라인 재판정은 이 둘을 분리해
+`warmPhysicalCallsZero=true`, `coldMachineGatesPassed=false`,
+`warmMachineGatesPassed=false`, 전체 `status=failed`로 기록한다. 따라서 이 실측도
+최적화 설정 채택 근거로 사용하지 않으며 provider 호출을 재시도하지 않는다.

@@ -508,8 +508,8 @@ def _failed_warm_cache_miss(
     *,
     settings_values: Mapping[str, Any],
     run_id_factory: Callable[[str], str],
+    key: str = "candidate-warm-verification",
 ) -> dict[str, Any]:
-    key = "candidate-warm-verification"
     return {
         "runId": run_id_factory(key),
         "cell": key,
@@ -528,6 +528,93 @@ def _failed_warm_cache_miss(
         "artifacts": {},
         "status": "failed",
     }
+
+
+def execute_live_cache_verification(
+    *,
+    generator: Callable[..., BCEModel] = generate_class_model,
+    run_id_factory: Callable[[str], str] = _default_run_id,
+    cell_runner: Callable[..., dict[str, Any]] = _run_cell,
+) -> dict[str, Any]:
+    """현재 baseline 설정으로 cold 1회 뒤 sealed-cache warm 0-call을 검증한다.
+
+    후보 채택 실험과 분리된 cache transport 검증이다. cold 결과가 product gate에서
+    거절되더라도 accepted typed unit으로 class model 생성이 끝났다면 같은 결과를 warm에서
+    재검증할 수 있다. sealed cache miss는 provider 계산 전에 즉시 실패한다.
+    """
+
+    settings_values = _baseline_settings()
+    cache = ProcessLocalAcceptedUnitCache(capacity=256)
+    cold = cell_runner(
+        "cache-verification-cold",
+        "cache-cold",
+        settings_values,
+        cache=cache,
+        generator=generator,
+        run_id_factory=run_id_factory,
+    )
+    cache.seal()
+    try:
+        warm = cell_runner(
+            "cache-verification-warm",
+            "cache-warm",
+            settings_values,
+            cache=cache,
+            generator=generator,
+            run_id_factory=run_id_factory,
+        )
+    except AcceptedUnitCacheMiss as error:
+        warm = _failed_warm_cache_miss(
+            error,
+            settings_values=settings_values,
+            run_id_factory=run_id_factory,
+            key="cache-verification-warm",
+        )
+
+    return _cache_verification_report(cold, warm)
+
+
+def _cache_verification_report(
+    cold: Mapping[str, Any], warm: Mapping[str, Any]
+) -> dict[str, Any]:
+    """cold/warm 실행 기록을 cache와 product gate가 모두 포함된 판정으로 바꾼다."""
+
+    checks = {
+        "coldGeneratedAcceptedModel": bool(cold.get("artifacts", {}).get("classModel")),
+        "coldUsedProvider": int(cold.get("metrics", {}).get("physicalLlmCalls") or 0) > 0,
+        "coldMachineGatesPassed": cold.get("status") == "passed",
+        "warmPhysicalCallsZero": (
+            int(warm.get("metrics", {}).get("physicalLlmCalls") or 0) == 0
+        ),
+        "warmReusedAcceptedUnits": (
+            int(warm.get("metrics", {}).get("logicalCacheEvents") or 0) > 0
+        ),
+        "warmMachineGatesPassed": warm.get("status") == "passed",
+        "artifactsByteEquivalent": cold.get("artifacts") == warm.get("artifacts"),
+    }
+    return {
+        "schemaVersion": "easydep-class-design-live-cache-verification/v1",
+        "caseId": CASE_ID,
+        "coldGenerationCount": 1,
+        "retryBudget": 0,
+        "status": "passed" if all(checks.values()) else "failed",
+        "cold": deepcopy(dict(cold)),
+        "warm": deepcopy(dict(warm)),
+        "checks": checks,
+    }
+
+
+def audit_live_cache_verification(report: Mapping[str, Any]) -> dict[str, Any]:
+    """저장된 cache 검증을 provider 재호출 없이 현재 판정 규칙으로 다시 검사한다."""
+
+    if report.get("schemaVersion") != "easydep-class-design-live-cache-verification/v1":
+        raise ValueError("cache verification report schema does not match")
+    if report.get("caseId") != CASE_ID or report.get("retryBudget") != 0:
+        raise ValueError("cache verification report identity does not match")
+    cold, warm = report.get("cold"), report.get("warm")
+    if not isinstance(cold, Mapping) or not isinstance(warm, Mapping):
+        raise TypeError("cache verification report is incomplete")
+    return _cache_verification_report(cold, warm)
 
 
 def _validate_reused_cell(
@@ -779,6 +866,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--review-report", type=Path)
     parser.add_argument("--resume-report", type=Path)
     parser.add_argument("--record-failed-cell", type=Path)
+    parser.add_argument("--cache-verification", action="store_true")
+    parser.add_argument("--review-cache-report", type=Path)
     parser.add_argument("--failure-type")
     parser.add_argument("--failure-message")
     parser.add_argument(
@@ -793,10 +882,16 @@ def main(argv: list[str] | None = None) -> int:
         args.review_report,
         args.resume_report,
         args.record_failed_cell,
+        args.cache_verification,
+        args.review_cache_report,
     ))
     if selected_modes > 1:
         parser.error("review, resume, and failed-baseline modes are mutually exclusive")
-    if args.record_failed_cell:
+    if args.review_cache_report:
+        report = audit_live_cache_verification(_read_json(args.review_cache_report))
+    elif args.cache_verification:
+        report = execute_live_cache_verification()
+    elif args.record_failed_cell:
         if not args.failure_type or not args.failure_message:
             parser.error("failed-cell mode requires --failure-type and --failure-message")
         report = record_failed_inflight(
@@ -818,6 +913,8 @@ def main(argv: list[str] | None = None) -> int:
             progress=lambda partial: _write_json(args.output, partial),
         )
     _write_json(args.output, report)
+    if args.cache_verification or args.review_cache_report:
+        return 0 if report["status"] == "passed" else 1
     return 0 if report["decision"].get("adopted") else 1
 
 

@@ -141,6 +141,8 @@ def why(field: str) -> str:
 
 
 def why_of(field: str) -> str:
+    """registry가 아는 field라면 그 값이 여는 후속 판단을 설명한다."""
+
     ask = input_registry.by_field().get(field)
     return ask.opens if ask else ""
 

@@ -15,6 +15,10 @@ APP_ROOT = REPOSITORY_ROOT / "app"
 CLOUDKB_ROOT = APP_ROOT / "cloudkb"
 DESIGN_SERVICES_ROOT = APP_ROOT / "design" / "services"
 IMPLEMENTATION_ROOT = APP_ROOT / "implementation"
+REQUIREMENTS_BOUNDED_ROOTS = tuple(
+    APP_ROOT / "requirements" / name
+    for name in ("contracts", "runtime", "resources", "modeling", "orchestration")
+)
 
 
 def _python_files(root: Path) -> list[Path]:
@@ -114,3 +118,14 @@ def test_implementation_does_not_import_design_service_internals():
         IMPLEMENTATION_ROOT,
         ("app.design.services", "app.orchestration"),
     )
+
+
+def test_requirements_bounded_contexts_do_not_import_global_orchestration():
+    """요구사항 단계 서비스는 상위 cross-stage 조정 계층을 역참조하지 않는다."""
+
+    offenders = [
+        offender
+        for root in REQUIREMENTS_BOUNDED_ROOTS
+        for offender in _forbidden_imports(root, ("app.orchestration",))
+    ]
+    assert not offenders, "forbidden package imports remain:\n" + "\n".join(offenders)

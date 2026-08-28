@@ -162,6 +162,8 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
+        """current checkpoint와 새 channel version을 원자적 저장 단위로 기록한다."""
+
         skeleton = checkpoint.copy()
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
@@ -214,6 +216,8 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         task_id: str,
         task_path: str = "",
     ) -> None:
+        """LangGraph task의 pending write를 재시도 규칙에 맞춰 저장한다."""
+
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         checkpoint_id = config["configurable"]["checkpoint_id"]
@@ -327,6 +331,8 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         )
 
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        """지정 checkpoint 또는 현재 namespace의 최신 checkpoint를 복원한다."""
+
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         checkpoint_id = get_checkpoint_id(config)
@@ -356,6 +362,8 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         before: RunnableConfig | None = None,
         limit: int | None = None,
     ) -> Iterator[CheckpointTuple]:
+        """조건·상한에 맞는 checkpoint를 최신 순으로 반환한다."""
+
         # 제너레이터로 만들지 않는다. `with session_scope()` 안에서 yield 하면 소비자가
         # 중간에 멈출 때(LangGraph는 흔히 그런다) 세션이 열린 채 남고, 그 커넥션 위에서
         # 다음 put이 "transaction within a transaction"으로 깨진다. 세션 안에서 다 만들고
@@ -390,6 +398,8 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
 
     # -- 정리 ---------------------------------------------------------------
     def delete_thread(self, thread_id: str) -> None:
+        """지정 thread의 current session과 checkpoint 자료만 삭제한다."""
+
         with session_scope() as db:
             for model in (
                 RequirementsCheckpointWrite,
