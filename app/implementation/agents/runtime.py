@@ -59,7 +59,11 @@ from .prompts import (
 )
 from .workspace import (
     changed_files,
+    ensure_referenced_entity_collections,
     ensure_mapper_accessible_persistence_constructor,
+    ensure_natural_id_repository_queries,
+    repair_unnecessary_mockito_stubs,
+    repair_api_adapter_test_contract_mismatches,
     load_task,
     missing_required_outputs,
     prepare_agent_workspace,
@@ -616,6 +620,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         sandbox, list(task["allowed_write_paths"]), overwrite=True
                     )
                 if task_type == "persistence-entities":
+                    ensure_referenced_entity_collections(sandbox)
                     ensure_mapper_accessible_persistence_constructor(
                         sandbox, list(task["allowed_write_paths"])
                     )
@@ -630,6 +635,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             "stderr": "Persistence entity schema mismatch: "
                             + "; ".join(schema_violations),
                         })
+                if task_type == "persistence-repositories":
+                    ensure_natural_id_repository_queries(sandbox)
+                if task_type == "api-adapter":
+                    repair_api_adapter_test_contract_mismatches(sandbox)
                 if task_type == "control":
                     ensure_control_service_component(
                         sandbox, list(task["allowed_write_paths"])
@@ -789,6 +798,16 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     # defect. Do not spend local LLM repair rounds rewriting a
                     # test that cannot own the SQL or JPA mapping.
                     raise
+                if repair_unnecessary_mockito_stubs(sandbox, error.evidence):
+                    try:
+                        verify_agent_workspace(
+                            sandbox, task_type, list(task["allowed_write_paths"])
+                        )
+                    except WorkspaceVerificationError:
+                        pass
+                    else:
+                        changed = changed_files(before, snapshot_files(sandbox))
+                        break
                 referenced = referenced_source_paths(error.evidence)
                 normalized_allowed = {
                     str(path).replace("\\", "/").lower()

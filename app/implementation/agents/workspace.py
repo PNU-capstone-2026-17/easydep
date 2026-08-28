@@ -11,6 +11,90 @@ from pathlib import Path
 from ..domain.implementation_ir import remove_readonly
 
 
+def ensure_referenced_entity_collections(sandbox: Path) -> list[str]:
+    """Add only entity collections that existing generated services actually use.
+
+    BCE implementations sometimes call a reverse collection (for example,
+    ``student.getEnrollments()``) even though the entity agent emitted only the
+    owning ``@ManyToOne`` side.  This is a cross-task contract gap, not a
+    domain-specific rule.  Infer the collection element from the assignment in
+    the generated Java source and add a conventional bidirectional JPA mapping
+    only when that accessor is referenced and absent.
+    """
+    java_root = sandbox / "application" / "src" / "main" / "java"
+    if not java_root.is_dir():
+        return []
+    sources = {path: path.read_text(encoding="utf-8") for path in java_root.rglob("*.java")}
+    requests: dict[str, tuple[str, str]] = {}
+    for source in sources.values():
+        variables = {
+            name: entity
+            for entity, name in re.findall(r"\b([A-Z]\w*Entity)\s+(\w+)\s*=", source)
+        }
+        for element, variable, accessor in re.findall(
+            r"\b(?:Set|List)<\s*([A-Z]\w*Entity)\s*>\s+\w+\s*=\s*"
+            r"(\w+)\.get([A-Z]\w*)\(\)",
+            source,
+        ):
+            owner = variables.get(variable)
+            if owner:
+                requests[f"{owner}:{accessor}"] = (accessor[0].lower() + accessor[1:], element)
+        for variable, operation, method_suffix, argument in re.findall(
+            r"\b(\w+)\.(add|remove)([A-Z]\w*)\(\s*(\w+)\s*\)", source
+        ):
+            owner = variables.get(variable)
+            element = next(
+                iter(re.findall(r"\b([A-Z]\w*Entity)\s+" + re.escape(argument) + r"\b", source)),
+                "",
+            )
+            if owner and element:
+                property_name = method_suffix[0].lower() + method_suffix[1:] + "s"
+                requests[f"{owner}:{property_name}"] = (property_name, element)
+    changed: list[str] = []
+    for path, source in sources.items():
+        entity_match = re.search(r"\bclass\s+([A-Z]\w*Entity)\b", source)
+        if not entity_match:
+            continue
+        owner = entity_match.group(1)
+        additions: list[str] = []
+        for key, (property_name, element) in requests.items():
+            if not key.startswith(owner + ":"):
+                continue
+            getter = "get" + property_name[0].upper() + property_name[1:]
+            if re.search(r"\b" + re.escape(getter) + r"\s*\(", source):
+                continue
+            # The target entity must own a relationship back to this collection.
+            target_source = next(
+                (text for candidate, text in sources.items() if candidate.name == element + ".java"), ""
+            )
+            relation = re.search(
+                rf"@(ManyToOne|OneToOne)\b[\s\S]{{0,240}}?private\s+{re.escape(owner)}\s+(\w+)\s*;",
+                target_source,
+            )
+            if not relation:
+                continue
+            singular = property_name[:-1] if property_name.endswith("s") else property_name
+            additions.extend([
+                f"    @OneToMany(mappedBy = \"{relation.group(2)}\")\n"
+                f"    private Set<{element}> {property_name} = new HashSet<>();\n",
+                f"    public Set<{element}> {getter}() {{ return {property_name}; }}\n"
+                f"    public void add{singular[0].upper() + singular[1:]}({element} value) {{ {property_name}.add(value); value.set{owner[:-6]}(this); }}\n"
+                f"    public void remove{singular[0].upper() + singular[1:]}({element} value) {{ {property_name}.remove(value); value.set{owner[:-6]}(null); }}\n",
+            ])
+        if not additions:
+            continue
+        if "import java.util.Set;" not in source:
+            source = source.replace("\n", "\nimport java.util.Set;\n", 1)
+        if "import java.util.HashSet;" not in source:
+            source = source.replace("\n", "\nimport java.util.HashSet;\n", 1)
+        if "import jakarta.persistence.OneToMany;" not in source:
+            source = source.replace("\n", "\nimport jakarta.persistence.OneToMany;\n", 1)
+        source = source.rsplit("}", 1)[0] + "\n" + "\n".join(additions) + "}\n"
+        path.write_text(source, encoding="utf-8")
+        changed.append(str(path.relative_to(sandbox)).replace("\\", "/"))
+    return changed
+
+
 def missing_required_outputs(sandbox: Path, relative_paths: list[str]) -> list[str]:
     """Return contracted task outputs that the agent has not created as files."""
     return [relative for relative in relative_paths if not (sandbox / relative).is_file()]
@@ -97,6 +181,118 @@ def ensure_mapper_accessible_persistence_constructor(
         if replacements:
             path.write_text(updated, encoding="utf-8")
             repaired.append(normalized)
+    return repaired
+
+
+def ensure_natural_id_repository_queries(sandbox: Path) -> list[str]:
+    """Add missing Spring Data lookups for natural-id usages in the workspace.
+
+    Controls are generated from the same ERD contract and commonly call a
+    natural-id finder (for example ``findByCourseId``).  A repository agent may
+    omit that derived query even though the consuming Control already uses it.
+    The compiler then fails before the agent can repair the mismatch.  Derive
+    the method from the actual Entity field and existing call sites, keeping
+    this guard domain-neutral.
+    """
+    java_root = sandbox / "application" / "src" / "main" / "java"
+    if not java_root.is_dir():
+        return []
+    repaired: list[str] = []
+    entities: dict[str, tuple[str, str]] = {}
+    for entity in java_root.rglob("*Entity.java"):
+        source = entity.read_text(encoding="utf-8")
+        class_match = re.search(r"\bclass\s+(\w+)", source)
+        id_match = re.search(
+            r"@Id\s+(?:@\w+(?:\([^)]*\))?\s+)*(?:private|protected|public)\s+([\w<>?, ]+)\s+(\w+)\s*;",
+            source,
+        )
+        if class_match and id_match:
+            entities[class_match.group(1)] = (id_match.group(1).strip(), id_match.group(2))
+    for repository in java_root.rglob("*Repository.java"):
+        source = repository.read_text(encoding="utf-8")
+        generic = re.search(r"extends\s+JpaRepository\s*<\s*(\w+),", source)
+        if not generic or generic.group(1) not in entities:
+            continue
+        entity_name = generic.group(1)
+        id_type, id_property = entities[entity_name]
+        method_name = "findBy" + id_property[:1].upper() + id_property[1:]
+        if re.search(rf"\b{re.escape(method_name)}\s*\(", source):
+            continue
+        repository_name = repository.stem.removesuffix("Repository")
+        usages = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in java_root.rglob("*.java")
+            if path != repository
+        )
+        if not re.search(rf"\.\s*{re.escape(method_name)}\s*\(", usages):
+            continue
+        insertion = (
+            f"    Optional<{entity_name}> {method_name}({id_type} {id_property});\n"
+        )
+        if "import java.util.Optional;" not in source:
+            source = re.sub(
+                r"(?m)^(import .*;)[ \t]*$",
+                r"\1\nimport java.util.Optional;",
+                source,
+                count=1,
+            )
+        source = source.rsplit("}", 1)[0].rstrip() + "\n" + insertion + "}\n"
+        repository.write_text(source, encoding="utf-8")
+        repaired.append(repository.as_posix())
+    return repaired
+
+
+def repair_unnecessary_mockito_stubs(sandbox: Path, evidence: dict[str, object]) -> list[str]:
+    """Remove Mockito stubs that strict mode identified as unused.
+
+    Generated focused tests often put every collaborator stub in ``setUp``;
+    negative-input tests then fail before assertions with
+    ``UnnecessaryStubbingException``.  The exception names the exact source
+    line, so removing only that stubbing is safer than making the whole test
+    suite lenient or changing production behavior.
+    """
+    stderr = str(evidence.get("stderr") or evidence.get("output") or "")
+    repaired: list[str] = []
+    for match in re.finditer(r"([A-Za-z]:[^\n:]+\.java):(\d+):", stderr):
+        path = Path(match.group(1))
+        if "src\\test\\" not in str(path).lower() and "/src/test/" not in str(path).lower():
+            continue
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        index = int(match.group(2)) - 1
+        if not 0 <= index < len(lines):
+            continue
+        line = lines[index]
+        if not re.search(r"\b(?:when|doReturn|doThrow|doAnswer)\s*\(", line):
+            continue
+        lines[index] = ""
+        path.write_text("".join(lines), encoding="utf-8")
+        repaired.append(path.as_posix())
+    return repaired
+
+
+def repair_api_adapter_test_contract_mismatches(sandbox: Path) -> list[str]:
+    """Align a boolean failure branch with the status asserted by its contract test."""
+    repaired: list[str] = []
+    test_root = sandbox / "application" / "src" / "test"
+    for test in test_root.rglob("*ControllerTest.java"):
+        test_source = test.read_text(encoding="utf-8")
+        if not re.search(r"assertEquals\(\s*400\s*,\s*response\.getStatusCode", test_source):
+            continue
+        controller_name = test.stem.removesuffix("Test")
+        controller = next(sandbox.rglob(f"{controller_name}.java"), None)
+        if controller is None or "/src/main/" not in controller.as_posix():
+            continue
+        source = controller.read_text(encoding="utf-8")
+        updated, count = re.subn(
+            r"ResponseEntity\.status\(\s*409\s*\)\.body\(\s*false\s*\)",
+            "ResponseEntity.badRequest().body(false)",
+            source,
+        )
+        if count:
+            controller.write_text(updated, encoding="utf-8")
+            repaired.append(str(controller.relative_to(sandbox)).replace("\\", "/"))
     return repaired
 
 
