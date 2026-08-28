@@ -17,4 +17,8 @@ def static_verification_node(state: TestingState) -> dict:
         workspace_dir=state.get("manifests_dir", ""),
         subject="deployment file",
         report_key="static_report",
+        version_no=(state.get("artifact_versions") or {}).get(TYPE_DEPLOYMENT_FILE),
+        snapshot_ref=(state.get("artifact_refs") or {}).get(TYPE_DEPLOYMENT_FILE),
+        expected_implementation_job_id=state.get("implementation_job_id"),
+        fixed_snapshot=bool(state.get("fixed_artifacts")),
     )

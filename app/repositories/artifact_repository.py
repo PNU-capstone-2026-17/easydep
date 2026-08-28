@@ -440,24 +440,60 @@ def save_file_snapshot(
         return version.id
 
 
-def load_file_snapshot(app_id: str, artifact_type: str) -> dict[str, Any] | None:
-    """현재 파일 snapshot을 설계 상태와 섞지 않고 별도 구조로 반환한다."""
+def load_file_snapshot(
+    app_id: str,
+    artifact_type: str,
+    version_no: int | None = None,
+    *,
+    version_id: int | None = None,
+) -> dict[str, Any] | None:
+    """파일 snapshot 한 버전을 설계 상태와 섞지 않고 반환한다.
+
+    selector를 생략하면 기존과 같이 현재 버전을 읽는다. ``version_no`` 또는 내부 DB
+    식별자인 ``version_id``를 전달하면 그 버전만 조회한다. Testing job은 시작할 때
+    확인한 번호를 계속 전달하므로, 같은 앱의 새 구현이 나중에 저장되더라도 실행 중인
+    검사가 최신 파일로 바뀌지 않는다.
+    """
+    if version_no is not None and version_id is not None:
+        raise ValueError("Choose either version_no or version_id, not both")
     with session_scope() as session:
         _require_app(session, app_id)
         artifact = _find_artifact(session, app_id, artifact_type)
         if artifact is None or artifact.current_version_id is None:
             return None
-        version = session.get(ArtifactVersion, artifact.current_version_id)
+        if version_id is not None:
+            version = session.get(ArtifactVersion, version_id)
+            if version is not None and version.artifact_id != artifact.id:
+                version = None
+        elif version_no is None:
+            version = session.get(ArtifactVersion, artifact.current_version_id)
+        else:
+            version = session.scalars(
+                select(ArtifactVersion).where(
+                    ArtifactVersion.artifact_id == artifact.id,
+                    ArtifactVersion.version_no == version_no,
+                )
+            ).first()
         if version is None:
             return None
+        files = {
+            item.file_path: {"content": item.content, "sha256": item.sha256}
+            for item in version.files
+        }
+        # 파일 경로와 각 파일의 SHA-256을 정렬된 순서로 합쳐 snapshot 전체 digest를
+        # 만든다. DB row ID나 저장 시각은 넣지 않으므로 같은 파일 tree는 같은 digest다.
+        digest_source = "".join(
+            f"{path}\0{item['sha256']}\n" for path, item in sorted(files.items())
+        )
         return {
             "artifact_type": artifact_type,
+            "version_id": version.id,
             "version_no": version.version_no,
+            "snapshot_digest": hashlib.sha256(
+                digest_source.encode("utf-8")
+            ).hexdigest(),
             "metadata": _safe_json_object(version.content),
-            "files": {
-                item.file_path: {"content": item.content, "sha256": item.sha256}
-                for item in version.files
-            },
+            "files": files,
             "created_at": version.created_at.isoformat(),
         }
 

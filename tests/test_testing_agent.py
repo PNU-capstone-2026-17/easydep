@@ -6,6 +6,7 @@ requirements agent stored. These tests pin both, because a scan that silently
 falls back to a stale directory reports a pass that means nothing.
 """
 
+import hashlib
 import threading
 import time
 from contextlib import contextmanager
@@ -35,7 +36,13 @@ def _snapshot(files: dict[str, str], version_no: int = 3) -> dict:
         "artifact_type": "any",
         "version_no": version_no,
         "metadata": {"implementation_job_id": "job-1"},
-        "files": {path: {"content": text, "sha256": "x"} for path, text in files.items()},
+        "files": {
+            path: {
+                "content": text,
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            }
+            for path, text in files.items()
+        },
         "created_at": "2026-08-16T00:00:00",
     }
 
@@ -409,6 +416,18 @@ def test_exposed_port_is_read_from_the_generated_dockerfile(tmp_path):
     assert exposed_port(tmp_path) == 9090
 
 
+def test_parallel_testing_jobs_use_different_docker_names():
+    """같은 앱의 두 Testing job이 image/container 이름을 공유하면 안 된다."""
+    from app.testing.runtime.app_container import runtime_identity
+
+    first = runtime_identity("app-1", "testing-job-1")
+    second = runtime_identity("app-1", "testing-job-2")
+
+    assert first != second
+    assert first == runtime_identity("app-1", "testing-job-1")
+    assert all("app-1" not in value for value in first)
+
+
 # ---------------------------------------------------------------------------
 # The shared verification pass
 # ---------------------------------------------------------------------------
@@ -479,9 +498,11 @@ def test_verification_still_scans_when_the_app_cannot_be_launched(stored_artifac
     assert result["applicationLaunchError"] == "docker build failed"
     assert result["reports"]["static"]["status"] == "FAILED"
     assert result["reports"]["dynamicFunctional"]["status"] == "SKIPPED"
-    # A skipped stage proved nothing, but it did not disprove anything either.
-    assert result["passed"] is True
+    # 실행할 애플리케이션이 없으면 기능을 검증하지 못했으므로 성공일 수 없다.
+    assert result["passed"] is False
+    assert "동적 테스트" in result["blockingReason"]
     assert [item["code"] for item in result["diagnostics"]] == [
+        "APPLICATION_LAUNCH_FAILED",
         "DEPLOYMENT_MISCONFIGURATION",
         "IAC_MISCONFIGURATION",
     ]

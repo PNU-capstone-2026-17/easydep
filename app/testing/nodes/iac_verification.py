@@ -16,4 +16,8 @@ def iac_verification_node(state: TestingState) -> dict:
         workspace_dir=state.get("iac_dir", ""),
         subject="IaC",
         report_key="iac_report",
+        version_no=(state.get("artifact_versions") or {}).get(TYPE_IAC_CODE),
+        snapshot_ref=(state.get("artifact_refs") or {}).get(TYPE_IAC_CODE),
+        expected_implementation_job_id=state.get("implementation_job_id"),
+        fixed_snapshot=bool(state.get("fixed_artifacts")),
     )

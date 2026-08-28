@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import threading
 import uuid
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -21,6 +20,13 @@ from app.implementation.application.jobs import worker as implementation_worker
 from app.metrics import langsmith as langsmith_metrics
 from app.testing.runtime.adapter import TestingAdapter
 from app.testing.runtime.verification import run_verification_graph
+from app.testing.schemas.testing_input import TestingInput
+from app.testing.utils.artifact_source import (
+    ArtifactSnapshotMismatch,
+    ArtifactSourceUnavailable,
+    capture_testing_input,
+    materialized_testing_application,
+)
 from app.validation import RepairAttempt, RepairLedger, repair_makes_progress, stable_digest
 
 router = APIRouter(prefix="/api/testing", tags=["testing"])
@@ -108,35 +114,45 @@ def _repair_state(ledger: RepairLedger, *, passed: bool) -> dict[str, Any]:
     }
 
 
-def _run_test(job_id: str, app_id: str, run_root: Path) -> None:
-    """백그라운드 thread에서 테스트와 실행 검증을 수행하고 결과를 registry에 기록한다."""
+def _run_test(job_id: str, testing_input: TestingInput) -> None:
+    """고정된 구현 snapshot으로 모든 검사를 실행하고 결과를 registry에 기록한다."""
     _update(job_id, status="RUNNING")
     job = _job(job_id)
     repair_history = job.get("repair_history") or {}
     previous_findings = tuple(job.get("previous_findings") or ())
     ledger = RepairLedger.model_validate(repair_history or {})
     try:
-        # Web testing API는 이전 orchestration graph를 거치지 않고 자체 runner를 사용한다.
-        # 검증 범위는 유지한다. 먼저 unit test를 실행하고, 이어서 정적 검사와 저장된
-        # 산출물로 실제 인스턴스를 띄우는 동적 검증을 수행한다.
-        with langsmith_metrics.trace_metadata({"app_id": app_id}):
-            report = TestingAdapter().run(implementation_result={"run_root": str(run_root)})
-            unit_passed = bool(report.get("passed"))
-            report["unitPassed"] = unit_passed
+        # unit test까지 DB에 고정한 snapshot을 사용한다. 원래 run_root는 provenance로만
+        # 남기고, 실제 검사는 새 임시 폴더에 같은 파일 묶음을 한 번 복원해 실행한다.
+        with materialized_testing_application(testing_input) as run_root:
+            with langsmith_metrics.trace_metadata(
+                {
+                    "app_id": testing_input.app_id,
+                    "implementation_job_id": testing_input.implementation_job_id,
+                    "artifact_versions": testing_input.version_map(),
+                }
+            ):
+                report = TestingAdapter().run(
+                    implementation_result={"run_root": str(run_root)}
+                )
+                unit_passed = bool(report.get("passed"))
+                report["unitPassed"] = unit_passed
 
-            verification = run_verification_graph(
-                run_id=job_id,
-                app_id=app_id,
-                manifests_dir=str(run_root / "application" / "k8s"),
-                iac_dir=str(run_root / "application" / "terraform"),
-                repair_history=ledger.model_dump(mode="json"),
-            )
-            report["verification"] = verification
-            report["passed"] = unit_passed and verification["passed"]
-            report["diagnostics"] = [
-                *(report.get("diagnostics") or []),
-                *verification["diagnostics"],
-            ]
+                verification = run_verification_graph(
+                    run_id=job_id,
+                    app_id=testing_input.app_id,
+                    manifests_dir=str(run_root / "application" / "k8s"),
+                    iac_dir=str(run_root / "application" / "terraform"),
+                    repair_history=ledger.model_dump(mode="json"),
+                    testing_input=testing_input,
+                )
+                report["verification"] = verification
+                report["passed"] = unit_passed and verification["passed"]
+                report["diagnostics"] = [
+                    *(report.get("diagnostics") or []),
+                    *verification["diagnostics"],
+                ]
+                report["testingInput"] = testing_input.model_dump(mode="json")
         findings = _finding_keys(report)
         dynamic = (verification.get("reports") or {}).get("dynamicFunctional") or {}
         candidate_digest = str(dynamic.get("candidateDigest") or stable_digest(report))
@@ -248,9 +264,21 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
     run_root_value = implementation.get("run_root")
     if not run_root_value:
         raise HTTPException(status_code=409, detail="Implementation workspace is unavailable.")
-    run_root = Path(str(run_root_value))
-    if not run_root.is_dir():
-        raise HTTPException(status_code=409, detail="Implementation workspace is unavailable.")
+    # 실제 검사는 DB snapshot을 임시 폴더에 복원해 실행한다. 따라서 서버 재시작 뒤 원래
+    # workspace가 정리되었더라도 구현 작업에 snapshot ID가 남아 있으면 테스트할 수 있다.
+    try:
+        testing_input = capture_testing_input(
+            app_id,
+            request.implementation_job_id,
+            str(run_root_value),
+            artifact_version_ids=implementation.get("artifact_version_ids"),
+            completed_at=implementation.get("completed_at"),
+        )
+    except (ArtifactSourceUnavailable, ArtifactSnapshotMismatch, ValueError) as error:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Implementation artifacts are unavailable: {error}",
+        ) from error
 
     repair_history: dict[str, Any] | None = None
     previous_findings: tuple[str, ...] = ()
@@ -263,6 +291,14 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
             raise HTTPException(status_code=409, detail="Only a completed failing testing job can be repaired.")
         repair_history = previous.get("repair_history") or {}
         previous_findings = _finding_keys(previous_result)
+        previous_input = previous.get("testing_input")
+        if previous_input is not None and TestingInput.model_validate(
+            previous_input
+        ) != testing_input:
+            raise HTTPException(
+                status_code=409,
+                detail="A testing repair must use the same implementation artifacts.",
+            )
 
     # registry에 QUEUED 상태를 먼저 넣은 뒤 thread를 시작한다. 반대로 하면 빠른 thread가
     # 아직 등록되지 않은 job_id를 갱신하려다 실패할 수 있다.
@@ -277,11 +313,12 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
         "repair_of_job_id": request.repair_testing_job_id,
         "repair_history": repair_history or RepairLedger().model_dump(mode="json"),
         "previous_findings": list(previous_findings),
+        "testing_input": testing_input.model_dump(mode="json"),
     }
     with _testing_jobs_lock:
         _testing_jobs[job_id] = record
     threading.Thread(
-        target=_run_test, args=(job_id, app_id, run_root), daemon=True
+        target=_run_test, args=(job_id, testing_input), daemon=True
     ).start()
     return record
 

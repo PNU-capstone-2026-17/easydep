@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import threading
 import time
+from contextlib import contextmanager
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import app.testing.api as testing_api
+from app.db.models import TYPE_DEPLOYMENT_FILE, TYPE_SOURCE_CODE
+from app.testing.schemas.testing_input import ArtifactSnapshotRef
+from app.testing.schemas.testing_input import TestingInput as FixedTestingInput
 from app.validation import RepairAttempt, RepairLedger
 
 
@@ -14,6 +18,45 @@ def _application() -> TestClient:
     app = FastAPI()
     app.include_router(testing_api.router)
     return TestClient(app)
+
+
+def _testing_input(run_root, *, implementation_job_id: str = "implementation-1"):
+    """DB를 사용하지 않는 API 테스트에 고정 snapshot 입력을 만든다."""
+    artifacts = {
+        TYPE_SOURCE_CODE: ArtifactSnapshotRef(
+            artifact_type=TYPE_SOURCE_CODE,
+            version_id=11,
+            version_no=1,
+            digest="1" * 64,
+            created_at="2026-08-29T00:00:00+00:00",
+            file_count=2,
+        ),
+        TYPE_DEPLOYMENT_FILE: ArtifactSnapshotRef(
+            artifact_type=TYPE_DEPLOYMENT_FILE,
+            version_id=12,
+            version_no=1,
+            digest="2" * 64,
+            created_at="2026-08-29T00:00:00+00:00",
+            file_count=1,
+        ),
+    }
+    return FixedTestingInput(
+        app_id="app-1",
+        implementation_job_id=implementation_job_id,
+        run_root=run_root,
+        implementation_completed_at="2026-08-29T00:00:00+00:00",
+        artifacts=artifacts,
+    )
+
+
+def _stub_materialized_application(monkeypatch, run_root) -> None:
+    """이미 준비한 임시 경로를 snapshot 복원 결과처럼 사용한다."""
+
+    @contextmanager
+    def materialized(_testing_input):
+        yield run_root
+
+    monkeypatch.setattr(testing_api, "materialized_testing_application", materialized)
 
 
 def test_testing_api_requires_completed_implementation(monkeypatch, tmp_path):
@@ -38,8 +81,8 @@ def test_testing_api_requires_completed_implementation(monkeypatch, tmp_path):
 
 
 def test_testing_api_runs_verified_adapter_in_background(monkeypatch, tmp_path):
-    run_root = tmp_path / "run"
-    (run_root / "application").mkdir(parents=True)
+    """원래 workspace가 없어도 저장 snapshot으로 새 Testing job을 시작한다."""
+    run_root = tmp_path / "removed-run"
     testing_api._testing_jobs.clear()
     monkeypatch.setattr(
         testing_api.implementation_worker,
@@ -51,12 +94,17 @@ def test_testing_api_runs_verified_adapter_in_background(monkeypatch, tmp_path):
             "run_root": str(run_root),
         },
     )
+    captured_input = _testing_input(run_root)
+    monkeypatch.setattr(
+        testing_api,
+        "capture_testing_input",
+        lambda *_args, **_kwargs: captured_input,
+    )
 
     done = threading.Event()
 
-    def complete(job_id, received_app_id, received_root):
-        assert received_app_id == "app-1"
-        assert received_root == run_root
+    def complete(job_id, received_input):
+        assert received_input == captured_input
         testing_api._update(
             job_id,
             status="COMPLETED",
@@ -116,6 +164,14 @@ def test_testing_job_reports_static_and_dynamic_verification(monkeypatch, tmp_pa
             "run_root": str(run_root),
         },
     )
+    captured_input = _testing_input(run_root)
+    monkeypatch.setattr(
+        testing_api,
+        "capture_testing_input",
+        lambda *_args, **_kwargs: captured_input,
+    )
+    _stub_materialized_application(monkeypatch, run_root)
+
     class StubAdapter:
         def run(self, **_kwargs):
             return {"status": "completed", "passed": True, "unitTests": {}}
@@ -184,6 +240,7 @@ def test_testing_repair_carries_history_and_records_a_clean_candidate(monkeypatc
             return {"passed": True, "unitTests": {}}
 
     monkeypatch.setattr(testing_api, "TestingAdapter", StubAdapter)
+    _stub_materialized_application(monkeypatch, run_root)
     captured = {}
 
     def verification(**kwargs):
@@ -197,7 +254,7 @@ def test_testing_repair_carries_history_and_records_a_clean_candidate(monkeypatc
 
     monkeypatch.setattr(testing_api, "run_verification_graph", verification)
 
-    testing_api._run_test("repair-1", "app-1", run_root)
+    testing_api._run_test("repair-1", _testing_input(run_root))
 
     result = testing_api._testing_jobs["repair-1"]["result"]
     assert result["passed"] is True
@@ -232,6 +289,7 @@ def test_testing_repair_stalls_on_a_repeated_candidate(monkeypatch, tmp_path):
             return {"passed": True, "unitTests": {}}
 
     monkeypatch.setattr(testing_api, "TestingAdapter", StubAdapter)
+    _stub_materialized_application(monkeypatch, run_root)
     monkeypatch.setattr(
         testing_api,
         "run_verification_graph",
@@ -245,7 +303,7 @@ def test_testing_repair_stalls_on_a_repeated_candidate(monkeypatch, tmp_path):
         },
     )
 
-    testing_api._run_test("repair-1", "app-1", run_root)
+    testing_api._run_test("repair-1", _testing_input(run_root))
 
     state = testing_api._testing_jobs["repair-1"]["result"]["repair_state"]
     assert state["status"] == "STALLED"

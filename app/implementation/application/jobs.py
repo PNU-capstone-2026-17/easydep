@@ -494,11 +494,12 @@ class ImplementationWorker:
         return self.public_record(self._with_live_generation_progress(self._read(job_id)))
 
     def get_testing_input(self, job_id: str) -> dict[str, Any]:
-        """테스트 adapter가 사용하는 최소한의 내부 실행 정보를 반환한다.
+        """Testing API가 버전이 고정된 입력을 만들 때 필요한 정보를 반환한다.
 
         일반 ``get`` 응답은 브라우저에 전달되므로 ``run_root``를 의도적으로 제거한다.
-        테스트 API는 같은 프로세스 안에서 실행되는 신뢰된 호출자이므로, 공개 응답을 거치지
-        않고 필요한 workspace 경로만 제한적으로 받는다.
+        Testing API는 같은 프로세스 안에서 실행되는 신뢰된 호출자이므로 공개 응답을 거치지
+        않고 workspace 경로와 저장된 snapshot의 DB 식별자를 받는다. 이 식별자를 이용하면
+        이후에 같은 앱의 새 구현이 저장되어도 원래 구현의 파일 버전을 다시 찾을 수 있다.
         """
         record = self._read(job_id)
         return {
@@ -506,6 +507,12 @@ class ImplementationWorker:
             "app_id": record["app_id"],
             "status": record["status"],
             "run_root": record.get("run_root"),
+            "artifact_version_ids": dict(
+                record.get("artifact_version_ids")
+                or record.get("artifact_versions")
+                or {}
+            ),
+            "completed_at": record.get("updated_at"),
         }
 
     def cancel(self, job_id: str) -> dict[str, Any]:
@@ -728,11 +735,18 @@ class ImplementationWorker:
             "base_versions": record.get("base_versions", {}),
             "feedback": record.get("feedback"),
         }
-        versions = {}
+        version_ids = {}
         for artifact_type, files in groups.items():
             if files:
-                versions[artifact_type] = artifact_repository.save_file_snapshot(record["app_id"], artifact_type, files, metadata=metadata)
-        record["artifact_versions"] = versions
+                version_ids[artifact_type] = artifact_repository.save_file_snapshot(
+                    record["app_id"], artifact_type, files, metadata=metadata
+                )
+        # ``save_file_snapshot``은 DB의 ArtifactVersion 식별자를 반환한다. Testing API는
+        # 이 값으로 정확한 버전을 다시 읽은 뒤 외부에 표시할 version_no와 digest를
+        # 별도의 typed 입력으로 만든다. 이름이 모호했던 artifact_versions도 새 작업에는
+        # 같은 값을 함께 남겨 기존 내부 조회 코드가 갑자기 깨지지 않게 한다.
+        record["artifact_version_ids"] = version_ids
+        record["artifact_versions"] = version_ids
         record["updated_at"] = _now()
         self._write(record)
 

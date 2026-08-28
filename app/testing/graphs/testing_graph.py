@@ -6,6 +6,7 @@ from app.testing.nodes.dynamic_functional import dynamic_functional_node
 from app.testing.nodes.iac_verification import iac_verification_node
 from app.testing.nodes.placeholders import dynamic_nfr_node
 from app.testing.nodes.static_verification import static_verification_node
+from app.testing.schemas.testing_input import TestingInput
 from app.testing.schemas.testing_state import TestingState
 
 
@@ -67,6 +68,9 @@ def initial_state(
     manifests_dir: str = "",
     iac_dir: str = "",
     repair_history: dict | None = None,
+    testing_input: TestingInput | None = None,
+    artifact_versions: dict[str, int] | None = None,
+    implementation_job_id: str | None = None,
 ) -> dict:
     """A fully populated input for :func:`create_testing_graph`.
 
@@ -75,9 +79,30 @@ def initial_state(
     drift apart, and every database lookup in the graph is keyed on it.  Callers
     build their input here so that cannot happen quietly.
     """
+    if testing_input is not None and testing_input.app_id != app_id:
+        raise ValueError(
+            "testing_input의 app_id가 graph 입력과 다릅니다: "
+            f"graph={app_id}, testing_input={testing_input.app_id}"
+        )
+    fixed_versions = (
+        testing_input.version_map()
+        if testing_input is not None
+        else dict(artifact_versions or {})
+    )
+    references = dict(testing_input.artifacts) if testing_input is not None else {}
+    expected_job = (
+        testing_input.implementation_job_id
+        if testing_input is not None
+        else implementation_job_id
+    )
     return {
         "run_id": run_id,
         "app_id": app_id,
+        "implementation_job_id": expected_job,
+        "artifact_versions": fixed_versions,
+        "artifact_refs": references,
+        # 빈 dict를 명시한 경우에도 "고정했지만 선택 산출물이 없음"이라는 뜻을 보존한다.
+        "fixed_artifacts": testing_input is not None or artifact_versions is not None,
         "manifests_dir": manifests_dir,
         "iac_dir": iac_dir,
         "target_url": target_url,
