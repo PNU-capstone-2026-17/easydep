@@ -89,6 +89,27 @@ PUBLIC_CONTRACTS = {
         "generate_workload_graph",
         "revise_workload_graph",
     ),
+    ROOT / "app/design/services/deployment_diagram/planning_facts.py": (
+        "extract_planning_facts",
+        "planning_context",
+        "planning_inputs_stale",
+    ),
+    ROOT / "app/design/services/deployment_diagram/normalization.py": (
+        "validate_workload_graph",
+        "normalize_workload_graph",
+    ),
+    ROOT / "app/design/services/deployment_diagram/placement.py": (
+        "build_deployment_plan",
+        "validate_deployment_plan",
+    ),
+    ROOT / "app/design/services/deployment_diagram/runtime_binding.py": (
+        "bind_runtime_contract",
+    ),
+    ROOT / "app/design/services/deployment_diagram/digest.py": (
+        "workload_graph_structure_digest",
+        "deployment_plan_structure_digest",
+        "resource_plan_structure_digest",
+    ),
 }
 
 

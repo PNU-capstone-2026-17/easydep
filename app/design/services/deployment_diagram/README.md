@@ -111,6 +111,33 @@ model의 JSON dump가 같으면 다음 결과도 같다.
 - ResourcePlan ID, sourceRef, digest와 배열 순서
 - implementation이 ResourcePlan에서 렌더한 OpenTofu 파일 이름과 내용
 
+planner 내부 책임은 다음 공개 module로 나뉜다.
+
+| module | 입력 | 출력과 소유 결정 |
+|---|---|---|
+| `planning_facts.py` | 상류 artifact와 version | fact·provenance·input digest, stale 비교 |
+| `normalization.py` | WorkloadGraph candidate와 planning fact | 정규화 graph, issue와 승인 constraint |
+| `placement.py` | normalized graph와 planning context | compute placement, storage/network/runtime binding |
+| `runtime_binding.py` | graph·DeploymentPlan·구현 관측값 | 비구조 값 binding 또는 재생성 issue |
+| `digest.py` | graph·DeploymentPlan·ResourcePlan | 각 structure digest |
+| `planner.py` | 기존 공개 import | 위 함수 재노출과 provider ResourcePlan 연결 |
+
+`planner.py`의 기존 공개 import는 compatibility facade로 유지한다. facade와 소유 module은 같은
+함수 객체를 노출하며, `bundle.py`의 입력·출력 shape와 호출 순서는 바뀌지 않는다. fact,
+constraint, issue, derivation, compute, placement, network, runtime binding, ResourcePlan node와
+reference 배열은 입력 순서와 기존 정책 순서를 그대로 유지한다. 세 `structureDigest`는
+issue·관측값처럼 구조를 바꾸지 않는 필드를 제외하는 기존 규칙을 사용한다.
+
+### 분리 전 baseline provenance
+
+[planner baseline fixture](../../../../tests/fixtures/deployment_planner_baseline.json)는 분리 후
+구현에서 만든 기대값이 아니다. 부모 기준점
+`190f78fc43cc804d3a4b28d428a53ade5b1ec3f4`의 기존 `planner.py`와 `bundle.py` blob을 체크아웃
+없이 직접 실행해 캡처했다. 고정 입력의 canonical SHA-256은
+`65e464fe581f7d4079c6f05dcf89b8e5fe3d5ab74f727ba9271c4f5d7bb86e37`이다. fixture는 planning
+facts, normalized graph, DeploymentPlan, runtime binding, ResourcePlan, invalid graph와 bundle의
+전체 canonical hash뿐 아니라 배열 순서와 모든 structure digest를 함께 보존한다.
+
 `extractor.extract_deployment_model`과 `reviser.revise_deployment_model`은 이전 내부 호출자를 위한
 dict compatibility facade다. facade는 canonical typed 서비스에 위임하고 자체 prompt나 repair
 규칙을 소유하지 않는다.
@@ -129,7 +156,10 @@ dict compatibility facade다. facade는 canonical typed 서비스에 위임하�
   않는다.
 - deployment service는 requirements 내부 state나 implementation service를 import하지 않는다.
 - typed generation/revision은 planner, provider template, IaC renderer를 호출하지 않는다.
-- planner와 renderer는 prompt 또는 LLM service를 역참조하지 않는다.
+- planning fact 이후 module은 structured adapter, prompt, LLM service를 import하거나 호출하지
+  않는다.
+- planner와 renderer는 graph state, repository, requirements 내부 state, implementation service를
+  역참조하지 않는다.
 - 테스트는 prompt literal, private helper, 내부 문자열 조립 방식에 결합하지 않는다.
 
 ## 실패 조건
