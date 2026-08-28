@@ -12,7 +12,6 @@ import threading
 from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints
 
-from app.requirements.agent import supervisor
 from app.requirements.contracts.state import AgentState
 from app.requirements.knowledge import rules
 from app.requirements.modeling import (
@@ -23,6 +22,7 @@ from app.requirements.modeling import (
     use_cases,
     validation,
 )
+from app.requirements.orchestration import supervisor
 from app.requirements.runtime import telemetry
 from app.requirements.schemas import (
     Actor,

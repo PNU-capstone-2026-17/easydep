@@ -8,9 +8,9 @@
 """
 from __future__ import annotations
 
-from app.requirements.agent import supervisor
-from app.requirements.agent.graph import build_graph
 from app.requirements.knowledge import rules
+from app.requirements.orchestration import supervisor
+from app.requirements.orchestration.graph import build_graph
 
 
 def _issue(rule_id: str, text: str = "fix it") -> str:
@@ -33,7 +33,7 @@ def _state(**overrides) -> dict:
 # ---------------------------------------------------------------------------
 def test_every_defect_rule_names_a_stage_we_can_go_back_to():
     """`owner`가 되돌릴 수 없는 단계를 가리키면 그 결함은 영원히 안 고쳐진다."""
-    from app.requirements.agent import stages
+    from app.requirements import stage_registry as stages
 
     editable = set(stages.editable_keys())
     for rule in rules.RULES:
@@ -261,7 +261,7 @@ def test_handoff_blocks_an_incomplete_relationship_review():
     ]
 
 
-def test_handoff_reads_embedded_reviews_when_summary_reports_are_absent():
+def test_handoff_does_not_reconstruct_a_removed_legacy_spec_summary():
     state = _state(
         use_case_specs=[
             {
@@ -279,7 +279,7 @@ def test_handoff_reads_embedded_reviews_when_summary_reports_are_absent():
 
     issues = supervisor.blocking_issues(state)
 
-    assert "specification report has 1 unresolved issue(s)" in issues
+    assert "specification report has 1 unresolved issue(s)" not in issues
     assert "relationship report: relationship defect" in issues
     assert "relationship review was not validated: failed" in issues
 

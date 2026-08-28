@@ -7,8 +7,8 @@
 """
 import pytest
 
-from app.requirements import feedback as fb
-from app.requirements import runner
+from app.requirements.orchestration import feedback as fb
+from app.requirements.orchestration import runner
 from app.requirements.schemas import FeedbackEdit, FeedbackIntent
 
 
@@ -61,13 +61,12 @@ def _install_stage_spies(monkeypatch):
 
 
 def test_apply_feedback_use_cases_cascades_all_downstream(monkeypatch):
-    monkeypatch.setattr(
-        fb, "classify_feedback",
-        lambda feedback, state: FeedbackIntent(stage="use_cases", scope="broad", target_ids=[], instruction="merge cart UCs"),
+    edit = FeedbackEdit(
+        stage="use_cases", scope="broad", instruction="merge cart UCs"
     )
     calls = _install_stage_spies(monkeypatch)
 
-    state, report = fb.apply_feedback({"classified": []}, "장바구니 유스케이스들을 하나로 합쳐줘")
+    state, report = fb.apply_feedback({"classified": []}, edit)
 
     assert report["regenerated"] == "use_cases"
     assert report["cascaded"] == ["coverage", "specs", "relationships", "diagram"]
@@ -78,13 +77,12 @@ def test_apply_feedback_use_cases_cascades_all_downstream(monkeypatch):
 
 
 def test_apply_feedback_relationships_only_cascades_diagram(monkeypatch):
-    monkeypatch.setattr(
-        fb, "classify_feedback",
-        lambda feedback, state: FeedbackIntent(stage="relationships", scope="broad", target_ids=[], instruction="add include"),
+    edit = FeedbackEdit(
+        stage="relationships", scope="broad", instruction="add include"
     )
     calls = _install_stage_spies(monkeypatch)
 
-    _, report = fb.apply_feedback({}, "인증을 include로 묶어줘")
+    _, report = fb.apply_feedback({}, edit)
 
     assert report["regenerated"] == "relationships"
     assert report["cascaded"] == ["diagram"]      # 관계 아래는 다이어그램뿐
@@ -92,9 +90,8 @@ def test_apply_feedback_relationships_only_cascades_diagram(monkeypatch):
 
 
 def test_apply_feedback_report_consistency(monkeypatch):
-    monkeypatch.setattr(
-        fb, "classify_feedback",
-        lambda feedback, state: FeedbackIntent(stage="relationships", scope="broad", target_ids=[], instruction="x"),
+    edit = FeedbackEdit(
+        stage="relationships", scope="broad", instruction="x"
     )
     # 관계/다이어그램만 재생성; 정합성 지표는 state에서 읽음.
     monkeypatch.setattr(fb, "identify_relationships",
@@ -103,7 +100,7 @@ def test_apply_feedback_report_consistency(monkeypatch):
 
     state = {"coverage": {"coverage_ratio": 1.0, "orphan_fr_ids": []},
              "use_case_specs": [{"issues": ["i1"]}, {"issues": []}]}
-    _, report = fb.apply_feedback(state, "fb")
+    _, report = fb.apply_feedback(state, edit)
     c = report["consistency"]
 
     assert c["coverage_ratio"] == 1.0
@@ -117,13 +114,12 @@ def test_apply_feedback_report_consistency(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_apply_feedback_upto_bounds_cascade_to_gate(monkeypatch):
     # use_cases 게이트: use_cases 재생성 후 coverage까지만 cascade(specs 이하는 아직 없음).
-    monkeypatch.setattr(
-        fb, "classify_feedback",
-        lambda feedback, state: FeedbackIntent(stage="use_cases", scope="broad", target_ids=[], instruction="i"),
+    edit = FeedbackEdit(
+        stage="use_cases", scope="broad", instruction="i"
     )
     calls = _install_stage_spies(monkeypatch)
 
-    intent, cascaded = fb.apply_feedback_upto({"classified": []}, "fb", up_to="coverage")
+    intent, cascaded = fb.apply_feedback_upto({"classified": []}, edit, up_to="coverage")
 
     assert intent.stage == "use_cases"
     assert cascaded == ["coverage"]
@@ -132,13 +128,12 @@ def test_apply_feedback_upto_bounds_cascade_to_gate(monkeypatch):
 
 def test_apply_feedback_upto_routes_to_upstream_actors(monkeypatch):
     # use_cases 게이트에서 '외부 액터 추가' → actors 재생성 후 use_cases·coverage cascade.
-    monkeypatch.setattr(
-        fb, "classify_feedback",
-        lambda feedback, state: FeedbackIntent(stage="actors", scope="broad", target_ids=[], instruction="add DBMS actor"),
+    edit = FeedbackEdit(
+        stage="actors", scope="broad", instruction="add DBMS actor"
     )
     calls = _install_stage_spies(monkeypatch)
 
-    intent, _ = fb.apply_feedback_upto({"classified": []}, "DBMS를 외부 액터로 추가", up_to="coverage")
+    intent, _ = fb.apply_feedback_upto({"classified": []}, edit, up_to="coverage")
 
     assert intent.stage == "actors"
     assert [c[0] for c in calls] == ["actors", "use_cases", "coverage"]
@@ -147,13 +142,12 @@ def test_apply_feedback_upto_routes_to_upstream_actors(monkeypatch):
 
 def test_apply_feedback_upto_clamps_downstream_stage(monkeypatch):
     # 아직 생성 안 된 하위(relationships)를 지목하면 게이트 단계(use_cases)로 클램프.
-    monkeypatch.setattr(
-        fb, "classify_feedback",
-        lambda feedback, state: FeedbackIntent(stage="relationships", scope="local", target_ids=["X"], instruction="i"),
+    edit = FeedbackEdit(
+        stage="relationships", scope="local", target_ids=["X"], instruction="i"
     )
     calls = _install_stage_spies(monkeypatch)
 
-    intent, cascaded = fb.apply_feedback_upto({"classified": []}, "fb", up_to="coverage")
+    intent, cascaded = fb.apply_feedback_upto({"classified": []}, edit, up_to="coverage")
 
     assert intent.stage == "use_cases" and intent.scope == "broad"
     assert [c[0] for c in calls] == ["use_cases", "coverage"]
@@ -208,14 +202,16 @@ def test_generate_specs_local_target_preserves_siblings():
 # ---------------------------------------------------------------------------
 def test_structured_edit_skips_the_intent_classifier(monkeypatch):
     """FeedbackEdit이 오면 분류 LLM을 부르지 않고 그대로 의도로 쓴다."""
-    monkeypatch.setattr(
-        fb, "classify_feedback",
-        lambda feedback, state: pytest.fail("구조화 편집에는 분류기가 돌면 안 된다"),
-    )
     edit = FeedbackEdit(
         stage="specs", scope="local", target_ids=["UC2"], instruction="결제 실패 확장을 추가"
     )
-    intent = fb.resolve_intent(edit, {})
+    intent = fb.resolve_intent(
+        edit,
+        {},
+        proposal_call=lambda *_args, **_kwargs: pytest.fail(
+            "구조화 편집에는 분류기가 돌면 안 된다"
+        ),
+    )
 
     assert intent.stage == "specs"
     assert intent.scope == "local"
@@ -241,8 +237,12 @@ def test_natural_language_still_goes_through_the_classifier(monkeypatch):
             stage="actors", scope="broad", target_ids=[], instruction="관리자 액터를 분리"
         )
 
-    monkeypatch.setattr(fb, "classify_feedback", fake_classify)
-    intent = fb.resolve_intent("액터에서 관리자를 분리해줘", {})
+    def propose(_schema, _messages):
+        return fake_classify("액터에서 관리자를 분리해줘", {})
+
+    intent = fb.resolve_intent(
+        "액터에서 관리자를 분리해줘", {}, proposal_call=propose
+    )
 
     assert seen["feedback"] == "액터에서 관리자를 분리해줘"
     assert intent.stage == "actors"      # use_cases 게이트에서 말해도 actors로 간다
@@ -250,8 +250,7 @@ def test_natural_language_still_goes_through_the_classifier(monkeypatch):
 
 def test_structured_edit_is_clamped_like_natural_language(monkeypatch):
     """화면이 보냈다고 믿고 아직 없는 하위 산출물을 재생성하려 들면 안 된다."""
-    monkeypatch.setattr(fb, "_regenerate_stage", lambda state, intent: None)
-    monkeypatch.setattr(fb, "_cascade", lambda state, stage, up_to=None: [])
+    calls = _install_stage_spies(monkeypatch)
 
     # 아직 use_cases 게이트인데(up_to=coverage) specs를 지목했다.
     edit = FeedbackEdit(stage="specs", scope="local", target_ids=["UC1"], instruction="고쳐")
@@ -260,3 +259,4 @@ def test_structured_edit_is_clamped_like_natural_language(monkeypatch):
     assert intent.stage == "use_cases"   # 재생성 가능한 최상위로 클램프
     assert intent.scope == "broad"
     assert intent.target_ids == []
+    assert [call[0] for call in calls] == ["use_cases", "coverage"]

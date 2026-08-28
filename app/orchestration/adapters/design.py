@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
@@ -12,7 +12,8 @@ from app.orchestration.checkpoint import (
     DEFAULT_CHECKPOINT_PATH,
     SqliteMemorySaver,
 )
-from app.requirements.agent.supervisor import blocking_issues
+from app.requirements.contracts.state import AgentState
+from app.requirements.orchestration.supervisor import blocking_issues
 
 
 class DesignContractError(RuntimeError):
@@ -190,7 +191,7 @@ class DesignAdapter:
     @staticmethod
     def _state(requirements_result: dict[str, Any]) -> dict[str, Any]:
         errors = [
-            *blocking_issues(requirements_result),
+            *blocking_issues(cast(AgentState, requirements_result)),
             *_handoff_errors(requirements_result),
         ]
         if errors:

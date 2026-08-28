@@ -176,7 +176,7 @@ def payloads_from_run(run_dir: str) -> list[tuple[str, dict]]:
         requirement_view,
         spec_review_payload,
     )
-    from app.requirements.runner import load_state
+    from app.requirements.orchestration.runner import load_state
 
     state = load_state(run_dir)
     by_id = {r["id"]: r for r in (state.get("classified") or [])}

@@ -10,8 +10,13 @@ import argparse
 import json
 from pathlib import Path
 
-from app.requirements.common import telemetry
-from app.requirements.runner import ARTIFACTS_DIR, load_input, persist_run, run_pipeline
+from app.requirements.orchestration.runner import (
+    ARTIFACTS_DIR,
+    load_input,
+    persist_run,
+    run_pipeline,
+)
+from app.requirements.runtime import telemetry
 from evaluation.easydep.requirements.evaluate import (
     ROOT,
     require_preclassified,

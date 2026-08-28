@@ -12,7 +12,7 @@ from app.orchestration.checkpoint import (
     DEFAULT_CHECKPOINT_PATH,
     SqliteMemorySaver,
 )
-from app.requirements.agent.state import AgentState
+from app.requirements.contracts.state import AgentState
 from app.requirements.runtime import telemetry
 
 
@@ -23,7 +23,7 @@ class RequirementsAdapter:
         *,
         feedback_gates: bool = False,
     ) -> None:
-        from app.requirements.agent.graph import build_graph
+        from app.requirements.orchestration.graph import build_graph
 
         saver = SqliteMemorySaver(checkpoint_path, "requirements")
         self.graph = build_graph(feedback_gates=feedback_gates, saver=saver)
@@ -31,9 +31,9 @@ class RequirementsAdapter:
 
     @staticmethod
     def _payload(result: dict[str, Any], thread_id: str) -> dict[str, Any]:
-        from app.requirements.agent.graph import _result_payload
+        from app.requirements.orchestration.graph import result_payload
 
-        payload = _result_payload(result, thread_id)
+        payload = result_payload(result, thread_id)
         telemetry_result = result.get("_orchestration_telemetry")
         if isinstance(telemetry_result, dict):
             payload["telemetry"] = telemetry_result

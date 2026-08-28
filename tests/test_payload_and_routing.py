@@ -1,16 +1,16 @@
-"""_result_payload 응답 변환 테스트."""
+"""공개 result_payload의 HTTP 응답 변환 계약을 검증한다."""
 
 from types import SimpleNamespace
 
 import pytest
 
-from app.requirements.agent.graph import _result_payload
+from app.requirements.orchestration.graph import ARTIFACT_KEYS, result_payload
 from app.requirements.schemas import AnalyzeResponse
 
 
 def test_payload_completed():
     result = {"phase": "reconcile", "classified": [{"id": "R1"}]}
-    out = _result_payload(result, "tid-1")
+    out = result_payload(result, "tid-1")
     assert out["status"] == "completed"
     assert out["thread_id"] == "tid-1"
     assert out["requirements"] == [{"id": "R1"}]
@@ -19,7 +19,7 @@ def test_payload_completed():
 def test_payload_omits_pipeline_when_stubs_off():
     # 파이프라인 미실행(step2~4 키 없음) → 응답에도 없어야 함.
     result = {"phase": "reconcile", "classified": [{"id": "R1"}]}
-    out = _result_payload(result, "tid")
+    out = result_payload(result, "tid")
     for key in ("actors", "use_cases", "coverage", "use_case_specs", "relationships", "diagram"):
         assert key not in out
 
@@ -35,7 +35,7 @@ def test_payload_includes_pipeline_artifacts_when_present():
         "relationships": {"associations": [{"actor": "User", "use_case": "Log in"}]},
         "diagram": "@startuml\n@enduml",
     }
-    out = _result_payload(result, "tid")
+    out = result_payload(result, "tid")
     assert out["actors"][0]["name"] == "User"
     assert out["use_cases"][0]["id"] == "UC1"
     assert out["coverage"]["coverage_ratio"] == 1.0
@@ -47,14 +47,14 @@ def test_payload_includes_pipeline_artifacts_when_present():
 def test_payload_omits_empty_pipeline_values():
     # 빈 값(예: use_cases=[])은 싣지 않는다.
     result = {"phase": "reconcile", "classified": [], "use_cases": [], "diagram": ""}
-    out = _result_payload(result, "tid")
+    out = result_payload(result, "tid")
     assert "use_cases" not in out and "diagram" not in out
 
 
 def test_payload_need_clarification():
     interrupt_obj = SimpleNamespace(value={"questions": ["q1", "q2"]})
     result = {"__interrupt__": [interrupt_obj]}
-    out = _result_payload(result, "tid-2")
+    out = result_payload(result, "tid-2")
     assert out["status"] == "need_clarification"
     assert out["questions"] == ["q1", "q2"]
 
@@ -68,13 +68,13 @@ def test_analyze_response_accepts_and_omits_pipeline_fields():
         "use_cases": [{"id": "UC1", "name": "Log in"}],
         "diagram": "@startuml\n@enduml",
     }
-    resp = AnalyzeResponse(**_result_payload(result, "tid"))
+    resp = AnalyzeResponse(**result_payload(result, "tid"))
     dumped = resp.model_dump()
     assert dumped["use_cases"][0]["id"] == "UC1"
     assert dumped["diagram"] == "@startuml\n@enduml"
 
     # 파이프라인 미실행 → 해당 필드는 None.
-    resp2 = AnalyzeResponse(**_result_payload({"classified": [req]}, "t"))
+    resp2 = AnalyzeResponse(**result_payload({"classified": [req]}, "t"))
     assert resp2.diagram is None and resp2.use_cases is None and resp2.actors is None
 
 
@@ -87,7 +87,7 @@ def test_analyze_response_keeps_requirement_provenance_without_changing_payload_
         "source_refs": ["RAW1"],
     }
 
-    response = AnalyzeResponse(**_result_payload({"classified": [requirement]}, "tid"))
+    response = AnalyzeResponse(**result_payload({"classified": [requirement]}, "tid"))
 
     assert response.requirements is not None
     assert response.requirements[0].id == "RR1"
@@ -109,7 +109,7 @@ def test_feedback_payload_carries_the_edit_material():
             "edit_targets": ["UC1", "UC2"],
         }
     )
-    out = _result_payload({"__interrupt__": [interrupt_obj]}, "tid")
+    out = result_payload({"__interrupt__": [interrupt_obj]}, "tid")
     assert out["status"] == "need_feedback"
     assert out["edit_stage"] == "specs"
     assert out["edit_targets"] == ["UC1", "UC2"]
@@ -121,7 +121,7 @@ def test_analyze_rejects_answer_and_edit_together():
     """둘 다 오면 무엇을 따를지 모호하다 — 조용히 하나를 고르지 않는다."""
     from fastapi import HTTPException
 
-    from app.requirements.api import analyze_endpoint
+    from app.requirements.orchestration.api import analyze_endpoint
     from app.requirements.schemas import AnalyzeRequest, FeedbackEdit
 
     req = AnalyzeRequest(
@@ -274,7 +274,7 @@ def test_deployment_preferences_reject_two_regions_for_one_provider():
 
 
 def test_analyze_routes_a_structured_edit_to_resume(monkeypatch):
-    from app.requirements import api
+    from app.requirements.orchestration import api
     from app.requirements.schemas import AnalyzeRequest, FeedbackEdit
 
     seen = {}
@@ -299,9 +299,7 @@ def test_every_artifact_key_survives_the_response_schema():
     실제로 `cloud_concerns`가 그 상태였다: 파이프라인이 만들고 `_result_payload`가 싣는데
     화면은 못 받았다. 키를 하나 더 만들 때마다 같은 사고가 나므로 목록끼리 대조한다.
     """
-    from app.requirements.agent.graph import _ARTIFACT_KEYS
-
-    missing = [k for k in _ARTIFACT_KEYS if k not in AnalyzeResponse.model_fields]
+    missing = [k for k in ARTIFACT_KEYS if k not in AnalyzeResponse.model_fields]
     assert not missing, f"응답 스키마에 없는 산출물 키: {missing}"
 
 
@@ -321,7 +319,7 @@ def test_feedback_payload_carries_the_resource_questions():
             )
         ]
     }
-    out = _result_payload(result, "tid-r")
+    out = result_payload(result, "tid-r")
 
     assert out["resource_questions"] == questions
     assert AnalyzeResponse(**out).resource_questions == questions

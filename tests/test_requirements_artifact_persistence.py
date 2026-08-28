@@ -1,5 +1,5 @@
 from app.repositories import artifact_repository
-from app.requirements.api import persist_analysis
+from app.requirements.orchestration.api import persist_analysis
 
 
 def test_first_review_gate_persists_all_three_reviewable_artifacts(monkeypatch) -> None:

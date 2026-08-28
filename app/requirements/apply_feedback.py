@@ -13,8 +13,8 @@ import json
 from pathlib import Path
 
 from app.requirements.common.console import use_utf8_stdout
-from app.requirements.feedback import apply_feedback
-from app.requirements.runner import ARTIFACTS_DIR, load_state, persist_run
+from app.requirements.orchestration.feedback import apply_feedback
+from app.requirements.orchestration.runner import ARTIFACTS_DIR, load_state, persist_run
 from app.requirements.runtime import telemetry
 
 

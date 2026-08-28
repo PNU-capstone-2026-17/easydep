@@ -6,7 +6,7 @@
 """
 import uuid
 
-from app.requirements.agent import graph as g
+from app.requirements.orchestration import graph as g
 from app.requirements.schemas import ClarifyOnlyResult, ExpandedRequirementsResult
 
 

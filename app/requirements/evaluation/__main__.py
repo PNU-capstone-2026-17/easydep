@@ -372,7 +372,7 @@ def _cmd_dataset_score(args) -> int:
 
 def _cmd_score(args) -> int:
     from app.requirements.evaluation import scorecard as sc
-    from app.requirements.runner import load_state
+    from app.requirements.orchestration.runner import load_state
 
     state = load_state(args.run_dir)
     card = sc.scorecard(state)

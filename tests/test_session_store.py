@@ -13,8 +13,7 @@ from typing_extensions import TypedDict
 
 from app.db import session as db_session
 from app.db.models import Base
-from app.requirements import session_store as store
-
+from app.requirements.orchestration import persistence as store
 
 #: 이 저장소가 만드는 테이블만. 다른 에이전트 테이블은 MySQL 전용 타입(MEDIUMTEXT)을
 #: 써서 SQLite에 못 만들고, 어차피 여기서 볼 대상도 아니다.
@@ -264,39 +263,14 @@ def test_a_session_resumes_after_the_process_is_gone(sqlite_db):
 def test_serving_import_chain_pulls_in_the_store():
     """server.py가 init_db()를 부르기 전에 우리 테이블이 메타데이터에 올라와야 한다.
 
-    graph.py가 session_store를 모듈 수준에서 import하기 때문에 성립한다. 누군가
+    canonical graph가 persistence를 모듈 수준에서 import하기 때문에 성립한다. 누군가
     이 import를 지연시키면 서버는 뜨는데 세션 테이블만 조용히 안 생긴다.
     """
-    import app.requirements.api  # noqa: F401 - 서빙 경로의 진입점
-    from app.requirements.agent import graph as graph_mod
+    import app.requirements.orchestration.api  # noqa: F401 - 서빙 경로의 진입점
 
-    assert graph_mod.session_store is store
-
-
-def test_memory_and_sql_graphs_are_cached_separately():
-    from app.requirements.agent import graph as graph_mod
-
-    graph_mod._GRAPHS.clear()
-    plain = graph_mod._compiled(gated=False, persistent=False)
-    assert graph_mod._compiled(gated=False, persistent=False) is plain   # 캐시된다
-    assert graph_mod._compiled(gated=True, persistent=False) is not plain
-    assert graph_mod._compiled(gated=False, persistent=True) is not plain
-    assert len(graph_mod._GRAPHS) == 3
-    graph_mod._GRAPHS.clear()
-
-
-def test_session_mode_is_remembered_in_memory_when_not_persisting():
-    """CLI·배치는 DB 없이 돌아야 한다 — 모드 기억도 메모리에 둔다."""
-    from app.requirements.agent import graph as graph_mod
-
-    graph_mod._remember_mode("cli-thread", gated=True, persistent=False)
-    assert graph_mod._thread_gates["cli-thread"] is True
-    assert graph_mod._recall_mode("cli-thread", persistent=False) is True
+    assert "requirements_checkpoints" in Base.metadata.tables
 
 
 def test_session_mode_goes_to_the_database_when_persisting(sqlite_db):
-    from app.requirements.agent import graph as graph_mod
-
-    graph_mod._remember_mode("api-thread", gated=True, persistent=True)
-    assert "api-thread" not in graph_mod._thread_gates      # 메모리에는 안 남는다
-    assert graph_mod._recall_mode("api-thread", persistent=True) is True
+    store.remember_session_mode("api-thread", gated=True)
+    assert store.session_mode("api-thread") is True

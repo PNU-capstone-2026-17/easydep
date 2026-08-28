@@ -18,7 +18,7 @@ from pathlib import Path
 
 from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
-from app.requirements.runner import (
+from app.requirements.orchestration.runner import (
     ARTIFACTS_DIR,
     INPUTS_DIR,
     load_input,

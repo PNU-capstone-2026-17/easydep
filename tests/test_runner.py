@@ -7,7 +7,7 @@
 
 import json
 
-from app.requirements import runner
+from app.requirements.orchestration import runner
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +84,8 @@ def test_batch_runner_goes_back_when_a_stage_could_not_repair_itself(monkeypatch
     그래프는 조건부 엣지로 되돌리고 러너는 함수를 직접 부르므로, 같은 판단을 러너에서도
     돌린다. 여기에 없으면 C2의 효과가 측정에 잡히지 않는다.
     """
-    from app.requirements.agent import supervisor
     from app.requirements.knowledge import rules
+    from app.requirements.orchestration import supervisor
 
     monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
     issue = f"[semantic] fix {rules.tag_of('spec.remerge-re-establishes-state')}"

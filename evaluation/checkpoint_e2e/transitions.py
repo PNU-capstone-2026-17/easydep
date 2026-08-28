@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from app.design.graphs.subgraphs import DESIGN_SUBGRAPHS
-from app.requirements.agent.subgraphs import build_stage_subgraphs
+from app.requirements.orchestration.subgraphs import build_stage_subgraphs
 
 from .catalog import checkpoint_after, jsonable
 from .evidence import validate_state

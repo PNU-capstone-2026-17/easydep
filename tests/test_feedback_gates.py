@@ -1,7 +1,7 @@
 """대화형 피드백 게이트(정적 라우팅) 테스트: gate_route 마커 + 서브그래프 토폴로지."""
-from app.requirements.agent import graph as g
-from app.requirements.agent import subgraphs as sg
-from app.requirements.agent.steps import feedback_gates as fg
+from app.requirements.orchestration import feedback_gates as fg
+from app.requirements.orchestration import graph as g
+from app.requirements.orchestration import subgraphs as sg
 from app.requirements.schemas import FeedbackEdit
 
 
@@ -154,8 +154,6 @@ def test_stage_subgraphs_have_no_gate_nodes():
 # --- 되묻기의 왕복(게이트 쪽) ------------------------------------------------
 def test_the_gate_carries_the_resource_questions(monkeypatch):
     """질문이 게이트 payload에 실리지 않으면 사용자에게 영영 안 보인다."""
-    from app.requirements.agent.steps import feedback_gates as fg
-
     seen: dict = {}
 
     def fake_interrupt(payload):
@@ -182,7 +180,6 @@ def test_a_suggested_resource_question_can_be_skipped(monkeypatch):
 
 def test_a_resource_answer_does_not_reclassify_requirements(monkeypatch):
     """사용자는 질문에 답했을 뿐이다. 재분류를 돌리면 요구사항이 덩달아 흔들린다."""
-    from app.requirements.agent.steps import feedback_gates as fg
     from app.requirements.schemas import ResourceAnswer
 
     def boom(*_a, **_k):
@@ -203,7 +200,6 @@ def test_a_resource_answer_does_not_reclassify_requirements(monkeypatch):
 
 def test_an_all_blank_resource_answer_advances(monkeypatch):
     """모르는 칸 하나가 세션을 게이트에 영원히 묶어 두면 안 된다."""
-    from app.requirements.agent.steps import feedback_gates as fg
     from app.requirements.schemas import ResourceAnswer
 
     monkeypatch.setattr(fg, "interrupt",
@@ -211,12 +207,13 @@ def test_an_all_blank_resource_answer_advances(monkeypatch):
     assert fg.gate_requirements({"classified": []})["gate_route"] == "advance"  # type: ignore[arg-type]
 
 
-def test_a_resource_answer_never_becomes_natural_language_feedback():
-    """물어보지 않은 게이트로 흘러들면 pydantic 표현이 피드백 문장이 된다."""
-    import pytest
-
-    from app.requirements.agent.steps import feedback_gates as fg
+def test_resource_answer_is_not_a_natural_language_gate_edit(monkeypatch):
+    """자원 답변은 공개 gate router에서 자연어 피드백으로 변환되지 않는다."""
     from app.requirements.schemas import ResourceAnswer
 
-    with pytest.raises(TypeError):
-        fg._as_text(ResourceAnswer(answers={"provider": "aws"}))
+    monkeypatch.setattr(
+        fg,
+        "interrupt",
+        lambda _payload: ResourceAnswer(answers={"provider": "aws"}),
+    )
+    assert fg.gate_requirements({"classified": []})["gate_route"] == "answers"

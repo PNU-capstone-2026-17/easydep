@@ -17,9 +17,9 @@ import sys
 import uuid
 from collections.abc import Callable
 
-from app.requirements.agent import resume_analysis, start_analysis
 from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
+from app.requirements.orchestration.graph import resume_analysis, start_analysis
 from app.requirements.runtime import telemetry
 
 
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         # 대화형: 모든 interrupt 게이트를 켜고 그래프를 재컴파일한다.
         # (step2~4 파이프라인은 모드와 무관하게 항상 실행된다.)
         settings.enable_feedback_gates = True
-        from app.requirements.agent.graph import rebuild_graph
+        from app.requirements.orchestration.graph import rebuild_graph
         rebuild_graph()
 
     requirements = _collect_requirements(args, print)

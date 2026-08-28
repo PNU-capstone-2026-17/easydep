@@ -10,6 +10,7 @@
 | `stage_registry.py` | PIPELINE·group·batch·cascade 순서 | 단계 구현과 graph state |
 | `resources/` | ResourceSpec 스키마, 질문·근거·gap 계약 | agent 실행 상태와 클라우드 사실 |
 | `modeling/` | 정제·actor/use-case·명세·관계 proposal/normalize/validate/repair와 PlantUML projection | graph 순서, supervisor cascade, HTTP·저장 |
+| `orchestration/` | PIPELINE 기반 graph·batch·feedback·supervisor·runner·현재 checkpoint·HTTP 조율 | 단계 prompt·검증·repair 규칙, 과거 checkpoint migration |
 | `knowledge/` | 규칙, concern, evidence 분류와 결정론적 검출 | 파이프라인 단계와 설계/구현 결과 |
 | `traceability.py` | 요구사항 ID에서 UC·제약·배포 필요·actor·capability·step으로의 링크 색인 | 구현 엔진의 파일 provenance matrix |
 

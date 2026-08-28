@@ -42,8 +42,8 @@ from app.implementation.interfaces.schemas import (
     CreateImplementationJobRequest,
 )
 from app.repositories import artifact_repository
-from app.requirements.api import analyze_endpoint
 from app.requirements.config import settings as requirements_settings
+from app.requirements.orchestration.api import analyze_endpoint
 from app.requirements.runtime import telemetry as requirements_telemetry
 from app.requirements.schemas import (
     AnalyzeRequest,

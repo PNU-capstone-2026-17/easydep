@@ -217,7 +217,7 @@ def phase_pure_runs(c: Campaign, names: list[str], limit: int | None) -> None:
     """PURE 외부 입력으로 파이프라인을 돌린다. 도메인마다 한 번, 이미 한 것은 건너뛴다."""
     from app.requirements import prompts
     from app.requirements.evaluation import pure
-    from app.requirements.runner import persist_run, run_pipeline
+    from app.requirements.orchestration.runner import persist_run, run_pipeline
 
     out = c.out_dir / "pure-runs.jsonl"
     done = _jsonl_ids(out, "document")
@@ -274,7 +274,7 @@ def phase_input_runs(c: Campaign, names: list[str]) -> None:
     나란히 놓으면 코퍼스가 바꾼 것과 판이 바꾼 것이 섞인다.
     """
     from app.requirements import prompts
-    from app.requirements.runner import load_input, persist_run, run_pipeline
+    from app.requirements.orchestration.runner import load_input, persist_run, run_pipeline
 
     out = c.out_dir / "input-runs.jsonl"
     done = _jsonl_ids(out, "dataset")

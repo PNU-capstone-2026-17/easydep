@@ -82,7 +82,7 @@ def build(rule_id: str, run_dirs: list[str], per_domain: int = 5) -> dict:
         requirement_view,
         spec_review_payload,
     )
-    from app.requirements.runner import load_state
+    from app.requirements.orchestration.runner import load_state
 
     rule = rules.rule(rule_id)
     items = []

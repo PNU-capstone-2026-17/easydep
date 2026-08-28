@@ -19,10 +19,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
 from app.requirements.agent.baseline import build_baseline_graph
-from app.requirements.agent.graph import build_graph
 from app.requirements.config import settings
 from app.requirements.modeling.specifications import validate_specification
 from app.requirements.modeling.use_cases import check_coverage
+from app.requirements.orchestration.graph import build_graph
 from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import CoverageJudgment

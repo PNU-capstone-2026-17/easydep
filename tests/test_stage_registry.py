@@ -12,12 +12,11 @@
 """
 import pytest
 
-from app.requirements import feedback as fb
-from app.requirements import runner
 from app.requirements import stage_registry as stages
 from app.requirements.agent import stages as legacy_stages
-from app.requirements.agent import subgraphs
 from app.requirements.common.state_contract import StateContract, state_contract_of
+from app.requirements.orchestration import graph as orchestration_graph
+from app.requirements.orchestration import runner, subgraphs
 
 
 def test_pipeline_group_batch_and_key_order_is_exact() -> None:
@@ -151,18 +150,6 @@ def test_batch_order_skips_exactly_the_preclassified_group():
     assert skipped, "건너뛰는 단계가 하나도 없다 — 상수가 실제 그룹 이름이 맞는가"
 
 
-def test_feedback_cascade_is_derived_not_restated():
-    assert list(stages.cascade_order()) == fb._ORDER
-    assert stages.node_by_key() == fb._STAGE_FN_NAME
-    assert stages.editable_keys() == fb._EDITABLE
-
-
-def test_cascade_targets_exist_as_functions_in_feedback():
-    """cascade는 globals()로 함수를 찾는다 — 이름이 실제로 거기 있어야 한다."""
-    for key, name in stages.node_by_key().items():
-        assert name in vars(fb), f"{key} → {name} 이 feedback 모듈에 없다"
-
-
 def test_every_stage_declares_what_it_reads():
     """계약 없는 단계가 생기면 조용한 빈 산출물이 다시 가능해진다."""
     for stage in stages.PIPELINE:
@@ -227,9 +214,7 @@ def test_every_registered_group_is_actually_wired_into_the_parent_graph(gated):
     서빙 경로와 평가 세트가 재는 경로가 조용히 갈린다. `stages.py`가 없애려고 만들어진
     바로 그 사고다.
     """
-    from app.requirements.agent import graph as g
-
-    compiled = g._build_gated_graph(None) if gated else g._build_plain_graph(None)
+    compiled = orchestration_graph.build_graph(feedback_gates=gated)
     nodes = set(compiled.get_graph().nodes)
     missing = [group for group in stages.GROUPS if group not in nodes]
     assert not missing, f"부모 그래프에 안 이어진 그룹: {missing}"

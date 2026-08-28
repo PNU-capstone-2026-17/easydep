@@ -150,7 +150,7 @@ def blocking_issues(state: dict[str, Any], *, through: str = "relationships") ->
     record a meaningful failure while the shared gate itself is being developed.
     """
     try:
-        supervisor = import_module("app.requirements.agent.supervisor")
+        supervisor = import_module("app.requirements.orchestration.supervisor")
         checker = getattr(supervisor, "blocking_issues")
     except (ImportError, AttributeError):
         return []
