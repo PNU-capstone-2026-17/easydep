@@ -1,3 +1,5 @@
+"""typed 클래스 계약이 시퀀스·API·ERD 하류에 손실 없이 전달되는지 검사한다."""
+
 from __future__ import annotations
 
 import copy
@@ -8,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.extractor import _control_parameter_types
+from app.design.services.api_spec.normalization import control_contracts
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.erd.mapping import build_logical_model
 from app.design.services.sequence_diagram.projection import project_sequence_model
@@ -384,8 +386,10 @@ def test_erd_maps_entities_but_never_data_types_to_tables():
     assert [table["name"] for table in logical["Tables"]] == ["Order"]
 
 
-def test_api_adapter_reads_typed_control_signature_from_structured_contract():
-    types = _control_parameter_types("", _collaboration_model())
+def test_api_normalization_reads_control_signature_from_typed_contract():
+    types, _returns = control_contracts(
+        BCEModel.model_validate(_collaboration_model())
+    )
 
     assert types[("OrderControl", "place")] == {"request": "OrderRequest"}
 

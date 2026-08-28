@@ -1,196 +1,40 @@
-"""유스케이스·클래스·시퀀스 다이어그램에서 API 엔드포인트 모델을 도출한다.
+"""이전 PlantUML 기반 API 추출 import를 보존하는 호환 어댑터다.
 
-**왜 OpenAPI를 바로 만들지 않나.** OpenAPI 3.1은 중첩이 깊고 규칙이 많아서, LLM에게
-그것을 직접 쓰게 하면 필드 누락·스키마 참조 오류가 나고 그때마다 수리 루프가 필요했다.
-여기서는 훨씬 단순한 평평한 모델(엔드포인트 목록 + 스키마 목록)만 받고, OpenAPI 문서
-조립은 openapi.build_openapi_from_model이 결정론적으로 한다. 그래서 openapi/paths 같은
-필수 필드가 빠질 수 없고, $ref도 항상 실제 스키마를 가리킨다.
+새 production 경계는 :mod:`app.design.services.api_spec.service`이며 typed BCE와
+sequence 모델만 받는다. 이 모듈은 기존 체크포인트·호출자가 바뀌는 동안 PlantUML 입력을
+``legacy`` 모듈에 가두고 종전 dict 반환 shape를 유지한다.
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
-from pydantic import BaseModel, Field
-
+from app.design.services.api_spec.legacy import (
+    LEGACY_API_SPEC_EXTRACTION_SYSTEM_PROMPT as API_SPEC_EXTRACTION_SYSTEM_PROMPT,
+)
+from app.design.services.api_spec.legacy import (
+    control_parameter_types as _legacy_control_parameter_types,
+)
+from app.design.services.api_spec.legacy import (
+    control_return_types as _legacy_control_return_types,
+)
+from app.design.services.api_spec.legacy import (
+    legacy_api_spec_messages,
+)
+from app.design.services.api_spec.models import (
+    ApiControlArgument,
+    ApiControlBinding,
+    ApiControlOutcome,
+    ApiEndpoint,
+    ApiField,
+    ApiResponse,
+    ApiSchema,
+    ApiSpecModel,
+)
+from app.design.services.api_spec.normalization import (
+    control_contracts_from_payload,
+    normalize_api_spec_payload,
+)
 from app.design.services.common.structured import parse_structured
-
-
-class ApiField(BaseModel):
-    name: str
-    #: string | integer | number | boolean | array | object, 또는 Schemas의 이름.
-    type: str = Field(default="string")
-    required: bool = Field(default=True)
-    description: str = Field(default="")
-
-
-class ApiResponse(BaseModel):
-    status: int = Field(default=200)
-    description: str = Field(default="")
-    #: 본문 스키마 이름(Schemas 중 하나). 본문이 없으면 빈 문자열.
-    schema_name: str = Field(default="")
-    #: 배열로 돌려주는지. schema_name이 있을 때만 의미가 있다.
-    is_array: bool = Field(default=False)
-
-
-class ApiControlArgument(BaseModel):
-    """One explicit value flow from the HTTP request to a Control parameter."""
-
-    #: Exact parameter name in the BCE Control method.
-    name: str
-    #: ``$path.id``, ``$query.filter``, ``$body.field`` or ``$body``.
-    source: str
-
-
-class ApiControlOutcome(BaseModel):
-    """The named Control outcome that produces one documented HTTP status."""
-
-    status: int
-    outcome: str = Field(min_length=1)
-
-
-class ApiControlBinding(BaseModel):
-    """The executable application contract behind one HTTP operation.
-
-    This belongs in the API design model rather than an implementation prompt:
-    it is the single, reviewable answer to which Control operation receives an
-    endpoint and how every documented HTTP outcome is produced.
-    """
-
-    control: str
-    method: str
-    arguments: list[ApiControlArgument] = Field(default_factory=list)
-    outcomes: list[ApiControlOutcome] = Field(default_factory=list)
-
-
-class ApiEndpoint(BaseModel):
-    #: "/orders/{orderId}" 처럼 중괄호로 경로 변수를 표기한다.
-    path: str = Field(default="/")
-    method: str = Field(default="get")
-    summary: str = Field(default="")
-    operation_id: str = Field(default="")
-    path_params: list[ApiField] = Field(default_factory=list)
-    query_params: list[ApiField] = Field(default_factory=list)
-    #: 요청 본문 스키마 이름(Schemas 중 하나). 본문이 없으면 빈 문자열.
-    request_schema: str = Field(default="")
-    responses: list[ApiResponse] = Field(default_factory=list)
-    #: 이 엔드포인트를 낳은 Boundary/Control 클래스 이름.
-    source_classes: list[str] = Field(default_factory=list)
-    #: 이 엔드포인트가 실현하는 유스케이스 id.
-    use_case_ids: list[str] = Field(default_factory=list)
-    #: Endpoint-to-Control mapping used by design validation and implementation.
-    control_binding: ApiControlBinding | None = None
-
-
-class ApiSchema(BaseModel):
-    name: str
-    description: str = Field(default="")
-    fields: list[ApiField] = Field(default_factory=list)
-    #: 이 스키마가 나온 Entity 클래스 이름. 요청 전용 스키마면 비울 수 있다.
-    source_class: str = Field(default="")
-
-
-class ApiSpecModel(BaseModel):
-    title: str = Field(default="API")
-    version: str = Field(default="1.0.0")
-    Endpoints: list[ApiEndpoint] = Field(default_factory=list)
-    Schemas: list[ApiSchema] = Field(default_factory=list)
-
-
-API_SPEC_EXTRACTION_SYSTEM_PROMPT = """
-You are an API designer deriving a REST API model from a use-case specification,
-the analysis-level class diagram, and the sequence diagram derived from them.
-
-## Input
-A use-case specification, a class diagram in PlantUML using Boundary-Control-Entity
-stereotypes, and a sequence diagram in PlantUML. Do not invent endpoints or fields
-the inputs do not support.
-
-## Endpoints
-- Derive endpoints from the Boundary classes and from the messages that cross from
-  an actor into the system in the sequence diagram. One endpoint per distinct
-  operation the system exposes — not one per class and not one per scenario step.
-- `path` uses plural resource nouns and braces for variables: /orders/{orderId}.
-- `method` follows REST semantics: get (read), post (create), put (full replace),
-  patch (partial update), delete (remove). Choose from the operation's intent, not
-  from the method name in the class diagram.
-- `operation_id` is a unique camelCase verbNoun, e.g. createOrder, listOrders.
-- `path_params` must contain exactly the variables that appear in braces in `path`,
-  with the same names. `query_params` are filters and pagination only.
-- `request_schema` is set only for methods that carry a body (post, put, patch),
-  and must name one of the Schemas you return.
-- `responses` must include the success case and every failure the specification's
-  Extensions describe (e.g. 400 validation, 404 not found, 409 conflict).
-  Set `schema_name` only when the response carries a body; set `is_array` for
-  collection responses. Use 204 only for a command whose successful outcome has
-  no response body. A browse, search, view, authentication, creation, or
-  registration result must use an appropriate non-204 success status and a
-  response schema.
-
-## Schemas
-- Derive schemas from the Entity classes in the class diagram — their fields are the
-  schema's fields. Add request-shaped schemas (e.g. OrderCreateRequest) where the
-  request body is a subset of an entity.
-- `type` is one of string, integer, number, boolean, array, object — or the name of
-  another schema you return, for nested objects.
-- `name` is PascalCase and unique.
-
-## Traceability
-- `source_classes` on each endpoint: the Boundary/Control classes it came from,
-  copied exactly from the class diagram.
-- `use_case_ids` on each endpoint: the use case(s) it realizes, copied exactly
-  from the specification.
-- `source_class` on each schema: the Entity class it mirrors. Leave it empty for
-  request-shaped schemas that do not correspond to one entity.
-- `control_binding` on every endpoint is mandatory. Set its `control` and
-  `method` to the exact BCE Control class and method that implement the endpoint.
-  Map every Control parameter once in `arguments`, using only `$path.<name>`,
-  `$query.<name>`, `$body.<field>`, or `$body`. Map every documented response
-  status once in `outcomes` with a meaningful named result such as `found`,
-  `not_found`, `created`, or `validation_error`. Do not use fabricated values,
-  implicit defaults, or an untyped `Object` result.
-- When a Control parameter is an aggregate filter or request value object (for
-  example `filter : CourseFilter`), keep it as one explicit HTTP value named
-  `filter`: declare `query_params` entry `filter` with type `CourseFilter` and
-  bind it from `$query.filter`, or use one request body when the HTTP method
-  allows a body. Do not split that one Control parameter into unrelated query
-  arguments; the adapter needs one value whose type matches the BCE contract.
-- A path identifier may be mapped only when that exact parameter exists on the
-  selected Control method. Never add a path argument to a generic
-  `process(operation, data)` method just because the endpoint path contains an
-  identifier. If the Control contract cannot receive the identifier, preserve
-  the honest contract mismatch for validation and class-diagram repair instead
-  of inventing a binding.
-- Keep CRUD bindings operation-specific. A DELETE request has no `$body`, so
-  never map create/update attributes from `$body` into a DELETE Control call.
-  A create or update body must contain every `$body.<field>` named by its exact
-  Control method, with the same scalar type (`int` maps to `integer`, for
-  example). Do not bind a create/update endpoint to a generic
-  `processX(..., action : String, ...)` dispatcher: return the honest contract
-  mismatch for class-diagram repair instead.
-- Before choosing a Control binding, locate the exact Boundary-to-Control call
-  in the sequence diagram for the same use case. Reuse that exact target and
-  signature; do not bind an endpoint to another method from the same class just
-  because its name sounds similar.
-- **Never invent a name or an id.** An empty list is honest; a made-up
-  reference is a lie the trace matrix will believe.
-
-## Self-check before finalizing
-(a) every `request_schema` and every response `schema_name` names a schema you returned,
-(b) every brace variable in every `path` has a matching entry in `path_params`,
-(c) `operation_id` values are unique,
-(d) every use-case step where the actor asks the system to do something is reachable
-    through at least one endpoint,
-(e) every `source_classes` / `source_class` entry names a class in the given class
-    diagram, and every `use_case_ids` entry appears in the given specification.
-(f) every endpoint has an exact Control binding; its argument sources and outcomes
-    cover the endpoint contract, and the same Control call appears in the sequence.
-(g) when the inputs describe user-visible system behavior, Endpoints is not empty.
-    A schema-only API model is incomplete and cannot be implemented.
-
-Populate the response strictly according to the provided schema. Do not include
-markdown, code fences, or any prose outside the schema fields.
-"""
 
 
 def api_spec_messages(
@@ -198,18 +42,11 @@ def api_spec_messages(
     class_diagram_puml: str,
     sequence_diagram_puml: str,
 ) -> list[dict[str, str]]:
-    """운영 호출과 지연 프로브가 공유하는 API 설계 메시지 계약."""
-    return [
-        {"role": "system", "content": API_SPEC_EXTRACTION_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": (
-                f"[Use Case Specification]\n{scenario_text}\n\n"
-                f"[Class Diagram PlantUML]\n{class_diagram_puml}\n\n"
-                f"[Sequence Diagrams PlantUML]\n{sequence_diagram_puml}"
-            ),
-        },
-    ]
+    """기존 PlantUML 호출 메시지를 legacy 경계에서 만든다."""
+
+    return legacy_api_spec_messages(
+        scenario_text, class_diagram_puml, sequence_diagram_puml
+    )
 
 
 def extract_api_spec_model(
@@ -218,13 +55,14 @@ def extract_api_spec_model(
     sequence_diagram_puml: str,
     class_model: Any | None = None,
 ) -> dict[str, Any]:
-    """유스케이스 + 클래스 + 시퀀스 → 구조화된 API 엔드포인트 모델."""
+    """이전 PlantUML 입력으로 모델을 한 번 제안하고 기존 dict shape를 반환한다."""
+
     if not scenario_text:
         return {}
-    messages = api_spec_messages(
-        scenario_text, class_diagram_puml, sequence_diagram_puml
+    model = parse_structured(
+        api_spec_messages(scenario_text, class_diagram_puml, sequence_diagram_puml),
+        ApiSpecModel,
     )
-    model = parse_structured(messages, ApiSpecModel)
     return normalize_api_spec_model(model, class_diagram_puml, class_model)
 
 
@@ -232,286 +70,51 @@ def _control_parameter_types(
     class_diagram_puml: str,
     class_model: Any | None = None,
 ) -> dict[tuple[str, str], dict[str, str]]:
-    """Read exact Control parameter types for request schema alignment."""
-    result: dict[tuple[str, str], dict[str, str]] = {}
-    payload = (
-        class_model.model_dump(by_alias=True)
-        if isinstance(class_model, BaseModel)
-        else class_model
+    contracts = control_contracts_from_payload(class_model)
+    return contracts[0] if contracts is not None else _legacy_control_parameter_types(
+        class_diagram_puml
     )
-    if isinstance(payload, dict) and isinstance(payload.get("Classes"), list):
-        # Operations are the accepted signature source.  PlantUML remains a
-        # compatibility projection for older callers, not an API type parser.
-        for class_item in payload["Classes"]:
-            if not isinstance(class_item, dict):
-                continue
-            if str(class_item.get("stereotype") or "").strip().casefold() != "control":
-                continue
-            class_name = str(class_item.get("className") or "").strip()
-            for operation in class_item.get("operations") or []:
-                if not isinstance(operation, dict):
-                    continue
-                method_name = str(operation.get("name") or "").strip()
-                if not class_name or not method_name:
-                    continue
-                parameters: dict[str, str] = {}
-                for parameter in operation.get("parameters") or []:
-                    if not isinstance(parameter, dict):
-                        continue
-                    name = str(parameter.get("name") or "").strip()
-                    type_name = str(parameter.get("type") or "").strip()
-                    if name and type_name:
-                        parameters[name] = type_name
-                result[(class_name, method_name)] = parameters
-        return result
-    class_pattern = re.compile(
-        r"(?ms)^\s*class\s+(?P<class>[A-Za-z_]\w*)[^\{]*\{(?P<body>.*?)^\s*\}"
-    )
-    method_pattern = re.compile(
-        r"^\s*[+\-#]\s*(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^)]*)\)"
-        r"\s*(?::\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?:<[^>]+>)?)?\s*$",
-        re.MULTILINE,
-    )
-    for match in class_pattern.finditer(class_diagram_puml or ""):
-        if not re.search(r"<<\s*Control\s*>>", match.group(0), re.IGNORECASE):
-            continue
-        for method in method_pattern.finditer(match.group("body")):
-            parameters: dict[str, str] = {}
-            for raw in method.group("params").split(","):
-                name, separator, type_name = raw.strip().partition(":")
-                if separator and name.strip() and type_name.strip():
-                    parameters[name.strip()] = type_name.strip()
-            result[(match.group("class"), method.group("name"))] = parameters
-    return result
 
 
 def _control_return_types(
     class_diagram_puml: str,
     class_model: Any | None = None,
 ) -> dict[tuple[str, str], str]:
-    """Read exact Control return contracts for response normalization."""
-    result: dict[tuple[str, str], str] = {}
-    payload = (
-        class_model.model_dump(by_alias=True)
-        if isinstance(class_model, BaseModel)
-        else class_model
+    contracts = control_contracts_from_payload(class_model)
+    return contracts[1] if contracts is not None else _legacy_control_return_types(
+        class_diagram_puml
     )
-    if isinstance(payload, dict) and isinstance(payload.get("Classes"), list):
-        for class_item in payload["Classes"]:
-            if not isinstance(class_item, dict):
-                continue
-            if str(class_item.get("stereotype") or "").strip().casefold() != "control":
-                continue
-            class_name = str(class_item.get("className") or "").strip()
-            for operation in class_item.get("operations") or []:
-                if not isinstance(operation, dict):
-                    continue
-                method_name = str(operation.get("name") or "").strip()
-                return_type = str(operation.get("returnType") or "").strip()
-                if class_name and method_name and return_type:
-                    result[(class_name, method_name)] = return_type
-        return result
-    class_pattern = re.compile(
-        r"(?ms)^\s*class\s+(?P<class>[A-Za-z_]\w*)[^\{]*\{(?P<body>.*?)^\s*\}"
-    )
-    method_pattern = re.compile(
-        r"^\s*[+\-#]\s*(?P<name>[A-Za-z_]\w*)\s*\([^)]*\)\s*"
-        r":\s*(?P<return>[^\s]+(?:<[^>]+>)?)\s*$",
-        re.MULTILINE,
-    )
-    for match in class_pattern.finditer(class_diagram_puml or ""):
-        if not re.search(r"<<\s*Control\s*>>", match.group(0), re.IGNORECASE):
-            continue
-        for method in method_pattern.finditer(match.group("body")):
-            result[(match.group("class"), method.group("name"))] = method.group(
-                "return"
-            ).strip()
-    return result
-
-
-def _response_contract_for_control(return_type: str) -> tuple[str, bool]:
-    """Map a BCE return type to an OpenAPI response shape without inference."""
-    normalized = re.sub(r"\s+", "", return_type or "")
-    collection = re.fullmatch(
-        r"(?:java\.util\.)?(?:List|Set|Collection|Iterable)<(.+)>", normalized,
-        re.IGNORECASE,
-    )
-    item = collection.group(1) if collection else normalized
-    primitive = {
-        "string": "string",
-        "str": "string",
-        "boolean": "boolean",
-        "bool": "boolean",
-        "int": "integer",
-        "integer": "integer",
-        "long": "integer",
-        "short": "integer",
-        "float": "number",
-        "double": "number",
-        "bigdecimal": "number",
-        "number": "number",
-    }.get(item.lower())
-    return (primitive or item, collection is not None) if item and item.lower() != "void" else ("", False)
-
-
-def _api_field_type_for_control(type_name: str) -> str:
-    token = re.sub(r"\s+", "", type_name).lower()
-    # Collection-valued Control parameters are JSON arrays on the wire.  The
-    # previous fallback treated ``List<Enrollment>`` as a string, producing a
-    # syntactically valid OpenAPI document that could never satisfy the BCE
-    # binding validator.
-    if re.match(r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>", token):
-        return "array"
-    if token.endswith("[]"):
-        return "array"
-    if token in {"byte", "short", "int", "integer", "long"}:
-        return "integer"
-    if token in {"float", "double", "bigdecimal", "number"}:
-        return "number"
-    if token in {"boolean", "bool"}:
-        return "boolean"
-    # java.time values are represented as ISO strings at the HTTP boundary.
-    return "string"
-
-
-def _api_query_type_for_control(type_name: str) -> str:
-    """Keep an explicitly bound query aggregate aligned with its BCE type.
-
-    Scalar Java types have a fixed HTTP representation.  A named filter/DTO is
-    different: collapsing it to ``string`` makes a syntactically valid OpenAPI
-    parameter that cannot satisfy the Control contract.  The OpenAPI renderer
-    safely projects an unknown named query type as an object while validation
-    can still prove the exact API-to-Control type match.
-    """
-    normalized = re.sub(r"\s+", "", type_name).lower()
-    scalar = _api_field_type_for_control(type_name)
-    if scalar != "string" or normalized in {
-        "", "string", "str", "char", "character", "uuid",
-        "localdate", "localdatetime", "instant",
-    } or normalized.startswith("java.time."):
-        return scalar
-    return str(type_name).strip() or scalar
 
 
 def normalize_api_spec_model(
-    model: dict[str, Any], class_diagram_puml: str = "", class_model: Any | None = None,
+    model: dict[str, Any],
+    class_diagram_puml: str = "",
+    class_model: Any | None = None,
 ) -> dict[str, Any]:
-    """Repair mechanical traceability omissions without inventing API behavior.
+    """기존 느슨한 입력 우선순위로 API payload를 제자리 정규화한다."""
 
-    The structured model frequently contains a correct ``control_binding`` but
-    omits the redundant ``source_classes`` entry, or leaves request DTO fields
-    empty even though the binding explicitly names ``$body.<field>``.  These
-    are representation omissions, not design decisions, so fill them
-    deterministically before validation and OpenAPI rendering.
-    """
     if not isinstance(model, dict):
         return model
-    control_parameters = _control_parameter_types(class_diagram_puml, class_model)
-    control_returns = _control_return_types(class_diagram_puml, class_model)
-    for endpoint in model.get("Endpoints", []) or []:
-        if not isinstance(endpoint, dict):
-            continue
-        binding = endpoint.get("control_binding")
-        if isinstance(binding, dict):
-            control = str(binding.get("control") or "").strip()
-            method = str(binding.get("method") or "").strip()
-            # Some model responses flatten the qualified target into
-            # ``Class.method`` and leave the HTTP verb in ``method``.  When
-            # the split target is an exact BCE contract, this is a mechanical
-            # representation error, not a design choice; normalize it before
-            # traceability and argument validation.
-            if "." in control:
-                candidate_control, candidate_method = control.rsplit(".", 1)
-                if (candidate_control, candidate_method) in control_parameters:
-                    control = candidate_control
-                    method = candidate_method
-                    binding["control"] = control
-                    binding["method"] = method
-            expected_parameters = control_parameters.get((control, method), {})
-            response_schema, response_is_array = _response_contract_for_control(
-                control_returns.get((control, method), "")
-            )
-            source_classes = endpoint.setdefault("source_classes", [])
-            if control and isinstance(source_classes, list) and control not in source_classes:
-                source_classes.append(control)
-            query_params = endpoint.get("query_params")
-            if not isinstance(query_params, list):
-                query_params = []
-                endpoint["query_params"] = query_params
-            known_query_params = {
-                str(item.get("name") or "").strip()
-                for item in query_params if isinstance(item, dict)
-            } if isinstance(query_params, list) else set()
-            for argument in binding.get("arguments", []) or []:
-                if not isinstance(argument, dict):
-                    continue
-                source = str(argument.get("source") or "").strip()
-                if not source.startswith("$query."):
-                    continue
-                query_name = source.removeprefix("$query.").strip()
-                if not query_name or query_name in known_query_params:
-                    continue
-                parameter_name = str(argument.get("name") or "").strip()
-                query_params.append({
-                    "name": query_name,
-                    "type": _api_query_type_for_control(
-                        expected_parameters.get(parameter_name, "String")
-                    ),
-                    "required": True,
-                    "description": "",
-                })
-                known_query_params.add(query_name)
-            request_schema = str(endpoint.get("request_schema") or "").strip()
-            if request_schema:
-                schema = next(
-                    (
-                        item for item in model.get("Schemas", []) or []
-                        if isinstance(item, dict) and item.get("name") == request_schema
-                    ),
-                    None,
-                )
-                if isinstance(schema, dict):
-                    fields = schema.setdefault("fields", [])
-                    known = {
-                        str(item.get("name") or "").strip()
-                        for item in fields if isinstance(item, dict)
-                    }
-                    for argument in binding.get("arguments", []) or []:
-                        if not isinstance(argument, dict):
-                            continue
-                        source = str(argument.get("source") or "")
-                        name = source.removeprefix("$body.").strip()
-                        if not name or name == source or name in known:
-                            if name and name in known and source.startswith("$body."):
-                                expected = control_parameters.get(
-                                    (control, method), {}
-                                ).get(str(argument.get("name") or "").strip())
-                                if expected:
-                                    for field in fields:
-                                        if isinstance(field, dict) and field.get("name") == name:
-                                            field["type"] = _api_field_type_for_control(expected)
-                            continue
-                        fields.append({
-                            "name": name,
-                            "type": "string",
-                            "required": True,
-                            "description": "",
-                        })
-                        known.add(name)
-            # Response types are not an API-design choice once the exact BCE
-            # Control binding is selected.  Fill omitted success schemas and
-            # correct a primitive-vs-object mismatch deterministically.  Named
-            # DTO/entity projections remain untouched because they can be an
-            # intentional HTTP representation distinct from a BCE return name.
-            for response in endpoint.get("responses", []) or []:
-                if not isinstance(response, dict):
-                    continue
-                status = int(response.get("status", 0) or 0)
-                if not (200 <= status < 300) or status == 204 or not response_schema:
-                    continue
-                current_schema = str(response.get("schema_name") or "").strip()
-                primitive_schema = response_schema in {"string", "integer", "number", "boolean"}
-                if not current_schema or primitive_schema:
-                    response["schema_name"] = response_schema
-                    response["is_array"] = response_is_array
-    return model
+    contracts = control_contracts_from_payload(class_model)
+    if contracts is None:
+        contracts = (
+            _legacy_control_parameter_types(class_diagram_puml),
+            _legacy_control_return_types(class_diagram_puml),
+        )
+    return normalize_api_spec_payload(model, *contracts)
+
+
+__all__ = [
+    "API_SPEC_EXTRACTION_SYSTEM_PROMPT",
+    "ApiControlArgument",
+    "ApiControlBinding",
+    "ApiControlOutcome",
+    "ApiEndpoint",
+    "ApiField",
+    "ApiResponse",
+    "ApiSchema",
+    "ApiSpecModel",
+    "api_spec_messages",
+    "extract_api_spec_model",
+    "normalize_api_spec_model",
+]

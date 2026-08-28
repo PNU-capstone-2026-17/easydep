@@ -1,58 +1,14 @@
-"""사용자 피드백을 API 엔드포인트 모델(진실의 원천)에 적용한다.
-
-LLM은 OpenAPI 문서를 만지지 않고 구조화된 엔드포인트 모델만 편집한다. 문서는 그 뒤
-결정론적 조립(openapi.build_openapi_from_model)으로 재생성되므로, 모델과 명세가
-어긋나지 않고 필수 필드가 빠지지 않는다.
-"""
+"""기존 dict·PlantUML 기반 API 수정 호출을 보존하는 호환 어댑터다."""
 from __future__ import annotations
 
 from typing import Any
 
-from app.design.services.api_spec.extractor import ApiSpecModel, normalize_api_spec_model
+from app.design.services.api_spec.extractor import normalize_api_spec_model
+from app.design.services.api_spec.legacy import (
+    LEGACY_API_SPEC_REVISION_SYSTEM_PROMPT as API_SPEC_REVISION_SYSTEM_PROMPT,
+)
+from app.design.services.api_spec.models import ApiSpecModel
 from app.design.services.common.structured import parse_structured, revision_messages
-
-API_SPEC_REVISION_SYSTEM_PROMPT = """
-You edit an existing REST API model. You are given the current model (as JSON),
-the use-case specification, class diagram, and sequence diagram it was derived from,
-and the user's natural-language feedback.
-
-Apply the feedback to the model and return the FULL revised model, following the
-same schema. Rules:
-- Change only what the feedback asks for; leave everything else intact.
-- Keep the model grounded in the inputs — do not invent endpoints, fields, or
-  schemas that the feedback and inputs do not support.
-- Every `request_schema` and every response `schema_name` must name a schema you return.
-- Every brace variable in a `path` must have a matching entry in `path_params`.
-- `operation_id` values must stay unique.
-- Keep REST method semantics (get read, post create, put replace, patch update,
-  delete remove).
-- Keep the traceability fields (source_classes / source_class / use_case_ids) accurate. Carry them over unchanged for
-  elements you did not touch; update them for elements you changed; fill them
-  in for elements you added. Never invent a reference — an empty list is
-  honest, a made-up one is a lie the trace matrix will believe.
-- Keep every endpoint's `control_binding` exact: it must name an existing BCE
-  Control method, map each Control argument from an explicit HTTP request source,
-  and name one outcome for every documented response status. Preserve an existing
-  binding unchanged unless the feedback or a reported contract issue requires it.
-- For `api.control-arguments-match` findings, compare every binding argument with
-  the selected BCE method's exact parameter name and Java type. Repair the HTTP
-  parameter or request schema type when necessary; never leave a string source
-  bound to an `int`/`long` Control parameter and never silently omit a required
-  parameter. For `api.control-call-in-sequence`, select an operation whose exact
-  Control call is present in the sequence; do not invent a call or keep an
-  endpoint that has no actor-to-Boundary flow.
-- A Control parameter that is an aggregate filter or request value object must
-  remain one explicit HTTP value with the same type (for example,
-  `filter : CourseFilter` maps from `$query.filter`, with a `query_params`
-  entry named `filter` and typed `CourseFilter`). Do not replace it with several
-  scalar arguments unless the BCE Control method actually declares those scalars.
-- If the reported issue says that no API operation exists, add the missing
-  requirement-grounded endpoints. Derive them from actor-to-system use-case
-  behavior and the exact BCE Control calls in the sequence diagram; do not add
-  infrastructure-only or placeholder endpoints.
-Return the revised model strictly according to the provided schema. Do not include
-markdown, code fences, or any prose outside the schema fields.
-"""
 
 
 def revise_api_spec_model(
@@ -63,10 +19,10 @@ def revise_api_spec_model(
     class_diagram_puml: str = "",
     class_model: Any | None = None,
 ) -> dict[str, Any]:
-    """현재 모델 + 피드백 → 수정된 모델. 피드백이 없으면 원본을 그대로 둔다."""
+    """기존 수정 envelope와 dict 반환 shape를 유지해 typed 전환을 연결한다."""
+
     if not current_model or not feedback:
         return current_model or {}
-
     revised = parse_structured(
         revision_messages(
             API_SPEC_REVISION_SYSTEM_PROMPT,
@@ -80,3 +36,6 @@ def revise_api_spec_model(
         ApiSpecModel,
     )
     return normalize_api_spec_model(revised, class_diagram_puml, class_model)
+
+
+__all__ = ["API_SPEC_REVISION_SYSTEM_PROMPT", "revise_api_spec_model"]

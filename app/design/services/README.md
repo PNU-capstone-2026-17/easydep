@@ -48,10 +48,11 @@
 - [클래스 설계 서비스](class_diagram/README.md)
 - [클래스 설계 검증](class_diagram/validation/README.md)
 - [시퀀스 투영과 검증](sequence_diagram/README.md)
+- [API 명세 서비스](api_spec/README.md)
 - [클래스·시퀀스 생성 로직](../../../docs/class-design-pipeline.md)
 - [클래스 설계 코드 규칙](../../../docs/class-design-code-conventions.md)
 
-API·ERD·배포의 상세 README는 해당 영역을 typed 서비스 경계로 리팩터링할 때 같은 형식으로
+ERD·배포의 상세 README는 해당 영역을 typed 서비스 경계로 리팩터링할 때 같은 형식으로
 추가한다. 그 전까지는 각 모듈의 현재 공개 함수와 중앙 시스템 문서를 기준으로 삼는다.
 
 ## 변경할 때 확인할 것

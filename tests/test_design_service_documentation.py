@@ -1,4 +1,4 @@
-"""클래스·시퀀스 설계의 설명 계약이 코드 구조와 함께 유지되는지 검사한다."""
+"""클래스·시퀀스·API 설계의 설명 계약이 코드 구조와 함께 유지되는지 검사한다."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ LOCAL_READMES = (
     ROOT / "app/design/services/class_diagram/README.md",
     ROOT / "app/design/services/class_diagram/validation/README.md",
     ROOT / "app/design/services/sequence_diagram/README.md",
+    ROOT / "app/design/services/api_spec/README.md",
 )
 CENTRAL_GUIDES = (
     ROOT / "docs/README.md",
@@ -23,6 +24,7 @@ PYTHON_MODULES = tuple(
     for directory in (
         ROOT / "app/design/services/class_diagram",
         ROOT / "app/design/services/sequence_diagram",
+        ROOT / "app/design/services/api_spec",
     )
     for path in directory.rglob("*.py")
     if path.name != "__init__.py"
@@ -56,6 +58,19 @@ PUBLIC_CONTRACTS = {
     ),
     ROOT / "app/design/services/sequence_diagram/validation.py": (
         "validate_sequence_model",
+    ),
+    ROOT / "app/design/services/api_spec/service.py": (
+        "generate_api_spec_model",
+        "revise_api_spec_model",
+    ),
+    ROOT / "app/design/services/api_spec/normalization.py": (
+        "normalize_api_spec_model",
+    ),
+    ROOT / "app/design/services/api_spec/validation.py": (
+        "validate_api_spec_model",
+    ),
+    ROOT / "app/design/services/api_spec/projection.py": (
+        "build_openapi_from_model",
     ),
 }
 

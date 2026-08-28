@@ -43,9 +43,13 @@ from app.design.nodes.artifact import (
 )
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.extractor import extract_api_spec_model
-from app.design.services.api_spec.openapi import build_openapi_from_model
-from app.design.services.api_spec.reviser import revise_api_spec_model
+from app.design.services.api_spec.models import ApiSpecModel
+from app.design.services.api_spec.projection import build_openapi_from_model
+from app.design.services.api_spec.service import (
+    generate_api_spec_model as extract_api_spec_model,
+)
+from app.design.services.api_spec.service import revise_api_spec_model
+from app.design.services.api_spec.validation import validate_api_spec_model
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.scenario import build_scenario_index
@@ -347,6 +351,85 @@ def _state_check(
     )
 
 
+def _stored_api_model(value: object) -> ApiSpecModel:
+    """graph state의 API JSON을 typed service 경계에서 검증한다."""
+
+    if not isinstance(value, (dict, ApiSpecModel)):
+        raise TypeError("stored API model must be an object")
+    return value if isinstance(value, ApiSpecModel) else ApiSpecModel.model_validate(value)
+
+
+def _api_design_inputs(
+    state: ArchitectureState,
+) -> tuple[BCEModel, SequenceCollection]:
+    """API 생성·수정이 공유하는 승인 BCE·시퀀스 입력을 검증한다."""
+
+    bce_model = _stored_class_model(state.get("extracted_bce_classes") or {})
+    sequence_value = state.get("sequence_diagram_model")
+    if not isinstance(sequence_value, dict):
+        raise TypeError("stored sequence model must be an object")
+    return bce_model, SequenceCollection.model_validate(sequence_value)
+
+
+def _extract_api_state(state: ArchitectureState) -> dict[str, Any]:
+    """raw graph state를 typed API proposal service에 연결해 저장 JSON으로 반환한다."""
+
+    bce_model, sequence_model = _api_design_inputs(state)
+    proposed = extract_api_spec_model(
+        usecase_spec_text(state), bce_model, sequence_model,
+    )
+    return _stored_api_model(proposed).model_dump()
+
+
+def _revise_api_state(
+    current: dict[str, Any],
+    feedback: str,
+    state: ArchitectureState,
+    targets: set[str],
+) -> dict[str, Any]:
+    """현재 API JSON과 graph feedback을 typed revision service에 연결한다."""
+
+    bce_model, sequence_model = _api_design_inputs(state)
+    revised = revise_api_spec_model(
+        _stored_api_model(current),
+        feedback,
+        usecase_spec_text(state),
+        bce_model,
+        sequence_model,
+        targets,
+    )
+    return _stored_api_model(revised).model_dump()
+
+
+def _render_api_model(model: dict[str, Any]) -> dict[str, Any]:
+    """저장 JSON을 검증한 뒤 결정론적 OpenAPI projection만 호출한다."""
+
+    return build_openapi_from_model(_stored_api_model(model))
+
+
+def _api_model_findings(
+    model: dict[str, Any], state: ArchitectureState,
+) -> list[ArtifactFinding]:
+    """typed 계약을 관찰하되 기존 semantic repair finding만 반환한다.
+
+    typed validator의 exact-call 판정은 기존 detector보다 엄격할 수 있다. 그 오류를 repair
+    finding에 더하면 호출 횟수와 수정 범위가 바뀌므로, 이 adapter에서는 typed 입력 정합성을
+    관찰만 하고 graph의 기존 detector가 repair 소유권을 계속 가진다.
+    """
+
+    accepted = _stored_api_model(model)
+    payload = accepted.model_dump()
+    findings = list(api_spec_findings(payload, cast(dict[str, Any], state)))
+    try:
+        bce_model, sequence_model = _api_design_inputs(state)
+    except (TypeError, ValueError):
+        # 기존 checkpoint의 class ``methods``/단일 sequence shape는 legacy detector가
+        # 계속 판정한다. 새 generation/revision 경로만 typed 입력을 강제한다.
+        return findings
+    validate_api_spec_model(accepted, bce_model, sequence_model)
+    return findings
+
+
 CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     stage="class_diagram",
     model_key="extracted_bce_classes",
@@ -401,36 +484,17 @@ API_SPEC_SPEC = DesignArtifactSpec(
     errors_key="api_spec_syntax_errors",
     feedback_key="api_spec_feedback",
     empty={},
-    extract=lambda state: extract_api_spec_model(
-        usecase_spec_text(state),
-        state.get("class_diagram_puml", ""),
-        state.get("sequence_diagram_puml", ""),
-        class_model=state.get("extracted_bce_classes") or {},
-    ),
-    revise=lambda current, feedback, state, targets: revise_api_spec_model(
-        current,
-        feedback,
-        _design_context(state, "api_spec"),
-        targets,
-        state.get("class_diagram_puml", ""),
-        class_model=state.get("extracted_bce_classes") or {},
-    ),
-    render=build_openapi_from_model,
+    extract=_extract_api_state,
+    revise=_revise_api_state,
+    render=_render_api_model,
     validate=validate_api_spec,
     elements={
         "Endpoints": _endpoint_key,
         "Schemas": lambda s: s.get("name", ""),
     },
-    check=_state_check(api_spec_findings),
+    check=_api_model_findings,
     check_key="api_spec_check",
-    repair=lambda current, feedback, state, targets: revise_api_spec_model(
-        current,
-        feedback,
-        _design_context(state, "api_spec"),
-        targets,
-        state.get("class_diagram_puml", ""),
-        class_model=state.get("extracted_bce_classes") or {},
-    ),
+    repair=_revise_api_state,
 )
 
 ERD_SPEC = DesignArtifactSpec(

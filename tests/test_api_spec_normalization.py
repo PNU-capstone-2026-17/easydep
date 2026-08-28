@@ -1,6 +1,8 @@
+"""API 호환 facade가 기존 정규화·수정·OpenAPI shape를 보존하는지 검사한다."""
+
+from app.design.services.api_spec import reviser
 from app.design.services.api_spec.extractor import normalize_api_spec_model
 from app.design.services.api_spec.openapi import build_openapi_from_model
-from app.design.services.api_spec import reviser
 
 
 def test_api_model_fills_control_traceability_and_explicit_body_fields() -> None:
