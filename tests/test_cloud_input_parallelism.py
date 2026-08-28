@@ -1,9 +1,11 @@
+"""독립 cloud input 분석의 병렬성과 결정론적 병합 계약을 검증한다."""
+
 from __future__ import annotations
 
 import threading
 import time
 
-from app.requirements.agent.steps import step_cloud_inputs
+from app.requirements.resources import cloud_inputs
 
 
 def test_cloud_input_analysis_overlaps_independent_branches(monkeypatch) -> None:
@@ -33,11 +35,10 @@ def test_cloud_input_analysis_overlaps_independent_branches(monkeypatch) -> None
             }
         }
 
-    monkeypatch.setattr(step_cloud_inputs, "derive_deployment_needs", deployment)
-    monkeypatch.setattr(step_cloud_inputs, "extract_resource_constraints", constraints)
-
-    result = step_cloud_inputs.analyze_cloud_inputs(
-        {"classified": [{"id": "FR1", "text": "x", "type": "FR"}]}
+    result = cloud_inputs.analyze_cloud_inputs(
+        {"classified": [{"id": "FR1", "text": "x", "type": "FR"}]},
+        deployment_call=deployment,
+        constraint_call=constraints,
     )
 
     assert set(entered) == {"deployment", "constraints"}

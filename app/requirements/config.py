@@ -104,7 +104,7 @@ class Settings(BaseSettings):
     # 않는다는 뜻이다.
     concern_linker_llm: bool = False
 
-    # 제약 구조화 **에이전트**(`steps/step_resource.py`)를 돌릴지.
+    # 제약 구조화 **에이전트**(`resources/service.py`)를 돌릴지.
     #
     # 끄면 이 단계는 아무것도 읽지 않고, 필수 칸 전부가 되묻기 질문으로 나간다. 그건
     # 결함이 아니라 **정확한 기록**이다 — 자연어를 읽는 수단이 없는데 읽은 척하지 않는다.

@@ -20,9 +20,9 @@ from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
-from app.requirements.agent.steps import step_cloud
 from app.requirements.evaluation import jsonl
 from app.requirements.knowledge import concerns
+from app.requirements.resources import capability_extraction as step_cloud
 
 
 def load(dir_path: Path) -> list[dict]:

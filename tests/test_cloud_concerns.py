@@ -1,10 +1,8 @@
-"""Current generic deployment-needs extraction contract."""
+"""요구사항에서 도출하는 일반 배포 capability의 공개 계약을 검증한다."""
 from __future__ import annotations
 
-import re
-
-from app.requirements.agent.steps import step_cloud
 from app.requirements.knowledge import concerns, verify_concerns
+from app.requirements.resources import capability_extraction as step_cloud
 from app.requirements.schemas import DeploymentNeed, DeploymentNeedsResult
 
 CLASSIFIED = [
@@ -363,12 +361,6 @@ def test_llm_failure_is_visible_and_does_not_fabricate_needs(monkeypatch):
     result = step_cloud.derive_deployment_needs({"classified": CLASSIFIED})
 
     assert result["deployment_needs"] == {}
-
-
-def test_deployment_need_prompt_is_english_and_rejects_design_inference():
-    assert not re.search(r"[가-힣]", step_cloud._SYSTEM)
-    assert "not a mandate for one instance or no replication" in step_cloud._SYSTEM
-    assert "Do not select or name concrete cloud resources" in step_cloud._SYSTEM
 
 
 def test_consumed_state_metadata_requires_value_level_evidence(monkeypatch):

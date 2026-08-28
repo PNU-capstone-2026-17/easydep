@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.requirements.capability_contract import CalibrationPoint, fit_policy
+from app.requirements.resources.capability_contract import CalibrationPoint, fit_policy
 
 
 def load_labels(path: Path) -> list[CalibrationPoint]:

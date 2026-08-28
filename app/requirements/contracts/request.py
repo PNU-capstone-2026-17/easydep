@@ -35,7 +35,7 @@ class ResourceAnswer(BaseModel):
     사용자는 질문에 답했을 뿐인데 요구사항이 흔들린다.
 
     값은 **문자열 그대로** 받는다. 해석은 제약 구조화 에이전트가 산문과 같은 규율로
-    한다(`steps/step_resource.py`) — 화면이 "서울"을 코드로 바꿔 보내면 그 해석이
+    한다(`resources/service.py`) — 화면이 "서울"을 코드로 바꿔 보내면 그 해석이
     어디서 왔는지 아무도 모르게 된다. 답했다는 사실이 모호함을 없애 주지도 않는다:
     "서울"은 여전히 카탈로그를 거쳐야 하고, 후보가 여럿이면 여전히 되물어야 한다.
     """
@@ -136,7 +136,7 @@ class AnalyzeRequest(BaseModel):
     # 신규 세션의 초기값 또는 요구사항 게이트의 구조화 재개 값으로 사용한다.
     deployment_preferences: DeploymentPreferences | None = None
     # 클라우드 제약 원문(`apps.resource_constraints_text`). 요구사항과 **따로** 받는다 —
-    # 여기서 `RESOURCE_SPEC`이 만들어진다(`steps/step_resource.py`). 없으면 필수 칸이
+    # 여기서 `RESOURCE_SPEC`이 만들어진다(`resources/service.py`). 없으면 필수 칸이
     # 비고, 그 사실이 되묻기 질문으로 나간다.
     resource_constraints_text: str | None = None
     answer: str | None = None

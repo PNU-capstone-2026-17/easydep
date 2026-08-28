@@ -28,9 +28,9 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from app.requirements.agent.steps import step_cloud
 from app.requirements.evaluation import concern_report
 from app.requirements.knowledge import concerns
+from app.requirements.resources import capability_extraction as step_cloud
 
 
 def requirements() -> list[dict]:

@@ -1,3 +1,5 @@
+"""application/runtime 의도와 cloud capability/binding의 공개 계약을 검증한다."""
+
 from pathlib import Path
 
 from app.requirements.resources.application_cloud import (
@@ -8,7 +10,7 @@ from app.requirements.resources.application_cloud import (
     ContractFact,
     DeploymentBindingContract,
     application_intent_contract_from_requirements,
-    cloud_contract_from_legacy,
+    cloud_capability_contract_from_requirements,
     dependency_declarations,
     derive_deployment_bindings,
     infer_application_contract,
@@ -194,7 +196,7 @@ def test_test_environment_cannot_override_process_control_variables(tmp_path: Pa
 
 
 def test_legacy_cloud_adapter_preserves_unknown_accepted_capability():
-    contract = cloud_contract_from_legacy(
+    contract = cloud_capability_contract_from_requirements(
         {
             "deployment_needs": {
                 "future_accelerator_pool": {
@@ -736,7 +738,7 @@ def test_binding_planner_uses_app_port_and_storage_path_without_database_assumpt
 
 
 def test_cloud_contract_does_not_invent_deployment_topology():
-    contract = cloud_contract_from_legacy(
+    contract = cloud_capability_contract_from_requirements(
         {"deployment_needs": {}, "resource_spec": {"provider": "aws"}}
     )
 
@@ -744,7 +746,7 @@ def test_cloud_contract_does_not_invent_deployment_topology():
 
 
 def test_high_availability_requirement_remains_a_capability_fact():
-    contract = cloud_contract_from_legacy(
+    contract = cloud_capability_contract_from_requirements(
         {
             "deployment_needs": {
                 "availability_requirement": {

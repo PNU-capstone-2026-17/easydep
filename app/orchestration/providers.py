@@ -43,7 +43,7 @@ from app.requirements.resources.application_cloud import (
     CloudCapabilityContract,
     DeploymentBindingContract,
     application_intent_contract_from_requirements,
-    cloud_contract_from_legacy,
+    cloud_capability_contract_from_requirements,
     dependency_declarations,
     derive_deployment_bindings,
     infer_application_contract,
@@ -899,7 +899,7 @@ tasks.named('test') { useJUnitPlatform() }
                         ),
                     },
                 )
-            cloud_contract = cloud_contract_from_legacy(requirements_result)
+            cloud_contract = cloud_capability_contract_from_requirements(requirements_result)
             cloud_contract, binding_contract = derive_deployment_bindings(
                 contract,
                 cloud_contract,

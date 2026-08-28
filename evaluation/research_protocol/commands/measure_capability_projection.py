@@ -13,8 +13,8 @@ from time import perf_counter
 from typing import Any
 
 from app.orchestration.adapters.cloud_design import CloudDesignAdapter
-from app.requirements.agent.steps.step_cloud import derive_deployment_needs
-from app.requirements.capability_contract import link_dependency_capability
+from app.requirements.resources.capability_contract import link_dependency_capability
+from app.requirements.resources.capability_extraction import derive_deployment_needs
 from evaluation.baselines.common import model, seed, temperature
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 

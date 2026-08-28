@@ -417,7 +417,7 @@ def start_analysis(
 
     `constraints_text`는 사용자가 **요구사항과 따로** 쓴 클라우드 제약 원문이다
     (`apps.resource_constraints_text`). 요구사항 문장에 섞어 넣지 않는 이유는
-    `steps/step_resource.py`에 있다 — 실측상 provider·region·예산은 요구사항 산문에
+    `resources/service.py`에 있다 — 실측상 provider·region·예산은 요구사항 산문에
     0건이고, 섞으면 분류기가 그것들을 FR/NFR로 판정해야 한다.
     """
     gates = settings.enable_feedback_gates if feedback_gates is None else feedback_gates

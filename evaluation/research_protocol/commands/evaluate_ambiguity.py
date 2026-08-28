@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.requirements.capability_contract import decide, load_policy
+from app.requirements.resources.capability_contract import decide, load_policy
 from evaluation.research_protocol.core.paths import PROTOCOL_ROOT, REPOSITORY_ROOT
 from evaluation.research_protocol.core.selective_metrics import score_selective_decisions
 

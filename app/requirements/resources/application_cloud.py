@@ -636,9 +636,22 @@ def dependency_declarations(
     return sorted(declarations)
 
 
-def cloud_contract_from_legacy(requirements_result: dict[str, Any]) -> CloudCapabilityContract:
-    """Preserve arbitrary accepted capability keys without baking them into the schema."""
-    from app.requirements.capability_contract import accepted_needs
+def cloud_capability_contract_from_requirements(
+    requirements_result: dict[str, Any],
+) -> CloudCapabilityContract:
+    """현재 requirements 결과를 typed cloud capability 계약으로 투영한다.
+
+    Args:
+        requirements_result: 현재 분석의 ``deployment_needs``를 포함한 JSON 결과다.
+
+    Returns:
+        수락된 capability를 임의 키 손실 없이 옮긴 typed cloud 계약이다.
+
+    Notes:
+        저장 checkpoint 호환 adapter가 아니라 현재 requirements→implementation handoff의
+        결정론적 projection이다. 따라서 과거 형상을 뜻하는 fallback은 제공하지 않는다.
+    """
+    from app.requirements.resources.capability_contract import accepted_needs
 
     needs = accepted_needs(requirements_result.get("deployment_needs") or {})
     facts = []
@@ -676,7 +689,7 @@ def application_intent_contract_from_requirements(
     requirements_result: dict[str, Any],
 ) -> ApplicationRuntimeContract:
     """수락된 열린 need에서 명시적으로 근거가 있는 앱 상태 의도만 투영한다."""
-    from app.requirements.capability_contract import accepted_needs
+    from app.requirements.resources.capability_contract import accepted_needs
 
     facts: list[ContractFact] = []
     needs = accepted_needs(requirements_result.get("deployment_needs") or {})

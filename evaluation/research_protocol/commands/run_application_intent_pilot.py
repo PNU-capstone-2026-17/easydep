@@ -11,10 +11,10 @@ from time import perf_counter
 from app.requirements.resources.application_cloud import (
     DeploymentBindingContract,
     application_intent_contract_from_requirements,
-    cloud_contract_from_legacy,
+    cloud_capability_contract_from_requirements,
     validate_binding_consistency,
 )
-from app.requirements.agent.steps.step_cloud import derive_deployment_needs
+from app.requirements.resources.capability_extraction import derive_deployment_needs
 
 CASES = {
     "explicit-node-scope": [
@@ -59,7 +59,7 @@ def run(*, capability_samples: int = CONFIRMATORY_CAPABILITY_SAMPLES) -> dict:
             "resource_spec": {"multiZone": True},
         }
         intent = application_intent_contract_from_requirements(requirements_result)
-        cloud = cloud_contract_from_legacy(requirements_result)
+        cloud = cloud_capability_contract_from_requirements(requirements_result)
         diagnostics = validate_binding_consistency(
             intent, cloud, DeploymentBindingContract()
         )

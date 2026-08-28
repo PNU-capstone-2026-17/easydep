@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.cloudkb.depkb.reliability import cohen_kappa, percent_agreement
-from app.requirements.capability_contract import calibrated_score
+from app.requirements.resources.capability_contract import calibrated_score
 
 PROPOSAL_SCHEMA = "easydep-capability-proposals/v1"
 REVIEW_SCHEMA = "easydep-capability-review/v1"

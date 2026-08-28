@@ -113,7 +113,7 @@ class AgentState(TypedDict):
     capability_contract: NotRequired[dict]
     # 사용자가 쓴 클라우드 제약 원문(`apps.resource_constraints_text`). 요구사항 문장과
     # **따로** 받는다 — 실측상 provider·region·예산은 요구사항 산문에 아예 없고(0건),
-    # 없는 곳을 뒤지면 오탐만 남는다(`steps/step_resource.py`).
+    # 없는 곳을 뒤지면 오탐만 남는다(`resources/service.py`).
     resource_constraints_text: NotRequired[str]
     # 최초 화면의 구조화 입력. provider·region·월 예산은 이 값을 결정론적으로
     # 정규화하고, 자유문장 제약은 보조 추출 경로로만 사용한다.
@@ -125,7 +125,7 @@ class AgentState(TypedDict):
     # 구조화 에이전트가 산문과 같은 규율로 해석한다("서울"은 여전히 카탈로그를 거쳐
     # 코드로 풀려야 하고, 후보가 여럿이면 여전히 모호하다).
     resource_answers: NotRequired[dict[str, str]]
-    # 제약 구조화의 작업 기록: 초안·질문·근거·버린 후보(`steps/step_resource.py`).
+    # 제약 구조화의 작업 기록: 초안·질문·근거·버린 후보(`resources/service.py`).
     # 계약을 만족하지 못해도 **여기는 늘 존재한다** — 왜 못 채웠는지가 사라지면 안 된다.
     resource_intake: NotRequired[dict]
     # `RESOURCE_SPEC` 계약 산출물. **계약을 만족할 때만 존재한다.** 반쯤 채운 사양을

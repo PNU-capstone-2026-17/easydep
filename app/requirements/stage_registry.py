@@ -51,9 +51,9 @@ from app.requirements.agent.steps.step4_diagram import (
     identify_relationships,
     render_diagram,
 )
-from app.requirements.agent.steps.step_cloud_inputs import analyze_cloud_inputs
-from app.requirements.agent.steps.step_resource import build_resource_spec
 from app.requirements.common.state_contract import StateContract, state_contract_of
+from app.requirements.resources.cloud_inputs import analyze_cloud_inputs
+from app.requirements.resources.service import build_resource_spec
 
 
 @dataclass(frozen=True)

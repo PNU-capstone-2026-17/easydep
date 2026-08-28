@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("requirements", nargs="*", help="요구사항 문장 (여러 개 가능)")
     parser.add_argument("--file", "-f", help="요구사항을 한 줄에 하나씩 담은 파일")
     # **요구사항과 따로 받는다.** 실측상 provider·region·예산은 요구사항 산문에
-    # 0건이고(`steps/step_resource.py`), 섞으면 분류기가 그것들을 FR/NFR로 판정해야
+    # 0건이고(`resources/service.py`), 섞으면 분류기가 그것들을 FR/NFR로 판정해야
     # 한다. 그래프는 처음부터 이 값을 받고 있었는데 CLI만 안 넘기고 있었다.
     parser.add_argument(
         "--constraints", "-c",

@@ -1,10 +1,10 @@
-"""Current RESOURCE_SPEC behavior for the Docker-on-VM requirements flow."""
+"""Docker-on-VM 요구사항 경로의 공개 RESOURCE_SPEC 계약을 검증한다."""
 
 from __future__ import annotations
 
 import re
 
-from app.requirements.agent.steps import step_resource as sr
+from app.requirements.resources import service as sr
 from app.requirements.schemas import CloudConstraintExtraction
 
 CONSTRAINTS = "Deploy to AWS in Seoul with a monthly budget of at most 100 USD."
@@ -27,12 +27,12 @@ def _extraction(**changes) -> CloudConstraintExtraction:
 
 def _run(monkeypatch, extraction: CloudConstraintExtraction, text: str = CONSTRAINTS):
     monkeypatch.setattr(sr.settings, "resource_agent_llm", True)
-    monkeypatch.setattr(sr, "_extract_once", lambda _briefing: extraction)
     return sr.build_resource_spec(
         {
             "classified": [],
             "resource_constraints_text": text,
-        }
+        },
+        proposal_call=lambda _briefing: extraction,
     )
 
 
@@ -216,20 +216,35 @@ def test_disabled_llm_reports_degradation_without_fabricating_values(monkeypatch
     assert intake["degraded"].startswith("The resource constraint LLM is disabled")
 
 
-def test_structured_user_answers_are_grounded_in_the_rendered_briefing():
-    seen, briefing = sr._perception(
+def test_structured_user_answers_ground_cached_extraction_through_public_stage():
+    """구조화 답변의 근거 인정을 private briefing helper 없이 결과로 확인한다."""
+
+    result = sr.build_resource_spec(
         {
             "classified": [],
             "resource_answers": {
                 "provider": "azure",
                 "monthlyBudgetUSD": "100",
             },
+            "resource_constraint_extraction": {
+                "status": "completed",
+                "result": CloudConstraintExtraction(
+                    provider="azure",
+                    provider_evidence="provider: azure",
+                    monthly_budget_amount=100,
+                    monthly_budget_currency="USD",
+                    monthly_budget_evidence="monthlyBudgetUSD: 100",
+                ).model_dump(mode="json"),
+            },
         }
     )
 
-    assert "provider: azure" in briefing
-    assert sr._ground("provider: azure", seen)
-    assert sr._ground("monthlyBudgetUSD: 100", seen)
+    assert result["resource_intake"]["draft"] == {
+        "schemaVersion": "4",
+        "workloads": ["vm"],
+        "provider": "azure",
+        "monthlyBudgetUSD": 100.0,
+    }
 
 
 def test_structured_topology_preferences_are_not_copied_into_resource_spec(monkeypatch):

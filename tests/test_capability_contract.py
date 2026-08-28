@@ -1,6 +1,8 @@
+"""배포 capability 판정·calibration·의존 링크의 공개 계약을 검증한다."""
+
 from __future__ import annotations
 
-from app.requirements.capability_contract import (
+from app.requirements.resources.capability_contract import (
     CalibrationPoint,
     calibrated_score,
     decide,

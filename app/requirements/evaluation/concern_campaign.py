@@ -34,10 +34,10 @@ import time
 from pathlib import Path
 
 from app.requirements import prompts
-from app.requirements.agent.steps import step_cloud
 from app.requirements.config import settings
 from app.requirements.evaluation import campaign, jsonl
 from app.requirements.knowledge import concerns
+from app.requirements.resources import capability_extraction as step_cloud
 
 _ROOT = Path(__file__).resolve().parents[3]
 INPUTS_DIR = _ROOT / "inputs"

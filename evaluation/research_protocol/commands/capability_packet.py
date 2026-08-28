@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from app.requirements.agent.steps.step_cloud import derive_deployment_needs
+from app.requirements.resources.capability_extraction import derive_deployment_needs
 from evaluation.baselines.common import model, seed, temperature
 from evaluation.capability_campaign import make_review, validate_proposals
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT

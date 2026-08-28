@@ -9,13 +9,13 @@ from time import perf_counter
 from typing import Any
 
 from app.orchestration.adapters.cloud_design import CloudDesignAdapter
+from app.orchestration.contracts import RunMode, StepContext
+from app.orchestration.providers import LlmVmDeliveryProvider
 from app.requirements.resources.application_cloud import (
-    cloud_contract_from_legacy,
+    cloud_capability_contract_from_requirements,
     derive_deployment_bindings,
     infer_application_contract,
 )
-from app.orchestration.contracts import RunMode, StepContext
-from app.orchestration.providers import LlmVmDeliveryProvider
 from evaluation.implementation import evaluate_repository
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 from evaluation.research_protocol.core.snapshot_context import source_app_id
@@ -74,7 +74,7 @@ def run_delivery_cell(
         use_cloud_kb=use_cloud_kb,
     )
     app_contract = infer_application_contract(application)
-    cloud_contract = cloud_contract_from_legacy(requirements)
+    cloud_contract = cloud_capability_contract_from_requirements(requirements)
     cloud_contract, binding_contract = derive_deployment_bindings(
         app_contract, cloud_contract
     )

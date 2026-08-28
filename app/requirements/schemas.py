@@ -708,4 +708,4 @@ class AnalyzeResponse(BaseModel):
 # `ResourceFieldRead`·`ResourceReading`은 없앴다(2026-07-29). 제약 구조화를 **한 번
 # 읽고 끝내는 구조화 출력**에서 도구를 쓰는 에이전트 루프로 바꾸면서, 읽기의 결과는
 # 스키마가 아니라 도구 호출(`record_field`)로 들어온다 — 인용 대조는 그 문에서 그대로
-# 한다(`steps/step_resource._ground`).
+# 한다(`resources/service.py`).

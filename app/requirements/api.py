@@ -40,7 +40,7 @@ def persist_analysis(app_id: str, payload: dict) -> list[str]:
 
     STAGE_ARTIFACTS(app/repositories/artifact_repository.py)에 이미 자리가 있어
     스키마 변경은 필요 없다. resource_spec은 **2026-07-28부터 이 에이전트가 만든다**
-    (`steps/step_resource.py`) — 계약을 만족한 실행에서만 온다.
+    (`resources/service.py`) — 계약을 만족한 실행에서만 온다.
     """
     if payload.get("status") not in ("need_feedback", "completed"):
         return []  # clarify 질문 응답에는 아직 산출물이 없다

@@ -9,9 +9,11 @@ from typing import Any
 
 from app.cloudkb.depkb.evidence_model import validate_frozen_model
 from app.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
-from app.requirements.capability_contract import DEFAULT_POLICY, load_policy
+from app.requirements.resources.capability_contract import DEFAULT_POLICY, load_policy
 from evaluation.dependency_audit.intervention_results import adjudicate_result
-from evaluation.research_protocol.commands.build_intervention_manifest import build as build_interventions
+from evaluation.research_protocol.commands.build_intervention_manifest import (
+    build as build_interventions,
+)
 from evaluation.research_protocol.commands.build_runtime_dependencies import build as build_runtime
 from evaluation.research_protocol.core.paths import DEFINITION_ROOT, PROTOCOL_ROOT, REPOSITORY_ROOT
 

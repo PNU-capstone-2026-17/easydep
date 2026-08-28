@@ -13,13 +13,13 @@ from time import perf_counter
 from typing import Any
 
 from app.orchestration.adapters.testing import TestingAdapter
+from app.orchestration.contracts import RunMode, StepContext, StepStatus
+from app.orchestration.providers import LlmLogicProvider, LlmVmDeliveryProvider
 from app.requirements.resources.application_cloud import (
-    cloud_contract_from_legacy,
+    cloud_capability_contract_from_requirements,
     derive_deployment_bindings,
     infer_application_contract,
 )
-from app.orchestration.contracts import RunMode, StepContext, StepStatus
-from app.orchestration.providers import LlmLogicProvider, LlmVmDeliveryProvider
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 from evaluation.research_protocol.core.snapshot_context import (
     load_context,
@@ -86,7 +86,7 @@ def run_case(
         preflight_before = preflight(application, boundary)
         feedback = _diagnostic_feedback(preflight_before, case["expectedDiagnostic"])
         app_contract = infer_application_contract(application)
-        cloud_contract = cloud_contract_from_legacy(requirements)
+        cloud_contract = cloud_capability_contract_from_requirements(requirements)
         cloud_contract, binding_contract = derive_deployment_bindings(
             app_contract, cloud_contract
         )
