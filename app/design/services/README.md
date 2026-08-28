@@ -37,6 +37,9 @@
 
 - graph adapter만 원시 `ArchitectureState`를 읽고 저장 JSON으로 직렬화한다.
 - 서비스 공개 함수는 Pydantic 모델이나 frozen dataclass를 주고받는다.
+- 문서에 명시한 호환 facade는 이전 checkpoint와 저장소 내부 호출을 위해 legacy dict나
+  PlantUML을 받을 수 있다. facade는 canonical typed 서비스에 위임하며 자체 규칙이나
+  prompt를 소유하지 않는다.
 - LLM 응답은 호출 위치에서 Pydantic schema로 검증한 뒤에만 다음 단계로 전달한다.
 - 검증 함수는 모델을 수정하거나 LLM을 호출하지 않는다. repair 여부와 예산은 소유
   서비스가 결정한다.
@@ -49,10 +52,11 @@
 - [클래스 설계 검증](class_diagram/validation/README.md)
 - [시퀀스 투영과 검증](sequence_diagram/README.md)
 - [API 명세 서비스](api_spec/README.md)
+- [ERD 수정과 논리 모델 투영](erd/README.md)
 - [클래스·시퀀스 생성 로직](../../../docs/class-design-pipeline.md)
 - [클래스 설계 코드 규칙](../../../docs/class-design-code-conventions.md)
 
-ERD·배포의 상세 README는 해당 영역을 typed 서비스 경계로 리팩터링할 때 같은 형식으로
+배포의 상세 README는 해당 영역을 typed 서비스 경계로 리팩터링할 때 같은 형식으로
 추가한다. 그 전까지는 각 모듈의 현재 공개 함수와 중앙 시스템 문서를 기준으로 삼는다.
 
 ## 변경할 때 확인할 것

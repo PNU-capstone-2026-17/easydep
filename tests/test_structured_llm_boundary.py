@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import pytest
 from pydantic import BaseModel, model_validator
@@ -10,12 +11,13 @@ from pydantic import BaseModel, model_validator
 import app.design.services.common.structured as structured
 from app.design.services.common.structured import (
     StructuredLlmError,
-    _parse_with_schema_repair,
-    _stream_structured,
     bind_context,
     capture_llm_timings,
+    parse_with_schema_repair,
     record_llm_timing,
     run_with_wall_timeout,
+    schema_repair_payload,
+    stream_structured_response,
 )
 
 
@@ -24,6 +26,7 @@ def test_local_schema_failure_gets_one_bounded_full_object_retry(monkeypatch):
         answer: str
 
     calls: list[list[dict[str, str]]] = []
+    repair_payloads: list[dict[str, Any]] = []
 
     def stream(_client, messages, schema, _observation, **_kwargs):
         calls.append(messages)
@@ -31,18 +34,22 @@ def test_local_schema_failure_gets_one_bounded_full_object_retry(monkeypatch):
             return schema.model_validate({})
         return schema(answer="ok")
 
-    monkeypatch.setattr(
-        "app.design.services.common.structured._stream_structured", stream
-    )
+    def capture_payload(validation_errors, parsed_input):
+        payload = schema_repair_payload(validation_errors, parsed_input)
+        repair_payloads.append(payload)
+        return payload
 
-    parsed = _parse_with_schema_repair(
+    monkeypatch.setattr(structured, "stream_structured_response", stream)
+    monkeypatch.setattr(structured, "schema_repair_payload", capture_payload)
+
+    parsed = parse_with_schema_repair(
         object(), [{"role": "user", "content": "generate"}], Result
     )
 
     assert parsed.answer == "ok"
     assert len(calls) == 2
-    assert "Regenerate the entire object" in calls[1][-1]["content"]
-    assert '"loc": ["answer"]' in calls[1][-1]["content"]
+    assert len(repair_payloads) == 1
+    assert list(repair_payloads[0]["validationErrors"][0]["loc"]) == ["answer"]
 
 
 def test_value_error_context_is_serialized_for_schema_repair(monkeypatch):
@@ -56,6 +63,7 @@ def test_value_error_context_is_serialized_for_schema_repair(monkeypatch):
             return self
 
     calls: list[list[dict[str, str]]] = []
+    repair_payloads: list[dict[str, Any]] = []
 
     def stream(_client, messages, schema, _observation, **_kwargs):
         calls.append(messages)
@@ -63,17 +71,21 @@ def test_value_error_context_is_serialized_for_schema_repair(monkeypatch):
             return schema.model_validate({"answer": ""})
         return schema(answer="ok")
 
-    monkeypatch.setattr(
-        "app.design.services.common.structured._stream_structured", stream
-    )
+    def capture_payload(validation_errors, parsed_input):
+        payload = schema_repair_payload(validation_errors, parsed_input)
+        repair_payloads.append(payload)
+        return payload
 
-    parsed = _parse_with_schema_repair(
+    monkeypatch.setattr(structured, "stream_structured_response", stream)
+    monkeypatch.setattr(structured, "schema_repair_payload", capture_payload)
+
+    parsed = parse_with_schema_repair(
         object(), [{"role": "user", "content": "generate"}], Result
     )
 
     assert parsed.answer == "ok"
     assert len(calls) == 2
-    assert "answer must not be empty" in calls[1][-1]["content"]
+    assert "answer must not be empty" in repair_payloads[0]["validationErrors"][0]["msg"]
 
 
 def test_schema_repair_carries_a_bounded_prior_model_level_input(monkeypatch):
@@ -89,7 +101,7 @@ def test_schema_repair_carries_a_bounded_prior_model_level_input(monkeypatch):
 
     invalid = {"source": "same", "target": "same", "padding": "x" * 128}
     repair_payloads = []
-    original_payload = structured._schema_repair_payload
+    original_payload = schema_repair_payload
 
     def capture_payload(validation_errors, parsed_input):
         payload = original_payload(validation_errors, parsed_input)
@@ -114,10 +126,10 @@ def test_schema_repair_carries_a_bounded_prior_model_level_input(monkeypatch):
         "chat": type("Chat", (), {"completions": completions})()
     })()
 
-    monkeypatch.setattr(structured, "_SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS", 32)
-    monkeypatch.setattr(structured, "_schema_repair_payload", capture_payload)
+    monkeypatch.setattr(structured, "SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS", 32)
+    monkeypatch.setattr(structured, "schema_repair_payload", capture_payload)
 
-    parsed = _parse_with_schema_repair(
+    parsed = parse_with_schema_repair(
         client, [{"role": "user", "content": "generate"}], Result
     )
 
@@ -141,10 +153,10 @@ def test_schema_repair_keeps_or_explicitly_overrides_call_reasoning_effort(monke
         return schema(answer="ok")
 
     monkeypatch.setattr(
-        "app.design.services.common.structured._stream_structured", stream
+        "app.design.services.common.structured.stream_structured_response", stream
     )
 
-    parsed = _parse_with_schema_repair(
+    parsed = parse_with_schema_repair(
         object(),
         [{"role": "user", "content": "generate"}],
         Result,
@@ -167,12 +179,10 @@ def test_non_validation_failure_is_not_retried(monkeypatch):
         calls += 1
         raise TimeoutError("endpoint stalled")
 
-    monkeypatch.setattr(
-        "app.design.services.common.structured._stream_structured", stream
-    )
+    monkeypatch.setattr(structured, "stream_structured_response", stream)
 
     with pytest.raises(StructuredLlmError, match="endpoint stalled"):
-        _parse_with_schema_repair(
+        parse_with_schema_repair(
             object(), [{"role": "user", "content": "generate"}], Result
         )
     assert calls == 1
@@ -222,7 +232,9 @@ def test_streaming_structured_output_records_progress_and_validates_schema():
     client = type("Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
     observation = {}
 
-    parsed = _stream_structured(client, [{"role": "user", "content": "x"}], Result, observation)
+    parsed = stream_structured_response(
+        client, [{"role": "user", "content": "x"}], Result, observation
+    )
 
     assert parsed.answer == "ok"
     assert observation["transport"] == "structuredStream"
@@ -257,7 +269,7 @@ def test_streaming_structured_output_accepts_an_explicit_completion_limit(monkey
     from app.config import settings
     monkeypatch.setattr(settings, "llm_max_completion_tokens", 8192)
 
-    parsed = _stream_structured(
+    parsed = stream_structured_response(
         client,
         [{"role": "user", "content": "x"}],
         Result,
@@ -297,11 +309,11 @@ def test_streaming_structured_output_uses_explicit_effort_and_omits_it_for_non_g
     from app.config import settings
 
     monkeypatch.setattr(settings, "model", "openai/gpt-oss-120b")
-    _stream_structured(
+    stream_structured_response(
         client, [{"role": "user", "content": "x"}], Result, {}, reasoning_effort="low"
     )
     monkeypatch.setattr(settings, "model", "meta/llama-3.1-8b-instruct")
-    _stream_structured(
+    stream_structured_response(
         client, [{"role": "user", "content": "x"}], Result, {}, reasoning_effort="high"
     )
 
@@ -314,7 +326,7 @@ def test_streaming_structured_output_rejects_unknown_reasoning_effort():
         answer: str
 
     with pytest.raises(ValueError, match="unsupported reasoning effort"):
-        _stream_structured(
+        stream_structured_response(
             object(),
             [{"role": "user", "content": "x"}],
             Result,
@@ -368,7 +380,7 @@ def test_timeout_retains_incremental_stream_progress_without_content(
             pytest.raises(StructuredLlmError, match="timed out"),
         ):
             run_with_wall_timeout(
-                lambda: _stream_structured(
+                lambda: stream_structured_response(
                     client, [{"role": "user", "content": "x"}], Result, observation
                 ),
                 operation="Result",
@@ -420,7 +432,7 @@ def test_invalid_structured_output_records_bounded_content_samples_only_in_exper
     monkeypatch.setattr(settings, "llm_failure_response_sample_chars", 16)
 
     with pytest.raises(Exception):
-        _stream_structured(
+        stream_structured_response(
             client, [{"role": "user", "content": "x"}], Result, observation
         )
 
@@ -451,7 +463,7 @@ def test_invalid_structured_output_does_not_record_content_without_opt_in(monkey
     monkeypatch.delenv("LLM_FAILURE_RESPONSE_SAMPLE_CHARS", raising=False)
 
     with pytest.raises(Exception):
-        _stream_structured(
+        stream_structured_response(
             client, [{"role": "user", "content": "x"}], Result, observation
         )
 

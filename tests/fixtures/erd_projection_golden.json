@@ -1,0 +1,197 @@
+{
+  "Tables": [
+    {
+      "name": "Customer",
+      "primaryKey": ["customerId"],
+      "keyOrigin": "natural",
+      "columns": [
+        {
+          "name": "customerId",
+          "type": "UUID",
+          "role": "pk",
+          "references": null,
+          "referencesColumn": null,
+          "unique": false,
+          "mandatory": false
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR(255)",
+          "role": "attribute",
+          "references": null,
+          "referencesColumn": null,
+          "unique": false,
+          "mandatory": false
+        }
+      ],
+      "uniqueTogether": [],
+      "origin": {"kind": "class", "className": "Customer"}
+    },
+    {
+      "name": "Order",
+      "primaryKey": ["order_id"],
+      "keyOrigin": "surrogate",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "BIGINT",
+          "role": "pk",
+          "references": null,
+          "referencesColumn": null,
+          "unique": false,
+          "mandatory": false
+        },
+        {
+          "name": "placedAt",
+          "type": "TIMESTAMP",
+          "role": "attribute",
+          "references": null,
+          "referencesColumn": null,
+          "unique": false,
+          "mandatory": false
+        },
+        {
+          "name": "customerId",
+          "type": "UUID",
+          "role": "fk",
+          "references": "Customer",
+          "referencesColumn": "customerId",
+          "unique": false,
+          "mandatory": true
+        }
+      ],
+      "uniqueTogether": [],
+      "origin": {"kind": "class", "className": "Order"},
+      "surrogateCollidesWith": null
+    },
+    {
+      "name": "Product",
+      "primaryKey": ["sku"],
+      "keyOrigin": "natural",
+      "columns": [
+        {
+          "name": "sku",
+          "type": "VARCHAR(255)",
+          "role": "pk",
+          "references": null,
+          "referencesColumn": null,
+          "unique": false,
+          "mandatory": false
+        },
+        {
+          "name": "title",
+          "type": "VARCHAR(255)",
+          "role": "attribute",
+          "references": null,
+          "referencesColumn": null,
+          "unique": false,
+          "mandatory": false
+        }
+      ],
+      "uniqueTogether": [],
+      "origin": {"kind": "class", "className": "Product"}
+    },
+    {
+      "name": "OrderProduct",
+      "primaryKey": ["order_id", "product_sku"],
+      "keyOrigin": "surrogate",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "BIGINT",
+          "role": "pk",
+          "references": "Order",
+          "referencesColumn": "order_id",
+          "unique": false,
+          "mandatory": true
+        },
+        {
+          "name": "product_sku",
+          "type": "VARCHAR(255)",
+          "role": "pk",
+          "references": "Product",
+          "referencesColumn": "sku",
+          "unique": false,
+          "mandatory": true
+        }
+      ],
+      "uniqueTogether": [],
+      "origin": {"kind": "junction", "tables": ["Order", "Product"]}
+    },
+    {
+      "name": "OrderTags",
+      "primaryKey": ["ordertags_id"],
+      "keyOrigin": "surrogate",
+      "columns": [
+        {
+          "name": "ordertags_id",
+          "type": "BIGINT",
+          "role": "pk",
+          "references": null,
+          "referencesColumn": null,
+          "unique": false,
+          "mandatory": false
+        },
+        {
+          "name": "order_id",
+          "type": "BIGINT",
+          "role": "fk",
+          "references": "Order",
+          "referencesColumn": "order_id",
+          "unique": false,
+          "mandatory": true
+        },
+        {
+          "name": "tags_value",
+          "type": "VARCHAR(255)",
+          "role": "attribute",
+          "references": null,
+          "referencesColumn": null,
+          "unique": false,
+          "mandatory": false
+        }
+      ],
+      "uniqueTogether": [],
+      "origin": {"kind": "multivalued", "table": "Order", "field": "tags"}
+    }
+  ],
+  "Relations": [
+    {
+      "source": "Customer",
+      "target": "Order",
+      "symbol": "||..o{",
+      "kind": "one-to-many",
+      "identifying": false
+    },
+    {
+      "source": "Order",
+      "target": "OrderProduct",
+      "symbol": "||--|{",
+      "kind": "many-to-many",
+      "identifying": true
+    },
+    {
+      "source": "Product",
+      "target": "OrderProduct",
+      "symbol": "||--|{",
+      "kind": "many-to-many",
+      "identifying": true
+    },
+    {
+      "source": "Order",
+      "target": "OrderTags",
+      "symbol": "||..o{",
+      "kind": "multivalued",
+      "identifying": false
+    }
+  ],
+  "Unmapped": [
+    {
+      "source": "Customer",
+      "target": "Product",
+      "reason": "multiplicity-missing",
+      "sourceMultiplicity": "",
+      "targetMultiplicity": ""
+    }
+  ]
+}

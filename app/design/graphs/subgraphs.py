@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -70,8 +71,9 @@ from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_runtime_puml,
 )
 from app.design.services.deployment_diagram.reviser import revise_deployment_model
-from app.design.services.erd.plantuml import generate_erd_from_bce_json
-from app.design.services.erd.reviser import revise_erd_classes
+from app.design.services.erd.plantuml import render_logical_model
+from app.design.services.erd.projection import project_logical_model
+from app.design.services.erd.service import revise_erd_model as revise_erd_classes
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.projection import (
     SequenceCollection,
@@ -89,6 +91,8 @@ DESIGN_STAGES: tuple[str, ...] = (
     "erd",
     "deployment_diagram",
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 # 수락 단위 cache는 process에만 존재한다. graph state와 checkpoint에는 기록하지 않는다.
 _CLASS_DESIGN_ACCEPTED_UNIT_CACHE = ProcessLocalAcceptedUnitCache(capacity=256)
@@ -108,9 +112,10 @@ def _seed_erd_model(state: ArchitectureState) -> dict[str, Any]:
     ERD 수정이 클래스 다이어그램을 조용히 오염시킨다. 문서가 앞서 있었으므로 코드를
     문서에 맞춘다.
     """
-    return copy.deepcopy(
+    source = copy.deepcopy(
         state.get("extracted_bce_classes") or state.get("erd_bce_classes") or {}
     )
+    return _stored_class_model(source).model_dump(by_alias=True)
 
 
 def _message_key(message: dict) -> str:
@@ -199,6 +204,8 @@ def _class_index(state: ArchitectureState):
 
 def _stored_class_model(value: object) -> BCEModel:
     """상태에 저장된 JSON을 서비스 경계의 BCE 계약으로 검증한다."""
+    if isinstance(value, BCEModel):
+        return value
     if not isinstance(value, dict):
         raise TypeError("stored class model must be an object")
     return BCEModel.model_validate(value)
@@ -426,8 +433,43 @@ def _api_model_findings(
         # 기존 checkpoint의 class ``methods``/단일 sequence shape는 legacy detector가
         # 계속 판정한다. 새 generation/revision 경로만 typed 입력을 강제한다.
         return findings
-    validate_api_spec_model(accepted, bce_model, sequence_model)
+    report = validate_api_spec_model(accepted, bce_model, sequence_model)
+    log_level = logging.WARNING if report.errors else logging.DEBUG
+    _LOGGER.log(
+        log_level,
+        "typed API validation reported observational results",
+        extra={
+            "api_typed_validation": {
+                "valid": report.valid,
+                "errors": list(report.errors),
+            }
+        },
+    )
     return findings
+
+
+def _revise_erd_state(
+    current: dict[str, Any],
+    feedback: str,
+    state: ArchitectureState,
+    targets: set[str],
+) -> dict[str, Any]:
+    """graph의 ERD BCE JSON을 typed revision service에 연결해 alias JSON으로 반환한다."""
+
+    source = current or state.get("extracted_bce_classes") or {}
+    revised = revise_erd_classes(
+        _stored_class_model(source),
+        feedback,
+        usecase_spec_text(state),
+        targets,
+    )
+    return _stored_class_model(revised).model_dump(by_alias=True)
+
+
+def _render_erd_model(model: dict[str, Any]) -> str:
+    """검증된 ERD BCE에서 logical model과 PlantUML을 순수 투영한다."""
+
+    return render_logical_model(project_logical_model(_stored_class_model(model)))
 
 
 CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
@@ -506,13 +548,8 @@ ERD_SPEC = DesignArtifactSpec(
     feedback_key="erd_feedback",
     empty="",
     extract=_seed_erd_model,
-    revise=lambda current, feedback, state, targets: revise_erd_classes(
-        current_bce=current or state.get("extracted_bce_classes", {}),
-        feedback=feedback,
-        scenario_text=usecase_spec_text(state),
-        targets=targets,
-    ),
-    render=generate_erd_from_bce_json,
+    revise=_revise_erd_state,
+    render=_render_erd_model,
     validate=validate_puml_artifact,
     # ERD 는 클래스 BCE 의 투영이라 직접 지목하지 않는다 — 클래스를 고치면 따라온다.
     elements={},
@@ -521,12 +558,7 @@ ERD_SPEC = DesignArtifactSpec(
     # `erd_findings` 가 사상을 돌려 나온 논리 데이터 모델(테이블·키·외래키)까지 판정한다.
     check=_state_check(erd_findings),
     check_key="erd_check",
-    repair=lambda current, feedback, state, targets: revise_erd_classes(
-        current_bce=current or state.get("extracted_bce_classes", {}),
-        feedback=feedback,
-        scenario_text=usecase_spec_text(state),
-        targets=targets,
-    ),
+    repair=_revise_erd_state,
 )
 
 

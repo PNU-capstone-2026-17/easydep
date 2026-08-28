@@ -392,6 +392,7 @@ def test_graph_spec_validates_raw_inputs_and_dumps_typed_result(monkeypatch) -> 
 
 def test_graph_spec_observes_typed_report_without_changing_semantic_findings(
     monkeypatch,
+    caplog,
 ) -> None:
     model = normalize_api_spec_model(_proposal(), _bce_model()).model_dump()
     model["Endpoints"][0]["path"] = "/courses/{courseId}"
@@ -417,7 +418,8 @@ def test_graph_spec_observes_typed_report_without_changing_semantic_findings(
 
     monkeypatch.setattr(design_subgraphs, "validate_api_spec_model", observe)
 
-    findings = design_subgraphs.API_SPEC_SPEC.check(model, state)
+    with caplog.at_level("WARNING", logger=design_subgraphs.__name__):
+        findings = design_subgraphs.API_SPEC_SPEC.check(model, state)
     expected = api_spec_findings(model, state)
 
     assert len(observed) == 1
@@ -426,3 +428,12 @@ def test_graph_spec_observes_typed_report_without_changing_semantic_findings(
     assert isinstance(observed[0][2], SequenceCollection)
     assert findings == expected
     assert all(item.rule_id != "api.typed-contract" for item in findings)
+    record = next(
+        item
+        for item in caplog.records
+        if item.message == "typed API validation reported observational results"
+    )
+    assert record.api_typed_validation == {
+        "valid": False,
+        "errors": ["browseCourses: stricter observational finding"],
+    }

@@ -18,12 +18,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.design.services.erd.mapping import build_logical_model
-
 # `sanitize_entity_name`은 여기서 안 쓰지만 다시 내보낸다 — `app/design/rtm.py`가 추적표의
 # ERD 항목 이름을 이 이름으로 맞추려고 여기서 가져간다. 그림에 적히는 이름과 추적표가
 # 가리키는 이름이 갈라지면 "erd:Order를 고쳐줘"가 통하지 않는다.
 from app.design.services.common.fields import sanitize_entity_name  # noqa: F401
+from app.design.services.erd.projection import build_logical_model
 
 
 def _column_line(column: dict[str, Any]) -> str:
@@ -73,6 +72,15 @@ def _table_block(table: dict[str, Any]) -> str:
 
 def render_logical_model(logical: dict[str, Any]) -> str:
     """논리 데이터 모델 → PlantUML. 테이블이 하나도 없으면 빈 문자열.
+
+    Args:
+        logical: ``Tables``·``Relations``·``Unmapped``를 가진 결정론적 projection이다.
+
+    Returns:
+        기존 정렬과 annotation을 유지한 ERD PlantUML 문자열이다.
+
+    Notes:
+        ``Unmapped``는 그리지 않으며 table과 relation의 입력 순서를 그대로 사용한다.
 
     **`Unmapped`는 그리지 않는다.** 옮기지 못한 관계를 그림에 주석으로라도 적으면, 그림이
     "이런 관계가 있다"고 말하게 된다. 실제로 있는 것은 관계가 아니라 **모델의 결함**이고,

@@ -297,7 +297,7 @@ def _reasoning_effort(reasoning_effort: str | None) -> str | None:
     return configured
 
 
-def _stream_structured(
+def stream_structured_response(
     client,
     messages: list[dict[str, str]],
     schema: type[BaseModel],
@@ -474,7 +474,7 @@ def parse_structured(
     temperature/seed를 고정하는 것은 같은 입력이 같은 모델을 내도록 하기 위해서다 —
     산출물이 재현되지 않으면 피드백이 무엇을 고쳤는지 알 수 없다.
     """
-    parsed = _parse_with_schema_repair(
+    parsed = parse_with_schema_repair(
         _structured_client(
             settings.base_url,
             settings.api_key,
@@ -546,7 +546,7 @@ def _request_digests(
     }
 
 
-def _parse_with_schema_repair(
+def parse_with_schema_repair(
     client,
     messages: list[dict[str, str]],
     schema: type[BaseModel],
@@ -557,11 +557,10 @@ def _parse_with_schema_repair(
     operation: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> BaseModel:
-    """Retry local schema validation once, retaining the declared effort policy.
+    """선언된 추론 강도를 유지하며 로컬 스키마 검증을 한 번만 재시도한다.
 
-    Repairs inherit the original call's effort.  A caller may explicitly opt
-    into a different repair level (for example ``high``); no repair is silently
-    escalated.
+    repair는 원 호출의 추론 강도를 상속한다. 호출자가 명시적으로 다른 repair 강도를
+    지정할 수 있지만 암묵적으로 상향하지 않는다.
     """
     operation_name = operation or schema.__name__
     semantic_repair = operation_name.casefold().endswith("repair")
@@ -586,7 +585,7 @@ def _parse_with_schema_repair(
     }
     try:
         return run_with_wall_timeout(
-            lambda: _stream_structured(
+            lambda: stream_structured_response(
                 client,
                 messages,
                 schema,
@@ -623,7 +622,7 @@ def _parse_with_schema_repair(
             )
         ]
 
-    repair_payload = _schema_repair_payload(validation_errors, parsed_input)
+    repair_payload = schema_repair_payload(validation_errors, parsed_input)
     repair_messages = [
         *messages,
         {
@@ -649,7 +648,7 @@ def _parse_with_schema_repair(
         **_request_digests(repair_messages, schema),
     }
     return run_with_wall_timeout(
-        lambda: _stream_structured(
+        lambda: stream_structured_response(
             client,
             repair_messages,
             schema,
@@ -666,21 +665,21 @@ def _parse_with_schema_repair(
     )
 
 
-_SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS = 16_000
+SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS = 16_000
 
 
-def _schema_repair_payload(
+def schema_repair_payload(
     validation_errors: list[dict[str, Any]], parsed_input: Any | None,
 ) -> dict[str, Any]:
-    """Keep repair context JSON-safe and bounded without persisting model output."""
+    """모델 출력을 저장하지 않고 JSON-safe한 제한 크기 repair 문맥을 만든다."""
     payload: dict[str, Any] = {"validationErrors": validation_errors}
     if parsed_input is None:
         return payload
     encoded = json.dumps(parsed_input, ensure_ascii=False, separators=(",", ":"))
-    if len(encoded) <= _SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS:
+    if len(encoded) <= SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS:
         payload["previousParsedInput"] = parsed_input
         return payload
-    sample = _SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS // 2
+    sample = SCHEMA_REPAIR_PREVIOUS_INPUT_MAX_CHARS // 2
     payload["previousParsedInput"] = {
         "truncated": True,
         "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),

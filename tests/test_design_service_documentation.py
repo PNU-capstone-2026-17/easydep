@@ -13,6 +13,7 @@ LOCAL_READMES = (
     ROOT / "app/design/services/class_diagram/validation/README.md",
     ROOT / "app/design/services/sequence_diagram/README.md",
     ROOT / "app/design/services/api_spec/README.md",
+    ROOT / "app/design/services/erd/README.md",
 )
 CENTRAL_GUIDES = (
     ROOT / "docs/README.md",
@@ -25,6 +26,7 @@ PYTHON_MODULES = tuple(
         ROOT / "app/design/services/class_diagram",
         ROOT / "app/design/services/sequence_diagram",
         ROOT / "app/design/services/api_spec",
+        ROOT / "app/design/services/erd",
     )
     for path in directory.rglob("*.py")
     if path.name != "__init__.py"
@@ -72,6 +74,15 @@ PUBLIC_CONTRACTS = {
     ROOT / "app/design/services/api_spec/projection.py": (
         "build_openapi_from_model",
     ),
+    ROOT / "app/design/services/erd/service.py": ("revise_erd_model",),
+    ROOT / "app/design/services/erd/projection.py": ("project_logical_model",),
+    ROOT / "app/design/services/erd/table_mapping.py": ("build_entity_tables",),
+    ROOT / "app/design/services/erd/relationship_mapping.py": (
+        "build_multivalued_child",
+        "relationship_endpoints",
+        "map_relationship",
+    ),
+    ROOT / "app/design/services/erd/plantuml.py": ("render_logical_model",),
 }
 
 

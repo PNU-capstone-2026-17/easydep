@@ -59,9 +59,9 @@ RTM·deployment·implementation은 이 결과와 저장 모델을 기존 방식�
    call의 일치를 검사하고 모델을 바꾸지 않는 report를 반환한다.
 4. graph adapter는 이 report를 observational check로 실행한다. typed 규칙이 기존 detector의
    유스케이스 범위·분해 경로 판정보다 엄격해 호출 수를 늘리지 않도록 repair finding에는
-   합치지 않는다. 기존 semantic finding이 있으면 기존 bounded repair가 API revision
-   service만 다시 호출한다. 별도 repair loop를 추가하거나 BCE·sequence를 이 패키지에서
-   수정하지 않는다.
+   합치지 않고 표준 로그에만 기록한다. 로그는 checkpoint나 외부 telemetry schema에 저장하지
+   않는다. 기존 semantic finding이 있으면 기존 bounded repair가 API revision service만 다시
+   호출한다. 별도 repair loop를 추가하거나 BCE·sequence를 이 패키지에서 수정하지 않는다.
 5. graph가 수락한 모델만 OpenAPI로 투영한다. projection 실패를 LLM 출력으로 덮지 않는다.
 
 ## Legacy PlantUML adapter

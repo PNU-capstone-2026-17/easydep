@@ -1,0 +1,45 @@
+@startuml
+hide circle
+!theme plain
+
+skinparam linetype ortho
+
+entity "Customer" as Customer {
+  * customerId : UUID
+  --
+  name : VARCHAR(255)
+}
+
+entity "Order" as Order {
+  * order_id : BIGINT
+  --
+  placedAt : TIMESTAMP
+  customerId : UUID <<FK>> <<not null>>
+}
+
+entity "Product" as Product {
+  * sku : VARCHAR(255)
+  --
+  title : VARCHAR(255)
+}
+
+entity "OrderProduct" as OrderProduct {
+  * order_id : BIGINT <<FK>>
+  * product_sku : VARCHAR(255) <<FK>>
+}
+
+' === 제1정규화(1NF) 분리 테이블 ===
+' easydep:erd-origin kind=multivalued alias=OrderTags parent=Order field=tags
+entity "OrderTags" as OrderTags {
+  * ordertags_id : BIGINT
+  --
+  order_id : BIGINT <<FK>> <<not null>>
+  tags_value : VARCHAR(255)
+}
+
+Customer ||..o{ Order
+Order ||--|{ OrderProduct
+Product ||--|{ OrderProduct
+Order ||..o{ OrderTags
+
+@enduml
