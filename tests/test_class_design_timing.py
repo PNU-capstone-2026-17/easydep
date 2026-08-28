@@ -45,7 +45,9 @@ def test_design_invocation_replaces_session_events_between_start_and_resume(tmp_
             "use_case_id": "UC1",
             "trigger": "The member submits a request.",
             "main_scenario": [{"covered_req_ids": ["FR1"]}],
-            "success_guarantee": "The request is accepted.",
+            "success_guarantee": [
+                {"sentence": "The request is accepted.", "covered_req_ids": ["FR1"]}
+            ],
             "generated": True,
         }],
         "relationships": {},

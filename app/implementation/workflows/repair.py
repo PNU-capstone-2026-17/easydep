@@ -3,13 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from app.config import settings
-
-
-REPAIR_SCHEMA = "implementation-repair-plan/v1alpha1"
+REPAIR_SCHEMA = "implementation-repair-plan/v2"
 REPAIR_PLAN = Path("reports/repair-plan.json")
 REPAIR_PROMPT_HEADING = "## Orchestrated repair and revalidation directives"
 REPAIR_PROMPT_START = "<!-- easydep:repair-directives:start -->"
@@ -49,7 +46,7 @@ def schedule_cross_phase_repair(
     failed_task_id: str,
     evidence: dict[str, object],
 ) -> dict[str, object] | None:
-    """Plan bounded upstream repairs and downstream revalidation from build evidence."""
+    """Plan history-aware upstream repairs and downstream revalidation."""
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
     tasks = list(manifest.get("implementation_tasks", []))
@@ -92,11 +89,6 @@ def schedule_cross_phase_repair(
     }
     evidence_sha = hashlib.sha256(evidence_text.encode("utf-8")).hexdigest()
     matching_entries = _entries_for_failure(plan, failed_task_id)
-    max_revisions = settings.implementation_max_cross_phase_repairs
-    revision = _chain_revision(matching_entries) + 1
-    if revision > max_revisions:
-        return None
-
     owner_phases = {_phase(task_by_id[task_id]) for task_id in owner_ids}
     revalidation_ids = sorted(
         str(task["task_id"])
@@ -104,13 +96,31 @@ def schedule_cross_phase_repair(
         if str(task["task_id"]) not in owner_ids
         and any(_depends_on(_phase(task), phase) for phase in owner_phases)
     )
+    failure_fingerprint = _failure_fingerprint(causal_evidence)
+    strategy_key = f"cross-phase:{','.join(sorted(owner_ids))}"
+    if any(
+        entry.get("failureFingerprint") == failure_fingerprint
+        and entry.get("strategyKey") == strategy_key
+        for entry in matching_entries
+    ):
+        plan["status"] = "STALLED"
+        plan["stallReason"] = (
+            f"No untried implementation strategy remains for {failed_task_id}."
+        )
+        plan["updatedAt"] = datetime.now(UTC).isoformat()
+        _write_json(plan_path, plan)
+        return None
+    revision = len(matching_entries) + 1
     entry = {
         "failedTaskId": failed_task_id,
         "repairChainId": _repair_chain_id(failed_task_id),
         "ownerTaskIds": sorted(owner_ids),
         "revalidationTaskIds": revalidation_ids,
         "evidenceSha256": evidence_sha,
-        "failureFingerprint": _failure_fingerprint(causal_evidence),
+        "failureFingerprint": failure_fingerprint,
+        "strategyKey": strategy_key,
+        "inputDigest": evidence_sha,
+        "outcome": "scheduled",
         "evidence": causal_evidence[-8000:],
         "revision": revision,
         "createdAt": min(
@@ -119,16 +129,13 @@ def schedule_cross_phase_repair(
                 for item in matching_entries
                 if item.get("createdAt")
             ),
-            default=datetime.now(timezone.utc).isoformat(),
+            default=datetime.now(UTC).isoformat(),
         ),
-        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "updatedAt": datetime.now(UTC).isoformat(),
     }
-    plan["entries"] = [
-        item
-        for item in plan.get("entries", [])
-        if not isinstance(item, dict) or item.get("failedTaskId") != failed_task_id
-    ]
     plan["entries"].append(entry)
+    plan["status"] = "ACTIVE"
+    plan.pop("stallReason", None)
     plan["updatedAt"] = entry["updatedAt"]
     _write_json(plan_path, plan)
     return entry
@@ -137,7 +144,7 @@ def schedule_cross_phase_repair(
 def schedule_source_conformance_repair(
     run_root: Path, report: dict[str, object]
 ) -> dict[str, object] | None:
-    """Re-plan bounded source repairs using deterministic conformance evidence."""
+    """Re-plan source repairs while rejecting an identical failure strategy."""
     violations = report.get("violations", [])
     codes = {
         str(item.get("code"))
@@ -179,15 +186,28 @@ def schedule_source_conformance_repair(
     plan = _read_json(plan_path) if plan_path.is_file() else {"schemaVersion": REPAIR_SCHEMA, "entries": []}
     evidence_sha = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
     matching_entries = _entries_for_failure(plan, "source-design-conformance")
-    revision = _chain_revision(matching_entries) + 1
-    if revision > settings.implementation_max_conformance_repairs:
+    strategy_key = f"source-conformance:{','.join(sorted(codes))}:{','.join(sorted(owners))}"
+    if any(
+        entry.get("evidenceSha256") == evidence_sha
+        and entry.get("strategyKey") == strategy_key
+        for entry in matching_entries
+    ):
+        plan["status"] = "STALLED"
+        plan["stallReason"] = "No untried source-conformance repair strategy remains."
+        plan["updatedAt"] = datetime.now(UTC).isoformat()
+        _write_json(plan_path, plan)
         return None
+    revision = len(matching_entries) + 1
     entry = {
         "failedTaskId": "source-design-conformance",
         "repairChainId": _repair_chain_id("source-design-conformance"),
         "ownerTaskIds": sorted(owners),
         "revalidationTaskIds": [str(task["task_id"]) for task in tasks if task.get("task_type") == "integration-test"],
         "evidenceSha256": evidence_sha,
+        "failureFingerprint": _failure_fingerprint(evidence),
+        "strategyKey": strategy_key,
+        "inputDigest": evidence_sha,
+        "outcome": "scheduled",
         "evidence": evidence,
         "revision": revision,
         "createdAt": min(
@@ -196,17 +216,13 @@ def schedule_source_conformance_repair(
                 for item in matching_entries
                 if item.get("createdAt")
             ),
-            default=datetime.now(timezone.utc).isoformat(),
+            default=datetime.now(UTC).isoformat(),
         ),
-        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "updatedAt": datetime.now(UTC).isoformat(),
     }
-    plan["entries"] = [
-        item
-        for item in plan.get("entries", [])
-        if not isinstance(item, dict)
-        or item.get("failedTaskId") != "source-design-conformance"
-    ]
     plan["entries"].append(entry)
+    plan["status"] = "ACTIVE"
+    plan.pop("stallReason", None)
     plan["updatedAt"] = entry["updatedAt"]
     _write_json(plan_path, plan)
     return entry
@@ -243,7 +259,22 @@ def apply_repair_directives(run_root: Path) -> None:
         additions = [
             f"\n\n{REPAIR_PROMPT_START}\n{REPAIR_PROMPT_HEADING}\n"
         ]
-        for entry in relevant:
+        older = relevant[:-5]
+        if older:
+            additions.append(
+                "\n### Earlier repair history (deterministically compacted)\n"
+                + "\n".join(
+                    "- "
+                    f"revision={entry.get('revision')} "
+                    f"failure={entry.get('failedTaskId')} "
+                    f"strategy={entry.get('strategyKey')} "
+                    f"fingerprint={entry.get('failureFingerprint')} "
+                    f"outcome={entry.get('outcome')}"
+                    for entry in older
+                )
+                + "\n"
+            )
+        for entry in relevant[-5:]:
             role = (
                 "repair the failure in your owned files"
                 if task_id in entry.get("ownerTaskIds", [])
@@ -517,12 +548,12 @@ def _entries_for_failure(
 
 
 def _chain_revision(entries: list[dict[str, object]]) -> int:
-    """Count legacy split entries and the new cumulative chain equally."""
-    return sum(max(1, int(item.get("revision", 0))) for item in entries)
+    """Return the latest revision in the current v2 append-only history."""
+    return max((int(item.get("revision", 0)) for item in entries), default=0)
 
 
 def repair_rounds(plan: dict[str, object]) -> int:
-    """Return the largest cumulative repair chain, including legacy plans."""
+    """Return the largest append-only repair revision."""
     entries = [
         item for item in plan.get("entries", []) if isinstance(item, dict)
     ]

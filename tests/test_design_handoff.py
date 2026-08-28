@@ -38,7 +38,9 @@ def _requirements_result(**overrides):
                     }
                 ],
                 "extensions": [],
-                "success_guarantee": ["The order is recorded"],
+                "success_guarantee": [
+                    {"sentence": "The order is recorded", "covered_req_ids": ["FR1"]}
+                ],
                 "minimal_guarantee": [],
                 "issues": [],
                 "repair_iters": 0,
@@ -161,7 +163,9 @@ def test_handoff_allows_suggested_capacity_questions():
                         "use_case_id": "UC2",
                         "trigger": "Member acts",
                         "main_scenario": [{"step_number": 1, "covered_req_ids": []}],
-                        "success_guarantee": ["Done"],
+                        "success_guarantee": [
+                            {"sentence": "Done", "covered_req_ids": []}
+                        ],
                     }
                 ]
             },

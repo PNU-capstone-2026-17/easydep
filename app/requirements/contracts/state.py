@@ -53,6 +53,13 @@ class UseCaseItem(TypedDict):
     # 주 시나리오/확장(예외·대안)은 step3에서 생성한다 (여기서 만들지 않음).
 
 
+class GuaranteeItem(TypedDict):
+    """명세 보장 문장과 이를 실현하는 요구사항 ID."""
+
+    sentence: str
+    covered_req_ids: list[str]
+
+
 class UseCaseSpecItem(TypedDict):
     """유스케이스 명세 (step3 산출, Cockburn 풀 템플릿)."""
 
@@ -66,8 +73,8 @@ class UseCaseSpecItem(TypedDict):
     extensions: list[
         dict
     ]  # {label, branch_step, condition, handling_steps, outcome, resume_at_step}
-    success_guarantee: list[str]
-    minimal_guarantee: list[str]
+    success_guarantee: list[GuaranteeItem]
+    minimal_guarantee: list[GuaranteeItem]
     issues: list[str]  # 검증 위반(정적+의미). reflection 루프 후 남은 것.
     repair_iters: int  # 반성 루프에서 재생성한 횟수
     # 의미 검증(LLM)을 실제로 거쳤는지.
@@ -78,14 +85,10 @@ class UseCaseSpecItem(TypedDict):
     # 생성이 성공했는지. False면 이 항목은 자리만 지키는 빈 명세다(형제를 살리려고
     # 남긴다 — 목록에서 빼면 산출물에서 조용히 사라진다). 없으면 성공한 것으로 본다.
     generated: NotRequired[bool]
-    # 반성 루프가 멈춘 이유.
-    #   "clean"          결함이 없어져서
-    #   "no_improvement" 재생성이 결함을 줄이지 못해서(개수가 같은 것도 포함)
-    #   "budget"         max_repair_iters를 다 써서
-    #   "error"          재생성 호출이 실패해서
-    #   "not_generated"  최초 생성부터 실패해 루프에 들어가지도 못해서
-    # 부분(수술적) 수정으로 바꿀 값어치가 있는지는 이 분포를 봐야 안다.
+    # 반성 루프가 멈춘 이유: clean|stalled|waiting_external|error|not_generated.
     repair_stopped: NotRequired[str]
+    # 수리 시도·전략·후보 digest를 보존하는 RepairHistory/v1 객체.
+    repair_history: NotRequired[dict]
 
 
 class AgentState(TypedDict):
@@ -157,9 +160,9 @@ class AgentState(TypedDict):
     # 서브그래프의 조건부 엣지(route_gate)가 이를 읽어 분기한다. Command(goto) 동적 라우팅 대체.
     gate_route: NotRequired[str]
     # --- 되돌아가기(supervisor) ---
-    # 결함을 낸 단계로 몇 번 되돌렸는지. `settings.max_redo_rounds`로 묶인다.
+    # 결함을 낸 단계로 몇 번 되돌렸는지. 표시·계측용이며 종료 예산으로 쓰지 않는다.
     redo_rounds: NotRequired[int]
-    # 되돌린 기록: {owner, reason, escalated, rule_ids}. 왜 그 단계가 다시 돌았는지가
+    # 되돌린 기록: {owner, reason, escalated, rule_ids, strategy_key, input_digest}.
     # 남아 있지 않으면, 산출물만 보고는 되돌리기가 있었는지조차 알 수 없다.
     redo_history: NotRequired[list[dict]]
     # 되돌릴 단계에 들려 보내는 지시. 단계 함수가 `feedback` 인자 대신 여기서 읽는다 —

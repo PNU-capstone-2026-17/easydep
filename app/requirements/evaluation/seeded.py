@@ -71,7 +71,9 @@ CLEAN: dict = {
          ],
          "outcome": "resume", "resume_at_step": 3},
     ],
-    "success_guarantee": ["The order is recorded"],
+    "success_guarantee": [
+        {"sentence": "The order is recorded", "covered_req_ids": []}
+    ],
     "minimal_guarantee": [],
     "issues": [],
     "repair_iters": 0,

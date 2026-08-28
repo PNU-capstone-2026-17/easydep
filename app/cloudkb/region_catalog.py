@@ -255,13 +255,27 @@ def resolve_region(
     if not text:
         return []
     regions = catalog(provider=provider, output_dir=output_dir)
-    lowered = text.lower()
+    lowered = " ".join(text.lower().split())
+    # 사람과 LLM은 표시 이름에 흔히 일반 접미사("Seoul region")를 붙인다.
+    # 카탈로그 이름은 "Asia Pacific (Seoul)"처럼 그 접미사를 포함하지 않으므로,
+    # provider가 정해진 뒤에도 정확한 한 후보를 놓치고 필수 입력을 다시 묻게 됐다.
+    # 리전 코드를 추측하지 않고 검색어의 비식별 접미사만 제거한다.
+    name_queries = [lowered]
+    for suffix in (" cloud region", " region"):
+        if lowered.endswith(suffix):
+            normalized = lowered[: -len(suffix)].strip(" ,()[]")
+            if normalized:
+                name_queries.append(normalized)
 
     exact = [r for r in regions if r.code.lower() == lowered]
     if exact:
         return exact
 
-    by_name = [r for r in regions if lowered in r.name.lower()]
+    by_name = [
+        r
+        for r in regions
+        if any(query in r.name.lower() for query in name_queries)
+    ]
     if by_name:
         return [_retag(r, "name") for r in by_name]
 

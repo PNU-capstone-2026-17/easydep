@@ -67,6 +67,7 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
         # 구별해야 한다. 남은 위반을 게이트에서 숨기면 사용자는 통과했다고 믿는다.
         check = state.get(config.get("check_key") or "") or {}
         artifact = state.get(config["state_key"])
+        findings = list(check.get("findings", []))
         api_operation_blocked = (
             stage == "api_spec" and _api_has_no_http_operation(artifact)
         )
@@ -88,9 +89,22 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
                 "errors": (
                     state.get(config["errors_key"], []) if config["errors_key"] else []
                 ),
-                "findings": check.get("findings", []),
+                "findings": findings,
                 "check_status": check.get("stopped"),
                 "repair_iters": check.get("repair_iters", 0),
+                "repair_history": check.get("repair_history"),
+                "requires_revision": bool(findings) or api_operation_blocked,
+                "blocking_findings": [
+                    {
+                        "code": "design.validation",
+                        "stage": stage,
+                        "target_ids": [],
+                        "message": finding,
+                        "severity": "error",
+                        "repairable": True,
+                    }
+                    for finding in findings
+                ],
                 "method_proposals": check.get("method_proposals", []),
             }
         )
@@ -106,6 +120,8 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
                 ),
                 "gate_route": "loop",
             }
+        if findings and not str(answer or "").strip():
+            return {"gate_route": "loop"}
         if not str(answer or "").strip():
             return {"gate_route": "advance"}
         return {feedback_key: str(answer), "gate_route": "loop"}

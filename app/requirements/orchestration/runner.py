@@ -173,7 +173,7 @@ def run_pipeline(
     # `stage_registry.py` 하나다. 여기 손으로 적으면 그 목록의 두 번째 사본이 된다.
     _run_stages(state, stages.batch_order())
 
-    # 되돌아가기. 상한은 그래프와 같은 설정을 쓴다(`settings.max_redo_rounds`).
+    # 되돌아가기. 같은 입력·finding에는 미사용 전략만 선택하므로 숫자 예산이 없다.
     while True:
         decision = supervisor.decide(state)
         if decision.action != supervisor.REDO or not decision.owner:
@@ -187,6 +187,8 @@ def run_pipeline(
             "reason": decision.reason,
             "escalated": decision.escalated,
             "rule_ids": list(decision.rule_ids),
+            "strategy_key": decision.strategy_key,
+            "input_digest": decision.input_digest,
             "rerun": ran,
         })
         state["redo_history"] = history
@@ -324,8 +326,7 @@ def persist_run(
             "base_url": settings.base_url,
             "temperature": settings.temperature,
             "spec_concurrency": settings.spec_concurrency,
-            "max_repair_iters": settings.max_repair_iters,
-            "max_redo_rounds": settings.max_redo_rounds,
+            "repair_policy": "progress-or-untried-strategy/v1",
             "validator_votes": settings.validator_votes,
             "validator_per_rule": settings.validator_per_rule,
             "enable_bert_verify": settings.enable_bert_verify,

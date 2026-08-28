@@ -1,4 +1,4 @@
-"""STEP 3 — 유스케이스별 명세 proposal·검증·bounded repair stage다.
+"""STEP 3 — 유스케이스별 명세 proposal·검증·history-aware repair stage다.
 
 step2의 각 유스케이스에 대해 주 시나리오 + 확장(예외/대안) + 사전/사후조건을 생성한다.
 유스케이스마다 LLM 호출 1건이 독립적이라 ThreadPoolExecutor로 동시 실행해 속도를 높인다
@@ -11,8 +11,8 @@ LLM 출력을 그대로 믿지 않고 검증·반성한다:
     지적을 문자열로 바꾼다 — 규칙과 검출기가 지식베이스에 함께 있어야 지적이 인용을 들고 나간다.
   - _semantic_findings: LLM 의미 검증(hidden branching·scope creep 등, 정적이 못 잡는 것).
     검증자가 댄 규칙 id를 지식베이스와 대조해, **없는 규칙을 인용한 지적은 버린다.**
-  - _spec_for의 reflection 루프: 검증 실패 시 지시를 붙여 재생성(최대 max_repair_iters),
-    회귀하면 직전본 유지.
+  - _spec_for의 reflection 루프: 검증 실패 시 이력을 붙여 미사용 전략으로 재생성,
+    회귀·반복 후보는 버리고 전략이 소진되면 정체 상태로 전환.
 
 규칙의 출처(책이 적었나 / 우리가 정했나)는 `knowledge/rules.py`에 있다. 책 본문은 저장소에
 없다 — 저작물이라 지웠고(`d1a7ec5`), 담는 것은 우리 표현의 규범 문장과 인용 좌표다.
@@ -49,6 +49,13 @@ from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import UseCaseSpec
 from app.requirements.traceability import constraints_for_use_case
+from app.validation import (
+    RepairAttempt,
+    RepairLedger,
+    repair_makes_progress,
+    stable_digest,
+    transient_llm_error,
+)
 
 # 마크다운/특수문자 → plain 정규화 매핑.
 _REPLACEMENTS = {
@@ -58,8 +65,11 @@ _REPLACEMENTS = {
     "**": "", "__": "", "`": "",                       # bold/code 마크업
 }
 
-_LOCAL_REPAIR_LIMIT = 2
 _RULE_TAG = re.compile(r"\[([a-z][a-z0-9_.-]*)\s")
+_SPEC_REPAIR_STRATEGIES = (
+    "targeted_findings",
+    "fresh_contract_regeneration",
+)
 
 
 class _NeighbourGoal(TypedDict):
@@ -167,8 +177,20 @@ def normalize_specification(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecIt
              "outcome": e.outcome, "resume_at_step": e.resume_at_step}
             for e in spec.extensions
         ],
-        "success_guarantee": [normalize_text(g) for g in spec.success_guarantee],
-        "minimal_guarantee": [normalize_text(g) for g in spec.minimal_guarantee],
+        "success_guarantee": [
+            {
+                "sentence": normalize_text(guarantee.sentence),
+                "covered_req_ids": list(guarantee.covered_req_ids),
+            }
+            for guarantee in spec.success_guarantee
+        ],
+        "minimal_guarantee": [
+            {
+                "sentence": normalize_text(guarantee.sentence),
+                "covered_req_ids": list(guarantee.covered_req_ids),
+            }
+            for guarantee in spec.minimal_guarantee
+        ],
         "issues": [],
         "repair_iters": 0,
         # _check가 곧 덮어쓴다. 조립 시점에는 아직 아무 검증도 안 했다.
@@ -310,7 +332,7 @@ def generate_specification(
     """명세를 생성하고, 검증 실패 시 지시를 붙여 재생성하는 반성 루프(스레드에서 호출).
 
     각 반복은 결정론 static + LLM semantic 검증을 병합해 issues를 만들고, 남으면 그 issues를
-    지시로 붙여 재생성한다(최대 settings.max_repair_iters). feedback이 있으면 최초 생성에
+    지시로 붙여 재생성한다. feedback이 있으면 최초 생성에
     사용자 지시를 반영한다.
 
     **채택 규칙은 검증 단계가 전진했거나 결함이 줄었는가다.** 정적 무결성 결함을
@@ -320,10 +342,9 @@ def generate_specification(
 
     멈춘 이유는 `repair_stopped`에 남긴다. 수술적(부분) 수정으로 바꿀 값어치가 있는지는
     이 값의 분포를 봐야 알 수 있고, 지금은 그 근거가 없다.
-    A repair is accepted only when its stable issue-key set is a strict subset of
-    the current set. A non-improving repair is discarded, but does not cancel the remaining local
-    attempt because model sampling is non-deterministic and the configured budget is already
-    bounded.
+    숫자 예산은 없다. 같은 입력·finding에는 아직 쓰지 않은 전략만 선택하고, 모든 전략이
+    진전을 만들지 못하면 ``stalled``로 명시적으로 멈춘다. 채택된 후보로 입력 digest가
+    바뀌면 전략 집합을 다시 사용할 수 있으므로 100회 이상 진전하는 수리도 잘리지 않는다.
     """
     specification_input = cast(_SpecificationInput, uc)
     base_user = _spec_human(specification_input, by_id, actors, feedback)
@@ -354,12 +375,10 @@ def generate_specification(
     item = _generate([SystemMessage(content=system), HumanMessage(content=base_user)])
 
     unresolved_keys = _issue_keys(item["issues"])
+    ledger = RepairLedger()
     attempts = 0
-    stopped = "budget"
-    for _ in range(min(_LOCAL_REPAIR_LIMIT, max(0, settings.max_repair_iters))):
-        if not item["issues"]:
-            stopped = "clean"
-            break
+    stopped = "stalled"
+    while item["issues"]:
         previous_spec = {
             key: item.get(key)
             for key in (
@@ -367,10 +386,33 @@ def generate_specification(
                 "success_guarantee", "minimal_guarantee",
             )
         }
+        input_digest = stable_digest(
+            {"specification": previous_spec, "findings": sorted(unresolved_keys)}
+        )
+        finding_keys_before = tuple(sorted(unresolved_keys))
+        strategy = next(
+            (
+                candidate_strategy
+                for candidate_strategy in _SPEC_REPAIR_STRATEGIES
+                if not ledger.strategy_attempted(
+                    input_digest=input_digest,
+                    finding_keys=finding_keys_before,
+                    strategy_key=candidate_strategy,
+                )
+            ),
+            None,
+        )
+        if strategy is None:
+            ledger.status = "STALLED"
+            ledger.stall_reason = "No untried repair strategy remains for this specification state."
+            stopped = "stalled"
+            break
         repair_user = prompts.spec_repair_user(
             base_user,
             json.dumps(previous_spec, ensure_ascii=False, indent=2),
             item["issues"],
+            strategy=strategy,
+            repair_history=ledger.prompt_context(),
         )
         attempts += 1
         try:
@@ -382,25 +424,87 @@ def generate_specification(
             telemetry.record_degradation(
                 "spec.repair", f"{type(exc).__name__}: {exc}", subject=uc["id"]
             )
-            stopped = "error"
+            waiting = transient_llm_error(exc)
+            ledger.record(
+                RepairAttempt(
+                    stage="requirements.specifications",
+                    target_ids=(str(uc["id"]),),
+                    strategy_key=strategy,
+                    input_digest=input_digest,
+                    finding_keys_before=finding_keys_before,
+                    finding_keys_after=finding_keys_before,
+                    outcome="waiting_external" if waiting else "error",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            ledger.status = "WAITING_EXTERNAL" if waiting else "STALLED"
+            ledger.stall_reason = "External LLM is unavailable." if waiting else str(exc)
+            stopped = "waiting_external" if waiting else "error"
             break
         candidate_keys = _issue_keys(candidate["issues"])
+        candidate_spec = {
+            key: candidate.get(key)
+            for key in (
+                "preconditions", "trigger", "main_scenario", "extensions",
+                "success_guarantee", "minimal_guarantee",
+            )
+        }
+        candidate_digest = stable_digest(candidate_spec)
         current_static = validate_specification(cast(dict[str, object], item))
         candidate_static = validate_specification(cast(dict[str, object], candidate))
         advanced_to_semantic_review = bool(current_static) and not candidate_static
-        if not advanced_to_semantic_review and not candidate_keys < unresolved_keys:
-            # Keep the better previous item, but use any remaining bounded attempt.
+        repeated = ledger.candidate_seen(
+            input_digest=input_digest,
+            candidate_digest=candidate_digest,
+        )
+        improved = not repeated and repair_makes_progress(
+            tuple(unresolved_keys),
+            tuple(candidate_keys),
+            frontier_before=0 if current_static else 1,
+            frontier_after=0 if candidate_static else 1,
+        )
+        outcome = (
+            "repeated_candidate"
+            if repeated
+            else "clean"
+            if not candidate_keys
+            else "improved"
+            if improved
+            else "regressed"
+            if len(candidate_keys) > len(unresolved_keys)
+            else "no_improvement"
+        )
+        ledger.record(
+            RepairAttempt(
+                stage="requirements.specifications",
+                target_ids=(str(uc["id"]),),
+                strategy_key=strategy,
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+                finding_keys_before=finding_keys_before,
+                finding_keys_after=tuple(sorted(candidate_keys)),
+                outcome=outcome,
+                detail=(
+                    "Static validation cleared and semantic validation became reachable."
+                    if advanced_to_semantic_review
+                    else ""
+                ),
+            )
+        )
+        if not improved:
             continue
         item = candidate
         unresolved_keys = candidate_keys
-    else:
-        # 예산을 다 쓰고 나왔다. 마지막 반복이 결함을 없앴을 수도 있다.
-        stopped = "clean" if not item["issues"] else "budget"
+
+    if not item["issues"]:
+        stopped = "clean"
+        ledger.status = "COMPLETED"
 
     # 채택 횟수가 아니라 **시도 횟수**다. 채택 수를 세면 헛돈 재생성이 기록에서
     # 사라져서, 반성 루프가 비용을 얼마나 쓰는지 알 수 없게 된다.
     item["repair_iters"] = attempts
     item["repair_stopped"] = stopped
+    item["repair_history"] = ledger.model_dump(mode="json")
     return item
 
 

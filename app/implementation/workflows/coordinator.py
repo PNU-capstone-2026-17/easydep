@@ -841,7 +841,7 @@ def run_workflow_to_completion(
     retry_failed: bool = False,
     max_cycles: int = 100,
 ) -> dict[str, object]:
-    """Run every phase and bounded repair from one explicit transmission approval."""
+    """Run every phase and delegated history-aware repair from one approval."""
     run_root = run_root.resolve()
     state = plan_workflow(run_root, spec)
     request_path = run_root / "reports" / "external-transmission-request.json"

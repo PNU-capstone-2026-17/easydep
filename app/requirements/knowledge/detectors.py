@@ -141,7 +141,11 @@ def contract_fields(spec: dict, _context: object | None = None) -> list[Finding]
 
 
 def scenario_requirement_refs(spec: dict, _context: object | None = None) -> list[Finding]:
-    """Keep scenario coverage exactly aligned with accepted functional requirements."""
+    """Keep scenario and guarantee coverage aligned with accepted FRs.
+
+    일부 요구는 actor/system action이 아니라 저장·감사·상태 갱신 같은 사후 보장이다.
+    그런 요구를 main scenario에 억지로 되풀이하지 않고 typed guarantee에서 추적한다.
+    """
     rule_id = "spec.scenario-requirement-reference-integrity"
     accepted = set(spec.get("requirement_ids") or [])
     found: list[Finding] = []
@@ -158,12 +162,25 @@ def scenario_requirement_refs(spec: dict, _context: object | None = None) -> lis
                         location,
                     )
                 )
+    for field_name in ("success_guarantee", "minimal_guarantee"):
+        for index, guarantee in enumerate(spec.get(field_name, []) or [], 1):
+            location = f"{field_name} {index}"
+            for requirement_id in guarantee.get("covered_req_ids", []) or []:
+                covered.add(requirement_id)
+                if requirement_id not in accepted:
+                    found.append(
+                        Finding(
+                            rule_id,
+                            f"covered_req_id {requirement_id!r} is not an accepted functional requirement",
+                            location,
+                        )
+                    )
     for requirement_id in spec.get("requirement_ids") or []:
         if requirement_id not in covered:
             found.append(
                 Finding(
                     rule_id,
-                    f"accepted functional requirement {requirement_id!r} is not covered by the main scenario",
+                    f"accepted functional requirement {requirement_id!r} is not covered by the main scenario or guarantees",
                 )
             )
     return found

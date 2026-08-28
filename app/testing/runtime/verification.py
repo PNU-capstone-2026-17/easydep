@@ -33,6 +33,7 @@ def run_verification_graph(
     target_url: str = "",
     manifests_dir: str = "",
     iac_dir: str = "",
+    repair_history: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     with langsmith_metrics.trace_scope(
         "easydep.testing.verification",
@@ -49,6 +50,7 @@ def run_verification_graph(
             target_url=target_url,
             manifests_dir=manifests_dir,
             iac_dir=iac_dir,
+            repair_history=repair_history,
         )
 
 
@@ -59,6 +61,7 @@ def _run_verification_graph(
     target_url: str = "",
     manifests_dir: str = "",
     iac_dir: str = "",
+    repair_history: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the testing graph against a live instance of the stored application.
 
@@ -79,6 +82,7 @@ def _run_verification_graph(
                     target_url=url,
                     manifests_dir=manifests_dir,
                     iac_dir=iac_dir,
+                    repair_history=repair_history,
                 )
             )
     except ApplicationLaunchError as error:
@@ -89,6 +93,7 @@ def _run_verification_graph(
                 app_id=app_id,
                 manifests_dir=manifests_dir,
                 iac_dir=iac_dir,
+                repair_history=repair_history,
             )
         )
 

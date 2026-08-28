@@ -135,7 +135,7 @@ def test_sequence_diagram_draft_remains_visible_while_findings_block_advance() -
     assert image.body == b"draft"
 
 
-def test_design_advances_past_sequence_findings_when_an_artifact_exists() -> None:
+def test_design_refuses_to_advance_past_sequence_findings() -> None:
     state = {
         **_state(),
         "sequence_diagram_puml": "@startuml\n@enduml",
@@ -156,9 +156,11 @@ def test_design_advances_past_sequence_findings_when_an_artifact_exists() -> Non
             "status": "NEEDS_INPUT",
             "findings": [{"stage": "sequence_diagram", "finding": "invalid"}],
         }
-        resume_design_session(APP_ID, FeedbackRequest(feedback=""))
+        with pytest.raises(HTTPException) as raised:
+            resume_design_session(APP_ID, FeedbackRequest(feedback=""))
 
-    resume.assert_called_once_with(APP_ID, "")
+    assert raised.value.status_code == 409
+    resume.assert_not_called()
 
 
 def test_design_does_not_advance_when_findings_have_no_artifact() -> None:

@@ -1,5 +1,6 @@
 import operator
-from typing import TypedDict, Annotated, Optional, Any
+from typing import Annotated, Any, TypedDict
+
 
 class TestingState(TypedDict):
     """
@@ -15,16 +16,19 @@ class TestingState(TypedDict):
     manifests_dir: str # e.g. "application/k8s"
     iac_dir: str # e.g. "application/terraform"
     target_url: str # Target URL for dynamic testing, defaults to localhost:8080
+    # 사용자가 선택한 이전 수리 이력. 동적 테스트 생성기는 같은 실패와 후보를
+    # 반복하지 않도록 이 값을 프롬프트 문맥으로만 사용한다.
+    repair_history: dict[str, Any]
 
     # State
     current_node: str
     errors: Annotated[list[str], operator.add]
 
     # Reports from each verification node
-    static_report: Optional[dict[str, Any]]
-    dynamic_functional_report: Optional[dict[str, Any]]
-    dynamic_nfr_report: Optional[dict[str, Any]]
-    iac_report: Optional[dict[str, Any]]
+    static_report: dict[str, Any] | None
+    dynamic_functional_report: dict[str, Any] | None
+    dynamic_nfr_report: dict[str, Any] | None
+    iac_report: dict[str, Any] | None
 
 
 # 이름이 ``Test``로 시작하지만 pytest 수집 대상 클래스가 아니다.

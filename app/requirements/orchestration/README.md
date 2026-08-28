@@ -29,7 +29,7 @@
 - runner의 run ID·manifest 정책은 상위 composition root가 callback으로 주입하며,
   이 경계가 cross-stage orchestration 구현을 직접 import하지 않는다.
 - orchestration은 단계 서비스를 정해진 순서로 호출할 뿐, 단계 내부 LLM 호출 수,
-  병렬도, retry 및 bounded repair 범위를 늘리거나 다시 소유하지 않는다.
+  병렬도, retry 및 progress-aware repair 범위를 늘리거나 다시 소유하지 않는다.
 - 테스트는 모든 LLM·repository 경계를 대체하며 실제 NIM 호출을 하지 않는다.
 
 ## 금지 의존성

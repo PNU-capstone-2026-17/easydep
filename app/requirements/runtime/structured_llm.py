@@ -102,6 +102,8 @@ def build_llm(*, seed_override: int | None = None) -> ChatOpenAI:
             # 상태였다(`evaluation/semantic.py`의 `ask`). 순서를 바꾸면 이 변경이 곧
             # 측정 편향이 된다.
             timeout=90,
+            # 기존 production 계약을 유지한다. 논리 수리 이력과 transport 재시도는
+            # 서로 다른 층이며, 일시적인 연결 오류 두 번은 SDK가 처리한다.
             max_retries=2,
         )
         if seed_override is not None:

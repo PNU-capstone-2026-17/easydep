@@ -40,9 +40,13 @@ def _step(n, sentence="actor acts", reqs=None):
     return MainScenarioStep(step_number=n, sentence=sentence, covered_req_ids=reqs or [])
 
 
+def _guarantee(sentence="done", reqs=None):
+    return {"sentence": sentence, "covered_req_ids": reqs or []}
+
+
 def _clean_spec(**over):
     """정적 이슈가 없는 최소 스펙(계약·문장 정상) — 반성 루프가 안 돌게."""
-    base = dict(trigger="user acts", preconditions=["ready"], success_guarantee=["done"],
+    base = dict(trigger="user acts", preconditions=["ready"], success_guarantee=[_guarantee()],
                 main_scenario=[_step(1)])
     base.update(over)
     return UseCaseSpec(**base)
@@ -72,7 +76,8 @@ def test_generate_specs_maps_fields_and_shapes_extensions(monkeypatch):
                 outcome="resume", resume_at_step=2,
             )
         ],
-        success_guarantee=["order saved"], minimal_guarantee=["no partial order"],
+        success_guarantee=[_guarantee("order saved", ["R2"])],
+        minimal_guarantee=[_guarantee("no partial order")],
     )
     monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: spec)
 
@@ -245,7 +250,8 @@ def test_clean_strips_markdown_and_specials():
 
 def _spec(main, exts, **over):
     base = {
-        "trigger": "user acts", "preconditions": ["ok"], "success_guarantee": ["done"],
+        "trigger": "user acts", "preconditions": ["ok"],
+        "success_guarantee": [_guarantee()],
         "main_scenario": main, "extensions": exts,
     }
     base.update(over)
@@ -315,7 +321,7 @@ def test_spec_snapshots_the_accepted_use_case_traceability_ids(monkeypatch):
     assert item["nfr_ids"] is not accepted["nfr_ids"]
 
 
-def test_every_accepted_functional_requirement_must_be_covered_by_a_scenario_step(monkeypatch):
+def test_every_accepted_functional_requirement_must_be_covered_by_a_scenario_or_guarantee(monkeypatch):
     accepted = _uc("UC1", reqs=["R1", "R2"], nfrs=["N1"])
     monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec(
         main_scenario=[_step(1, reqs=["R1"])]
@@ -332,13 +338,32 @@ def test_every_accepted_functional_requirement_must_be_covered_by_a_scenario_ste
     assert not any("'N1' is not covered" in issue for issue in item["issues"])
 
 
+def test_postcondition_requirement_may_be_covered_by_a_typed_guarantee(monkeypatch):
+    accepted = _uc("UC1", reqs=["R1", "R2"], nfrs=["N1"])
+    monkeypatch.setattr(
+        s3,
+        "invoke_structured",
+        lambda schema, messages: _clean_spec(
+            main_scenario=[_step(1, reqs=["R1"])],
+            success_guarantee=[_guarantee("The order is recorded", ["R2"])],
+        ),
+    )
+
+    item = s3.generate_specs(
+        {"use_cases": [accepted], "classified": _CLASSIFIED, "actors": []}
+    )["use_case_specs"][0]
+
+    assert not any("is not covered" in issue for issue in item["issues"])
+    assert item["success_guarantee"][0]["covered_req_ids"] == ["R2"]
+
+
 def test_empty_minimal_guarantee_is_preserved_in_the_validator_payload():
     item = {
         "trigger": "start",
         "preconditions": ["ready"],
         "main_scenario": [],
         "extensions": [],
-        "success_guarantee": ["complete"],
+        "success_guarantee": [_guarantee("complete")],
         "minimal_guarantee": [],
     }
 
@@ -353,7 +378,7 @@ def test_spec_review_payload_keeps_constraints_separate_from_scenario_coverage()
         "preconditions": [],
         "main_scenario": [],
         "extensions": [],
-        "success_guarantee": ["complete"],
+        "success_guarantee": [_guarantee("complete")],
         "minimal_guarantee": [],
     }
     constraints = [{"id": "R3", "text": "The operation preserves its balance.", "type": "FR"}]
@@ -420,12 +445,11 @@ def test_reflection_loop_repairs_until_clean(monkeypatch):
 
 
 def test_reflection_loop_gives_up_when_regeneration_does_not_help(monkeypatch):
-    """나아지지 않는 재생성에 예산을 계속 쓰지 않는다.
+    """나아지지 않는 재생성은 미사용 전략 소진 뒤 정체로 멈춘다.
 
     예전에는 결함 **개수가 늘 때만** 거절했다. 그래서 결함 3개가 다른 결함 3개로
     바뀌어도 채택하고 다음 반복까지 돌았다 — 나아진 것 없이 호출만 두 배로 썼다.
     """
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
     calls = {"n": 0}
 
     def fake(schema, messages):
@@ -436,13 +460,16 @@ def test_reflection_loop_gives_up_when_regeneration_does_not_help(monkeypatch):
     spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
 
     assert spec["issues"]                        # 여전히 위반 → 표면화
-    assert spec["repair_stopped"] == "budget"
-    assert spec["repair_iters"] == 2             # 설정된 지역 예산까지만 시도한다
-    assert calls["n"] == 3                       # 최초 생성 + 재생성 2회
+    assert spec["repair_stopped"] == "stalled"
+    assert spec["repair_iters"] == 2
+    assert calls["n"] == 3
+    assert [attempt["outcome"] for attempt in spec["repair_history"]["attempts"]] == [
+        "no_improvement",
+        "repeated_candidate",
+    ]
 
 
 def test_reflection_can_recover_after_one_repeated_sample(monkeypatch):
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
     results = iter([_bad_spec(), _bad_spec(), _clean_spec()])
     monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: next(results))
 
@@ -455,16 +482,14 @@ def test_reflection_can_recover_after_one_repeated_sample(monkeypatch):
     assert spec["repair_stopped"] == "clean"
 
 
-def test_reflection_loop_stops_at_repair_budget(monkeypatch):
-    """매번 조금씩 나아지지만 끝내 깨끗해지지 않으면 예산에서 멈춘다."""
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
-    # 위반 스텝 3개 → 2개 → 1개. 위반은 **스텝마다** 하나씩 세므로 개수가 실제로 줄고,
-    # 그래서 매번 채택되어 예산이 먼저 소진된다.
+def test_reflection_loop_has_no_numeric_cap_while_each_candidate_improves(monkeypatch):
+    """매번 진전하면 예전 2회 예산을 넘어 깨끗해질 때까지 이어간다."""
     bad, good = "User clicks it", "The user submits the order"
     rounds = [
         [bad, bad, bad],
         [bad, bad, good],
         [bad, good, good],
+        [good, good, good],
     ]
     calls = {"n": 0}
 
@@ -478,9 +503,9 @@ def test_reflection_loop_stops_at_repair_budget(monkeypatch):
     monkeypatch.setattr(s3, "invoke_structured", fake)
     spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
 
-    assert spec["repair_stopped"] == "budget"
-    assert spec["repair_iters"] == 2     # 예산 소진
-    assert spec["issues"]                # 줄었지만 남아 있다 → 표면화
+    assert spec["repair_stopped"] == "clean"
+    assert spec["repair_iters"] == 3
+    assert spec["issues"] == []
 
 
 def test_reflection_rejects_a_smaller_issue_list_with_new_keys(monkeypatch):
@@ -492,19 +517,18 @@ def test_reflection_rejects_a_smaller_issue_list_with_new_keys(monkeypatch):
         _step(1, "System proceeds if the request is valid"),
     ])
     results = iter([initial, replacement, replacement])
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
     monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: next(results))
 
     item = s3.generate_specs(
         {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
     )["use_case_specs"][0]
 
-    assert item["repair_stopped"] == "budget"
+    assert item["repair_stopped"] == "stalled"
     assert item["repair_iters"] == 2
     assert all("spec.black-box-no-ui-mechanics" in issue for issue in item["issues"])
 
 
-def test_reflection_enforces_the_local_two_attempt_cap(monkeypatch):
+def test_reflection_does_not_enforce_the_old_local_two_attempt_cap(monkeypatch):
     rounds = [
         _clean_spec(main_scenario=[_step(index, "User clicks the button") for index in range(1, 4)]),
         _clean_spec(main_scenario=[_step(index, "User clicks the button") for index in range(1, 3)]),
@@ -518,19 +542,17 @@ def test_reflection_enforces_the_local_two_attempt_cap(monkeypatch):
         calls["n"] += 1
         return result
 
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 99)
     monkeypatch.setattr(s3, "invoke_structured", fake)
 
     item = s3.generate_specs(
         {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
     )["use_case_specs"][0]
 
-    assert item["repair_iters"] == 2
-    assert item["repair_stopped"] == "budget"
-    assert calls["n"] == 3
+    assert item["repair_iters"] == 3
+    assert item["repair_stopped"] == "clean"
+    assert calls["n"] == 4
 def test_reflection_loop_keeps_static_to_semantic_validation_progress(monkeypatch):
     """확장 분기 참조를 고치면 새 의미 지적이 생겨도 후보를 버리지 않는다."""
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
     calls = {"n": 0}
 
     invalid_extension = Extension(
@@ -569,7 +591,6 @@ def test_reflection_loop_keeps_static_to_semantic_validation_progress(monkeypatc
 
 def test_repair_stopped_is_aggregated_in_the_report(monkeypatch):
     """왜 멈췄는지의 분포가 리포트에 있어야 부분 수정으로 바꿀 근거가 생긴다."""
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 1)
     monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec())
 
     state = s3.generate_specs(
@@ -616,7 +637,6 @@ def _all_clean(violated: dict[str, str] | None = None) -> list[RuleVerdict]:
 
 def test_semantic_validator_merges_and_drives_repair(monkeypatch):
     monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 1)
 
     def fake(schema, messages):
         return _clean_spec()          # 정적으론 깨끗
@@ -630,7 +650,8 @@ def test_semantic_validator_merges_and_drives_repair(monkeypatch):
     assert any("[semantic]" in i for i in spec["issues"])  # 의미 결함이 병합됨
     # 지적이 근거를 들고 나간다 — 규칙 id와 인용 좌표가 문구에 함께 있다.
     assert any("spec.remerge-re-establishes-state" in i and "Ch. 8" in i for i in spec["issues"])
-    assert spec["repair_iters"] == 1                        # 의미 결함이 재생성을 유발
+    assert spec["repair_iters"] == 2                        # 두 고유 전략을 기록하고 정체
+    assert spec["repair_stopped"] == "stalled"
     assert spec["semantic_status"] == "ok"                  # 실제로 검증을 거쳤다
 
 
@@ -641,7 +662,6 @@ def test_ungrounded_finding_is_dropped_and_not_reported_as_clean(monkeypatch):
     헛소리만 한 실행이 깨끗한 실행처럼 보이면 안 된다.
     """
     monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 1)
 
     monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec())
     _patch_validator(monkeypatch, verdicts=[

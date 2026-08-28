@@ -60,7 +60,7 @@ RTM·deployment·implementation은 이 결과와 저장 모델을 기존 방식�
 4. graph adapter는 이 report를 observational check로 실행한다. typed 규칙이 기존 detector의
    유스케이스 범위·분해 경로 판정보다 엄격해 호출 수를 늘리지 않도록 repair finding에는
    합치지 않고 표준 로그에만 기록한다. 로그는 checkpoint나 외부 telemetry schema에 저장하지
-   않는다. 기존 semantic finding이 있으면 기존 bounded repair가 API revision service만 다시
+   않는다. 기존 semantic finding이 있으면 history-aware repair가 API revision service만 다시
    호출한다. 별도 repair loop를 추가하거나 BCE·sequence를 이 패키지에서 수정하지 않는다.
 5. graph가 수락한 모델만 OpenAPI로 투영한다. projection 실패를 LLM 출력으로 덮지 않는다.
 
@@ -94,6 +94,6 @@ type을 다시 추론하지 않는다.
 - 존재하지 않는 schema, path parameter 누락·중복 operation ID, 빈 operation 집합은 수락하지 않는다.
 - endpoint가 실제 Control operation과 모든 parameter를 연결하지 못하거나 sequence에서 호출을
   찾지 못하면 typed report에 남긴다. 이 report는 현재 관측 전용이며 repair 범위를 넓히지 않는다.
-- graph의 기존 bounded repair 뒤에도 finding이 남으면 실패를 반환하며 빈 placeholder endpoint,
+- graph의 기존 repair 전략이 소진된 뒤에도 finding이 남으면 실패를 반환하며 빈 placeholder endpoint,
   fabricated class/use-case ID 또는 느슨한 `Object` 계약으로 통과시키지 않는다. API service는
   자체 repair loop를 추가해 호출 수나 repair 범위를 넓히지 않는다.

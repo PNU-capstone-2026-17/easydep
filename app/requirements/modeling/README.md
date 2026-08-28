@@ -2,7 +2,7 @@
 
 `app.requirements.modeling`은 정제된 요구사항에서 actor, use case, Cockburn 명세,
 관계 모델과 use-case PlantUML을 만드는 단계 서비스다. 각 단계는 typed proposal을
-받아 정규화하고 결정론적으로 검증한 뒤, 정해진 횟수 안에서만 repair하여 accepted
+받아 정규화하고 결정론적으로 검증한 뒤, 진전과 미사용 전략이 있는 동안 repair하여 accepted
 state patch를 반환한다. graph 순서, feedback cascade, supervisor 재실행은 이
 패키지의 책임이 아니다.
 
@@ -36,9 +36,9 @@ state patch를 반환한다. graph 순서, feedback cascade, supervisor 재실�
   HTTP 또는 repository를 직접 갱신하지 않는다.
 - Step 2의 독립 trace audit와 Step 3의 use-case별 명세 생성은 기존 concurrency와
   `ContextVar` 전파를 유지한다.
-- specification repair는 설정 예산과 지역 상한을 모두 따르며, relationship
-  selection repair는 최대 1회다. semantic validator의 vote 수와 confirmation
-  호출은 runtime 설정을 그대로 따른다.
+- specification과 relationship repair는 숫자 상한 대신 입력·finding·전략·후보 digest
+  이력을 따른다. 같은 실패를 반복하지 않고 진전하거나 미사용 전략이 있는 동안 계속한다.
+  semantic validator의 vote 수와 confirmation 호출은 runtime 설정을 그대로 따른다.
 - 빈 입력 또는 이미 accepted된 결정론 projection은 불필요한 proposal 호출을 하지
   않는다. logical/physical 호출 집계는 `runtime.telemetry`의 기존 operation 이름과
   shape를 사용한다.
@@ -63,7 +63,7 @@ state patch를 반환한다. graph 순서, feedback cascade, supervisor 재실�
   finding/dropped reference로 표면화하며 조용히 새 ID를 만들지 않는다.
 - semantic vote가 실패하거나 모든 규칙을 검사하지 못하면 clean으로 간주하지 않고
   기존 `failed`/`ungrounded`/`unexamined_rules` 상태를 보존한다.
-- bounded repair 예산이 끝나거나 개선되지 않으면 마지막 accepted candidate와
+- 같은 입력의 전략이 소진되거나 개선되지 않으면 마지막 accepted candidate와
   `repair_stopped` 사유를 반환하여 supervisor가 공개 finding만으로 재실행 범위를
   결정하게 한다.
 

@@ -182,7 +182,7 @@ def test_generate_specs_local_target_preserves_siblings():
                 sentence="User acts",
                 covered_req_ids=["R1"],
             )],
-            success_guarantee=["Done"],
+            success_guarantee=[{"sentence": "Done", "covered_req_ids": []}],
         )
     state = {
         "classified": [{"id": "R1", "text": "x", "type": "FR"}],

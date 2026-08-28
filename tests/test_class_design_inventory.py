@@ -91,6 +91,6 @@ def test_class_design_reasoning_effort_is_independent_per_owned_stage(monkeypatc
     assert operations.operation_reasoning_effort() == "high"
     assert collaboration.call_plan_reasoning_effort() == "medium"
 
-    # Stage-specific reasoning is only a model policy. The established one
-    # replacement rule remains owned by each stage's existing validators.
-    assert settings.design_max_repair_iters == 3
+    # Stage-specific reasoning is only a model policy. Repair termination is
+    # owned by validation progress and the append-only repair history.
+    assert not hasattr(settings, "design_max_repair_iters")

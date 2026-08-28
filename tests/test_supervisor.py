@@ -59,7 +59,6 @@ def test_the_top_stage_has_nowhere_further_up():
 # ---------------------------------------------------------------------------
 def test_a_model_defect_goes_back_to_the_stage_that_made_it(monkeypatch):
     """`review_model`이 찾은 결함은 예전에 **아무도 고치지 않았다.** 이제 actors로 돌아간다."""
-    monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
     issue = _issue("actors.sud-is-not-an-actor", "Remove 'Order Service' from the actors")
 
     decision = supervisor.decide(_state(model_review={"issues": [issue]}))
@@ -76,7 +75,6 @@ def test_a_stage_that_gave_up_escalates_upstream(monkeypatch):
 
     예전에는 그 신호를 받아 올려보낼 통로가 구조에 없었다 — 명세만 계속 다시 썼다.
     """
-    monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
     issue = _issue("spec.remerge-re-establishes-state")
     state = _state(use_case_specs=[
         {"use_case_id": "UC1", "issues": [issue], "repair_stopped": "no_improvement"},
@@ -91,7 +89,6 @@ def test_a_stage_that_gave_up_escalates_upstream(monkeypatch):
 
 def test_a_stage_still_working_on_it_is_asked_again_itself(monkeypatch):
     """자기 루프가 아직 포기하지 않았으면 그 단계로 되돌린다(위로 올리지 않는다)."""
-    monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
     state = _state(use_case_specs=[
         {"use_case_id": "UC1", "issues": [_issue("spec.no-scope-creep")],
          "repair_stopped": "clean"},
@@ -105,7 +102,6 @@ def test_a_stage_still_working_on_it_is_asked_again_itself(monkeypatch):
 
 def test_only_the_most_upstream_target_is_taken(monkeypatch):
     """위를 고치면 아래는 cascade로 다시 돈다 — 한 번에 여러 곳을 되돌릴 이유가 없다."""
-    monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
     state = _state(
         model_review={"issues": [_issue("actors.sud-is-not-an-actor")]},
         use_case_specs=[{"use_case_id": "UC1", "issues": [_issue("spec.no-scope-creep")],
@@ -117,15 +113,20 @@ def test_only_the_most_upstream_target_is_taken(monkeypatch):
     assert decision.owner == "actors"   # use_cases(=specs의 상위)보다 더 위
 
 
-def test_the_budget_stops_the_loop(monkeypatch):
-    monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
-    state = _state(model_review={"issues": [_issue("actors.sud-is-not-an-actor")]},
-                   redo_rounds=1)
+def test_exhausting_the_strategy_for_the_same_finding_stalls():
+    state = _state(model_review={"issues": [_issue("actors.sud-is-not-an-actor")]})
+    first = supervisor.decide(state)
+    state["redo_history"] = [
+        {
+            "input_digest": first.input_digest,
+            "strategy_key": first.strategy_key,
+        }
+    ]
 
     decision = supervisor.decide(state)
 
     assert decision.action == supervisor.ADVANCE
-    assert "예산 소진" in decision.reason
+    assert decision.reason.startswith("stalled:")
 
 
 def test_no_defects_means_advance():
@@ -288,7 +289,6 @@ def test_handoff_does_not_reconstruct_a_removed_legacy_spec_summary():
 # 3. 그래프 노드
 # ---------------------------------------------------------------------------
 def test_the_node_writes_the_marker_the_instruction_and_the_history(monkeypatch):
-    monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
     node = supervisor.supervise_for("model_use_cases")
     issue = _issue("actors.sud-is-not-an-actor")
 
@@ -313,7 +313,6 @@ def test_an_unreachable_target_is_surfaced_not_crashed(monkeypatch):
     """엣지 맵에 없는 곳으로 되돌리려 하면 죽지도, 조용히 넘기지도 않는다."""
     from app.requirements.runtime import telemetry
 
-    monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
     # 이 자리(supervise_model)에서는 write_specifications로 되돌릴 수 없다.
     node = supervisor.supervise_for("model_use_cases")
     state = _state(use_case_specs=[

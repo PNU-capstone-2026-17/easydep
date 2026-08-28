@@ -369,9 +369,6 @@ def test_api_artifact_validation_rejects_schema_only_openapi_document():
 
 
 def test_schema_only_api_model_is_repaired_before_rendering(monkeypatch):
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "design_max_repair_iters", 1)
     state, repaired = _cart_contract_state(
         {
             "control": "ShoppingCartController",

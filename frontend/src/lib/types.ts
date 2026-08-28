@@ -64,6 +64,26 @@ export interface SequenceDiagramSummary {
   use_case_name: string;
 }
 
+export interface BlockingFinding {
+  code: string;
+  stage: string;
+  target_ids: string[];
+  message: string;
+  severity: string;
+  repairable: boolean;
+}
+
+export interface RepairState {
+  status: 'ACTIVE' | 'WAITING_EXTERNAL' | 'STALLED' | 'NEEDS_INPUT' | 'COMPLETED' | string;
+  attempt_count: number;
+  accepted_count: number;
+  recent_attempts: Array<Record<string, unknown>>;
+  tried_strategies?: string[];
+  rejected_candidate_digests?: string[];
+  finding_digest?: string;
+  stall_reason?: string;
+}
+
 export interface LiveDiagramPreview {
   command_id: string;
   stage: 'class_diagram';
@@ -138,4 +158,5 @@ export interface CommandPayload {
   job_id?: string;
   request_id?: string;
   implementation_job_id?: string;
+  repair_testing_job_id?: string;
 }

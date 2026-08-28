@@ -22,13 +22,15 @@ from app.design.evaluation.seeded import CLEAN_STATE, ERD_CLEAN, ERD_SEEDED
 from app.design.graphs.subgraphs import ERD_SPEC
 from app.design.knowledge import detectors
 from app.design.knowledge.detectors import erd_findings
-from app.design.services.erd import mapping
 from app.design.nodes.artifact import (
     CLEAN as STOPPED_CLEAN,
-    NO_IMPROVEMENT,
+)
+from app.design.nodes.artifact import (
+    STALLED,
     check_node,
     render_and_validate,
 )
+from app.design.services.erd import mapping
 
 CHECK_KEY = ERD_SPEC.check_key
 #: 다중도가 없어 사상되지 않는 관계를 심은 모델.
@@ -59,7 +61,10 @@ def test_a_clean_model_is_not_sent_to_the_llm_at_all():
         raise AssertionError("깨끗한 모델에 재생성을 불렀다")
 
     out = _run(_spec_with(never), ERD_CLEAN)
-    assert out[CHECK_KEY] == {"findings": [], "repair_iters": 0, "stopped": STOPPED_CLEAN}
+    assert out[CHECK_KEY]["findings"] == []
+    assert out[CHECK_KEY]["repair_iters"] == 0
+    assert out[CHECK_KEY]["stopped"] == STOPPED_CLEAN
+    assert out[CHECK_KEY]["repair_history"]["status"] == "COMPLETED"
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +281,7 @@ def test_a_repair_that_empties_the_model_is_never_adopted():
     """
     out = _run(_spec_with(lambda *a: {"Classes": [], "Relationships": []}), UNMAPPED)
 
-    assert out[CHECK_KEY]["stopped"] == NO_IMPROVEMENT
+    assert out[CHECK_KEY]["stopped"] == STALLED
     # 버려졌으므로 원래 모델이 그대로 남는다.
     assert out[ERD_SPEC.model_key]["Classes"] == UNMAPPED["Classes"]
 

@@ -81,7 +81,9 @@ def _clean_spec(trigger: str = "Member submits a request") -> UseCaseSpec:
                 covered_req_ids=["R1"],
             )
         ],
-        success_guarantee=["The request is recorded."],
+        success_guarantee=[
+            {"sentence": "The request is recorded.", "covered_req_ids": []}
+        ],
     )
 
 
@@ -268,10 +270,8 @@ def test_step3_generation_overlaps_preserves_order_and_uses_one_call_per_unit(
     assert all(run is stats for run in observed_runs)
 
 
-def test_specification_repair_keeps_the_two_attempt_local_cap(monkeypatch) -> None:
-    """계속 남는 정적 결함은 initial+repair 2회의 총 3 proposal에서 멈춘다."""
-
-    monkeypatch.setattr(specifications.settings, "max_repair_iters", 99)
+def test_specification_repair_stalls_after_unique_strategies_are_exhausted() -> None:
+    """계속 같은 결함·후보면 두 고유 전략 뒤 명시적으로 정체된다."""
     calls = 0
 
     def propose(_schema, _messages):
@@ -289,7 +289,7 @@ def test_specification_repair_keeps_the_two_attempt_local_cap(monkeypatch) -> No
 
     assert calls == 3
     assert item["repair_iters"] == 2
-    assert item["repair_stopped"] == "budget"
+    assert item["repair_stopped"] == "stalled"
     assert item["issues"]
 
 
@@ -395,7 +395,6 @@ def test_supervisor_and_registry_preserve_the_downstream_rerun_scope(monkeypatch
 
     from app.requirements import stage_registry
 
-    monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
     actor_issue = f"[model] remove system actor {rules.tag_of('actors.sud-is-not-an-actor')}"
     spec_issue = f"[semantic] remove scope {rules.tag_of('spec.no-scope-creep')}"
     decision = supervisor.decide({
@@ -572,5 +571,5 @@ def test_modeling_documentation_covers_the_operational_contract() -> None:
         "## 호환 경계",
     ):
         assert heading in readme
-    assert "최대 1회" in readme
+    assert "숫자 상한 대신" in readme
     assert "별도의 dead-path 근거 없이 제거하지" in readme

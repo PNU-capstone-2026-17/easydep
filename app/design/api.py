@@ -166,9 +166,7 @@ def resume_design_session(app_id: str, request: FeedbackRequest) -> JSONResponse
                 require_app(app_id), stages=[str(active_stage)]
             )
             findings = list(readiness.get("findings") or [])
-            # 규칙 findings는 사용자에게 계속 보이지만, 렌더/저장된 산출물이 있으면
-            # 다음 설계 단계의 입력으로 사용할 수 있다. 산출물 자체가 없을 때만 멈춘다.
-            if findings and not _stage_artifact_exists(require_app(app_id), str(active_stage)):
+            if findings:
                 raise HTTPException(
                     status_code=409,
                     detail={

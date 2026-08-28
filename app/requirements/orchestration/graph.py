@@ -54,7 +54,13 @@ from app.requirements.orchestration.feedback_gates import (
 )
 from app.requirements.orchestration.persistence import SqlCheckpointSaver
 from app.requirements.orchestration.subgraphs import build_stage_subgraphs
-from app.requirements.orchestration.supervisor import blocking_issues, route_redo, supervise_for
+from app.requirements.orchestration.supervisor import (
+    blocking_findings,
+    blocking_issues,
+    repair_state,
+    route_redo,
+    supervise_for,
+)
 from app.requirements.runtime import telemetry
 
 RequirementsGraph = CompiledStateGraph[AgentState, None, AgentState, AgentState]
@@ -79,6 +85,9 @@ def _handoff_gate(state: AgentState) -> dict:
             "requirements findings. Provide feedback to repair them."
         ),
         "summary": issues,
+        "blocking_findings": blocking_findings(state),
+        "requires_revision": True,
+        "repair_state": repair_state(state),
         # The blocker may belong to use cases, specifications, or relationships. Do not make the
         # UI fabricate a relationship edit target; free-form feedback is routed by the existing
         # feedback classifier to the owning stage.
@@ -119,7 +128,8 @@ def _build_plain_graph(saver: BaseCheckpointSaver[str]) -> RequirementsGraph:
     (`docs/graph/*.png`)이 실제 흐름을 말하지 않게 된다. 되돌아가기는 이 파이프라인의
     구조이므로 구조로 드러나야 한다.
 
-    무한 루프는 `settings.max_redo_rounds`가 막는다(상태의 `redo_rounds`로 센다).
+    같은 finding/input에서 이미 쓴 strategy는 supervisor가 다시 고르지 않는다. 따라서
+    숫자 상한 없이 진전하는 동안 계속하고, 전략이 소진되면 handoff blocker로 드러난다.
     """
     subs = build_stage_subgraphs()
     builder = StateGraph(AgentState)
@@ -381,6 +391,9 @@ def result_payload(
                 # 되묻기. 화면이 이걸 받아야 `resource_answers`를 만들 수 있다 —
                 # 안 실으면 질문이 상태에만 있고 사용자에게는 영영 안 보인다.
                 "resource_questions": value.get("resource_questions"),
+                "blocking_findings": value.get("blocking_findings"),
+                "requires_revision": value.get("requires_revision"),
+                "repair_state": value.get("repair_state"),
                 "requirements": result.get("classified", []),
             }
             # 게이트에서 멈춘 시점까지 누적된 step2~4 산출물도 함께 실어 UI가 진행 상황을 보여준다.

@@ -13,28 +13,55 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.design.services.deployment_diagram.bundle import build_deployment_diagram_bundle
-from app.implementation.generation.orchestrator import (
-    PrototypeOrchestrator,
-    find_undefined_bce_types,
-    load_job,
-    plan_e2e_tasks,
+from app.implementation.agents.prompts.feedback import (
+    render_frontend_verification_feedback,
+    render_verification_feedback,
+    verification_failure_hints,
+)
+from app.implementation.agents.provider import (
+    configured_api_key,
+    openhands_compatibility,
+    provider_retry_delay,
+    transient_provider_error,
 )
 from app.implementation.agents.runtime import (
     EventJournal,
     _api_adapter_repair_contract,
-    _requires_cross_phase_repair,
-    _repair_missing_generated_model_imports,
-    _render_missing_output_repair_prompt,
     _promote_changed_files,
+    _render_missing_output_repair_prompt,
+    _repair_missing_generated_model_imports,
+    _requires_cross_phase_repair,
     _restore_unauthorized_files,
     break_configuration_cycles,
     enforce_spring_persistence_validation,
+    ensure_control_service_component,
     execution_attempt,
     normalize_spring_boot_repository_discovery,
     remove_placeholder_comments,
-    ensure_control_service_component,
     select_repair_paths,
     write_execution_result,
+)
+from app.implementation.agents.verification.build import (
+    WorkspaceVerificationError,
+    api_adapter_contract_violations,
+    boundary_adapter_contract_violations,
+    ensure_persistence_schema_test,
+    persistence_entity_schema_violations,
+    persistence_reserved_identifier_markers,
+    production_placeholder_markers,
+    production_test_library_markers,
+    read_gradle_test_failures,
+    repair_invalid_inverse_entity_associations,
+    repair_persistence_schema_table_quoting,
+    summarize_test_failure,
+    task_verification_command,
+    verify_run_workspace,
+)
+from app.implementation.agents.verification.e2e import (
+    e2e_contract_violations,
+    repair_nested_e2e_members,
+    repair_orphaned_java_test_statements,
+    repair_spring_boot3_test_compatibility,
 )
 from app.implementation.agents.workspace import (
     changed_files,
@@ -46,39 +73,32 @@ from app.implementation.agents.workspace import (
     snapshot_files,
     task_base_package,
 )
-from app.implementation.agents.provider import (
-    configured_api_key,
-    openhands_compatibility,
-    transient_provider_error,
-    provider_retry_delay,
+from app.implementation.application.jobs import _unrepresentable_openapi_error_outcomes
+from app.implementation.delivery.kubernetes import (
+    infer_intent,
+    render_deployment,
+    validate_intent,
 )
-from app.implementation.agents.verification.build import (
-    WorkspaceVerificationError,
-    production_placeholder_markers,
-    production_test_library_markers,
-    api_adapter_contract_violations,
-    boundary_adapter_contract_violations,
-    persistence_reserved_identifier_markers,
-    ensure_persistence_schema_test,
-    repair_persistence_schema_table_quoting,
-    repair_invalid_inverse_entity_associations,
-    persistence_entity_schema_violations,
-    read_gradle_test_failures,
-    summarize_test_failure,
-    task_verification_command,
-    verify_run_workspace,
+from app.implementation.delivery.terraform import render_iac, validate_terraform
+from app.implementation.domain.implementation_ir import (
+    ApiOperationIR,
+    ApiPortIR,
+    ApiResponseIR,
+    assess_bce_erd_entity_contract,
+    build_implementation_ir,
+    parse_erd_association_entities,
 )
-from app.implementation.agents.prompts.feedback import (
-    render_frontend_verification_feedback,
-    render_verification_feedback,
-    verification_failure_hints,
+from app.implementation.domain.implementation_ir import (
+    parse_openapi_operations as parse_ir_openapi_operations,
 )
-from app.implementation.workflows.repair import (
-    apply_repair_directives,
-    referenced_source_paths,
-    schedule_cross_phase_repair,
+from app.implementation.generation.orchestrator import (
+    PrototypeOrchestrator,
+    find_undefined_bce_types,
+    load_job,
+    plan_e2e_tasks,
 )
 from app.implementation.planning.design_context import (
+    _e2e_persistence_paths,
     detect_e2e_design_gaps,
     find_empty_java_contracts,
     generate_api_adapter_tasks,
@@ -97,58 +117,44 @@ from app.implementation.planning.design_context import (
     render_persistence_schema_prompt,
     render_prompt,
     slice_sequence,
-    _e2e_persistence_paths,
 )
-from app.implementation.application.jobs import _unrepresentable_openapi_error_outcomes
 from app.implementation.workflows.completion import audit_run_completion
-from app.implementation.agents.verification.e2e import e2e_contract_violations
-from app.implementation.agents.verification.e2e import (
-    repair_nested_e2e_members,
-    repair_spring_boot3_test_compatibility,
-)
-from app.implementation.agents.verification.e2e import repair_orphaned_java_test_statements
-from app.implementation.delivery.kubernetes import (
-    infer_intent,
-    render_deployment,
-    validate_intent,
-)
-from app.implementation.delivery.terraform import render_iac, validate_terraform
-from scripts.generate_deployment_diagram_examples import (
-    DEPLOYMENT_CASES,
-    _graph as deployment_graph,
-    _resource_spec as deployment_resource_spec,
-)
 from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
     _implemented_interfaces,
     _method_call_sequences,
-    _verify_erd_conformance,
     _participant_aliases,
     _sequence_documents,
+    _verify_erd_conformance,
     capture_generated_contracts,
     restore_generated_contracts,
     verify_source_design_conformance,
 )
-from app.implementation.domain.implementation_ir import (
-    ApiOperationIR,
-    ApiPortIR,
-    ApiResponseIR,
-    build_implementation_ir,
-    parse_erd_association_entities,
-    assess_bce_erd_entity_contract,
-    parse_openapi_operations as parse_ir_openapi_operations,
-)
 from app.implementation.workflows.coordinator import (
     _defer_e2e_planning,
-    _execute_task_batch,
     _e2e_prerequisites_complete,
+    _execute_task_batch,
     _phase_task_batches,
     _verify_phase,
-    reconcile_workflow_state,
     _write_json_atomic,
+    reconcile_workflow_state,
     validate_approval,
     validate_workflow_approval,
     write_transmission_request,
+)
+from app.implementation.workflows.repair import (
+    apply_repair_directives,
+    referenced_source_paths,
+    schedule_cross_phase_repair,
+)
+from scripts.generate_deployment_diagram_examples import (
+    DEPLOYMENT_CASES,
+)
+from scripts.generate_deployment_diagram_examples import (
+    _graph as deployment_graph,
+)
+from scripts.generate_deployment_diagram_examples import (
+    _resource_spec as deployment_resource_spec,
 )
 
 
@@ -182,7 +188,6 @@ class ImplementationParallelismTest(unittest.TestCase):
             run_root = Path(directory) / "run"
             sandbox.mkdir()
             run_root.mkdir()
-            missing = sandbox / "application/src/main/Missing.java"
             target = run_root / "application/src/main/Missing.java"
             target.parent.mkdir(parents=True)
             target.write_text("old", encoding="utf-8")
@@ -1123,7 +1128,7 @@ class LoadJobTest(unittest.TestCase):
                 ),
             )
 
-    def test_cross_phase_repair_budget_is_cumulative_across_changed_evidence(self) -> None:
+    def test_cross_phase_repair_continues_across_changed_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory)
             reports = run / "reports"
@@ -1162,7 +1167,7 @@ class LoadJobTest(unittest.TestCase):
                 self.assertIsNotNone(repair)
                 self.assertEqual(attempt, repair["revision"])
 
-            exhausted = schedule_cross_phase_repair(
+            fourth = schedule_cross_phase_repair(
                 run,
                 "implement-application-wiring",
                 {
@@ -1172,12 +1177,13 @@ class LoadJobTest(unittest.TestCase):
                     )
                 },
             )
-            self.assertIsNone(exhausted)
+            self.assertIsNotNone(fourth)
+            self.assertEqual(4, fourth["revision"])
             plan = json.loads(
                 (reports / "repair-plan.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(1, len(plan["entries"]))
-            self.assertEqual(3, plan["entries"][0]["revision"])
+            self.assertEqual(4, len(plan["entries"]))
+            self.assertEqual(4, plan["entries"][-1]["revision"])
 
     def test_mapped_by_context_failure_repairs_named_persistence_entities(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1516,7 +1522,7 @@ paths:
                 }),
                 encoding="utf-8",
             )
-            package = run = root / "run_order"
+            run = root / "run_order"
             java = run / "application/src/main/java/com/example/orders"
             (java / "api").mkdir(parents=True)
             (java / "api/OrdersApi.java").write_text(

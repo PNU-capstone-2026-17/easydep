@@ -61,11 +61,8 @@ class Settings(BaseSettings):
     easydep_llm_stall_probe_after_seconds: float | None = None
     easydep_llm_stall_probe_timeout_seconds: float = 60.0
 
-    # Implementation Limits & Config
-    implementation_max_cross_phase_repairs: int = 3
-    implementation_max_conformance_repairs: int = 3
-    design_max_repair_iters: int = 3
-    design_max_sequence_repair_calls: int = 4
+    # Implementation and design execution config. Semantic repair attempts are
+    # governed by progress/history, not numeric settings.
     design_sequence_parallelism: int = 2
     # Long design calls are independent, but hosted NIM is more stable and each
     # prompt easier to observe when no more than two are in flight.
@@ -113,8 +110,5 @@ class Settings(BaseSettings):
 
     # Workflow approval
     easydep_approve_member_implementation: str = "0"
-
-    # Testing
-    dynamic_test_max_retries: int = 3
 
 settings = Settings()

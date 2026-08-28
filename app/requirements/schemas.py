@@ -30,6 +30,7 @@ from app.requirements.contracts.request import (
 from app.requirements.contracts.request import (
     ResourceAnswer as ResourceAnswer,
 )
+from app.validation import BlockingFinding, RepairStateSummary
 
 # FR/NFR 라벨 타입 (BERT 매핑과 동일: 0=NFR, 1=FR)
 ReqType = Literal["FR", "NFR"]
@@ -338,6 +339,23 @@ class MainScenarioStep(BaseModel):
     )
 
 
+class Guarantee(BaseModel):
+    """성공·실패 뒤 반드시 성립하는 상태와 그 요구사항 근거."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sentence: str = Field(
+        description="One concise, testable postcondition stated in plain business prose."
+    )
+    covered_req_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "IDs of accepted functional requirements realized by this guarantee. "
+            "Leave empty when the guarantee only records a constraint."
+        ),
+    )
+
+
 class ExtensionHandlingStep(BaseModel):
     """확장 흐름의 처리 스텝."""
 
@@ -391,14 +409,14 @@ class UseCaseSpec(BaseModel):
         default_factory=list,
         description="Exception/alternate flows, each branching from a main-scenario step.",
     )
-    success_guarantee: list[str] = Field(
+    success_guarantee: list[Guarantee] = Field(
         default_factory=list,
-        description="Postconditions guaranteed when the use case succeeds.",
+        description="Typed postconditions guaranteed when the use case succeeds.",
     )
-    minimal_guarantee: list[str] = Field(
+    minimal_guarantee: list[Guarantee] = Field(
         default_factory=list,
         description=(
-            "Failure-path guarantees directly supported by the supplied requirements. "
+            "Typed failure-path guarantees directly supported by supplied requirements. "
             "Use an empty list when no such guarantee is supported."
         ),
     )
@@ -672,6 +690,10 @@ class AnalyzeResponse(BaseModel):
     # 이 게이트가 함께 묻는 `RESOURCE_SPEC` 되묻기. 각 항목은 {field, kind, why,
     # question, seen}이고, 화면은 `field`를 키로 `resource_answers`를 만들어 보낸다.
     resource_questions: list[dict] | None = None
+    # Handoff blockers are structured so workspace/UI do not parse prose.
+    blocking_findings: list[BlockingFinding] | None = None
+    requires_revision: bool | None = None
+    repair_state: RepairStateSummary | None = None
     # status == completed 일 때 채워짐 (step1)
     requirements: list[RequirementItemOut] | None = None
     # step2~4 산출물 — 파이프라인은 항상 실행되지만, 게이트 interrupt로 중간에 멈춘

@@ -347,8 +347,9 @@ Produce:
   or as a system validation with its supported failure extension, never both.
 - trigger: the business event that starts the use case.
 - main_scenario: the main SUCCESS scenario (happy path) as ordered steps. Number them from 1.
-  Derive steps from the goal and covered FRs — every covered FR must appear in some step's
-  covered_req_ids. Put the realizing FR id(s) in each step's covered_req_ids.
+  Derive actions from the goal and covered FRs. Put an FR id in a step's covered_req_ids only
+  when that action realizes it. A covered FR that solely states a postcondition may instead be
+  traced by a success_guarantee; do not duplicate it as an artificial action.
   When this goal is conditionally available after another goal reaches a particular outcome,
   describe that prior outcome only as context in the trigger or preconditions. Start the scenario
   at this goal's first actor action; do not replay the predecessor's request, checks, or result.
@@ -372,13 +373,15 @@ Produce:
   external dependencies, delivery channels, or recovery behavior merely to populate extensions.
   Never add an extension whose condition merely negates a trigger or precondition that is already
   required for this use case to start; such a condition belongs outside this use case.
-- success_guarantee: postconditions that hold when the use case succeeds.
-- minimal_guarantee: failure-path guarantees directly supported by the supplied requirements.
+- success_guarantee: typed postconditions that hold when the use case succeeds. Each item has
+  sentence and covered_req_ids. Trace an accepted FR here when the postcondition realizes it.
+- minimal_guarantee: typed failure-path guarantees directly supported by the supplied requirements.
+  Each item has sentence and covered_req_ids.
 
 Respect each applicable RTM constraint in the smallest suitable contract location: a validation
 step, extension condition, precondition, success guarantee, or minimal guarantee. Do not invent a
-new goal or unrelated flow merely to restate a constraint, and do not put a constraint id in
-covered_req_ids unless it is also listed among the functional requirements this use case covers.
+  new goal or unrelated flow merely to restate a constraint, and do not put a constraint id in
+  any covered_req_ids unless it is also listed among the functional requirements this use case covers.
   Use an empty list when they do not establish one. Do not invent failure, storage,
   transactional, retry, recovery, or security behavior merely to populate this field.
 
@@ -421,13 +424,21 @@ SPEC_VALIDATOR_SYSTEM = _validator_system(
 )
 
 # STEP 3 — 반성(reflection) 재생성: 실패 지시를 붙여 명세를 고쳐 다시 생성.
-def spec_repair_user(base_user: str, previous_spec: str, directives: list[str]) -> str:
+def spec_repair_user(
+    base_user: str,
+    previous_spec: str,
+    directives: list[str],
+    *,
+    strategy: str,
+    repair_history: str,
+) -> str:
     joined = "\n".join(f"- {d}" for d in directives)
     return (
         f"{base_user}\n\n[PREVIOUS SPECIFICATION]\n{previous_spec}\n\n"
         f"[THE PREVIOUS SPECIFICATION FAILED THESE CHECKS — return the complete corrected "
         f"specification, preserving fields that do not need a change and introducing no new "
-        f"behavior]\n{joined}"
+        f"behavior]\n{joined}\n\n[REPAIR STRATEGY]\n{strategy}\n\n"
+        f"[ACCUMULATED REPAIR HISTORY]\n{repair_history}"
     )
 
 

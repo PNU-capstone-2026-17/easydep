@@ -1,10 +1,14 @@
-"""Shared contracts for deterministic validation."""
+"""Shared contracts for deterministic validation and repair audit history."""
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Generic, Literal, TypeVar
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
@@ -13,6 +17,23 @@ ContextT = TypeVar("ContextT")
 
 FindingOrigin = Literal["schema", "deterministic", "semantic"]
 ValidationStatus = Literal["clean", "findings", "needs_input", "disabled", "error"]
+RepairStatus = Literal[
+    "ACTIVE",
+    "WAITING_EXTERNAL",
+    "STALLED",
+    "NEEDS_INPUT",
+    "COMPLETED",
+    "CANCELLED",
+]
+RepairOutcome = Literal[
+    "improved",
+    "clean",
+    "repeated_candidate",
+    "no_improvement",
+    "regressed",
+    "waiting_external",
+    "error",
+]
 
 
 class Finding(BaseModel):
@@ -56,6 +77,221 @@ class ValidationReport(BaseModel):
     checked_rule_ids: tuple[str, ...] = ()
     unexamined_rule_ids: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+
+
+class RepairAttempt(BaseModel):
+    """한 번의 의미 수리와 수용 여부를 재현하는 감사 레코드."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    attempt_id: str = ""
+    stage: str
+    target_ids: tuple[str, ...] = ()
+    strategy_key: str
+    input_digest: str
+    candidate_digest: str = ""
+    finding_keys_before: tuple[str, ...] = ()
+    finding_keys_after: tuple[str, ...] = ()
+    outcome: RepairOutcome
+    detail: str = ""
+    created_at: str = ""
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    elapsed_ms: float | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.attempt_id:
+            object.__setattr__(self, "attempt_id", str(uuid4()))
+        if not self.created_at:
+            object.__setattr__(self, "created_at", datetime.now(UTC).isoformat())
+
+
+class RedoRepairAttempt(BaseModel):
+    """상위 요구사항 단계로 올린 수리 한 번의 공개 요약이다."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    round: int = 0
+    target: str = ""
+    source: str = ""
+    reason: str = ""
+    escalated: bool = False
+    rule_ids: tuple[str, ...] = ()
+    strategy_key: str = ""
+    input_digest: str = ""
+
+
+class BlockingFinding(BaseModel):
+    """UI와 자동 실행기가 공유하는 수리 가능 차단 사유다."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: str
+    stage: str
+    target_ids: tuple[str, ...] = ()
+    message: str
+    severity: Literal["error", "warning"] = "error"
+    repairable: bool
+
+
+class RepairStateSummary(BaseModel):
+    """외부 응답에 노출하는 수리 에피소드의 안정된 요약 계약이다."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: RepairStatus
+    attempt_count: int = 0
+    accepted_count: int = 0
+    recent_attempts: tuple[RepairAttempt | RedoRepairAttempt, ...] = ()
+    tried_strategies: tuple[str, ...] = ()
+    rejected_candidate_digests: tuple[str, ...] = ()
+    finding_digest: str = ""
+    stall_reason: str = ""
+
+
+class RepairLedger(BaseModel):
+    """숫자 예산 대신 진전과 미사용 전략으로 종료를 보장하는 수리 기록."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["RepairHistory/v1"] = "RepairHistory/v1"
+    episode_id: str = ""
+    status: RepairStatus = "ACTIVE"
+    attempts: list[RepairAttempt] = []
+    stall_reason: str = ""
+    next_retry_at: str | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.episode_id:
+            self.episode_id = str(uuid4())
+
+    def strategy_attempted(
+        self,
+        *,
+        input_digest: str,
+        finding_keys: Sequence[str],
+        strategy_key: str,
+    ) -> bool:
+        signature = tuple(sorted(set(finding_keys)))
+        return any(
+            attempt.input_digest == input_digest
+            and attempt.finding_keys_before == signature
+            and attempt.strategy_key == strategy_key
+            for attempt in self.attempts
+        )
+
+    def candidate_seen(self, *, input_digest: str, candidate_digest: str) -> bool:
+        return bool(candidate_digest) and any(
+            attempt.input_digest == input_digest
+            and attempt.candidate_digest == candidate_digest
+            for attempt in self.attempts
+        )
+
+    def record(self, attempt: RepairAttempt) -> None:
+        self.attempts.append(attempt)
+
+    def prompt_context(self, *, recent: int = 5) -> str:
+        """모든 고유 실패는 남기고 오래된 상세만 결정론적으로 압축한다."""
+        rejected = [
+            attempt
+            for attempt in self.attempts
+            if attempt.outcome not in {"improved", "clean"}
+        ]
+        unique_findings = sorted(
+            {
+                finding
+                for attempt in rejected
+                for finding in (
+                    *attempt.finding_keys_before,
+                    *attempt.finding_keys_after,
+                )
+            }
+        )
+        tried_strategies = sorted({attempt.strategy_key for attempt in self.attempts})
+        rejected_candidates = sorted(
+            {attempt.candidate_digest for attempt in rejected if attempt.candidate_digest}
+        )
+        recent_attempts = [
+            {
+                "strategy": attempt.strategy_key,
+                "outcome": attempt.outcome,
+                "findingsBefore": list(attempt.finding_keys_before),
+                "findingsAfter": list(attempt.finding_keys_after),
+                "candidateDigest": attempt.candidate_digest,
+                "detail": attempt.detail,
+            }
+            for attempt in self.attempts[-max(0, recent):]
+        ]
+        return json.dumps(
+            {
+                "instruction": "Do not repeat a tried strategy or rejected candidate.",
+                "uniqueFailedFindings": unique_findings,
+                "triedStrategies": tried_strategies,
+                "rejectedCandidateDigests": rejected_candidates,
+                "olderAttemptCount": max(0, len(self.attempts) - len(recent_attempts)),
+                "recentAttempts": recent_attempts,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+
+
+def stable_digest(value: Any) -> str:
+    """JSON-compatible 값의 정규화 SHA-256 digest."""
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json")
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def repair_makes_progress(
+    before: Sequence[str],
+    after: Sequence[str],
+    *,
+    frontier_before: int = 0,
+    frontier_after: int = 0,
+) -> bool:
+    """결함 집합이 줄거나 검증 의존 단계가 앞으로 간 후보만 수용한다."""
+    before_set = set(before)
+    after_set = set(after)
+    return not after_set or after_set < before_set or frontier_after > frontier_before
+
+
+def transient_llm_error(error: BaseException) -> bool:
+    """NIM/OpenAI 호환 transport·과부하 오류를 의미 결함과 구별한다."""
+    text = f"{type(error).__name__}: {error}".casefold()
+    return any(
+        marker in text
+        for marker in (
+            "429",
+            "rate limit",
+            "too many requests",
+            "timeout",
+            "timed out",
+            "connection",
+            "temporarily unavailable",
+            "service unavailable",
+            "overloaded",
+            "bad gateway",
+            "gateway timeout",
+            "502",
+            "503",
+            "504",
+        )
+    )
+
+
+def repair_retry_delay(failure_count: int) -> int:
+    """외부 장애 대기 간격. 시도 수는 제한하지 않고 간격만 5분으로 제한한다."""
+    schedule = (5, 15, 30, 60, 300)
+    return schedule[min(max(0, failure_count - 1), len(schedule) - 1)]
 
 
 CheckFn = Callable[[ArtifactT, ContextT], Sequence[Finding]]

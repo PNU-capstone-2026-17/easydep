@@ -43,8 +43,8 @@ validate → repair 루프가 필요했다. 지금은 다섯 모두 이 골격�
 
   - 고치는 대상이 **텍스트가 아니라 모델**이다(`spec.revise`). 그림은 언제나 모델의
     순수한 투영이므로 어긋날 자리가 없다.
-  - 판정이 **결정론**이라 위반 수를 셀 수 있고, **줄지 않으면 멈춘다.** 종료가 보장된다.
-  - 예산이 유계다(`DESIGN_MAX_REPAIR_ITERS`, 기본 2).
+  - 판정이 **결정론**이라 진전을 확인할 수 있다. 같은 입력·finding에 같은 전략을 다시
+    쓰지 않고, 미사용 전략이 없으면 정체로 멈추므로 숫자 예산 없이 종료가 보장된다.
 
 ## 자동으로 고쳐 주지 않는다
 
@@ -69,22 +69,35 @@ from app.design.knowledge.detectors import (
 )
 from app.design.observability import log_design_timing
 from app.design.schemas.architecture_state import ArchitectureState
+from app.validation import (
+    RepairAttempt,
+    RepairLedger,
+    stable_digest,
+    transient_llm_error,
+)
 
 #: 왜 재생성을 멈췄는가. **"위반 0건"과 "예산이 끝났다"를 같은 값으로 두지 않기 위해 있다.**
 CLEAN = "clean"                    # 위반이 없다
-BUDGET = "budget"                  # 예산을 다 썼는데 위반이 남았다
 NO_IMPROVEMENT = "no_improvement"  # 재생성이 위반을 줄이지 못했다 → 직전본을 지켰다
+STALLED = "stalled"                # 같은 상태에서 쓸 새 수리 전략이 없다
 ERROR = "error"                    # 재생성 호출이 실패했다 → 직전본을 지켰다
+WAITING_EXTERNAL = "waiting_external"  # 외부 LLM이 복구될 때까지 대기한다
 NEEDS_INPUT = "needs_input"        # 요구사항 결정이 필요해 LLM이 고칠 수 없다
 #: 검사는 했고 재생성은 **시도하지 않았다.** 지목 수정(`cascade.py`)의 값이다 — 그 경로는
 #: 사용자가 지목한 항목만 고치는 것이 보장인데, 재생성은 전체 수정으로 부르므로 그 보장을
 #: 스스로 깬다. 그래서 드러내기만 하고 고칠지는 사용자가 정한다.
 #:
-#: `BUDGET`을 재사용하지 않는 이유: 예산을 쓰지도 않았는데 다 썼다고 적는 것이 된다.
 CHECKED_ONLY = "checked_only"
 #: 위반이 남아 있는 상태들. 원인은 다르지만 결과는 같다 — 남아 있는 findings가 결함의
 #: 전부라고 말할 수 없다.
-UNRESOLVED = (BUDGET, NO_IMPROVEMENT, ERROR, CHECKED_ONLY, NEEDS_INPUT)
+UNRESOLVED = (
+    NO_IMPROVEMENT,
+    STALLED,
+    ERROR,
+    WAITING_EXTERNAL,
+    CHECKED_ONLY,
+    NEEDS_INPUT,
+)
 
 # 산출물 LLM이 임의로 고치면 안 되는 결함. 수리 프롬프트에서 제외하되 findings와
 # 최종 게이트에는 그대로 남겨 사용자의 요구사항 결정을 기다린다.
@@ -147,12 +160,6 @@ _SEQUENCE_REPAIR_RULE_GROUPS = (
         "sequence.extension-replays-anchor-operation",
     },
 )
-
-
-def repair_budget() -> int:
-    """재생성을 몇 번까지 시도하는가. 0이면 검사만 하고 고치지 않는다."""
-    from app.config import settings
-    return max(0, settings.design_max_repair_iters)
 
 
 def repair_directive(findings: list[Finding]) -> str:
@@ -483,6 +490,15 @@ def _finding_key(finding: Finding) -> tuple[str, str, str]:
     return finding.rule_id, finding.location, finding.message
 
 
+def _repair_finding_keys(findings: list[Finding]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            f"{finding.rule_id}|{finding.location}|{finding.message}"
+            for finding in findings
+        )
+    )
+
+
 def _dedupe_findings(findings: list[Finding]) -> list[Finding]:
     """같은 결함을 한 번만 수리 프롬프트와 수용 판단에 사용한다."""
     unique: list[Finding] = []
@@ -527,7 +543,7 @@ def _unrepaired_stop(findings: list[Finding]) -> str:
         return NEEDS_INPUT
     if all(finding.rule_id in LOCAL_REPAIR_ONLY_RULES for finding in findings):
         return CHECKED_ONLY
-    return BUDGET
+    return STALLED
 def _repair_batch(
     spec: DesignArtifactSpec,
     findings: list[Finding],
@@ -650,85 +666,91 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         findings = _dedupe_findings(spec.check(model, state))
         iterations = 0
         error: str | None = None
-        # 루프를 한 번도 안 돌 수 있다(위반이 없거나 예산이 0). 그때의 답을 먼저 적어 둔다.
+        ledger = RepairLedger()
+        # 루프를 한 번도 안 돌 수 있다(위반이 없거나 자동 수리 대상이 아님).
         repairable = _repairable_findings(findings) if spec.repair else []
         stopped = CLEAN if not findings else (
             CHECKED_ONLY if spec.repair is None
-            else (BUDGET if repairable else _unrepaired_stop(findings))
+            else (STALLED if repairable else _unrepaired_stop(findings))
         )
         skipped_findings: set[tuple[str, str, str]] = set()
 
-        # 생성은 유스케이스별인데 예전에는 수리 예산만 컬렉션 전체에 2회였다. 컬렉션
-        # 모델에서는 같은 유계 예산을 각 유스케이스에 부여한다. 레거시 단일 모델과 다른
-        # 산출물의 호출 횟수는 그대로 유지한다.
         diagrams = model.get("Diagrams") if isinstance(model, dict) else None
-        if spec.repair is None:
-            budget = 0
-        elif spec.stage == "sequence_diagram" and isinstance(diagrams, list):
-            # Bound the collection as a whole. Multiplying the per-use-case
-            # budget can turn a large model into dozens of serial LLM calls.
-            from app.config import settings
-
-            budget = min(
-                repair_budget() * max(1, len(diagrams)),
-                max(0, int(settings.design_max_sequence_repair_calls)),
-            )
-        else:
-            budget = repair_budget()
 
         log_design_timing(
             "design.model_check.started",
             stage=spec.stage,
             findings_count=len(findings),
             repairable_findings_count=len(repairable),
-            repair_budget=budget,
+            repair_policy="progress-or-untried-strategy/v1",
             diagram_count=len(diagrams) if isinstance(diagrams, list) else None,
         )
 
-        for _ in range(budget):
-            if not findings:
-                break
+        while findings and spec.repair is not None:
             repairable = _repairable_findings(findings)
             if not repairable:
                 stopped = _unrepaired_stop(findings)
                 break
             batch = _repair_batch(spec, repairable, skipped_findings)
-            if not batch and spec.stage == "sequence_diagram" and skipped_findings:
-                # 다른 종류의 결함이 없으면 첫 확률적 응답 한 번으로 포기하지 않는다.
-                # 예산은 그대로 소비되므로 반복은 여전히 유계다.
-                skipped_findings.clear()
-                batch = _repair_batch(spec, repairable, skipped_findings)
             if not batch:
-                stopped = NO_IMPROVEMENT
+                stopped = STALLED
+                ledger.status = "STALLED"
+                ledger.stall_reason = "No untried repair batch remains for this artifact state."
+                break
+            targets = _sequence_repair_targets(spec, model, state, batch)
+            if len(targets) > 1:
+                # 같은 종류의 결함이 여러 유스케이스에 있어도 한 번에 하나만 고친다.
+                target = sorted(targets)[0]
+                diagram = next(
+                    (
+                        item
+                        for item in (model.get("Diagrams") or [])
+                        if isinstance(item, dict)
+                        and str(item.get("use_case_id") or "").strip() == target
+                    ),
+                    {},
+                )
+                local_keys = {
+                    _finding_key(finding)
+                    for finding in spec.check(diagram, state)
+                }
+                batch = [
+                    finding
+                    for finding in batch
+                    if _finding_key(finding) in local_keys
+                ]
+                targets = {target}
+            finding_keys_before = _repair_finding_keys(findings)
+            input_digest = stable_digest(
+                {"model": model, "findings": finding_keys_before}
+            )
+            strategy_stem = (
+                f"rules={','.join(sorted({finding.rule_id for finding in batch}))};"
+                f"targets={','.join(sorted(targets)) or 'all'}"
+            )
+            strategy = next(
+                (
+                    f"{mode}:{strategy_stem}"
+                    for mode in ("targeted", "alternative")
+                    if not ledger.strategy_attempted(
+                        input_digest=input_digest,
+                        finding_keys=finding_keys_before,
+                        strategy_key=f"{mode}:{strategy_stem}",
+                    )
+                ),
+                None,
+            )
+            if strategy is None:
+                if spec.stage == "sequence_diagram":
+                    skipped_findings.update(_finding_key(finding) for finding in batch)
+                    continue
+                stopped = STALLED
+                ledger.status = "STALLED"
+                ledger.stall_reason = "All repair strategies were tried for this artifact state."
                 break
             iterations += 1
             repair_started = time.perf_counter()
             try:
-                targets = _sequence_repair_targets(spec, model, state, batch)
-                if len(targets) > 1:
-                    # 같은 종류의 결함이 여러 유스케이스에 있어도 한 번에 하나만 고친다.
-                    # 그래야 큰 컬렉션을 전면 재작성하지 않고, 실패 예산도 유스케이스별로
-                    # 독립적으로 사용할 수 있다.
-                    target = sorted(targets)[0]
-                    diagram = next(
-                        (
-                            item
-                            for item in (model.get("Diagrams") or [])
-                            if isinstance(item, dict)
-                            and str(item.get("use_case_id") or "").strip() == target
-                        ),
-                        {},
-                    )
-                    local_keys = {
-                        _finding_key(finding)
-                        for finding in spec.check(diagram, state)
-                    }
-                    batch = [
-                        finding
-                        for finding in batch
-                        if _finding_key(finding) in local_keys
-                    ]
-                    targets = {target}
                 log_design_timing(
                     "design.auto_repair.started",
                     stage=spec.stage,
@@ -737,15 +759,32 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                     target_use_case_ids=sorted(targets),
                     findings_count=len(findings),
                 )
-                if spec.repair is None:
-                    raise RuntimeError(f"{spec.stage} has no automatic repair service")
-                revised = spec.repair(model, repair_directive(batch), state, targets)
+                directive = (
+                    f"{repair_directive(batch)}\n\n[REPAIR STRATEGY]\n{strategy}\n\n"
+                    f"[ACCUMULATED REPAIR HISTORY]\n{ledger.prompt_context()}"
+                )
+                revised = spec.repair(model, directive, state, targets)
                 # 컬렉션이면 finding이 속한 유스케이스만 LLM 출력을 받아들인다. 대상
                 # 추론이 불가능한 컬렉션 수준 결함만 기존처럼 전체 수정한다.
                 candidate = merge_model(spec, model, revised, targets)
             except Exception as exc:  # noqa: BLE001 - 검증 실패가 스테이지를 죽이면 안 된다
                 error = f"{type(exc).__name__}: {exc}"
-                stopped = ERROR
+                waiting = transient_llm_error(exc)
+                stopped = WAITING_EXTERNAL if waiting else ERROR
+                ledger.record(
+                    RepairAttempt(
+                        stage=f"design.{spec.stage}",
+                        target_ids=tuple(sorted(targets)),
+                        strategy_key=strategy,
+                        input_digest=input_digest,
+                        finding_keys_before=finding_keys_before,
+                        finding_keys_after=finding_keys_before,
+                        outcome="waiting_external" if waiting else "error",
+                        detail=error,
+                    )
+                )
+                ledger.status = "WAITING_EXTERNAL" if waiting else "STALLED"
+                ledger.stall_reason = error
                 log_design_timing(
                     "design.auto_repair.failed",
                     stage=spec.stage,
@@ -755,10 +794,28 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 )
                 break
             candidate_findings = _dedupe_findings(spec.check(candidate or {}, state))
+            candidate_digest = stable_digest(candidate)
+            candidate_keys = _repair_finding_keys(candidate_findings)
+            repeated = ledger.candidate_seen(
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+            )
             if _is_degenerate(spec, model, candidate) or _loses_sequence_traceability(
                 spec, model, candidate, state
             ):
-                stopped = NO_IMPROVEMENT
+                ledger.record(
+                    RepairAttempt(
+                        stage=f"design.{spec.stage}",
+                        target_ids=tuple(sorted(targets)),
+                        strategy_key=strategy,
+                        input_digest=input_digest,
+                        candidate_digest=candidate_digest,
+                        finding_keys_before=finding_keys_before,
+                        finding_keys_after=candidate_keys,
+                        outcome="no_improvement",
+                        detail="degenerate_or_lost_traceability",
+                    )
+                )
                 log_design_timing(
                     "design.auto_repair.completed",
                     stage=spec.stage,
@@ -768,25 +825,41 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                     reason="degenerate_or_lost_traceability",
                     candidate_findings_count=len(candidate_findings),
                 )
-                if spec.stage == "sequence_diagram":
-                    skipped_findings.update(_finding_key(finding) for finding in batch)
-                    continue
-                break
-            if not _repair_is_improvement(spec, findings, candidate_findings):
-                stopped = NO_IMPROVEMENT
+                continue
+            improved = not repeated and _repair_is_improvement(
+                spec, findings, candidate_findings
+            )
+            ledger.record(
+                RepairAttempt(
+                    stage=f"design.{spec.stage}",
+                    target_ids=tuple(sorted(targets)),
+                    strategy_key=strategy,
+                    input_digest=input_digest,
+                    candidate_digest=candidate_digest,
+                    finding_keys_before=finding_keys_before,
+                    finding_keys_after=candidate_keys,
+                    outcome=(
+                        "repeated_candidate"
+                        if repeated
+                        else "clean"
+                        if improved and not candidate_findings
+                        else "improved"
+                        if improved
+                        else "no_improvement"
+                    ),
+                )
+            )
+            if not improved:
                 log_design_timing(
                     "design.auto_repair.completed",
                     stage=spec.stage,
                     iteration=iterations,
                     elapsed_ms=round((time.perf_counter() - repair_started) * 1000, 1),
                     accepted=False,
-                    reason="no_improvement",
+                    reason="repeated_candidate" if repeated else "no_improvement",
                     candidate_findings_count=len(candidate_findings),
                 )
-                if spec.stage == "sequence_diagram":
-                    skipped_findings.update(_finding_key(finding) for finding in batch)
-                    continue
-                break
+                continue
             model, findings = candidate, candidate_findings
             skipped_findings.clear()
             log_design_timing(
@@ -801,17 +874,17 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             stopped = (
                 CLEAN
                 if not findings
-                else (
-                    BUDGET
-                    if remaining_repairable
-                    else _unrepaired_stop(findings)
-                )
+                else (STALLED if remaining_repairable else _unrepaired_stop(findings))
             )
+
+        if not findings:
+            ledger.status = "COMPLETED"
 
         report: dict[str, Any] = {
             "findings": [f.as_issue() for f in findings],
             "repair_iters": iterations,
             "stopped": stopped,
+            "repair_history": ledger.model_dump(mode="json"),
         }
         if error:
             report["error"] = error

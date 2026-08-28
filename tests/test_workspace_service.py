@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.responses import JSONResponse
@@ -8,13 +10,11 @@ from fastapi.responses import JSONResponse
 from app.db.models import Base
 from app.design import progress as design_progress
 from app.repositories import artifact_repository
-from app.workspace import repository
 from app.workspace import api as workspace_api
+from app.workspace import repository
 from app.workspace import service as workspace_module
-from app.workspace.service import WorkspaceService
 from app.workspace.live_preview import LivePreviewStore, live_previews
-
-import json
+from app.workspace.service import WorkspaceService
 
 
 class RejectingExecutor:
@@ -47,7 +47,11 @@ def test_reconcile_implementation_command_closes_stale_running_command(monkeypat
     monkeypatch.setattr(workspace_module.implementation_worker, "get", lambda _job_id: completed_job)
     monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: updated)
     monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
-    monkeypatch.setattr(repository, "now", lambda: datetime.now())
+    monkeypatch.setattr(
+        repository,
+        "now",
+        lambda: datetime.now(UTC).replace(tzinfo=None),  # noqa: PLW0108
+    )
 
     service = WorkspaceService()
     try:
@@ -75,7 +79,11 @@ def test_reconcile_implementation_command_recovers_interrupted_command(monkeypat
     )
     monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: updated)
     monkeypatch.setattr(repository, "append_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(repository, "now", lambda: datetime.now())
+    monkeypatch.setattr(
+        repository,
+        "now",
+        lambda: datetime.now(UTC).replace(tzinfo=None),  # noqa: PLW0108
+    )
 
     service = WorkspaceService()
     try:
@@ -98,7 +106,7 @@ def test_chat_event_timestamp_is_returned_as_explicit_korean_time() -> None:
             text="hello",
             event_data={},
             # MySQL DATETIME values are stored as naive UTC values.
-            created_at=datetime(2026, 8, 19, 5, 30, 21),
+            created_at=datetime(2026, 8, 19, 5, 30, 21),  # noqa: DTZ001
         )
     )
 
@@ -699,11 +707,12 @@ def test_design_findings_without_an_artifact_require_revision() -> None:
 
     assert result["awaiting_input"] is True
     assert result["requires_revision"] is True
-    assert result["blocking_findings"] == ["missing flow step"]
+    assert result["blocking_findings"][0]["message"] == "missing flow step"
+    assert result["can_delegate_repair"] is True
     assert "before continuing" in result["message"]
 
 
-def test_design_findings_with_a_generated_artifact_allow_continue() -> None:
+def test_design_findings_with_a_generated_artifact_still_require_revision() -> None:
     service = WorkspaceService()
     try:
         result = service._design_result(
@@ -720,13 +729,13 @@ def test_design_findings_with_a_generated_artifact_allow_continue() -> None:
         service.shutdown()
 
     assert result["awaiting_input"] is True
-    assert result["requires_revision"] is False
-    assert result["blocking_findings"] == []
+    assert result["requires_revision"] is True
+    assert result["blocking_findings"][0]["message"] == "missing flow step"
     assert result["findings"] == ["missing flow step"]
-    assert "continued to the next stage" in result["message"]
+    assert "before continuing" in result["message"]
 
 
-def test_design_findings_use_persisted_artifact_when_response_omits_it(monkeypatch) -> None:
+def test_design_findings_cannot_be_waived_by_a_persisted_artifact(monkeypatch) -> None:
     monkeypatch.setattr(
         artifact_repository,
         "load_state",
@@ -747,9 +756,9 @@ def test_design_findings_use_persisted_artifact_when_response_omits_it(monkeypat
     finally:
         service.shutdown()
 
-    assert result["requires_revision"] is False
-    assert result["blocking_findings"] == []
-    assert "continued to the next stage" in result["message"]
+    assert result["requires_revision"] is True
+    assert result["blocking_findings"][0]["message"] == "missing flow step"
+    assert "before continuing" in result["message"]
 
 
 def test_retry_design_accepts_only_a_failed_design_command(monkeypatch) -> None:
@@ -875,6 +884,147 @@ def test_workspace_replaces_internal_feedback_prompt_with_english_ui_copy() -> N
     assert "Before I continue" not in result["message"]
     assert "Waiting for deployment details." not in result["message"]
     assert not any("가" <= character <= "힣" for character in result["message"])
+
+
+def test_requirements_handoff_exposes_llm_repair_without_allowing_advance() -> None:
+    service = WorkspaceService()
+    try:
+        result = service._requirements_result(
+            {
+                "status": "need_feedback",
+                "phase": "requirements_handoff",
+                "blocking_findings": [
+                    {
+                        "code": "requirements.specification",
+                        "stage": "specs",
+                        "target_ids": ["UC1"],
+                        "message": "Specification has an unresolved finding.",
+                        "severity": "error",
+                        "repairable": True,
+                    }
+                ],
+                "repair_state": {
+                    "status": "ACTIVE",
+                    "attempt_count": 3,
+                    "accepted_count": 1,
+                    "recent_attempts": [],
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["requires_revision"] is True
+    assert result["can_delegate_repair"] is True
+    assert result["repair_state"]["attempt_count"] == 3
+
+
+def test_delegated_repair_stalls_when_the_same_blockers_return() -> None:
+    blocker = {
+        "code": "requirements.specification",
+        "stage": "specs",
+        "target_ids": ["UC1"],
+        "message": "Specification has an unresolved finding.",
+        "severity": "error",
+        "repairable": True,
+    }
+    previous = {
+        "blocking_findings": [blocker],
+        "repair_state": {
+            "status": "ACTIVE",
+            "attempt_count": 2,
+            "accepted_count": 0,
+            "recent_attempts": [],
+            "tried_strategies": ["targeted_findings"],
+            "rejected_candidate_digests": [],
+        },
+    }
+    current = {
+        "blocking_findings": [blocker],
+        "repair_state": {
+            "status": "ACTIVE",
+            "attempt_count": 1,
+            "accepted_count": 0,
+            "recent_attempts": [],
+        },
+    }
+
+    state = workspace_module._merge_delegated_repair_state(
+        previous,
+        current,
+        strategy_key="delegate:requirements:specs:episode-3",
+    )
+
+    assert state["status"] == "STALLED"
+    assert state["attempt_count"] == 4
+    assert state["recent_attempts"][-1]["outcome"] == "repeated_candidate"
+    assert "targeted_findings" in state["tried_strategies"]
+
+
+def test_delegated_repair_keeps_running_after_blockers_make_progress() -> None:
+    previous = {
+        "blocking_findings": [
+            {"code": "one", "stage": "specs", "message": "one"},
+            {"code": "two", "stage": "specs", "message": "two"},
+        ],
+        "repair_state": {"status": "ACTIVE", "recent_attempts": []},
+    }
+    current = {
+        "blocking_findings": [
+            {"code": "two", "stage": "specs", "message": "two"},
+        ],
+        "repair_state": {"status": "ACTIVE", "recent_attempts": []},
+    }
+
+    state = workspace_module._merge_delegated_repair_state(
+        previous,
+        current,
+        strategy_key="delegate:requirements:specs:episode-1",
+    )
+
+    assert state["status"] == "ACTIVE"
+    assert state["accepted_count"] == 1
+    assert state["recent_attempts"][-1]["outcome"] == "improved"
+
+
+def test_failed_testing_is_an_actionable_repair_gate(monkeypatch) -> None:
+    monkeypatch.setattr(
+        workspace_module,
+        "get_testing_job",
+        lambda _job_id: {
+            "job_id": "testing-1",
+            "status": "COMPLETED",
+            "implementation_job_id": "implementation-1",
+            "result": {
+                "passed": False,
+                "blocking_findings": [
+                    {
+                        "code": "testing.dynamic",
+                        "stage": "testing",
+                        "target_ids": [],
+                        "message": "FR1 assertion failed",
+                        "severity": "error",
+                        "repairable": True,
+                    }
+                ],
+                "repair_state": {
+                    "status": "ACTIVE",
+                    "attempt_count": 1,
+                    "accepted_count": 0,
+                    "recent_attempts": [],
+                },
+            },
+        },
+    )
+    service = WorkspaceService()
+    try:
+        result = service._monitor_testing({"job_id": "testing-1"})
+    finally:
+        service.shutdown()
+
+    assert result["awaiting_input"] is True
+    assert result["can_delegate_repair"] is True
+    assert result["job"]["implementation_job_id"] == "implementation-1"
 
 
 def test_implementation_progress_snapshot_extracts_active_file_and_class(tmp_path) -> None:

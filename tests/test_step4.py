@@ -415,11 +415,11 @@ def test_materialized_relationships_are_independently_reviewed():
     assert rel["semantic_status"] == "ok"
     assert rel["relationship_issues"]
     assert rel["unexamined_rules"] == ["rel.generalization-keeps-meaning"]
-    assert rel["repair_iters"] == 1
-    assert rel["repair_stopped"] == "unresolved"
+    assert rel["repair_iters"] == 2
+    assert rel["repair_stopped"] == "stalled"
 
 
-def test_confirmed_relationship_defect_gets_one_bounded_selection_repair():
+def test_confirmed_relationship_defect_stops_after_a_clean_selection_repair():
     state = _shared_state()
     reviews = iter([
         s4.validator.Review(

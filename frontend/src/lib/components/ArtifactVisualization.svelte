@@ -186,6 +186,28 @@
                   </div>
                 </div>
               {/if}
+              {#if array(spec.success_guarantee).length || array(spec.minimal_guarantee).length}
+                <div class="grid gap-3 sm:grid-cols-2">
+                  {#each [['Success guarantees', array(spec.success_guarantee)], ['Minimal guarantees', array(spec.minimal_guarantee)]] as [title, guarantees]}
+                    {#if guarantees.length}
+                      <div>
+                        <p class="mb-2 font-semibold">{title}</p>
+                        <ul class="space-y-2">
+                          {#each guarantees as rawGuarantee}
+                            {@const guarantee = object(rawGuarantee)}
+                            <li class="rounded-lg bg-[#f6f6f3] p-2.5">
+                              <p class="leading-5">{scalar(guarantee.sentence)}</p>
+                              {#if array(guarantee.covered_req_ids).length}
+                                <p class="mt-1 font-mono text-[10px] text-[#7b7e75]">{array(guarantee.covered_req_ids).join(' · ')}</p>
+                              {/if}
+                            </li>
+                          {/each}
+                        </ul>
+                      </div>
+                    {/if}
+                  {/each}
+                </div>
+              {/if}
             </div>
           </details>
         {/each}

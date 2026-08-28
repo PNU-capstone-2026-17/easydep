@@ -17,6 +17,7 @@ from app.testing.utils.requirements_source import (
     functional_requirements,
 )
 from app.testing.utils.test_runner import run_dynamic_test
+from app.validation import RepairLedger, stable_digest
 
 SYSTEM_PROMPT = """You are an expert QA automation engineer.
 Your task is to write a single Python script using `pytest` and `playwright` to test the functional requirements of a web application.
@@ -95,6 +96,14 @@ def dynamic_functional_node(state: TestingState) -> dict:
     # Format requirements for prompt
     req_text = json.dumps(requirements, ensure_ascii=False, indent=2)
     prompt = SYSTEM_PROMPT.format(requirements_text=req_text)
+    raw_history = state.get("repair_history") or {}
+    if raw_history and raw_history.get("attempts"):
+        history = RepairLedger.model_validate(raw_history)
+        prompt += (
+            "\n\nPrevious generated-test repair attempts are listed below. "
+            "Do not repeat a rejected test candidate or failed approach.\n"
+            f"{history.prompt_context()}"
+        )
 
     # 2. Generate Test Code
     api_key = configured_api_key()
@@ -105,7 +114,9 @@ def dynamic_functional_node(state: TestingState) -> dict:
             "dynamic_functional_report": {"status": "FAILED"},
         }
 
-    client = OpenAI(api_key=api_key, base_url=provider_settings.base_url, max_retries=2)
+    # Transport retries are owned by the outer repair episode so every physical
+    # request and failure remains visible in its audit history.
+    client = OpenAI(api_key=api_key, base_url=provider_settings.base_url, max_retries=0)
 
     try:
         response = client.chat.completions.create(
@@ -126,6 +137,7 @@ def dynamic_functional_node(state: TestingState) -> dict:
     # Repository root is assumed to be the current working directory of the orchestrator
     repository_root = Path(os.getcwd())
     report = run_dynamic_test(test_code, target_url, repository_root)
+    report["candidateDigest"] = stable_digest(test_code)
     report["targetUrl"] = target_url
     # Which requirements this run claims to cover, so a passing report can be
     # traced back to the analysis it was derived from.

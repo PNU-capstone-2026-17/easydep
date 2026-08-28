@@ -6,9 +6,9 @@ requirements agent stored. These tests pin both, because a scan that silently
 falls back to a stale directory reports a pass that means nothing.
 """
 
-from contextlib import contextmanager
 import threading
 import time
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -84,18 +84,16 @@ def test_materialize_artifact_rejects_traversal(tmp_path):
     with patch(
         "app.testing.utils.artifact_source.load_file_snapshot",
         return_value=_snapshot({"../escaped.yaml": "kind: Deployment\n"}),
-    ):
-        with pytest.raises(ValueError):
-            materialize_artifact("app-1", TYPE_DEPLOYMENT_FILE, tmp_path)
+    ), pytest.raises(ValueError):
+        materialize_artifact("app-1", TYPE_DEPLOYMENT_FILE, tmp_path)
     assert not (tmp_path.parent / "escaped.yaml").exists()
 
 
 def test_materialize_artifact_without_snapshot(tmp_path):
     with patch(
         "app.testing.utils.artifact_source.load_file_snapshot", return_value=None
-    ):
-        with pytest.raises(ArtifactSourceUnavailable):
-            materialize_artifact("app-1", TYPE_IAC_CODE, tmp_path)
+    ), pytest.raises(ArtifactSourceUnavailable):
+        materialize_artifact("app-1", TYPE_IAC_CODE, tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +132,8 @@ def test_functional_requirements_accepts_wrapped_shape():
 def test_functional_requirements_without_analysis():
     with patch(
         "app.testing.utils.requirements_source.load_state", return_value={}
-    ):
-        with pytest.raises(RequirementsUnavailable):
-            functional_requirements("app-1")
+    ), pytest.raises(RequirementsUnavailable):
+        functional_requirements("app-1")
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +305,50 @@ def test_dynamic_functional_generates_from_stored_requirements(stored_artifacts)
     assert "Login responds within 200ms." not in prompt
 
 
+def test_dynamic_functional_prompt_includes_accumulated_repair_history(stored_artifacts):
+    from app.validation import RepairAttempt, RepairLedger
+
+    ledger = RepairLedger(episode_id="testing-episode")
+    ledger.record(
+        RepairAttempt(
+            stage="testing.dynamic-functional",
+            strategy_key="first-attempt",
+            input_digest="input-1",
+            candidate_digest="rejected-candidate",
+            finding_keys_before=("FR1 failed",),
+            finding_keys_after=("FR1 failed",),
+            outcome="no_improvement",
+        )
+    )
+    with patch(
+        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
+    ), patch(
+        "app.testing.utils.requirements_source.load_state",
+        return_value={
+            "refined_requirements": [
+                {"id": "FR1", "text": "A user can register.", "type": "FR"}
+            ]
+        },
+    ), patch(
+        "app.testing.nodes.dynamic_functional.configured_api_key", return_value="key"
+    ), patch(
+        "app.testing.nodes.dynamic_functional.run_dynamic_test",
+        return_value={"status": "passed"},
+    ), patch("app.testing.nodes.dynamic_functional.OpenAI") as mock_openai:
+        mock_openai.return_value.chat.completions.create.return_value.choices[
+            0
+        ].message.content = "def test_fr1(page): pass"
+        create_testing_graph().invoke(
+            _initial_state(repair_history=ledger.model_dump(mode="json"))
+        )
+
+    prompt = mock_openai.return_value.chat.completions.create.call_args.kwargs[
+        "messages"
+    ][0]["content"]
+    assert "rejected-candidate" in prompt
+    assert "FR1 failed" in prompt
+
+
 def test_dynamic_functional_without_app_id_does_not_silently_pass():
     with patch(
         "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
@@ -354,9 +395,8 @@ def test_build_context_requires_stored_source_and_dockerfile(tmp_path):
 
     with patch(
         "app.testing.utils.artifact_source.load_file_snapshot", return_value=None
-    ):
-        with pytest.raises(ApplicationLaunchError):
-            build_context("app-1", tmp_path)
+    ), pytest.raises(ApplicationLaunchError):
+        build_context("app-1", tmp_path)
 
 
 def test_exposed_port_is_read_from_the_generated_dockerfile(tmp_path):

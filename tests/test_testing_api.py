@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import app.testing.api as testing_api
+from app.validation import RepairAttempt, RepairLedger
 
 
 def _application() -> TestClient:
@@ -115,15 +116,11 @@ def test_testing_job_reports_static_and_dynamic_verification(monkeypatch, tmp_pa
             "run_root": str(run_root),
         },
     )
-    monkeypatch.setattr(
-        testing_api,
-        "TestingAdapter",
-        lambda: type(
-            "Stub",
-            (),
-            {"run": lambda _self, **_kwargs: {"status": "completed", "passed": True, "unitTests": {}}},
-        )(),
-    )
+    class StubAdapter:
+        def run(self, **_kwargs):
+            return {"status": "completed", "passed": True, "unitTests": {}}
+
+    monkeypatch.setattr(testing_api, "TestingAdapter", StubAdapter)
 
     calls: dict = {}
 
@@ -170,3 +167,86 @@ def test_testing_job_reports_static_and_dynamic_verification(monkeypatch, tmp_pa
     assert [item["code"] for item in result["diagnostics"]] == [
         "DEPLOYMENT_MISCONFIGURATION"
     ]
+
+
+def test_testing_repair_carries_history_and_records_a_clean_candidate(monkeypatch, tmp_path):
+    run_root = tmp_path / "run"
+    (run_root / "application").mkdir(parents=True)
+    testing_api._testing_jobs.clear()
+    ledger = RepairLedger(episode_id="testing-episode")
+    testing_api._testing_jobs["repair-1"] = {
+        "job_id": "repair-1",
+        "repair_history": ledger.model_dump(mode="json"),
+        "previous_findings": ["testing.dynamic:FR1 assertion failed"],
+    }
+    class StubAdapter:
+        def run(self, **_kwargs):
+            return {"passed": True, "unitTests": {}}
+
+    monkeypatch.setattr(testing_api, "TestingAdapter", StubAdapter)
+    captured = {}
+
+    def verification(**kwargs):
+        captured.update(kwargs)
+        return {
+            "reports": {"dynamicFunctional": {"candidateDigest": "candidate-2"}},
+            "passed": True,
+            "blockingReason": None,
+            "diagnostics": [],
+        }
+
+    monkeypatch.setattr(testing_api, "run_verification_graph", verification)
+
+    testing_api._run_test("repair-1", "app-1", run_root)
+
+    result = testing_api._testing_jobs["repair-1"]["result"]
+    assert result["passed"] is True
+    assert result["repair_state"]["status"] == "COMPLETED"
+    assert result["repair_state"]["recent_attempts"][0]["outcome"] == "clean"
+    assert captured["repair_history"]["episode_id"] == "testing-episode"
+
+
+def test_testing_repair_stalls_on_a_repeated_candidate(monkeypatch, tmp_path):
+    run_root = tmp_path / "run"
+    (run_root / "application").mkdir(parents=True)
+    testing_api._testing_jobs.clear()
+    previous = RepairLedger(episode_id="testing-episode")
+    previous.record(
+        RepairAttempt(
+            stage="testing.dynamic-functional",
+            strategy_key="initial_generation",
+            input_digest="input-1",
+            candidate_digest="same-candidate",
+            finding_keys_after=("testing.dynamic:FR1 assertion failed",),
+            outcome="no_improvement",
+        )
+    )
+    testing_api._testing_jobs["repair-1"] = {
+        "job_id": "repair-1",
+        "repair_history": previous.model_dump(mode="json"),
+        "previous_findings": ["testing.dynamic:FR1 assertion failed"],
+    }
+
+    class StubAdapter:
+        def run(self, **_kwargs):
+            return {"passed": True, "unitTests": {}}
+
+    monkeypatch.setattr(testing_api, "TestingAdapter", StubAdapter)
+    monkeypatch.setattr(
+        testing_api,
+        "run_verification_graph",
+        lambda **_kwargs: {
+            "reports": {
+                "dynamicFunctional": {"candidateDigest": "same-candidate"}
+            },
+            "passed": False,
+            "blockingReason": "FR1 assertion failed",
+            "diagnostics": [],
+        },
+    )
+
+    testing_api._run_test("repair-1", "app-1", run_root)
+
+    state = testing_api._testing_jobs["repair-1"]["result"]["repair_state"]
+    assert state["status"] == "STALLED"
+    assert state["recent_attempts"][-1]["outcome"] == "repeated_candidate"

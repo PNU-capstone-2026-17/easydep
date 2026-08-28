@@ -116,7 +116,7 @@ def main() -> int:
         parser.add_argument(
             "--approve-all-external-transmission",
             action="store_true",
-            help="Approve all planned phases and bounded repairs for this exact run input.",
+            help="Approve all planned phases and delegated repairs for this exact run input.",
         )
         parser.add_argument("--approved-by", default="EasyDep CLI user")
         args = parser.parse_args()

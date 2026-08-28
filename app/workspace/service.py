@@ -48,9 +48,11 @@ from app.requirements.runtime import telemetry as requirements_telemetry
 from app.requirements.schemas import (
     AnalyzeRequest,
     DeploymentPreferences,
+    FeedbackEdit,
     InitialCloudConstraints,
 )
 from app.testing.api import CreateTestingJobRequest, create_testing_job, get_testing_job
+from app.validation import RepairAttempt, stable_digest
 
 from . import repository
 from .live_preview import live_previews
@@ -63,6 +65,115 @@ TERMINAL_JOB_STATUSES = {
     "NEEDS_INPUT",
     "NEEDS_PLANNER",
 }
+
+
+def _blocker_keys(result: dict[str, Any]) -> tuple[str, ...]:
+    """수리 전후를 비교할 안정된 공개 blocker 키를 만든다."""
+    return tuple(
+        sorted(
+            json.dumps(blocker, ensure_ascii=False, sort_keys=True, default=str)
+            for blocker in result.get("blocking_findings") or []
+            if isinstance(blocker, dict)
+        )
+    )
+
+
+def _merge_delegated_repair_state(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    strategy_key: str,
+) -> dict[str, Any]:
+    """명령 경계를 넘은 LLM 수리 이력을 압축 정보까지 잃지 않고 합친다."""
+    old = dict(previous.get("repair_state") or {})
+    new = dict(current.get("repair_state") or {})
+    before = _blocker_keys(previous)
+    after = _blocker_keys(current)
+    input_digest = stable_digest(before)
+    candidate_digest = stable_digest(after)
+    rejected_before = {
+        str(value) for value in old.get("rejected_candidate_digests") or [] if value
+    }
+    repeated = bool(after) and (
+        after == before or candidate_digest in rejected_before
+    )
+    outcome = (
+        "clean"
+        if not after
+        else "repeated_candidate"
+        if repeated
+        else "improved"
+    )
+    delegated = RepairAttempt(
+        stage="workspace.delegate-repair",
+        strategy_key=strategy_key,
+        input_digest=input_digest,
+        candidate_digest=candidate_digest,
+        finding_keys_before=before,
+        finding_keys_after=after,
+        outcome=outcome,
+        detail=(
+            "The delegated repair returned the same blocker set."
+            if repeated
+            else "The normal user-visible delegate action was executed."
+        ),
+    ).model_dump(mode="json")
+
+    recent: list[dict[str, Any]] = []
+    seen_attempts: set[str] = set()
+    for attempt in [
+        *(old.get("recent_attempts") or []),
+        *(new.get("recent_attempts") or []),
+        delegated,
+    ]:
+        if not isinstance(attempt, dict):
+            continue
+        identity = str(attempt.get("attempt_id") or stable_digest(attempt))
+        if identity in seen_attempts:
+            continue
+        seen_attempts.add(identity)
+        recent.append(attempt)
+
+    tried = {
+        str(value)
+        for state in (old, new)
+        for value in state.get("tried_strategies") or []
+        if value
+    }
+    tried.add(strategy_key)
+    rejected = {
+        str(value)
+        for state in (old, new)
+        for value in state.get("rejected_candidate_digests") or []
+        if value
+    }
+    if repeated:
+        rejected.add(candidate_digest)
+    status = (
+        "COMPLETED"
+        if not after
+        else "STALLED"
+        if repeated
+        else str(new.get("status") or "ACTIVE")
+    )
+    return {
+        "status": status,
+        "attempt_count": int(old.get("attempt_count") or 0)
+        + int(new.get("attempt_count") or 0)
+        + 1,
+        "accepted_count": int(old.get("accepted_count") or 0)
+        + int(new.get("accepted_count") or 0)
+        + (outcome in {"improved", "clean"}),
+        "recent_attempts": recent[-5:],
+        "tried_strategies": sorted(tried),
+        "rejected_candidate_digests": sorted(rejected),
+        "finding_digest": candidate_digest,
+        "stall_reason": (
+            "The delegated repair repeated the same unresolved blocker set."
+            if repeated
+            else str(new.get("stall_reason") or "")
+        ),
+    }
 
 
 # The implementation worker has two distinct parts: initial deterministic
@@ -194,7 +305,7 @@ class WorkspaceService:
         revisions: list[ReviseRequest] = []
         for raw in raw_entries:
             if not isinstance(raw, dict):
-                raise ValueError("Each sequence feedback entry must name a target and feedback.")
+                raise TypeError("Each sequence feedback entry must name a target and feedback.")
             target = str(raw.get("target") or "").strip()
             feedback = str(raw.get("feedback") or "").strip()
             if not target.startswith("sequence_diagram:") or target == "sequence_diagram:":
@@ -306,6 +417,7 @@ class WorkspaceService:
     def _validate_payload(action: str, payload: dict[str, Any]) -> None:
         required = {
             "advance": ("action_id",),
+            "delegate_repair": ("action_id",),
             "retry_design": ("action_id",),
             "rerun_implementation": (),
             "confirm_change": ("action_id",),
@@ -361,7 +473,7 @@ class WorkspaceService:
             prior = repository.get_command(str(payload.get("action_id") or ""))
             return str((prior or {}).get("stage") or "design")
         latest = repository.latest_command(app_id)
-        if action == "advance" and latest is not None:
+        if action in {"advance", "delegate_repair"} and latest is not None:
             return str(latest["stage"])
         state = artifact_repository.load_state(app_id)
         if not state.get("refined_requirements") or (
@@ -457,6 +569,58 @@ class WorkspaceService:
         action = str(command["action"])
         if action in {"message", "advance", "apply_deployment_preferences"}:
             return self._stage_message(command, advance=action == "advance")
+        if action == "delegate_repair":
+            action_id = str(command["payload"].get("action_id") or "")
+            prior = repository.get_command(action_id) or {}
+            result = prior.get("result") or {}
+            blockers = result.get("blocking_findings") or []
+            messages = [
+                str(blocker.get("message") or "")
+                for blocker in blockers
+                if isinstance(blocker, dict) and blocker.get("repairable") is not False
+            ]
+            if not messages:
+                raise ValueError("No LLM-repairable blocker is available.")
+            if prior.get("stage") == "testing":
+                previous_job = result.get("job") or {}
+                implementation_job_id = str(
+                    previous_job.get("implementation_job_id")
+                    or prior.get("payload", {}).get("implementation_job_id")
+                    or ""
+                )
+                testing_job_id = str(result.get("job_id") or previous_job.get("job_id") or "")
+                if not implementation_job_id or not testing_job_id:
+                    raise ValueError("The failing testing run cannot be resumed.")
+                job = create_testing_job(
+                    str(command["app_id"]),
+                    CreateTestingJobRequest(
+                        implementation_job_id=implementation_job_id,
+                        repair_testing_job_id=testing_job_id,
+                    ),
+                )
+                return self._monitor_testing(job)
+            history = dict(result.get("repair_state") or {})
+            repair_stage = str(
+                result.get("current_stage") or result.get("phase") or prior.get("stage")
+            )
+            strategy_key = (
+                f"delegate:{prior.get('stage')}:{repair_stage}:"
+                f"episode-{int(history.get('attempt_count') or 0) + 1}"
+            )
+            delegated = dict(command)
+            delegated["payload"] = {
+                **command["payload"],
+                "_repair_strategy_key": strategy_key,
+                "text": (
+                    "Repair the current stage using the accumulated repair history. "
+                    f"Use this new strategy identity: {strategy_key}. "
+                    "Do not repeat a rejected strategy or candidate. Resolve these blockers:\n- "
+                    + "\n- ".join(messages)
+                    + "\n\nAccumulated repair history:\n"
+                    + json.dumps(history, ensure_ascii=False, sort_keys=True)
+                ),
+            }
+            return self._stage_message(delegated, advance=False)
         if action == "start_design":
             return self._stage_message(command, advance=True)
         if action == "retry_design":
@@ -603,7 +767,46 @@ class WorkspaceService:
                         app_id=app_id,
                     )
                 else:
-                    request = AnalyzeRequest(answer=text, thread_id=app_id, app_id=app_id)
+                    if command.get("action") == "delegate_repair":
+                        repairable = [
+                            blocker
+                            for blocker in previous_result.get("blocking_findings") or []
+                            if isinstance(blocker, dict)
+                            and blocker.get("repairable") is not False
+                        ]
+                        stage_order = {
+                            "actors": 0,
+                            "use_cases": 1,
+                            "specs": 2,
+                            "relationships": 3,
+                        }
+                        owner = min(
+                            (str(item.get("stage") or "relationships") for item in repairable),
+                            key=lambda value: stage_order.get(value, 99),
+                            default="relationships",
+                        )
+                        targets = sorted(
+                            {
+                                str(target)
+                                for item in repairable
+                                if str(item.get("stage") or "") == owner
+                                for target in item.get("target_ids") or []
+                            }
+                        )
+                        request = AnalyzeRequest(
+                            edit=FeedbackEdit(
+                                stage=owner,
+                                scope="local" if targets else "broad",
+                                target_ids=targets,
+                                instruction=text,
+                            ),
+                            thread_id=app_id,
+                            app_id=app_id,
+                        )
+                    else:
+                        request = AnalyzeRequest(
+                            answer=text, thread_id=app_id, app_id=app_id
+                        )
             else:
                 provider = str(payload.get("provider") or "")
                 region = str(payload.get("region") or "")
@@ -635,7 +838,14 @@ class WorkspaceService:
             )
             with requirements_telemetry.progress_scope(progress):
                 result = analyze_endpoint(request).model_dump(mode="json")
-            return self._requirements_result(result)
+            shaped = self._requirements_result(result)
+            if command.get("action") == "delegate_repair":
+                shaped["repair_state"] = _merge_delegated_repair_state(
+                    previous_result,
+                    shaped,
+                    strategy_key=str(payload.get("_repair_strategy_key") or "delegate"),
+                )
+            return shaped
 
         if stage == "design":
             status = session_status(app_id)
@@ -736,7 +946,16 @@ class WorkspaceService:
                 label=self._design_stage_label(operation_stage, verb),
                 operation=operation,
             )
-            return self._design_result(_json_response(response))
+            shaped = self._design_result(_json_response(response))
+            if command.get("action") == "delegate_repair":
+                action_id = str(payload.get("action_id") or "")
+                previous = repository.get_command(action_id) or {}
+                shaped["repair_state"] = _merge_delegated_repair_state(
+                    previous.get("result") or {},
+                    shaped,
+                    strategy_key=str(payload.get("_repair_strategy_key") or "delegate"),
+                )
+            return shaped
 
         if stage != "implementation":
             raise ValueError("The current stage cannot process a conversational command.")
@@ -1045,6 +1264,39 @@ class WorkspaceService:
             }
         if status == "need_feedback":
             phase = str(result.get("phase") or "requirements")
+            if phase == "requirements_handoff":
+                blockers = list(result.get("blocking_findings") or [])
+                repairable = [
+                    blocker
+                    for blocker in blockers
+                    if isinstance(blocker, dict) and blocker.get("repairable") is not False
+                ]
+                return {
+                    "awaiting_input": True,
+                    "kind": "action_required",
+                    "message": (
+                        f"Design handoff is blocked by {len(blockers)} unresolved "
+                        "requirements finding(s). Review them, provide feedback, or "
+                        "delegate the repair to the LLM."
+                    ),
+                    "phase": phase,
+                    "requires_revision": True,
+                    "blocking_findings": blockers,
+                    "repair_state": result.get("repair_state") or {
+                        "status": "ACTIVE" if repairable else "NEEDS_INPUT",
+                        "attempt_count": 0,
+                        "accepted_count": 0,
+                        "recent_attempts": [],
+                    },
+                    "can_delegate_repair": bool(repairable),
+                    "summary": result.get("feedback_summary"),
+                    "review_artifacts": [
+                        "Refined requirements",
+                        "Use cases",
+                        "Use-case specifications",
+                        "Use-case diagram",
+                    ],
+                }
             requirements = list(result.get("requirements") or [])
             functional_count = sum(
                 1 for item in requirements if item.get("type") == "FR"
@@ -1151,43 +1403,72 @@ class WorkspaceService:
             *list(stage_validation.get("findings") or []),
         ]
         method_proposals = list(stage_validation.get("method_proposals") or [])
-        artifact = (result.get("artifacts") or {}).get(stage)
-        if artifact is None:
-            config = artifact_repository.STAGE_ARTIFACTS.get(str(stage), {})
-            artifact = result.get(config.get("state_key", ""))
-        # The design response can omit derived artifacts when it crosses a
-        # checkpoint, even though persist_* has already stored the model. Use
-        # the repository as the final source of truth so a generated draft is
-        # never presented as a blocking, artifact-less failure.
-        if not artifact:
-            app_id = str(result.get("app_id") or "").strip()
-            if app_id:
-                try:
-                    persisted = artifact_repository.load_state(app_id)
-                    config = artifact_repository.STAGE_ARTIFACTS.get(str(stage), {})
-                    artifact = persisted.get(config.get("state_key", ""))
-                except Exception:  # noqa: BLE001 - response shaping must not fail
-                    artifact = None
-        artifact_exists = bool(artifact.strip()) if isinstance(artifact, str) else bool(artifact)
-        requires_revision = bool(findings) and not artifact_exists
+        requires_revision = bool(findings)
+        repair_history = stage_validation.get("repair_history") or {}
+        repair_status = str(repair_history.get("status") or "")
+        repair_state = {
+            "status": (
+                "WAITING_EXTERNAL"
+                if repair_status == "WAITING_EXTERNAL"
+                else "STALLED"
+                if repair_status == "STALLED"
+                else "ACTIVE"
+                if findings
+                else "COMPLETED"
+            ),
+            "attempt_count": len(repair_history.get("attempts") or []),
+            "accepted_count": sum(
+                attempt.get("outcome") in {"improved", "clean"}
+                for attempt in repair_history.get("attempts") or []
+                if isinstance(attempt, dict)
+            ),
+            "recent_attempts": list(repair_history.get("attempts") or [])[-5:],
+            "tried_strategies": sorted(
+                {
+                    str(attempt.get("strategy_key") or "")
+                    for attempt in repair_history.get("attempts") or []
+                    if isinstance(attempt, dict) and attempt.get("strategy_key")
+                }
+            ),
+            "rejected_candidate_digests": sorted(
+                {
+                    str(attempt.get("candidate_digest") or "")
+                    for attempt in repair_history.get("attempts") or []
+                    if isinstance(attempt, dict)
+                    and attempt.get("candidate_digest")
+                    and attempt.get("outcome") not in {"improved", "clean"}
+                }
+            ),
+            "finding_digest": stable_digest(findings),
+            "stall_reason": repair_history.get("stall_reason") or "",
+        }
+        blocking_findings = [
+            {
+                "code": "design.validation",
+                "stage": str(stage or "design"),
+                "target_ids": [],
+                "message": str(finding),
+                "severity": "error",
+                "repairable": True,
+            }
+            for finding in findings
+        ]
         return {
             "awaiting_input": True,
             "kind": "action_required",
             "message": (
                 f"The {str(stage or 'design').replace('_', ' ')} draft has "
-                f"{len(findings)} findings. The generated artifact can still be reviewed "
-                "and continued to the next stage."
-                if findings and artifact_exists
-                else f"The {str(stage or 'design').replace('_', ' ')} draft has "
-                f"{len(findings)} findings. Review the draft and send revision feedback "
-                "before continuing."
+                f"{len(findings)} findings. Review the draft, provide feedback, or "
+                "delegate the repair to the LLM before continuing."
                 if requires_revision
                 else "Review the current design artifacts, then send revision feedback "
                 "or continue to the next stage."
             ),
             "current_stage": stage,
             "requires_revision": requires_revision,
-            "blocking_findings": findings if requires_revision else [],
+            "blocking_findings": blocking_findings,
+            "repair_state": repair_state,
+            "can_delegate_repair": requires_revision,
             "findings": findings,
             # Keep the pending approval decision on the workspace command as
             # well as in the artifact payload so the UI can offer an explicit
@@ -1718,6 +1999,33 @@ class WorkspaceService:
                     raise RuntimeError(
                         str(current.get("error") or "The testing job failed.")
                     )
+                report = current.get("result") or {}
+                if report.get("passed") is False:
+                    blockers = list(report.get("blocking_findings") or [])
+                    return {
+                        "awaiting_input": True,
+                        "kind": "action_required",
+                        "message": (
+                            f"Testing found {len(blockers)} blocking failure(s). "
+                            "Review them, provide feedback, or delegate another repair "
+                            "attempt to the LLM."
+                        ),
+                        "requires_revision": True,
+                        "blocking_findings": blockers,
+                        "repair_state": report.get("repair_state") or {
+                            "status": "ACTIVE",
+                            "attempt_count": 0,
+                            "accepted_count": 0,
+                            "recent_attempts": [],
+                        },
+                        "can_delegate_repair": any(
+                            blocker.get("repairable") is not False
+                            for blocker in blockers
+                            if isinstance(blocker, dict)
+                        ),
+                        "job_id": job_id,
+                        "job": current,
+                    }
                 return {
                     "message": "Testing completed.",
                     "job_id": job_id,

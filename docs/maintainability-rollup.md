@@ -42,9 +42,11 @@ contract test를 진실 원천으로 삼는다.
 - cache cold/warm은 `tests/test_class_design_service.py`, 현재 schema의 프로세스 재시작·재개는
   `tests/test_session_store.py`와 `tests/test_orchestration_checkpoint.py`의 공개 contract suite를
   최종 rollup gate에서 함께 실행해 보장한다.
-- 리팩터링 단계의 LLM logical/physical 호출 수, 병렬도, retry와 bounded repair 범위는 각
-  단계의 공개 injection seam을 사용하는 기존 contract test가 고정한다. 실제 NIM은 호출하지
-  않는다.
+- 리팩터링 단계의 LLM logical/physical 호출 수, 병렬도와 transport retry는 각 단계의 공개
+  injection seam을 사용하는 contract test가 고정한다. 의미 수리는 숫자 상한 대신 누적 이력,
+  finding 감소 및 새 전략·새 candidate라는 전진 조건으로 계속되며, 같은 실패를 반복하면
+  `STALLED`로 멈춘다. `delegate_repair`는 사용자가 선택할 수 있는 일반 액션이고 auto mode도
+  별도 우회 없이 그 액션을 선택한다. 최종 회귀에서는 실제 NIM을 추가 호출하지 않는다.
 - `app/core` tracked path·import와 구 requirements orchestration active import는 0이어야 한다.
 - 테스트는 production prompt literal이나 private helper가 아니라 공개 service/spec/report를
   검증한다.

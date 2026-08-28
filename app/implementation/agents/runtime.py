@@ -12,36 +12,19 @@ from pathlib import Path
 
 from app.config import settings
 from app.metrics import langsmith as langsmith_metrics
+from app.validation import RepairAttempt, RepairLedger, stable_digest
+
 from ..planning.design_context import (
     read_generated_java_contracts,
     referenced_openapi_model_names,
 )
-from .verification.frontend import (
-    frontend_contract_violations,
-    has_mutating_operations,
-    repair_frontend_accessibility_contract,
-    repair_responsive_table_styles,
-)
-from .verification.build import (
-    WorkspaceVerificationError,
-    ensure_persistence_schema_test,
-    repair_invalid_inverse_entity_associations,
-    persistence_entity_schema_violations,
-    persistence_reserved_identifier_markers,
-    repair_persistence_schema_table_quoting,
-    production_placeholder_markers,
-    production_test_library_markers,
-    api_adapter_contract_violations,
-    boundary_adapter_contract_violations,
-    verify_agent_workspace,
-)
-from .verification.e2e import (
-    e2e_contract_violations,
-    repair_nested_e2e_members,
-    repair_orphaned_java_test_statements,
-    repair_spring_boot3_test_compatibility,
-)
 from ..workflows.repair import referenced_source_paths
+from .prompts import (
+    FRONTEND_SYSTEM_PROMPT,
+    IMPLEMENTATION_SYSTEM_PROMPT,
+    render_frontend_verification_feedback,
+    render_verification_feedback,
+)
 from .provider import (
     MAX_PROVIDER_RETRIES,
     configured_api_key,
@@ -51,11 +34,30 @@ from .provider import (
     provider_retry_delay,
     transient_provider_error,
 )
-from .prompts import (
-    FRONTEND_SYSTEM_PROMPT,
-    IMPLEMENTATION_SYSTEM_PROMPT,
-    render_frontend_verification_feedback,
-    render_verification_feedback,
+from .verification.build import (
+    WorkspaceVerificationError,
+    api_adapter_contract_violations,
+    boundary_adapter_contract_violations,
+    ensure_persistence_schema_test,
+    persistence_entity_schema_violations,
+    persistence_reserved_identifier_markers,
+    production_placeholder_markers,
+    production_test_library_markers,
+    repair_invalid_inverse_entity_associations,
+    repair_persistence_schema_table_quoting,
+    verify_agent_workspace,
+)
+from .verification.e2e import (
+    e2e_contract_violations,
+    repair_nested_e2e_members,
+    repair_orphaned_java_test_statements,
+    repair_spring_boot3_test_compatibility,
+)
+from .verification.frontend import (
+    frontend_contract_violations,
+    has_mutating_operations,
+    repair_frontend_accessibility_contract,
+    repair_responsive_table_styles,
 )
 from .workspace import (
     changed_files,
@@ -69,13 +71,8 @@ from .workspace import (
     task_base_package,
 )
 
-
 MAX_AGENT_ITERATIONS = 6
 MAX_REPAIR_ITERATIONS = 4
-# A repair conversation receives only the diagnostic and repair targets below;
-# keeping the number of fresh conversations bounded prevents the original
-# design prompt from being retransmitted indefinitely after a persistent gate.
-MAX_VERIFICATION_REPAIRS = 3
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
@@ -455,12 +452,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     started = time.monotonic()
     agent = None
     conversation_warning: str | None = None
+    repair_ledger = RepairLedger()
     try:
         round_prompt = prompt
         round_allowed = allowed_absolute
         round_iteration_limit = MAX_AGENT_ITERATIONS
         provider_retries = 0
-        for repair_attempt in range(MAX_VERIFICATION_REPAIRS + 1):
+        repair_attempt = 0
+        while True:
             reasoning_effort = os.environ.get(
                 "OPENHANDS_REPAIR_REASONING_EFFORT" if repair_attempt else "OPENHANDS_REASONING_EFFORT",
                 str(
@@ -474,7 +473,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             )
             # A transient provider failure is a transport concern, not a source
             # verification failure. Retry the same conversation round without
-            # consuming one of the bounded repair attempts; otherwise a NIM
+            # recording a semantic repair attempt; otherwise a NIM
             # outage is reported misleadingly as missing files and the agent is
             # sent an unnecessary (and expensive) repair prompt.
             while True:
@@ -557,9 +556,44 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     sandbox, task["allowed_write_paths"]
                 )
             if missing_outputs:
-                if repair_attempt >= MAX_VERIFICATION_REPAIRS:
+                finding_keys = tuple(f"missing:{path}" for path in missing_outputs)
+                candidate_digest = stable_digest(
+                    read_allowed_sources(sandbox, task["allowed_write_paths"])
+                )
+                repeated = repair_attempt > 0 and any(
+                    item.candidate_digest == candidate_digest
+                    for item in repair_ledger.attempts
+                    if item.candidate_digest
+                )
+                repair_ledger.record(
+                    RepairAttempt(
+                        stage=f"implementation.{task_type}",
+                        target_ids=tuple(missing_outputs),
+                        strategy_key=(
+                            "initial_generation"
+                            if repair_attempt == 0
+                            else "create_missing_outputs"
+                        ),
+                        input_digest=stable_digest(
+                            {
+                                "task": task_id,
+                                "candidate": candidate_digest,
+                                "findings": finding_keys,
+                            }
+                        ),
+                        candidate_digest=candidate_digest,
+                        finding_keys_before=finding_keys,
+                        finding_keys_after=finding_keys,
+                        outcome="repeated_candidate" if repeated else "no_improvement",
+                    )
+                )
+                if repeated:
+                    repair_ledger.status = "STALLED"
+                    repair_ledger.stall_reason = (
+                        "The implementation agent repeated the same missing-output candidate."
+                    )
                     missing_error = RuntimeError(
-                        "Agent did not create required task outputs: "
+                        "Agent repeated a candidate without creating required task outputs: "
                         + ", ".join(missing_outputs)
                     )
                     if conversation_error is not None:
@@ -587,6 +621,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         ],
                     ),
                 )
+                round_prompt += (
+                    "\n\n## Accumulated repair history\n\n"
+                    + repair_ledger.prompt_context()
+                )
+                repair_attempt += 1
                 continue
 
             changed = changed_files(before, snapshot_files(sandbox))
@@ -802,7 +841,44 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     # Return the evidence to the workflow repair planner instead
                     # of spending every local repair round on the wrong allowlist.
                     raise
-                if repair_attempt >= MAX_VERIFICATION_REPAIRS:
+                evidence_digest = stable_digest(error.evidence)
+                finding_keys = (f"verification:{evidence_digest}",)
+                candidate_digest = stable_digest(
+                    read_allowed_sources(sandbox, task["allowed_write_paths"])
+                )
+                repeated = repair_attempt > 0 and any(
+                    item.candidate_digest == candidate_digest
+                    for item in repair_ledger.attempts
+                    if item.candidate_digest
+                )
+                repair_ledger.record(
+                    RepairAttempt(
+                        stage=f"implementation.{task_type}",
+                        target_ids=tuple(task["allowed_write_paths"]),
+                        strategy_key=(
+                            "initial_generation"
+                            if repair_attempt == 0
+                            else "verification_correction"
+                        ),
+                        input_digest=stable_digest(
+                            {
+                                "task": task_id,
+                                "candidate": candidate_digest,
+                                "findings": finding_keys,
+                            }
+                        ),
+                        candidate_digest=candidate_digest,
+                        finding_keys_before=finding_keys,
+                        finding_keys_after=finding_keys,
+                        outcome="repeated_candidate" if repeated else "no_improvement",
+                        detail=str(error.evidence)[-4000:],
+                    )
+                )
+                if repeated:
+                    repair_ledger.status = "STALLED"
+                    repair_ledger.stall_reason = (
+                        "The implementation agent repeated a rejected source candidate."
+                    )
                     raise
                 repair_paths = select_repair_paths(
                     error.evidence, task["allowed_write_paths"]
@@ -816,7 +892,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 )
                 # Do not retransmit the original design prompt on every repair
                 # conversation.  The diagnostic plus the files selected by the
-                # verifier are sufficient for a bounded local correction.
+                # verifier and accumulated history are sufficient for a local correction.
                 feedback_kwargs = {}
                 repair_contract = _repair_contract_context(context)
                 if task_type == "api-adapter":
@@ -845,6 +921,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     repair_paths,
                     **feedback_kwargs,
                 )
+                round_prompt += (
+                    "\n\n## Accumulated repair history\n\n"
+                    + repair_ledger.prompt_context()
+                )
+                repair_attempt += 1
     except Exception as error:
         failure = {
             "taskId": task_id,
@@ -861,6 +942,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         }
         if isinstance(error, WorkspaceVerificationError):
             failure["verificationEvidence"] = error.evidence
+        if repair_ledger.attempts:
+            failure["repairHistory"] = repair_ledger.model_dump(mode="json")
         write_execution_result(execution_dir, task_id, attempt, failure)
         shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
         raise
@@ -880,6 +963,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "eventJournal": str(journal.path.relative_to(run_root)).replace("\\", "/"),
         "status": "SUCCEEDED",
     }
+    if repair_ledger.attempts:
+        repair_ledger.status = "COMPLETED"
+        result["repairHistory"] = repair_ledger.model_dump(mode="json")
     if conversation_warning is not None:
         result["conversationWarning"] = conversation_warning
     write_execution_result(execution_dir, task_id, attempt, result)
@@ -1104,7 +1190,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "maxIterations": MAX_AGENT_ITERATIONS,
         "maxRepairIterations": MAX_REPAIR_ITERATIONS,
         "stuckDetection": False,
-        "verificationRepairLimit": MAX_VERIFICATION_REPAIRS,
+        "verificationRepairPolicy": "history-and-progress/v1",
         "reasoningBudgetCap": MAX_REASONING_BUDGET,
         "reasoningEffort": task["llm"].get(
             "reasoningEffort", settings.implementation_reasoning_effort
@@ -1140,11 +1226,11 @@ def create_openhands_conversation(
 ):
     global _RESTRICTED_EDITOR_REGISTERED
 
-    from pydantic import AliasChoices, Field, SecretStr
-    from openhands.sdk import Agent, Conversation, LLM, Tool, register_tool
+    from openhands.sdk import LLM, Agent, Conversation, Tool, register_tool
     from openhands.tools.file_editor import FileEditorAction, FileEditorTool
     from openhands.tools.file_editor.definition import FileEditorObservation
     from openhands.tools.file_editor.impl import FileEditorExecutor
+    from pydantic import AliasChoices, Field, SecretStr
 
     _configure_openhands_profile_store()
 

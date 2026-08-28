@@ -42,19 +42,8 @@ class Settings(BaseSettings):
     # step3 명세 생성·semantic 커버리지 채점의 동시 LLM 호출 상한(UC별 병렬).
     # hosted NIM(integrate.api)에서 8 동시까지 429 없이 견딤을 실측했다.
     spec_concurrency: int = 8
-    # step3 명세 반성(reflection) 루프: 검증 실패 시 수술적 지시로 재생성하는 최대 횟수.
-    max_repair_iters: int = 2
-    # 파이프라인 되돌아가기(supervisor) 최대 횟수. 0이면 끈다.
-    #
-    # **기본값이 0인 이유는 측정 결과다**(2026-07-26, toystore, 조건별 2회):
-    # 결함 합이 기저 7~8 vs 처리 6~9 — 처리 범위가 기저 범위를 감쌌고, 결정론 재검증도
-    # 기저가 0·3으로 갈려 조건 간 차이를 읽을 수 없었다. 반면 비용은 LLM 호출 1.9배로
-    # 확실했다. 개선이 안 보이는데 비용이 두 배인 것을 기본으로 둘 수는 없다.
-    #
-    # 기계장치는 그대로 두고 끈다 — 왜 안 먹었는지에 대한 가설(에스컬레이션이 문장 수준
-    # 지시를 상위 단계로 올려 실행 불가능한 지시가 된다)은 아직 시험하지 않았다.
-    # `docs/requirements-agent-improvements.md` §6 참고. 켜려면 `MAX_REDO_ROUNDS=1`.
-    max_redo_rounds: int = 0
+    # 의미 수리는 숫자 예산으로 끊지 않는다. 후보·finding·전략 digest 이력이 같은 실패의
+    # 반복을 막고, 미사용 전략이 없을 때만 명시적인 stalled 상태로 전환한다.
     # 대화형 모드 스위치. True면 모든 interrupt 기반 상호작용을 켠다:
     #  - step1 clarify(요구사항이 추상적일 때 질문) 루프
     #  - 각 스텝(1~4) 말미의 피드백 게이트(피드백 주면 재생성·루프, 빈 값이면 다음 단계)

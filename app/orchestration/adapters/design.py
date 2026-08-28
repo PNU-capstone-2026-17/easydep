@@ -137,6 +137,19 @@ def _handoff_errors(requirements_result: dict[str, Any]) -> list[str]:
                     errors.append(
                         f"{use_case_id} step references non-local requirement: {normalized}"
                     )
+        for field_name in ("success_guarantee", "minimal_guarantee"):
+            for guarantee in specification.get(field_name) or []:
+                if not isinstance(guarantee, dict):
+                    errors.append(f"{use_case_id} {field_name} contains a non-object item")
+                    continue
+                if not str(guarantee.get("sentence") or "").strip():
+                    errors.append(f"{use_case_id} {field_name} contains an empty sentence")
+                for requirement_id in guarantee.get("covered_req_ids") or []:
+                    normalized = str(requirement_id).strip()
+                    if normalized and normalized not in accepted_ids:
+                        errors.append(
+                            f"{use_case_id} {field_name} references non-local requirement: {normalized}"
+                        )
 
     reported_unknown = (requirements_result.get("coverage") or {}).get(
         "unknown_requirement_refs"

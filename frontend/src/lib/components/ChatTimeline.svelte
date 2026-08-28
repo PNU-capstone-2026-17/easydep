@@ -363,6 +363,20 @@
               {event.metadata.resource_question.why}
             </p>
           {/if}
+          {#if Array.isArray(event.metadata?.blocking_findings) && event.metadata.blocking_findings.length}
+            <ul class="mt-2 space-y-1 border-t border-[#ece8dc] pt-2 text-xs leading-5 text-[#76554f]">
+              {#each event.metadata.blocking_findings as finding}
+                <li><span class="font-mono text-[10px]">{finding.code}</span> · {finding.message}</li>
+              {/each}
+            </ul>
+          {/if}
+          {#if event.metadata?.repair_state?.attempt_count > 0}
+            <p class="mt-2 text-[11px] leading-5 text-[#777267]">
+              Repair attempts: {event.metadata.repair_state.attempt_count}
+              · accepted: {event.metadata.repair_state.accepted_count}
+              · status: {event.metadata.repair_state.status}
+            </p>
+          {/if}
         </div>
         {#if relatedArtifacts.length}
           <div class="mt-3 grid gap-2 sm:grid-cols-2" aria-label="Generated artifacts">

@@ -91,6 +91,7 @@ class WorkspaceCommandRequest(BaseModel):
     action: Literal[
         "message",
         "advance",
+        "delegate_repair",
         "confirm_change",
         "dismiss_change",
         "start_design",

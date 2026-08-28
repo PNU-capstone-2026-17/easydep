@@ -171,7 +171,7 @@ def test_e2e_http_runtime_failure_targets_application_contract_owners(
     ]
 
 
-def test_repair_budget_is_cumulative_across_changed_evidence(tmp_path: Path) -> None:
+def test_changed_failure_evidence_can_continue_without_a_numeric_budget(tmp_path: Path) -> None:
     _write_run(tmp_path, _tasks())
     for attempt in range(1, 4):
         repair = schedule_cross_phase_repair(
@@ -187,7 +187,7 @@ def test_repair_budget_is_cumulative_across_changed_evidence(tmp_path: Path) -> 
         assert repair is not None
         assert repair["revision"] == attempt
 
-    exhausted = schedule_cross_phase_repair(
+    fourth = schedule_cross_phase_repair(
         tmp_path,
         "implement-application-wiring",
         {
@@ -197,10 +197,32 @@ def test_repair_budget_is_cumulative_across_changed_evidence(tmp_path: Path) -> 
             )
         },
     )
-    assert exhausted is None
+    assert fourth is not None
+    assert fourth["revision"] == 4
+    plan = json.loads((tmp_path / "reports/repair-plan.json").read_text())
+    assert len(plan["entries"]) == 4
+    assert repair_rounds(plan) == 4
+
+
+def test_same_failure_and_strategy_stall_without_adding_duplicate_history(tmp_path: Path) -> None:
+    _write_run(tmp_path, _tasks())
+    evidence = {
+        "stderr": (
+            "C:/work/application/src/main/java/example/"
+            "OrderRepository.java:12: error: unchanged failure"
+        )
+    }
+
+    assert schedule_cross_phase_repair(
+        tmp_path, "implement-application-wiring", evidence
+    ) is not None
+    assert schedule_cross_phase_repair(
+        tmp_path, "implement-application-wiring", evidence
+    ) is None
+
     plan = json.loads((tmp_path / "reports/repair-plan.json").read_text())
     assert len(plan["entries"]) == 1
-    assert repair_rounds(plan) == 3
+    assert plan["status"] == "STALLED"
 
 
 def test_warning_path_does_not_override_causal_owner(tmp_path: Path) -> None:

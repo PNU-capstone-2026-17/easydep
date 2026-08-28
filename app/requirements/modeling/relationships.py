@@ -1,4 +1,4 @@
-"""Canonical use-case 관계를 선택·검증하고 bounded repair하는 modeling stage다.
+"""Canonical use-case 관계를 선택·검증하고 history-aware repair하는 modeling stage다.
 
 수락된 Step 3 RTM coverage로 ``include``와 ``extend`` 후보를 제한하며, 모델은 그 유한
 후보 안에서만 의미 결정을 수행한다. Actor 관계는 upstream canonical fact로 취급한다.
@@ -27,6 +27,13 @@ from app.requirements.modeling.contracts import (
 from app.requirements.modeling.feedback import feedback_for
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import ExistingIncludeModel, ExtendSelection, RelationshipModel
+from app.validation import (
+    RepairAttempt,
+    RepairLedger,
+    repair_makes_progress,
+    stable_digest,
+    transient_llm_error,
+)
 
 _EXTEND_CUE = re.compile(r"\b(?:may|optionally|when|while|after|once|unless)\b", re.IGNORECASE)
 _LEXICAL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9'-]*")
@@ -940,7 +947,7 @@ def identify_relationships(
     if specs_by_id:
         reviewer = review_call or validator.review
 
-        def review_current(subject: str) -> validator.Review:
+        def review_candidate(candidate: dict[str, Any], subject: str) -> validator.Review:
             return reviewer(
                 rules.DRAW_DIAGRAM,
                 _relationship_review_payload(
@@ -948,7 +955,7 @@ def identify_relationships(
                     actors,
                     use_cases,
                     specs_by_id,
-                    relations,
+                    candidate,
                 ),
                 prefix="rel",
                 source="relationships.semantic_validator",
@@ -956,23 +963,116 @@ def identify_relationships(
                 confirm_violations=True,
             )
 
-        review = review_current("initial")
-        if review.status == validator.OK and review.findings:
+        review = review_candidate(relations, "initial")
+        ledger = RepairLedger()
+        attempts = 0
+        strategies = ("targeted_selection", "full_reselection")
+        while review.status == validator.OK and review.findings:
+            finding_keys = tuple(
+                sorted({rules.rule_of(finding) or finding for finding in review.findings})
+            )
+            input_digest = stable_digest(
+                {"relationships": relations, "findings": finding_keys}
+            )
+            strategy = next(
+                (
+                    key
+                    for key in strategies
+                    if not ledger.strategy_attempted(
+                        input_digest=input_digest,
+                        finding_keys=finding_keys,
+                        strategy_key=key,
+                    )
+                ),
+                None,
+            )
+            if strategy is None:
+                ledger.status = "STALLED"
+                ledger.stall_reason = "No untried relationship repair strategy remains."
+                break
             repair_feedback = "\n".join([
                 feedback,
                 "Correct only these independently confirmed relationship defects. "
                 "Re-evaluate the supplied candidates and return a complete relationship "
-                "selection without changing use cases or specifications:",
+                "selection without changing use cases or specifications.",
+                f"Strategy: {strategy}.",
+                f"Repair history:\n{ledger.prompt_context()}",
                 *(f"- {finding}" for finding in review.findings),
             ]).strip()
-            relations = build(repair_feedback)
-            relations["repair_iters"] = 1
-            review = review_current("repair-1")
+            attempts += 1
+            try:
+                candidate = build(repair_feedback)
+                candidate_review = review_candidate(candidate, f"repair-{attempts}")
+            except Exception as exc:  # noqa: BLE001 - preserve the best accepted projection
+                waiting = transient_llm_error(exc)
+                ledger.record(
+                    RepairAttempt(
+                        stage="requirements.relationships",
+                        strategy_key=strategy,
+                        input_digest=input_digest,
+                        finding_keys_before=finding_keys,
+                        finding_keys_after=finding_keys,
+                        outcome="waiting_external" if waiting else "error",
+                        detail=f"{type(exc).__name__}: {exc}",
+                    )
+                )
+                ledger.status = "WAITING_EXTERNAL" if waiting else "STALLED"
+                ledger.stall_reason = str(exc)
+                break
+            candidate_keys = tuple(
+                sorted(
+                    {
+                        rules.rule_of(finding) or finding
+                        for finding in candidate_review.findings
+                    }
+                )
+            )
+            candidate_digest = stable_digest(candidate)
+            repeated = ledger.candidate_seen(
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+            )
+            improved = (
+                candidate_review.status == validator.OK
+                and not repeated
+                and repair_makes_progress(finding_keys, candidate_keys)
+            )
+            ledger.record(
+                RepairAttempt(
+                    stage="requirements.relationships",
+                    strategy_key=strategy,
+                    input_digest=input_digest,
+                    candidate_digest=candidate_digest,
+                    finding_keys_before=finding_keys,
+                    finding_keys_after=candidate_keys,
+                    outcome=(
+                        "repeated_candidate"
+                        if repeated
+                        else "clean"
+                        if improved and not candidate_keys
+                        else "improved"
+                        if improved
+                        else "no_improvement"
+                    ),
+                )
+            )
+            if not improved:
+                continue
+            relations = candidate
+            review = candidate_review
+        if review.status == validator.OK and not review.findings:
+            ledger.status = "COMPLETED"
         relations["relationship_issues"] = review.findings
         relations["semantic_status"] = review.status
         relations["unexamined_rules"] = list(review.unexamined)
+        relations["repair_iters"] = attempts
+        relations["repair_history"] = ledger.model_dump(mode="json")
         relations["repair_stopped"] = (
-            "clean" if review.status == validator.OK and not review.findings else "unresolved"
+            "clean"
+            if review.status == validator.OK and not review.findings
+            else "waiting_external"
+            if ledger.status == "WAITING_EXTERNAL"
+            else "stalled"
         )
     return {"relationships": relations, "phase": "relationships"}
 

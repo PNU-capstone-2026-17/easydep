@@ -685,7 +685,11 @@ def _model_review(
         "constraint_applicability": state.get("constraint_applicability") or {},
     }
     result = review_call(
-        rules.MODEL_USE_CASES, payload, prefix="model", source="use_cases.semantic_validator"
+        rules.MODEL_USE_CASES,
+        payload,
+        prefix="model",
+        source="use_cases.semantic_validator",
+        confirm_violations=True,
     )
     return {
         "issues": result.findings,

@@ -2,11 +2,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 from langgraph.graph import END, START, StateGraph
 
-from app.testing.schemas.testing_state import TestingState
-from app.testing.nodes.static_verification import static_verification_node
-from app.testing.nodes.iac_verification import iac_verification_node
 from app.testing.nodes.dynamic_functional import dynamic_functional_node
+from app.testing.nodes.iac_verification import iac_verification_node
 from app.testing.nodes.placeholders import dynamic_nfr_node
+from app.testing.nodes.static_verification import static_verification_node
+from app.testing.schemas.testing_state import TestingState
 
 
 def parallel_static_verification_node(state: TestingState) -> dict:
@@ -66,6 +66,7 @@ def initial_state(
     target_url: str = "",
     manifests_dir: str = "",
     iac_dir: str = "",
+    repair_history: dict | None = None,
 ) -> dict:
     """A fully populated input for :func:`create_testing_graph`.
 
@@ -80,6 +81,7 @@ def initial_state(
         "manifests_dir": manifests_dir,
         "iac_dir": iac_dir,
         "target_url": target_url,
+        "repair_history": repair_history or {},
         "current_node": "",
         "errors": [],
         "static_report": None,

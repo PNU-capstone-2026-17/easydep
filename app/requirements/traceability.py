@@ -64,6 +64,8 @@ class Traceability:
     capabilities_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: 요구 id → 그것을 커버한다고 적힌 명세 스텝들(`"UC1.3"`). UC보다 정밀한 추적.
     steps_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: 요구 id → 그것을 실현한다고 적힌 보장(`"UC1.success.1"`). 실행 스텝과 분리한다.
+    guarantees_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     # -- 되읽기 ------------------------------------------------------------
     def ucs_of(self, req_id: str) -> tuple[str, ...]:
@@ -198,11 +200,19 @@ def index(state: dict) -> Traceability:
                 values.append(str(use_case_id))
 
     steps: dict[str, list[str]] = {}
+    guarantees: dict[str, list[str]] = {}
     for spec in state.get("use_case_specs") or []:
         uc_id = spec.get("use_case_id", "?")
         for step in spec.get("main_scenario", []) or []:
             for rid in step.get("covered_req_ids", []) or []:
                 steps.setdefault(rid, []).append(f"{uc_id}.{step['step_number']}")
+        for guarantee_kind in ("success", "minimal"):
+            field_name = f"{guarantee_kind}_guarantee"
+            for position, guarantee in enumerate(spec.get(field_name, []) or [], 1):
+                for rid in guarantee.get("covered_req_ids", []) or []:
+                    guarantees.setdefault(rid, []).append(
+                        f"{uc_id}.{guarantee_kind}.{position}"
+                    )
 
     deployment: dict[str, list[str]] = {}
     for need_id, need in (state.get("deployment_needs") or {}).items():
@@ -240,6 +250,7 @@ def index(state: dict) -> Traceability:
         actors_of={k: tuple(v) for k, v in actors.items()},
         capabilities_of={k: tuple(v) for k, v in capabilities.items()},
         steps_of={k: tuple(v) for k, v in steps.items()},
+        guarantees_of={k: tuple(v) for k, v in guarantees.items()},
     )
 
 
@@ -277,6 +288,7 @@ def build_requirement_trace(state: dict, verdicts: list[dict] | None = None) -> 
             "constrains_use_cases": list(trace.ucs_constrained_by.get(requirement_id, ())),
             "modeled_as_constraint": requirement_id in trace.constraint_ids,
             "scenario_steps": list(trace.steps_of.get(requirement_id, ())),
+            "guarantees": list(trace.guarantees_of.get(requirement_id, ())),
             "actor_roles": list(trace.actors_of.get(requirement_id, ())),
             "deployment_needs": sorted(needs_by_req.get(requirement_id, [])),
             "capabilities": list(trace.capabilities_of.get(requirement_id, ())),

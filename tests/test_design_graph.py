@@ -109,9 +109,12 @@ _SEQUENCE = {
         "Participants": [
             {"name": "Customer", "alias": "Customer", "kind": "actor", "description": "", "source_class": ""},
             {"name": "OrderBoundary", "alias": "OrderBoundary", "kind": "boundary", "description": "", "source_class": "OrderBoundary"},
+            {"name": "OrderControl", "alias": "OrderControl", "kind": "control", "description": "", "source_class": "OrderControl"},
         ],
         "Messages": [
             {"source": "Customer", "target": "OrderBoundary", "label": "placeOrder(request:OrderRequest)", "type": "sync", "fragments": [], "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1"], "call_id": "UC1:main:1::call:1", "reply_to": "", "arguments": [{"parameter": "request", "type": "OrderRequest", "source_kind": "input", "source_ref": "UC1:main:1#request"}]},
+            {"source": "OrderBoundary", "target": "OrderControl", "label": "placeOrder(request:OrderRequest)", "type": "sync", "fragments": [], "use_case_ids": ["UC1"], "step_ids": ["UC1:main:2"], "call_id": "UC1:main:1::call:2", "reply_to": "", "arguments": [{"parameter": "request", "type": "OrderRequest", "source_kind": "call_result", "source_ref": "UC1:main:1::call:1#request"}]},
+            {"source": "OrderControl", "target": "OrderBoundary", "label": "OrderResult", "type": "return", "fragments": [], "use_case_ids": ["UC1"], "step_ids": ["UC1:main:2"], "call_id": "", "reply_to": "UC1:main:1::call:2", "arguments": []},
             {"source": "OrderBoundary", "target": "Customer", "label": "OrderResult", "type": "return", "fragments": [], "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1"], "call_id": "", "reply_to": "UC1:main:1::call:1", "arguments": []},
         ],
         "UnresolvedSteps": [],
@@ -128,11 +131,22 @@ _API = {
             "path": "/orders",
             "method": "post",
             "operation_id": "createOrder",
-            "request_schema": "Order",
-            "responses": [{"status": 201, "schema_name": "Order"}],
+            "request_schema": "OrderRequest",
+            "responses": [{"status": 201, "schema_name": "OrderResult"}],
+            "source_classes": ["OrderBoundary", "OrderControl"],
+            "use_case_ids": ["UC1"],
+            "control_binding": {
+                "control": "OrderControl",
+                "method": "placeOrder",
+                "arguments": [{"name": "request", "source": "$body"}],
+                "outcomes": [{"status": 201, "outcome": "created"}],
+            },
         }
     ],
-    "Schemas": [{"name": "Order", "fields": [{"name": "total", "type": "integer"}]}],
+    "Schemas": [
+        {"name": "OrderRequest", "fields": [{"name": "total", "type": "integer"}]},
+        {"name": "OrderResult", "fields": [{"name": "accepted", "type": "boolean"}]},
+    ],
 }
 _DEPLOYMENT = {
     "schemaVersion": "easydep-workload-graph",

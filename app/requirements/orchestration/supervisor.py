@@ -29,7 +29,8 @@ LLM 감독자로 바꾸고 싶으면 갈아끼울 자리는 `decide()` 하나다
    되돌리지 않고 **상위 단계로 올린다**. 같은 자리에서 또 실패할 것이 뻔한 재생성에 예산을
    쓰지 않는다 — 그게 이 층이 생긴 이유다.
 3. 여러 단계가 걸리면 **가장 위쪽 하나만** 고른다. 위를 고치면 아래는 cascade로 다시 돈다.
-4. `max_redo_rounds`로 묶는다. 되돌리기는 되돌리기를 부를 수 있어서, 상한이 없으면 안 끝난다.
+4. 같은 입력·finding에는 같은 전략을 다시 쓰지 않는다. 미사용 상위 전략이 없으면
+   ``stalled``로 드러내므로 숫자 예산 없이도 같은 실패를 반복하지 않는다.
 
 **이 층은 판단만 한다.** 실제 재실행은 그래프(엣지)나 cascade가 한다 — 판단을 순수하게
 두면 LLM 없이 시험할 수 있다.
@@ -40,12 +41,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import cast
 
-from app.requirements.config import settings
 from app.requirements.contracts.state import AgentState
 from app.requirements.knowledge import rules
 from app.requirements.modeling.feedback import feedback_for  # noqa: F401 - public facade
 from app.requirements.resources import cloud_contract
 from app.requirements.runtime import telemetry
+from app.validation import stable_digest
 
 ADVANCE = "advance"
 REDO = "redo"
@@ -190,6 +191,118 @@ def blocking_issues(state: AgentState, through: str = "relationships") -> list[s
             )
     return list(dict.fromkeys(issues))
 
+
+def blocking_findings(
+    state: AgentState, through: str = "relationships"
+) -> list[dict[str, object]]:
+    """정규 handoff 차단 사유를 공개용 구조로 투영한다."""
+    spec_targets = sorted(
+        str(use_case_id)
+        for use_case_id in (state.get("spec_report") or {}).get("issues_by_uc", {})
+    )
+    findings: list[dict[str, object]] = []
+    for message in blocking_issues(state, through=through):
+        if message.startswith("requirement source mapping"):
+            code, stage, repairable = "requirements.source", "requirements", False
+        elif message.startswith("resource contract"):
+            code, stage, repairable = "requirements.resource-contract", "resources", False
+        elif message.startswith("capability contract"):
+            code, stage, repairable = "requirements.capability-contract", "resources", False
+        elif message.startswith("model review"):
+            code, stage, repairable = "requirements.model-review", "use_cases", True
+        elif message.startswith("coverage"):
+            code, stage, repairable = "requirements.coverage", "use_cases", True
+        elif message.startswith("specification"):
+            code, stage, repairable = "requirements.specification", "specs", True
+        else:
+            code, stage, repairable = "requirements.relationship", "relationships", True
+        findings.append(
+            {
+                "code": code,
+                "stage": stage,
+                "target_ids": spec_targets if stage == "specs" else [],
+                "message": message,
+                "severity": "error",
+                "repairable": repairable,
+            }
+        )
+    return findings
+
+
+def repair_state(state: AgentState, through: str = "relationships") -> dict[str, object]:
+    """저장된 단계별 수리 이력을 공개용 상태 요약으로 만든다."""
+    blockers = blocking_findings(state, through=through)
+    histories = [
+        spec.get("repair_history")
+        for spec in state.get("use_case_specs") or []
+        if isinstance(spec.get("repair_history"), dict)
+    ]
+    relationships_history = (state.get("relationships") or {}).get("repair_history")
+    if isinstance(relationships_history, dict):
+        histories.append(relationships_history)
+    attempts = [
+        attempt
+        for history in histories
+        for attempt in history.get("attempts", [])
+        if isinstance(attempt, dict)
+    ]
+    redo = [entry for entry in state.get("redo_history") or [] if isinstance(entry, dict)]
+    statuses = {str(history.get("status") or "") for history in histories}
+    if not blockers:
+        status = "COMPLETED"
+    elif "WAITING_EXTERNAL" in statuses:
+        status = "WAITING_EXTERNAL"
+    elif blockers and not any(bool(blocker["repairable"]) for blocker in blockers):
+        status = "NEEDS_INPUT"
+    else:
+        # A local stage may be stalled while an upstream/cascade strategy is still available.
+        # The delegate_repair action owns that escalation, so the handoff remains actionable.
+        status = "ACTIVE"
+    recent = [*attempts, *redo][-5:]
+    rejected_candidates = sorted(
+        {
+            str(attempt.get("candidate_digest") or "")
+            for attempt in attempts
+            if attempt.get("outcome") not in {"improved", "clean"}
+            and attempt.get("candidate_digest")
+        }
+    )
+    return {
+        "status": status,
+        "attempt_count": len(attempts) + len(redo),
+        "accepted_count": sum(
+            attempt.get("outcome") in {"improved", "clean"} for attempt in attempts
+        ),
+        "recent_attempts": recent,
+        "tried_strategies": sorted(
+            {
+                str(entry.get("strategy_key") or "")
+                for entry in [*attempts, *redo]
+                if entry.get("strategy_key")
+            }
+        ),
+        "rejected_candidate_digests": rejected_candidates,
+        "finding_digest": stable_digest(
+            [
+                {
+                    "code": blocker["code"],
+                    "stage": blocker["stage"],
+                    "targets": blocker["target_ids"],
+                    "message": blocker["message"],
+                }
+                for blocker in blockers
+            ]
+        ),
+        "stall_reason": next(
+            (
+                str(history.get("stall_reason") or "")
+                for history in reversed(histories)
+                if history.get("stall_reason")
+            ),
+            "",
+        ),
+    }
+
 # `stages`는 **함수 안에서** import한다. 단계 함수들이 이 모듈의 `feedback_for`를 쓰는데
 # (steps → supervisor), `stages`는 그 단계 함수들을 import한다(stages → steps). 모듈 상단에서
 # 끌어오면 순환이 된다 — `feedback_gates.py`가 `feedback`을 지연 import하는 것과 같은 이유다.
@@ -232,6 +345,8 @@ class Decision:
     escalated: bool = False
     #: 이 판단의 근거가 된 규칙 id들.
     rule_ids: tuple[str, ...] = field(default_factory=tuple)
+    strategy_key: str = ""
+    input_digest: str = ""
 
 
 def _issues_by_owner(state: AgentState) -> dict[str, list[str]]:
@@ -253,8 +368,8 @@ def _issues_by_owner(state: AgentState) -> dict[str, list[str]]:
 def _gave_up(state: AgentState, owner: str) -> bool:
     """그 단계의 자기 반성 루프가 이미 포기했는가.
 
-    `clean`이 아닌 모든 값이 포기다 — `no_improvement`(재생성이 줄이지 못함),
-    `budget`(예산 소진), `error`(재생성 호출 실패), `not_generated`(최초 생성 실패).
+    `clean`이 아닌 모든 값이 포기다 — `stalled`(새 전략 없음),
+    `waiting_external`, `error`, `not_generated`(최초 생성 실패).
     """
     if owner == "specs":
         stopped = {
@@ -286,30 +401,43 @@ def _instruction(issues: list[str], *, escalated: bool) -> str:
 
 def decide(state: AgentState) -> Decision:
     """남은 결함을 보고 되돌릴지 정한다(LLM 없음, 순수 함수)."""
-    rounds = int(state.get("redo_rounds", 0) or 0)
-    budget = settings.max_redo_rounds
     grouped = _issues_by_owner(state)
     if not grouped:
         return Decision(reason="남은 결함이 없다")
-    if rounds >= budget:
-        return Decision(
-            reason=f"되돌리기 예산 소진({rounds}/{budget}) — 남은 결함은 리포트로만 표면화한다"
-        )
 
-    # 가장 위쪽 단계 하나만 고른다. 위를 고치면 아래는 cascade로 다시 돈다.
+    attempted = {
+        (str(entry.get("input_digest") or ""), str(entry.get("strategy_key") or ""))
+        for entry in state.get("redo_history") or []
+        if isinstance(entry, dict)
+    }
+    # 가장 위쪽의 아직 쓰지 않은 전략 하나만 고른다. 위를 고치면 아래는 cascade로 다시 돈다.
     targets = []
     for owner, issues in grouped.items():
         escalated = _gave_up(state, owner)
         destination = upstream_of(owner) if escalated else owner
-        if destination is None:
-            # 맨 위 단계가 포기했다 — 더 올릴 곳이 없다. 되돌려도 같은 자리다.
-            continue
-        targets.append((destination, owner, issues, escalated))
+        input_digest = stable_digest({"owner": owner, "issues": sorted(set(issues))})
+        while destination is not None:
+            strategy_key = f"repair:{owner}->{destination}"
+            if (input_digest, strategy_key) not in attempted:
+                targets.append(
+                    (
+                        destination,
+                        owner,
+                        issues,
+                        destination != owner,
+                        strategy_key,
+                        input_digest,
+                    )
+                )
+                break
+            destination = upstream_of(destination)
     if not targets:
-        return Decision(reason="되돌릴 상위 단계가 없다(맨 위 단계에서 포기했다)")
+        return Decision(reason="stalled: 같은 finding에 사용할 새 수리 전략이 없다")
 
     order = list(_editable_in_order())
-    destination, source, issues, escalated = min(targets, key=lambda t: order.index(t[0]))
+    destination, source, issues, escalated, strategy_key, input_digest = min(
+        targets, key=lambda target: order.index(target[0])
+    )
     rule_ids = tuple(
         dict.fromkeys(r for r in (rules.rule_of(i) for i in issues) if r)
     )
@@ -325,6 +453,8 @@ def decide(state: AgentState) -> Decision:
         reason=reason,
         escalated=escalated,
         rule_ids=rule_ids,
+        strategy_key=strategy_key,
+        input_digest=input_digest,
     )
 
 
@@ -376,6 +506,8 @@ def supervise_for(
             "reason": decision.reason,
             "escalated": decision.escalated,
             "rule_ids": list(decision.rule_ids),
+            "strategy_key": decision.strategy_key,
+            "input_digest": decision.input_digest,
         })
         return cast(AgentState, {
             "redo_route": group,

@@ -443,6 +443,10 @@ def _spec_stub(covered_req_ids: list[str] | None = None):
             covered_req_ids=covered_req_ids or [],
         )],
         extensions=[],
-        success_guarantee=["the order is recorded"],
-        minimal_guarantee=["no partial order is kept"],
+        success_guarantee=[
+            {"sentence": "the order is recorded", "covered_req_ids": []}
+        ],
+        minimal_guarantee=[
+            {"sentence": "no partial order is kept", "covered_req_ids": []}
+        ],
     )

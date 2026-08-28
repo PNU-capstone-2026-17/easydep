@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUp, Check, ChevronRight, Download, LoaderCircle, Paperclip, Play, RotateCcw, X, Zap } from '@lucide/svelte';
+  import { ArrowUp, Bot, Check, ChevronRight, Download, LoaderCircle, Paperclip, Play, RotateCcw, X, Zap } from '@lucide/svelte';
   import { downloadImplementationArtifacts } from '$lib/api';
   import type { WorkspaceCommand } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
@@ -33,7 +33,8 @@
   let resourceQuestion = $derived(
     result?.resource_question ?? result?.resource_questions?.[0] ?? null
   );
-  let requiresDesignRevision = $derived(Boolean(result?.requires_revision));
+  let requiresRevision = $derived(Boolean(result?.requires_revision));
+  let canDelegateRepair = $derived(Boolean(result?.can_delegate_repair));
   let implementationAction = $derived(
     command?.stage === 'implementation' &&
       ['approve_implementation', 'rerun_implementation', 'start_implementation'].includes(command.action)
@@ -135,17 +136,25 @@
             Continue without this optional input <ChevronRight size={13} />
           </Button>
         {/if}
-      {:else if command?.stage === 'design' && requiresDesignRevision}
+      {:else if requiresRevision}
+        {#if canDelegateRepair}
+          <Button size="sm" onclick={() => onAction('delegate_repair', { action_id: command?.command_id })} disabled={busy}>
+            <Bot size={13} /> Let the LLM repair it
+          </Button>
+        {/if}
         <span class="px-1 text-xs text-[#74520c]">
-          Review the draft findings and describe the required revision in the message box.
+          Review the blocking findings and describe a revision, or delegate the same repair action to the LLM.
         </span>
       {:else if command?.stage === 'design'}
         <Button size="sm" onclick={() => onAction('advance', { action_id: command?.command_id })} disabled={busy}>
           Continue to the next design step <ChevronRight size={13} />
         </Button>
       {:else if command?.stage === 'implementation' && result?.request_id}
-        <Button size="sm" onclick={() => onAction('approve_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id, delegate_repair_approvals: true })} disabled={busy}>
-          <Check size={13} /> Approve implementation
+        <Button size="sm" onclick={() => onAction('approve_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id, delegate_repair_approvals: false })} disabled={busy}>
+          <Check size={13} /> Approve this phase
+        </Button>
+        <Button size="sm" variant="outline" onclick={() => onAction('approve_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id, delegate_repair_approvals: true })} disabled={busy}>
+          <Bot size={13} /> Approve and delegate repairs
         </Button>
         <Button size="sm" variant="danger" onclick={() => onAction('reject_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id })} disabled={busy}>
           <X size={13} /> Reject

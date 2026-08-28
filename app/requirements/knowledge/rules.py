@@ -229,7 +229,9 @@ RULES: tuple[Rule, ...] = (
             "Every use-case name, goal qualifier, and actor-goal boundary must be supported "
             "by its linked functional requirements and accepted actor facts. Do not add a "
             "lifecycle state, prerequisite, outcome, or domain convention merely because it "
-            "would be plausible for that operation."
+            "would be plausible for that operation. A linked requirement may legitimately be "
+            "an absorbed subfunction, consequence, or postcondition of the same goal; do not "
+            "demand its removal when that trace path is explicit."
         ),
         citation="easydep convention (source-grounded use-case projection)",
         evidence="project-convention",

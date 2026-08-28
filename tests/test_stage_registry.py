@@ -135,9 +135,6 @@ def test_batch_runner_actually_runs_the_registry_order(monkeypatch):
     for stage in stages.PIPELINE:
         if hasattr(runner, stage.node):
             monkeypatch.setattr(runner, stage.node, recorder(stage.node))
-    # 되돌아가기가 끼어들면 순서에 재실행이 섞인다 — 정방향만 본다.
-    monkeypatch.setattr(runner.settings, "max_redo_rounds", 0)
-
     runner.run_pipeline([{"id": "FR1", "text": "x", "type": "FR"}])
 
     assert called == [s.node for s in stages.batch_order()]
