@@ -5,10 +5,10 @@ import json
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from app.config import settings
 from app.metrics import langsmith as langsmith_metrics
@@ -45,12 +45,10 @@ from .release import write_release_manifest
 from .repair import (
     apply_repair_directives,
     repair_task_ids,
-    repair_rounds,
     schedule_cross_phase_repair,
     schedule_source_conformance_repair,
 )
 from .traceability import build_rtm_traceability_map
-
 
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
 TRANSMISSION_SCHEMA = "external-transmission-request/v1alpha1"
@@ -839,9 +837,14 @@ def run_workflow_to_completion(
     *,
     approved_by: str,
     retry_failed: bool = False,
-    max_cycles: int = 100,
+    max_cycles: int | None = None,
 ) -> dict[str, object]:
-    """Run every phase and delegated history-aware repair from one approval."""
+    """한 번의 위임 승인으로 완료 또는 명확한 중단 상태까지 실행한다.
+
+    기본 실행에는 repair 횟수 상한이 없다. 각 repair 계획은 실패 지문과 사용한 전략을
+    저장하며, 같은 실패에 같은 전략을 다시 쓰게 되면 계획 단계에서 ``STALLED``가 된다.
+    ``max_cycles``는 테스트와 멤버 프로세스가 승인 한 주기만 실행할 때 쓰는 선택 사항이다.
+    """
     run_root = run_root.resolve()
     state = plan_workflow(run_root, spec)
     request_path = run_root / "reports" / "external-transmission-request.json"
@@ -865,13 +868,13 @@ def run_workflow_to_completion(
                 str(task["task_id"])
                 for task in manifest.get("implementation_tasks", [])
             ),
-            "maxRepairRounds": 3,
-            "maxTaskAttempts": 50,
         },
     }
     _write_json_atomic(approval_path, approval)
 
-    for _cycle in range(max_cycles):
+    cycle = 0
+    while True:
+        cycle += 1
         state = run_workflow(
             run_root,
             spec,
@@ -887,7 +890,10 @@ def run_workflow_to_completion(
             raise RuntimeError(
                 f"Run-to-completion stopped in {status}: {state.get('blockingReason')}"
             )
-    raise RuntimeError(f"Run-to-completion exceeded {max_cycles} workflow cycles")
+        if max_cycles is not None and cycle >= max_cycles:
+            raise RuntimeError(
+                f"Run-to-completion exceeded {max_cycles} workflow cycles"
+            )
 
 
 def _render_deployment_if_configured(
@@ -1157,6 +1163,8 @@ def _valid_delegated_execution_approval(
         return False
     plan_path = run_root / "reports" / "repair-plan.json"
     plan = _read_json(plan_path) if plan_path.is_file() else {}
+    if plan.get("status") == "STALLED":
+        return False
     planned_ids = {
         str(task_id)
         for entry in plan.get("entries", []) if isinstance(entry, dict)
@@ -1164,15 +1172,9 @@ def _valid_delegated_execution_approval(
     }
     current_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
     initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
-    if not current_ids or not (current_ids.issubset(initial_ids) or current_ids.issubset(planned_ids)):
-        return False
-    attempts = sum(int(task.get("attempts", 0)) for task in state.get("tasks", []))
-    return attempts < int(scope.get("maxTaskAttempts", 0)) and _repair_rounds(run_root) <= int(scope.get("maxRepairRounds", 0))
-
-
-def _repair_rounds(run_root: Path) -> int:
-    plan = _read_json(run_root / "reports" / "repair-plan.json") if (run_root / "reports" / "repair-plan.json").is_file() else {}
-    return repair_rounds(plan)
+    return bool(current_ids) and (
+        current_ids.issubset(initial_ids) or current_ids.issubset(planned_ids)
+    )
 
 
 def phase_for_task(task_type: str) -> str:
@@ -1339,4 +1341,4 @@ def _write_json_atomic(path: Path, value: dict[str, object]) -> None:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()

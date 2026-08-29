@@ -2630,12 +2630,16 @@ TestRestTemplate http; CourseRepository courseRepository;
                 json.dumps({"entries": [{"revision": 1, "ownerTaskIds": ["repair-control"], "revalidationTaskIds": []}]}),
                 encoding="utf-8",
             )
-            state = {"tasks": [{"taskId": "repair-control", "status": "PENDING", "attempts": 1}]}
+            state = {"tasks": [{"taskId": "repair-control", "status": "PENDING", "attempts": 100}]}
             request = write_transmission_request(run, state)
             approval = reports / "approval.json"
             approval.write_text(json.dumps({
                 "requestId": "initial-request", "approved": True, "delegatedRepairApprovals": True,
-                "delegationScope": {"runId": run.name, "inputHash": "input-hash", "initialTaskIds": [], "maxRepairRounds": 3, "maxTaskAttempts": 50},
+                "delegationScope": {
+                    "runId": run.name,
+                    "inputHash": "input-hash",
+                    "initialTaskIds": [],
+                },
             }), encoding="utf-8")
 
             accepted = validate_workflow_approval(approval, request, state, run)

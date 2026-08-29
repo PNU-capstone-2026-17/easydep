@@ -356,17 +356,25 @@ def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path
     approval = tmp_path / "approval.json"
     approval.write_text(json.dumps({
         "delegatedRepairApprovals": True,
-        "delegationScope": {"runId": run.name, "inputHash": "input-hash", "initialTaskIds": ["initial-wiring"], "maxRepairRounds": 3, "maxTaskAttempts": 50},
+        "delegationScope": {
+            "runId": run.name,
+            "inputHash": "input-hash",
+            "initialTaskIds": ["initial-wiring"],
+        },
     }), encoding="utf-8")
     record = {
         "run_root": str(run),
         "transmission_request": {"tasks": [{"taskId": "repair-api"}, {"taskId": "repair-e2e"}]},
-        "workflow": {"tasks": [{"attempts": 2}]},
+        "workflow": {"tasks": [{"attempts": 200}]},
     }
 
     assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
     record["transmission_request"] = {"tasks": [{"taskId": "initial-wiring"}]}
     assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
+    (reports / "repair-plan.json").write_text(
+        json.dumps({"status": "STALLED", "entries": []}), encoding="utf-8"
+    )
+    assert not ImplementationWorker._delegated_execution_is_active(record, str(approval))
 
 
 def test_cancel_terminates_active_process_and_preserves_cancelled_status(

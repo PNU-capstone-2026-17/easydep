@@ -30,7 +30,6 @@ from app.design.validation import design_readiness_report
 from app.repositories import artifact_repository
 
 from ..config import ImplementationSettings
-from ..workflows.repair import repair_rounds
 from .feedback import assess_feedback_eligibility
 from .prototype import PrototypeClient
 
@@ -556,8 +555,6 @@ class ImplementationWorker:
                     str(task["task_id"])
                     for task in manifest.get("implementation_tasks", [])
                 ),
-                "maxRepairRounds": 3,
-                "maxTaskAttempts": 50,
             },
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         record["status"] = "QUEUED"
@@ -773,6 +770,8 @@ class ImplementationWorker:
                 return False
             plan_path = run_root / "reports" / "repair-plan.json"
             plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path.is_file() else {}
+            if plan.get("status") == "STALLED":
+                return False
             entries = [item for item in plan.get("entries", []) if isinstance(item, dict)]
             planned_ids = {
                 str(task_id)
@@ -781,17 +780,9 @@ class ImplementationWorker:
             }
             request_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
             initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
-            attempts = sum(
-                int(task.get("attempts", 0))
-                for task in (record.get("workflow") or {}).get("tasks", [])
-                if isinstance(task, dict)
-            )
-            rounds = repair_rounds(plan)
             return (
                 bool(request_ids)
                 and (request_ids.issubset(initial_ids) or request_ids.issubset(planned_ids))
-                and rounds <= int(scope.get("maxRepairRounds", 0))
-                and attempts < int(scope.get("maxTaskAttempts", 0))
             )
         except (OSError, json.JSONDecodeError):
             return False

@@ -18,10 +18,6 @@ ONE_CYCLE_EXHAUSTED = "Run-to-completion exceeded 1 workflow cycles"
 CHECKPOINT_RUN_ENV = "EASYDEP_MEMBER_CHECKPOINT_RUN"
 
 
-class MemberPlannerExhausted(RuntimeError):
-    pass
-
-
 def _output_root(job_path: Path) -> tuple[dict[str, object], Path]:
     job = json.loads(job_path.read_text(encoding="utf-8"))
     output_root = Path(str(job.get("outputRoot", "generated/runs")))
@@ -108,22 +104,16 @@ def _run_member_workflow_with_current_approvals(
     job: object,
     *,
     approved_by: str,
-    max_approval_cycles: int = 32,
-    max_attempts_per_task: int | None = None,
     retry_failed: bool = False,
 ) -> dict[str, object]:
-    """새 transmission request마다 멤버의 공개 일괄 실행 경계를 다시 호출한다."""
+    """새 transmission request마다 멤버의 공개 일괄 실행 경계를 다시 호출한다.
+
+    횟수로 중단하지 않는다. 같은 실패와 같은 repair 전략이 반복되면 repair planner가
+    ``STALLED`` 상태를 기록하므로, 여기서는 새 요청이 있는 동안 승인만 갱신한다.
+    """
     from app.implementation.workflows.coordinator import run_workflow_to_completion
 
-    attempt_limit = max_attempts_per_task or max(
-        1,
-        int(os.getenv("IMPLEMENTATION_MAX_TASK_ATTEMPTS", "5")),
-    )
-    for _cycle in range(max_approval_cycles):
-        if _task_attempt_limit_exceeded(run_root, attempt_limit):
-            raise MemberPlannerExhausted(
-                f"Member task exceeded {attempt_limit} attempts"
-            )
+    while True:
         try:
             return run_workflow_to_completion(
                 run_root,
@@ -135,50 +125,9 @@ def _run_member_workflow_with_current_approvals(
         except PermissionError as error:
             if str(error) != APPROVAL_MISMATCH:
                 raise
-            if _repair_revision_exceeds_delegation(run_root):
-                raise RuntimeError(
-                    "Member workflow exceeded its delegated repair-round limit"
-                ) from error
         except RuntimeError as error:
             if str(error) != ONE_CYCLE_EXHAUSTED:
                 raise
-    raise RuntimeError(
-        f"Member workflow exceeded {max_approval_cycles} transmission approval cycles"
-    )
-
-
-def _repair_revision_exceeds_delegation(run_root: Path) -> bool:
-    reports = run_root / "reports"
-    approval_path = reports / "one-time-run-approval.json"
-    repair_path = reports / "repair-plan.json"
-    if not approval_path.is_file() or not repair_path.is_file():
-        return False
-    approval = json.loads(approval_path.read_text(encoding="utf-8"))
-    scope = approval.get("delegationScope") or {}
-    limit = int(scope.get("maxRepairRounds", 0))
-    plan = json.loads(repair_path.read_text(encoding="utf-8"))
-    revision = max(
-        (
-            int(entry.get("revision", 0))
-            for entry in plan.get("entries", [])
-            if isinstance(entry, dict)
-        ),
-        default=0,
-    )
-    return revision > limit
-
-
-def _task_attempt_limit_exceeded(run_root: Path, limit: int) -> bool:
-    state_path = run_root / "reports" / "workflow-state.json"
-    if not state_path.is_file():
-        return False
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    return any(
-        int(task.get("attempts", 0)) >= limit
-        and task.get("status") != "SUCCEEDED"
-        for task in state.get("tasks", [])
-        if isinstance(task, dict)
-    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -220,13 +169,6 @@ def main(argv: list[str] | None = None) -> int:
                 approved_by="EasyDep orchestration explicit batch approval",
                 retry_failed="--retry-failed-generation" in flags,
             )
-        except MemberPlannerExhausted as error:
-            workflow = workflow_status(run_root)
-            workflow = {
-                **workflow,
-                "status": "NEEDS_PLANNER",
-                "blockingReason": str(error),
-            }
         except RuntimeError:
             # NEEDS_PLANNER means the member workflow exhausted its implemented
             # planners. Preserve its completed work so an explicitly configured
