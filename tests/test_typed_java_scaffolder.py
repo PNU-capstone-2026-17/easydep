@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from app.implementation.generation.java_scaffold import (
     JavaScaffoldInput,
+    java_type,
     render_java_scaffold,
 )
 
@@ -73,6 +74,7 @@ def _scaffold_payload() -> dict[str, object]:
                         "createdAt : datetime",
                         "tags : list<String>",
                         "note : optional<String>",
+                        "creditHours : optional<integer>",
                         "status : OrderStatus",
                     ],
                     "operations": [
@@ -179,10 +181,26 @@ def test_maps_scalar_collection_optional_and_time_types() -> None:
         r"\bOffsetDateTime\s+createdAt\b",
         r"\bList<String>\s+tags\b",
         r"\bOptional<String>\s+note\b",
+        r"\bOptional<Integer>\s+creditHours\b",
     )
     assert all(re.search(pattern, entity) for pattern in expected_entity_declarations)
     assert re.search(r"\bList<UUID>\s+itemIds\b", request)
     assert re.search(r"\bOffsetDateTime\s+requestedAt\b", request)
+
+
+@pytest.mark.parametrize(
+    ("design_type", "expected"),
+    [
+        ("optional<integer>", "Optional<Integer>"),
+        ("list<int>", "List<Integer>"),
+        ("set<boolean>", "Set<Boolean>"),
+        ("map<string, double>", "Map<String,Double>"),
+    ],
+)
+def test_boxes_primitive_types_inside_java_generics(
+    design_type: str, expected: str
+) -> None:
+    assert java_type(design_type) == expected
 
 
 def test_same_typed_input_produces_byte_identical_files() -> None:
@@ -195,6 +213,17 @@ def test_same_typed_input_produces_byte_identical_files() -> None:
     assert {path: text.encode("utf-8") for path, text in first.items()} == {
         path: text.encode("utf-8") for path, text in second.items()
     }
+
+
+def test_allows_api_schema_with_the_same_domain_name_as_bce_entity() -> None:
+    """OpenAPI models and BCE entities are emitted into distinct packages."""
+    payload = _scaffold_payload()
+    payload["apiModel"] = {"Schemas": [{"name": "Order"}]}
+
+    request = JavaScaffoldInput.model_validate(payload)
+    files = render_java_scaffold(request)
+
+    assert "public class Order" in _java_source(files, "Order")
 
 
 @pytest.mark.parametrize(
