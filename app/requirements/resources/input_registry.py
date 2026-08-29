@@ -59,6 +59,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 
 from app.cloudkb.depkb.closure import closure
+from app.cloudkb.depkb.scope import VM_ANCHOR_TYPES
 from app.requirements.resources import resource_contract as _contract
 
 #: 계층 — **없으면 못 재는가(필수) · 판정 하나가 닫히는가(권고) · 계획에 실릴
@@ -293,13 +294,10 @@ def anchors_for(csp: str) -> tuple[str, ...]:
     **claims에서 뽑는다**(주체 집합 중 연쇄 의존 자원 계산이 가능한 것). 손으로 적으면 다음
     실측에서 어긋나고, 그건 이 저장소가 반복해서 물린 자리다.
     """
-    import json
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parent / "cloudkb" / "depkb" / "claims.json"
-    doc = json.loads(path.read_text(encoding="utf-8"))
     out = []
-    for subject in sorted({c["subject"] for c in doc["claims"] if c["csp"] == csp}):
+    # closure가 claims.json의 읽기와 검증을 한 곳에서 담당한다. 여기서 같은 파일을 다시
+    # 찾아 읽으면 패키지 이동 때 경로가 어긋나고 검증 규칙도 두 벌이 된다.
+    for subject in sorted(VM_ANCHOR_TYPES):
         try:
             closure(subject, csp)
         except KeyError:

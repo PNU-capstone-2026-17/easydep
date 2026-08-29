@@ -38,19 +38,22 @@ application requirements
 - Kubernetes·컨테이너 프리셋 중심이었던 `sizingkb`
 - 관리형 서비스 가격 파서와 IBM 성능 파서
 
-과거 조사 문서는 [`document/archive/`](document/archive/)에 보존한다. 현재 문서 상태는 [`document/README.md`](document/README.md)를 따른다.
+과거 조사 문서는 [`document/archive/`](document/archive/)에 참고 자료로 남아 있다. 현재
+문서 상태는 [`document/README.md`](document/README.md)를 따른다.
 
-## 데이터와 연구 증거의 경계
+## 런타임 데이터 경계
 
 - `data/*.json.gz`는 검증 후 커밋한 런타임 데이터이며 기본 실행에서 우선한다.
 - `output/`과 `.cache/`는 로컬 재빌드 작업공간이다. 현행 모델의 일부가 아니며 커밋하지 않는다.
-- `depkb/native/`는 CSP별 공식 원천에서 추출한 경계와 관계 검토 자료를 보존한다.
-- `depkb/replications/`와 `document/archive/`는 재현 결과와 과거 조사 기록을 보존한다.
-  일회성 CSP 실험 스크립트와 원본 응답은 제품 코드에 포함하지 않는다.
-- `document/archive/`는 비권위 과거 기록이다.
+- `depkb/claims.json`은 요구사항 단계가 읽는 Docker-on-VM 의존관계다.
+- `provider_primitives.py`는 설계 단계가 ResourcePlan을 만들 때 사용하는 CSP별 리소스 이름과
+  연결 규칙이다.
+- `depkb/native/`의 JSON, `depkb/replications/`와 `document/archive/`는 조사 참고 자료로
+  남아 있지만 제품 Python 실행 경로에서는 읽지 않는다.
+- 원천 수집·검토·반복 실험 Python 코드는 제품 패키지에 포함하지 않는다.
 
-실제 프로비저닝 계획은 선택된 CSP의 provider-native DepKB와 capability 실현 카탈로그를
-사용한다. CSP 사이에 같은 리소스 ID가 존재한다고 가정하지 않는다.
+실제 프로비저닝 계획은 검토된 claims와 CSP별 provider primitive를 사용한다. CSP 사이에
+같은 리소스 ID가 존재한다고 가정하지 않는다.
 
 ## 아직 구현하지 않은 부분
 
@@ -58,7 +61,7 @@ application requirements
 - 디스크 크기·IOPS 같은 VM 연계 리소스의 별도 용량 제약 KB
 - 애플리케이션 부하에서 도출한 최소 용량을 사용하는 종단 RQ3 평가
 
-`costkb`와 `perfkb`는 현재 `app/implementation/planning/vm_selection.py`에 연결되어 있다.
+`costkb`와 `perfkb`는 VM 후보를 비교하는 공개 조회 API를 제공한다.
 다만 이 값들은 사용자가 명시한 최소 요구량이 있을 때만 후보 필터에 사용할 수 있다.
 근거가 없는 최소 사양을 시스템이 임의로 추정하지 않는다.
 
@@ -66,16 +69,14 @@ application requirements
 
 `app.cloudkb`는 클라우드 사실과 그 사실에서 파생한 후보·의존관계만 소유한다.
 
-- **입력:** 커밋된 `data/*.json.gz`와 `depkb/native/`의 공급자 원천 증거, 그리고
-  명시적으로 요청된 재빌드 작업의 경로·공급자 응답.
+- **입력:** 커밋된 `data/*.json.gz`, `depkb/claims.json`과 provider primitive.
 - **출력:** 검증된 카탈로그, 의존관계·비용·성능 조회 결과, `ResourcePlan`에 넘길
-  공급자별 후보. 반복 검증에 필요한 연구 결과만 `replications/`에 남긴다.
+  공급자별 후보.
 - **부수효과:** 기본 조회는 저장소의 번들 데이터를 읽기만 한다. fetch/rebuild CLI가
   요청된 경우에만 네트워크를 읽고 `output/`·`.cache/`에 작업 산출물을 쓴다.
 - **사용하면 안 되는 import:** `app.requirements`, `app.design`, `app.implementation`을 import하지
   않는다. 애플리케이션 단계의 상태·프롬프트·LLM 호출을 알지 못하며, 패키지 내부
   연결은 `app.cloudkb`의 canonical 경로를 사용한다.
-- **실패 조건:** 번들·스키마가 없거나 손상됨, 공급자 응답이 계약을 위반함, 고정된
-  증거와 재빌드 결과가 불일치함, 또는 네트워크 fetch가 실패하면 명시적인 검증/
-  fetch 오류로 중단한다. 근거 없는 최소 용량이나 공급자 간 ID 동일성은 추정하지
-  않는다.
+- **실패 조건:** 번들·스키마가 없거나 손상됨, 공급자 응답이 계약을 위반함, 고정된 데이터와
+  재빌드 결과가 불일치함, 또는 요청한 네트워크 fetch가 실패하면 명시적인 오류로 중단한다.
+  근거 없는 최소 용량이나 공급자 간 ID 동일성은 추정하지 않는다.

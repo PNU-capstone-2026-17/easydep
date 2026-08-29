@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from app.cloudkb.kbcommon import artifact
 
 

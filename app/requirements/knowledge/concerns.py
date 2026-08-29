@@ -10,7 +10,7 @@
 
 한 파일에 두면 심각도 어휘가 곧 갈린다. "위반했다"와 "안 적혔다"를 같은 목록에 두면
 검증 프롬프트가 후자를 지적으로 바꾼다 — 그러면 사용자가 안 쓴 것이 전부 결함이 되고
-오탐이 대부분이 된다(`app/cloudkb/document/archive/cloud-native-requirements.md` §6의 판단).
+오탐이 대부분이 된다.
 
 형식은 checklist-based reading(CBR)이다 — 질문 목록을 들고 요구사항을 읽어 **누락**을
 찾는다. 그래서 항목이 규범문이 아니라 질문문이고, 미충족이 결함이 아니라 인계다.
@@ -33,8 +33,8 @@
     optional-link    identity·공인 주소·추가 디스크 등을 생략해도 VM은 생성된다
     function         연결을 바꾸면 VM은 남아도 도달성·API 접근 기능이 사라진다
 
-거부(required) 계열은 관심사가 아니다 — 거부는 "환경이 대신 정함"이 아니라 계획이
-처리할 제약이고, 그쪽은 `app/cloudkb/infra_planning`이 이미 소비한다.
+거부(required) 계열은 관심사가 아니다 — 거부는 "환경이 대신 정함"이 아니라 이후 설계가
+처리할 제약이며, DepKB의 `closure()`가 의존관계와 선택 조건을 제공한다.
 
 **군집은 우리 구성이다.** 관측 21좌표를 결정 4개로 묶은 것은 우리 판단이고, 그렇다고
 표시한다. 관측 자체는 실측이다(전 좌표가 `claims.json`에 실재해야 하며
@@ -66,7 +66,7 @@
 
 `spec.black-box-no-internal-components`·`spec.no-protocol-mechanics`가 명세에 내부
 컴포넌트·프로토콜을 금지한다. 관심사는 NFR 층과 나란한 별도 산출물에 살고
-유스케이스 명세는 손대지 않는다(`app/cloudkb/document/archive/cloud-native-requirements.md` §5).
+유스케이스 명세는 손대지 않는다.
 """
 from __future__ import annotations
 
