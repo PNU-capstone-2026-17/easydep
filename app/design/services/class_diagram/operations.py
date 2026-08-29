@@ -112,6 +112,12 @@ expose it through the Boundary signature. If later work needs data discovered
 by an earlier operation, return that data in a declared result type. Keep
 generated clocks, sequence positions, and defaults inside their owning
 operation instead of inventing caller inputs.
+An authenticated precondition is not a caller value source by itself. Do not
+invent an identity lookup such as `readByExternalId(criteria)` merely because
+the actor is authenticated, and do not introduce a criteria DTO whose value
+is absent from the preceding flow. Reuse an existing request/result field, or
+omit the lookup when the receiving operation can resolve the current actor
+from its established session context.
 When an Entity mutation applies actor-supplied data, consume a compatible
 upstream request or details value. Do not make that mutation parameterless
 merely to evade provenance.
@@ -392,10 +398,15 @@ def _canonicalize_step_ownership(
     candidate: dict[str, Any],
     inventory: dict[str, Any],
     actor_entry_refs: set[str],
+    allowed_step_ids: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """추가 LLM 호출 없이 actor-entry step의 고정 Boundary 소유 규칙을 투영한다."""
 
     normalized = deepcopy(candidate)
+    allowed_refs = set(allowed_step_ids)
+    allowed_use_cases = {
+        ref.split(":", 1)[0] for ref in allowed_refs
+    }
     stereotypes = {
         class_name(item): text(item.get("stereotype")).casefold()
         for item in inventory.get("Classes") or [] if isinstance(item, dict)
@@ -410,6 +421,12 @@ def _canonicalize_step_ownership(
             if not isinstance(operation, dict):
                 continue
             owned = deepcopy(operation)
+            if allowed_refs:
+                owned["stepRefs"] = [
+                    ref for ref in owned.get("stepRefs") or []
+                    if text(ref) in allowed_refs
+                    or text(ref).split(":", 1)[0] not in allowed_use_cases
+                ]
             if stereotypes.get(owner) != "boundary":
                 owned["stepRefs"] = [
                     ref for ref in owned.get("stepRefs") or []
@@ -509,7 +526,7 @@ def _propose_fragment(
     # 5. actor entry는 Boundary만 소유한다. Control/Entity의 중복 stepRef를 제거한 뒤
     # 근거가 사라진 placeholder operation도 함께 제외한다.
     return _canonicalize_step_ownership(
-        candidate, inventory, actor_entry_refs,
+        candidate, inventory, actor_entry_refs, allowed_step_ids,
     )
 
 

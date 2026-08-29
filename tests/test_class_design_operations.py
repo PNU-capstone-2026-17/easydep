@@ -17,6 +17,7 @@ from app.design.services.class_diagram.validation.operations import (
     OPERATION_CHECKS,
     OperationContext,
 )
+from app.design.services.class_diagram.operations import _canonicalize_step_ownership
 from app.validation import run_checks
 from tests.class_design_fixtures import (
     call_plan,
@@ -313,6 +314,71 @@ def test_only_boundary_operation_may_trace_an_actor_entry_step():
     )
 
     assert any("only Boundary may own an actor entry step" in finding.message for finding in report.findings)
+
+
+def test_actor_only_execution_slice_does_not_require_control_or_entity():
+    raw = {
+        "use_cases": [{"id": "UC1", "name": "Review", "primary_actor": "Member"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "main_scenario": [{
+                "step_number": 1,
+                "subject_ref": "Member",
+                "sentence": "Member reviews the displayed result.",
+            }],
+            "extensions": [],
+        }],
+        "relationships": {"includes": [], "extends": []},
+    }
+    index = build_scenario_index(raw)
+    inventory = {
+        "Classes": [{
+            "className": "ReviewBoundary",
+            "stereotype": "Boundary",
+            "useCaseIds": ["UC1"],
+        }],
+        "DataTypes": [],
+        "Relationships": [],
+    }
+    fragment = {
+        "DataTypes": [],
+        "Classes": [{
+            "className": "ReviewBoundary",
+            "operations": [{
+                "name": "review",
+                "parameters": [],
+                "returnType": "void",
+                "stepRefs": ["UC1:main:1"],
+            }],
+        }],
+    }
+    report = run_checks(
+        OPERATION_CHECKS,
+        fragment,
+        OperationContext(index, inventory, index.use_case("UC1"), ("UC1:main:1",), ("UC1:main:1",)),
+        parallel=True,
+    )
+    assert not report.findings
+
+
+def test_operation_normalization_discards_refs_outside_execution_slice():
+    candidate = {
+        "DataTypes": [],
+        "Classes": [{
+            "className": "RequestBoundary",
+            "operations": [{
+                "name": "review",
+                "parameters": [],
+                "returnType": "void",
+                "stepRefs": ["UC1:main:1", "UC1:main:2"],
+            }],
+        }],
+    }
+    inventory = {"Classes": [{"className": "RequestBoundary", "stereotype": "Boundary"}]}
+    normalized = _canonicalize_step_ownership(
+        candidate, inventory, set(), ("UC1:main:2",),
+    )
+    assert normalized["Classes"][0]["operations"][0]["stepRefs"] == ["UC1:main:2"]
 
 
 def test_operation_contract_rejects_duplicate_parameter_names():

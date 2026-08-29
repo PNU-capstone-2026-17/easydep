@@ -51,7 +51,7 @@ _JAVA_CONTRACT_TYPES = frozenset({
     "short", "Short", "int", "Integer", "long", "Long", "float", "Float", "double",
     "Double", "void", "Void", "List", "Set", "Map", "Collection", "Iterable",
     "Optional", "Page", "UUID", "Date", "LocalDate", "LocalDateTime", "OffsetDateTime",
-    "Instant", "BigDecimal",
+    "LocalTime", "Instant", "BigDecimal",
 })
 
 

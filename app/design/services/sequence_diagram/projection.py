@@ -194,6 +194,7 @@ def _project_collaboration(
     operations: dict[str, dict[str, Any]],
     use_case_id: str,
     fragments: dict[str, dict[str, str]],
+    index: ScenarioIndex,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """call tree 하나를 깊이 우선 call/return 메시지와 participant로 펼친다.
 
@@ -224,6 +225,37 @@ def _project_collaboration(
         else:
             roots.append(call_id)
         seen.add(call_id)
+
+    # Keep conditional extension calls at their branch point. Collaboration plans
+    # may list a normal lookup before an extension lookup even though the extension
+    # branches from an earlier main step; preserving raw plan order then produces a
+    # sequence diagram whose opt block is chronologically late.
+    use_case = index.use_case(use_case_id)
+    extension_anchors = {
+        text(extension.get("label")): int(extension.get("branch_step"))
+        for extension in use_case.specification.get("extensions") or []
+        if isinstance(extension, dict)
+        and text(extension.get("label"))
+        and isinstance(extension.get("branch_step"), int)
+    }
+    step_order = {step.id: step.order for step in use_case.steps}
+
+    def call_order(call: dict[str, Any]) -> tuple[float, int]:
+        refs = [text(ref) for ref in call.get("stepRefs") or []]
+        positions: list[float] = []
+        for ref in refs:
+            if ":extension:" in ref:
+                label = ref.split(":extension:", 1)[1].split(":", 1)[0]
+                if label in extension_anchors:
+                    positions.append(extension_anchors[label] - 0.5)
+            elif ref in step_order:
+                positions.append(float(step_order[ref]))
+        return (min(positions, default=float("inf")), calls.index(call))
+
+    for parent, child_ids in children.items():
+        child_calls = [call_by_id[child_id] for child_id in child_ids]
+        child_calls.sort(key=call_order)
+        children[parent] = [text(call.get("callId")) for call in child_calls]
     if len(roots) != 1:
         raise ValueError("one execution collaboration requires one root call")
 
@@ -540,7 +572,7 @@ def project_sequence_model(
             raise ValueError("collaboration has no useCaseIds")
         owner = scope[0]
         messages, participants = _project_collaboration(
-            collaboration, operations, owner, fragments.get(owner, {}),
+            collaboration, operations, owner, fragments.get(owner, {}), index,
         )
         _merge_diagram(
             diagrams, owner, index.use_case(owner).name, messages, participants,
@@ -557,7 +589,7 @@ def project_sequence_model(
         scoped = _scoped_include_collaboration(use_case.id, source) if source else None
         if scoped:
             messages, participants = _project_collaboration(
-                scoped, operations, use_case.id, fragments.get(use_case.id, {}),
+                scoped, operations, use_case.id, fragments.get(use_case.id, {}), index,
             )
             _merge_diagram(diagrams, use_case.id, use_case.name, messages, participants)
     missing = [use_case.id for use_case in index.use_cases if use_case.id not in diagrams]

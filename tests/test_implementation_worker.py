@@ -58,6 +58,18 @@ def test_declared_bce_enum_satisfies_signature_and_field_references() -> None:
     assert _missing_bce_contract_types(puml) == []
 
 
+def test_java_time_local_time_is_allowed_in_bce_signatures() -> None:
+    puml = """
+    @startuml
+    class ScheduleControl <<Control>> {
+      + findByTime(time : LocalTime): String
+    }
+    @enduml
+    """
+
+    assert _missing_bce_contract_types(puml) == []
+
+
 def test_control_return_does_not_reject_documented_openapi_error_outcomes() -> None:
     class_diagram = """
     @startuml

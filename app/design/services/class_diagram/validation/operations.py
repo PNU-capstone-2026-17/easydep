@@ -41,6 +41,18 @@ def _allowed_operation_steps(context: OperationContext) -> set[str]:
     return set(context.allowed_step_ids) or {step.id for step in context.use_case.steps}
 
 
+def _requires_system_operation(context: OperationContext) -> bool:
+    """Actor-only slices represent observation/acknowledgement, not system work."""
+
+    allowed = _allowed_operation_steps(context)
+    actor_steps = {
+        group.actor_step
+        for group in context.index.groups
+        if group.use_case_id == context.use_case.id and group.actor_step
+    }
+    return bool(allowed - actor_steps)
+
+
 def _fragment_operations(
     fragment: dict[str, Any], inventory: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -222,7 +234,7 @@ def _operation_coverage(
         findings.append(Finding(
             "class.operation.coverage", f"operations do not cover steps: {missing}", context.use_case.id,
         ))
-    if "Control" not in stereotypes:
+    if _requires_system_operation(context) and "Control" not in stereotypes:
         findings.append(Finding(
             "class.operation.coverage", "use case requires a Control operation", context.use_case.id,
         ))
@@ -259,6 +271,11 @@ def _operation_groups(
             ))
     for group in groups:
         refs = set(group.step_ids)
+        # A trailing actor-only step (for example, reviewing an already displayed
+        # result) has no system execution to orchestrate. Requiring a Control here
+        # would be impossible after delegated actor-entry refs are removed.
+        if group.actor_step and not (refs - {group.actor_step}):
+            continue
         if group.actor_step:
             owners = [
                 operation for operation in operations
@@ -271,7 +288,7 @@ def _operation_groups(
                     "each actor entry must be owned by exactly one Boundary operation",
                     group.id,
                 ))
-        if not any(
+        if _requires_system_operation(context) and not any(
             operation["stereotype"] == "Control"
             and refs & set(operation.get("stepRefs") or [])
             for operation in operations
@@ -317,7 +334,7 @@ def _operation_groups(
         operation["className"]
         for operation in operations if operation["stereotype"] == "Entity"
     }
-    if scoped_entities and not used_entities:
+    if _requires_system_operation(context) and scoped_entities and not used_entities:
         findings.append(Finding(
             "class.operation.execution-groups",
             "a use case with persistent-state candidates requires an Entity operation",
