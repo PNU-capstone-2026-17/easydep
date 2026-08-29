@@ -205,7 +205,7 @@ def test_structured_llm_error_names_the_output_schema():
     assert events[0]["elapsedSeconds"] >= 0
 
 
-def test_streaming_structured_output_records_progress_and_validates_schema():
+def test_streaming_structured_output_records_progress_and_validates_schema(monkeypatch):
     class Result(BaseModel):
         answer: str
 
@@ -231,6 +231,8 @@ def test_streaming_structured_output_records_progress_and_validates_schema():
     completions = type("Completions", (), {"create": lambda *_args, **_kwargs: chunks})()
     client = type("Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
     observation = {}
+    from app.config import settings
+    monkeypatch.setattr(settings, "llm_capture_response_content", True)
 
     parsed = stream_structured_response(
         client, [{"role": "user", "content": "x"}], Result, observation
@@ -244,6 +246,8 @@ def test_streaming_structured_output_records_progress_and_validates_schema():
     assert observation["ttftSeconds"] is not None
     assert observation["firstContentSeconds"] is not None
     assert observation["finishReasons"] == ["stop"]
+    assert observation["responseContent"] == '{"answer":"ok"}'
+    assert observation["reasoningContent"] == "thinking"
 
 
 def test_streaming_structured_output_accepts_an_explicit_completion_limit(monkeypatch):
@@ -429,6 +433,7 @@ def test_invalid_structured_output_records_bounded_content_samples_only_in_exper
     observation = {}
     from app.config import settings
     monkeypatch.setattr(settings, "easydep_experiment_session", "diagnostic")
+    monkeypatch.setattr(settings, "llm_capture_response_content", False)
     monkeypatch.setattr(settings, "llm_failure_response_sample_chars", 16)
 
     with pytest.raises(Exception):
@@ -460,6 +465,8 @@ def test_invalid_structured_output_does_not_record_content_without_opt_in(monkey
         "Client", (), {"chat": type("Chat", (), {"completions": completions})()}
     )()
     observation = {}
+    from app.config import settings
+    monkeypatch.setattr(settings, "llm_capture_response_content", False)
     monkeypatch.delenv("LLM_FAILURE_RESPONSE_SAMPLE_CHARS", raising=False)
 
     with pytest.raises(Exception):
@@ -468,6 +475,44 @@ def test_invalid_structured_output_does_not_record_content_without_opt_in(monkey
         )
 
     assert not any(key.startswith("failureContent") for key in observation)
+
+
+def test_invalid_response_keeps_full_content_reasoning_and_validation_error(monkeypatch):
+    """schema 실패 때에도 실제 NIM 응답과 거절 이유를 함께 확인할 수 있다."""
+
+    class Result(BaseModel):
+        answer: str
+
+    invalid = '{"answer": 42}'
+    choice = type("Choice", (), {
+        "delta": type("Delta", (), {
+            "content": invalid,
+            "reasoning_content": "answer should be concise",
+        })(),
+        "finish_reason": "stop",
+    })()
+    completions = type(
+        "Completions",
+        (),
+        {"create": lambda *_args, **_kwargs: [
+            type("Chunk", (), {"choices": [choice]})()
+        ]},
+    )()
+    client = type(
+        "Client", (), {"chat": type("Chat", (), {"completions": completions})()}
+    )()
+    observation = {}
+    from app.config import settings
+    monkeypatch.setattr(settings, "llm_capture_response_content", True)
+
+    with pytest.raises(Exception):
+        stream_structured_response(
+            client, [{"role": "user", "content": "x"}], Result, observation
+        )
+
+    assert observation["responseContent"] == invalid
+    assert observation["reasoningContent"] == "answer should be concise"
+    assert observation["schemaValidationErrors"][0]["loc"] == ("answer",)
 
 
 def test_timing_capture_propagates_to_concurrent_context_bound_workers():

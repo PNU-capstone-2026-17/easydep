@@ -16,7 +16,10 @@ from app.design.services.sequence_diagram.projection import (
     project_sequence_model,
     sequence_findings,
 )
-from app.design.services.sequence_diagram.validation import validate_sequence_model
+from app.design.services.sequence_diagram.validation import (
+    sequence_flow_order,
+    validate_sequence_model,
+)
 from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
@@ -170,3 +173,46 @@ def test_collection_validation_rejects_return_before_its_call(monkeypatch):
     assert "sequence.call-return-links" in {
         finding.rule_id for finding in report.findings
     }
+
+
+def test_flow_order_accepts_extension_result_shared_with_branch_call():
+    """분기 단계와 extension을 함께 추적한 한 호출은 늦은 재실행이 아니다."""
+
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [
+                    {"step_number": 1},
+                    {"step_number": 2},
+                    {"step_number": 3},
+                ],
+                "extensions": [{
+                    "label": "2a",
+                    "branch_step": 2,
+                    "handling_steps": [{"sub_step": "2a1"}],
+                }],
+            }],
+        },
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [
+            {
+                "source": "Actor",
+                "target": "Boundary",
+                "type": "sync",
+                "label": "submit()",
+                "step_ids": ["UC1:main:1", "UC1:main:2", "UC1:extension:2a:2a1"],
+            },
+            {
+                "source": "Boundary",
+                "target": "Control",
+                "type": "sync",
+                "label": "continueFlow()",
+                "step_ids": ["UC1:main:3"],
+            },
+        ],
+    }
+
+    assert sequence_flow_order(model, state) == []

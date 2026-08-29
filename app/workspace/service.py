@@ -71,16 +71,16 @@ TERMINAL_JOB_STATUSES = {
     "NEEDS_PLANNER",
 }
 
-# 설계 실험에서는 schema 오류를 분석하기 위해 응답 앞뒤 일부를 timing collector에
-# 임시로 넣을 수 있다. Workspace event는 브라우저와 평가 산출물에 오래 남으므로
-# 그 문자열 표본은 공개 경계를 넘기지 않고, 길이·hash 같은 수치 정보만 전달한다.
+# 예전의 길이 제한 표본은 진단용 내부 값으로만 남긴다. 현재 개발 기본 설정은 실제 JSON
+# 응답과 reasoning을 별도 ``responseContent``·``reasoningContent`` field로 기록하므로,
+# Workspace event에서도 같은 실행의 원문을 확인할 수 있다.
 _PRIVATE_DESIGN_TIMING_FIELDS = frozenset(
     {"failureContentPrefix", "failureContentSuffix"}
 )
 
 
 def _public_design_timing_event(event: Mapping[str, Any]) -> dict[str, Any]:
-    """설계 timing 한 건에서 LLM 응답 문자열 표본을 제거한다."""
+    """설계 timing 한 건을 Workspace event로 옮기고 예전 중복 표본만 제거한다."""
     return {
         key: value
         for key, value in event.items()

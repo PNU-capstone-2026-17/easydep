@@ -315,6 +315,7 @@ def stream_structured_response(
     max_inter_event = 0.0
     event_count = 0
     content_parts: list[str] = []
+    reasoning_parts: list[str] = []
     content_characters = 0
     reasoning_characters = 0
     finish_reasons: list[str] = []
@@ -373,6 +374,8 @@ def stream_structured_response(
             if content:
                 content_parts.append(content)
                 content_characters += len(content)
+            if reasoning:
+                reasoning_parts.append(reasoning)
             reasoning_characters += len(reasoning)
             if choice.finish_reason:
                 finish_reasons.append(str(choice.finish_reason))
@@ -393,6 +396,7 @@ def stream_structured_response(
             finishReasons=list(finish_reasons),
         )
     content_text = "".join(content_parts)
+    reasoning_text = "".join(reasoning_parts)
     observation.update(
         firstEventSeconds=round(first_event, 6) if first_event is not None else None,
         ttftSeconds=round(first_output, 6) if first_output is not None else None,
@@ -407,6 +411,13 @@ def stream_structured_response(
         finishReasons=finish_reasons,
         responseSha256=hashlib.sha256(content_text.encode("utf-8")).hexdigest(),
     )
+    if settings.llm_capture_response_content:
+        # 별도 진단 저장소를 만들지 않고 기존 timing event에 원문을 붙인다. 이 event는
+        # 실험 결과 JSON과 Workspace event 양쪽에서 그대로 확인할 수 있다.
+        observation.update(
+            responseContent=content_text,
+            reasoningContent=reasoning_text,
+        )
     try:
         parsed_input = json.loads(content_text)
     except json.JSONDecodeError:
@@ -414,6 +425,14 @@ def stream_structured_response(
     try:
         return schema.model_validate_json(content_text)
     except ValidationError as error:
+        observation["schemaValidationErrors"] = [
+            dict(item)
+            for item in error.errors(
+                include_url=False,
+                include_input=False,
+                include_context=False,
+            )
+        ]
         _record_failure_content(observation, content_text)
         raise _SchemaValidationFailure(error, parsed_input) from error
     except Exception:

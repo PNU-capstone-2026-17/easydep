@@ -57,5 +57,10 @@ Pydantic schema로 검증한 모델로 보존한다. PlantUML 그림과 OpenAPI 
 1. 설계 session의 `stage`와 `ArchitectureState`의 해당 산출물 필드를 확인한다.
 2. renderer가 만든 그림보다 Pydantic 검사를 통과한 JSON 모델을 먼저 확인한다.
 3. finding의 `rule_id`와 `location`으로 소유 validator를 찾는다.
-4. LLM 원문보다 normalize 이후 후보가 어떤 validator에서 거절됐는지 확인한다.
-5. 피드백 cascade가 관련 없는 산출물까지 다시 만들지 않았는지 확인한다.
+4. Workspace event 중 `progress_event`가 `designLlmMetrics`인 항목을 찾는다.
+   `llm_timing_events`의 `responseContent`에는 모델의 JSON 원문,
+   `reasoningContent`에는 NIM reasoning 원문이 들어 있다. schema 검증에 실패했다면
+   `schemaValidationErrors`에서 거절된 field와 이유를 바로 확인할 수 있다.
+5. LLM 원문과 normalize 이후 후보를 함께 보고 어느 validator에서 달라졌는지 확인한다.
+   응답 저장이 필요 없는 환경에서는 `LLM_CAPTURE_RESPONSE_CONTENT=false`로 끌 수 있다.
+6. 피드백 cascade가 관련 없는 산출물까지 다시 만들지 않았는지 확인한다.

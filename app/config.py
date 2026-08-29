@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 300.0
     llm_wall_timeout_seconds: float = 330.0
     llm_max_retries: int = 0
+    # 개발 중에는 실제 응답을 봐야 schema 오류와 불필요하게 긴 출력을 구분할 수 있다.
+    # timing event와 Workspace event에 JSON 응답·reasoning·검증 오류를 함께 남긴다.
+    # 운영 환경에서 저장량을 줄이고 싶으면 false로 끌 수 있다.
+    llm_capture_response_content: bool = True
     llm_failure_response_sample_chars: int = 0
 
     # OpenHands / Implementation Provider Settings

@@ -108,10 +108,8 @@ def test_vertical_service_does_not_fabricate_an_unsourceable_parameter(monkeypat
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(build_scenario_index(single_use_case()))
-    model = model.model_dump(by_alias=True)
-
-    assert model["Collaborations"] == []
+    with pytest.raises(ValueError, match="parameter source must be"):
+        service.generate_class_model(build_scenario_index(single_use_case()))
 
 
 def test_operation_generation_reuses_one_grounded_upstream_value_type(monkeypatch):
@@ -143,7 +141,8 @@ def test_operation_generation_reuses_one_grounded_upstream_value_type(monkeypatc
     })
     plan = call_plan()
     plan["calls"].append({
-        "receiverOperationId": "Registration::add(details:AddRegistrationDetails)",
+        # operation 정규화가 재사용 가능한 RequestData로 바꾼 뒤의 실제 유한 후보다.
+        "receiverOperationId": "Registration::add(details:RequestData)",
         "parentCallIndex": 2,
     })
 
@@ -154,6 +153,13 @@ def test_operation_generation_reuses_one_grounded_upstream_value_type(monkeypatc
             return fragment
         if issubclass(schema, CallPlanProposal):
             return plan
+        if schema.__name__ == "FiniteBindingChoices":
+            # 같은 RequestData가 두 호출에 있어 선택만 LLM 몫이다. 테스트는 동적
+            # Literal schema가 허용한 첫 실제 후보를 골라 생성 흐름을 끝까지 확인한다.
+            return {
+                name: field_schema["enum"][0]
+                for name, field_schema in schema.model_json_schema()["properties"].items()
+            }
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)

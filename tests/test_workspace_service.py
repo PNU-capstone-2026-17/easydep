@@ -539,6 +539,9 @@ def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> Non
                 "failureContentSha256": "safe-digest",
                 "failureContentPrefix": "private response start",
                 "failureContentSuffix": "private response end",
+                "responseContent": '{"Classes": []}',
+                "reasoningContent": "empty inventory is enough",
+                "schemaValidationErrors": [{"loc": ["Classes"], "type": "too_short"}],
             },
         )
         return "done"
@@ -564,6 +567,15 @@ def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> Non
     )
     assert "failureContentPrefix" not in metrics["metadata"]["llm_timing_events"][0]
     assert "failureContentSuffix" not in metrics["metadata"]["llm_timing_events"][0]
+    assert metrics["metadata"]["llm_timing_events"][0]["responseContent"] == (
+        '{"Classes": []}'
+    )
+    assert metrics["metadata"]["llm_timing_events"][0]["reasoningContent"] == (
+        "empty inventory is enough"
+    )
+    assert metrics["metadata"]["llm_timing_events"][0]["schemaValidationErrors"] == [
+        {"loc": ["Classes"], "type": "too_short"}
+    ]
 
 
 def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -> None:

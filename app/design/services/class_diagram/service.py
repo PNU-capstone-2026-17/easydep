@@ -172,7 +172,16 @@ def _repair_collaboration_handoffs(
             ledger.stall_reason = (
                 "The collaboration operation handoff repeated an unchanged failed state."
             )
-            return skeleton, results, active_group_ids
+            # 성공한 collaboration만 모아 불완전한 BCEModel을 반환하면 이후 sequence
+            # 단계가 전혀 다른 오류로 실패한다. 여기서 실제 원인과 누적 수리 이력을 함께
+            # 전달해야 호출자와 화면이 "어느 그룹이 왜 멈췄는지" 바로 보여줄 수 있다.
+            raise ValueError(
+                "class collaboration repair stalled without completing every "
+                "execution group: "
+                + "; ".join(finding_keys)
+                + "\n\nAccumulated repair history:\n"
+                + ledger.prompt_context()
+            )
 
         history = ledger.prompt_context()
         contextual_failures = [
@@ -275,9 +284,15 @@ def generate_class_model(
         **_payload(skeleton),
         "Collaborations": collaborations,
     })
-    # 5. 최종 검증은 보고서만 만든다. 여기서 또 LLM repair를 시작하면 호출 예산과 국소성
-    # 계약을 깨므로 오류는 그대로 호출자에 전달한다.
-    validate_class_model(model, index)
+    # 5. 최종 검증에서는 새 LLM repair를 시작하지 않는다. 대신 누락이나 타입 오류가 하나라도
+    # 남으면 이 단계에서 실패시켜, 불완전한 모델이 sequence 단계로 넘어가지 않게 한다.
+    report = validate_class_model(model, index)
+    if report.errors or report.findings:
+        details = [
+            *(f"{finding.location}: {finding.message}" for finding in report.findings),
+            *report.errors,
+        ]
+        raise ValueError("generated class model is incomplete or invalid: " + "; ".join(details))
     return model
 
 
@@ -359,12 +374,20 @@ def resume_class_model(
             for result in results_by_id.values() if result.collaboration is not None
         },
     }
-    return BCEModel.model_validate({
+    resumed = BCEModel.model_validate({
         **_payload(working_model),
         "Collaborations": [
             accepted[group.id] for group in index.groups if group.id in accepted
         ],
     })
+    report = validate_class_model(resumed, index)
+    if report.errors or report.findings:
+        details = [
+            *(f"{finding.location}: {finding.message}" for finding in report.findings),
+            *report.errors,
+        ]
+        raise ValueError("resumed class model is incomplete or invalid: " + "; ".join(details))
+    return resumed
 
 
 def revise_class_model(

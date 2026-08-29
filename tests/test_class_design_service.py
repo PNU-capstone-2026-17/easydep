@@ -4,6 +4,8 @@ from __future__ import annotations
 import inspect
 import json
 
+import pytest
+
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.services.class_diagram import service
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
@@ -13,6 +15,7 @@ from app.design.services.class_diagram.proposals import (
     OperationFragment,
 )
 from app.design.services.class_diagram.scenario import build_scenario_index
+from app.validation import Finding, ValidationReport
 from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
@@ -83,6 +86,98 @@ def test_operation_handoff_repair_continues_past_one_round(monkeypatch):
     assert operation_calls == 3
     assert call_plan_calls == 5
     assert len(model.Collaborations) == 1
+
+
+def test_generate_raises_with_repair_history_when_collaboration_repeats(monkeypatch):
+    """같은 협업 실패가 반복되면 불완전 모델 대신 누적 원인을 반환한다."""
+
+    def fake_parse(_messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is OperationFragment:
+            return operation_fragment()
+        if issubclass(schema, CallPlanProposal):
+            plan = call_plan()
+            plan["calls"][1]["parentCallIndex"] = None
+            return plan
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    index = build_scenario_index(single_use_case())
+
+    with pytest.raises(ValueError) as raised:
+        service.generate_class_model(index)
+
+    message = str(raised.value)
+    assert "repair stalled" in message
+    assert "UC1" in message
+    assert "every delegated call requires an earlier parent" in message
+    assert "Accumulated repair history" in message
+
+
+def test_resume_raises_with_repair_history_when_collaboration_repeats(monkeypatch):
+    """재개 중 수리도 실패 협업을 누락한 채 성공으로 끝나서는 안 된다."""
+
+    invalid_call_plan = False
+
+    def fake_parse(_messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is OperationFragment:
+            return operation_fragment()
+        if issubclass(schema, CallPlanProposal):
+            plan = call_plan()
+            if invalid_call_plan:
+                plan["calls"][1]["parentCallIndex"] = None
+            return plan
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    index = build_scenario_index(single_use_case())
+    current = service.generate_class_model(index)
+    current.Collaborations = []
+    invalid_call_plan = True
+
+    with pytest.raises(ValueError) as raised:
+        service.resume_class_model(index, current)
+
+    message = str(raised.value)
+    assert "repair stalled" in message
+    assert "UC1" in message
+    assert "every delegated call requires an earlier parent" in message
+    assert "Accumulated repair history" in message
+
+
+def test_generate_does_not_ignore_final_validation_findings(monkeypatch):
+    """조각 검사를 통과해도 완성 모델 검증 finding이 있으면 저장하지 않는다."""
+
+    def fake_parse(_messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is OperationFragment:
+            return operation_fragment()
+        if issubclass(schema, CallPlanProposal):
+            return call_plan()
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    monkeypatch.setattr(
+        service,
+        "validate_class_model",
+        lambda _model, _index: ValidationReport(
+            status="findings",
+            findings=(
+                Finding(
+                    "class.model.final-test",
+                    "synthetic final validation finding",
+                    "Collaborations",
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="synthetic final validation finding"):
+        service.generate_class_model(build_scenario_index(single_use_case()))
 
 
 def test_operation_feedback_rebuilds_only_the_owned_contract(monkeypatch):

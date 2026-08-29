@@ -1548,13 +1548,14 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
         if all(
             any(
                 (number := _main_step_number(str(step_id), use_case_id)) is not None
-                and number > branch_step
+                and number >= branch_step
                 for step_id in messages[position].get("step_ids") or []
             )
             for position in positions
         ):
-            # Control call 하나가 main outcome과 extension result를 함께 소유할 수 있다.
-            # 이 call 자체는 뒤에서 반복된 별도 시나리오 행동이 아니다.
+            # 한 Control call이 분기 단계의 정상 결과와 extension 결과를 함께 소유할 수
+            # 있다. 같은 메시지에 branch step 또는 그 이후 main step이 함께 적혀 있으면
+            # 별도로 늦게 실행된 extension이 아니라 한 호출의 조건부 결과다.
             continue
         if branch_step not in main_positions:
             found.append(
