@@ -5,6 +5,13 @@ import json
 import sys
 from pathlib import Path
 
+from ..agents.runtime import (
+    execute_openhands_task,
+    validate_openhands_adapter,
+)
+from ..agents.verification.build import verify_run_workspace
+from ..delivery.container import render_deployment
+from ..delivery.terraform import render_iac, validate_terraform
 from ..generation.orchestrator import (
     PrototypeOrchestrator,
     load_job,
@@ -15,13 +22,6 @@ from ..generation.orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
-from ..agents.runtime import (
-    execute_openhands_task,
-    validate_openhands_adapter,
-)
-from ..agents.verification.build import verify_run_workspace
-from ..delivery.kubernetes import render_deployment
-from ..delivery.terraform import render_iac, validate_terraform
 from ..workflows.completion import audit_run_completion
 from ..workflows.coordinator import (
     plan_workflow,
@@ -65,9 +65,7 @@ def main() -> int:
         parser.add_argument("run", type=Path)
         parser.add_argument("job", type=Path)
         args = parser.parse_args()
-        report = render_deployment(
-            args.run.resolve(), load_job(args.job.resolve()), include_kubernetes=False
-        )
+        report = render_deployment(args.run.resolve(), load_job(args.job.resolve()))
         print(json.dumps({"renderer": "deterministic", "files": report["renderedFiles"]}, ensure_ascii=False))
         return 0
     if len(sys.argv) > 1 and sys.argv[1] == "plan-iac":
@@ -76,9 +74,7 @@ def main() -> int:
         parser.add_argument("run", type=Path)
         parser.add_argument("job", type=Path)
         args = parser.parse_args()
-        report = render_iac(
-            args.run.resolve(), load_job(args.job.resolve()), include_kubernetes=False
-        )
+        report = render_iac(args.run.resolve(), load_job(args.job.resolve()))
         print(json.dumps({"renderer": report["renderer"], "files": report["renderedFiles"]}, ensure_ascii=False))
         return 0
     if len(sys.argv) > 1 and sys.argv[1] == "validate-iac":

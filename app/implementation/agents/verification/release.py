@@ -23,7 +23,7 @@ def verify_container_runtime(
     """Build the image and prove its backend and packaged frontend are reachable."""
     application = run_root / "application"
     frontend_required = (application / "frontend" / "package.json").is_file()
-    separate_frontend = _separate_frontend_mode(application)
+    separate_frontend = _separate_frontend_mode(run_root)
     dockerfile = application / "Dockerfile"
     report_path = run_root / "reports" / "container-runtime-smoke.json"
     if not dockerfile.is_file():
@@ -192,8 +192,9 @@ def _tcp_probe(host: str, port: int, timeout: float) -> bool:
         return False
 
 
-def _separate_frontend_mode(application: Path) -> bool:
-    intent_path = application / "k8s" / "deployment-intent.json"
+def _separate_frontend_mode(run_root: Path) -> bool:
+    """현재 렌더러가 기록한 보고서에서 프런트엔드 실행 방식을 읽는다."""
+    intent_path = run_root / "reports" / "deployment-intent.json"
     if not intent_path.is_file():
         return False
     try:

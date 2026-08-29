@@ -30,7 +30,7 @@
 | `planning/` | 설계 context를 작은 구현 task와 용량·provider 결정으로 변환 |
 | `agents/` | 허용된 파일만 편집하는 LLM agent와 build·E2E·release 검사 |
 | `workflows/` | 작업 조정, repair, 요구사항 추적, 완료와 설계 일치 검사 순서 |
-| `delivery/` | Terraform·Kubernetes·가상 머신 배포 파일 생성과 검사 |
+| `delivery/` | Docker·Terraform·가상 머신 배포 파일 생성과 검사 |
 | `runtime/` | subprocess, Docker 경로와 Linux runner 실행 경계 |
 | `interfaces/` | FastAPI와 CLI 요청·응답 모델 |
 | `tools/` | Gradle wrapper처럼 버전을 고정해야 하는 실행 도구 |

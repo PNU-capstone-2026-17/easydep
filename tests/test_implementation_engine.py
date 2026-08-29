@@ -14,7 +14,7 @@ from app.implementation.agents.verification.build import (
     verify_run_workspace,
 )
 from app.implementation.agents.verification.e2e import e2e_contract_violations
-from app.implementation.delivery.kubernetes import render_deployment
+from app.implementation.delivery.container import render_deployment
 from app.implementation.delivery.terraform import render_iac
 from app.implementation.domain.implementation_ir import build_implementation_ir
 from app.implementation.generation.orchestrator import load_job
@@ -397,8 +397,12 @@ def test_cloud_spec_renders_deployment_and_matching_iac(tmp_path: Path) -> None:
         iac = render_iac(run, spec)
 
     assert deployment["intentSource"] == "implementation-agent-inference"
+    assert deployment["kubernetesManifests"] is False
     assert iac["provider"] == "aws"
+    assert iac["kubernetesManifests"] is False
     assert iac["sourceConformance"]["status"] == "SUCCEEDED"
-    assert (run / "application/k8s/orders-api/deployment.yaml").is_file()
+    assert (run / "application/Dockerfile").is_file()
     assert (run / "application/terraform/main.tf").is_file()
     assert (run / "application/deployment-bundle/README.md").is_file()
+    assert not (run / "application/k8s").exists()
+    assert not (run / "application/deployment-bundle/application/k8s").exists()

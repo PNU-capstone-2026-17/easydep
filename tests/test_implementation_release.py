@@ -68,13 +68,13 @@ def test_container_runtime_smoke_builds_separate_frontend_image(
 ) -> None:
     application = tmp_path / "application"
     frontend = application / "frontend"
-    k8s = application / "k8s"
+    reports = tmp_path / "reports"
     frontend.mkdir(parents=True)
-    k8s.mkdir()
+    reports.mkdir()
     (application / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
     (frontend / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
     (frontend / "package.json").write_text("{}", encoding="utf-8")
-    (k8s / "deployment-intent.json").write_text(
+    (reports / "deployment-intent.json").write_text(
         '{"frontend":{"mode":"separate"}}', encoding="utf-8"
     )
     commands: list[list[str]] = []

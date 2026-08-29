@@ -19,7 +19,7 @@ from ..agents.verification.build import (
     verify_run_workspace,
 )
 from ..agents.verification.release import verify_container_runtime
-from ..delivery.kubernetes import render_deployment, render_local_container
+from ..delivery.container import render_deployment, render_local_container
 from ..delivery.terraform import render_iac
 from ..domain.implementation_ir import (
     assess_bce_erd_entity_contract,
@@ -904,9 +904,7 @@ def _render_deployment_if_configured(
     deployment = spec.inputs.get("deployment")
     deployment_bundle = spec.inputs.get("deploymentBundle")
     if (intent and intent.is_file()) or (cloud and cloud.is_file()):
-        deployment_report = render_deployment(
-            run_root, spec, include_kubernetes=False
-        )
+        deployment_report = render_deployment(run_root, spec)
     elif deployment and deployment.is_file() and not (
         deployment_bundle and deployment_bundle.is_file()
     ):
@@ -918,7 +916,7 @@ def _render_deployment_if_configured(
         deployment_report = None
     iac_report = None
     if (cloud and cloud.is_file()) or (deployment_bundle and deployment_bundle.is_file()):
-        iac_report = render_iac(run_root, spec, include_kubernetes=False)
+        iac_report = render_iac(run_root, spec)
     return deployment_report, iac_report
 
 

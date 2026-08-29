@@ -51,9 +51,7 @@ def validate_terraform(application: Path) -> dict[str, object]:
     return {"status": "SUCCEEDED", "commands": ["fmt", "init -backend=false", "validate"]}
 
 
-def render_iac(
-    run_root: Path, spec: Any, *, include_kubernetes: bool = True
-) -> dict[str, object]:
+def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
     cloud, deployment_evidence, resource_plan = _iac_design_source(spec)
     provider = str((resource_plan or cloud).get("provider", "azure")).lower()
     if provider not in SUPPORTED_PROVIDERS:
@@ -63,6 +61,7 @@ def render_iac(
     application = run_root / "application"
     terraform = application / "terraform"
     terraform.mkdir(parents=True, exist_ok=True)
+    conformance: dict[str, Any]
     if resource_plan is not None:
         # deployment bundle의 ResourcePlan은 사용자가 검토한 CSP별 기준 계획이다. 공용
         # renderer는 계획에 있는 모든 node와 reference를 사용하며, 다른 Terraform 구성을
@@ -96,24 +95,23 @@ def render_iac(
     for filename, content in files.items():
         (terraform / filename).write_text(content.rstrip() + "\n", encoding="utf-8")
     if resource_plan is None:
-        conformance = validate_deployment_iac_conformance(
-            cloud,
-            intent,
-            application,
-            require_kubernetes_manifests=include_kubernetes,
-        )
+        conformance = validate_deployment_iac_conformance(cloud, intent, application)
     terraform_validation = validate_terraform(application)
-    report = {"schemaVersion": SCHEMA_VERSION, "renderer": f"deterministic-terraform-{provider}", "provider": provider, "renderedFiles": [f"application/terraform/{name}" for name in files], "requiredVariables": required_variables, "sourceConformance": conformance, "terraformValidation": terraform_validation, "kubernetesManifests": include_kubernetes, "sourceEvidence": deployment_evidence}
+    report = {"schemaVersion": SCHEMA_VERSION, "renderer": f"deterministic-terraform-{provider}", "provider": provider, "renderedFiles": [f"application/terraform/{name}" for name in files], "requiredVariables": required_variables, "sourceConformance": conformance, "terraformValidation": terraform_validation, "kubernetesManifests": False, "sourceEvidence": deployment_evidence}
     reports = run_root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     if conformance["status"] == "FAILED":
         raise ValueError("Deployment/IaC conformance failed:\n- " + "\n- ".join(conformance["errors"]))
     if terraform_validation["status"] == "FAILED":
-        raise ValueError("Terraform validation failed:\n- " + "\n- ".join(terraform_validation.get("errors", [])))
-    bundle = sync_deployment_bundle(
-        application, include_kubernetes=include_kubernetes
-    )
+        terraform_errors = terraform_validation.get("errors", [])
+        messages = (
+            [str(item) for item in terraform_errors]
+            if isinstance(terraform_errors, list)
+            else [str(terraform_errors)]
+        )
+        raise ValueError("Terraform validation failed:\n- " + "\n- ".join(messages))
+    bundle = sync_deployment_bundle(application)
     report["deploymentBundle"] = bundle.relative_to(application.parent).as_posix()
     (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
@@ -220,9 +218,7 @@ def _rendered_required_variables(files: dict[str, str]) -> list[dict[str, str]]:
     ]
 
 
-def sync_deployment_bundle(
-    application: Path, *, include_kubernetes: bool = True
-) -> Path:
+def sync_deployment_bundle(application: Path) -> Path:
     """IaC 검사가 성공하면 다른 파일 없이 실행 가능한 deployment bundle을 만든다."""
     bundle = application / "deployment-bundle"
     marker = bundle / ".easydep-managed"
@@ -235,11 +231,9 @@ def sync_deployment_bundle(
         )
         (staging / ".easydep-managed").write_text("easydep deployment bundle\n", encoding="utf-8")
         instructions = (
-            "Run `sh application/k8s/deploy.sh application/terraform -auto-approve` "
-            "from this directory after configuring provider credentials."
-            if include_kubernetes
-            else "Apply the generated Terraform under `application/terraform` "
-            "after configuring provider credentials."
+            "Build the Docker image from `application` (and `application/frontend` "
+            "when it has its own Dockerfile). Apply the generated OpenTofu/Terraform "
+            "under `application/terraform` after configuring provider credentials."
         )
         (staging / "README.md").write_text(
             f"# EasyDep deployment bundle\n\n{instructions}\n",
@@ -261,8 +255,6 @@ def validate_deployment_iac_conformance(
     cloud: dict[str, Any],
     intent: dict[str, Any],
     application: Path,
-    *,
-    require_kubernetes_manifests: bool = True,
 ) -> dict[str, object]:
     source_path = application / "terraform" / "main.tf"
     errors: list[str] = []
@@ -298,40 +290,6 @@ def validate_deployment_iac_conformance(
         errors.append("AWS subnet must reference the rendered VPC")
     if provider == "gcp" and any(_type(provider, item) == "google_compute_subnetwork" for item in resources) and "network = google_compute_network." not in source:
         errors.append("GCP subnetwork must reference the rendered network")
-    if require_kubernetes_manifests:
-        for workload in intent.get("workloads", []) if isinstance(intent, dict) else []:
-            name = str(workload.get("name", ""))
-            if name and not (application / "k8s" / name).is_dir():
-                errors.append(f"deployment workload {name} has no rendered Kubernetes manifests")
-    unresolved_images = [workload for workload in intent.get("workloads", []) if "__EASYDEP_REGISTRY_" in str(workload.get("image", ""))] if isinstance(intent, dict) else []
-    if unresolved_images and require_kubernetes_manifests:
-        registries = {_resource_id(item) for item in resources if _role(provider, item) == "registry"}
-        clusters = {_resource_id(item) for item in resources if _role(provider, item) == "cluster"}
-        default_cluster = next(iter(clusters)) if len(clusters) == 1 else None
-        for workload in unresolved_images:
-            reference = workload.get("registryRef")
-            if not isinstance(reference, str) or reference not in registries:
-                errors.append(f"deployment workload {workload.get('name')} must declare a valid registryRef")
-                continue
-            cluster_reference = workload.get("clusterRef", default_cluster)
-            if not isinstance(cluster_reference, str) or cluster_reference not in clusters:
-                errors.append(f"deployment workload {workload.get('name')} must declare a valid clusterRef")
-                continue
-            cluster_item = next(item for item in resources if _resource_id(item) == cluster_reference)
-            registry_item = next(item for item in resources if _resource_id(item) == reference)
-            binding = _pull_binding_name(provider, cluster_item, registry_item)
-            binding_type = access[provider]
-            if f'{binding_type} "{binding}"' not in source:
-                errors.append(f"deployment workload {workload.get('name')} registryRef {reference} has no image-pull binding for clusterRef {cluster_reference}")
-        if not (application / "k8s" / "render-images.sh").is_file():
-            errors.append("registry image rendering script is missing")
-        if not (application / "k8s" / "deploy.sh").is_file():
-            errors.append("IaC-to-Kubernetes deployment script is missing")
-        if not (application / "k8s" / "build-push.sh").is_file():
-            errors.append("container build-and-push script is missing")
-        outputs = application / "terraform" / "outputs.tf"
-        if not outputs.is_file() or 'output "registry_image_bases"' not in outputs.read_text(encoding="utf-8"):
-            errors.append("Terraform registry_image_bases output is missing")
     if not intent:
         warnings.append("Deployment intent is absent; workload-to-infrastructure validation was skipped")
     return {"status": "FAILED" if errors else ("SUCCEEDED_WITH_WARNINGS" if warnings else "SUCCEEDED"), "errors": errors, "warnings": warnings}
