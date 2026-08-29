@@ -33,6 +33,11 @@
   let resourceQuestion = $derived(
     result?.resource_question ?? result?.resource_questions?.[0] ?? null
   );
+  let resourceChoices = $derived(
+    Array.isArray(resourceQuestion?.choices)
+      ? resourceQuestion.choices.filter((choice: unknown) => choice && typeof choice === 'object')
+      : []
+  );
   let requiresRevision = $derived(Boolean(result?.requires_revision));
   let canDelegateRepair = $derived(Boolean(result?.can_delegate_repair));
   let implementationAction = $derived(
@@ -77,6 +82,11 @@
     if (!value || busy || targetRequired) return;
     text = '';
     await onSend(value);
+  }
+
+  async function answerResourceChoice(value: unknown) {
+    if (busy || !command?.command_id || typeof value !== 'string' || !value.trim()) return;
+    await onAction('message', { text: value, action_id: command.command_id });
   }
 
   function keydown(event: KeyboardEvent) {
@@ -130,8 +140,31 @@
           Keep current artifacts
         </Button>
       {:else if resourceQuestion}
-        <span class="px-1 text-xs text-[#74520c]">Reply to the question below.</span>
-        {#if resourceQuestion.kind === 'suggested'}
+        <div class="w-full px-1">
+          <p class="text-sm font-medium text-[#5f4610]">{resourceQuestion.question}</p>
+          {#if resourceChoices.length}
+            <div class="mt-2 grid gap-2 sm:grid-cols-2">
+              {#each resourceChoices as choice}
+                <button
+                  type="button"
+                  class="rounded-lg border border-[#d9caa4] bg-white px-3 py-2 text-left transition hover:border-[#86ad98] hover:bg-[#f6fbf7] disabled:cursor-not-allowed disabled:opacity-60"
+                  onclick={() => answerResourceChoice(choice.value)}
+                  disabled={busy}
+                >
+                  <span class="block text-xs font-semibold text-[#37433b]">
+                    {choice.label}{choice.recommended ? ' (Recommended)' : ''}
+                  </span>
+                  {#if choice.description}
+                    <span class="mt-1 block text-[11px] leading-4 text-[#6d7068]">{choice.description}</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <span class="mt-1 block text-xs text-[#74520c]">Reply to the question below.</span>
+          {/if}
+        </div>
+        {#if resourceQuestion.kind === 'suggested' && !resourceChoices.length}
           <Button size="sm" variant="ghost" onclick={() => onAction('advance', { action_id: command?.command_id })} disabled={busy}>
             Continue without this optional input <ChevronRight size={13} />
           </Button>
@@ -236,8 +269,8 @@
       onkeydown={keydown}
       rows="2"
       class="max-h-40 min-h-14 w-full resize-none border-0 bg-transparent px-2 py-2 text-sm leading-6 outline-none placeholder:text-[#999b93]"
-      placeholder={targetRequired ? 'Use the targeted feedback form in the sequence diagram panel' : resourceQuestion?.question ?? (awaiting ? 'Enter an answer or revision request' : 'Enter a request for the current stage')}
-      disabled={busy || targetRequired}
+      placeholder={targetRequired ? 'Use the targeted feedback form in the sequence diagram panel' : resourceChoices.length ? 'Choose one of the answers above' : resourceQuestion?.question ?? (awaiting ? 'Enter an answer or revision request' : 'Enter a request for the current stage')}
+      disabled={busy || targetRequired || resourceChoices.length > 0}
     ></textarea>
     <div class="flex items-center justify-between px-1 pb-1">
       <span class="text-[10px] text-[#a0a199]">Enter to send · Shift+Enter for a new line</span>
@@ -255,7 +288,7 @@
         >
           <Zap size={14} />
         </Button>
-        <Button size="icon" onclick={submit} disabled={busy || targetRequired || !text.trim()} aria-label="Send message">
+        <Button size="icon" onclick={submit} disabled={busy || targetRequired || resourceChoices.length > 0 || !text.trim()} aria-label="Send message">
           <ArrowUp size={16} />
         </Button>
       </div>

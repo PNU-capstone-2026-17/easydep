@@ -6,7 +6,9 @@ import pytest
 
 from app.requirements.resources.capability_contract import (
     CalibrationPoint,
+    apply_capability_answers,
     calibrated_score,
+    capability_resource_questions,
     decide,
     fit_policy,
     link_dependency_capability,
@@ -14,6 +16,76 @@ from app.requirements.resources.capability_contract import (
     requires_persistent_storage,
     validate_policy,
 )
+
+
+def _pending_persistent_storage_contract() -> dict:
+    return {
+        "schemaVersion": "CapabilityContract/v1",
+        "capabilities": [
+            {
+                "id": "persistent_storage",
+                "statement": "Keep application state in durable storage.",
+                "requirementIds": ["RR1"],
+                "evidenceSpans": ["record registrations"],
+                "origin": "inferred",
+                "necessity": "required",
+                "decision": "needsQuestion",
+                "decisionReason": "calibrated-threshold-not-met",
+                "rawConfidence": 1.0,
+                "calibratedConfidence": None,
+                "thresholdVersion": "test-v1",
+                "confirmation": "pending",
+                "alternatives": [],
+                "unresolvedFields": [],
+                "dependencyCapabilityIds": [],
+            }
+        ],
+        "questions": [
+            {
+                "capabilityId": "persistent_storage",
+                "reason": "calibrated-threshold-not-met",
+                "question": "Should storage be durable?",
+            }
+        ],
+    }
+
+
+def test_pending_capability_projects_to_a_finite_workspace_choice() -> None:
+    questions = capability_resource_questions(_pending_persistent_storage_contract())
+
+    assert questions[0]["field"] == "capability:persistent_storage"
+    assert "service restarts" in questions[0]["question"]
+    assert [choice["value"] for choice in questions[0]["choices"]] == [
+        "accepted",
+        "abstained",
+    ]
+    assert questions[0]["choices"][0]["recommended"] is True
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [("accepted", "accepted"), ("abstained", "abstained")],
+)
+def test_capability_choice_updates_the_contract_and_deployment_projection(
+    answer: str, expected: str
+) -> None:
+    state = {
+        "capability_contract": _pending_persistent_storage_contract(),
+        "deployment_needs": {
+            "persistent_storage": {"required": True, "decision": "needsQuestion"}
+        },
+    }
+
+    patch = apply_capability_answers(
+        state, {"capability:persistent_storage": answer}
+    )
+
+    capability = patch["capability_contract"]["capabilities"][0]
+    assert capability["decision"] == expected
+    assert capability["confirmation"] == "userConfirmed"
+    assert patch["capability_contract"]["questions"] == []
+    assert patch["deployment_needs"]["persistent_storage"]["decision"] == expected
+    assert patch["capability_answers"] == {"persistent_storage": expected}
 
 
 def test_calibration_qualifies_only_when_precision_and_wilson_floor_hold():

@@ -292,7 +292,9 @@ def get_workspace(app_id: str) -> dict[str, Any]:
     return {
         "app_id": app_id,
         "current_stage": repository.get_app_summary(app_id)["current_stage"],
-        "command": repository.latest_command(app_id),
+        "command": workspace_service.present_command(
+            app_id, repository.latest_command(app_id)
+        ),
         "events": repository.list_events(app_id),
         "artifacts": artifacts,
         "deployment_preferences": repository.get_deployment_preferences(app_id),

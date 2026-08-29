@@ -8,12 +8,15 @@ from __future__ import annotations
 import json
 import math
 import re
+from copy import deepcopy
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.requirements.schemas import CapabilityContract
 
 SCHEMA_VERSION = "easydep-capability-threshold/v1"
 DEFAULT_POLICY = Path(__file__).parents[1] / "knowledge" / "capability-threshold.json"
@@ -328,6 +331,158 @@ def accepted_needs(needs: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value for key, value in needs.items()
         if isinstance(value, dict) and value.get("decision", "accepted") == "accepted"
+    }
+
+
+_CAPABILITY_FIELD_PREFIX = "capability:"
+_ACCEPTED_ANSWERS = frozenset({"accepted", "yes", "required", "include", "true"})
+_ABSTAINED_ANSWERS = frozenset(
+    {"abstained", "no", "not_required", "exclude", "false"}
+)
+
+
+def capability_resource_questions(contract: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Project pending capability decisions into the workspace question contract.
+
+    Capability questions are human product decisions, not repair findings.  The
+    workspace already understands a ``field`` plus a finite ``choices`` list, so
+    keep the stable capability id in the field instead of asking the UI to parse
+    the prose question.
+    """
+
+    question_by_id = {
+        str(item.get("capabilityId") or ""): item
+        for item in contract.get("questions") or []
+        if isinstance(item, Mapping) and item.get("capabilityId")
+    }
+    projected: list[dict[str, Any]] = []
+    for capability in contract.get("capabilities") or []:
+        if (
+            not isinstance(capability, Mapping)
+            or capability.get("decision") != "needsQuestion"
+        ):
+            continue
+        capability_id = str(capability.get("id") or "").strip()
+        if not capability_id:
+            continue
+        statement = str(capability.get("statement") or capability_id).strip()
+        source_question = question_by_id.get(capability_id) or {}
+        question = str(
+            source_question.get("question")
+            or f"Should the deployment include this capability: {statement}?"
+        ).strip()
+        accepted_label = "Yes, include this capability"
+        accepted_description = "Add this capability to the downstream design contract."
+        declined_label = "No, do not include it"
+        declined_description = (
+            "Continue without this capability; related data or behavior may not persist."
+        )
+        if capability_id == "persistent_storage":
+            question = (
+                "Should users, courses, registrations, and capacity data be preserved "
+                "after the service restarts?"
+            )
+            accepted_label = "Yes, use persistent storage"
+            accepted_description = (
+                "Recommended: keep application data in a durable database or equivalent store."
+            )
+            declined_label = "No, allow data to reset"
+            declined_description = (
+                "Continue without durable storage; data may be lost when the service restarts."
+            )
+        projected.append(
+            {
+                "field": f"{_CAPABILITY_FIELD_PREFIX}{capability_id}",
+                "capability_id": capability_id,
+                "kind": "choice",
+                "why": str(
+                    source_question.get("reason")
+                    or capability.get("decisionReason")
+                    or "user-confirmation-required"
+                ),
+                "question": question,
+                "choices": [
+                    {
+                        "value": "accepted",
+                        "label": accepted_label,
+                        "description": accepted_description,
+                        "recommended": capability.get("necessity") == "required",
+                    },
+                    {
+                        "value": "abstained",
+                        "label": declined_label,
+                        "description": declined_description,
+                        "recommended": False,
+                    },
+                ],
+            }
+        )
+    return projected
+
+
+def apply_capability_answers(
+    state: Mapping[str, Any], answers: Mapping[str, str]
+) -> dict[str, Any]:
+    """Apply finite user choices without invoking or reclassifying with an LLM."""
+
+    normalized: dict[str, str] = {}
+    for field, raw_value in answers.items():
+        field_name = str(field).strip()
+        if not field_name.startswith(_CAPABILITY_FIELD_PREFIX):
+            continue
+        capability_id = field_name.removeprefix(_CAPABILITY_FIELD_PREFIX).strip()
+        value = str(raw_value or "").strip().casefold()
+        if value in _ACCEPTED_ANSWERS:
+            normalized[capability_id] = "accepted"
+        elif value in _ABSTAINED_ANSWERS:
+            normalized[capability_id] = "abstained"
+    if not normalized:
+        return {}
+
+    contract = deepcopy(dict(state.get("capability_contract") or {}))
+    capabilities = list(contract.get("capabilities") or [])
+    applied: dict[str, str] = {}
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        capability_id = str(item.get("id") or "")
+        decision = normalized.get(capability_id)
+        if decision is None or item.get("decision") != "needsQuestion":
+            continue
+        item["decision"] = decision
+        item["decisionReason"] = (
+            "user-confirmed-capability"
+            if decision == "accepted"
+            else "user-declined-capability"
+        )
+        item["confirmation"] = "userConfirmed"
+        applied[capability_id] = decision
+    if not applied:
+        return {}
+
+    contract["questions"] = [
+        item
+        for item in contract.get("questions") or []
+        if not isinstance(item, Mapping)
+        or str(item.get("capabilityId") or "") not in applied
+    ]
+    # Validate before the user decision is allowed into the persisted graph state.
+    validated_contract = CapabilityContract.model_validate(contract).model_dump(
+        by_alias=True
+    )
+
+    deployment_needs = deepcopy(dict(state.get("deployment_needs") or {}))
+    for capability_id, decision in applied.items():
+        need = deployment_needs.get(capability_id)
+        if isinstance(need, dict):
+            need["decision"] = decision
+
+    previous_answers = dict(state.get("capability_answers") or {})
+    previous_answers.update(applied)
+    return {
+        "capability_contract": validated_contract,
+        "deployment_needs": deployment_needs,
+        "capability_answers": previous_answers,
     }
 
 

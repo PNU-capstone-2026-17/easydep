@@ -249,6 +249,70 @@ def test_requirement_reply_answers_the_resource_question_without_reclassificatio
     assert captured["request"].answer is None
 
 
+def test_legacy_handoff_checkpoint_backfills_and_routes_a_capability_choice(
+    monkeypatch,
+) -> None:
+    captured = {}
+    previous = {
+        "command_id": "prior",
+        "stage": "requirements",
+        "status": "AWAITING_INPUT",
+        "result": {
+            "phase": "requirements_handoff",
+            "blocking_findings": [
+                {
+                    "code": "requirements.capability-contract",
+                    "repairable": False,
+                }
+            ],
+        },
+    }
+    question = {
+        "field": "capability:persistent_storage",
+        "kind": "choice",
+        "question": "Should data survive service restarts?",
+        "choices": [{"value": "accepted", "label": "Yes"}],
+    }
+    monkeypatch.setattr(repository, "get_command", lambda *_args, **_kwargs: previous)
+    monkeypatch.setattr(
+        artifact_repository,
+        "load_state",
+        lambda _app_id: {"capability_contract": {"capabilities": []}},
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "capability_resource_questions",
+        lambda _contract: [question],
+    )
+
+    def analyze(request):
+        captured["request"] = request
+        return {"status": "completed", "saved_stages": []}
+
+    monkeypatch.setattr(workspace_module, "analyze_requirements", analyze)
+    service = WorkspaceService()
+    try:
+        presented = service.present_command("app-1", previous)
+        service._stage_message(
+            {
+                "command_id": "reply",
+                "app_id": "app-1",
+                "stage": "requirements",
+                "action": "message",
+                "payload": {"text": "accepted", "action_id": "prior"},
+            },
+            advance=False,
+        )
+    finally:
+        service.shutdown()
+
+    assert presented["result"]["resource_question"] == question
+    assert captured["request"].resource_answers == {
+        "capability:persistent_storage": "accepted"
+    }
+    assert captured["request"].answer is None
+
+
 def test_initial_workspace_request_accepts_provider_and_region_without_budget(
     monkeypatch,
 ) -> None:
@@ -955,6 +1019,51 @@ def test_requirements_handoff_exposes_llm_repair_without_allowing_advance() -> N
     assert result["requires_revision"] is True
     assert result["can_delegate_repair"] is True
     assert result["repair_state"]["attempt_count"] == 3
+
+
+def test_requirements_handoff_exposes_capability_choices_instead_of_llm_repair() -> None:
+    service = WorkspaceService()
+    try:
+        result = service._requirements_result(
+            {
+                "status": "need_feedback",
+                "phase": "requirements_handoff",
+                "blocking_findings": [
+                    {
+                        "code": "requirements.capability-contract",
+                        "stage": "resources",
+                        "target_ids": [],
+                        "message": "capability contract needs answers for: persistent_storage",
+                        "severity": "error",
+                        "repairable": False,
+                    }
+                ],
+                "repair_state": {
+                    "status": "NEEDS_INPUT",
+                    "attempt_count": 2,
+                    "accepted_count": 2,
+                    "recent_attempts": [],
+                },
+                "resource_questions": [
+                    {
+                        "field": "capability:persistent_storage",
+                        "kind": "choice",
+                        "question": "Should data survive service restarts?",
+                        "choices": [
+                            {"value": "accepted", "label": "Yes"},
+                            {"value": "abstained", "label": "No"},
+                        ],
+                    }
+                ],
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["can_delegate_repair"] is False
+    assert result["resource_question"]["kind"] == "choice"
+    assert result["resource_question"]["choices"][0]["value"] == "accepted"
+    assert "Should data survive service restarts?" in result["message"]
 
 
 def test_retry_requirements_accepts_only_a_failed_requirements_command(

@@ -2,7 +2,65 @@
 from app.requirements.orchestration import feedback_gates as fg
 from app.requirements.orchestration import graph as g
 from app.requirements.orchestration import subgraphs as sg
-from app.requirements.schemas import FeedbackEdit
+from app.requirements.schemas import FeedbackEdit, ResourceAnswer
+
+
+def _pending_capability_state() -> dict:
+    return {
+        "use_case_specs": [],
+        "relationships": {},
+        "model_review": {"issues": [], "semantic_status": "ok"},
+        "deployment_needs": {
+            "persistent_storage": {"required": True, "decision": "needsQuestion"}
+        },
+        "capability_contract": {
+            "schemaVersion": "CapabilityContract/v1",
+            "capabilities": [
+                {
+                    "id": "persistent_storage",
+                    "statement": "Keep application state in durable storage.",
+                    "requirementIds": ["RR1"],
+                    "evidenceSpans": ["record registrations"],
+                    "origin": "inferred",
+                    "necessity": "required",
+                    "decision": "needsQuestion",
+                    "decisionReason": "calibrated-threshold-not-met",
+                    "rawConfidence": 1.0,
+                    "calibratedConfidence": None,
+                    "thresholdVersion": "test-v1",
+                    "confirmation": "pending",
+                    "alternatives": [],
+                    "unresolvedFields": [],
+                    "dependencyCapabilityIds": [],
+                }
+            ],
+            "questions": [
+                {
+                    "capabilityId": "persistent_storage",
+                    "reason": "calibrated-threshold-not-met",
+                    "question": "Should storage be durable?",
+                }
+            ],
+        },
+    }
+
+
+def test_handoff_exposes_and_applies_a_capability_choice(monkeypatch) -> None:
+    seen: dict = {}
+
+    def choose(payload):
+        seen.update(payload)
+        return ResourceAnswer(
+            answers={"capability:persistent_storage": "accepted"}
+        )
+
+    monkeypatch.setattr(g, "interrupt", choose)
+    out = g._handoff_gate(_pending_capability_state())
+
+    assert seen["resource_questions"][0]["kind"] == "choice"
+    assert out["gate_route"] == "loop"
+    assert out["capability_contract"]["capabilities"][0]["decision"] == "accepted"
+    assert out["deployment_needs"]["persistent_storage"]["decision"] == "accepted"
 
 
 def test_gate_advances_on_empty_feedback(monkeypatch):

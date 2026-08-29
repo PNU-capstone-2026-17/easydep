@@ -116,6 +116,9 @@ class AgentState(TypedDict):
     # 감사 가능한 selective-prediction 계약이다. ``deployment_needs``는 현재 요구사항·구현
     # 소비자가 사용하는 projection이고, 이 필드는 판정 근거와 보정값까지 보존한다.
     capability_contract: NotRequired[dict]
+    # 사람이 확인한 capability id → accepted|abstained. LLM 수리 결과가 아니라
+    # 선택형 질문에 대한 명시적 제품 결정이며 계약 감사 기록으로 보존한다.
+    capability_answers: NotRequired[dict[str, str]]
     # 사용자가 쓴 클라우드 제약 원문(`apps.resource_constraints_text`). 요구사항 문장과
     # **따로** 받는다 — 실측상 provider·region·예산은 요구사항 산문에 아예 없고(0건),
     # 없는 곳을 뒤지면 오탐만 남는다(`resources/service.py`).

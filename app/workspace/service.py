@@ -41,6 +41,7 @@ from app.requirements.orchestration.service import (
     analyze_requirements,
     retry_requirements_analysis,
 )
+from app.requirements.resources.capability_contract import capability_resource_questions
 from app.requirements.runtime import telemetry as requirements_telemetry
 from app.testing.service import CreateTestingJobRequest, create_testing_job, get_testing_job
 from app.validation import RepairAttempt, RepairOutcome, stable_digest
@@ -89,6 +90,44 @@ def _resource_questions(
         questions[0] if questions else None,
     )
     return questions, selected
+
+
+def _with_capability_handoff_questions(
+    app_id: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Backfill choice cards for checkpoints saved before capability UI support.
+
+    Workspace command results are persisted snapshots. Merely deploying the new
+    presentation code would otherwise leave an already-blocked application with
+    the old empty question list forever. Enrich a copy from the canonical
+    artifact state; never rewrite command history during a read.
+    """
+
+    if (
+        result.get("phase") != "requirements_handoff"
+        or result.get("resource_question")
+        or result.get("resource_questions")
+    ):
+        return result
+    blockers = result.get("blocking_findings") or []
+    if not any(
+        isinstance(blocker, dict)
+        and blocker.get("code") == "requirements.capability-contract"
+        for blocker in blockers
+    ):
+        return result
+    state = artifact_repository.load_state(app_id)
+    questions = capability_resource_questions(state.get("capability_contract") or {})
+    if not questions:
+        return result
+    enriched = dict(result)
+    enriched["resource_question"] = questions[0]
+    enriched["resource_questions"] = questions
+    enriched["message"] = (
+        "A deployment decision is required before design can start. "
+        f"{questions[0]['question']}"
+    )
+    return enriched
 
 
 def _merge_delegated_repair_state(
@@ -385,6 +424,19 @@ class WorkspaceService:
         except RuntimeError:
             # A concurrent caller may already have queued the same resume operation.
             return None
+
+    def present_command(
+        self, app_id: str, command: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Return a display-ready command without mutating its stored snapshot."""
+
+        if command is None:
+            return None
+        presented = dict(command)
+        result = command.get("result")
+        if isinstance(result, dict):
+            presented["result"] = _with_capability_handoff_questions(app_id, result)
+        return presented
 
     @staticmethod
     def _validate_payload(action: str, payload: dict[str, Any]) -> None:
@@ -697,7 +749,9 @@ class WorkspaceService:
             )
             if continuation:
                 assert previous is not None
-                previous_result = previous.get("result") or {}
+                previous_result = _with_capability_handoff_questions(
+                    app_id, previous.get("result") or {}
+                )
                 if command.get("action") == "apply_deployment_preferences":
                     preferences = DeploymentPreferences.model_validate(
                         payload.get("deployment_preferences") or {}
@@ -1227,6 +1281,7 @@ class WorkspaceService:
             phase = str(result.get("phase") or "requirements")
             if phase == "requirements_handoff":
                 blockers = list(result.get("blocking_findings") or [])
+                resource_questions, resource_question = _resource_questions(result)
                 repairable = [
                     blocker
                     for blocker in blockers
@@ -1236,9 +1291,14 @@ class WorkspaceService:
                     "awaiting_input": True,
                     "kind": "action_required",
                     "message": (
-                        f"Design handoff is blocked by {len(blockers)} unresolved "
-                        "requirements finding(s). Review them, provide feedback, or "
-                        "delegate the repair to the LLM."
+                        "A deployment decision is required before design can start. "
+                        f"{resource_question.get('question')}"
+                        if resource_question
+                        else (
+                            f"Design handoff is blocked by {len(blockers)} unresolved "
+                            "requirements finding(s). Review them, provide feedback, or "
+                            "delegate the repair to the LLM."
+                        )
                     ),
                     "phase": phase,
                     "requires_revision": True,
@@ -1251,6 +1311,8 @@ class WorkspaceService:
                         "recent_attempts": [],
                     },
                     "can_delegate_repair": bool(repairable),
+                    "resource_question": resource_question,
+                    "resource_questions": resource_questions,
                     "summary": result.get("feedback_summary"),
                     "review_artifacts": [
                         "Refined requirements",

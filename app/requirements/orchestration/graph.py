@@ -54,6 +54,10 @@ from app.requirements.orchestration.feedback_gates import (
 )
 from app.requirements.orchestration.persistence import SqlCheckpointSaver
 from app.requirements.orchestration.subgraphs import build_stage_subgraphs
+from app.requirements.resources.capability_contract import (
+    apply_capability_answers,
+    capability_resource_questions,
+)
 from app.requirements.orchestration.supervisor import (
     blocking_findings,
     blocking_issues,
@@ -93,8 +97,15 @@ def _handoff_gate(state: AgentState) -> dict:
         # feedback classifier to the owning stage.
         "edit_stage": None,
         "edit_targets": [],
-        "resource_questions": [],
+        "resource_questions": capability_resource_questions(
+            state.get("capability_contract") or {}
+        ),
     })
+    if isinstance(answer, ResourceAnswer):
+        patch = apply_capability_answers(state, answer.answers)
+        # An invalid or stale choice leaves the same question visible.  It must
+        # never fall through to natural-language feedback classification.
+        return {**patch, "gate_route": "loop"}
     if isinstance(answer, FeedbackEdit):
         empty = not answer.instruction.strip()
     else:
