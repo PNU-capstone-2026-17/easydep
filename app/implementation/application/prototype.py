@@ -278,6 +278,13 @@ class PrototypeClient:
         self._terminate_process_tree(process)
         return True
 
+    def cancel_all(self) -> None:
+        """서버 종료 시 이 client가 시작한 모든 하위 프로세스를 종료한다."""
+        with self._process_lock:
+            processes = list(self._processes.values())
+        for process in processes:
+            self._terminate_process_tree(process)
+
     def _call(
         self, args: list[str], operation_id: str | None = None
     ) -> dict[str, Any]:

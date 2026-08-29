@@ -398,6 +398,22 @@ def test_cancel_terminates_active_process_and_preserves_cancelled_status(
     assert persisted["status"] == "CANCELLED"
 
 
+def test_shutdown_terminates_all_active_implementation_subprocesses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    cancelled: list[bool] = []
+    monkeypatch.setattr(
+        implementation_worker.client,
+        "cancel_all",
+        lambda: cancelled.append(True),
+    )
+
+    implementation_worker.shutdown()
+
+    assert cancelled == [True]
+
+
 def test_write_uses_unique_temp_and_falls_back_when_windows_replace_is_denied(
     monkeypatch, tmp_path: Path
 ) -> None:

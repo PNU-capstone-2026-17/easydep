@@ -18,7 +18,7 @@ from app.design.schemas.class_model import (
     DataType,
 )
 
-JAVA_SCAFFOLDER_VERSION = "1.0.0"
+JAVA_SCAFFOLDER_VERSION = "1.0.1"
 
 _JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 _FIELD = re.compile(
@@ -73,6 +73,16 @@ _TYPE_ALIASES = {
     "optional": "Optional",
     "iterable": "Iterable",
     "void": "void",
+}
+_BOXED_GENERIC_TYPES = {
+    "boolean": "Boolean",
+    "byte": "Byte",
+    "short": "Short",
+    "int": "Integer",
+    "long": "Long",
+    "float": "Float",
+    "double": "Double",
+    "char": "Character",
 }
 _IMPORTS = {
     "BigDecimal": "java.math.BigDecimal",
@@ -167,18 +177,13 @@ class JavaScaffoldInput(BaseModel):
                     "bceModel and erdBceModel contain different Entity relationships"
                 )
 
-        api_schema_names = {
-            str(item.get("name"))
-            for item in self.api_model.get("Schemas", [])
-            if isinstance(item, dict) and item.get("name")
-        }
-        component_names = {item.class_name for item in self.bce_model.Classes}
-        collisions = sorted(api_schema_names & component_names)
-        if collisions:
-            raise ValueError(
-                "API schema names collide with BCE component names: "
-                + ", ".join(collisions)
-            )
+        # API schemas and BCE components intentionally use different Java
+        # packages (``.api.model`` and ``.bce``).  A domain entity such as
+        # ``Course`` commonly appears in both models, and that is not a Java
+        # type collision.  The scaffold renders only BCE declarations; the
+        # OpenAPI generator owns API model declarations in its own package.
+        # Rejecting equal simple names here therefore blocked valid designs
+        # before either generator could create a file.
         return self
 
 
@@ -346,7 +351,14 @@ def java_type(design_type: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         token = match.group(0)
-        return _TYPE_ALIASES.get(token.casefold(), token)
+        java = _TYPE_ALIASES.get(token.casefold(), token)
+        # Java generic arguments must be reference types.  Keep primitive
+        # aliases for ordinary fields and parameters, but box them inside a
+        # collection or Optional (for example optional<integer> becomes
+        # Optional<Integer>, never Optional<int>).
+        if "<" in source[: match.start()]:
+            return _BOXED_GENERIC_TYPES.get(java, java)
+        return java
 
     converted = re.sub(r"[A-Za-z_$][A-Za-z0-9_$]*", replace, source)
     if not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*(?:<[A-Za-z0-9_$<>,?]+>)?", converted):

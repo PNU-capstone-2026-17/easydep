@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from collections.abc import Mapping
@@ -263,7 +264,7 @@ class WorkspaceService:
     def reconcile_implementation_command(self, app_id: str) -> dict[str, Any] | None:
         """구현 작업은 끝났지만 Workspace 명령만 남은 경우 완료 상태를 맞춘다."""
         command = repository.latest_command(app_id)
-        if not command or command.get("status") not in {"RUNNING", "INTERRUPTED"}:
+        if not command or command.get("status") not in {"RUNNING", "INTERRUPTED", "FAILED"}:
             return command
         if command.get("action") not in {
             "start_implementation",
@@ -283,6 +284,7 @@ class WorkspaceService:
         # READY workflow의 완료 여부는 구현 작업 서비스가 판정하여 공개 상태를
         # COMPLETED로 바꾼다. Workspace가 그 내부 규칙을 다시 구현하지 않는다.
         if job_status != "COMPLETED":
+            self._sync_implementation_progress(app_id, str(command["command_id"]), job)
             return command
         result = {
             "message": "Review the generated implementation artifacts below.",
@@ -307,6 +309,57 @@ class WorkspaceService:
             metadata={"status": "COMPLETED", "job_id": job_id},
         )
         return updated
+
+    def _sync_implementation_progress(
+        self, app_id: str, command_id: str, job: dict[str, Any]
+    ) -> None:
+        """재시작 뒤에도 저장된 job 상태를 Workspace 진행 이벤트로 복원한다."""
+        previous_updates: dict[str, str] = {}
+        for event in repository.list_events(app_id):
+            if (
+                event.get("command_id") != command_id
+                or event.get("stage") != "implementation"
+                or event.get("kind") != "progress"
+            ):
+                continue
+            metadata = event.get("metadata") or {}
+            step = str(metadata.get("step") or "")
+            if step:
+                previous_updates[step] = "|".join(
+                    str(metadata.get(field) or "")
+                    for field in ("progress_status", "progress_step_label", "progress_detail")
+                )
+        progress = self._implementation_progress_snapshot(job)
+        for update in progress.get("updates", []) if progress else []:
+            if not isinstance(update, dict):
+                continue
+            step = str(update.get("step") or "")
+            if not step:
+                continue
+            label = str(update.get("label") or step)
+            detail = str(update.get("detail") or "")
+            status = str(update.get("status") or "running")
+            key = "|".join((status, label, detail))
+            if previous_updates.get(step) == key:
+                continue
+            repository.append_event(
+                app_id,
+                command_id=command_id,
+                stage="implementation",
+                kind="progress",
+                actor="system",
+                text=detail or label,
+                metadata={
+                    "progress_event": "implementationStepUpdated",
+                    "step": step,
+                    "progress_step_label": label,
+                    "progress_card_label": str(
+                        progress.get("progress_card_label") or "구현 진행 상황"
+                    ),
+                    "progress_detail": detail,
+                    "progress_status": status,
+                },
+            )
 
     @staticmethod
     def _sequence_target_feedbacks(context: dict[str, Any]) -> list[ReviseRequest]:
@@ -1551,8 +1604,15 @@ class WorkspaceService:
         terminal_failure = job_status in {"FAILED", "CANCELLED", "REJECTED"}
         failure_error = str(job.get("error") or "").strip()
         failure_lines = [line.strip() for line in failure_error.splitlines() if line.strip()]
+        meaningful_failure_lines = [
+            line
+            for line in failure_lines
+            if re.search(r"\b(error|exception|failed|timeout|denied)\b", line, re.IGNORECASE)
+        ]
         failure_detail = (
-            failure_lines[-1][-500:] if failure_lines else "구현 작업이 완료되지 않았습니다."
+            (meaningful_failure_lines[-1] if meaningful_failure_lines else failure_lines[-1])[-500:]
+            if failure_lines
+            else "구현 작업이 완료되지 않았습니다."
         )
         live_progress = job.get("progress")
         progress_status = (
