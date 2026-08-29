@@ -46,6 +46,18 @@ def test_repair_history_blocks_same_strategy_and_candidate_for_same_state():
         input_digest=attempt.input_digest,
         candidate_digest=attempt.candidate_digest,
     )
+    assert not ledger.failure_seen(
+        input_digest=attempt.input_digest,
+        finding_keys=attempt.finding_keys_before,
+    )
+    ledger.record(attempt.model_copy(update={
+        "attempt_id": "attempt-2",
+        "candidate_digest": stable_digest({"candidate": "different"}),
+    }))
+    assert ledger.failure_seen(
+        input_digest=attempt.input_digest,
+        finding_keys=attempt.finding_keys_before,
+    )
     assert not ledger.strategy_attempted(
         input_digest=stable_digest({"revision": "new"}),
         finding_keys=attempt.finding_keys_before,

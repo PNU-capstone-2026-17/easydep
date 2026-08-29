@@ -275,3 +275,87 @@ def test_ambiguous_binding_selection_is_limited_to_finite_candidates(monkeypatch
     assert selected == {
         "UC1:main:1::call:3#studentId": candidates[1],
     }
+
+
+def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names(monkeypatch):
+    """매개변수 이름이 달라도 타입이 맞는 요청 필드를 실제 후보로 제공한다."""
+    model = BCEModel.model_validate({
+        "Classes": [
+            {
+                "className": "ConversionBoundary",
+                "stereotype": "Boundary",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": (
+                        "ConversionBoundary::convert(request:ConversionRequest)"
+                    ),
+                    "name": "convert",
+                    "parameters": [{"name": "request", "type": "ConversionRequest"}],
+                    "returnType": "ConversionResult",
+                    "stepRefs": ["UC1:main:1"],
+                }],
+            },
+            {
+                "className": "ConversionControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": "ConversionControl::findUnit(code:String)",
+                    "name": "findUnit",
+                    "parameters": [{"name": "code", "type": "String"}],
+                    "returnType": "ConversionResult",
+                    "stepRefs": ["UC1:main:2"],
+                }],
+            },
+        ],
+        "DataTypes": [
+            {
+                "name": "ConversionRequest",
+                "kind": "valueObject",
+                "fields": [
+                    "sourceUnitCode : String",
+                    "targetUnitCode : String",
+                ],
+            },
+            {
+                "name": "ConversionResult",
+                "kind": "valueObject",
+                "fields": ["value : Decimal"],
+            },
+        ],
+        "Relationships": [],
+        "Collaborations": [],
+    })
+    plan = CallPlanProposal.model_validate({
+        "calls": [
+            {
+                "receiverOperationId": (
+                    "ConversionBoundary::convert(request:ConversionRequest)"
+                ),
+                "parentCallIndex": None,
+            },
+            {
+                "receiverOperationId": "ConversionControl::findUnit(code:String)",
+                "parentCallIndex": 1,
+            },
+        ],
+    })
+    expected_candidates = [
+        "UC1:main:1::call:1#request.sourceUnitCode",
+        "UC1:main:1::call:1#request.targetUnitCode",
+    ]
+
+    def select_source(_group, ambiguous):
+        location = "UC1:main:1::call:2#code"
+        assert ambiguous == {location: expected_candidates}
+        return {location: expected_candidates[0]}
+
+    monkeypatch.setattr(collaboration, "select_ambiguous_bindings", select_source)
+    result = collaboration.materialize(
+        build_scenario_index(single_use_case()),
+        model,
+        build_scenario_index(single_use_case()).groups[0],
+        plan,
+    )
+
+    assert result.calls[1].argument_bindings[0].source_ref == expected_candidates[0]

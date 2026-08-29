@@ -187,6 +187,30 @@ class RepairLedger(BaseModel):
             for attempt in self.attempts
         )
 
+    def failure_seen(
+        self,
+        *,
+        input_digest: str,
+        finding_keys: Sequence[str],
+    ) -> bool:
+        """후보가 달라도 같은 검증 실패가 두 번 누적됐는지 확인한다.
+
+        한 번의 재발만으로 멈추면 서로 다른 수리안을 시도하는 정상 흐름도 막을 수 있다.
+        따라서 이전 기록에 같은 실패가 두 번 있을 때, 즉 현재 결과가 세 번째 같은
+        실패일 때만 정체로 판단한다. 이는 전체 수리 횟수 제한이 아니라 같은 상태를
+        반복하는 경우만 끝내는 조건이다.
+        """
+        signature = tuple(sorted(set(finding_keys)))
+        matching_attempts = sum(
+            1
+            for attempt in self.attempts
+            if (
+                attempt.input_digest == input_digest
+                and attempt.finding_keys_before == signature
+            )
+        )
+        return bool(signature) and matching_attempts >= 2
+
     def record(self, attempt: RepairAttempt) -> None:
         self.attempts.append(attempt)
 

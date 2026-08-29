@@ -595,9 +595,15 @@ def _checked_fragment_uncached(
 
         current_findings = tuple(sorted(set(finding_text(report.findings))))
         candidate_digest = stable_digest(candidate)
-        repeated = ledger.candidate_seen(
-            input_digest=input_digest,
-            candidate_digest=candidate_digest,
+        repeated = (
+            ledger.candidate_seen(
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+            )
+            or ledger.failure_seen(
+                input_digest=input_digest,
+                finding_keys=current_findings,
+            )
         )
         ledger.record(RepairAttempt(
             stage="design.class.operations",
@@ -613,7 +619,7 @@ def _checked_fragment_uncached(
         if repeated:
             ledger.status = "STALLED"
             ledger.stall_reason = (
-                "The operation LLM repeated an already rejected fragment."
+                "The operation LLM repeated an already rejected fragment or failed state."
             )
             raise ValueError(
                 f"operation fragment {use_case.id} repair stalled on a repeated candidate: "
@@ -1068,11 +1074,17 @@ def _build_fragments(
                     # 충돌의 후발 소유자인 현재 unit만 이력 기반으로 교체한다. 이미 committed된
                     # 형제 fragment를 다시 호출하지 않는 것이 국소성 보장의 핵심이다.
                     candidate_digest = stable_digest(fragment)
-                    repeated = collision_ledger.candidate_seen(
-                        input_digest=collision_input_digest,
-                        candidate_digest=candidate_digest,
-                    )
                     finding_keys = (str(collision),)
+                    repeated = (
+                        collision_ledger.candidate_seen(
+                            input_digest=collision_input_digest,
+                            candidate_digest=candidate_digest,
+                        )
+                        or collision_ledger.failure_seen(
+                            input_digest=collision_input_digest,
+                            finding_keys=finding_keys,
+                        )
+                    )
                     collision_ledger.record(RepairAttempt(
                         stage="design.class.operation-collision",
                         target_ids=(unit.id,),

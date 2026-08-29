@@ -278,7 +278,11 @@ def _binding_candidates(
                 projected = projected_field_type(source_type, field_path, fields_by_type)
                 field_ref = f"{source_ref}.{field_path}"
                 add_named(field_path, projected, field_ref)
-                if field_path.casefold() == name.casefold() and types_compatible(projected, target_type):
+                # 이름이 달라도 타입이 맞으면 유한 후보에 포함한다. 예를 들어
+                # ``code: String``은 request의 ``sourceUnitCode``와
+                # ``targetUnitCode`` 중 하나일 수 있다. 둘 이상이면 아래의 저비용
+                # selector가 실제 후보 안에서만 고르므로 값을 새로 만들지 않는다.
+                if types_compatible(projected, target_type):
                     candidates.append(field_ref)
         return_type = text(operation.get("returnType"))
         if return_type.casefold() != "void" and types_compatible(return_type, target_type):
@@ -289,7 +293,7 @@ def _binding_candidates(
             projected = projected_field_type(return_type, field_path, fields_by_type)
             field_ref = f"{ancestor['callId']}#result.{field_path}"
             add_named(field_path, projected, field_ref)
-            if field_path.casefold() == name.casefold() and types_compatible(projected, target_type):
+            if types_compatible(projected, target_type):
                 candidates.append(field_ref)
     for earlier in reversed(calls[:call_index]):
         if text(earlier.get("callId")) in ancestor_ids:
@@ -573,11 +577,17 @@ def _accepted_collaboration_payload(
                 if candidate is not None
                 else {"error": error_text}
             )
-            repeated = ledger.candidate_seen(
-                input_digest=input_digest,
-                candidate_digest=candidate_digest,
-            )
             finding_keys = (error_text,)
+            repeated = (
+                ledger.candidate_seen(
+                    input_digest=input_digest,
+                    candidate_digest=candidate_digest,
+                )
+                or ledger.failure_seen(
+                    input_digest=input_digest,
+                    finding_keys=finding_keys,
+                )
+            )
             ledger.record(RepairAttempt(
                 stage="design.class.collaboration",
                 target_ids=(group.id,),
@@ -592,7 +602,7 @@ def _accepted_collaboration_payload(
             if repeated:
                 ledger.status = "STALLED"
                 ledger.stall_reason = (
-                    "The collaboration LLM repeated an already rejected call plan."
+                    "The collaboration LLM repeated an already rejected call plan or failed state."
                 )
                 raise _CollaborationUnitFailure(
                     "repair stalled on a repeated candidate: " + error_text

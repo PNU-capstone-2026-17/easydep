@@ -146,9 +146,15 @@ def _repair_collaboration_handoffs(
             "skeleton": _payload(skeleton),
             "failures": finding_keys,
         })
-        repeated = ledger.candidate_seen(
-            input_digest=input_digest,
-            candidate_digest=candidate_digest,
+        repeated = (
+            ledger.candidate_seen(
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+            )
+            or ledger.failure_seen(
+                input_digest=input_digest,
+                finding_keys=finding_keys,
+            )
         )
         ledger.record(RepairAttempt(
             stage="design.class.operation-handoff",

@@ -273,9 +273,15 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
 
         findings = tuple(sorted(set(finding_text(report.findings))))
         candidate_digest = stable_digest(candidate)
-        repeated = ledger.candidate_seen(
-            input_digest=input_digest,
-            candidate_digest=candidate_digest,
+        repeated = (
+            ledger.candidate_seen(
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+            )
+            or ledger.failure_seen(
+                input_digest=input_digest,
+                finding_keys=findings,
+            )
         )
         ledger.record(RepairAttempt(
             stage="design.class.inventory",
@@ -290,7 +296,9 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
         ))
         if repeated:
             ledger.status = "STALLED"
-            ledger.stall_reason = "The inventory LLM repeated an already rejected candidate."
+            ledger.stall_reason = (
+                "The inventory LLM repeated an already rejected candidate or failed state."
+            )
             raise ValueError(
                 "class inventory repair stalled on a repeated candidate: "
                 + "; ".join(findings)
