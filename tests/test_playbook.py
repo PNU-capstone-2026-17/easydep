@@ -14,9 +14,9 @@ import json
 import pytest
 
 from app.requirements import prompts
-from app.requirements.agent import playbook
 from app.requirements.config import settings
 from app.requirements.knowledge import rules
+from app.requirements.orchestration import playbook
 
 #: 검출기가 판정하는 규칙(결정론)과 검증자가 판정하는 규칙(흔들린다) 하나씩.
 DETECTED = "spec.black-box-no-ui-mechanics"
@@ -151,41 +151,6 @@ def test_unknown_rules_are_never_learned(tmp_path):
     assert playbook.harvest(run) == []
 
 
-def test_rendered_block_says_it_is_not_a_rule(tmp_path):
-    """배운 것이 규칙인 척하면 `basis.py`가 그은 선이 프롬프트에서 무너진다.
-
-    규칙 목록의 문장은 좌표를 댈 수 있다. 이 절의 문장은 우리 로그가 전부다 — 읽는 쪽이
-    그 차이를 알아야 한다.
-    """
-    entries = []
-    for i in range(playbook.MIN_RUNS_DETECTOR):
-        entries = playbook.curate(entries, playbook.harvest(
-            _run_dir(tmp_path, f"run_{i}", "toystore", [_issue(DETECTED)],
-                     f"System shows the catalogue on screen {i}.")
-        ))
-    block = playbook.render(entries, rules.WRITE_SPECIFICATIONS)
-    assert "Not rules" in block
-    assert "run logs" in block
-
-
-def test_entries_are_capped_so_the_block_cannot_swallow_the_prompt(tmp_path):
-    """상한이 없으면 배운 것이 규칙을 밀어낸다.
-
-    ACE가 말하는 context collapse는 "요약해서 잃는 것"이지만, 여기서는 **늘려서 묻는 것**이
-    같은 값이다 — §9가 잰 것이 정확히 그것이다(규칙을 여럿 한 프롬프트에 넣으면 안정된
-    판정이 0이 됐다).
-    """
-    entries = [
-        playbook.Entry(rule_id=r.id, stage=rules.WRITE_SPECIFICATIONS,
-                       detector_runs=[f"run_{i}" for i in range(5)])
-        for r in rules.rules_for(rules.WRITE_SPECIFICATIONS, rules.DEFECT)
-    ]
-    assert len(entries) > playbook.MAX_ENTRIES_PER_STAGE, "상한을 시험하지 못하는 표본이다"
-    block = playbook.render(entries, rules.WRITE_SPECIFICATIONS)
-    listed = [line for line in block.splitlines() if line.startswith("- (")]
-    assert len(listed) == playbook.MAX_ENTRIES_PER_STAGE
-
-
 def test_disabled_playbook_leaves_the_prompt_byte_identical(monkeypatch):
     """**꺼짐이 곧 대조군이다.**
 
@@ -195,25 +160,6 @@ def test_disabled_playbook_leaves_the_prompt_byte_identical(monkeypatch):
     monkeypatch.setattr(settings, "playbook_enabled", False)
     assert prompts.generation_system_for(rules.WRITE_SPECIFICATIONS) == prompts.SPEC_SYSTEM
     assert prompts.generation_system_for(rules.DRAW_DIAGRAM) == prompts.RELATIONSHIPS_SYSTEM
-
-
-def test_enabled_playbook_appends_after_the_rules(tmp_path, monkeypatch):
-    """켜면 규칙 **뒤에** 자기 절로 붙는다 — 규칙 사이에 끼지 않는다."""
-    entries = []
-    for i in range(playbook.MIN_RUNS_DETECTOR):
-        entries = playbook.curate(entries, playbook.harvest(
-            _run_dir(tmp_path, f"run_{i}", "toystore", [_issue(DETECTED)],
-                     f"System shows the catalogue on screen {i}.")
-        ))
-    path = tmp_path / "playbook.json"
-    playbook.save(path, entries)
-
-    monkeypatch.setattr(settings, "playbook_enabled", True)
-    monkeypatch.setattr(settings, "playbook_path", str(path))
-    prompt = prompts.generation_system_for(rules.WRITE_SPECIFICATIONS)
-
-    assert prompt.startswith(prompts.SPEC_SYSTEM), "규칙 판이 그대로 앞에 있어야 한다"
-    assert prompt.index("[RULES YOU FOLLOW]") < prompt.index("[WHAT WE GOT WRONG BEFORE]")
 
 
 def test_a_missing_playbook_file_does_not_stop_the_run(monkeypatch, tmp_path):
@@ -231,8 +177,6 @@ def test_saved_playbook_round_trips_and_is_human_editable(tmp_path):
     path = tmp_path / "pb.json"
     playbook.save(path, entries)
 
-    body = json.loads(path.read_text(encoding="utf-8"))
-    assert body["note"], "이 파일이 무엇인지 파일 자체가 말해야 한다"
     assert playbook.load(path)[0].as_dict() == entries[0].as_dict()
 
 

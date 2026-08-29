@@ -67,10 +67,8 @@ state patch를 반환한다. graph 순서, feedback cascade, supervisor 재실�
   `repair_stopped` 사유를 반환하여 supervisor가 공개 finding만으로 재실행 범위를
   결정하게 한다.
 
-## 호환 경계
+## 공개 경로
 
-기존 `app.requirements.agent.steps.step1_requirements`부터 `step4_diagram`까지의 import는
-canonical modeling 함수를 재노출하는 얇은 facade다. HTTP, `AgentState`, 저장 JSON,
-PlantUML과 stage operation 이름은 유지한다. 호출되지 않는 resource tool-agent 경로는
-이 modeling 리팩터링의 삭제 대상이 아니며, 별도의 dead-path 근거 없이 제거하지
-않는다.
+요구사항 단계 구현은 이 디렉터리의 모듈에서 직접 import한다. 이전
+`app.requirements.agent.steps` 경로는 더 이상 제공하지 않는다. HTTP, 현재
+`AgentState`, 저장 JSON, PlantUML과 stage operation 이름은 그대로 유지한다.

@@ -474,23 +474,6 @@ def test_http_state_json_and_plantuml_shape_remain_compatible() -> None:
     assert response["diagram"].endswith("\n@enduml")
 
 
-def test_legacy_stage_imports_delegate_to_canonical_public_boundaries() -> None:
-    """기존 step1–4 import는 독립 구현이 아니라 canonical service를 재노출한다."""
-
-    from app.requirements.agent.steps import step1_requirements as legacy_step1
-    from app.requirements.agent.steps import step2_usecases as legacy_step2
-    from app.requirements.agent.steps import step3_specifications as legacy_step3
-    from app.requirements.agent.steps import step4_diagram as legacy_step4
-
-    assert legacy_step1.expand_requirements.__wrapped__ is refinement.expand_requirements
-    assert legacy_step2.identify_use_cases.__wrapped__ is use_cases.identify_use_cases
-    assert legacy_step3.generate_specs.__wrapped__ is specifications.generate_specs
-    assert legacy_step4.identify_relationships.__wrapped__ is (
-        relationships.identify_relationships
-    )
-    assert legacy_step4.render_diagram is diagram.render_diagram
-
-
 def _contains_unbounded_annotation(annotation: object) -> bool:
     """annotation tree에 Any 또는 parameter 없는 dict가 있는지 판정한다."""
 
@@ -556,20 +539,3 @@ def test_modeling_import_direction_and_public_annotations_are_bounded() -> None:
             for annotation in get_type_hints(function).values()
         ), function.__qualname__
         assert inspect.signature(function).return_annotation is not inspect.Signature.empty
-
-
-def test_modeling_documentation_covers_the_operational_contract() -> None:
-    """README가 입력·출력·부수효과·실패와 import 제한을 모두 기록한다."""
-
-    readme = (MODELING_DIR / "README.md").read_text(encoding="utf-8")
-    for heading in (
-        "## 입력",
-        "## 출력",
-        "## 부수효과와 호출 범위",
-        "## 사용하면 안 되는 import",
-        "## 실패 조건",
-        "## 호환 경계",
-    ):
-        assert heading in readme
-    assert "숫자 상한 대신" in readme
-    assert "별도의 dead-path 근거 없이 제거하지" in readme

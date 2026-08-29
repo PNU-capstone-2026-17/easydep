@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 
 import pytest
 
 from app.cloudkb.depkb.native.consensus import reconcile_reviews
-from app.cloudkb.depkb.native.discovery import discover_aws
 from app.cloudkb.depkb.native.freeze import freeze_native_graph, validate_frozen_graph
 from app.cloudkb.depkb.native.review import make_review_packet, validate_review
 
 
+def _aws_inventory() -> dict:
+    return json.loads(
+        Path("app/cloudkb/depkb/native/aws-inventory.json").read_text(encoding="utf-8")
+    )
+
+
 def test_review_packet_covers_every_native_element_without_cross_provider_fields():
-    inventory = discover_aws()
+    inventory = _aws_inventory()
     packet = make_review_packet(inventory)
 
     validate_review(inventory, packet, require_complete=False)
@@ -22,7 +29,7 @@ def test_review_packet_covers_every_native_element_without_cross_provider_fields
 
 
 def test_incomplete_native_review_cannot_be_frozen():
-    inventory = discover_aws()
+    inventory = _aws_inventory()
     packet = make_review_packet(inventory)
 
     with pytest.raises(ValueError, match="not complete"):
@@ -30,7 +37,7 @@ def test_incomplete_native_review_cannot_be_frozen():
 
 
 def test_review_requires_evidenced_reason_for_inclusion():
-    inventory = discover_aws()
+    inventory = _aws_inventory()
     packet = make_review_packet(inventory)
     packet["decisions"][0].update(
         status="included", criterion="provisioningOutcome", reason=""

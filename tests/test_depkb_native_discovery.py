@@ -14,6 +14,17 @@ from app.cloudkb.depkb.native.discovery import (
 )
 from app.cloudkb.depkb.native.model import validate_inventory
 
+_CACHE_KEYS = {
+    discover_aws: "aws-cfn",
+    discover_gcp: "gcp-compute",
+}
+
+
+def _skip_without_pinned_source(discover) -> None:
+    key = _CACHE_KEYS.get(discover)
+    if key and not is_cached(key):
+        pytest.skip(f"고정 {key} 원천 스냅샷이 없는 환경에서는 원천 재추출을 실행하지 않는다")
+
 
 def test_protocol_forbids_prior_model_and_benchmark_discovery_inputs():
     protocol = json.loads(PROTOCOL.read_text(encoding="utf-8"))
@@ -25,8 +36,7 @@ def test_protocol_forbids_prior_model_and_benchmark_discovery_inputs():
 
 @pytest.mark.parametrize("discover", [discover_aws, discover_azure, discover_gcp])
 def test_native_discovery_is_pinned_and_contains_no_cross_provider_projection(discover):
-    if discover is discover_gcp and not is_cached("gcp-compute"):
-        pytest.skip("고정 GCP 원천 스냅샷이 없는 환경에서는 원천 재추출을 실행하지 않는다")
+    _skip_without_pinned_source(discover)
     inventory = discover()
     validate_inventory(inventory)
 
@@ -36,17 +46,9 @@ def test_native_discovery_is_pinned_and_contains_no_cross_provider_projection(di
     assert all("crossProviderSubject" not in item for item in inventory["candidates"])
 
 
-def test_native_discovery_module_does_not_import_prior_product_vocabulary():
-    source = Path("app/cloudkb/depkb/native/discovery.py").read_text(encoding="utf-8")
-
-    assert "depkb.vocabulary" not in source
-    assert "test-application-profiles" not in source
-
-
 @pytest.mark.parametrize("discover", [discover_azure, discover_gcp])
 def test_request_body_schema_is_a_traversal_root_not_a_dependency(discover):
-    if discover is discover_gcp and not is_cached("gcp-compute"):
-        pytest.skip("고정 GCP 원천 스냅샷이 없는 환경에서는 원천 재추출을 실행하지 않는다")
+    _skip_without_pinned_source(discover)
     inventory = discover()
 
     assert inventory["candidates"]
@@ -71,8 +73,7 @@ def test_request_body_schema_is_a_traversal_root_not_a_dependency(discover):
     ("gcp", discover_gcp),
 ])
 def test_committed_native_inventory_is_reproducible(provider, discover):
-    if provider == "gcp" and not is_cached("gcp-compute"):
-        pytest.skip("고정 GCP 원천 스냅샷이 없는 환경에서는 원천 재추출을 실행하지 않는다")
+    _skip_without_pinned_source(discover)
     committed = json.loads(
         Path(f"app/cloudkb/depkb/native/{provider}-inventory.json").read_text(
             encoding="utf-8"

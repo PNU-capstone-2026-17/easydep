@@ -23,42 +23,6 @@ _MODULES = (
 )
 
 
-def test_legacy_imports_reexport_canonical_public_objects() -> None:
-    """호환 경로가 orchestration 구현의 사본을 만들지 않는다."""
-    from app.requirements import api as legacy_api
-    from app.requirements import feedback as legacy_feedback
-    from app.requirements import runner as legacy_runner
-    from app.requirements.agent import graph as legacy_graph
-    from app.requirements.agent import subgraphs as legacy_subgraphs
-    from app.requirements.agent import supervisor as legacy_supervisor
-    from app.requirements.agent.steps import feedback_gates as legacy_gates
-    from app.requirements.orchestration import (
-        api,
-        feedback,
-        feedback_gates,
-        graph,
-        runner,
-        subgraphs,
-        supervisor,
-    )
-
-    pairs = (
-        (legacy_api.analyze_endpoint, api.analyze_endpoint),
-        (legacy_api.persist_analysis, api.persist_analysis),
-        (legacy_feedback.apply_feedback, feedback.apply_feedback),
-        (legacy_feedback.apply_feedback_upto, feedback.apply_feedback_upto),
-        (legacy_runner.run_pipeline, runner.run_pipeline),
-        (legacy_runner.persist_run, runner.persist_run),
-        (legacy_graph.build_graph, graph.build_graph),
-        (legacy_graph.start_analysis, graph.start_analysis),
-        (legacy_graph.resume_analysis, graph.resume_analysis),
-        (legacy_subgraphs.build_stage, subgraphs.build_stage),
-        (legacy_supervisor.decide, supervisor.decide),
-        (legacy_gates.gate_requirements, feedback_gates.gate_requirements),
-    )
-    assert all(legacy is canonical for legacy, canonical in pairs)
-
-
 @pytest.mark.parametrize("filename", _MODULES)
 def test_orchestration_modules_do_not_reverse_depend_on_downstream_contexts(
     filename: str,
@@ -178,20 +142,3 @@ def test_only_current_checkpoint_schema_is_supported() -> None:
         for path in (_ROOT / "app" / "requirements").rglob("*.py")
     )
     assert "app.requirements.session_store" not in active_imports
-
-
-def test_orchestration_readme_records_the_operational_contract() -> None:
-    """조율 경계의 입력·출력·부수효과·실패와 import 제한을 문서화한다."""
-    text = (_PACKAGE / "README.md").read_text(encoding="utf-8")
-    for heading in (
-        "## 입력",
-        "## 출력",
-        "## 부수효과와 호출 범위",
-        "## 사용하면 안 되는 import",
-        "## 실패 조건",
-        "## 호환 경계",
-    ):
-        assert heading in text
-    assert "PIPELINE" in text
-    assert "과거 requirements checkpoint shape 전용 MySQL parser" in text
-    assert "실제 NIM 호출을 하지 않는다" in text

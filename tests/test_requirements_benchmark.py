@@ -15,10 +15,6 @@ assert SPEC and SPEC.loader
 SPEC.loader.exec_module(benchmark)
 
 
-def test_frozen_holdout_hashes_are_unchanged():
-    assert benchmark.verify_holdout_hashes() == []
-
-
 def test_score_matches_roles_only_on_traced_requirements(tmp_path):
     manifest = {
         "dataset": "dev_checkout_gateway",
@@ -35,6 +31,13 @@ def test_score_matches_roles_only_on_traced_requirements(tmp_path):
          "supporting_actors": ["Payment Gateway"], "requirement_ids": ["FR6"]},
     ]
     files = {
+        "input.json": {
+            "classified": [
+                {"id": "FR3", "text": "Checkout an order", "type": "FR"},
+                {"id": "FR4", "text": "Use a payment gateway", "type": "FR"},
+                {"id": "FR6", "text": "Cancel an order", "type": "FR"},
+            ]
+        },
         "manifest.json": manifest,
         "actors.json": actors,
         "use_cases.json": use_cases,

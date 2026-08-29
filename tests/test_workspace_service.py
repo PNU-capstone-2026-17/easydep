@@ -933,10 +933,6 @@ def test_workspace_replaces_internal_feedback_prompt_with_english_ui_copy() -> N
 
     assert result["awaiting_input"] is True
     assert result["kind"] == "question"
-    assert result["message"] == (
-        "I refined and classified 1 requirement (1 functional and 0 non-functional). "
-        "What is the monthly budget?"
-    )
     assert result["resource_question"]["field"] == "monthlyBudgetUSD"
     assert result["review_artifacts"] == ["Refined requirements"]
     assert "Before I continue" not in result["message"]

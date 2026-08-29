@@ -54,10 +54,10 @@
   관찰 가능한 종료·degradation 결과를 남긴다.
 - artifact repository의 앱이 없거나 저장이 실패하면 HTTP 경계에서 오류로 드러낸다.
 
-## 호환 경계
+## 공개 경로
 
-- 기존 `app.requirements.agent.graph/subgraphs/supervisor`,
-  `app.requirements.agent.steps.feedback_gates`, `app.requirements.feedback`,
-  `app.requirements.runner`, `app.requirements.api`는 canonical 공개 객체만 재노출한다.
+- graph, subgraph, supervisor, feedback gate는 이 디렉터리에서 직접 import한다.
+  삭제한 `app.requirements.agent` 경로는 제공하지 않는다.
+- FastAPI 진입점은 `app.requirements.api`가 이 디렉터리의 router를 연결한다.
 - 과거 requirements checkpoint shape 전용 MySQL parser·migration fallback은 제공하지
   않는다. `persistence`는 현재 LangGraph checkpoint schema의 save→resume만 보장한다.

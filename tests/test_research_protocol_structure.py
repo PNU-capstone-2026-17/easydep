@@ -33,17 +33,6 @@ def test_research_runners_do_not_import_other_modules_private_names():
     assert violations == []
 
 
-def test_repository_root_is_derived_only_in_paths_module():
-    violations = []
-    for path in _active_python_files():
-        if path == PROTOCOL_ROOT / "core" / "paths.py":
-            continue
-        source = path.read_text(encoding="utf-8")
-        if "Path(__file__).resolve().parents" in source:
-            violations.append(path.name)
-    assert violations == []
-
-
 def test_active_protocol_inputs_are_not_mixed_with_runner_modules():
     top_level_json = {path.name for path in PROTOCOL_ROOT.glob("*.json")}
     assert top_level_json == set()
@@ -51,9 +40,3 @@ def test_active_protocol_inputs_are_not_mixed_with_runner_modules():
         path.name for path in (PROTOCOL_ROOT / "protocols").glob("*.json")
     } == ACTIVE_PROTOCOL_FILES
     assert (PROTOCOL_ROOT / "definitions" / "protocol.json").is_file()
-
-
-def test_protocol_root_contains_only_navigation_files():
-    assert {path.name for path in PROTOCOL_ROOT.iterdir() if path.is_file()} == {
-        "README.md"
-    }

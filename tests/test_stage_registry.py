@@ -1,4 +1,4 @@
-"""단계 목록(app/requirements/agent/stages.py)이 실제 배선과 맞는지 고정한다.
+"""단계 목록이 실제 배선과 맞는지 고정한다.
 
 **2026-07-27 이전에는 배선이 두 벌 더 있었다**: `subgraphs.py`의 그래프 엣지와
 `runner.run_pipeline`의 배치 실행 순서. 사람이 읽을 코드로 남기는 편이 낫다고 보고 사본을
@@ -13,7 +13,6 @@
 import pytest
 
 from app.requirements import stage_registry as stages
-from app.requirements.agent import stages as legacy_stages
 from app.requirements.common.state_contract import StateContract, state_contract_of
 from app.requirements.orchestration import graph as orchestration_graph
 from app.requirements.orchestration import runner, subgraphs
@@ -71,16 +70,6 @@ def test_pipeline_group_batch_and_key_order_is_exact() -> None:
         "specs",
         "relationships",
     )
-
-
-def test_legacy_stage_registry_is_the_canonical_public_registry() -> None:
-    """기존 agent.stages 경로가 사본 pipeline을 만들지 않는다."""
-
-    assert legacy_stages.Stage is stages.Stage
-    assert legacy_stages.PIPELINE is stages.PIPELINE
-    assert legacy_stages.GROUPS is stages.GROUPS
-    assert legacy_stages.batch_order is stages.batch_order
-    assert legacy_stages.cascade_order is stages.cascade_order
 
 
 def test_stage_contract_public_shape_is_attached_to_every_registered_stage() -> None:

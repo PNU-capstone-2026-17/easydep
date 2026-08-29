@@ -293,32 +293,6 @@ def test_request_state_and_api_resource_json_shape_is_preserved() -> None:
     }
 
 
-def test_legacy_resource_imports_delegate_to_canonical_public_boundaries() -> None:
-    """기존 Python import가 독립 구현을 만들지 않고 canonical service를 가리킨다."""
-
-    from app.requirements import capability_contract as legacy_contract
-    from app.requirements.agent.steps import resource_tools as legacy_tools
-    from app.requirements.agent.steps import step_cloud as legacy_capability
-    from app.requirements.agent.steps import step_cloud_inputs as legacy_cloud_inputs
-    from app.requirements.agent.steps import step_resource as legacy_resource
-    from app.requirements.resources import capability_contract, tools
-
-    assert legacy_capability.derive_deployment_needs.__wrapped__ is (
-        capability_extraction.derive_deployment_needs
-    )
-    assert legacy_cloud_inputs.analyze_cloud_inputs.__wrapped__ is (
-        cloud_inputs.analyze_cloud_inputs
-    )
-    assert legacy_resource.extract_resource_constraints.__wrapped__ is (
-        service.extract_resource_constraints
-    )
-    assert legacy_resource.build_resource_spec.__wrapped__ is service.build_resource_spec
-    assert legacy_contract.decide is capability_contract.decide
-    assert legacy_contract.CalibrationPoint is capability_contract.CalibrationPoint
-    assert legacy_tools.resolve_region is tools.resolve_region
-    assert legacy_tools.convert_to_usd is tools.convert_to_usd
-
-
 def test_resource_stage_import_direction_and_public_annotations_are_bounded() -> None:
     """canonical stage가 상위 실행·하류 영역을 역참조하거나 Any/bare dict를 노출하지 않는다."""
 
@@ -361,19 +335,3 @@ def test_resource_stage_import_direction_and_public_annotations_are_bounded() ->
         assert signature.return_annotation is not dict
         assert "typing.Any" not in repr(hints)
         assert all(parameter.annotation is not dict for parameter in signature.parameters.values())
-
-
-def test_resource_boundary_documentation_covers_operational_contract() -> None:
-    """README가 단계 경계와 보존 정책을 누락하지 않는다."""
-
-    readme = (RESOURCE_DIR / "README.md").read_text(encoding="utf-8")
-    for heading in (
-        "## 입력",
-        "## 출력",
-        "## 부수효과와 호출 범위",
-        "## 사용하면 안 되는 import",
-        "## 실패 조건",
-        "## 보존 중인 tool-agent 경로",
-    ):
-        assert heading in readme
-    assert "호출되지 않는다는 사실만으로 삭제하지 않는다" in readme

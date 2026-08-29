@@ -13,7 +13,6 @@ import httpx
 import pytest
 from pydantic import BaseModel, SecretStr
 
-from app.requirements.agent import llm as legacy_llm
 from app.requirements.config import settings
 from app.requirements.runtime import structured_llm, telemetry
 
@@ -175,15 +174,6 @@ def test_transient_provider_failures_use_two_sdk_retries_in_one_logical_call(
     assert attempts == 3
     assert stats.llm_calls == 1
     assert stats.structured_fallbacks == 0
-
-
-def test_legacy_llm_imports_are_the_canonical_runtime_api() -> None:
-    """기존 agent import가 독립 client cache나 다른 호출 경로를 만들지 않는다."""
-
-    assert legacy_llm.build_llm is structured_llm.build_llm
-    assert legacy_llm.invoke_structured is structured_llm.invoke_structured
-    assert legacy_llm.reset_llm is structured_llm.reset_llm
-    assert legacy_llm.warmup_llm is structured_llm.warmup_llm
 
 
 def test_native_structured_success_uses_one_physical_and_one_logical_call(

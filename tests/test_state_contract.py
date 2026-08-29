@@ -8,14 +8,12 @@
 """
 import pytest
 
-from app.requirements.agent.steps import step2_usecases as s2
-from app.requirements.agent.steps import step3_specifications as s3
-from app.requirements.agent.steps import step4_diagram as s4
 from app.requirements.common.state_contract import (
     MissingUpstreamState,
     require,
     require_any,
 )
+from app.requirements.modeling import diagram, relationships, specifications, use_cases
 
 
 def test_require_passes_when_keys_exist_even_if_empty():
@@ -43,14 +41,14 @@ def test_require_any_needs_only_one():
 @pytest.mark.parametrize(
     ("call", "missing"),
     [
-        (lambda: s2.identify_actors({}), "classified"),
-        (lambda: s2.identify_use_cases({"classified": []}), "actors"),
-        (lambda: s2.check_coverage({"classified": []}), "use_cases"),
-        (lambda: s3.generate_specs({"use_cases": []}), "classified"),
-        (lambda: s3.check_specs({}), "use_case_specs"),
-        (lambda: s4.identify_relationships({"use_cases": []}), "actors"),
-        (lambda: s4.check_relationships({}), "relationships"),
-        (lambda: s4.render_diagram({"use_cases": [], "actors": []}), "relationships"),
+        (lambda: use_cases.identify_actors({}), "classified"),
+        (lambda: use_cases.identify_use_cases({"classified": []}), "actors"),
+        (lambda: use_cases.check_coverage({"classified": []}), "use_cases"),
+        (lambda: specifications.generate_specs({"use_cases": []}), "classified"),
+        (lambda: specifications.check_specs({}), "use_case_specs"),
+        (lambda: relationships.identify_relationships({"use_cases": []}), "actors"),
+        (lambda: relationships.check_relationships({}), "relationships"),
+        (lambda: diagram.render_diagram({"use_cases": [], "actors": []}), "relationships"),
     ],
 )
 def test_missing_upstream_state_fails_loudly(call, missing):
@@ -62,14 +60,14 @@ def test_missing_upstream_state_fails_loudly(call, missing):
 @pytest.mark.parametrize(
     "call",
     [
-        lambda: s2.identify_actors({"classified": []}),
-        lambda: s2.identify_use_cases({"classified": [], "actors": []}),
-        lambda: s2.check_coverage({"classified": [], "use_cases": []}),
-        lambda: s3.generate_specs({"use_cases": [], "classified": []}),
-        lambda: s3.check_specs({"use_case_specs": []}),
-        lambda: s4.identify_relationships({"use_cases": [], "actors": []}),
-        lambda: s4.check_relationships({"relationships": {}}),
-        lambda: s4.render_diagram({"use_cases": [], "actors": [], "relationships": {}}),
+        lambda: use_cases.identify_actors({"classified": []}),
+        lambda: use_cases.identify_use_cases({"classified": [], "actors": []}),
+        lambda: use_cases.check_coverage({"classified": [], "use_cases": []}),
+        lambda: specifications.generate_specs({"use_cases": [], "classified": []}),
+        lambda: specifications.check_specs({"use_case_specs": []}),
+        lambda: relationships.identify_relationships({"use_cases": [], "actors": []}),
+        lambda: relationships.check_relationships({"relationships": {}}),
+        lambda: diagram.render_diagram({"use_cases": [], "actors": [], "relationships": {}}),
     ],
 )
 def test_empty_upstream_output_is_allowed(call):

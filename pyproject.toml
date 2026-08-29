@@ -155,14 +155,12 @@ files = [
     "app/requirements/common",
     "app/requirements/schemas.py",
     "app/requirements/config.py",
-    "app/requirements/agent/state.py",
+    "app/requirements/contracts/state.py",
     # 파이프라인 모양의 단일 소스. 여기가 틀리면 배선이 통째로 틀린다.
-    "app/requirements/agent/stages.py",
+    "app/requirements/stage_registry.py",
     # 규칙 지식베이스. 순수 데이터·순수 함수라 타입이 전부 지켜지고, 프롬프트·검출기·
     # 리포트가 전부 여기서 파생되므로 여기가 틀리면 근거가 통째로 틀린다.
     "app/requirements/knowledge",
-    # 평가. 채점이 틀리면 "나아졌다"는 판단이 통째로 틀린다.
-    "app/requirements/evaluation",
     # 체크포인터. 상위 인터페이스와 시그니처가 어긋나면 재개가 조용히 깨진다.
     "app/requirements/session_store.py",
     "app/design/services/class_diagram",

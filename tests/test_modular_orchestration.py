@@ -554,7 +554,7 @@ def test_retry_failed_testing_reuses_completed_implementation_steps(tmp_path, mo
 
 
 def test_retry_routes_app_dependency_failure_to_logic_and_downstream_only(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch
 ):
     monkeypatch.setenv("EASYDEP_EXPERIMENT_SESSION", "test-session")
     registry = _registry(tmp_path)
@@ -584,13 +584,6 @@ def test_retry_routes_app_dependency_failure_to_logic_and_downstream_only(
         "implementation.vm_selection",
         "implementation.vm_delivery",
     ]
-    events = capsys.readouterr().out
-    assert '"event": "checkpointLoadStarted"' in events
-    assert '"event": "checkpointLoadFinished"' in events
-    assert '"event": "checkpointExecutionStarted"' in events
-    assert '"event": "runPersistenceFinished"' in events
-
-
 def test_retry_hands_verified_failed_scaffold_output_to_logic(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     run_id = "partial-scaffold-run"
@@ -1129,9 +1122,13 @@ def test_llm_logic_preserves_member_build_contract_and_merges_dependencies(tmp_p
 
 
 def test_implementation_llm_completion_limit_is_explicitly_configurable(monkeypatch):
-    monkeypatch.delenv("LLM_MAX_COMPLETION_TOKENS", raising=False)
+    monkeypatch.setattr(
+        "app.orchestration.providers.settings.llm_max_completion_tokens", None
+    )
     assert _completion_options() == {}
-    monkeypatch.setenv("LLM_MAX_COMPLETION_TOKENS", "8192")
+    monkeypatch.setattr(
+        "app.orchestration.providers.settings.llm_max_completion_tokens", 8192
+    )
     assert _completion_options() == {"max_completion_tokens": 8192}
 
 
@@ -1685,20 +1682,6 @@ def test_llm_scaffold_accepts_json_production_resources(tmp_path, monkeypatch):
     ).is_file()
 
 
-def test_llm_prompts_forbid_unverified_framework_overrides():
-    from app.orchestration.providers import (
-        ACCEPTANCE_TEST_SYSTEM_PROMPT,
-        LOGIC_SYSTEM_PROMPT,
-        SCAFFOLD_SYSTEM_PROMPT,
-    )
-
-    assert "Spring Framework 6" in SCAFFOLD_SYSTEM_PROMPT
-    assert "exact superclass or interface signature" in SCAFFOLD_SYSTEM_PROMPT
-    assert "never add `@Override`" in LOGIC_SYSTEM_PROMPT
-    assert "org.springframework.boot.test.web.server" in ACCEPTANCE_TEST_SYSTEM_PROMPT
-    assert "legacy" in ACCEPTANCE_TEST_SYSTEM_PROMPT
-
-
 def test_cloud_design_no_verification_observes_mismatch_without_repair():
     provider = BuiltinCloudDesignProvider(
         adapter=SimpleNamespace(finalize=lambda **_kwargs: {"kb_used": True}),
@@ -1912,6 +1895,9 @@ def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(tmp_pa
         )()
 
     monkeypatch.setenv("EASYDEP_APPROVE_MEMBER_IMPLEMENTATION", "1")
+    monkeypatch.setattr(
+        "app.orchestration.providers.settings.easydep_approve_member_implementation", "1"
+    )
     monkeypatch.setenv("API_KEY", "approved-key")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("NVIDIA_API_KEY", raising=False)

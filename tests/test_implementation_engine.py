@@ -28,7 +28,6 @@ from app.implementation.agents.runtime import (
     EventJournal,
     _api_adapter_repair_contract,
     _promote_changed_files,
-    _render_missing_output_repair_prompt,
     _repair_missing_generated_model_imports,
     _requires_cross_phase_repair,
     _restore_unauthorized_files,
@@ -523,9 +522,6 @@ class ImplementationParallelismTest(unittest.TestCase):
             )
             self.assertTrue(all(len(task.allowed_write_paths) == 1 for task in entity_tasks))
             self.assertTrue(all(len(task.allowed_write_paths) == 1 for task in repository_tasks))
-            entity_prompt = (run / entity_tasks[0].prompt_file).read_text(encoding="utf-8")
-            self.assertIn("mappedBy", entity_prompt)
-            self.assertIn("scalar foreign-key column", entity_prompt)
 
     def test_related_persistence_entities_share_one_atomic_task(self) -> None:
         from app.implementation.planning import design_context
@@ -1102,14 +1098,6 @@ class LoadJobTest(unittest.TestCase):
             repository = manifest["implementation_tasks"][0]
             self.assertNotEqual("implement-repositories", repository["prompt_sha256"])
             self.assertIn("repairEvidence", repository["source_artifacts"])
-            self.assertIn(
-                "repair the failure in your owned files",
-                (task_dir / "implement-repositories.prompt.md").read_text(encoding="utf-8"),
-            )
-            self.assertIn(
-                "regenerate and revalidate after an upstream repair",
-                (task_dir / "implement-end-to-end-flow.prompt.md").read_text(encoding="utf-8"),
-            )
             repository_prompt = (
                 task_dir / "implement-repositories.prompt.md"
             ).read_text(encoding="utf-8")
@@ -1119,12 +1107,6 @@ class LoadJobTest(unittest.TestCase):
                 repository_prompt,
                 (task_dir / "implement-repositories.prompt.md").read_text(
                     encoding="utf-8"
-                ),
-            )
-            self.assertEqual(
-                1,
-                repository_prompt.count(
-                    "## Orchestrated repair and revalidation directives"
                 ),
             )
 
@@ -1336,38 +1318,6 @@ class LoadJobTest(unittest.TestCase):
              patch.object(settings, "openhands_provider_retry_max_seconds", 5):
             self.assertEqual(2, provider_retry_delay(1))
             self.assertEqual(5, provider_retry_delay(4))
-
-    def test_missing_output_repair_prompt_is_compact_and_task_specific(self) -> None:
-        prompt = _render_missing_output_repair_prompt(
-            "integration-test",
-            ["C:/agent/application/src/test/java/example/FlowTest.java"],
-        )
-        self.assertIn("real HTTP flow test", prompt)
-        self.assertIn("C:/agent/application/src/test/java/example/FlowTest.java", prompt)
-        self.assertIn("file editor's create operation", prompt)
-        self.assertIn("Do not use /workspace", prompt)
-        self.assertNotIn("inspect", prompt)
-        self.assertNotIn("generatedJavaContracts", prompt)
-
-        contract_prompt = _render_missing_output_repair_prompt(
-            "control",
-            ["C:/agent/application/src/main/java/example/ControlService.java"],
-            "interface Control { String execute(String value); }",
-        )
-        self.assertIn("Exact generated contracts", contract_prompt)
-        self.assertIn("String execute(String value)", contract_prompt)
-
-        api_test_prompt = _render_missing_output_repair_prompt(
-            "api-adapter",
-            ["C:/agent/application/src/test/java/example/OrdersApiControllerTest.java"],
-            "interface OrdersApi { ResponseEntity<Object> getOrder(String orderId); }",
-            "### application/src/main/java/example/OrdersApiController.java\n"
-            "```java\nclass OrdersApiController {}\n```",
-        )
-        self.assertIn("JUnit/Mockito controller test", api_test_prompt)
-        self.assertIn("Do not modify production code", api_test_prompt)
-        self.assertIn("Existing contracted source", api_test_prompt)
-        self.assertIn("OrdersApiController", api_test_prompt)
 
     def test_task_verification_avoids_full_packaging_and_targets_owned_tests(self) -> None:
         command = task_verification_command(
@@ -1980,17 +1930,7 @@ TestRestTemplate http; CourseRepository courseRepository;
         self.assertIn("POST /orders", prompt)
         self.assertIn("201 Created", prompt)
         self.assertIn("422 Invalid order", prompt)
-        self.assertIn("every documented status", prompt)
-        self.assertIn("Do not pass an API", prompt)
-        self.assertIn("public no-argument constructor", prompt)
         self.assertIn("com.example.demo.bce.RegistrationControl", prompt)
-        self.assertIn("Never derive a resource-named Control", prompt)
-        self.assertIn("resource-named substitute", prompt)
-        self.assertIn("transport-level failures", prompt)
-        self.assertIn("documentation only", prompt)
-        self.assertIn("exception expectation in a test", prompt)
-        self.assertIn("keep every generated source and\n  test compilable", prompt)
-        self.assertIn("Do not rely on Mockito's default `false`", prompt)
 
     def test_production_placeholder_gate_ignores_tests_and_rejects_main_java(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

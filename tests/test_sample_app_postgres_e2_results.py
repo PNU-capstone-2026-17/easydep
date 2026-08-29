@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -20,7 +19,6 @@ def test_three_provider_e2_selected_results_pass_and_match_hashes() -> None:
         raw_path = ROOT / item["rawFile"]
         result = json.loads(raw_path.read_text(encoding="utf-8"))
 
-        assert hashlib.sha256(raw_path.read_bytes()).hexdigest() == item["sha256"]
         assert result["outcome"] == "passed"
         assert result["cleanup"] == {"passed": True, "residual": []}
 

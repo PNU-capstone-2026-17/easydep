@@ -195,7 +195,7 @@ def test_frozen_checkpoint_json_excludes_process_local_cache_state() -> None:
 
 
 def test_removed_namespaces_have_no_tracked_or_active_consumers() -> None:
-    """app.core와 구 requirements orchestration 경로가 active 코드로 돌아오지 않는다."""
+    """삭제한 공용·요구사항 호환 경로가 다시 생기거나 import되지 않는다."""
     tracked = subprocess.run(
         ["git", "ls-files", "--", "app/core"],
         cwd=_ROOT,
@@ -205,32 +205,19 @@ def test_removed_namespaces_have_no_tracked_or_active_consumers() -> None:
     ).stdout.splitlines()
     assert tracked == []
 
-    legacy = (
-        "app.requirements.agent.graph",
-        "app.requirements.agent.subgraphs",
-        "app.requirements.agent.supervisor",
-        "app.requirements.agent.playbook",
-        "app.requirements.agent.steps.feedback_gates",
+    agent_dir = _ROOT / "app" / "requirements" / "agent"
+    assert not agent_dir.exists() or list(agent_dir.rglob("*.py")) == []
+
+    removed = (
+        "app.requirements.agent",
         "app.requirements.api",
         "app.requirements.feedback",
         "app.requirements.runner",
         "app.requirements.session_store",
     )
-    facades = {
-        "app/requirements/agent/graph.py",
-        "app/requirements/agent/subgraphs.py",
-        "app/requirements/agent/supervisor.py",
-        "app/requirements/agent/playbook.py",
-        "app/requirements/agent/steps/feedback_gates.py",
-        "app/requirements/api.py",
-        "app/requirements/feedback.py",
-        "app/requirements/runner.py",
-    }
     offenders: list[str] = []
     for path in sorted((_ROOT / "app").rglob("*.py")):
         relative = path.relative_to(_ROOT).as_posix()
-        if relative in facades:
-            continue
         tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
         for node in ast.walk(tree):
             modules: list[str] = []
@@ -244,7 +231,7 @@ def test_removed_namespaces_have_no_tracked_or_active_consumers() -> None:
             offenders.extend(
                 f"{relative}:{getattr(node, 'lineno', 0)}:{module}"
                 for module in modules
-                if module in legacy
+                if module.startswith(removed)
             )
     assert offenders == []
 

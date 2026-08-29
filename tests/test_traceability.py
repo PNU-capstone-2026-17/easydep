@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from app.requirements import traceability
-from app.requirements.agent.steps.step2_usecases import check_coverage
+from app.requirements.modeling.use_cases import check_coverage
 from app.requirements.traceability import build_requirement_trace
 
 

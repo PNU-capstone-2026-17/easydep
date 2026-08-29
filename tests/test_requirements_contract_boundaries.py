@@ -1,4 +1,4 @@
-"""요구사항 요청·상태 contract의 canonical shape과 호환 import를 검증한다.
+"""요구사항 요청·상태 contract의 canonical shape을 검증한다.
 
 공개 Pydantic·TypedDict 경계만 사용하며 endpoint, graph state 저장소,
 private serializer의 구현 모양에는 결합하지 않는다.
@@ -11,8 +11,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.requirements import schemas as legacy_schemas
-from app.requirements.agent import state as legacy_state
 from app.requirements.contracts import request, state
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -79,20 +77,6 @@ def test_analyze_request_public_shape_and_normalization_are_preserved() -> None:
     }
 
 
-def test_legacy_request_imports_reexport_canonical_models() -> None:
-    """기존 schemas import가 복제 model이 아닌 canonical class를 돌려준다."""
-
-    for name in (
-        "AnalyzeRequest",
-        "DeploymentPreferences",
-        "DeploymentTarget",
-        "FeedbackEdit",
-        "InitialCloudConstraints",
-        "ResourceAnswer",
-    ):
-        assert getattr(legacy_schemas, name) is getattr(request, name)
-
-
 def test_agent_state_public_key_order_is_preserved() -> None:
     """checkpoint·graph consumer가 사용하는 state key 목록을 고정한다."""
 
@@ -132,19 +116,6 @@ def test_agent_state_public_key_order_is_preserved() -> None:
         "stage_feedback",
         "redo_route",
     )
-
-
-def test_legacy_state_imports_reexport_canonical_types() -> None:
-    """기존 agent.state import가 같은 TypedDict class identity를 유지한다."""
-
-    for name in (
-        "ActorItem",
-        "AgentState",
-        "RequirementItem",
-        "UseCaseItem",
-        "UseCaseSpecItem",
-    ):
-        assert getattr(legacy_state, name) is getattr(state, name)
 
 
 def test_contract_modules_do_not_import_execution_or_downstream_layers() -> None:

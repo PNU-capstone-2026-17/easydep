@@ -17,8 +17,8 @@
 - `AnalyzeRequest` 및 중첩 input model의 검증된 값
 - `AgentState`, `RequirementItem`, `ActorItem`, `UseCaseItem`, `UseCaseSpecItem`의
   정적 타입 계약
-- 기존 `app.requirements.schemas` 및 `app.requirements.agent.state` import가
-  재노출하는 동일한 class 객체
+- 새 코드는 이 패키지의 모델을 직접 import한다. 삭제한 `app.requirements.agent`
+  호환 경로는 제공하지 않는다.
 
 ## 부수효과
 

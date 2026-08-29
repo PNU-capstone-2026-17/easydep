@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(
 def test_live_concrete_classification():
     # 라이브 테스트는 실제 키가 필요하므로 conftest의 더미 키를 무시하도록
     # 실제 .env가 로드된 설정을 새로 만든다.
-    from app.requirements.agent import start_analysis
+    from app.requirements.orchestration.graph import start_analysis
 
     payload = start_analysis(
         ["Users must be able to log in with email and password."],

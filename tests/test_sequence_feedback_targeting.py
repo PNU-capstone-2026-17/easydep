@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -179,24 +177,6 @@ def test_failed_targeted_batch_does_not_persist_an_earlier_target(monkeypatch) -
 
     assert error.value.status_code == 502
     assert persisted == []
-
-
-def test_workbench_exposes_an_explicit_sequence_feedback_target_and_review_action() -> None:
-    root = Path(__file__).resolve().parents[1] / "frontend" / "src"
-    workspace = (root / "routes" / "workspace" / "+page.svelte").read_text(encoding="utf-8")
-    pane = (root / "lib" / "components" / "ArtifactPane.svelte").read_text(encoding="utf-8")
-    composer = (root / "lib" / "components" / "Composer.svelte").read_text(encoding="utf-8")
-
-    assert "target_feedbacks: entries.map" in workspace
-    assert "sequenceFeedbackTargetIds" in pane
-    assert "Targeted sequence feedback" in pane
-    assert "onSequenceFeedbackSubmit" in pane
-    assert "Apply feedback to" in pane
-    assert "Approve all proposed methods" in pane
-    assert "onSequenceMethodApproval" in pane
-    assert "auto_approve_method_proposals: true" in workspace
-    assert "targetRequired" in composer
-    assert "targetRequired || !text.trim()" in composer
 
 
 def test_design_review_result_exposes_pending_method_proposals_for_manual_approval() -> None:

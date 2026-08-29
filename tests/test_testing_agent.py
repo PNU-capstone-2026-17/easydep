@@ -85,18 +85,6 @@ def test_functional_requirements_reads_stored_classified_list():
     assert [item["id"] for item in items] == ["FR1", "FR2"]
 
 
-def test_functional_requirements_accepts_wrapped_shape():
-    with patch(
-        "app.testing.utils.requirements_source.load_state",
-        return_value={
-            "refined_requirements": {
-                "requirements": [{"id": "FR1", "text": "A user can register."}]
-            }
-        },
-    ):
-        assert len(functional_requirements("app-1")) == 1
-
-
 def test_functional_requirements_without_analysis():
     with patch(
         "app.testing.utils.requirements_source.load_state", return_value={}

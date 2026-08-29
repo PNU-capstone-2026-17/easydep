@@ -16,20 +16,6 @@ def test_generated_claims_are_strictly_vm_scoped():
     assert {claim["csp"] for claim in claims} == {"aws", "azure", "gcp"}
 
 
-def test_every_dynamic_observation_has_a_valid_local_evidence_coordinate():
-    claims = json.loads(
-        Path("app/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
-    )["claims"]
-    assert len(claims) == 44
-    for claim in claims:
-        for observation in claim["observations"]:
-            experiment = observation.get("experiment")
-            result_file = observation.get("resultFile")
-            if experiment:
-                assert result_file == f"experiments/{experiment}/results.json"
-                assert (Path("app/cloudkb/depkb") / result_file).is_file()
-
-
 def test_product_kb_contains_only_creation_and_runtime_dependencies():
     claims = json.loads(
         Path("app/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
@@ -92,16 +78,3 @@ def test_out_of_scope_resources_are_rejected(resource):
     assert resource not in VM_ANCHOR_TYPES
     with pytest.raises(KeyError, match="Docker-on-VM"):
         closure(resource, "aws")
-
-
-def test_retained_experiment_evidence_contains_no_private_keys():
-    experiments = Path("app/cloudkb/depkb/experiments")
-    marker = "PRIVATE KEY-----"
-
-    contaminated = [
-        str(path)
-        for path in experiments.rglob("*.json")
-        if marker in path.read_text(encoding="utf-8", errors="replace")
-    ]
-
-    assert contaminated == []

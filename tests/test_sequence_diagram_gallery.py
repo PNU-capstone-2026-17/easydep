@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -217,22 +216,3 @@ def test_retry_at_a_review_gate_restores_the_draft_without_rerunning() -> None:
     assert payload["stage"] == "sequence_diagram"
     assert payload["artifact_status"]["sequence_diagram"] == "needs_review"
     retry.assert_not_called()
-
-
-def test_frontend_renders_sequence_diagrams_as_individual_image_cards() -> None:
-    source = (
-        Path(__file__).parents[1]
-        / "frontend"
-        / "src"
-        / "lib"
-        / "components"
-        / "ArtifactPane.svelte"
-    ).read_text(encoding="utf-8")
-
-    assert "getSequenceDiagrams(currentAppId)" in source
-    assert 'class="sequence-diagram-gallery' in source
-    assert 'class="sequence-diagram-card' in source
-    assert 'class="sequence-diagram-image' in source
-    assert "selected === 'sequence_diagram'" in source
-    assert "sequenceImageEpoch" in source
-    assert "?revision=${sequenceImageEpoch}" in source

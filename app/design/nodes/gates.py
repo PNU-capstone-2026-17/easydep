@@ -9,13 +9,13 @@
 타임에 선언한다. 토폴로지가 런타임에 달라지지 않으므로 그래프 그림이 곧 실제 흐름이다.
 
 게이트를 서브그래프 안이 아니라 **상위 그래프에** 두는 이유는 요구사항 에이전트와 같다
-(app/requirements/agent/graph.py 상단 docstring): LangGraph는 서브그래프가 interrupt로
+(app/requirements/orchestration/graph.py 상단 docstring): LangGraph는 서브그래프가 interrupt로
 멈추면 그 내부 누적 상태를 부모로 올리지 않으므로, 스테이지가 끝난 뒤 부모 레벨에서
 멈춰야 멈춘 시점의 산출물이 응답에 실린다.
 """
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from langgraph.types import interrupt
 

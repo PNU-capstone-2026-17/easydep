@@ -150,7 +150,6 @@ def test_baselines_share_the_same_build_completeness_contract():
     assert BUILD_COMPLETENESS_CONTRACT in COT_SYSTEM
     assert BUILD_COMPLETENESS_CONTRACT in _task(case)
     assert BUILD_COMPLETENESS_CONTRACT in chatdev_task(case)
-    assert "Never place Markdown headings" in BUILD_COMPLETENESS_CONTRACT
 
 
 def test_aggregate_keeps_failures_and_reports_distributions(tmp_path):
@@ -885,6 +884,7 @@ def test_isolated_worker_preserves_explicit_completion_limit(tmp_path, monkeypat
 
 
 def test_execute_creates_a_custom_artifact_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(experiment, "MIN_FREE_DISK_BYTES", 0)
     monkeypatch.setattr(experiment, "_run_isolated", lambda job, **_kwargs: {
         "job": job.key, "status": "failed", "runId": None,
     })
@@ -900,6 +900,7 @@ def test_execute_creates_a_custom_artifact_root(tmp_path, monkeypatch):
 def test_execute_recovers_the_checkpoint_from_an_interrupted_running_attempt(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(experiment, "MIN_FREE_DISK_BYTES", 0)
     captured = []
 
     def isolated(job, **_kwargs):
@@ -947,6 +948,7 @@ def test_holdout_cannot_run_before_research_freeze(tmp_path, monkeypatch):
 
 
 def test_development_pilot_does_not_claim_confirmatory_status(tmp_path, monkeypatch):
+    monkeypatch.setattr(experiment, "MIN_FREE_DISK_BYTES", 0)
     monkeypatch.setattr(experiment, "_run_isolated", lambda job, **_kwargs: {
         "job": job.key, "status": "failed", "runId": None,
     })

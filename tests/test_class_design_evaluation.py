@@ -14,7 +14,6 @@ from evaluation.class_design_optimization import (
 
 ROOT = Path(__file__).parent.parent
 GOLD = ROOT / "evaluation" / "baselines" / "course-registration-cases" / "goldset" / "e1-aws"
-PROTOCOL = ROOT / "evaluation" / "class_design_optimization_protocol.md"
 
 
 def _candidate() -> dict:
@@ -72,25 +71,6 @@ def test_gold_files_remain_input_artifacts_not_a_generated_evaluation_fixture():
 
     assert manifest["caseId"] == CASE_ID
     assert not (ROOT / "evaluation" / "class_design" / "fixtures").exists()
-
-
-def test_class_optimization_protocol_is_frozen_and_bounded():
-    protocol = PROTOCOL.read_text(encoding="utf-8")
-
-    for contract in (
-        "최대 9회",
-        "baseline 3회",
-        "`compact` 1회",
-        "`call-plan-low` 1회",
-        "`operation-low` 1회",
-        "합성 후보 3회",
-        "retry 예산은 0",
-        "독립 `run_id`",
-        "즉시 중단",
-        "cold와 warm",
-        "physical `llm_calls`는 0",
-    ):
-        assert contract in protocol
 
 
 def test_optimization_runner_has_exactly_nine_independent_frozen_cells():

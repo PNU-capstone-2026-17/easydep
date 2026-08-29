@@ -45,8 +45,8 @@ application requirements
 - `data/*.json.gz`는 검증 후 커밋한 런타임 데이터이며 기본 실행에서 우선한다.
 - `output/`과 `.cache/`는 로컬 재빌드 작업공간이다. 현행 모델의 일부가 아니며 커밋하지 않는다.
 - `depkb/native/`는 CSP별 공식 원천에서 추출한 경계와 관계 검토 자료를 보존한다.
-- `depkb/experiments/`, `depkb/replications/`, 저장소의 `evaluation/`은 연구 증거다.
-  제품 런타임 입력으로 직접 읽지 않는다.
+- `depkb/replications/`와 `document/archive/`는 재현 결과와 과거 조사 기록을 보존한다.
+  일회성 CSP 실험 스크립트와 원본 응답은 제품 코드에 포함하지 않는다.
 - `document/archive/`는 비권위 과거 기록이다.
 
 실제 프로비저닝 계획은 선택된 CSP의 provider-native DepKB와 capability 실현 카탈로그를
@@ -69,7 +69,7 @@ application requirements
 - **입력:** 커밋된 `data/*.json.gz`와 `depkb/native/`의 공급자 원천 증거, 그리고
   명시적으로 요청된 재빌드 작업의 경로·공급자 응답.
 - **출력:** 검증된 카탈로그, 의존관계·비용·성능 조회 결과, `ResourcePlan`에 넘길
-  공급자별 후보. 연구 산출물은 `experiments/`·`replications/` 아래에만 남긴다.
+  공급자별 후보. 반복 검증에 필요한 연구 결과만 `replications/`에 남긴다.
 - **부수효과:** 기본 조회는 저장소의 번들 데이터를 읽기만 한다. fetch/rebuild CLI가
   요청된 경우에만 네트워크를 읽고 `output/`·`.cache/`에 작업 산출물을 쓴다.
 - **사용하면 안 되는 import:** `app.requirements`, `app.design`, `app.implementation`을 import하지

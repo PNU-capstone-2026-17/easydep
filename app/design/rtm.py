@@ -4,7 +4,7 @@
 낡는다. 지금은 그걸 되감기(`/design/rewind`)로 푼다 — 뒤쪽을 **전부** 다시 만들어서
 확실하지만 무식하다. 추적표가 있으면 **영향받는 항목만** 다시 만들 수 있다.
 
-**설계 원칙은 요구사항 에이전트의 RTM(app/requirements/agent/rtm.py)과 같다:
+**설계 원칙은 요구사항 추적표(app/requirements/traceability.py)와 같다:
 추적표를 별도 LLM 호출로 만들지 않는다.** 각 모델이 자기 출처를 필드로 들고 다니고
 (`use_case_ids`, `source_classes`, `source_class`), 이 모듈은 그걸 **순수 함수로 모으기만**
 한다. LLM을 한 번 더 부르면 산출물과 추적표가 어긋날 기회가 생긴다 — 여기서는 어긋날

@@ -1,4 +1,4 @@
-"""되돌아가기(`app/requirements/agent/supervisor.py`)의 규율.
+"""되돌아가기(`app/requirements/orchestration/supervisor.py`)의 규율.
 
 이 파일이 지키는 것:
   - 결함은 **그것을 낸 단계**로 돌아간다(라우팅 표는 지식베이스의 `Rule.owner`다).

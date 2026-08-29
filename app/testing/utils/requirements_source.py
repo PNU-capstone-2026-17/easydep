@@ -1,14 +1,11 @@
-"""The functional requirements the dynamic test suite is written against.
+"""동적 테스트를 만들 때 기준으로 삼을 기능 요구사항을 읽는다.
 
-The requirements agent stores its classified requirement list as the
-``REFINE_REQ`` artifact, so the testing agent reads that rather than re-deriving
-requirements from the generated code — testing code against itself proves
-nothing.
+요구사항 단계는 분류된 요구사항 목록을 ``REFINE_REQ`` 산출물로 저장한다. 테스트 단계는
+생성된 구현에서 요구사항을 다시 추측하지 않고 이 산출물을 읽는다. 구현에서 테스트 기준을
+다시 만들면 잘못 생성된 구현을 그대로 정답으로 받아들일 수 있기 때문이다.
 
-The stored value is the classified list the requirements graph emits
-(``[{"id": "FR1", "text": ..., "type": "FR"}, ...]``, see
-``app/requirements/agent/state.py``).  Older payloads wrapped that list in a
-``{"requirements": [...]}`` object, so both shapes are accepted.
+현재 저장 형식은 ``[{"id": "FR1", "text": ..., "type": "FR"}, ...]`` 형태의 목록이다.
+정확한 상태 타입은 ``app/requirements/contracts/state.py``에 정의되어 있다.
 """
 
 from __future__ import annotations
@@ -19,24 +16,21 @@ from app.repositories.artifact_repository import AppNotFound, load_state
 
 
 class RequirementsUnavailable(Exception):
-    """The app has no stored requirements analysis to test against."""
+    """테스트 기준으로 사용할 저장된 요구사항 분석이 없음을 나타낸다."""
 
 
 def _as_items(value: Any) -> list[dict[str, Any]]:
-    if isinstance(value, dict):
-        value = value.get("requirements")
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict) and item.get("text")]
 
 
 def functional_requirements(app_id: str) -> list[dict[str, Any]]:
-    """Return the stored FR items for an app, newest stored version.
+    """앱에 가장 최근에 저장된 기능 요구사항 목록을 반환한다.
 
-    NFRs are dropped: they are the dynamic NFR stage's input, and mixing them in
-    makes the generated acceptance suite assert load and latency properties that
-    a functional run cannot decide.  An item with no ``type`` is kept, because an
-    unclassified requirement is still a requirement.
+    NFR은 별도의 동적 NFR 단계가 사용하므로 제외한다. 기능 테스트에 함께 넣으면 일반 실행으로
+    판단할 수 없는 부하나 지연 시간을 검증하게 된다. ``type``이 없는 항목은 아직 분류되지 않은
+    요구사항일 수 있으므로 유지한다.
     """
     try:
         state = load_state(app_id)
