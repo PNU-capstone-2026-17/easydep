@@ -15,7 +15,6 @@ from app.testing.runtime.app_container import (
     ApplicationLaunchError,
     running_application,
 )
-from app.testing.schemas.testing_input import TestingInput
 
 
 def _launch(
@@ -23,19 +22,17 @@ def _launch(
     target_url: str,
     *,
     launch_id: str,
-    testing_input: TestingInput | None,
-    artifact_versions: dict[str, int] | None,
-    implementation_job_id: str | None,
+    application_dir: str,
 ):
-    """호출자가 URL을 주면 재사용하고, 아니면 고정된 구현 파일을 실행한다."""
+    """호출자가 URL을 주면 재사용하고, 아니면 복원된 폴더를 실행한다."""
     if target_url:
         return nullcontext((target_url, {"source": "caller"}))
+    if not application_dir:
+        raise ApplicationLaunchError("실행할 애플리케이션 폴더가 없습니다.")
     return running_application(
         app_id,
+        application_dir,
         launch_id=launch_id,
-        testing_input=testing_input,
-        artifact_versions=artifact_versions,
-        implementation_job_id=implementation_job_id,
     )
 
 
@@ -44,11 +41,8 @@ def run_verification_graph(
     run_id: str,
     app_id: str,
     target_url: str = "",
-    manifests_dir: str = "",
-    iac_dir: str = "",
+    application_dir: str = "",
     repair_history: dict[str, Any] | None = None,
-    testing_input: TestingInput | None = None,
-    artifact_versions: dict[str, int] | None = None,
     implementation_job_id: str | None = None,
 ) -> dict[str, Any]:
     with langsmith_metrics.trace_scope(
@@ -58,22 +52,15 @@ def run_verification_graph(
             "operation": "verification",
             "run_id": run_id,
             "app_id": app_id,
-            "implementation_job_id": (
-                testing_input.implementation_job_id
-                if testing_input is not None
-                else implementation_job_id
-            ),
+            "implementation_job_id": implementation_job_id,
         },
     ):
         return _run_verification_graph(
             run_id=run_id,
             app_id=app_id,
             target_url=target_url,
-            manifests_dir=manifests_dir,
-            iac_dir=iac_dir,
+            application_dir=application_dir,
             repair_history=repair_history,
-            testing_input=testing_input,
-            artifact_versions=artifact_versions,
             implementation_job_id=implementation_job_id,
         )
 
@@ -83,11 +70,8 @@ def _run_verification_graph(
     run_id: str,
     app_id: str,
     target_url: str = "",
-    manifests_dir: str = "",
-    iac_dir: str = "",
+    application_dir: str = "",
     repair_history: dict[str, Any] | None = None,
-    testing_input: TestingInput | None = None,
-    artifact_versions: dict[str, int] | None = None,
     implementation_job_id: str | None = None,
 ) -> dict[str, Any]:
     """저장된 애플리케이션을 실행한 뒤 testing graph를 호출한다.
@@ -105,21 +89,15 @@ def _run_verification_graph(
             app_id,
             target_url,
             launch_id=run_id,
-            testing_input=testing_input,
-            artifact_versions=artifact_versions,
-            implementation_job_id=implementation_job_id,
+            application_dir=application_dir,
         ) as (url, application):
             result = graph.invoke(
                 initial_state(
                     run_id=run_id,
                     app_id=app_id,
                     target_url=url,
-                    manifests_dir=manifests_dir,
-                    iac_dir=iac_dir,
+                    application_dir=application_dir,
                     repair_history=repair_history,
-                    testing_input=testing_input,
-                    artifact_versions=artifact_versions,
-                    implementation_job_id=implementation_job_id,
                 )
             )
     except ApplicationLaunchError as error:
@@ -128,12 +106,8 @@ def _run_verification_graph(
             initial_state(
                 run_id=run_id,
                 app_id=app_id,
-                manifests_dir=manifests_dir,
-                iac_dir=iac_dir,
+                application_dir=application_dir,
                 repair_history=repair_history,
-                testing_input=testing_input,
-                artifact_versions=artifact_versions,
-                implementation_job_id=implementation_job_id,
             )
         )
 
@@ -171,24 +145,8 @@ def _run_verification_graph(
 def blocking_reason(reports: dict[str, Any]) -> str | None:
     """전체 검증을 실패로 처리할 이유를 반환하며, 문제가 없으면 ``None``을 반환한다.
 
-    실행된 동적 기능 검사가 실패하면 작업을 차단한다. 일반 정적 설정 문제는 실제 앱 동작이
-    요구사항과 다른지 직접 증명하지 않으므로 진단에는 남기되 여기서 곧바로 차단하지 않는다.
-    단, 고정 snapshot 자체를 찾지 못했거나 다른 구현 작업의 파일이면 검사 대상이 잘못된
-    것이므로 성공으로 처리할 수 없다.
+    정적 설정 문제는 진단에는 남기지만, 동적 기능 검사 실패만 전체 결과를 차단한다.
     """
-    # 고정한 snapshot을 찾지 못했거나 다른 구현 작업의 파일이 나온 경우에는 실제 검사
-    # 대상 자체가 틀린 것이다. 일반 Trivy 설정 오류와 달리 테스트 성공으로 처리할 수 없다.
-    for key in ("static", "iac"):
-        source_report = reports.get(key) or {}
-        if source_report.get("sourceError") in {
-            "SNAPSHOT_UNAVAILABLE",
-            "SNAPSHOT_MISMATCH",
-        }:
-            return str(
-                source_report.get("message")
-                or "고정된 구현 snapshot을 확인할 수 없습니다."
-            )
-
     report = reports.get("dynamicFunctional") or {}
     if str(report.get("status", "")).upper() == "FAILED":
         return str(report.get("reason") or "Dynamic functional tests failed.")

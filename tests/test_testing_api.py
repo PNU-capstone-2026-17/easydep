@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 import app.testing.api as testing_api
 from app.db.models import TYPE_DEPLOYMENT_FILE, TYPE_SOURCE_CODE
-from app.testing.schemas.testing_input import ArtifactSnapshotRef
 from app.testing.schemas.testing_input import TestingInput as FixedTestingInput
 from app.validation import RepairAttempt, RepairLedger
 
@@ -21,31 +20,11 @@ def _application() -> TestClient:
 
 
 def _testing_input(run_root, *, implementation_job_id: str = "implementation-1"):
-    """DB를 사용하지 않는 API 테스트에 고정 snapshot 입력을 만든다."""
-    artifacts = {
-        TYPE_SOURCE_CODE: ArtifactSnapshotRef(
-            artifact_type=TYPE_SOURCE_CODE,
-            version_id=11,
-            version_no=1,
-            digest="1" * 64,
-            created_at="2026-08-29T00:00:00+00:00",
-            file_count=2,
-        ),
-        TYPE_DEPLOYMENT_FILE: ArtifactSnapshotRef(
-            artifact_type=TYPE_DEPLOYMENT_FILE,
-            version_id=12,
-            version_no=1,
-            digest="2" * 64,
-            created_at="2026-08-29T00:00:00+00:00",
-            file_count=1,
-        ),
-    }
+    """DB를 사용하지 않는 API 테스트에 구현 산출물 ID를 만든다."""
     return FixedTestingInput(
         app_id="app-1",
         implementation_job_id=implementation_job_id,
-        run_root=run_root,
-        implementation_completed_at="2026-08-29T00:00:00+00:00",
-        artifacts=artifacts,
+        artifact_version_ids={TYPE_SOURCE_CODE: 11, TYPE_DEPLOYMENT_FILE: 12},
     )
 
 
@@ -213,6 +192,7 @@ def test_testing_job_reports_static_and_dynamic_verification(monkeypatch, tmp_pa
 
     assert fetched["status"] == "COMPLETED"
     assert calls["app_id"] == "app-1"
+    assert calls["application_dir"] == str(run_root / "application")
     result = fetched["result"]
     # Unit tests passed, but the dynamic functional stage did not.
     assert result["passed"] is False

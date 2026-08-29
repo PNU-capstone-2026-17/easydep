@@ -1,9 +1,6 @@
 import operator
 from typing import Annotated, Any, TypedDict
 
-from app.testing.schemas.testing_input import ArtifactSnapshotRef
-
-
 class TestingState(TypedDict):
     """
     LangGraph state for the Testing Agent.
@@ -14,15 +11,9 @@ class TestingState(TypedDict):
     # 요구사항이 모두 이 id로 DB에서 조회된다. LangGraph는 스키마에 없는 키를
     # 조용히 버리므로, 이 칸이 없으면 호출자가 넘겨도 노드에는 닿지 않는다.
     app_id: str
-    # Testing job 시작 때 선택한 구현 작업과 파일 버전이다. ``fixed_artifacts``가
-    # 참이면 이 목록에 없는 산출물을 DB 최신 버전이나 workspace에서 보충하지 않는다.
-    implementation_job_id: str | None
-    artifact_versions: dict[str, int]
-    artifact_refs: dict[str, ArtifactSnapshotRef]
-    fixed_artifacts: bool
-    # DB에 저장된 스냅샷이 없을 때만 쓰는 작업공간 대체 경로.
-    manifests_dir: str # e.g. "application/k8s"
-    iac_dir: str # e.g. "application/terraform"
+    # Testing 작업을 시작할 때 한 번 복원한 애플리케이션 폴더다. 모든 정적·동적
+    # 검사는 이 폴더를 함께 사용하며 검사 도중 DB에서 파일을 다시 읽지 않는다.
+    application_dir: str
     target_url: str # Target URL for dynamic testing, defaults to localhost:8080
     # 사용자가 선택한 이전 수리 이력. 동적 테스트 생성기는 같은 실패와 후보를
     # 반복하지 않도록 이 값을 프롬프트 문맥으로만 사용한다.

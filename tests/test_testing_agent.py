@@ -16,15 +16,9 @@ import pytest
 
 from app.db.models import (
     TYPE_DEPLOYMENT_FILE,
-    TYPE_FRONTEND_SOURCE_CODE,
     TYPE_IAC_CODE,
-    TYPE_SOURCE_CODE,
 )
 from app.testing.graphs.testing_graph import create_testing_graph
-from app.testing.utils.artifact_source import (
-    ArtifactSourceUnavailable,
-    materialize_artifact,
-)
 from app.testing.utils.requirements_source import (
     RequirementsUnavailable,
     functional_requirements,
@@ -68,39 +62,6 @@ def stored_artifacts():
         side_effect=lambda app_id, artifact_type: by_type.get(artifact_type),
     ) as loader:
         yield loader
-
-
-# ---------------------------------------------------------------------------
-# Materialisation
-# ---------------------------------------------------------------------------
-
-
-def test_materialize_artifact_writes_stored_tree(tmp_path, stored_artifacts):
-    info = materialize_artifact("app-1", TYPE_DEPLOYMENT_FILE, tmp_path)
-
-    assert info["source"] == "db"
-    assert info["version_no"] == 3
-    assert info["implementation_job_id"] == "job-1"
-    assert (tmp_path / "k8s" / "deployment.yaml").read_text(encoding="utf-8") == (
-        K8S_FILES["k8s/deployment.yaml"]
-    )
-    assert (tmp_path / "Dockerfile").is_file()
-
-
-def test_materialize_artifact_rejects_traversal(tmp_path):
-    with patch(
-        "app.testing.utils.artifact_source.load_file_snapshot",
-        return_value=_snapshot({"../escaped.yaml": "kind: Deployment\n"}),
-    ), pytest.raises(ValueError):
-        materialize_artifact("app-1", TYPE_DEPLOYMENT_FILE, tmp_path)
-    assert not (tmp_path.parent / "escaped.yaml").exists()
-
-
-def test_materialize_artifact_without_snapshot(tmp_path):
-    with patch(
-        "app.testing.utils.artifact_source.load_file_snapshot", return_value=None
-    ), pytest.raises(ArtifactSourceUnavailable):
-        materialize_artifact("app-1", TYPE_IAC_CODE, tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +127,17 @@ def _initial_state(**overrides) -> dict:
     return state
 
 
-def test_static_stages_scan_the_stored_snapshots(stored_artifacts):
-    """Trivy must be pointed at the database snapshot, not at a workspace path."""
+def test_static_stages_scan_the_same_application_folder(tmp_path):
+    """배포와 IaC 검사가 같은 복원 폴더의 파일을 읽는다."""
+    (tmp_path / "k8s").mkdir()
+    (tmp_path / "terraform").mkdir()
+    (tmp_path / "Dockerfile").write_text(K8S_FILES["Dockerfile"], encoding="utf-8")
+    (tmp_path / "k8s/deployment.yaml").write_text(
+        K8S_FILES["k8s/deployment.yaml"], encoding="utf-8"
+    )
+    (tmp_path / "terraform/main.tf").write_text(
+        IAC_FILES["terraform/main.tf"], encoding="utf-8"
+    )
     scanned: list[list[str]] = []
 
     def fake_scan(target_dir):
@@ -188,17 +158,21 @@ def test_static_stages_scan_the_stored_snapshots(stored_artifacts):
         "app.testing.utils.requirements_source.load_state",
         return_value={"refined_requirements": []},
     ):
-        result = create_testing_graph().invoke(_initial_state())
+        result = create_testing_graph().invoke(
+            _initial_state(application_dir=str(tmp_path))
+        )
 
     assert sorted(scanned) == sorted(
-        [["Dockerfile", "k8s/deployment.yaml"], ["terraform/main.tf"]]
+        [
+            ["Dockerfile", "k8s/deployment.yaml", "terraform/main.tf"],
+            ["main.tf"],
+        ]
     )
 
     assert result["static_report"]["status"] == "FAILED"
-    assert result["static_report"]["source"]["source"] == "db"
-    assert result["static_report"]["source"]["version_no"] == 3
+    assert result["static_report"]["source"]["source"] == "application"
     assert result["iac_report"]["status"] == "FAILED"
-    assert result["iac_report"]["source"]["artifact_type"] == TYPE_IAC_CODE
+    assert result["iac_report"]["source"]["source"] == "application"
 
     # No functional requirements were stored, so nothing is asserted about the app.
     assert result["dynamic_functional_report"]["status"] == "SKIPPED"
@@ -241,8 +215,7 @@ def test_static_stages_overlap_and_merge_results_in_stage_order():
     assert result["iac_report"]["status"] == "FAILED"
 
 
-def test_static_stage_falls_back_to_workspace_and_says_so(tmp_path):
-    """A run whose output was never persisted still scans, but is labelled."""
+def test_static_stage_reports_a_missing_iac_folder(tmp_path):
     manifests = tmp_path / "k8s"
     manifests.mkdir()
     (manifests / "deployment.yaml").write_text("kind: Deployment\n", encoding="utf-8")
@@ -256,11 +229,11 @@ def test_static_stage_falls_back_to_workspace_and_says_so(tmp_path):
         return_value={"refined_requirements": []},
     ):
         result = create_testing_graph().invoke(
-            _initial_state(manifests_dir=str(manifests))
+            _initial_state(application_dir=str(tmp_path))
         )
 
     assert result["static_report"]["status"] == "PASSED"
-    assert result["static_report"]["source"]["source"] == "workspace"
+    assert result["static_report"]["source"]["source"] == "application"
     # The IaC stage had neither a snapshot nor a directory: nothing was scanned,
     # which is neither a pass nor a misconfiguration.
     assert result["iac_report"]["status"] == "UNAVAILABLE"
@@ -371,41 +344,6 @@ def test_dynamic_functional_without_app_id_does_not_silently_pass():
 # ---------------------------------------------------------------------------
 
 
-def test_build_context_restores_the_frontend_prefix(tmp_path):
-    """``_persist_outputs`` strips ``frontend/`` on save; the build context needs it back."""
-    from app.testing.runtime.app_container import build_context
-
-    by_type = {
-        TYPE_SOURCE_CODE: _snapshot({"src/main/java/App.java": "class App {}"}),
-        TYPE_FRONTEND_SOURCE_CODE: _snapshot({"package.json": "{}"}),
-        TYPE_DEPLOYMENT_FILE: _snapshot(
-            {"Dockerfile": "FROM eclipse-temurin:21-jre\nEXPOSE 9090\n"}
-        ),
-    }
-    with patch(
-        "app.testing.utils.artifact_source.load_file_snapshot",
-        side_effect=lambda app_id, artifact_type: by_type.get(artifact_type),
-    ):
-        sources = build_context("app-1", tmp_path)
-
-    assert (tmp_path / "src" / "main" / "java" / "App.java").is_file()
-    assert (tmp_path / "frontend" / "package.json").is_file()
-    assert (tmp_path / "Dockerfile").is_file()
-    assert set(sources) == set(by_type)
-
-
-def test_build_context_requires_stored_source_and_dockerfile(tmp_path):
-    from app.testing.runtime.app_container import (
-        ApplicationLaunchError,
-        build_context,
-    )
-
-    with patch(
-        "app.testing.utils.artifact_source.load_file_snapshot", return_value=None
-    ), pytest.raises(ApplicationLaunchError):
-        build_context("app-1", tmp_path)
-
-
 def test_exposed_port_is_read_from_the_generated_dockerfile(tmp_path):
     from app.testing.runtime.app_container import exposed_port
 
@@ -434,11 +372,11 @@ def test_parallel_testing_jobs_use_different_docker_names():
 
 
 @contextmanager
-def _fake_launch(app_id, **kwargs):
-    yield "http://localhost:54321", {"source": "db", "image": "img", "hostPort": 54321}
+def _fake_launch(app_id, application_dir, **kwargs):
+    yield "http://localhost:54321", {"source": "application", "image": "img", "hostPort": 54321}
 
 
-def test_verification_runs_dynamic_tests_against_the_launched_app(stored_artifacts):
+def test_verification_runs_dynamic_tests_against_the_launched_app(tmp_path):
     from app.testing.runtime import verification
 
     captured: dict = {}
@@ -464,23 +402,25 @@ def test_verification_runs_dynamic_tests_against_the_launched_app(stored_artifac
         mock_openai.return_value.chat.completions.create.return_value.choices[
             0
         ].message.content = "def test_fr1(page): pass"
-        result = verification.run_verification_graph(run_id="r1", app_id="app-1")
+        result = verification.run_verification_graph(
+            run_id="r1", app_id="app-1", application_dir=str(tmp_path)
+        )
 
     assert captured["target_url"] == "http://localhost:54321"
     assert result["passed"] is True
     assert result["blockingReason"] is None
     assert result["application"]["hostPort"] == 54321
-    assert result["reports"]["static"]["source"]["source"] == "db"
+    assert result["reports"]["static"]["source"]["source"] == "application"
     assert result["reports"]["dynamicFunctional"]["targetUrl"] == "http://localhost:54321"
 
 
-def test_verification_still_scans_when_the_app_cannot_be_launched(stored_artifacts):
+def test_verification_still_scans_when_the_app_cannot_be_launched(tmp_path):
     """A build failure must not cost the static analysis of the same artifacts."""
     from app.testing.runtime import verification
     from app.testing.runtime.app_container import ApplicationLaunchError
 
     @contextmanager
-    def failing_launch(app_id, **kwargs):
+    def failing_launch(app_id, application_dir, **kwargs):
         raise ApplicationLaunchError("docker build failed")
         yield  # pragma: no cover
 
@@ -492,7 +432,9 @@ def test_verification_still_scans_when_the_app_cannot_be_launched(stored_artifac
     ), patch(
         "app.testing.nodes.dynamic_functional.run_dynamic_test"
     ) as never_run:
-        result = verification.run_verification_graph(run_id="r1", app_id="app-1")
+        result = verification.run_verification_graph(
+            run_id="r1", app_id="app-1", application_dir=str(tmp_path)
+        )
 
     never_run.assert_not_called()
     assert result["applicationLaunchError"] == "docker build failed"
@@ -504,7 +446,7 @@ def test_verification_still_scans_when_the_app_cannot_be_launched(stored_artifac
     assert [item["code"] for item in result["diagnostics"]] == [
         "APPLICATION_LAUNCH_FAILED",
         "DEPLOYMENT_MISCONFIGURATION",
-        "IAC_MISCONFIGURATION",
+        "IAC_NOT_SCANNED",
     ]
 
 

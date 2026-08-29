@@ -491,23 +491,16 @@ class ImplementationWorker:
     def get_testing_input(self, job_id: str) -> dict[str, Any]:
         """Testing API가 버전이 고정된 입력을 만들 때 필요한 정보를 반환한다.
 
-        일반 ``get`` 응답은 브라우저에 전달되므로 ``run_root``를 의도적으로 제거한다.
-        Testing API는 같은 프로세스 안에서 실행되는 신뢰된 호출자이므로 공개 응답을 거치지
-        않고 workspace 경로와 저장된 snapshot의 DB 식별자를 받는다. 이 식별자를 이용하면
-        이후에 같은 앱의 새 구현이 저장되어도 원래 구현의 파일 버전을 다시 찾을 수 있다.
+        Testing API는 공개 작업 응답을 다시 해석하지 않고, 구현 작업이 저장한 snapshot의
+        DB 식별자를 직접 받는다. 이 식별자로 파일을 한 번 복원하면 같은 앱에 새 구현이
+        저장되어도 Testing 작업의 입력이 바뀌지 않는다.
         """
         record = self._read(job_id)
         return {
             "job_id": record["job_id"],
             "app_id": record["app_id"],
             "status": record["status"],
-            "run_root": record.get("run_root"),
-            "artifact_version_ids": dict(
-                record.get("artifact_version_ids")
-                or record.get("artifact_versions")
-                or {}
-            ),
-            "completed_at": record.get("updated_at"),
+            "artifact_version_ids": dict(record.get("artifact_version_ids") or {}),
         }
 
     def cancel(self, job_id: str) -> dict[str, Any]:
@@ -734,12 +727,9 @@ class ImplementationWorker:
                 version_ids[artifact_type] = artifact_repository.save_file_snapshot(
                     record["app_id"], artifact_type, files, metadata=metadata
                 )
-        # ``save_file_snapshot``은 DB의 ArtifactVersion 식별자를 반환한다. Testing API는
-        # 이 값으로 정확한 버전을 다시 읽은 뒤 외부에 표시할 version_no와 digest를
-        # 별도의 typed 입력으로 만든다. 이름이 모호했던 artifact_versions도 새 작업에는
-        # 같은 값을 함께 남겨 기존 내부 조회 코드가 갑자기 깨지지 않게 한다.
+        # ``save_file_snapshot``이 반환한 DB 식별자만 Testing API에 넘긴다. Testing은
+        # 이 ID가 가리키는 파일 묶음을 한 번 복원하고 모든 검사를 같은 폴더에서 실행한다.
         record["artifact_version_ids"] = version_ids
-        record["artifact_versions"] = version_ids
         record["updated_at"] = _now()
         self._write(record)
 

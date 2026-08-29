@@ -6,17 +6,14 @@ from app.testing.nodes.dynamic_functional import dynamic_functional_node
 from app.testing.nodes.iac_verification import iac_verification_node
 from app.testing.nodes.placeholders import dynamic_nfr_node
 from app.testing.nodes.static_verification import static_verification_node
-from app.testing.schemas.testing_input import TestingInput
 from app.testing.schemas.testing_state import TestingState
 
 
 def parallel_static_verification_node(state: TestingState) -> dict:
     """Run the independent deployment and IaC scans with bounded concurrency.
 
-    Each scan materializes a different immutable artifact snapshot into its own
-    temporary directory and opens its own database session. Collect futures in
-    declaration order so the combined error list remains identical to the former
-    deployment-then-IaC graph order even when the IaC scan finishes first.
+    두 검사는 Testing 작업이 한 번 복원한 같은 애플리케이션 폴더를 읽는다. 결과는 선언
+    순서로 합쳐 병렬 실행 완료 순서가 달라도 외부 보고서 순서는 일정하게 유지한다.
     """
     with ThreadPoolExecutor(
         max_workers=2,
@@ -37,26 +34,21 @@ def parallel_static_verification_node(state: TestingState) -> dict:
     }
 
 def create_testing_graph():
-    """
-    Creates and compiles the Testing Agent LangGraph.
-    """
+    """Testing 에이전트의 검사 순서를 만들고 실행 가능한 graph로 변환한다."""
     workflow = StateGraph(TestingState)
 
-    # Add nodes
+    # 정적 분석 두 종류를 한 node 안에서 병렬 실행한 뒤 동적 검사를 이어서 수행한다.
     workflow.add_node("static_verification", parallel_static_verification_node)
     workflow.add_node("dynamic_functional", dynamic_functional_node)
     workflow.add_node("dynamic_nfr", dynamic_nfr_node)
 
-    # Add edges
-    # The two static scans overlap inside one bounded node. Dynamic checks remain
-    # outside that pool so Trivy cannot contend with the application under test.
+    # 동적 검사는 실행 중인 애플리케이션을 사용하므로 Trivy 병렬 구간 밖에 둔다.
     workflow.add_edge(START, "static_verification")
 
     workflow.add_edge("static_verification", "dynamic_functional")
     workflow.add_edge("dynamic_functional", "dynamic_nfr")
     workflow.add_edge("dynamic_nfr", END)
 
-    # Compile the graph
     return workflow.compile()
 
 
@@ -65,46 +57,14 @@ def initial_state(
     run_id: str,
     app_id: str,
     target_url: str = "",
-    manifests_dir: str = "",
-    iac_dir: str = "",
+    application_dir: str = "",
     repair_history: dict | None = None,
-    testing_input: TestingInput | None = None,
-    artifact_versions: dict[str, int] | None = None,
-    implementation_job_id: str | None = None,
 ) -> dict:
-    """A fully populated input for :func:`create_testing_graph`.
-
-    ``TestingState`` is a TypedDict, so LangGraph silently drops any key it does
-    not declare — an input assembled by hand loses ``app_id`` the moment the two
-    drift apart, and every database lookup in the graph is keyed on it.  Callers
-    build their input here so that cannot happen quietly.
-    """
-    if testing_input is not None and testing_input.app_id != app_id:
-        raise ValueError(
-            "testing_input의 app_id가 graph 입력과 다릅니다: "
-            f"graph={app_id}, testing_input={testing_input.app_id}"
-        )
-    fixed_versions = (
-        testing_input.version_map()
-        if testing_input is not None
-        else dict(artifact_versions or {})
-    )
-    references = dict(testing_input.artifacts) if testing_input is not None else {}
-    expected_job = (
-        testing_input.implementation_job_id
-        if testing_input is not None
-        else implementation_job_id
-    )
+    """호출 인자를 빠짐없이 채운 graph 시작 상태를 만든다."""
     return {
         "run_id": run_id,
         "app_id": app_id,
-        "implementation_job_id": expected_job,
-        "artifact_versions": fixed_versions,
-        "artifact_refs": references,
-        # 빈 dict를 명시한 경우에도 "고정했지만 선택 산출물이 없음"이라는 뜻을 보존한다.
-        "fixed_artifacts": testing_input is not None or artifact_versions is not None,
-        "manifests_dir": manifests_dir,
-        "iac_dir": iac_dir,
+        "application_dir": application_dir,
         "target_url": target_url,
         "repair_history": repair_history or {},
         "current_node": "",

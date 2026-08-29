@@ -122,14 +122,13 @@ def _run_test(job_id: str, testing_input: TestingInput) -> None:
     previous_findings = tuple(job.get("previous_findings") or ())
     ledger = RepairLedger.model_validate(repair_history or {})
     try:
-        # unit test까지 DB에 고정한 snapshot을 사용한다. 원래 run_root는 provenance로만
-        # 남기고, 실제 검사는 새 임시 폴더에 같은 파일 묶음을 한 번 복원해 실행한다.
+        # 구현 작업이 고정한 파일 묶음을 새 임시 폴더에 한 번만 복원한다. 단위·정적·IaC·
+        # 동적 검사는 아래 context가 끝날 때까지 이 폴더를 함께 사용한다.
         with materialized_testing_application(testing_input) as run_root:
             with langsmith_metrics.trace_metadata(
                 {
                     "app_id": testing_input.app_id,
                     "implementation_job_id": testing_input.implementation_job_id,
-                    "artifact_versions": testing_input.version_map(),
                 }
             ):
                 report = TestingAdapter().run(
@@ -141,10 +140,9 @@ def _run_test(job_id: str, testing_input: TestingInput) -> None:
                 verification = run_verification_graph(
                     run_id=job_id,
                     app_id=testing_input.app_id,
-                    manifests_dir=str(run_root / "application" / "k8s"),
-                    iac_dir=str(run_root / "application" / "terraform"),
+                    application_dir=str(run_root / "application"),
                     repair_history=ledger.model_dump(mode="json"),
-                    testing_input=testing_input,
+                    implementation_job_id=testing_input.implementation_job_id,
                 )
                 report["verification"] = verification
                 report["passed"] = unit_passed and verification["passed"]
@@ -261,18 +259,13 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
             status_code=409,
             detail="Implementation must be COMPLETED before testing can start.",
         )
-    run_root_value = implementation.get("run_root")
-    if not run_root_value:
-        raise HTTPException(status_code=409, detail="Implementation workspace is unavailable.")
-    # 실제 검사는 DB snapshot을 임시 폴더에 복원해 실행한다. 따라서 서버 재시작 뒤 원래
-    # workspace가 정리되었더라도 구현 작업에 snapshot ID가 남아 있으면 테스트할 수 있다.
+    # 구현 작업이 기록한 파일 묶음 ID만 고정한다. 실제 파일은 백그라운드 thread에서 한
+    # 번 복원하며 이후 검사들은 모두 같은 임시 애플리케이션 폴더를 사용한다.
     try:
         testing_input = capture_testing_input(
             app_id,
             request.implementation_job_id,
-            str(run_root_value),
             artifact_version_ids=implementation.get("artifact_version_ids"),
-            completed_at=implementation.get("completed_at"),
         )
     except (ArtifactSourceUnavailable, ArtifactSnapshotMismatch, ValueError) as error:
         raise HTTPException(

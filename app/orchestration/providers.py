@@ -1527,11 +1527,8 @@ class BuiltinTestingProvider:
                 implementation_result=payload,
                 case_id=str(payload.get("case_id") or "adhoc"),
             )
-            # Static analysis and the dynamic checks run through the same shared
-            # verification pass the web testing API uses.  Its nodes read the
-            # implementation agent's stored snapshots by app id; the directories
-            # below are only the fallback for a run whose output was never
-            # persisted, so they come from the workspace the adapter just tested.
+            # 단위·정적·IaC·동적 검사가 모두 방금 단위 테스트에 사용한 application
+            # 폴더를 본다. 검사마다 DB에서 최신 snapshot을 다시 찾지 않는다.
             try:
                 from app.testing.runtime.verification import run_verification_graph
 
@@ -1539,8 +1536,7 @@ class BuiltinTestingProvider:
                 verification = run_verification_graph(
                     run_id=context.run_id,
                     app_id=context.app_id,
-                    manifests_dir=str(application / "k8s"),
-                    iac_dir=str(application / "terraform"),
+                    application_dir=str(application),
                 )
                 result["verification"] = verification
             except Exception as graph_error:  # noqa: BLE001
