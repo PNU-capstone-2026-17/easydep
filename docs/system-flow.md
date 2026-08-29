@@ -106,8 +106,8 @@ type CreateAppInput = {
 | `GET /api/implementation/apps/{app_id}/artifacts/{type}/files/{path}` | 구현 파일 내용 조회 | UTF-8 내용과 SHA-256 |
 | `GET /api/implementation/apps/{app_id}/download` | 구현 파일 ZIP 다운로드 | 파일 묶음과 manifest |
 
-`/api/requirements`, `/api/apps/{id}/design/*`, `/api/implementation`, `/api/testing`도 존재한다.
-이 주소들은 개발·직접 연동용이며, 현재 SvelteKit 작업대의 기본 경로는 Workspace API이다.
+요구사항·설계·구현 변경·테스팅을 위한 별도 HTTP 주소는 제공하지 않는다. 구현 산출물 조회용
+`/api/implementation` GET 주소만 남아 있으며, 실행 상태와 다음 행동은 Workspace API에서 본다.
 
 ### 2.3 화면 명령 타입
 
@@ -292,41 +292,17 @@ LLM 응답은 먼저 NIM의 JSON Schema 구조화 출력을 요청한다. 공급
 의미 검사는 LLM에게도 물을 수 있다. 기본 설정은 한 번의 묶음 판정이며 다수결을 하지 않는다.
 따라서 “결정론적 검사 통과”와 “LLM 의미 검사 통과”는 같은 의미가 아니다.
 
-### 3.5 서비스 응답 타입
+### 3.5 Workspace에 전달하는 결과
 
-```python
-class AnalyzeResponse(BaseModel):
-    thread_id: str
-    phase: str
-    status: Literal["need_clarification", "need_feedback", "completed"]
-    questions: list[str] | None
-    feedback_prompt: str | None
-    feedback_summary: object | None
-    edit_stage: str | None
-    edit_targets: list[str] | None
-    resource_questions: list[dict] | None
-    blocking_findings: list[BlockingFinding] | None
-    requires_revision: bool | None
-    repair_state: RepairStateSummary | None
+요구사항 단계는 모든 산출물을 다시 감싸는 거대한 응답 클래스를 만들지 않는다. 각 단계가
+자기 Pydantic 모델로 LLM 응답을 검사한 뒤, 그래프가 현재 진행 상태와 지금까지 완성된
+산출물만 하나의 `dict[str, object]`에 모아 Workspace에 전달한다.
 
-    requirements: list[RequirementItemOut] | None
-    deployment_needs: dict | None
-    capability_contract: dict | None
-    resource_spec: dict | None
-    resource_intake: dict | None
-    actors: list[dict] | None
-    use_cases: list[dict] | None
-    coverage: dict | None
-    traceability: dict | None
-    model_review: dict | None
-    use_case_specs: list[dict] | None
-    spec_report: dict | None
-    relationships: dict | None
-    relationship_report: dict | None
-    diagram: str | None
-    saved_stages: list[str] | None
-    telemetry: dict | None
-```
+항상 있는 값은 `thread_id`, `phase`, `status`다. 질문 중이면 `questions`가, 검토 중이면
+`feedback_prompt`, `blocking_findings`, `repair_state`가 추가된다. 완료된 산출물은
+`requirements`, `actors`, `use_cases`, `use_case_specs`, `relationships`, `diagram`,
+`capability_contract`, `resource_spec`처럼 실제로 생성된 키만 들어간다. 이번 호출의 저장 결과와
+LLM 사용량은 각각 `saved_stages`, `telemetry`에 들어간다.
 
 Workspace는 이 응답을 다음처럼 처리한다.
 
@@ -349,22 +325,18 @@ Workspace는 이 응답을 다음처럼 처리한다.
 
 ### 4.1 설계 실행 경계
 
-Workspace는 다음 직접 API와 같은 Python 서비스를 프로세스 안에서 호출한다.
+Workspace는 `app/design/service.py`의 application service를 프로세스 안에서 직접 호출한다.
 
 ```text
-POST /api/apps/{app_id}/design/start
-POST /api/apps/{app_id}/design/resume
-POST /api/apps/{app_id}/design/retry
-POST /api/apps/{app_id}/design/rewind
-POST /api/apps/{app_id}/design/revise
-POST /api/apps/{app_id}/design/revise-batch
-POST /api/apps/{app_id}/design/resolve
-GET  /api/apps/{app_id}/design/session
-GET  /api/apps/{app_id}/design/trace
+Workspace command
+  → start_design / resume_design / retry_design
+  → rewind_design / revise_design_element / revise_design_elements
+  → app/design/graphs/design_graph.py
 ```
 
 설계 시작 입력은 저장된 `usecase_spec`이다. 단계 피드백은 `feedback: str`과 필요하면 대상
-산출물 또는 유스케이스 ID를 함께 보낸다. 실제 진행 위치는 MySQL의 설계 체크포인트에서 읽는다.
+산출물 또는 유스케이스 ID를 함께 보낸다. 서비스는 HTTP 응답 객체를 만들지 않고 결과 dict를
+Workspace에 돌려주며, 실제 진행 위치는 MySQL의 설계 체크포인트에서 읽는다.
 
 ### 4.2 다섯 설계 산출물
 
@@ -1095,11 +1067,11 @@ private helper 하나마다 테스트가 있고 위 다섯 묶음에서도 같�
 | 배포 graph·planning | `app/design/services/deployment_diagram/` |
 | 설계 수리 | `app/design/nodes/artifact.py` |
 | 설계 검토 지점 | `app/design/nodes/gates.py` |
-| 구현 HTTP 타입 | `app/implementation/interfaces/` |
+| 구현 산출물 조회 HTTP | `app/implementation/interfaces/http.py` |
 | 구현 작업 상태 | `app/implementation/application/jobs.py` |
 | 자체 Java scaffolder | `app/implementation/generation/java_scaffold.py` |
 | 구현 task 실행·수리 | `app/implementation/workflows/` |
-| 테스트 HTTP | `app/testing/api.py` |
+| 테스트 작업 서비스 | `app/testing/service.py` |
 | 테스트 입력 | `app/testing/schemas/testing_input.py` |
 | 생성 앱 검사 | `app/testing/runtime/` |
 | 공통 수리 이력 | `app/validation.py` |

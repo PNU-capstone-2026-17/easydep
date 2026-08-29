@@ -266,7 +266,7 @@ def test_serving_import_chain_pulls_in_the_store():
     canonical graph가 persistence를 모듈 수준에서 import하기 때문에 성립한다. 누군가
     이 import를 지연시키면 서버는 뜨는데 세션 테이블만 조용히 안 생긴다.
     """
-    import app.requirements.orchestration.api  # noqa: F401 - 서빙 경로의 진입점
+    import app.requirements.orchestration.service  # noqa: F401 - Workspace 서비스 진입점
 
     assert "requirements_checkpoints" in Base.metadata.tables
 

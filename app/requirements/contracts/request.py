@@ -6,6 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+FeedbackStage = Literal["actors", "use_cases", "specs", "relationships"]
+CloudProvider = Literal["aws", "azure", "gcp"]
+
 
 class FeedbackEdit(BaseModel):
     """화면이 이미 아는 것을 추측하지 않고 그대로 보내는 구조화 피드백.
@@ -20,7 +23,7 @@ class FeedbackEdit(BaseModel):
     그대로 둔다. 화면이 확신할 때만 이 형태를 쓴다.
     """
 
-    stage: Literal["actors", "use_cases", "specs", "relationships"]
+    stage: FeedbackStage
     scope: Literal["local", "broad"] = "broad"
     #: local일 때 대상 항목 id. broad면 비운다.
     target_ids: list[str] = Field(default_factory=list)
@@ -51,7 +54,7 @@ class InitialCloudConstraints(BaseModel):
     구조화해서 받아 제약 추출 LLM이 이미 알려진 값을 다시 추측하지 않게 한다.
     """
 
-    provider: Literal["aws", "azure", "gcp"]
+    provider: CloudProvider
     region: str = Field(min_length=1)
     monthly_budget_amount: float | None = Field(default=None, gt=0)
     monthly_budget_currency: str = Field(default="USD", min_length=3, max_length=3)
@@ -76,7 +79,7 @@ class InitialCloudConstraints(BaseModel):
 class DeploymentTarget(BaseModel):
     """배포 대안 지도에서 선택한 단일 provider·region 대상이다."""
 
-    provider: Literal["aws", "azure", "gcp"]
+    provider: CloudProvider
     region: str = Field(min_length=1, max_length=100)
     zones: list[str] = Field(default_factory=list, max_length=16)
 
@@ -150,7 +153,7 @@ class AnalyzeRequest(BaseModel):
     # 대화형 게이트(step1 clarify + 각 스텝 피드백) 사용 여부. None이면 서버 기본값(설정)을 따른다.
     # 신규 세션 시작 시에만 의미가 있으며, 이후 재개(answer)는 세션이 시작된 모드를 유지한다.
     feedback_gates: bool | None = None
-    # 산출물을 저장할 앱(POST /api/apps 로 발급). 있으면 분석이 완료된 시점에
+    # 산출물을 저장할 앱(POST /api/workspace/apps 로 발급). 있으면 분석이 완료된 시점에
     # refined_requirements / usecase_spec / usecase_diagram 이 그 앱에 기록되어
     # 설계 에이전트가 이어받는다. 없으면 저장 없이 응답만 돌려준다(단독 실행).
     app_id: str | None = None

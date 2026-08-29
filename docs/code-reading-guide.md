@@ -23,7 +23,7 @@ EasyDep는 여러 단계와 비동기 작업을 포함하므로 한 파일에서
 처음에는 요구사항 또는 설계 하나만 선택한다. 예를 들어 클래스 설계는 다음 순서다.
 
 ```text
-app/design/api.py
+app/design/service.py
   → app/design/graphs/design_graph.py
   → app/design/services/class_diagram/service.py
   → inventory.py → operations.py → collaboration.py

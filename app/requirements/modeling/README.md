@@ -47,8 +47,7 @@ state patch를 반환한다. graph 순서, feedback cascade, supervisor 재실�
 
 - modeling 서비스는 requirements graph, HTTP API, runner, session/checkpoint 또는
   artifact repository를 import하지 않는다.
-- `app.design`, `app.implementation`, `app.orchestration`, `app.workspace`를 역참조하지
-  않는다.
+- `app.design`, `app.implementation`, `app.workspace`를 역참조하지 않는다.
 - graph state 전체를 private helper로 파싱하거나 prompt literal을 외부 계약으로
   노출하지 않는다. 공개 입력은 `AgentState`/TypedDict/Pydantic 계약이고 공개 출력은
   `ModelingStagePatch` 또는 구체 typed 결과다.

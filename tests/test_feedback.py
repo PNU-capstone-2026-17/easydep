@@ -1,53 +1,17 @@
 """피드백 기반 재생성 테스트.
 
-  1. load_state 라운드트립 (persist → load).
-  2. apply_feedback: 의도 분류·재생성·하위 cascade·정합성 리포트 (스테이지 목킹).
-  3. specs local 재생성이 형제 spec을 보존.
-  4. 구조화 편집(FeedbackEdit)이 분류 LLM을 건너뛴다 — 자연어 경로는 그대로.
+  1. apply_feedback: 의도 분류·재생성·하위 cascade·정합성 리포트 (스테이지 목킹).
+  2. specs local 재생성이 형제 spec을 보존.
+  3. 구조화 편집(FeedbackEdit)이 분류 LLM을 건너뛴다 — 자연어 경로는 그대로.
 """
 import pytest
 
-from app.orchestration.run_identity import identity_manifest, make_run_id
 from app.requirements.orchestration import feedback as fb
-from app.requirements.orchestration import runner
 from app.requirements.schemas import FeedbackEdit, FeedbackIntent
 
 
 # ---------------------------------------------------------------------------
-# 1. load_state 라운드트립
-# ---------------------------------------------------------------------------
-def test_load_state_roundtrip(tmp_path):
-    input_obj = {"name": "demo", "classified": [{"id": "R1", "text": "x", "type": "FR"}]}
-    state = {
-        "actors": [{"name": "User", "kind": "primary", "description": "d", "parent_actor": None}],
-        "use_cases": [{"id": "UC1", "name": "Log in", "primary_actor": "User",
-                       "requirement_ids": ["R1"], "nfr_ids": []}],
-        "coverage": {"coverage_ratio": 1.0, "orphan_fr_ids": []},
-        "use_case_specs": [{"use_case_id": "UC1", "name": "Log in", "main_scenario": [], "issues": []}],
-        "relationships": {"associations": [{"actor": "User", "use_case": "Log in"}],
-                          "orphan_actors": [], "dropped_refs": []},
-        "diagram": "@startuml\n@enduml",
-    }
-    run_dir = runner.persist_run(
-        input_obj,
-        state,
-        dataset_name="demo",
-        artifact_root=tmp_path,
-        run_id_factory=make_run_id,
-        identity_manifest_factory=identity_manifest,
-    )
-    loaded = runner.load_state(run_dir)
-
-    assert loaded["classified"] == input_obj["classified"]
-    assert loaded["actors"][0]["name"] == "User"
-    assert loaded["use_cases"][0]["id"] == "UC1"
-    assert loaded["use_case_specs"][0]["use_case_id"] == "UC1"
-    assert loaded["relationships"]["associations"][0]["actor"] == "User"
-    assert loaded["diagram"] == "@startuml\n@enduml"
-
-
-# ---------------------------------------------------------------------------
-# 2. apply_feedback — 재생성 + cascade
+# 1. apply_feedback — 재생성 + cascade
 # ---------------------------------------------------------------------------
 def _install_stage_spies(monkeypatch):
     calls = []
@@ -118,7 +82,7 @@ def test_apply_feedback_report_consistency(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 2b. apply_feedback_upto — 게이트용 경계 cascade + 상위 라우팅 + 클램프
+# 1b. apply_feedback_upto — 게이트용 경계 cascade + 상위 라우팅 + 클램프
 # ---------------------------------------------------------------------------
 def test_apply_feedback_upto_bounds_cascade_to_gate(monkeypatch):
     # use_cases 게이트: use_cases 재생성 후 coverage까지만 cascade(specs 이하는 아직 없음).
@@ -162,7 +126,7 @@ def test_apply_feedback_upto_clamps_downstream_stage(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 3. specs local 재생성 — 형제 보존
+# 2. specs local 재생성 — 형제 보존
 # ---------------------------------------------------------------------------
 def test_generate_specs_local_target_preserves_siblings():
     from app.requirements.modeling import specifications as s3
@@ -206,7 +170,7 @@ def test_generate_specs_local_target_preserves_siblings():
 
 
 # ---------------------------------------------------------------------------
-# 4. 구조화 편집 — 화면이 아는 것을 LLM으로 다시 추측하지 않는다
+# 3. 구조화 편집 — 화면이 아는 것을 LLM으로 다시 추측하지 않는다
 # ---------------------------------------------------------------------------
 def test_structured_edit_skips_the_intent_classifier(monkeypatch):
     """FeedbackEdit이 오면 분류 LLM을 부르지 않고 그대로 의도로 쓴다."""

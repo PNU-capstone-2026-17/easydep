@@ -1,4 +1,4 @@
-"""구현 결과의 테스트와 실패 이력 기반 재시도를 제공하는 HTTP API다.
+"""구현 결과의 테스트 작업과 실패 이력 기반 재시도를 관리한다.
 
 완료된 구현 작업의 로컬 workspace를 받아 unit test, 정적 검사와 실행 검증을 차례로
 수행한다. 실패 후 다시 실행할 때는 이전 finding과 repair 이력을 넘겨 같은 결과를 반복했는지
@@ -12,7 +12,6 @@ import threading
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.implementation.application.jobs import JobNotFound
@@ -29,8 +28,6 @@ from app.testing.utils.artifact_source import (
 )
 from app.validation import RepairAttempt, RepairLedger, repair_makes_progress, stable_digest
 
-router = APIRouter(prefix="/api/testing", tags=["testing"])
-
 _testing_jobs: dict[str, dict[str, Any]] = {}
 # HTTP 조회 thread와 백그라운드 테스트 thread가 같은 dict를 사용하므로 모든 접근을
 # RLock으로 감싼다. 읽을 때도 사본을 반환해 caller가 registry를 직접 바꾸지 못하게 한다.
@@ -45,12 +42,12 @@ class CreateTestingJobRequest(BaseModel):
 
 
 def _job(job_id: str) -> dict[str, Any]:
-    """테스트 작업 사본을 반환하고, 없으면 HTTP 404를 발생시킨다."""
+    """테스트 작업 사본을 반환하고, 없으면 호출자에게 명확한 오류를 알린다."""
     with _testing_jobs_lock:
         try:
             return dict(_testing_jobs[job_id])
         except KeyError as error:
-            raise HTTPException(status_code=404, detail="Unknown testing job.") from error
+            raise ValueError("Unknown testing job.") from error
 
 
 def _update(job_id: str, **changes: Any) -> None:
@@ -93,18 +90,13 @@ def _repair_state(ledger: RepairLedger, *, passed: bool) -> dict[str, Any]:
         ),
         # 전체 이력은 다음 repair 입력에 유지하지만 HTTP 응답에는 최근 다섯 건만 싣는다.
         # 작업을 오래 반복해도 화면 응답이 계속 커지지 않게 하기 위해서다.
-        "recent_attempts": [
-            attempt.model_dump(mode="json") for attempt in ledger.attempts[-5:]
-        ],
-        "tried_strategies": sorted(
-            {attempt.strategy_key for attempt in ledger.attempts}
-        ),
+        "recent_attempts": [attempt.model_dump(mode="json") for attempt in ledger.attempts[-5:]],
+        "tried_strategies": sorted({attempt.strategy_key for attempt in ledger.attempts}),
         "rejected_candidate_digests": sorted(
             {
                 attempt.candidate_digest
                 for attempt in ledger.attempts
-                if attempt.candidate_digest
-                and attempt.outcome not in {"improved", "clean"}
+                if attempt.candidate_digest and attempt.outcome not in {"improved", "clean"}
             }
         ),
         "finding_digest": stable_digest(
@@ -124,33 +116,33 @@ def _run_test(job_id: str, testing_input: TestingInput) -> None:
     try:
         # 구현 작업이 고정한 파일 묶음을 새 임시 폴더에 한 번만 복원한다. 단위·정적·IaC·
         # 동적 검사는 아래 context가 끝날 때까지 이 폴더를 함께 사용한다.
-        with materialized_testing_application(testing_input) as run_root:
-            with langsmith_metrics.trace_metadata(
+        with (
+            materialized_testing_application(testing_input) as run_root,
+            langsmith_metrics.trace_metadata(
                 {
                     "app_id": testing_input.app_id,
                     "implementation_job_id": testing_input.implementation_job_id,
                 }
-            ):
-                report = TestingAdapter().run(
-                    implementation_result={"run_root": str(run_root)}
-                )
-                unit_passed = bool(report.get("passed"))
-                report["unitPassed"] = unit_passed
+            ),
+        ):
+            report = TestingAdapter().run(implementation_result={"run_root": str(run_root)})
+            unit_passed = bool(report.get("passed"))
+            report["unitPassed"] = unit_passed
 
-                verification = run_verification_graph(
-                    run_id=job_id,
-                    app_id=testing_input.app_id,
-                    application_dir=str(run_root / "application"),
-                    repair_history=ledger.model_dump(mode="json"),
-                    implementation_job_id=testing_input.implementation_job_id,
-                )
-                report["verification"] = verification
-                report["passed"] = unit_passed and verification["passed"]
-                report["diagnostics"] = [
-                    *(report.get("diagnostics") or []),
-                    *verification["diagnostics"],
-                ]
-                report["testingInput"] = testing_input.model_dump(mode="json")
+            verification = run_verification_graph(
+                run_id=job_id,
+                app_id=testing_input.app_id,
+                application_dir=str(run_root / "application"),
+                repair_history=ledger.model_dump(mode="json"),
+                implementation_job_id=testing_input.implementation_job_id,
+            )
+            report["verification"] = verification
+            report["passed"] = unit_passed and verification["passed"]
+            report["diagnostics"] = [
+                *(report.get("diagnostics") or []),
+                *verification["diagnostics"],
+            ]
+            report["testingInput"] = testing_input.model_dump(mode="json")
         findings = _finding_keys(report)
         dynamic = (verification.get("reports") or {}).get("dynamicFunctional") or {}
         candidate_digest = str(dynamic.get("candidateDigest") or stable_digest(report))
@@ -236,7 +228,6 @@ def _run_test(job_id: str, testing_input: TestingInput) -> None:
         _update(job_id, status="FAILED", error=str(error)[-4000:])
 
 
-@router.post("/apps/{app_id}/jobs", status_code=202)
 def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
     """완료된 구현 작업을 검사하고 새 테스트 thread를 시작한다.
 
@@ -247,18 +238,12 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
     try:
         implementation = implementation_worker.get_testing_input(request.implementation_job_id)
     except JobNotFound as error:
-        raise HTTPException(status_code=404, detail="Unknown implementation job.") from error
+        raise ValueError("Unknown implementation job.") from error
 
     if implementation["app_id"] != app_id:
-        raise HTTPException(
-            status_code=404,
-            detail="Implementation job does not belong to this app.",
-        )
+        raise ValueError("Implementation job does not belong to this app.")
     if implementation["status"] != "COMPLETED":
-        raise HTTPException(
-            status_code=409,
-            detail="Implementation must be COMPLETED before testing can start.",
-        )
+        raise ValueError("Implementation must be COMPLETED before testing can start.")
     # 구현 작업이 기록한 파일 묶음 ID만 고정한다. 실제 파일은 백그라운드 thread에서 한
     # 번 복원하며 이후 검사들은 모두 같은 임시 애플리케이션 폴더를 사용한다.
     try:
@@ -268,30 +253,28 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
             artifact_version_ids=implementation.get("artifact_version_ids"),
         )
     except (ArtifactSourceUnavailable, ArtifactSnapshotMismatch, ValueError) as error:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Implementation artifacts are unavailable: {error}",
-        ) from error
+        raise ValueError(f"Implementation artifacts are unavailable: {error}") from error
 
     repair_history: dict[str, Any] | None = None
     previous_findings: tuple[str, ...] = ()
     if request.repair_testing_job_id:
         previous = _job(request.repair_testing_job_id)
-        if previous.get("app_id") != app_id or previous.get("implementation_job_id") != request.implementation_job_id:
-            raise HTTPException(status_code=404, detail="Testing job does not belong to this implementation.")
+        if (
+            previous.get("app_id") != app_id
+            or previous.get("implementation_job_id") != request.implementation_job_id
+        ):
+            raise ValueError("Testing job does not belong to this implementation.")
         previous_result = previous.get("result") or {}
         if previous.get("status") != "COMPLETED" or previous_result.get("passed") is not False:
-            raise HTTPException(status_code=409, detail="Only a completed failing testing job can be repaired.")
+            raise ValueError("Only a completed failing testing job can be repaired.")
         repair_history = previous.get("repair_history") or {}
         previous_findings = _finding_keys(previous_result)
         previous_input = previous.get("testing_input")
-        if previous_input is not None and TestingInput.model_validate(
-            previous_input
-        ) != testing_input:
-            raise HTTPException(
-                status_code=409,
-                detail="A testing repair must use the same implementation artifacts.",
-            )
+        if (
+            previous_input is not None
+            and TestingInput.model_validate(previous_input) != testing_input
+        ):
+            raise ValueError("A testing repair must use the same implementation artifacts.")
 
     # registry에 QUEUED 상태를 먼저 넣은 뒤 thread를 시작한다. 반대로 하면 빠른 thread가
     # 아직 등록되지 않은 job_id를 갱신하려다 실패할 수 있다.
@@ -310,13 +293,10 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
     }
     with _testing_jobs_lock:
         _testing_jobs[job_id] = record
-    threading.Thread(
-        target=_run_test, args=(job_id, testing_input), daemon=True
-    ).start()
+    threading.Thread(target=_run_test, args=(job_id, testing_input), daemon=True).start()
     return record
 
 
-@router.get("/jobs/{job_id}")
 def get_testing_job(job_id: str) -> dict:
     """테스트 작업의 현재 상태와 완료된 보고서를 반환한다."""
     return _job(job_id)

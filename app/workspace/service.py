@@ -8,18 +8,17 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
-from fastapi.responses import JSONResponse
 
 from app.design import progress as design_progress
-from app.design.api import (
+from app.design.graphs.design_graph import has_active_session, session_status
+from app.design.graphs.subgraphs import DESIGN_STAGES
+from app.design.observability import design_timing_context, log_design_timing
+from app.design.service import (
     BatchReviseRequest,
-    FeedbackRequest,
     ReviseRequest,
-    RewindRequest,
-    StageRequest,
     resume_design_session,
     retry_design_session,
     revise_design_element,
@@ -27,37 +26,25 @@ from app.design.api import (
     rewind_design_session,
     start_design_session,
 )
-from app.design.graphs.design_graph import has_active_session, session_status
-from app.design.graphs.subgraphs import DESIGN_STAGES
-from app.design.observability import design_timing_context, log_design_timing
 from app.design.services.common.structured import capture_llm_timings
 from app.implementation.application.jobs import worker as implementation_worker
-from app.implementation.interfaces.http import (
-    approve_job,
-    cancel_job,
-    create_feedback_job,
-    create_job,
-)
-from app.implementation.interfaces.schemas import (
-    ApprovalRequest,
-    CreateImplementationFeedbackJobRequest,
-    CreateImplementationJobRequest,
-)
 from app.repositories import artifact_repository
 from app.requirements.config import settings as requirements_settings
-from app.requirements.orchestration.api import (
-    analyze_endpoint,
-    retry_analysis_endpoint,
-)
-from app.requirements.runtime import telemetry as requirements_telemetry
-from app.requirements.schemas import (
+from app.requirements.contracts.request import (
     AnalyzeRequest,
+    CloudProvider,
     DeploymentPreferences,
     FeedbackEdit,
+    FeedbackStage,
     InitialCloudConstraints,
 )
-from app.testing.api import CreateTestingJobRequest, create_testing_job, get_testing_job
-from app.validation import RepairAttempt, stable_digest
+from app.requirements.orchestration.service import (
+    analyze_requirements,
+    retry_requirements_analysis,
+)
+from app.requirements.runtime import telemetry as requirements_telemetry
+from app.testing.service import CreateTestingJobRequest, create_testing_job, get_testing_job
+from app.validation import RepairAttempt, RepairOutcome, stable_digest
 
 from . import repository
 from .live_preview import live_previews
@@ -74,18 +61,12 @@ TERMINAL_JOB_STATUSES = {
 # 예전의 길이 제한 표본은 진단용 내부 값으로만 남긴다. 현재 개발 기본 설정은 실제 JSON
 # 응답과 reasoning을 별도 ``responseContent``·``reasoningContent`` field로 기록하므로,
 # Workspace event에서도 같은 실행의 원문을 확인할 수 있다.
-_PRIVATE_DESIGN_TIMING_FIELDS = frozenset(
-    {"failureContentPrefix", "failureContentSuffix"}
-)
+_PRIVATE_DESIGN_TIMING_FIELDS = frozenset({"failureContentPrefix", "failureContentSuffix"})
 
 
 def _public_design_timing_event(event: Mapping[str, Any]) -> dict[str, Any]:
     """설계 timing 한 건을 Workspace event로 옮기고 예전 중복 표본만 제거한다."""
-    return {
-        key: value
-        for key, value in event.items()
-        if key not in _PRIVATE_DESIGN_TIMING_FIELDS
-    }
+    return {key: value for key, value in event.items() if key not in _PRIVATE_DESIGN_TIMING_FIELDS}
 
 
 def _blocker_keys(result: dict[str, Any]) -> tuple[str, ...]:
@@ -112,18 +93,10 @@ def _merge_delegated_repair_state(
     after = _blocker_keys(current)
     input_digest = stable_digest(before)
     candidate_digest = stable_digest(after)
-    rejected_before = {
-        str(value) for value in old.get("rejected_candidate_digests") or [] if value
-    }
-    repeated = bool(after) and (
-        after == before or candidate_digest in rejected_before
-    )
-    outcome = (
-        "clean"
-        if not after
-        else "repeated_candidate"
-        if repeated
-        else "improved"
+    rejected_before = {str(value) for value in old.get("rejected_candidate_digests") or [] if value}
+    repeated = bool(after) and (after == before or candidate_digest in rejected_before)
+    outcome: RepairOutcome = (
+        "clean" if not after else "repeated_candidate" if repeated else "improved"
     )
     delegated = RepairAttempt(
         stage="workspace.delegate-repair",
@@ -156,10 +129,7 @@ def _merge_delegated_repair_state(
         recent.append(attempt)
 
     tried = {
-        str(value)
-        for state in (old, new)
-        for value in state.get("tried_strategies") or []
-        if value
+        str(value) for state in (old, new) for value in state.get("tried_strategies") or [] if value
     }
     tried.add(strategy_key)
     rejected = {
@@ -171,11 +141,7 @@ def _merge_delegated_repair_state(
     if repeated:
         rejected.add(candidate_digest)
     status = (
-        "COMPLETED"
-        if not after
-        else "STALLED"
-        if repeated
-        else str(new.get("status") or "ACTIVE")
+        "COMPLETED" if not after else "STALLED" if repeated else str(new.get("status") or "ACTIVE")
     )
     return {
         "status": status,
@@ -236,12 +202,10 @@ _IMPLEMENTATION_DISPLAY_PHASES = (
     ("frontend", "Frontend 구현", frozenset({"frontend"})),
     ("e2e", "E2E 통합 테스트 실행", frozenset({"end-to-end"})),
 )
-def _json_response(response: JSONResponse) -> dict[str, Any]:
-    return json.loads(response.body.decode("utf-8"))
 
 
 class WorkspaceService:
-    """기존 단계 API를 한 대화형 명령 경계로 묶는 얇은 비동기 서비스다."""
+    """요구사항부터 테스트까지 한 대화형 명령 흐름으로 실행하는 서비스다."""
 
     def __init__(self) -> None:
         workers = max(1, min(4, int(os.getenv("EASYDEP_WORKSPACE_WORKERS", "2"))))
@@ -283,13 +247,10 @@ class WorkspaceService:
             return command
         job_status = str(job.get("status") or "")
         workflow = job.get("workflow")
-        workflow_complete = (
-            isinstance(workflow, dict)
-            and implementation_worker._workflow_is_complete(workflow)
-        )
-        if job_status != "COMPLETED" and not (
-            job_status == "READY" and workflow_complete
-        ):
+        workflow_complete = isinstance(
+            workflow, dict
+        ) and implementation_worker._workflow_is_complete(workflow)
+        if job_status != "COMPLETED" and not (job_status == "READY" and workflow_complete):
             return command
         result = {
             "message": "Review the generated implementation artifacts below.",
@@ -364,9 +325,7 @@ class WorkspaceService:
             )
         command_id = str(uuid.uuid4())
         with self._submission_lock:
-            command = repository.create_command(
-                command_id, app_id, action, resolved_stage, payload
-            )
+            command = repository.create_command(command_id, app_id, action, resolved_stage, payload)
         if text:
             repository.append_event(
                 app_id,
@@ -457,9 +416,7 @@ class WorkspaceService:
         if missing:
             raise ValueError(f"Missing values for the {action} command: {', '.join(missing)}")
 
-    def _validate_action_reference(
-        self, app_id: str, action: str, payload: dict[str, Any]
-    ) -> None:
+    def _validate_action_reference(self, app_id: str, action: str, payload: dict[str, Any]) -> None:
         action_id = str(payload.get("action_id") or "")
         if not action_id:
             return
@@ -467,22 +424,19 @@ class WorkspaceService:
         if prior is None or prior["app_id"] != app_id:
             raise ValueError("The command to answer could not be found.")
         if action in {"retry_requirements", "retry_design"}:
-            expected_stage = (
-                "requirements" if action == "retry_requirements" else "design"
-            )
-            if (
-                prior["status"] not in {"FAILED", "INTERRUPTED"}
-                or prior["stage"] != expected_stage
-            ):
+            expected_stage = "requirements" if action == "retry_requirements" else "design"
+            if prior["status"] not in {"FAILED", "INTERRUPTED"} or prior["stage"] != expected_stage:
                 raise ValueError(
-                    "Only a failed or interrupted "
-                    f"{expected_stage} command can be retried."
+                    f"Only a failed or interrupted {expected_stage} command can be retried."
                 )
             return
         if prior["status"] != "AWAITING_INPUT":
             raise ValueError("The command was already handled or is not awaiting a response.")
         result = prior.get("result") or {}
-        if action in {"confirm_change", "dismiss_change"} and result.get("action") != "confirm_change":
+        if (
+            action in {"confirm_change", "dismiss_change"}
+            and result.get("action") != "confirm_change"
+        ):
             raise ValueError("This command is not awaiting change confirmation.")
 
     def infer_stage(self, app_id: str, action: str, payload: dict[str, Any]) -> str:
@@ -564,10 +518,7 @@ class WorkspaceService:
                 stage=stage,
                 kind="status",
                 actor="assistant",
-                text=str(
-                    result.get("message")
-                    or f"Completed {self._stage_label(stage)}."
-                ),
+                text=str(result.get("message") or f"Completed {self._stage_label(stage)}."),
                 metadata={"status": "COMPLETED", **result},
             )
         except Exception as error:
@@ -594,9 +545,7 @@ class WorkspaceService:
             return
         prior = repository.get_command(action_id)
         if prior is not None and prior["status"] == "AWAITING_INPUT":
-            repository.update_command(
-                action_id, status="COMPLETED", completed_at=repository.now()
-            )
+            repository.update_command(action_id, status="COMPLETED", completed_at=repository.now())
 
     def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         action = str(command["action"])
@@ -658,14 +607,12 @@ class WorkspaceService:
             return self._stage_message(command, advance=True)
         if action == "retry_requirements":
             app_id = str(command["app_id"])
-            progress = self._requirements_progress_reporter(
-                app_id, str(command["command_id"])
-            )
+            progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
             with requirements_telemetry.progress_scope(progress):
-                result = retry_analysis_endpoint(
+                result = retry_requirements_analysis(
                     app_id,
                     app_id=app_id,
-                ).model_dump(mode="json")
+                )
             return self._requirements_result(result)
         if action == "retry_design":
             app_id = str(command["app_id"])
@@ -675,9 +622,9 @@ class WorkspaceService:
                 command,
                 stage=stage,
                 label=self._design_stage_label(stage, "Retrying"),
-                operation=lambda: retry_design_session(app_id, StageRequest()),
+                operation=lambda: retry_design_session(app_id),
             )
-            return self._design_result(_json_response(response))
+            return self._design_result(response)
         if action == "confirm_change":
             return self._confirm_change(command)
         if action == "dismiss_change":
@@ -696,15 +643,13 @@ class WorkspaceService:
                     text="",
                     metadata={"reset_implementation_timeline": True},
                 )
-            request = CreateImplementationJobRequest(
-                base_package=str(
-                    command["payload"].get("base_package") or "com.easydep.app"
-                ),
-                allow_assumptions=bool(
-                    command["payload"].get("allow_assumptions", True)
-                ),
+            app_id = str(command["app_id"])
+            job = implementation_worker.create_job(
+                app_id,
+                cast(dict[str, Any], artifact_repository.load_state(app_id)),
+                str(command["payload"].get("base_package") or "com.easydep.app"),
+                bool(command["payload"].get("allow_assumptions", True)),
             )
-            job = create_job(str(command["app_id"]), request)
             return self._monitor_implementation(job, command_id=str(command["command_id"]))
         if action in {"approve_implementation", "reject_implementation"}:
             payload = command["payload"]
@@ -723,46 +668,34 @@ class WorkspaceService:
                 ),
                 metadata={"status": "APPROVAL_RECEIVED" if approved else "REJECTED"},
             )
-            job = approve_job(
+            job = implementation_worker.approve(
                 str(payload["job_id"]),
-                ApprovalRequest(
-                    request_id=str(payload["request_id"]),
-                    approved=approved,
-                    approved_by="EasyDep Workspace",
-                    retry_failed=bool(payload.get("retry_failed", False)),
-                    delegate_repair_approvals=bool(
-                        payload.get("delegate_repair_approvals", True)
-                    ),
-                ),
+                str(payload["request_id"]),
+                approved,
+                "EasyDep Workspace",
+                bool(payload.get("retry_failed", False)),
+                bool(payload.get("delegate_repair_approvals", True)),
             )
             return self._monitor_implementation(job, command_id=str(command["command_id"]))
         if action == "cancel_implementation":
-            job = cancel_job(str(command["payload"]["job_id"]))
+            job = implementation_worker.cancel(str(command["payload"]["job_id"]))
             return {"message": "Cancelled the implementation job.", "job": job}
         if action == "start_testing":
             job = create_testing_job(
                 str(command["app_id"]),
                 CreateTestingJobRequest(
-                    implementation_job_id=str(
-                        command["payload"]["implementation_job_id"]
-                    )
+                    implementation_job_id=str(command["payload"]["implementation_job_id"])
                 ),
             )
             return self._monitor_testing(job)
         raise ValueError(f"Unsupported workspace command: {action}")
 
-    def _stage_message(
-        self, command: dict[str, Any], *, advance: bool
-    ) -> dict[str, Any]:
+    def _stage_message(self, command: dict[str, Any], *, advance: bool) -> dict[str, Any]:
         app_id = str(command["app_id"])
         payload = command["payload"]
         text = "" if advance else str(payload.get("text") or "").strip()
         stage = str(command["stage"])
-        if (
-            advance
-            and stage == "design"
-            and payload.get("auto_approve_method_proposals") is True
-        ):
+        if advance and stage == "design" and payload.get("auto_approve_method_proposals") is True:
             # Auto mode is an affirmative user choice.  Keep the approval in
             # the same feedback path as a manual decision so reconciliation
             # still applies only the concrete, persisted MethodProposals.
@@ -771,11 +704,10 @@ class WorkspaceService:
             action_id = str(payload.get("action_id") or "")
             previous = repository.get_command(action_id) if action_id else None
             continuation = bool(
-                action_id
-                and previous is not None
-                and previous["stage"] == "requirements"
+                action_id and previous is not None and previous["stage"] == "requirements"
             )
             if continuation:
+                assert previous is not None
                 previous_result = previous.get("result") or {}
                 if command.get("action") == "apply_deployment_preferences":
                     preferences = DeploymentPreferences.model_validate(
@@ -790,11 +722,9 @@ class WorkspaceService:
                         app_id, str(command["command_id"])
                     )
                     with requirements_telemetry.progress_scope(progress):
-                        result = analyze_endpoint(request).model_dump(mode="json")
+                        result = analyze_requirements(request)
                     return self._requirements_result(result)
-                resource_questions = list(
-                    previous_result.get("resource_questions") or []
-                )
+                resource_questions = list(previous_result.get("resource_questions") or [])
                 resource_question = previous_result.get("resource_question") or next(
                     (
                         question
@@ -815,8 +745,7 @@ class WorkspaceService:
                         repairable = [
                             blocker
                             for blocker in previous_result.get("blocking_findings") or []
-                            if isinstance(blocker, dict)
-                            and blocker.get("repairable") is not False
+                            if isinstance(blocker, dict) and blocker.get("repairable") is not False
                         ]
                         stage_order = {
                             "actors": 0,
@@ -824,11 +753,12 @@ class WorkspaceService:
                             "specs": 2,
                             "relationships": 3,
                         }
-                        owner = min(
+                        owner_value = min(
                             (str(item.get("stage") or "relationships") for item in repairable),
                             key=lambda value: stage_order.get(value, 99),
                             default="relationships",
                         )
+                        owner = cast(FeedbackStage, owner_value)
                         targets = sorted(
                             {
                                 str(target)
@@ -848,11 +778,9 @@ class WorkspaceService:
                             app_id=app_id,
                         )
                     else:
-                        request = AnalyzeRequest(
-                            answer=text, thread_id=app_id, app_id=app_id
-                        )
+                        request = AnalyzeRequest(answer=text, thread_id=app_id, app_id=app_id)
             else:
-                provider = str(payload.get("provider") or "")
+                provider = cast(CloudProvider, str(payload.get("provider") or ""))
                 region = str(payload.get("region") or "")
                 lines = [line.strip() for line in text.splitlines() if line.strip()]
                 cloud_constraints = (
@@ -872,16 +800,12 @@ class WorkspaceService:
                     thread_id=app_id,
                     app_id=app_id,
                     feedback_gates=True,
-                    resource_constraints_text=str(
-                        payload.get("resource_constraints_text") or ""
-                    ),
+                    resource_constraints_text=str(payload.get("resource_constraints_text") or ""),
                     cloud_constraints=cloud_constraints,
                 )
-            progress = self._requirements_progress_reporter(
-                app_id, str(command["command_id"])
-            )
+            progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
             with requirements_telemetry.progress_scope(progress):
-                result = analyze_endpoint(request).model_dump(mode="json")
+                result = analyze_requirements(request)
             shaped = self._requirements_result(result)
             if command.get("action") == "delegate_repair":
                 shaped["repair_state"] = _merge_delegated_repair_state(
@@ -903,13 +827,11 @@ class WorkspaceService:
             target_feedbacks = self._sequence_target_feedbacks(context)
             if target_feedbacks:
                 # Every entry has an explicit UC and its own instruction.  The
-                # batch API keeps all revisions in memory until all of them
+                # batch service keeps all revisions in memory until all of them
                 # succeed, so this command cannot persist a half-applied set.
-                revised = _json_response(
-                    revise_design_elements(
-                        app_id,
-                        BatchReviseRequest(revisions=target_feedbacks),
-                    )
+                revised = revise_design_elements(
+                    app_id,
+                    BatchReviseRequest(revisions=target_feedbacks),
                 )
                 return {
                     "awaiting_input": bool(status.get("active")),
@@ -930,11 +852,9 @@ class WorkspaceService:
                 # ordinary stage feedback.  In particular, sequence feedback
                 # must carry ``sequence_diagram:UCn`` so we never rewind and
                 # regenerate every use-case card just to revise one of them.
-                revised = _json_response(
-                    revise_design_element(
-                        app_id,
-                        ReviseRequest(target=element_ref, feedback=text),
-                    )
+                revised = revise_design_element(
+                    app_id,
+                    ReviseRequest(target=element_ref, feedback=text),
                 )
                 return {
                     "awaiting_input": bool(status.get("active")),
@@ -950,11 +870,7 @@ class WorkspaceService:
                     "design": revised,
                 }
             current_stage = str(status.get("stage") or "")
-            if (
-                text
-                and command.get("action") == "message"
-                and current_stage == "sequence_diagram"
-            ):
+            if text and command.get("action") == "message" and current_stage == "sequence_diagram":
                 raise ValueError(
                     "Select one or more use-case targets and provide feedback for each target."
                 )
@@ -969,28 +885,24 @@ class WorkspaceService:
                         if index + 1 < len(DESIGN_STAGES)
                         else "design_complete"
                     )
-                    verb = (
-                        "Generating"
-                        if operation_stage != "design_complete"
-                        else "Completing"
-                    )
+                    verb = "Generating" if operation_stage != "design_complete" else "Completing"
 
                 def operation():
-                    return resume_design_session(
-                        app_id, FeedbackRequest(feedback=text)
-                    )
+                    return resume_design_session(app_id, text)
             else:
                 operation_stage = DESIGN_STAGES[0]
                 verb = "Generating"
+
                 def operation():
-                    return start_design_session(app_id, StageRequest())
+                    return start_design_session(app_id)
+
             response = self._run_design_operation(
                 command,
                 stage=operation_stage,
                 label=self._design_stage_label(operation_stage, verb),
                 operation=operation,
             )
-            shaped = self._design_result(_json_response(response))
+            shaped = self._design_result(response)
             if command.get("action") == "delegate_repair":
                 action_id = str(payload.get("action_id") or "")
                 previous = repository.get_command(action_id) or {}
@@ -1005,13 +917,12 @@ class WorkspaceService:
             raise ValueError("The current stage cannot process a conversational command.")
         if not text:
             raise ValueError("Enter implementation feedback.")
-        job = create_feedback_job(
+        job = implementation_worker.create_feedback_job(
             app_id,
-            CreateImplementationFeedbackJobRequest(
-                feedback=text,
-                base_package=str(payload.get("base_package") or "com.easydep.app"),
-                allow_assumptions=bool(payload.get("allow_assumptions", True)),
-            ),
+            cast(dict[str, Any], artifact_repository.load_state(app_id)),
+            text,
+            str(payload.get("base_package") or "com.easydep.app"),
+            bool(payload.get("allow_assumptions", True)),
         )
         return self._monitor_implementation(job)
 
@@ -1034,14 +945,16 @@ class WorkspaceService:
         stage: str,
         label: str,
         operation,
-    ) -> JSONResponse:
+    ) -> dict[str, Any]:
         app_id = str(command["app_id"])
         command_id = str(command["command_id"])
         started = time.perf_counter()
         llm_timing_events: list[dict[str, Any]] = []
 
         def record(
-            status: str, detail: str, metadata: dict[str, Any] | None = None,
+            status: str,
+            detail: str,
+            metadata: dict[str, Any] | None = None,
         ) -> None:
             repository.append_event(
                 app_id,
@@ -1059,7 +972,8 @@ class WorkspaceService:
                     "progress_detail": detail,
                     "progress_status": status,
                     "progress_card_label": "Design generation",
-                } | dict(metadata or {}),
+                }
+                | dict(metadata or {}),
             )
 
         def report(event: str, fields: dict[str, Any]) -> None:
@@ -1091,11 +1005,14 @@ class WorkspaceService:
             )
 
         try:
-            with design_timing_context(
-                app_id=app_id,
-                command_id=command_id,
-                requested_stage=stage,
-            ), capture_llm_timings() as llm_timing_events:
+            with (
+                design_timing_context(
+                    app_id=app_id,
+                    command_id=command_id,
+                    requested_stage=stage,
+                ),
+                capture_llm_timings() as llm_timing_events,
+            ):
                 record("running", "Started")
                 log_design_timing("workspace.design_operation.started", label=label)
                 try:
@@ -1114,7 +1031,7 @@ class WorkspaceService:
                     )
                     raise
             elapsed = time.perf_counter() - started
-            payload = _json_response(response) if isinstance(response, JSONResponse) else {}
+            payload = response
             validation = payload.get("validation") or {}
             stage_validation = validation.get(stage) or {}
             findings = [
@@ -1151,8 +1068,7 @@ class WorkspaceService:
                         "progress_event": "designLlmMetrics",
                         "analysis_step": stage,
                         "llm_timing_events": [
-                            _public_design_timing_event(event)
-                            for event in llm_timing_events
+                            _public_design_timing_event(event) for event in llm_timing_events
                         ],
                     },
                 )
@@ -1227,27 +1143,29 @@ class WorkspaceService:
                 "active_analysis_steps": analysis_snapshot,
             }
             if event == "analysisStepStarted":
-                step_label = step_labels.get(
-                    str(current_step), "Running an analysis step"
-                )
+                step_label = step_labels.get(str(current_step), "Running an analysis step")
                 text = step_label
-                metadata.update({
-                    "analysis_step": current_step,
-                    "progress_step_label": step_label,
-                    "progress_detail": "Started",
-                    "progress_status": "running",
-                })
+                metadata.update(
+                    {
+                        "analysis_step": current_step,
+                        "progress_step_label": step_label,
+                        "progress_detail": "Started",
+                        "progress_status": "running",
+                    }
+                )
             elif event == "analysisStepFinished":
                 finished_step = str(fields.get("step") or current_step or "")
                 label = step_labels.get(finished_step, "Analysis step")
                 elapsed = float(fields.get("elapsedSeconds") or 0)
                 text = f"{label} completed in {elapsed:.1f}s"
-                metadata.update({
-                    "analysis_step": finished_step,
-                    "progress_step_label": label,
-                    "progress_detail": f"Completed in {elapsed:.1f}s",
-                    "progress_status": str(fields.get("status") or "completed"),
-                })
+                metadata.update(
+                    {
+                        "analysis_step": finished_step,
+                        "progress_step_label": label,
+                        "progress_detail": f"Completed in {elapsed:.1f}s",
+                        "progress_status": str(fields.get("status") or "completed"),
+                    }
+                )
             elif event == "llmOperationStarted":
                 operation = str(fields.get("operation") or "")
                 with progress_lock:
@@ -1255,29 +1173,21 @@ class WorkspaceService:
                     operation_count = operation_counts[operation]
                 if operation == "structured:DeploymentNeedsResult":
                     total = max(1, int(requirements_settings.capability_samples))
-                    suffix = (
-                        f" (sample {operation_count} of {total})"
-                        if total > 1
-                        else ""
-                    )
+                    suffix = f" (sample {operation_count} of {total})" if total > 1 else ""
                 else:
-                    suffix = (
-                        f" (call {operation_count})"
-                        if operation_count > 1
-                        else ""
-                    )
+                    suffix = f" (call {operation_count})" if operation_count > 1 else ""
                 label = operation_labels.get(operation, "AI model response")
                 text = f"Waiting for {label}{suffix}"
                 operation_step = operation_steps.get(operation) or current_step
-                step_label = step_labels.get(
-                    str(operation_step), "Running requirement analysis"
+                step_label = step_labels.get(str(operation_step), "Running requirement analysis")
+                metadata.update(
+                    {
+                        "analysis_step": operation_step,
+                        "progress_step_label": step_label,
+                        "progress_detail": f"Waiting for {label}{suffix}",
+                        "progress_status": "running",
+                    }
                 )
-                metadata.update({
-                    "analysis_step": operation_step,
-                    "progress_step_label": step_label,
-                    "progress_detail": f"Waiting for {label}{suffix}",
-                    "progress_status": "running",
-                })
             elif event == "llmOperationFinished":
                 operation = str(fields.get("operation") or "")
                 elapsed = float(fields.get("elapsedSeconds") or 0)
@@ -1285,24 +1195,26 @@ class WorkspaceService:
                 label = operation_labels.get(operation, "AI model response")
                 text = f"{label} {status} in {elapsed:.1f}s"
                 operation_step = operation_steps.get(operation) or current_step
-                step_label = step_labels.get(
-                    str(operation_step), "Running requirement analysis"
+                step_label = step_labels.get(str(operation_step), "Running requirement analysis")
+                metadata.update(
+                    {
+                        "analysis_step": operation_step,
+                        "progress_step_label": step_label,
+                        "progress_detail": f"{label} {status} in {elapsed:.1f}s",
+                        "progress_status": "running" if status == "completed" else status,
+                    }
                 )
-                metadata.update({
-                    "analysis_step": operation_step,
-                    "progress_step_label": step_label,
-                    "progress_detail": f"{label} {status} in {elapsed:.1f}s",
-                    "progress_status": "running" if status == "completed" else status,
-                })
             elif event in {"specTaskStarted", "specTaskFinished"}:
                 name = str(fields.get("useCaseName") or fields.get("useCaseId") or "")
                 text = f"Writing the use-case specification: {name}"
-                metadata.update({
-                    "analysis_step": current_step,
-                    "progress_step_label": step_labels["generate_specs"],
-                    "progress_detail": "Generating specifications in parallel",
-                    "progress_status": "running",
-                })
+                metadata.update(
+                    {
+                        "analysis_step": current_step,
+                        "progress_step_label": step_labels["generate_specs"],
+                        "progress_detail": "Generating specifications in parallel",
+                        "progress_status": "running",
+                    }
+                )
             else:
                 return
             repository.append_event(
@@ -1348,7 +1260,8 @@ class WorkspaceService:
                     "phase": phase,
                     "requires_revision": True,
                     "blocking_findings": blockers,
-                    "repair_state": result.get("repair_state") or {
+                    "repair_state": result.get("repair_state")
+                    or {
                         "status": "ACTIVE" if repairable else "NEEDS_INPUT",
                         "attempt_count": 0,
                         "accepted_count": 0,
@@ -1364,15 +1277,9 @@ class WorkspaceService:
                     ],
                 }
             requirements = list(result.get("requirements") or [])
-            functional_count = sum(
-                1 for item in requirements if item.get("type") == "FR"
-            )
-            non_functional_count = sum(
-                1 for item in requirements if item.get("type") == "NFR"
-            )
-            requirement_label = (
-                "requirement" if len(requirements) == 1 else "requirements"
-            )
+            functional_count = sum(1 for item in requirements if item.get("type") == "FR")
+            non_functional_count = sum(1 for item in requirements if item.get("type") == "NFR")
+            requirement_label = "requirement" if len(requirements) == 1 else "requirements"
             lead = {
                 "requirements": (
                     f"I refined and classified {len(requirements)} {requirement_label} "
@@ -1380,8 +1287,7 @@ class WorkspaceService:
                     f"{non_functional_count} non-functional)."
                 ),
                 "use_cases": (
-                    f"I identified {len(result.get('use_cases') or [])} "
-                    "user-goal use cases."
+                    f"I identified {len(result.get('use_cases') or [])} user-goal use cases."
                 ),
                 "specs": (
                     f"I wrote and checked {len(result.get('use_case_specs') or [])} "
@@ -1448,12 +1354,10 @@ class WorkspaceService:
 
     def _design_result(self, result: dict[str, Any]) -> dict[str, Any]:
         session = result.get("session") or {}
-        # The public design API reports completion as ``status: completed``.
-        # Keep legacy flags only for previously stored response shapes.
+        # The design service reports completion as ``status: completed``.
+        # Older stored command results can still contain the two flags below.
         finished = bool(
-            result.get("status") == "completed"
-            or result.get("finished")
-            or session.get("finished")
+            result.get("status") == "completed" or result.get("finished") or session.get("finished")
         )
         if finished:
             return {"message": "Design artifact generation completed.", "design": result}
@@ -1553,12 +1457,10 @@ class WorkspaceService:
         app_id = str(command["app_id"])
         target_feedbacks = self._sequence_target_feedbacks(context)
         if target_feedbacks:
-            result = revise_design_elements(
-                app_id, BatchReviseRequest(revisions=target_feedbacks)
-            )
+            result = revise_design_elements(app_id, BatchReviseRequest(revisions=target_feedbacks))
             return {
                 "message": "Revised the selected use-case diagrams and trace-linked artifacts.",
-                "design": _json_response(result),
+                "design": result,
             }
         element_ref = context.get("element_ref")
         if element_ref:
@@ -1567,7 +1469,7 @@ class WorkspaceService:
             )
             return {
                 "message": "Revised the selected design element and affected downstream artifacts.",
-                "design": _json_response(result),
+                "design": result,
             }
         stage = str(context.get("artifact_stage") or context.get("stage") or "")
         if stage not in {
@@ -1579,11 +1481,11 @@ class WorkspaceService:
             raise ValueError(
                 "Only a traceable design element or design stage can currently be rewound."
             )
-        rewind_design_session(app_id, RewindRequest(stage=stage))
-        result = resume_design_session(app_id, FeedbackRequest(feedback=feedback))
+        rewind_design_session(app_id, stage)
+        result = resume_design_session(app_id, feedback)
         return {
             "message": "Returned to the selected design stage and applied the feedback.",
-            "design": _json_response(result),
+            "design": result,
         }
 
     @staticmethod
@@ -1603,9 +1505,7 @@ class WorkspaceService:
             except Exception:  # Progress reporting must not interrupt a job.
                 private_job = job
 
-        run_root = str(
-            private_job.get("run_root") or job.get("run_root") or ""
-        ).strip()
+        run_root = str(private_job.get("run_root") or job.get("run_root") or "").strip()
         workflow = private_job.get("workflow")
         run_path = Path(run_root) if run_root else None
         if run_path is not None:
@@ -1619,9 +1519,7 @@ class WorkspaceService:
 
         updates: list[dict[str, str]] = []
 
-        def add_update(
-            step: str, label: str, status: str, detail: str = ""
-        ) -> None:
+        def add_update(step: str, label: str, status: str, detail: str = "") -> None:
             updates.append(
                 {
                     "step": step,
@@ -1633,32 +1531,20 @@ class WorkspaceService:
 
         job_status = str(job.get("status") or private_job.get("status") or "")
         terminal_failure = job_status in {"FAILED", "CANCELLED", "REJECTED"}
-        failure_error = str(
-            private_job.get("error") or job.get("error") or ""
-        ).strip()
-        failure_lines = [
-            line.strip() for line in failure_error.splitlines() if line.strip()
-        ]
+        failure_error = str(private_job.get("error") or job.get("error") or "").strip()
+        failure_lines = [line.strip() for line in failure_error.splitlines() if line.strip()]
         failure_detail = (
-            failure_lines[-1][-500:]
-            if failure_lines
-            else "구현 작업이 완료되지 않았습니다."
+            failure_lines[-1][-500:] if failure_lines else "구현 작업이 완료되지 않았습니다."
         )
         live_progress = job.get("progress")
         progress_status = (
-            str(live_progress.get("status") or "")
-            if isinstance(live_progress, dict)
-            else ""
+            str(live_progress.get("status") or "") if isinstance(live_progress, dict) else ""
         )
         progress_message = (
-            str(live_progress.get("message") or "")
-            if isinstance(live_progress, dict)
-            else ""
+            str(live_progress.get("message") or "") if isinstance(live_progress, dict) else ""
         )
         generation_status = (
-            "PLANNING"
-            if job_status == "PLANNING"
-            else progress_status or job_status
+            "PLANNING" if job_status == "PLANNING" else progress_status or job_status
         )
 
         if generation_status in {
@@ -1727,13 +1613,9 @@ class WorkspaceService:
                     if phase_id in phase_ids
                 ]
                 display_tasks = [
-                    task
-                    for task in tasks
-                    if str(task.get("phase") or "") in phase_ids
+                    task for task in tasks if str(task.get("phase") or "") in phase_ids
                 ]
-                task_statuses = {
-                    str(task.get("status") or "").upper() for task in display_tasks
-                }
+                task_statuses = {str(task.get("status") or "").upper() for task in display_tasks}
                 has_phase_work = bool(display_tasks) or any(
                     phase_statuses.get(phase_id) not in {None, "UNPLANNED"}
                     for phase_id in display_phases
@@ -1741,10 +1623,7 @@ class WorkspaceService:
                 all_succeeded = has_phase_work and all(
                     phase_statuses.get(phase_id) in {"SUCCEEDED", "COMPLETED", "UNPLANNED"}
                     or (
-                        any(
-                            str(task.get("phase") or "") == phase_id
-                            for task in display_tasks
-                        )
+                        any(str(task.get("phase") or "") == phase_id for task in display_tasks)
                         and all(
                             str(task.get("status") or "").upper() in {"SUCCEEDED", "COMPLETED"}
                             for task in display_tasks
@@ -1770,8 +1649,7 @@ class WorkspaceService:
                         failure_detail if terminal_failure else "",
                     )
                 elif (
-                    workflow_status.upper() == "RUNNING"
-                    and current_phase in phase_ids
+                    workflow_status.upper() == "RUNNING" and current_phase in phase_ids
                 ) or "RUNNING" in task_statuses:
                     add_update(
                         f"phase-{display_id}",
@@ -1808,10 +1686,18 @@ class WorkspaceService:
                         # workflow restarted at Repository.
                         if current_phase and task_phase != current_phase:
                             continue
-                        statuses = {str(task.get("status") or "PENDING").lower() for task in phase_tasks}
-                        if "failed" in statuses or "timeout" in statuses or "needs_review" in statuses:
+                        statuses = {
+                            str(task.get("status") or "PENDING").lower() for task in phase_tasks
+                        }
+                        if (
+                            "failed" in statuses
+                            or "timeout" in statuses
+                            or "needs_review" in statuses
+                        ):
                             task_status = next(
-                                status for status in ("failed", "timeout", "needs_review") if status in statuses
+                                status
+                                for status in ("failed", "timeout", "needs_review")
+                                if status in statuses
                             )
                         elif statuses and statuses <= {"succeeded", "completed"}:
                             task_status = "completed"
@@ -1837,8 +1723,7 @@ class WorkspaceService:
                         )
 
             workflow_complete = workflow_status == "COMPLETE" or (
-                workflow_status == "READY"
-                and implementation_worker._workflow_is_complete(workflow)
+                workflow_status == "READY" and implementation_worker._workflow_is_complete(workflow)
             )
             activity = workflow.get("currentActivity")
             if (
@@ -1869,7 +1754,9 @@ class WorkspaceService:
                         ),
                         ("implementation", "Backend 구현", frozenset()),
                     )
-                activity_prefix = "빌드 및 Unit Test" if activity_id.startswith("verify-") else "구현 결과 확인"
+                activity_prefix = (
+                    "빌드 및 Unit Test" if activity_id.startswith("verify-") else "구현 결과 확인"
+                )
                 activity_label = f"{display_label} {activity_prefix}"
                 if display_label.endswith(" 구현") and activity_prefix.startswith("구현 "):
                     activity_label = f"{display_label} {activity_prefix.removeprefix('구현 ')}"
@@ -1931,24 +1818,18 @@ class WorkspaceService:
                     except json.JSONDecodeError:
                         continue
                     event = payload.get("event") if isinstance(payload, dict) else None
-                    tool_name = (
-                        str(payload.get("tool") or "")
-                        if isinstance(payload, dict)
-                        else ""
-                    )
+                    tool_name = str(payload.get("tool") or "") if isinstance(payload, dict) else ""
                     if not isinstance(event, dict):
                         continue
                     path_value = (
-                        event.get("path")
-                        or event.get("file_path")
-                        or event.get("filePath")
+                        event.get("path") or event.get("file_path") or event.get("filePath")
                     )
                     if not isinstance(path_value, str) or not path_value.strip():
                         continue
-                    if (
-                        "file_editor" not in tool_name
-                        and tool_name not in {"restricted_file_editor", "file_editor"}
-                    ):
+                    if "file_editor" not in tool_name and tool_name not in {
+                        "restricted_file_editor",
+                        "file_editor",
+                    }:
                         continue
                     current_file = path_value.strip()
 
@@ -1977,7 +1858,9 @@ class WorkspaceService:
             snapshot["current_class"] = Path(file_name).stem
         return snapshot
 
-    def _monitor_implementation(self, job: dict[str, Any], *, command_id: str | None = None) -> dict[str, Any]:
+    def _monitor_implementation(
+        self, job: dict[str, Any], *, command_id: str | None = None
+    ) -> dict[str, Any]:
         job_id = str(job["job_id"])
         app_id = str(job.get("app_id") or "")
         last_status: str | None = None
@@ -2005,8 +1888,7 @@ class WorkspaceService:
                     if not step:
                         continue
                     progress_key = "|".join(
-                        str(update.get(field) or "")
-                        for field in ("status", "label", "detail")
+                        str(update.get(field) or "") for field in ("status", "label", "detail")
                     )
                     if last_progress.get(step) == progress_key:
                         continue
@@ -2016,7 +1898,11 @@ class WorkspaceService:
                         stage="implementation",
                         kind="progress",
                         actor="system",
-                        text=str(update.get("detail") or update.get("label") or "구현을 진행하고 있습니다."),
+                        text=str(
+                            update.get("detail")
+                            or update.get("label")
+                            or "구현을 진행하고 있습니다."
+                        ),
                         metadata={
                             "progress_event": "implementationStepUpdated",
                             "step": step,
@@ -2062,9 +1948,7 @@ class WorkspaceService:
             status = str(current.get("status") or "")
             if status in {"COMPLETED", "FAILED"}:
                 if status == "FAILED":
-                    raise RuntimeError(
-                        str(current.get("error") or "The testing job failed.")
-                    )
+                    raise RuntimeError(str(current.get("error") or "The testing job failed."))
                 report = current.get("result") or {}
                 if report.get("passed") is False:
                     blockers = list(report.get("blocking_findings") or [])
@@ -2078,7 +1962,8 @@ class WorkspaceService:
                         ),
                         "requires_revision": True,
                         "blocking_findings": blockers,
-                        "repair_state": report.get("repair_state") or {
+                        "repair_state": report.get("repair_state")
+                        or {
                             "status": "ACTIVE",
                             "attempt_count": 0,
                             "accepted_count": 0,

@@ -1,8 +1,8 @@
-"""요구사항 orchestration을 HTTP와 artifact persistence에 연결하는 canonical API 경계다.
+"""요구사항 분석 실행과 산출물 저장을 연결하는 application service다.
 
-원래는 자체 FastAPI 앱(app/main.py)이었지만, 통합 저장소에서는 설계 에이전트와
-같은 프로세스로 서빙하므로 라우터로만 남기고 앱 생성은 server.py가 맡는다.
-그래프 자체(app.requirements.orchestration.graph)는 서빙 방식과 무관하게 재사용된다.
+Workspace는 이 모듈을 직접 호출한다. HTTP 요청과 응답을 다루지 않으므로 FastAPI에
+의존하지 않으며, 그래프가 만든 검증된 결과 ``dict``를 그대로 반환한다.
+그래프 자체(app.requirements.orchestration.graph)는 호출 방식과 무관하게 재사용된다.
 
 산출물은 단계가 끝날 때마다 설계 에이전트와 같은 MySQL 저장소에 저장된다.
 요청에 app_id가 있을 때만 저장하므로, 저장소 없이 단독으로 돌려보는 것도 그대로 된다.
@@ -10,8 +10,6 @@
 
 import uuid
 from typing import cast
-
-from fastapi import APIRouter, HTTPException
 
 from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
@@ -28,13 +26,11 @@ from app.requirements.orchestration.graph import (
     start_analysis,
 )
 from app.requirements.runtime import telemetry
-from app.requirements.schemas import AnalyzeResponse
 
-# 서버 진입점(server.py)은 이 에이전트의 것이 아니라 로깅 설정을 거기 둘 수 없다.
-# 라우터가 로드되는 시점에 한 번 설정한다 — 여러 번 불러도 핸들러가 겹치지 않는다.
+# Workspace 프로세스에서 이 서비스를 처음 불러올 때 한 번 로깅을 설정한다.
+# 여러 번 불러도 핸들러가 겹치지 않도록 telemetry 쪽에서 보호한다.
 telemetry.configure_logging()
 
-router = APIRouter(prefix="/api/requirements", tags=["requirements"])
 
 def persist_analysis(app_id: str, payload: dict[str, object]) -> list[str]:
     """응답에 실린 산출물 중 달라진 것을 새 버전으로 남기고, 저장한 stage를 돌려준다.
@@ -95,14 +91,13 @@ def persist_analysis(app_id: str, payload: dict[str, object]) -> list[str]:
     return saved
 
 
-@router.post("/analyze", response_model=AnalyzeResponse)
-def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
+def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
     """요구사항 분석 세션을 시작하거나(구체화 질문에 대한) 답변으로 재개한다.
 
     - 신규 세션: requirements 를 담아 호출 (thread_id는 서버가 발급).
     - 구체화 답변: answer + 기존 thread_id 로 호출.
     응답이 need_clarification 이면 questions 를 사용자에게 보여주고,
-    답변을 다시 이 엔드포인트로 보내면 세션이 이어진다.
+    답변을 다시 이 함수에 담아 보내면 세션이 이어진다.
     app_id를 함께 보내면 단계가 끝날 때마다 그 앱의 저장소에 기록되고,
     이번 호출에서 저장된 stage 목록이 saved_stages로 돌아온다.
     """
@@ -122,9 +117,8 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
         if value is not None
     ]
     if len(given) > 1:
-        raise HTTPException(
-            status_code=400,
-            detail=f"{' / '.join(given)} 은 함께 보낼 수 없습니다. 하나만 보내세요.",
+        raise ValueError(
+            f"{' / '.join(given)} 은 함께 보낼 수 없습니다. 하나만 보내세요."
         )
 
     # 재개 경로 — 자연어(answer) · 구조화 편집(edit) · 되묻기의 답(resource_answers).
@@ -140,9 +134,8 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
     ):
         if resume is not None:
             if not req.thread_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="answer/edit/resource_answers 에는 thread_id가 필요합니다.",
+                raise ValueError(
+                    "answer/edit/resource_answers 에는 thread_id가 필요합니다."
                 )
             payload = resume_analysis(
                 resume, req.thread_id, persist=settings.enable_session_persistence
@@ -150,9 +143,8 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
         else:
             # 신규 분석 시작 경로
             if not req.requirements:
-                raise HTTPException(
-                    status_code=400,
-                    detail="requirements(요구사항 문장 배열) 또는 answer+thread_id가 필요합니다.",
+                raise ValueError(
+                    "requirements(요구사항 문장 배열) 또는 answer+thread_id가 필요합니다."
                 )
             thread_id = req.thread_id or str(uuid.uuid4())
             payload = start_analysis(
@@ -175,13 +167,15 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
     if req.app_id:
         try:
             payload["saved_stages"] = persist_analysis(req.app_id, payload)
-        except artifact_repository.AppNotFound:
-            raise HTTPException(status_code=404, detail=f"app_id {req.app_id} 를 찾을 수 없습니다.")
+        except artifact_repository.AppNotFound as error:
+            raise ValueError(f"app_id {req.app_id} 를 찾을 수 없습니다.") from error
 
-    return AnalyzeResponse.model_validate(payload)
+    return payload
 
 
-def retry_analysis_endpoint(thread_id: str, *, app_id: str | None = None) -> AnalyzeResponse:
+def retry_requirements_analysis(
+    thread_id: str, *, app_id: str | None = None
+) -> dict[str, object]:
     """저장된 요구사항 checkpoint를 재개하고 새로 생긴 산출물만 저장한다."""
     with langsmith_metrics.trace_metadata({"app_id": app_id} if app_id else None):
         payload = retry_analysis(
@@ -192,8 +186,5 @@ def retry_analysis_endpoint(thread_id: str, *, app_id: str | None = None) -> Ana
         try:
             payload["saved_stages"] = persist_analysis(app_id, payload)
         except artifact_repository.AppNotFound as error:
-            raise HTTPException(
-                status_code=404,
-                detail=f"app_id {app_id} 를 찾을 수 없습니다.",
-            ) from error
-    return AnalyzeResponse.model_validate(payload)
+            raise ValueError(f"app_id {app_id} 를 찾을 수 없습니다.") from error
+    return payload

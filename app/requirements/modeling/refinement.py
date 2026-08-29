@@ -143,8 +143,7 @@ def classify(
     if not is_available():
         raise RuntimeError(
             "FR/NFR classification requires the BERT classifier. "
-            "For an execution without BERT, provide preclassified requirements "
-            "to `python -m app.requirements.run_pipeline` instead."
+            "Install the configured classifier model before starting the Workspace."
         )
 
     classified: list[RequirementItem] = []

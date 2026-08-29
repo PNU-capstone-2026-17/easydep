@@ -1,8 +1,8 @@
-"""구현 작업과 생성 파일을 프론트엔드에 제공하는 HTTP API다.
+"""구현 단계가 생성한 파일을 프론트엔드에 제공하는 읽기 전용 HTTP API다.
 
-요청 형식과 현재 작업 상태를 검사한 뒤 ``ImplementationWorker``에 처리를 맡긴다. 생성된
-파일의 내용은 개별 조회 또는 ZIP 다운로드로 제공하며, 서버의 실제 작업 디렉터리 경로는
-응답에 포함하지 않는다.
+구현 작업의 시작·수정·승인·취소는 Workspace 명령이 application worker에 직접 전달한다.
+이 모듈은 생성된 파일의 목록·내용·버전과 ZIP 다운로드만 제공하며, 서버의 실제 작업
+디렉터리 경로는 응답에 포함하지 않는다.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+
 from app.db.models import (
     TYPE_DEPLOYMENT_FILE,
     TYPE_FRONTEND_SOURCE_CODE,
@@ -23,13 +24,6 @@ from app.db.models import (
 )
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import AppNotFound
-from .schemas import (
-    ApprovalRequest,
-    CreateImplementationFeedbackJobRequest,
-    CreateImplementationJobRequest,
-)
-from ..application.jobs import InvalidJobState, JobNotFound, worker
-
 
 router = APIRouter(prefix="/api/implementation", tags=["implementation"])
 FILE_ARTIFACT_TYPES = {
@@ -39,45 +33,6 @@ FILE_ARTIFACT_TYPES = {
     TYPE_DEPLOYMENT_FILE,
     TYPE_IAC_CODE,
 }
-
-
-@router.post("/apps/{app_id}/jobs", status_code=202)
-def create_job(app_id: str, request: CreateImplementationJobRequest) -> dict:
-    """저장된 최신 설계 산출물로 새 구현 작업을 등록한다."""
-    try:
-        return worker.create_job(app_id, artifact_repository.load_state(app_id), request.base_package, request.allow_assumptions)
-    except AppNotFound as error:
-        raise HTTPException(status_code=404, detail="Unknown app id.") from error
-    except InvalidJobState as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-
-
-@router.post("/apps/{app_id}/feedback-jobs", status_code=202)
-def create_feedback_job(
-    app_id: str, request: CreateImplementationFeedbackJobRequest
-) -> dict:
-    """현재 구현 snapshot에 사용자 피드백을 적용하는 수정 작업을 등록한다."""
-    try:
-        return worker.create_feedback_job(
-            app_id,
-            artifact_repository.load_state(app_id),
-            request.feedback,
-            request.base_package,
-            request.allow_assumptions,
-        )
-    except AppNotFound as error:
-        raise HTTPException(status_code=404, detail="Unknown app id.") from error
-    except InvalidJobState as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-
-
-@router.get("/jobs/{job_id}")
-def get_job(job_id: str) -> dict:
-    """구현 작업의 공개 상태와 진행률을 조회한다."""
-    try:
-        return worker.get(job_id)
-    except JobNotFound as error:
-        raise HTTPException(status_code=404, detail="Unknown implementation job.") from error
 
 
 @router.get("/apps/{app_id}/download")
@@ -130,28 +85,6 @@ def download_implementation_artifacts(app_id: str) -> StreamingResponse:
             )
         },
     )
-
-
-@router.post("/jobs/{job_id}/approval", status_code=202)
-def approve_job(job_id: str, request: ApprovalRequest) -> dict:
-    """구현 작업이 요청한 외부 전송을 승인하거나 거절한다."""
-    try:
-        return worker.approve(job_id, request.request_id, request.approved, request.approved_by, request.retry_failed, request.delegate_repair_approvals)
-    except JobNotFound as error:
-        raise HTTPException(status_code=404, detail="Unknown implementation job.") from error
-    except InvalidJobState as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-
-
-@router.post("/jobs/{job_id}/cancel", status_code=200)
-def cancel_job(job_id: str) -> dict:
-    """실행 중인 구현 작업과 그 하위 프로세스를 취소한다."""
-    try:
-        return worker.cancel(job_id)
-    except JobNotFound as error:
-        raise HTTPException(status_code=404, detail="Unknown implementation job.") from error
-    except InvalidJobState as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/apps/{app_id}/artifacts/{artifact_type}")

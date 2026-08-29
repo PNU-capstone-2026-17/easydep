@@ -17,7 +17,6 @@ Docker-on-VM 애플리케이션이다.
   → 2. 소프트웨어·클라우드 설계
   → 3. 소스·수용 테스트·Dockerfile·Terraform 생성
   → 4. 테스트
-  → 공통 외부 평가
 ```
 
 | 영역 | 위치 | 역할 |
@@ -26,13 +25,12 @@ Docker-on-VM 애플리케이션이다.
 | 설계 | `app/design/` | 클래스·시퀀스·ERD·OpenAPI·배포 설계 |
 | 구현 | `app/implementation/` | 애플리케이션 소스, 테스트, Dockerfile, Terraform 생성 |
 | 테스팅 | `app/testing/` | 생성 애플리케이션 검증 |
-| 오케스트레이션 | `app/orchestration/` | 4단계 provider 연결, 실행·재개·상태 저장 |
+| 워크스페이스 | `app/workspace/` | 프론트엔드 명령, 4단계 연결, 진행 이벤트와 재개 조율 |
 | 클라우드 지식 | `app/cloudkb/` | VM 자원 의존성, 가격 및 성능 데이터 |
-| 평가 | `evaluation/` | EasyDep·CoT·MetaGPT 공통 비교 평가 |
+| 제품 경로 실행기 | `evaluation/easydep/` | 프론트엔드와 같은 Workspace API로 요구사항 한 건을 실행 |
 
-실행 결과는 `artifacts/runs/<run-id>/` 아래에 단계별로 저장되며, 오케스트레이션 상태는
-`.easydep/orchestration/runs.sqlite3`에 저장된다. 웹 API의 애플리케이션 산출물과 버전은
-MySQL 저장소를 사용한다.
+프론트엔드에서 시작한 명령, 진행 이벤트, 애플리케이션 산출물과 단계별 체크포인트는 MySQL에
+저장된다. 제품 실행은 별도의 파일 기반 run 디렉터리를 만들지 않는다.
 
 ## 범위
 
@@ -148,8 +146,8 @@ python -m pytest
 - [초보자용 코드 탐색 순서](docs/code-reading-guide.md): UI 요청부터 단계 서비스까지 따라가는 방법
 - [백엔드 코드 길잡이](app/README.md): bounded context와 의존성 방향
 - [LangSmith 관측](docs/langsmith-observability.md): 전 에이전트 기본 trace·대시보드 설정
-- [오케스트레이션](app/orchestration/README.md): 4단계 실행과 provider 계약
-- [비교실험 계약](evaluation/experiment-contract.md): 공통 평가 기준
+- [대화형 워크스페이스](app/workspace/README.md): 프론트엔드 명령과 단계 전환 계약
+- [제품 경로 실행기](evaluation/easydep/README.md): 프론트엔드와 같은 API로 전체 흐름 실행
 - [클라우드 지식베이스](app/cloudkb/document/README.md): DepKB 및 VM 지식 문서
 
 ## 현재 주의점

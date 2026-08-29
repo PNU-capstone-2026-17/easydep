@@ -15,10 +15,10 @@
 | 요구사항 분석 | 소프트웨어 요구사항과 클라우드 제약 구조화 | ✅ | 용량 산정에 필요한 트래픽·최소 사양이 자주 미확정 |
 | 설계 | 기존 설계 산출물 + 논리 토폴로지·CSP ResourcePlan | ⚠️ | 3사 정적 Plan·중립 앱 runtime 통과. 생성 앱은 AWS 1회만 harness 보정 후 통과 |
 | 구현 | 멤버 workflow 호출과 임시 공백 provider 연결 | ⚠️ | BCE·OpenAPI·Gradle 생성기는 Docker 도구와 `/workspace` 경로 계약을 사용 |
-| 테스팅 | Gradle 테스트 및 테스트 0개 성공 방지 | ✅ | 운영 품질·보안 검사는 공통 평가기에 일부만 존재 |
+| 테스팅 | Gradle 테스트 및 테스트 0개 성공 방지 | ✅ | 더 넓은 운영 품질·보안 검사는 아직 제품 범위 밖 |
 | DepKB | AWS·Azure·GCP의 VM 자원 의존성 제공 | ⚠️ | 고정입력 절제 완료, 생성·기능 성공의 소규모 비교가 남음 |
 | VM 선택 | 용량 필터 후 가격·성능 추천 및 IaC 반영 gate | ✅ | 실제 처리량·전체 비용과 provider validate는 별도 증거 필요 |
-| 비교실험 | EasyDep·LLM CoT·MetaGPT·ChatDev 실행기 준비 | ⚠️ | E1·E2 공통 의미 평가기와 반복 실험 미실행 |
+| 여러 입력 실행 | 프론트엔드와 같은 Workspace API 실행기 | ⚠️ | 입력 묶음과 사람용 성공 기준은 정리 작업 뒤 확정 |
 | 종단 검증 | 중립 앱 E1·E2 3사 및 수강신청 생성 앱 AWS 기능 검증 | ⚠️ | AWS 생성 앱은 harness 보정 포함. 순수 생성과 Azure·GCP 생성 앱은 미확인 |
 
 범례: ✅ 동작 검증, ⚠️ 구조는 있으나 근거 또는 범위 부족, ❌ 미구현
@@ -33,7 +33,6 @@ flowchart LR
     R --> D[2. 설계]
     D --> I[3. 구현]
     I --> T[4. 테스팅]
-    T --> A[공통 외부 평가]
 
     R1[소프트웨어 요구사항 분석] --> R
     R2[CSP·리전·예산 + 후속 용량 하한] --> R
@@ -50,9 +49,7 @@ flowchart LR
     I4 --> I5[Docker + Terraform]
 
     I5 --> T1[Gradle 테스트]
-    A --> A1[Docker·Health·업무 API]
-    A --> A2[OpenTofu·IaC 의미 검증]
-    A --> A3[복잡도·코드 품질]
+    T --> T1[단위·정적·동적 검사 결과]
 ```
 
 ### 단계별 provider
@@ -86,24 +83,13 @@ flowchart TD
     RS --> AT[수용 테스트]
     SRC --> TEST[Gradle 테스트]
     AT --> TEST
-    SRC --> EVAL[공통 평가]
-    IAC --> EVAL
-    TEST --> EVAL
+    TEST --> RESULT[Workspace 테스트 결과]
+    IAC --> RESULT
 ```
 
-실행 결과는 중복 없이 다음 구조에 저장된다.
-
-```text
-artifacts/runs/<run-id>/
-├── manifest.json
-├── 01-requirements/
-├── 02-design/
-├── 03-implementation/
-└── 04-testing/
-```
-
-실행 상태는 추가 의존성이 없는 SQLite 저장소에 보존한다. 구현 단계는 동시에 하나만
-실행하며 timeout 시 하위 프로세스 트리도 종료한다.
+프론트엔드에서 시작한 실행은 MySQL의 `apps`, `workspace_commands`, `workspace_events`와
+산출물·체크포인트 테이블에 저장한다. 구현 단계는 동시에 하나만 실행하며 timeout 시 하위
+프로세스 트리도 종료한다.
 
 ## 요구사항 입력 경계
 
@@ -283,15 +269,15 @@ minikube·AKS 요구사항 배포, Kubernetes manifest 생성 및 완료된 병�
 | 1 | 최소 ResourcePlan·구조도·IaC 공동 생성 | 완료: 3사 구조도·IaC 입력 공유와 HCL·Plan JSON 정적 대조 통과 |
 | 2 | E1 종단 | 완료: 중립 앱 3사 cloud 1회, 수강신청 AWS 업무·동시성·영속성 통과. 생성 IaC harness 보정 한계 기록 |
 | 3 | E2 App 계층 장애 대응 | 완료: AWS ASG 교체, Azure VMSS 교체, GCP MIG 동일 VM 재기동을 각 1회 관찰. 단일 State VM이라 종단 HA는 아님 |
-| 4 | 공통 의미 평가기 | 네 시스템 산출물을 요구 ID·설계 결정·code/test/IaC 의미로 정규화 |
-| 5 | 8회 비교 파일럿 | E1·E2 × 4시스템의 성공·실패·검열 정상 분류 |
+| 4 | 코드 정리 | 실제 Workspace 경로 밖의 중복 실행기·API·테스트 제거 |
+| 5 | 여러 요구사항 실행 | 같은 Workspace API로 입력 묶음을 실행하고 실패 위치와 원시 응답 기록 |
 
-E1·E2 개발 경로와 cleanup은 완료됐다. 다음 확대 여부는 공통 의미 평가기와 8회 비교
-파일럿이 성공·실패·검열을 정상 분류한 뒤 결정한다.
+과거 비교실험용 평가 프레임워크는 현재 제품 흐름과 다른 경로를 만들었기 때문에 보류했다.
+코드 정리를 먼저 끝낸 뒤, 프론트엔드와 같은 공개 API로 여러 요구사항을 실행한다.
 
 ## 실행 시간과 병목 계측
 
-모든 오케스트레이션 단계는 UTC 시작·종료 시각과 단조 시계 기반 경과 시간을 기록한다.
+Workspace가 조율하는 각 단계는 UTC 시작·종료 시각과 단조 시계 기반 경과 시간을 기록한다.
 요구사항과 설계 단계는 구조화 LLM 호출별 작업명·경과 시간·성공 여부·폴백 여부를,
 IaC 단계는 생성·수정·HCL 사전 검사·공급자 초기화·공급자 검증 시간을 각각 기록한다.
 실패한 실행도 실패 직전까지의 하위 작업 시간을 보존한다. 따라서 단계 총시간만 비교하지
@@ -306,7 +292,8 @@ LLM 생성·수정은 35.66초뿐이어서 나머지 약 128초가 공급자 초
 
 ## 구현 경계와 사용 인터페이스
 
-새 종단 실행은 `app/orchestration/`을 기준으로 한다. 구현 단계는 다음 순서다.
+프론트엔드의 새 종단 실행은 `app/workspace/`의 HTTP API를 기준으로 한다. 구현 단계는 다음
+순서다.
 
 ```text
 소프트웨어·클라우드 설계
@@ -319,33 +306,30 @@ LLM 생성·수정은 35.66초뿐이어서 나머지 약 128초가 공급자 초
 
 | 위치 | 역할 |
 |---|---|
-| `app/orchestration/` | 4단계 그래프, checkpoint, provider와 실행 상태 |
-| `app/orchestration/adapters/` | 각 단계의 공개 경계 연결 |
+| `app/workspace/` | 프론트엔드 명령, 4단계 전환, 진행 이벤트와 실행 상태 |
+| `app/repositories/`, `app/db/` | 산출물·명령·이벤트와 단계별 checkpoint 저장 |
 | `app/implementation/` | 구현 IR, 품질 gate, Docker·IaC renderer |
 | `app/cloudkb/` | 리소스 의존성·VM 가격·성능 근거 |
-| `evaluation/` | 모든 시스템에 적용하는 외부 공통 평가 |
+| `evaluation/easydep/` | Workspace 공개 API로 요구사항 한 건을 실행하고 원시 응답 저장 |
 
-웹 UI용 비동기 구현 job은 별도 호환 경로다. 정확한 요청·응답 스키마는 실행 중인
-FastAPI `/docs`와 route 구현을 현재 API의 기준으로 사용한다.
+Workspace API가 프론트엔드의 공식 경로이며, 구현·테스팅 job API는 Workspace 서비스가 단계
+내부에서 사용한다. 정확한 요청·응답 스키마는 실행 중인 FastAPI `/docs`와 route 구현을 현재
+API의 기준으로 사용한다.
 
 | 메서드와 경로 | 역할 |
 |---|---|
-| `POST /api/apps` | 애플리케이션 세션 생성 |
-| `POST /api/requirements/analyze` | 요구사항 분석 시작 |
-| `POST /api/implementation/apps/{app_id}/jobs` | 비동기 구현 job 생성 |
-| `GET /api/implementation/jobs/{job_id}` | 구현 상태·승인 대기 조회 |
-| `POST /api/implementation/jobs/{job_id}/approval` | HITL 승인·거부 |
-| `POST /api/implementation/apps/{app_id}/feedback-jobs` | 기존 산출물 피드백 수정 |
-| `POST /api/testing/apps/{app_id}/jobs` | 완료된 구현 산출물의 Gradle 테스트 시작 |
-| `GET /api/testing/jobs/{job_id}` | 테스팅 상태와 진단 결과 조회 |
+| `POST /api/workspace/apps` | 앱 생성과 첫 요구사항 분석 시작 |
+| `GET /api/workspace/apps/{app_id}` | 현재 단계, 명령, 이벤트와 산출물 상태 복원 |
+| `POST /api/workspace/apps/{app_id}/commands` | 메시지·수리·승인·테스트 명령 제출 |
+| `GET /api/workspace/apps/{app_id}/events` | 진행 이벤트를 SSE로 조회 |
 
 필요 도구는 Python 의존성, JDK 21과 Gradle wrapper, Node.js/npm, OpenAPI Generator,
 Docker와 OpenTofu다. 생성·검증 도구의 고정 버전과 실제 provider는 run manifest에 남긴다.
 
-## 유지되는 외부 기술 문서
+## 유지되는 실행 문서
 
-- `app/orchestration/README.md`: 실행 명령과 provider 계약
-- `evaluation/experiment-contract.md`: subject·harness·environment failure 분류
+- `app/workspace/README.md`: 프론트엔드 명령과 단계 전환 계약
+- `evaluation/easydep/README.md`: 프론트엔드와 같은 공개 API 실행 방법
 - FastAPI `/docs`: 현재 HTTP 계약
 
 ## 2026-08-15 도메인 중립·수강신청 cloud 확인

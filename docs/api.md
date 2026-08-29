@@ -27,19 +27,19 @@ POST /api/workspace/apps/{app_id}/commands
   → advance, start_design, start_implementation 같은 다음 행동 요청
 ```
 
-프론트엔드는 가능하면 단계별 저수준 endpoint를 직접 조합하지 않고 workspace command를
-사용한다. 그래야 DB command 기록, 자동 모드와 재시작 복구가 동일하게 적용된다.
+프론트엔드는 생성·수정·승인·테스트를 모두 Workspace command로 요청한다. 그래야 DB command
+기록, 자동 모드와 재시작 복구가 동일하게 적용된다.
 
 ## Router 지도
 
 | prefix/영역 | 코드 | 역할 |
 |---|---|---|
 | `/api/workspace` | `app/workspace/api.py` | 앱, 대화 명령, event, live preview |
-| 요구사항 | `app/requirements/api.py` | 요구사항 분석과 단계별 계속 실행 |
-| 설계 | `app/design/api.py` | 설계 생성·feedback·readiness |
-| 구현 | `app/implementation/interfaces/http.py` | 구현 job 생성·조회·승인·취소 |
-| 테스팅 | `app/testing/api.py` | testing job 생성과 상태 조회 |
+| `/api/implementation` | `app/implementation/interfaces/http.py` | 구현 파일·버전·ZIP 조회 |
 | 산출물 | `app/artifacts_api.py` | 저장 JSON과 생성 파일 조회 |
+
+요구사항·설계·테스팅 실행은 별도 HTTP router를 두지 않는다. Workspace 서비스가 각 단계의
+application service를 직접 호출한다.
 
 ## 상태 코드 해석
 

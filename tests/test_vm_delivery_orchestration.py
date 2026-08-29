@@ -4,14 +4,13 @@ import json
 
 import pytest
 
-from app.orchestration.adapters.cloud_design import CloudDesignAdapter
-from app.implementation.delivery.vm_delivery import VmDeliveryAdapter
-from app.implementation.planning.provider_target import resolve_resource_spec
 from app.design.services.deployment_diagram.planner import (
     build_deployment_plan,
     build_provider_resource_plan,
     normalize_workload_graph,
 )
+from app.implementation.delivery.vm_delivery import VmDeliveryAdapter
+from app.implementation.planning.provider_target import resolve_resource_spec
 
 
 def _cloud_design(
@@ -239,39 +238,6 @@ def test_vm_delivery_stops_before_llm_for_unsupported_resource_plan(tmp_path):
                     ],
                 }
             },
-            implementation_result={"run_root": str(tmp_path / "run")},
-        )
-
-    assert calls == []
-
-
-@pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
-def test_unknown_logical_model_is_blocked_before_iac_generation(provider, tmp_path):
-    cloud_design = CloudDesignAdapter().finalize(
-        requirements_result={
-            "resource_spec": {"provider": provider, "region": "test-region"},
-            "deployment_needs": {},
-        },
-        design_result={
-            "deployment_diagram_model": {
-                "Nodes": [
-                    {"name": "Client", "kind": "device"},
-                    {"name": "Service Runtime", "kind": "executionEnvironment"},
-                ],
-                "Connections": [
-                    {"source": "Client", "target": "Service Runtime", "protocol": "HTTPS"}
-                ],
-            }
-        },
-    )
-    calls = []
-
-    with pytest.raises(ValueError, match=r"WorkloadGraph deployment diagram"):
-        VmDeliveryAdapter(lambda prompt: calls.append(prompt) or "{}").generate(
-            requirements_result={
-                "resource_spec": {"provider": provider, "region": "test-region"}
-            },
-            cloud_design_result=cloud_design,
             implementation_result={"run_root": str(tmp_path / "run")},
         )
 

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
-from fastapi.responses import JSONResponse
 
-from app.design import api as design_api
+from app.design import service as design_service
 from app.workspace import service as workspace_module
 from app.workspace.service import WorkspaceService
 
@@ -27,13 +25,11 @@ def test_selected_sequence_ucs_use_one_targeted_batch_path(monkeypatch) -> None:
                 [(revision.target, revision.feedback) for revision in request.revisions],
             )
         )
-        return JSONResponse(
-            content={
-                "changed": ["sequence_diagram"],
-                "touched": {"sequence_diagram": ["UC5", "UC6"]},
-                "related": {},
-            }
-        )
+        return {
+            "changed": ["sequence_diagram"],
+            "touched": {"sequence_diagram": ["UC5", "UC6"]},
+            "related": {},
+        }
 
     monkeypatch.setattr(workspace_module, "revise_design_elements", revise)
     monkeypatch.setattr(
@@ -114,11 +110,24 @@ def test_targeted_sequence_batch_persists_once_after_every_revision_succeeds(mon
     persisted: list[dict] = []
     synced: list[dict] = []
 
-    monkeypatch.setattr(design_api, "validate_app_id", lambda _app_id: None)
-    monkeypatch.setattr(design_api, "require_app", lambda _app_id: {"revision_count": 0})
-    monkeypatch.setattr(design_api, "to_web_response", lambda state: {"artifacts": state})
-    monkeypatch.setattr(design_api, "persist_cascade", lambda _app_id, result: persisted.append(result))
-    monkeypatch.setattr(design_api, "sync_design_state", lambda _app_id, state: synced.append(state))
+    monkeypatch.setattr(
+        design_service.artifact_repository,
+        "load_state",
+        lambda _app_id: {"revision_count": 0},
+    )
+    monkeypatch.setattr(
+        design_service, "to_web_response", lambda state: {"artifacts": state}
+    )
+    monkeypatch.setattr(
+        design_service,
+        "persist_cascade",
+        lambda _app_id, result: persisted.append(result),
+    )
+    monkeypatch.setattr(
+        design_service,
+        "sync_design_state",
+        lambda _app_id, state: synced.append(state),
+    )
 
     def cascade(state, target, feedback):
         return {
@@ -128,19 +137,22 @@ def test_targeted_sequence_batch_persists_once_after_every_revision_succeeds(mon
             "related": [],
         }
 
-    monkeypatch.setattr(design_api, "revise_and_cascade", cascade)
-    response = design_api.revise_design_elements(
-        "app-1",
-        design_api.BatchReviseRequest(
+    monkeypatch.setattr(design_service, "revise_and_cascade", cascade)
+    response = design_service.revise_design_elements(
+        "00000000-0000-0000-0000-000000000001",
+        design_service.BatchReviseRequest(
             revisions=[
-                design_api.ReviseRequest(target="sequence_diagram:UC5", feedback="first"),
-                design_api.ReviseRequest(target="sequence_diagram:UC6", feedback="second"),
+                design_service.ReviseRequest(
+                    target="sequence_diagram:UC5", feedback="first"
+                ),
+                design_service.ReviseRequest(
+                    target="sequence_diagram:UC6", feedback="second"
+                ),
             ]
         ),
     )
 
-    payload = response.body.decode("utf-8")
-    assert '"revision_count":2' in payload
+    assert response["artifacts"]["revision_count"] == 2
     assert len(persisted) == 1
     assert persisted[0]["touched"] == {"sequence_diagram": ["UC5", "UC6"]}
     assert synced == [persisted[0]["state"]]
@@ -149,9 +161,16 @@ def test_targeted_sequence_batch_persists_once_after_every_revision_succeeds(mon
 def test_failed_targeted_batch_does_not_persist_an_earlier_target(monkeypatch) -> None:
     persisted: list[dict] = []
 
-    monkeypatch.setattr(design_api, "validate_app_id", lambda _app_id: None)
-    monkeypatch.setattr(design_api, "require_app", lambda _app_id: {"revision_count": 0})
-    monkeypatch.setattr(design_api, "persist_cascade", lambda _app_id, result: persisted.append(result))
+    monkeypatch.setattr(
+        design_service.artifact_repository,
+        "load_state",
+        lambda _app_id: {"revision_count": 0},
+    )
+    monkeypatch.setattr(
+        design_service,
+        "persist_cascade",
+        lambda _app_id, result: persisted.append(result),
+    )
 
     def cascade(state, target, feedback):
         if target.endswith("UC6"):
@@ -163,19 +182,22 @@ def test_failed_targeted_batch_does_not_persist_an_earlier_target(monkeypatch) -
             "related": [],
         }
 
-    monkeypatch.setattr(design_api, "revise_and_cascade", cascade)
-    with pytest.raises(HTTPException, match="no batch changes were saved") as error:
-        design_api.revise_design_elements(
-            "app-1",
-            design_api.BatchReviseRequest(
+    monkeypatch.setattr(design_service, "revise_and_cascade", cascade)
+    with pytest.raises(RuntimeError, match="no batch changes were saved"):
+        design_service.revise_design_elements(
+            "00000000-0000-0000-0000-000000000001",
+            design_service.BatchReviseRequest(
                 revisions=[
-                    design_api.ReviseRequest(target="sequence_diagram:UC5", feedback="first"),
-                    design_api.ReviseRequest(target="sequence_diagram:UC6", feedback="second"),
+                    design_service.ReviseRequest(
+                        target="sequence_diagram:UC5", feedback="first"
+                    ),
+                    design_service.ReviseRequest(
+                        target="sequence_diagram:UC6", feedback="second"
+                    ),
                 ]
             ),
         )
 
-    assert error.value.status_code == 502
     assert persisted == []
 
 

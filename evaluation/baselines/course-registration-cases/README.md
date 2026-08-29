@@ -27,17 +27,19 @@
 API 경로, Java·Spring Boot, PostgreSQL 버전, 환경변수 이름과 합성 데이터는 요구사항의
 정답으로 넣지 않는다. 설계·구현 결과는 위 독립 oracle로 검증한다.
 
-## 골드 승격
+## 현재 실행 방법
 
-구형 체크포인트는 최신 입력과 일치하지 않으므로 새 결과를 곧바로 gold로 간주하지 않는다.
-후보 생성, 구조 검토, digest 검증을 거친 전체 연쇄만 승격한다.
+구형 체크포인트 전용 실행기는 제거했다. 사례를 다시 실행할 때에는 개발 서버를 켠 뒤
+프론트엔드와 같은 Workspace API 실행기에 입력 파일을 전달한다. 결과는 지정한 JSON 파일에
+원시 Workspace 상태와 산출물 응답으로 저장된다.
 
 ```powershell
-python -m evaluation.checkpoint_e2e gold-candidate --case e1-aws --through usecase_diagram --output <candidate>
-python -m evaluation.checkpoint_e2e gold-candidate --case e1-aws --through deployment_diagram --output <candidate> --resume
-python -m evaluation.checkpoint_e2e gold-validate <candidate>
-python -m evaluation.checkpoint_e2e gold-promote <candidate> --case e1-aws
+python -X utf8 -m evaluation.easydep.product `
+  --message-file C:\temp\course-registration-requirements.txt `
+  --stop-after testing `
+  --output .easydep/course-registration-result.json
 ```
 
-부분 후보는 구조를 검토하는 용도이며 승격할 수 없다. 클래스·시퀀스·API·ERD·배포
-체크포인트는 유효한 prefix에서 `--resume`으로 이어가고, 최종 단계까지 완료한 뒤 검증·승격한다.
+텍스트 파일에는 위 JSON의 `requirements` 문장과 `cloudConstraints`를 사람이 읽는 일반
+문장으로 옮긴다. 결과 JSON은 정답 판정이나 gold 승격을 자동으로 수행하지 않는다. LLM
+결과는 실행마다 달라질 수 있으므로 사람이 업무 목표, 단계 연결과 실패 위치를 확인한다.

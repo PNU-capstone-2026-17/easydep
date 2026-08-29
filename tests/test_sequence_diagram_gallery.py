@@ -13,12 +13,7 @@ from app.artifacts_api import (
     sequence_diagrams_from_state,
     to_web_response,
 )
-from app.design.api import (
-    FeedbackRequest,
-    StageRequest,
-    resume_design_session,
-    retry_design_session,
-)
+from app.design.service import resume_design_session, retry_design_session
 
 APP_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -141,51 +136,23 @@ def test_design_refuses_to_advance_past_sequence_findings() -> None:
         "sequence_diagram_check": {"findings": ["invalid receiver method"]},
     }
     with (
-        patch("app.design.api.require_app_exists"),
-        patch("app.design.api.require_active_session"),
+        patch("app.design.service.artifact_repository.ensure_app_exists"),
+        patch("app.design.service.has_active_session", return_value=True),
         patch(
-            "app.design.api.session_status",
+            "app.design.service.session_status",
             return_value={"active": True, "stage": "sequence_diagram"},
         ),
-        patch("app.design.api.require_app", return_value=state),
-        patch("app.design.api.design_readiness_report") as readiness,
-        patch("app.design.api.resume_design", return_value={}) as resume,
+        patch("app.design.service.artifact_repository.load_state", return_value=state),
+        patch("app.design.service.design_readiness_report") as readiness,
+        patch("app.design.service.resume_design", return_value={}) as resume,
     ):
         readiness.return_value = {
             "status": "NEEDS_INPUT",
             "findings": [{"stage": "sequence_diagram", "finding": "invalid"}],
         }
-        with pytest.raises(HTTPException) as raised:
-            resume_design_session(APP_ID, FeedbackRequest(feedback=""))
+        with pytest.raises(ValueError, match="Resolve the active design findings"):
+            resume_design_session(APP_ID)
 
-    assert raised.value.status_code == 409
-    resume.assert_not_called()
-
-
-def test_design_does_not_advance_when_findings_have_no_artifact() -> None:
-    state = {
-        **_state(),
-        "sequence_diagram_check": {"findings": ["invalid receiver method"]},
-    }
-    with (
-        patch("app.design.api.require_app_exists"),
-        patch("app.design.api.require_active_session"),
-        patch(
-            "app.design.api.session_status",
-            return_value={"active": True, "stage": "sequence_diagram"},
-        ),
-        patch("app.design.api.require_app", return_value=state),
-        patch("app.design.api.design_readiness_report") as readiness,
-        patch("app.design.api.resume_design", return_value={}) as resume,
-    ):
-        readiness.return_value = {
-            "status": "NEEDS_INPUT",
-            "findings": [{"stage": "sequence_diagram", "finding": "invalid"}],
-        }
-        with pytest.raises(HTTPException) as error:
-            resume_design_session(APP_ID, FeedbackRequest(feedback=""))
-
-    assert error.value.status_code == 409
     resume.assert_not_called()
 
 
@@ -197,21 +164,20 @@ def test_retry_at_a_review_gate_restores_the_draft_without_rerunning() -> None:
         "artifact_status": {"sequence_diagram": "implemented"},
     }
     with (
-        patch("app.design.api.require_app_exists"),
+        patch("app.design.service.artifact_repository.ensure_app_exists"),
         patch(
-            "app.design.api.session_status",
+            "app.design.service.session_status",
             return_value={
                 "active": True,
                 "retryable": False,
                 "stage": "sequence_diagram",
             },
         ),
-        patch("app.design.api.require_app", return_value=state),
-        patch("app.design.api.retry_design") as retry,
+        patch("app.design.service.artifact_repository.load_state", return_value=state),
+        patch("app.design.service.retry_design") as retry,
     ):
-        response = retry_design_session(APP_ID, StageRequest())
+        payload = retry_design_session(APP_ID)
 
-    payload = json.loads(response.body)
     assert payload["status"] == "need_feedback"
     assert payload["stage"] == "sequence_diagram"
     assert payload["artifact_status"]["sequence_diagram"] == "needs_review"

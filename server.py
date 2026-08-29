@@ -16,12 +16,9 @@ from fastapi.staticfiles import StaticFiles
 
 from app.artifacts_api import router as artifacts_router
 from app.db.session import init_db
-from app.design.api import router as design_router
 from app.implementation.application.jobs import worker as implementation_worker
 from app.implementation.interfaces.http import router as implementation_router
-from app.requirements.api import router as requirements_router
 from app.requirements.classifier import warmup_or_raise
-from app.testing.api import router as testing_router
 from app.workspace.api import router as workspace_router
 from app.workspace.service import workspace_service
 
@@ -76,10 +73,7 @@ app = FastAPI(title="EasyDep Agents", lifespan=lifespan)
 # router 등록 순서는 URL 우선순위를 바꾸지 않지만, 파이프라인 순서대로 두면 새 개발자가
 # 어떤 기능이 연결되어 있는지 빠르게 확인할 수 있다.
 app.include_router(artifacts_router)
-app.include_router(requirements_router)
-app.include_router(design_router)
 app.include_router(implementation_router)
-app.include_router(testing_router)
 app.include_router(workspace_router)
 
 

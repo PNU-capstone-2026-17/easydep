@@ -1,1 +1,1 @@
-"""Evaluation suites and comparison baselines for EasyDep."""
+"""프론트엔드와 같은 공개 API로 EasyDep 제품 흐름을 실행하는 도구다."""

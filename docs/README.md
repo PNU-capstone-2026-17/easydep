@@ -8,7 +8,7 @@
 | 1 | [전체 실행 흐름과 데이터 계약](system-flow.md) | 실제 프론트엔드 경로, 사용자·LLM 입출력 타입, 검증·수리, 산출물과 저장·재개 |
 | 2 | [현재 시스템 상태](current-system-status.md) | 4단계 구조, 구현됨·미구현, 실행 경계와 다음 작업 |
 | 3 | [배포 다이어그램과 리소스 의존성 통합 기준](logical-deployment-topology-decisions.md) | 범위, 토폴로지, ResourcePlan, 멀티 AZ·VM 그룹·LB, CSP 생성 의존성, 앱·guest 바인딩, 셋업과 검증 |
-| 4 | [비교평가 계획과 현재 결과](comparison-experiment-plan.md) | E1·E2·D1, 기준군, 공통 gate, 실행 규모와 주장 한계 |
+| 4 | [비교평가 계획과 과거 결과](comparison-experiment-plan.md) | 보류한 비교실험의 배경과 과거 측정 기록 |
 
 [연구 배경](research.md)은 이미 승인된 연구 기록으로 보존하며 수정하지 않는다.
 
@@ -26,9 +26,8 @@
 - `app/design/services/sequence_diagram/README.md`: 결정론적 시퀀스 투영과 피드백 경로
 - [상호작용 설계 개선과 LLM 호출 최적화](interaction-design-improvements.md): 남은 개선,
   호출 운영 원칙과 측정 항목
-- `app/orchestration/README.md`: 오케스트레이터 명령과 provider 계약
-- `evaluation/README.md`: 평가 실행 명령
-- `evaluation/experiment-contract.md`: 실패·검열 분류
+- `app/workspace/README.md`: 프론트엔드 명령, 진행 이벤트와 단계 전환 계약
+- `evaluation/easydep/README.md`: 프론트엔드와 같은 Workspace API를 호출하는 얇은 실행기
 - FastAPI `/docs`: 현재 HTTP API 계약
 
 완료된 E1~E3 및 관리형 L4 실험 결과는 [보관 문서](archive/README.md)에서 확인한다.
@@ -38,7 +37,7 @@
 - 현재 실행 흐름과 공개 입출력 타입은 전체 실행 흐름 문서에 기록한다.
 - 현재 구현 상태와 다음 작업은 상태 문서에만 기록한다.
 - 배포 모델·CSP 관계·검증 규칙은 토폴로지 문서에만 기록한다.
-- 사례·비교군·측정 결과와 주장 한계는 평가 문서에만 기록한다.
+- 과거 사례·비교군·측정 결과는 평가 기록에 남기되 현재 제품 실행 설명과 섞지 않는다.
 - 특정 시점 보고서와 완료된 결정은 `archive/`로 이동하고 다시 갱신하지 않는다.
 - 사람용 문서는 한국어로 쓰고 시스템 식별자와 필드 이름만 영어로 유지한다.
 - 중앙 문서는 도메인 개념을, 코드 옆 README는 파일·입출력·실패 경계를 설명한다.

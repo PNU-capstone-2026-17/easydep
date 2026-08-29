@@ -9,8 +9,8 @@
 5. [`terminology-ledger.md`](terminology-ledger.md): 용어 출처·조작적 정의·하면 안 되는 해석
 6. [`resource-coverage.md`](resource-coverage.md): 현재 자원 어휘의 충족 범위와 미측정 후보
 
-실행 상태와 채점기의 세부 검사 조건은 `evaluation/experiment-contract.md`에 둔다. 연구 질문과
-지표는 이 디렉터리의 평가 프로토콜이 기준이고, 실행 계약은 이를 구현하는 하위 규칙이다.
+연구 질문과 지표는 이 디렉터리의 평가 프로토콜에 남긴다. 과거 채점기는 현재 제품 경로와
+달라 보류했으며, 새 실행 확인은 프론트엔드와 같은 Workspace API를 사용한다.
 
 `archive/`는 조사 과정과 폐기된 설계를 보존하는 참고용 기록이다. 논문이나 구현의 현재 기준으로 인용하지
 않으며, 필요한 주장은 위 문서들에서 원출처와 함께 다시 확인한다.

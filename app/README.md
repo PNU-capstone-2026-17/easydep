@@ -12,7 +12,7 @@
   → testing: 생성된 결과를 정적·동적으로 검사함
 
 모든 단계의 바깥쪽
-  ├─ orchestration: 여러 단계를 한 실행으로 연결하고 중단된 지점부터 다시 시작함
+  ├─ workspace: 프론트엔드 명령으로 여러 단계를 연결하고 중단된 지점부터 다시 시작함
   ├─ repositories/db: 산출물·명령·이벤트·체크포인트를 저장함
   ├─ cloudkb: 클라우드 선택에 필요한 사실과 규칙을 제공함
   └─ metrics: LLM(대규모 언어 모델)의 호출 시간과 실행 기록을 수집함
@@ -27,7 +27,6 @@
 | `implementation` | 설계 계약을 실행 가능한 애플리케이션과 배포 산출물로 바꾼다. | [구현](implementation/README.md) |
 | `testing` | 생성된 애플리케이션이 계약과 실행 환경을 만족하는지 검사한다. | [테스팅](testing/README.md) |
 | `workspace` | 대화형 UI의 명령·진행 이벤트·자동 진행을 조율한다. | [워크스페이스](workspace/README.md) |
-| `orchestration` | 단계별 실행 방법, 중간 저장 상태와 전체 순서를 관리한다. | [오케스트레이션](orchestration/README.md) |
 | `repositories` | 업무 코드가 저장 기술을 직접 알지 않도록 저장소 API를 제공한다. | [저장소](repositories/README.md) |
 | `db` | MySQL 연결, 테이블 구조와 작업 중간 상태 저장을 담당한다. | [데이터베이스](db/README.md) |
 | `cloudkb` | AWS·Azure·GCP의 자원, 지역, 가격과 연결 규칙을 제공한다. | [클라우드 지식](cloudkb/README.md) |
@@ -40,9 +39,9 @@
 결과는 정해진 데이터 형식으로 돌려준다.
 
 ```text
-HTTP/UI → workspace/orchestration → 단계 공개 API → 단계 내부 서비스
-                             ↓
-                       repositories/db
+HTTP/UI → workspace → 단계 공개 API → 단계 내부 서비스
+              ↓
+        repositories/db
 
 cloudkb → requirements/design/implementation에서 읽을 수 있음
 cloudkb ─X→ requirements/design/implementation 내부를 import하면 안 됨
@@ -61,8 +60,7 @@ cloudkb ─X→ requirements/design/implementation 내부를 import하면 안 �
 
 ## 코드를 수정할 때
 
-- 새 업무 규칙은 그 규칙을 소유한 단계에 둔다. 편하다는 이유로 `workspace`나
-  `orchestration`에 넣지 않는다.
+- 새 업무 규칙은 그 규칙을 소유한 단계에 둔다. 편하다는 이유로 `workspace`에 넣지 않는다.
 - LLM 응답은 Pydantic schema로 확인한 뒤에만 저장하거나 다음 단계로 넘긴다.
 - 내부 데이터를 PlantUML이나 OpenAPI 문서로 바꾸는 코드는 결정론적이어야 한다. 즉 같은
   입력을 받으면 항상 같은 문서를 만들어야 한다.

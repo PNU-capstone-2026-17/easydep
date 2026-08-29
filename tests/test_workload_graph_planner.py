@@ -20,7 +20,6 @@ from app.design.services.deployment_diagram.planner import (
     planning_inputs_stale,
     validate_provider_resource_plan,
 )
-from app.orchestration.adapters.cloud_design import CloudDesignAdapter
 
 
 def workload(
@@ -598,35 +597,6 @@ def test_invalid_workload_graph_becomes_reviewable_bundle_without_planning() -> 
     assert projection["deploymentPlan"] == {}
     assert projection["resourcePlan"] == {}
     assert "Duplicate ids: application." in projection["issues"][0]["reason"]
-
-    finalized = CloudDesignAdapter().finalize(
-        requirements_result={}, design_result={"deployment_diagram_bundle": bundle}
-    )
-    assert finalized["status"] == "needsInput"
-    assert finalized["reason"] == "deployment-diagram-needs-input"
-
-
-def test_cloud_adapter_passes_current_bundle_and_blocks_unknown_schema() -> None:
-    bundle = build_deployment_diagram_bundle(
-        graph(workload("web", public=True)),
-        {"schemaVersion": "4", "workloads": ["vm"], "provider": "aws", "region": "r1"},
-    )
-    completed = CloudDesignAdapter().finalize(
-        requirements_result={}, design_result={"deployment_diagram_bundle": bundle}
-    )
-    assert completed["status"] == "completed"
-    assert completed["resource_plan"]["schemaVersion"] == "easydep-resource-plan"
-
-    blocked = CloudDesignAdapter().finalize(
-        requirements_result={},
-        design_result={
-            "deployment_diagram_bundle": {
-                "schemaVersion": "unsupported",
-            }
-        },
-    )
-    assert blocked["status"] == "needsRegeneration"
-
 
 def test_deployment_subgraph_finalizer_carries_structured_upstream_models() -> None:
     assert DEPLOYMENT_DIAGRAM_SPEC.finalize is not None

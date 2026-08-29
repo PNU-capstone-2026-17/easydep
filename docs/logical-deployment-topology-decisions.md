@@ -40,7 +40,7 @@ CloudDesignAdapter → 구현/테스트 → runtime contract 관찰
 | bundle 조립 | [`app/design/services/deployment_diagram/bundle.py`](../app/design/services/deployment_diagram/bundle.py) |
 | CSP 리소스 폐쇄성 | [`app/design/services/deployment_diagram/provider_template.py`](../app/design/services/deployment_diagram/provider_template.py) |
 | PlantUML 두 view | [`app/design/services/deployment_diagram/provider_plantuml.py`](../app/design/services/deployment_diagram/provider_plantuml.py) |
-| 구현 단계 인계 | [`app/orchestration/adapters/cloud_design.py`](../app/orchestration/adapters/cloud_design.py), [`app/implementation/delivery/vm_delivery.py`](../app/implementation/delivery/vm_delivery.py) |
+| 구현 단계 인계 | [`app/implementation/delivery/vm_delivery.py`](../app/implementation/delivery/vm_delivery.py) |
 | OpenTofu 생성 | [`app/implementation/delivery/iac_renderer.py`](../app/implementation/delivery/iac_renderer.py) |
 
 ## 1. 계약과 기준 데이터
@@ -313,16 +313,14 @@ GET /api/apps/{appId}/stages/deployment_diagram/views/provisioning/image.svg
 
 ## 9. 뒷단: 구현과 IaC 연결
 
-### 9.1 CloudDesignAdapter
+### 9.1 VM delivery 경계
 
-`CloudDesignAdapter`는 bundle을 구현 오케스트레이션 계약으로 바꾼다.
+`VmDeliveryAdapter`는 수락된 bundle에서 WorkloadGraph, DeploymentPlan과 ResourcePlan을 읽어
+구현 결과와 연결한다. bundle이나 schema가 잘못됐거나 ResourcePlan에 해결되지 않은 선택이
+남아 있으면 IaC 생성을 시작하지 않는다. 구현 과정에서 확인한 실행 정보가 설계와 다르면
+runtime binding을 다시 적용한 뒤 같은 provider의 ResourcePlan을 다시 만든다.
 
-- bundle이 없거나 schema가 다르면 `needsRegeneration`
-- projection이 여러 개면 `alternativesReady`와 target 선택 질문
-- 단일 ResourcePlan은 provider validation 재수행
-- WorkloadGraph, DeploymentPlan, ResourcePlan, 두 PUML과 digest 인계
-
-이 adapter는 RESOURCE_SPEC에서 topology를 다시 만들거나 DB/runtime 기본값을 넣지 않는다.
+이 경계는 RESOURCE_SPEC에서 topology를 새로 정하거나 DB·runtime 기본값을 임의로 넣지 않는다.
 
 ### 9.2 구현 관찰과 2단계 binding
 
@@ -439,14 +437,10 @@ python scripts/validate_deployment_iac_examples.py --plan
 IaC 검사는 45 module을 `fmt`/`validate`하고 대표 15 module을 정적 `plan`한다. provider는
 시스템 공용 `.easydep/provider-plugin-cache`를 사용한다.
 
-[`evaluation/checkpoint_e2e/`](../evaluation/checkpoint_e2e/)는 제품 UI·DB 없이 동결된
-수강신청 goldset에서 체크포인트 하나를 실행한다. `erd → deployment_diagram`은 실제
-서브그래프를 호출하고 bundle, graph, 두 plan, 두 PUML/SVG와 OpenTofu를 폴더에 남긴다.
-
-```powershell
-python -m evaluation.checkpoint_e2e run --case e1-aws --from erd
-python -m evaluation.checkpoint_e2e run-all --case e1-aws
-```
+제품 UI·DB를 우회하던 동결 체크포인트 실행기는 제거했다. 현재 종단 확인은
+`python -X utf8 -m evaluation.easydep.product`가 프론트엔드와 같은 Workspace API를
+호출하고, 저장된 산출물 응답을 그대로 남기는 방식으로 수행한다. 배포 변환기만 빠르게
+확인할 때에는 위의 결정론적 예제 생성·검사 스크립트를 사용한다.
 
 ## 11. 현재 범위와 알려진 경계
 

@@ -102,7 +102,7 @@ graph = build_design_graph()
 
 
 # ----------------------------------------------------------------------------
-# 서빙 헬퍼 (app/design/api.py에서 사용)
+# Workspace application service에서 사용하는 실행 헬퍼
 # ----------------------------------------------------------------------------
 def _result_payload(result: dict, app_id: str) -> dict[str, Any]:
     """그래프 실행 결과를 API 응답 형태(dict)로 변환한다.

@@ -1,11 +1,10 @@
-"""공개 result_payload의 HTTP 응답 변환 계약을 검증한다."""
+"""요구사항 그래프 결과가 Workspace에 전달되는 공개 dict 계약을 검증한다."""
 
 from types import SimpleNamespace
 
 import pytest
 
-from app.requirements.orchestration.graph import ARTIFACT_KEYS, result_payload
-from app.requirements.schemas import AnalyzeResponse
+from app.requirements.orchestration.graph import result_payload
 
 
 def test_payload_completed():
@@ -59,42 +58,6 @@ def test_payload_need_clarification():
     assert out["questions"] == ["q1", "q2"]
 
 
-def test_analyze_response_accepts_and_omits_pipeline_fields():
-    req = {"id": "FR1", "text": "log in", "type": "FR"}
-    # 파이프라인 산출물이 있는 payload → AnalyzeResponse가 검증·직렬화한다.
-    result = {
-        "phase": "diagram",
-        "classified": [req],
-        "use_cases": [{"id": "UC1", "name": "Log in"}],
-        "diagram": "@startuml\n@enduml",
-    }
-    resp = AnalyzeResponse(**result_payload(result, "tid"))
-    dumped = resp.model_dump()
-    assert dumped["use_cases"][0]["id"] == "UC1"
-    assert dumped["diagram"] == "@startuml\n@enduml"
-
-    # 파이프라인 미실행 → 해당 필드는 None.
-    resp2 = AnalyzeResponse(**result_payload({"classified": [req]}, "t"))
-    assert resp2.diagram is None and resp2.use_cases is None and resp2.actors is None
-
-
-def test_analyze_response_keeps_requirement_provenance_without_changing_payload_keys():
-    requirement = {
-        "id": "RR1",
-        "text": "Customers shall place orders.",
-        "type": "FR",
-        "draft_ref": "RR1",
-        "source_refs": ["RAW1"],
-    }
-
-    response = AnalyzeResponse(**result_payload({"classified": [requirement]}, "tid"))
-
-    assert response.requirements is not None
-    assert response.requirements[0].id == "RR1"
-    assert response.requirements[0].draft_ref == "RR1"
-    assert response.requirements[0].source_refs == ["RAW1"]
-
-
 # ---------------------------------------------------------------------------
 # 구조화 편집(F) — 게이트가 준 재료가 응답까지 흘러가는가, 라우팅이 갈리는가.
 # ---------------------------------------------------------------------------
@@ -113,15 +76,11 @@ def test_feedback_payload_carries_the_edit_material():
     assert out["status"] == "need_feedback"
     assert out["edit_stage"] == "specs"
     assert out["edit_targets"] == ["UC1", "UC2"]
-    # 스키마도 통과해야 화면까지 간다.
-    assert AnalyzeResponse(**out).edit_targets == ["UC1", "UC2"]
 
 
 def test_analyze_rejects_answer_and_edit_together():
     """둘 다 오면 무엇을 따를지 모호하다 — 조용히 하나를 고르지 않는다."""
-    from fastapi import HTTPException
-
-    from app.requirements.orchestration.api import analyze_endpoint
+    from app.requirements.orchestration.service import analyze_requirements
     from app.requirements.schemas import AnalyzeRequest, FeedbackEdit
 
     req = AnalyzeRequest(
@@ -129,9 +88,8 @@ def test_analyze_rejects_answer_and_edit_together():
         edit=FeedbackEdit(stage="specs", instruction="구조화"),
         thread_id="t",
     )
-    with pytest.raises(HTTPException) as excinfo:
-        analyze_endpoint(req)
-    assert excinfo.value.status_code == 400
+    with pytest.raises(ValueError, match="함께 보낼 수 없습니다"):
+        analyze_requirements(req)
 
 
 def test_initial_cloud_constraints_are_structured_and_normalized():
@@ -274,7 +232,7 @@ def test_deployment_preferences_reject_two_regions_for_one_provider():
 
 
 def test_analyze_routes_a_structured_edit_to_resume(monkeypatch):
-    from app.requirements.orchestration import api
+    from app.requirements.orchestration import service
     from app.requirements.schemas import AnalyzeRequest, FeedbackEdit
 
     seen = {}
@@ -283,10 +241,10 @@ def test_analyze_routes_a_structured_edit_to_resume(monkeypatch):
         seen.update(answer=answer, thread_id=thread_id, persist=persist)
         return {"thread_id": thread_id, "phase": "specs", "status": "completed"}
 
-    monkeypatch.setattr(api, "resume_analysis", fake_resume)
-    monkeypatch.setattr(api.settings, "enable_session_persistence", True)
+    monkeypatch.setattr(service, "resume_analysis", fake_resume)
+    monkeypatch.setattr(service.settings, "enable_session_persistence", True)
     edit = FeedbackEdit(stage="specs", scope="local", target_ids=["UC1"], instruction="고쳐")
-    api.analyze_endpoint(AnalyzeRequest(edit=edit, thread_id="t-9"))
+    service.analyze_requirements(AnalyzeRequest(edit=edit, thread_id="t-9"))
 
     assert seen["answer"] is edit  # 문자열로 뭉개지 않고 그대로 넘어간다
     assert seen["thread_id"] == "t-9"
@@ -342,11 +300,11 @@ def test_retry_analysis_rejects_a_missing_checkpoint(monkeypatch):
         graph.retry_analysis("missing-run", persist=True)
 
 
-def test_retry_analysis_endpoint_persists_only_new_stage_versions(monkeypatch):
-    from app.requirements.orchestration import api
+def test_retry_analysis_service_persists_only_new_stage_versions(monkeypatch):
+    from app.requirements.orchestration import service
 
     monkeypatch.setattr(
-        api,
+        service,
         "retry_analysis",
         lambda thread_id, *, persist: {
             "thread_id": thread_id,
@@ -354,26 +312,16 @@ def test_retry_analysis_endpoint_persists_only_new_stage_versions(monkeypatch):
             "status": "completed",
         },
     )
-    monkeypatch.setattr(api.settings, "enable_session_persistence", True)
+    monkeypatch.setattr(service.settings, "enable_session_persistence", True)
     monkeypatch.setattr(
-        api,
+        service,
         "persist_analysis",
         lambda app_id, _payload: [f"saved-for-{app_id}"],
     )
 
-    result = api.retry_analysis_endpoint("app-1", app_id="app-1")
+    result = service.retry_requirements_analysis("app-1", app_id="app-1")
 
-    assert result.saved_stages == ["saved-for-app-1"]
-
-
-def test_every_artifact_key_survives_the_response_schema():
-    """응답 스키마에 없는 산출물 키는 **조용히 사라진다** — pydantic이 모르는 키를 버린다.
-
-    실제로 `cloud_concerns`가 그 상태였다: 파이프라인이 만들고 `_result_payload`가 싣는데
-    화면은 못 받았다. 키를 하나 더 만들 때마다 같은 사고가 나므로 목록끼리 대조한다.
-    """
-    missing = [k for k in ARTIFACT_KEYS if k not in AnalyzeResponse.model_fields]
-    assert not missing, f"응답 스키마에 없는 산출물 키: {missing}"
+    assert result["saved_stages"] == ["saved-for-app-1"]
 
 
 def test_feedback_payload_carries_the_resource_questions():
@@ -395,4 +343,3 @@ def test_feedback_payload_carries_the_resource_questions():
     out = result_payload(result, "tid-r")
 
     assert out["resource_questions"] == questions
-    assert AnalyzeResponse(**out).resource_questions == questions

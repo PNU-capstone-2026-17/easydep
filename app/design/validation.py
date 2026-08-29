@@ -1,7 +1,8 @@
 """Design-readiness checks shared by design hand-off and implementation entry."""
+
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from app.design.knowledge.detectors import (
@@ -20,16 +21,12 @@ from app.validation import ValidationReport
 DESIGN_READINESS_SCHEMA = "easydep-design-readiness/v1alpha1"
 
 
-def validate_class_model(
-    model: dict[str, Any], state: dict[str, Any]
-) -> ValidationReport:
+def validate_class_model(model: dict[str, Any], state: dict[str, Any]) -> ValidationReport:
     """클래스 다이어그램의 전체 의미 규칙을 typed 보고서로 반환한다."""
     return class_diagram_validation_report(model, state)
 
 
-def validate_sequence_model(
-    model: dict[str, Any], state: dict[str, Any]
-) -> ValidationReport:
+def validate_sequence_model(model: dict[str, Any], state: dict[str, Any]) -> ValidationReport:
     """시퀀스 모델의 전체 규칙을 typed 보고서로 반환한다."""
     return _validate_sequence_model(model or {}, state or {})
 
@@ -46,9 +43,7 @@ def _finding_payload(finding: Finding) -> dict[str, Any]:
     }
 
 
-def _readiness_status(
-    findings: list[Finding], validation_status: str | None = None
-) -> str:
+def _readiness_status(findings: list[Finding], validation_status: str | None = None) -> str:
     """Map typed validation evidence to the design hand-off vocabulary."""
     if validation_status in {"disabled", "error"}:
         return "BLOCKED"
@@ -59,18 +54,21 @@ def _readiness_status(
     return "BLOCKED"
 
 
-_CHECKED_STAGES: tuple[
-    tuple[str, str, str, Callable[[dict, dict], ValidationReport]], ...
-] = (
+_CHECKED_STAGES: tuple[tuple[str, str, str, Callable[[dict, dict], ValidationReport]], ...] = (
     ("class_diagram", "extracted_bce_classes", "class_diagram_check", validate_class_model),
-    ("sequence_diagram", "sequence_diagram_model", "sequence_diagram_check", validate_sequence_model),
+    (
+        "sequence_diagram",
+        "sequence_diagram_model",
+        "sequence_diagram_check",
+        validate_sequence_model,
+    ),
     ("api_spec", "api_spec_model", "api_spec_check", api_spec_validation_report),
     ("erd", "erd_bce_classes", "erd_check", erd_validation_report),
 )
 
 
 def design_readiness_report(
-    state: dict[str, Any], stages: Iterable[str] | None = None
+    state: Mapping[str, Any], stages: Iterable[str] | None = None
 ) -> dict[str, Any]:
     """Return unresolved deterministic findings in a transport-safe form."""
     selected = set(stages) if stages is not None else None
@@ -88,10 +86,7 @@ def design_readiness_report(
         # therefore not an instance of the class-diagram presentation subclass
         # imported above. Cross that boundary through the public data shape instead
         # of asking Pydantic to reinterpret a sibling model instance.
-        findings = [
-            Finding.model_validate(finding.model_dump())
-            for finding in checked.findings
-        ]
+        findings = [Finding.model_validate(finding.model_dump()) for finding in checked.findings]
         reports.append(
             {
                 "stage": stage,

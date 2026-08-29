@@ -5,8 +5,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from fastapi.responses import JSONResponse
-
 from app.db.models import Base
 from app.design import progress as design_progress
 from app.design.services.common.structured import record_llm_timing
@@ -187,11 +185,9 @@ def test_requirement_reply_uses_the_waiting_command_as_continuation(monkeypatch)
 
     def analyze(request):
         captured["request"] = request
-        return SimpleNamespace(
-            model_dump=lambda **_kwargs: {"status": "completed", "saved_stages": []}
-        )
+        return {"status": "completed", "saved_stages": []}
 
-    monkeypatch.setattr(workspace_module, "analyze_endpoint", analyze)
+    monkeypatch.setattr(workspace_module, "analyze_requirements", analyze)
     service = WorkspaceService()
     try:
         result = service._stage_message(
@@ -234,11 +230,9 @@ def test_requirement_reply_answers_the_resource_question_without_reclassificatio
 
     def analyze(request):
         captured["request"] = request
-        return SimpleNamespace(
-            model_dump=lambda **_kwargs: {"status": "completed", "saved_stages": []}
-        )
+        return {"status": "completed", "saved_stages": []}
 
-    monkeypatch.setattr(workspace_module, "analyze_endpoint", analyze)
+    monkeypatch.setattr(workspace_module, "analyze_requirements", analyze)
     service = WorkspaceService()
     try:
         service._stage_message(
@@ -264,11 +258,9 @@ def test_initial_workspace_request_accepts_provider_and_region_without_budget(
 
     def analyze(request):
         captured["request"] = request
-        return SimpleNamespace(
-            model_dump=lambda **_kwargs: {"status": "completed", "saved_stages": []}
-        )
+        return {"status": "completed", "saved_stages": []}
 
-    monkeypatch.setattr(workspace_module, "analyze_endpoint", analyze)
+    monkeypatch.setattr(workspace_module, "analyze_requirements", analyze)
     service = WorkspaceService()
     try:
         service._stage_message(
@@ -298,11 +290,9 @@ def test_initial_workspace_request_can_start_before_cloud_selection(monkeypatch)
 
     def analyze(request):
         captured["request"] = request
-        return SimpleNamespace(
-            model_dump=lambda **_kwargs: {"status": "completed", "saved_stages": []}
-        )
+        return {"status": "completed", "saved_stages": []}
 
-    monkeypatch.setattr(workspace_module, "analyze_endpoint", analyze)
+    monkeypatch.setattr(workspace_module, "analyze_requirements", analyze)
     service = WorkspaceService()
     try:
         service._stage_message(
@@ -339,11 +329,9 @@ def test_structured_deployment_preferences_resume_the_waiting_requirements_gate(
 
     def analyze(request):
         captured["request"] = request
-        return SimpleNamespace(
-            model_dump=lambda **_kwargs: {"status": "completed", "saved_stages": []}
-        )
+        return {"status": "completed", "saved_stages": []}
 
-    monkeypatch.setattr(workspace_module, "analyze_endpoint", analyze)
+    monkeypatch.setattr(workspace_module, "analyze_requirements", analyze)
     service = WorkspaceService()
     try:
         service._stage_message(
@@ -417,11 +405,9 @@ def test_initial_workspace_request_forwards_structured_monthly_budget(monkeypatc
 
     def analyze(request):
         captured["request"] = request
-        return SimpleNamespace(
-            model_dump=lambda **_kwargs: {"status": "completed", "saved_stages": []}
-        )
+        return {"status": "completed", "saved_stages": []}
 
-    monkeypatch.setattr(workspace_module, "analyze_endpoint", analyze)
+    monkeypatch.setattr(workspace_module, "analyze_requirements", analyze)
     service = WorkspaceService()
     try:
         service._stage_message(
@@ -510,10 +496,10 @@ def test_design_operation_emits_a_named_progress_card(monkeypatch) -> None:
         {"app_id": "app-1", "command_id": "command-1"},
         stage="sequence_diagram",
         label="Retrying the sequence diagram",
-        operation=lambda: "done",
+        operation=lambda: {"status": "need_feedback", "validation": {}},
     )
 
-    assert response == "done"
+    assert response == {"status": "need_feedback", "validation": {}}
     assert [event["metadata"]["progress_status"] for event in events] == [
         "running",
         "completed",
@@ -544,7 +530,7 @@ def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> Non
                 "schemaValidationErrors": [{"loc": ["Classes"], "type": "too_short"}],
             },
         )
-        return "done"
+        return {"status": "need_feedback", "validation": {}}
 
     WorkspaceService._run_design_operation(
         {"app_id": "app-1", "command_id": "command-1"},
@@ -604,14 +590,14 @@ def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -
             completed=2,
             total=2,
         )
-        return "done"
+        return {"status": "need_feedback", "validation": {}}
 
     assert WorkspaceService._run_design_operation(
         {"app_id": "app-1", "command_id": "command-1"},
         stage="class_diagram",
         label="Generating the class diagram",
         operation=operation,
-    ) == "done"
+    ) == {"status": "need_feedback", "validation": {}}
 
     preview = live_previews.get("app-1", "command-1", "class_diagram")
     assert preview is not None
@@ -704,16 +690,16 @@ def test_design_operation_marks_a_generated_draft_as_needing_review(monkeypatch)
         {"app_id": "app-1", "command_id": "command-1"},
         stage="sequence_diagram",
         label="Retrying the sequence diagram",
-        operation=lambda: JSONResponse(
-            content={
-                "validation": {
-                    "sequence_diagram": {"findings": ["missing flow step"]}
-                }
+        operation=lambda: {
+            "validation": {
+                "sequence_diagram": {"findings": ["missing flow step"]}
             }
-        ),
+        },
     )
 
-    assert isinstance(response, JSONResponse)
+    assert response["validation"]["sequence_diagram"]["findings"] == [
+        "missing flow step"
+    ]
     assert events[-1]["metadata"]["progress_status"] == "needs_review"
     assert "1 findings require revision" in events[-1]["metadata"]["progress_detail"]
 
@@ -1717,17 +1703,17 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     calls: list[dict] = []
     events: list[dict] = []
 
-    def fake_create_job(app_id, request):
+    def fake_create_job(app_id, _design, base_package, allow_assumptions):
         calls.append(
             {
                 "app_id": app_id,
-                "base_package": request.base_package,
-                "allow_assumptions": request.allow_assumptions,
+                "base_package": base_package,
+                "allow_assumptions": allow_assumptions,
             }
         )
         return {"job_id": "new-job", "app_id": app_id, "status": "QUEUED"}
 
-    monkeypatch.setattr(workspace_module, "create_job", fake_create_job)
+    monkeypatch.setattr(workspace_module.implementation_worker, "create_job", fake_create_job)
     monkeypatch.setattr(
         workspace_module.repository,
         "append_event",

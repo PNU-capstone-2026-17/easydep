@@ -16,7 +16,6 @@ from app.implementation.agents.verification.build import gradle_command
 from app.implementation.application.feedback import assess_feedback_eligibility
 from app.implementation.application.jobs import (
     ImplementationWorker,
-    InvalidJobState,
     _missing_bce_contract_types,
     _unrepresentable_openapi_error_outcomes,
 )
@@ -881,57 +880,6 @@ def test_public_job_record_hides_host_source_paths() -> None:
     assert public["transmission_request"]["tasks"][0]["sourceArtifacts"] == ["class"]
 
 
-def test_implementation_api_enqueues_job(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.implementation.interfaces.http.artifact_repository.load_state",
-        lambda app_id: {"class_diagram_puml": "class X", "api_spec": {"paths": {}}},
-    )
-    monkeypatch.setattr(
-        "app.implementation.interfaces.http.worker.create_job",
-        lambda app_id, design, base_package, allow_assumptions: {
-            "job_id": "job-1",
-            "app_id": app_id,
-            "status": "QUEUED",
-        },
-    )
-    application = FastAPI()
-    application.include_router(router)
-    response = TestClient(application).post(
-        "/api/implementation/apps/app-1/jobs",
-        json={"base_package": "com.example.orders"},
-    )
-    assert response.status_code == 202
-    assert response.json()["status"] == "QUEUED"
-
-
-def test_implementation_feedback_api_enqueues_revision_job(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.implementation.interfaces.http.artifact_repository.load_state",
-        lambda app_id: {"class_diagram_puml": "class X", "api_spec": {"paths": {}}},
-    )
-    monkeypatch.setattr(
-        "app.implementation.interfaces.http.worker.create_feedback_job",
-        lambda app_id, design, feedback, base_package, allow_assumptions: {
-            "job_id": "feedback-1",
-            "job_type": "FEEDBACK_REVISION",
-            "app_id": app_id,
-            "status": "QUEUED",
-            "feedback": feedback,
-        },
-    )
-    application = FastAPI()
-    application.include_router(router)
-    response = TestClient(application).post(
-        "/api/implementation/apps/app-1/feedback-jobs",
-        json={
-            "feedback": "Reject shipped order cancellation.",
-            "base_package": "com.example.orders",
-        },
-    )
-    assert response.status_code == 202
-    assert response.json()["job_type"] == "FEEDBACK_REVISION"
-
-
 def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> None:
     snapshots = {
         "SOURCE_CODE": {
@@ -964,19 +912,3 @@ def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> 
         "SOURCE_CODE",
         "TEST_CODE",
     }
-
-
-def test_implementation_api_returns_conflict_for_stale_approval(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.implementation.interfaces.http.worker.approve",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            InvalidJobState("Approval does not match")
-        ),
-    )
-    application = FastAPI()
-    application.include_router(router)
-    response = TestClient(application).post(
-        "/api/implementation/jobs/job-1/approval",
-        json={"request_id": "a" * 64, "approved": True},
-    )
-    assert response.status_code == 409

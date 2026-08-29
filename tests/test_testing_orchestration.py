@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import app.testing.runtime.adapter as testing_module
 from app.requirements.resources.application_cloud import infer_application_contract
-from app.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
 from app.testing.runtime.adapter import TestingAdapter as VerificationAdapter
 
 
@@ -112,7 +111,6 @@ def test_compile_failure_routes_to_the_recorded_scaffold_file_owner(tmp_path):
 
     assert diagnostics[0]["code"] == "APP-COMPILE-SCAFFOLD-001"
     assert diagnostics[0]["ownedFailedFiles"] == ["src/main/java/example/Broken.java"]
-    assert DIAGNOSTIC_REPAIR_OWNER[diagnostics[0]["code"]] == ("implementation.scaffold")
 
 
 def test_latest_writer_owns_a_compile_failure_when_logic_modified_scaffold_file(
@@ -194,9 +192,6 @@ def test_member_generated_unowned_test_compile_failure_routes_to_scaffold(tmp_pa
             "ownedFailedFiles": ["src/test/java/example/ControllerTest.java"],
         }
     ]
-    assert DIAGNOSTIC_REPAIR_OWNER[diagnostics[0]["code"]] == ("implementation.scaffold")
-
-
 def test_non_member_unowned_test_compile_failure_routes_to_acceptance_tests(tmp_path):
     application = tmp_path / "run" / "application"
     application.mkdir(parents=True)

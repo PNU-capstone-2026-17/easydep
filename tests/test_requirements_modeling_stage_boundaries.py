@@ -28,7 +28,6 @@ from app.requirements.runtime import telemetry
 from app.requirements.schemas import (
     Actor,
     ActorResult,
-    AnalyzeResponse,
     ClarifyOnlyResult,
     Critique,
     ExpandedRequirementsResult,
@@ -420,58 +419,6 @@ def test_supervisor_and_registry_preserve_the_downstream_rerun_scope(monkeypatch
         "relationships",
         "diagram",
     )
-
-
-def test_http_state_json_and_plantuml_shape_remain_compatible() -> None:
-    """canonical stage 결과가 기존 HTTP/AgentState key와 PlantUML shape에 맞는다."""
-
-    actors = [{
-        "name": "Member",
-        "description": "member",
-        "parent_actor": None,
-        "source_refs": ["R1"],
-    }]
-    modeled_use_cases = [_use_case_item("UC1", "Submit request")]
-    relationship_patch = {
-        "associations": [{"actor": "Member", "use_case_id": "UC1"}],
-        "includes": [],
-        "extends": [],
-        "generalizations": [],
-        "derived_use_cases": [],
-    }
-    plantuml = diagram.render_diagram({
-        "actors": actors,
-        "use_cases": modeled_use_cases,
-        "relationships": relationship_patch,
-    })["diagram"]
-    response = AnalyzeResponse(
-        thread_id="thread-modeling",
-        phase="diagram",
-        status="completed",
-        actors=actors,
-        use_cases=modeled_use_cases,
-        relationships=relationship_patch,
-        diagram=plantuml,
-    ).model_dump(mode="json", exclude_none=True)
-
-    assert {
-        "actors",
-        "use_cases",
-        "use_case_specs",
-        "relationships",
-        "diagram",
-    } <= set(AgentState.__annotations__)
-    assert tuple(response) == (
-        "thread_id",
-        "phase",
-        "status",
-        "actors",
-        "use_cases",
-        "relationships",
-        "diagram",
-    )
-    assert response["diagram"].startswith("@startuml\n")
-    assert response["diagram"].endswith("\n@enduml")
 
 
 def _contains_unbounded_annotation(annotation: object) -> bool:

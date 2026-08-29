@@ -622,12 +622,12 @@ def test_rewinding_to_a_stage_not_reached_yet_is_refused(graph):
 
 
 def test_serving_import_chain_pulls_in_the_checkpoint_tables():
-    """api.py를 import하면 design_* 테이블이 메타데이터에 올라간다.
+    """service.py를 import하면 design_* 테이블이 메타데이터에 올라간다.
 
     올라가지 않으면 서버는 뜨는데 init_db()가 테이블을 안 만들고, 첫 /design/start 가
     돌 때까지 아무도 모른다.
     """
-    import app.design.api  # noqa: F401 - 서빙 경로의 진입점
+    import app.design.service  # noqa: F401 - Workspace가 사용하는 설계 진입점
     from app.db.models import Base
 
     assert {

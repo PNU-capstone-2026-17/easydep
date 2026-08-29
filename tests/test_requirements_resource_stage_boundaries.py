@@ -23,7 +23,6 @@ from app.requirements.resources import (
 )
 from app.requirements.runtime import telemetry
 from app.requirements.schemas import (
-    AnalyzeResponse,
     CloudConstraintExtraction,
     DeploymentNeed,
     DeploymentNeedsResult,
@@ -238,8 +237,8 @@ def test_cloud_input_public_seam_overlaps_branches_and_propagates_context() -> N
     }
 
 
-def test_request_state_and_api_resource_json_shape_is_preserved() -> None:
-    """resource 경계 이동이 AnalyzeRequest·AgentState·AnalyzeResponse JSON을 바꾸지 않는다."""
+def test_request_and_state_expose_resource_inputs_and_outputs() -> None:
+    """Workspace 입력과 그래프 상태에 resource 필드가 공개되는지 확인한다."""
 
     request = AnalyzeRequest.model_validate(
         {
@@ -264,33 +263,6 @@ def test_request_state_and_api_resource_json_shape_is_preserved() -> None:
         "resource_intake",
         "resource_spec",
     } <= set(AgentState.__annotations__)
-
-    response = AnalyzeResponse(
-        thread_id="thread-1",
-        phase="resource_spec",
-        status="completed",
-        deployment_needs={"ingress": {"decision": "accepted"}},
-        capability_contract={
-            "schemaVersion": "CapabilityContract/v1",
-            "capabilities": [],
-            "questions": [],
-        },
-        resource_spec={"schemaVersion": "4", "workloads": ["vm"]},
-        resource_intake={"valid": True, "questions": []},
-    )
-    assert response.model_dump(mode="json", exclude_none=True) == {
-        "thread_id": "thread-1",
-        "phase": "resource_spec",
-        "status": "completed",
-        "deployment_needs": {"ingress": {"decision": "accepted"}},
-        "capability_contract": {
-            "schemaVersion": "CapabilityContract/v1",
-            "capabilities": [],
-            "questions": [],
-        },
-        "resource_spec": {"schemaVersion": "4", "workloads": ["vm"]},
-        "resource_intake": {"valid": True, "questions": []},
-    }
 
 
 def test_resource_stage_import_direction_and_public_annotations_are_bounded() -> None:

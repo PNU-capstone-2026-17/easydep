@@ -1,7 +1,7 @@
 """Pydantic 스키마 모음.
 
 두 종류가 있다:
-  1. HTTP API 계약  — AnalyzeRequest / AnalyzeResponse
+  1. Workspace가 요구사항 실행에 넘기는 입력 계약 — AnalyzeRequest
   2. LLM 구조화 출력 — Assessment / ClarifyOnlyResult 등
 LLM 구조화 출력은 graph.py에서 ChatOpenAI.with_structured_output(...) 에 넘겨,
 gpt-oss-120b가 스키마에 맞는 JSON을 반환하도록 강제하는 데 쓴다.
@@ -30,7 +30,6 @@ from app.requirements.contracts.request import (
 from app.requirements.contracts.request import (
     ResourceAnswer as ResourceAnswer,
 )
-from app.validation import BlockingFinding, RepairStateSummary
 
 # FR/NFR 라벨 타입 (BERT 매핑과 동일: 0=NFR, 1=FR)
 ReqType = Literal["FR", "NFR"]
@@ -658,73 +657,6 @@ class CloudConstraintExtraction(BaseModel):
     data_residency_evidence: str = ""
     ambiguous_fields: list[str] = Field(default_factory=list)
     understanding: str = ""
-
-
-# ----------------------------------------------------------------------------
-# HTTP API 스키마
-# ----------------------------------------------------------------------------
-class RequirementItemOut(BaseModel):
-    """Final requirement with stable identity, BERT label, and RAW provenance."""
-
-    id: str
-    text: str
-    type: ReqType
-    draft_ref: str | None = None
-    source_refs: list[str] = Field(default_factory=list)
-
-
-class AnalyzeResponse(BaseModel):
-    thread_id: str
-    phase: str
-    status: Literal["need_clarification", "need_feedback", "completed"]
-    # status == need_clarification 일 때 채워짐
-    questions: list[str] | None = None
-    # status == need_feedback 일 때 채워짐(대화형 피드백 게이트)
-    feedback_prompt: str | None = None
-    feedback_summary: object | None = None
-    # 이 게이트에서 화면이 구조화 편집(FeedbackEdit)을 만들 때 쓸 재료.
-    # edit_stage는 이 게이트가 재생성할 수 있는 단계, edit_targets는 고를 수 있는 항목 id다.
-    # 화면이 이걸 쓰면 의도 분류 LLM 호출이 생략된다.
-    edit_stage: str | None = None
-    edit_targets: list[str] | None = None
-    # 이 게이트가 함께 묻는 `RESOURCE_SPEC` 되묻기. 각 항목은 {field, kind, why,
-    # question, seen}이고, 화면은 `field`를 키로 `resource_answers`를 만들어 보낸다.
-    resource_questions: list[dict] | None = None
-    # Handoff blockers are structured so workspace/UI do not parse prose.
-    blocking_findings: list[BlockingFinding] | None = None
-    requires_revision: bool | None = None
-    repair_state: RepairStateSummary | None = None
-    # status == completed 일 때 채워짐 (step1)
-    requirements: list[RequirementItemOut] | None = None
-    # step2~4 산출물 — 파이프라인은 항상 실행되지만, 게이트 interrupt로 중간에 멈춘
-    # 시점에는 아직 안 만들어진 단계의 필드가 None일 수 있다.
-    # 각 항목의 상세 구조는 상단의 Actor/UseCase/UseCaseSpec/RelationshipModel 스키마 및
-    # state.py 의 대응 TypedDict 참조. (출력 전용이라 dict 그대로 통과시킨다.)
-    # 클라우드 층 산출물 둘. **요구사항과 나란한 별도 산출물이지 명세의 일부가 아니다.**
-    # 여기 적지 않으면 조용히 사라진다 — pydantic이 모르는 키를 버리므로, 파이프라인이
-    # 만들어도 화면은 받을 수 없으므로 출력 필드로 명시한다.
-    deployment_needs: dict | None = None  # 요구사항 ID 기반 제네릭 배포 필요사항
-    capability_contract: dict | None = None  # CapabilityContract/v1 selective decisions
-    resource_spec: dict | None = None  # RESOURCE_SPEC — 계약을 만족할 때만 있다
-    resource_intake: dict | None = None  # 초안·질문·근거·버린 후보(A 트랙)
-    actors: list[dict] | None = None  # ActorItem
-    use_cases: list[dict] | None = None  # UseCaseItem
-    coverage: dict | None = None  # check_coverage 결과
-    traceability: dict | None = None  # requirement id 중심 realizes/constrains RTM
-    model_review: dict | None = None  # review_model(독립 의미 검증자)의 판정
-    use_case_specs: list[dict] | None = None  # UseCaseSpecItem (Cockburn 명세)
-    spec_report: dict | None = None  # check_specs 검증 집계
-    relationships: dict | None = None  # associations/includes/extends/generalizations/derived
-    relationship_report: dict | None = None  # check_relationships 검증 집계
-    diagram: str | None = None  # PlantUML 텍스트
-    # 이번 응답에서 산출물 저장소에 새 버전으로 기록된 stage 이름들.
-    # app_id를 보냈을 때만 채워지며, 화면이 "무엇이 저장됐는지"를 표시하는 데 쓴다.
-    # 내용이 이전과 같으면 저장하지 않으므로 빈 리스트일 수 있다.
-    saved_stages: list[str] | None = None
-    # 이번 호출에서 실제로 일어난 일: LLM 호출 수·토큰·폴백 횟수와 **저하 목록**.
-    # degradations가 비어 있지 않으면 산출물 일부가 검증을 못 거쳤다는 뜻이므로,
-    # 화면은 결과를 그대로 신뢰해서는 안 된다. (app/requirements/runtime/telemetry.py)
-    telemetry: dict | None = None
 
 
 # `ResourceFieldRead`·`ResourceReading`은 없앴다(2026-07-29). 제약 구조화를 **한 번
