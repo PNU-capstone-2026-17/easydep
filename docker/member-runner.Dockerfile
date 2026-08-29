@@ -38,11 +38,6 @@ RUN mkdir -p /opt/easydep \
       e03186835022ca02da4aa95e3967b6a3b6d44c2e5f7606e6d5c22466f519c757 \
       /opt/easydep/openapi-generator-7.14.0.jar | sha256sum --check --status
 
-# BCE generator dependencies are embedded in the runner so its read-only
-# workspace bind mount never needs a host node_modules directory.
-COPY app/implementation/tools/puml2code-bce /opt/easydep/puml2code-bce
-RUN cd /opt/easydep/puml2code-bce && npm ci --omit=dev
-
 RUN printf '%s\n' '#!/bin/sh' \
       'exec python -B -m app.implementation.runtime.runner_docker_shim "$@"' \
       > /usr/local/bin/docker \

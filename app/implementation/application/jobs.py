@@ -267,6 +267,19 @@ class ImplementationWorker:
             )
             if not isinstance(design.get(key), dict) or not design[key]
         ]
+        class_model = design.get("extracted_bce_classes")
+        has_entity = bool(
+            isinstance(class_model, dict)
+            and any(
+                isinstance(item, dict) and item.get("stereotype") == "Entity"
+                for item in class_model.get("Classes", [])
+            )
+        )
+        if has_entity and (
+            not isinstance(design.get("erd_bce_classes"), dict)
+            or not design["erd_bce_classes"]
+        ):
+            missing_models.append("erd_bce_classes")
         readiness = _append_bce_contract_type_report(
             design_readiness_report(design), design.get("class_diagram_puml")
         )
@@ -283,7 +296,7 @@ class ImplementationWorker:
                 base_package,
                 _missing_openapi_operation_report(readiness),
             )
-        if missing_models and not self._has_substantial_rendered_design(design):
+        if missing_models:
             return self._create_design_blocked_job(
                 app_id, base_package, self._missing_design_model_report(missing_models)
             )
@@ -301,23 +314,6 @@ class ImplementationWorker:
         self._write(record)
         self.executor.submit(self._plan, job_id)
         return self.public_record(record)
-
-    @staticmethod
-    def _has_substantial_rendered_design(design: dict[str, Any]) -> bool:
-        """최종 출력된 설계 산출물만으로도 구현을 진행할 수 있는지 판단한다.
-
-        구조화 설계 모델은 자세한 준비도 검사에 유용하지만, 모델이 없다는 이유만으로 완성된
-        클래스 다이어그램과 OpenAPI까지 버리지는 않는다. 구현기는 두 최종 산출물을 직접
-        사용할 수 있으며 남은 계약 문제를 보고서에 기록한다. 내용이 거의 없는 placeholder나
-        HTTP operation이 없는 OpenAPI는 사용할 수 없으므로 계속 차단한다.
-        """
-        class_diagram = design.get("class_diagram_puml")
-        api_spec = design.get("api_spec")
-        if not isinstance(class_diagram, str) or "@startuml" not in class_diagram:
-            return False
-        if not isinstance(api_spec, dict):
-            return False
-        return _has_rendered_openapi_operation(api_spec)
 
     def _create_design_blocked_job(
         self, app_id: str, base_package: str, readiness: dict[str, Any]

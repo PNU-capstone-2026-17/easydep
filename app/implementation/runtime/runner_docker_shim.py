@@ -22,7 +22,6 @@ OPENAPI_JARS = {
     ),
 }
 GRADLE_IMAGES = {"gradle:8.14.2-jdk21"}
-PUML2CODE_IMAGE = "easydep/puml2code-bce:0.2.0"
 
 
 def translate(arguments: list[str]) -> tuple[list[str], Path | None, dict[str, str]]:
@@ -78,12 +77,6 @@ def translate(arguments: list[str]) -> tuple[list[str], Path | None, dict[str, s
         if not command or command[0] not in {"node", "npm"}:
             raise ValueError("node:20에서는 node 또는 npm만 허용합니다")
         return command, working_directory, environment
-    if image == PUML2CODE_IMAGE:
-        return [
-            "node",
-            "/opt/easydep/puml2code-bce/bin/puml2code",
-            *command,
-        ], working_directory, environment
     if image in OPENAPI_JARS:
         return ["java", "-jar", str(OPENAPI_JARS[image]), *command], working_directory, environment
     if image in GRADLE_IMAGES:

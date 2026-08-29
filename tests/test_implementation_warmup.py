@@ -9,9 +9,6 @@ from app.implementation.generation.warmup import warmup_implementation_runtime
 def test_startup_warmup_uses_isolated_gradle_home(
     monkeypatch, tmp_path: Path
 ) -> None:
-    tool_root = tmp_path / "app" / "implementation" / "tools" / "puml2code-bce"
-    tool_root.mkdir(parents=True)
-    (tool_root / "Dockerfile").write_text("FROM node:20\n", encoding="utf-8")
     commands: list[list[str]] = []
 
     def completed(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
@@ -45,4 +42,6 @@ def test_startup_warmup_uses_isolated_gradle_home(
     assert warmup_source.is_file()
     assert gradle[gradle.index("-e") + 1] == "GRADLE_USER_HOME=/tmp/easydep-gradle-home"
     assert "-Dorg.gradle.vfs.watch=false" in gradle
+    assert any("install" in command and "--package-lock-only" in command for command in commands)
+    assert not any("puml2code" in argument for command in commands for argument in command)
     assert (tmp_path / ".easydep" / "implementation-warmup" / "report.json").is_file()

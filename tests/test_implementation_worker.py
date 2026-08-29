@@ -28,6 +28,7 @@ from app.implementation.interfaces.schemas import (
     CreateImplementationFeedbackJobRequest,
     CreateImplementationJobRequest,
 )
+from tests.class_design_fixtures import typed_class_model_payload
 
 
 def test_job_contract_preserves_automated_placeholder_policy() -> None:
@@ -483,6 +484,9 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
                 "@startuml UC2\nA -> B : second()\n@enduml"
             ),
             "api_spec": {"openapi": "3.0.3", "paths": {}},
+            "extracted_bce_classes": typed_class_model_payload(),
+            "sequence_diagram_model": {"Diagrams": []},
+            "api_spec_model": {"Endpoints": []},
             "erd_puml": "@startuml\nentity orders\n@enduml",
             "deployment_diagram_puml": "@startuml\nnode app\n@enduml",
             "deployment_diagram_bundle": {
@@ -499,16 +503,17 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     job = json.loads(path.read_text(encoding="utf-8"))
     assert set(job["inputs"]) == {
         "bceClass", "sequence", "openapi", "erd", "deployment",
-        "deploymentBundle", "cloud",
+        "deploymentBundle", "cloud", "bceModel", "sequenceModel", "apiModel",
     }
     assert job["generation"]["basePackage"] == "com.example.orders"
-    assert job["requiredInputs"] == ["bceClass", "sequence", "openapi"]
+    assert job["requiredInputs"] == [
+        "bceClass", "sequence", "openapi", "bceModel", "sequenceModel", "apiModel",
+    ]
     assert (tmp_path / job["inputs"]["openapi"]).is_file()
     sequence_path = tmp_path / job["inputs"]["sequence"]
     assert sequence_path.name == "sequence-diagrams.puml"
     assert sequence_path.read_text(encoding="utf-8").count("@startuml") == 2
-    assert job["tools"]["puml2codeRoot"].startswith("app/implementation/tools/")
-    assert "openapiGeneratorJar" not in job["tools"]
+    assert "tools" not in job
     assert job["progressPath"].endswith("generation-progress.json")
 
 
@@ -703,34 +708,6 @@ def test_initial_job_blocks_lossy_erd_bce_identifier_contract(
     assert record["status"] == "NEEDS_INPUT"
     assert record["workflow"]["currentPhase"] == "design-validation"
     assert "erd.surrogate-key-collides" in record["error"]
-
-
-def test_initial_job_proceeds_with_rendered_artifacts_when_derived_models_are_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    implementation_worker = ImplementationWorker(settings(tmp_path))
-    job_path = tmp_path / "prepared" / "job.json"
-    job_path.parent.mkdir(parents=True)
-    job_path.write_text("{}", encoding="utf-8")
-    implementation_worker.client.prepare_job = lambda *_args, **_kwargs: job_path
-    monkeypatch.setattr(implementation_worker.executor, "submit", lambda *_args, **_kwargs: None)
-    try:
-        record = implementation_worker.create_job(
-            "app-1",
-            {
-                "class_diagram_puml": "@startuml\nclass Cart <<Control>> {}\n@enduml",
-                "api_spec": {
-                    "openapi": "3.1.0",
-                    "paths": {"/carts": {"post": {"operationId": "createCart"}}},
-                },
-            },
-            "com.example",
-            False,
-        )
-    finally:
-        implementation_worker.shutdown()
-
-    assert record["status"] == "QUEUED"
 
 
 def test_planning_keeps_validation_needs_input_outcome_resumable(

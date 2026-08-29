@@ -1518,7 +1518,6 @@ paths:
                         "openapi": "openapi.yaml",
                     },
                     "generation": {"basePackage": "com.example.orders"},
-                    "tools": {"puml2codeRoot": ".", "openapiGeneratorJar": "bce.puml"},
                 }),
                 encoding="utf-8",
             )
@@ -2914,10 +2913,6 @@ PurchaseController -> ErrorScreen : showError(\"failed\")
                         "workspaceRoot": ".",
                         "inputs": {"bceClass": "bce.puml", "sequence": "sequence.puml"},
                         "generation": {"basePackage": "com.example.demo"},
-                        "tools": {
-                            "puml2codeRoot": ".",
-                            "openapiGeneratorJar": "bce.puml",
-                        },
                     }
                 ),
                 encoding="utf-8",
@@ -3015,10 +3010,6 @@ PurchaseController -> ErrorScreen : showError(\"failed\")
                         "workspaceRoot": ".",
                         "inputs": {"bceClass": "bce.puml", "sequence": "sequence.puml"},
                         "generation": {"basePackage": "com.example.demo"},
-                        "tools": {
-                            "puml2codeRoot": ".",
-                            "openapiGeneratorJar": "bce.puml",
-                        },
                     }
                 ),
                 encoding="utf-8",
@@ -3100,7 +3091,6 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                         "workspaceRoot": ".",
                         "inputs": {"bceClass": "bce.puml", "sequence": "sequence.puml", "erd": "erd.puml"},
                         "generation": {"basePackage": "com.example.demo"},
-                        "tools": {"puml2codeRoot": ".", "openapiGeneratorJar": "bce.puml"},
                     }
                 ),
                 encoding="utf-8",
@@ -3158,10 +3148,6 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                             "openapi": "openapi.yaml",
                         },
                         "generation": {"basePackage": "com.example.demo"},
-                        "tools": {
-                            "puml2codeRoot": ".",
-                            "openapiGeneratorJar": "bce.puml",
-                        },
                     }
                 ),
                 encoding="utf-8",
@@ -3272,7 +3258,6 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                         "openapi": "openapi.yaml",
                     },
                     "generation": {"basePackage": "com.example.products"},
-                    "tools": {"puml2codeRoot": ".", "openapiGeneratorJar": "bce.puml"},
                 }),
                 encoding="utf-8",
             )
@@ -3329,10 +3314,6 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                             "openapi": "openapi.yaml",
                         },
                         "generation": {"basePackage": "com.example.demo"},
-                        "tools": {
-                            "puml2codeRoot": ".",
-                            "openapiGeneratorJar": "bce.puml",
-                        },
                     }
                 ),
                 encoding="utf-8",
@@ -4244,10 +4225,6 @@ class Term <<Entity>> {
                         "name": "safe",
                         "workspaceRoot": ".",
                         "inputs": {"bceClass": "diagram.puml"},
-                        "tools": {
-                            "puml2codeRoot": ".",
-                            "openapiGeneratorJar": "diagram.puml",
-                        },
                     }
                 ),
                 encoding="utf-8",

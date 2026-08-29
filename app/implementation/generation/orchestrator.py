@@ -7,11 +7,11 @@ import os
 import re
 import shutil
 import subprocess
-import threading
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from app.config import settings
@@ -38,12 +38,15 @@ from ..planning.design_context import (
 )
 from ..workflows.conformance import capture_generated_contracts
 from .frontend import generate_frontend_project
-
+from .java_scaffold import (
+    JAVA_SCAFFOLDER_VERSION,
+    JavaScaffoldInput,
+    build_java_scaffold_trace,
+    render_java_scaffold,
+)
 
 OPTIONAL_DESIGN_INPUTS = ("erd", "deployment", "cloud")
-BCE_GENERATOR_VERSION = "0.2.0"
 IMPLEMENTATION_PIPELINE_VERSION = "0.6.0-strict-release"
-PUML2CODE_IMAGE = "easydep/puml2code-bce:0.2.0"
 OPENAPI_GENERATOR_IMAGE = "openapitools/openapi-generator-cli:v7.24.0"
 GRADLE_GENERATOR_IMAGE = "gradle:8.14.2-jdk21"
 # A Docker bind mount can keep a directory handle open for a short time after
@@ -84,7 +87,6 @@ def load_job(path: Path) -> JobSpec:
 
     inputs = {name: resolve(value) for name, value in data.get("inputs", {}).items()}
     generation = data.get("generation", {})
-    tools = data.get("tools", {})
     agent = data.get("agent", {})
     return JobSpec(
         job_type=str(data.get("jobType", "INITIAL_IMPLEMENTATION")),
@@ -99,11 +101,6 @@ def load_job(path: Path) -> JobSpec:
         allow_assumptions=bool(generation.get("allowAssumptions", False)),
         verify_compile=bool(data.get("verification", {}).get("compile", True)),
         output_root=resolve(data.get("outputRoot", "generated/runs")),
-        puml2code_root=resolve(
-            tools.get(
-                "puml2codeRoot", "app/implementation/tools/puml2code-bce"
-            )
-        ),
         agent_mode=agent.get("mode", "plan-only"),
         agent_model=agent.get(
             "model", "nvidia_nim/openai/gpt-oss-120b"
@@ -140,7 +137,7 @@ class _ManifestBuffer:
     def __init__(self) -> None:
         self.commands: list[CommandEvidence] = []
         self.diagnostics: list[Diagnostic] = []
-        self.tools: dict[str, object] = {}
+        self.tools: dict[str, dict[str, str]] = {}
 
 
 class PrototypeOrchestrator:
@@ -532,16 +529,6 @@ class PrototypeOrchestrator:
                         )
                     )
 
-        required_tools = {} if self.spec.job_type == "FEEDBACK_REVISION" else {
-            "puml2code": self.spec.puml2code_root / "bin" / "puml2code",
-            "puml2codeDockerfile": self.spec.puml2code_root / "Dockerfile",
-        }
-        for name, path in required_tools.items():
-            if not path.is_file():
-                self.manifest.diagnostics.append(
-                    Diagnostic("MISSING_TOOL", "ERROR", f"Missing tool {name}: {path}")
-                )
-
     def _combined_input_hash(self) -> str:
         digest = hashlib.sha256()
         digest.update(self.spec.name.encode())
@@ -556,7 +543,7 @@ class PrototypeOrchestrator:
         digest.update(str(self.spec.agent_top_p).encode())
         digest.update(str(self.spec.agent_max_output_tokens).encode())
         digest.update(str(self.spec.agent_reasoning_budget).encode())
-        digest.update(BCE_GENERATOR_VERSION.encode())
+        digest.update(JAVA_SCAFFOLDER_VERSION.encode())
         digest.update(OPENAPI_GENERATOR_IMAGE.encode())
         digest.update(IMPLEMENTATION_PIPELINE_VERSION.encode())
         # Bind a run to the actual planner/runtime implementation, not only a
@@ -566,20 +553,6 @@ class PrototypeOrchestrator:
         for source in sorted(implementation_root.rglob("*.py")):
             digest.update(source.relative_to(implementation_root).as_posix().encode())
             digest.update(sha256_file(source).encode())
-        for tool in (
-            self.spec.puml2code_root / "package.json",
-            self.spec.puml2code_root / "package-lock.json",
-            self.spec.puml2code_root / "Dockerfile",
-        ):
-            if tool.is_file():
-                digest.update(tool.relative_to(self.spec.puml2code_root).as_posix().encode())
-                digest.update(sha256_file(tool).encode())
-        generator_source = self.spec.puml2code_root / "src"
-        if generator_source.is_dir():
-            for source in sorted(generator_source.rglob("*")):
-                if source.is_file():
-                    digest.update(source.relative_to(self.spec.puml2code_root).as_posix().encode())
-                    digest.update(sha256_file(source).encode())
         for name in sorted(self.manifest.inputs):
             digest.update(name.encode())
             digest.update(self.manifest.inputs[name]["sha256"].encode())
@@ -611,7 +584,7 @@ class PrototypeOrchestrator:
             "schemaVersion": PROGRESS_SCHEMA,
             "status": status,
             "message": message,
-            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "updatedAt": datetime.now(UTC).isoformat(),
         }
         temporary_name: str | None = None
         try:
@@ -642,55 +615,44 @@ class PrototypeOrchestrator:
                 except OSError:
                     pass
 
-    def _ensure_puml2code_image(self) -> None:
-        """Build the BCE generator image with its npm dependencies included.
-
-        The repository bind mount intentionally contains only tracked source;
-        `node_modules` is ignored.  Building from the tool directory keeps the
-        generator's runtime dependencies out of the host workspace and makes
-        the command work on a fresh Windows checkout.
-        """
-        if os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") == "1":
-            # The member runner embeds the exact same tool image contents and
-            # rewrites this invocation through runner_docker_shim.
-            return
-        dockerfile = self.spec.puml2code_root / "Dockerfile"
-        self._run_command(
-            "puml2code-bce-image",
-            [
-                "docker",
-                "build",
-                "--tag",
-                PUML2CODE_IMAGE,
-                "--file",
-                str(dockerfile),
-                str(self.spec.puml2code_root),
-            ],
-            self.spec.workspace_root,
-        )
-
     def _generate_bce(self, java_root: Path) -> None:
-        bce_package = f"{self.spec.base_package}.bce"
-        self._ensure_puml2code_image()
-        command = [
-            "docker", "run", "--rm",
-            "-v", self._workspace_volume(),
-            "-w", CONTAINER_WORKSPACE.as_posix(),
-            PUML2CODE_IMAGE,
-            "-i",
-            self._container_path(self.spec.inputs["bceClass"]),
-            "-l",
-            "java",
-            "-p",
-            bce_package,
-            "-o",
-            self._container_path(java_root),
-        ]
-        self._run_command("puml2code-bce", command, self.spec.puml2code_root)
-        self._sink().tools["puml2code-bce"] = {
-            "upstream": "https://github.com/jupe/puml2code",
-            "forkVersion": BCE_GENERATOR_VERSION,
-            "image": PUML2CODE_IMAGE,
+        """구조화된 BCE JSON을 검증하고 Java source root 아래에 직접 쓴다."""
+        def read_json(name: str) -> dict[str, object]:
+            return json.loads(self.spec.inputs[name].read_text(encoding="utf-8"))
+
+        erd_path = self.spec.inputs.get("erdBceModel")
+        scaffold = JavaScaffoldInput.model_validate({
+            "bceModel": read_json("bceModel"),
+            "sequenceModel": read_json("sequenceModel"),
+            "apiModel": read_json("apiModel"),
+            "erdBceModel": (
+                json.loads(erd_path.read_text(encoding="utf-8"))
+                if erd_path and erd_path.is_file()
+                else None
+            ),
+            "basePackage": self.spec.base_package,
+            "javaVersion": 21,
+            "applicationName": self.spec.name,
+        })
+        files = render_java_scaffold(scaffold)
+        for relative, content in files.items():
+            target = java_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8", newline="\n")
+        trace_path = java_root.parents[3] / "reports" / "java-scaffold-trace.json"
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_path.write_text(
+            json.dumps(
+                build_java_scaffold_trace(scaffold, files),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self._sink().tools["typed-java-scaffolder"] = {
+            "version": JAVA_SCAFFOLDER_VERSION,
+            "input": "BCEModel",
+            "javaVersion": "21",
         }
 
     def _generate_openapi(self, application: Path) -> None:

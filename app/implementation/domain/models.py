@@ -36,7 +36,6 @@ class JobSpec:
     allow_assumptions: bool
     verify_compile: bool
     output_root: Path
-    puml2code_root: Path
     agent_mode: str
     agent_model: str
     agent_base_url: str

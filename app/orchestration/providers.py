@@ -423,6 +423,10 @@ class MemberScaffoldProvider:
                 "sequence_diagram_puml": artifacts.get("sequence_diagram") or "",
                 "api_spec": artifacts.get("api_spec") or {},
                 "erd_puml": artifacts.get("erd") or "",
+                "extracted_bce_classes": design.get("extracted_bce_classes") or {},
+                "sequence_diagram_model": design.get("sequence_diagram_model") or {},
+                "api_spec_model": design.get("api_spec_model") or {},
+                "erd_bce_classes": design.get("erd_bce_classes") or {},
                 "deployment_diagram_puml": payload.get("cloud_design_result", {}).get(
                     "deployment_diagram_puml", ""
                 ),

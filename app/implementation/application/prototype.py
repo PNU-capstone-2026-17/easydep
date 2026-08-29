@@ -138,6 +138,13 @@ class PrototypeClient:
 
         bce_puml = re.sub(r"\(\s*\.{3}\s*\)", "()", str(design.get("class_diagram_puml") or ""))
         write("bceClass", "class-diagram.puml", bce_puml)
+        # 구현용 Java 계약은 표시용 PlantUML을 다시 parsing하지 않고 설계 단계가 저장한
+        # 구조화 모델에서 만든다. 네 파일을 같은 job snapshot에 고정하면 생성 도중 다른
+        # 설계 버전이 섞이는 것도 막을 수 있다.
+        write("bceModel", "class-model.json", design.get("extracted_bce_classes"))
+        write("sequenceModel", "sequence-model.json", design.get("sequence_diagram_model"))
+        write("apiModel", "api-model.json", design.get("api_spec_model"))
+        write("erdBceModel", "erd-class-model.json", design.get("erd_bce_classes"))
         # 하나의 파일에 유스케이스별 @startuml 블록을 모두 보존한다. 구현 계획·정합성
         # 검사는 이 입력 전체를 순회하므로 모든 유스케이스 호출 흐름이 소스 생성에 반영된다.
         write("sequence", "sequence-diagrams.puml", design.get("sequence_diagram_puml"))
@@ -152,19 +159,22 @@ class PrototypeClient:
             design.get("deployment_diagram_bundle"),
         )
         write("cloud", "resource-spec.json", design.get("resource_spec"))
+        required_inputs = [
+            "bceClass", "sequence", "openapi",
+            "bceModel", "sequenceModel", "apiModel",
+        ]
+        if "erdBceModel" in inputs:
+            required_inputs.append("erdBceModel")
         job = {
             "name": f"easydep-{app_id[:8]}",
             "appId": app_id,
             "workspaceRoot": str(self.settings.repository_root),
             "inputs": inputs,
-            "requiredInputs": ["bceClass", "sequence", "openapi"],
+            "requiredInputs": required_inputs,
             "outputRoot": (root / "generated" / "runs").relative_to(self.settings.repository_root).as_posix(),
             "generation": {"basePackage": base_package, "allowAssumptions": allow_assumptions},
             "verification": {"compile": True},
             "progressPath": progress_path.relative_to(self.settings.repository_root).as_posix(),
-            "tools": {
-                "puml2codeRoot": "app/implementation/tools/puml2code-bce",
-            },
             "agent": {
                 "mode": "openhands",
                 "model": self.settings.model,

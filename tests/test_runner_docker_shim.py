@@ -73,15 +73,38 @@ def test_runner_shim_accepts_the_pinned_backend_openapi_image():
     ]
 
 
-def test_runner_shim_uses_its_embedded_puml2code_tool():
-    command, _, _ = translate(
+def test_runner_shim_keeps_frontend_node_tool():
+    command, cwd, _ = translate(
         [
             "run",
             "--rm",
-            "easydep/puml2code-bce:0.2.0",
-            "-i",
-            "/workspace/design/class.puml",
+            "-v",
+            "/easydep-workspace/frontend:/easydep-workspace/frontend",
+            "-w",
+            "/easydep-workspace/frontend",
+            "node:20",
+            "npm",
+            "install",
         ]
     )
 
-    assert command[:2] == ["node", "/opt/easydep/puml2code-bce/bin/puml2code"]
+    assert command == ["npm", "install"]
+    assert cwd is not None
+    assert cwd.as_posix() == "/easydep-workspace/frontend"
+
+
+def test_runner_shim_rejects_removed_puml2code_image():
+    try:
+        translate(
+            [
+                "run",
+                "--rm",
+                "easydep/puml2code-bce:0.2.0",
+                "-i",
+                "/workspace/design/class.puml",
+            ]
+        )
+    except ValueError as error:
+        assert "허용하지 않은" in str(error)
+    else:
+        raise AssertionError("removed puml2code image was accepted")

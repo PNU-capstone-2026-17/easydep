@@ -10,17 +10,12 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .frontend_scaffold import react_scaffold_files
-from .orchestrator import (
-    GRADLE_GENERATOR_IMAGE,
-    OPENAPI_GENERATOR_IMAGE,
-    PUML2CODE_IMAGE,
-)
-
+from .orchestrator import GRADLE_GENERATOR_IMAGE, OPENAPI_GENERATOR_IMAGE
 
 WARMUP_SCHEMA = "easydep-implementation-warmup/v1alpha1"
 WARMUP_GRADLE_BUILD = """plugins {
@@ -93,22 +88,6 @@ def warmup_implementation_runtime(
         )
         return ok
 
-    if os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") != "1":
-        tool_root = repository_root / "app" / "implementation" / "tools" / "puml2code-bce"
-        run(
-            "build-puml2code-image",
-            [
-                "docker",
-                "build",
-                "--tag",
-                PUML2CODE_IMAGE,
-                "--file",
-                str(tool_root / "Dockerfile"),
-                str(tool_root),
-            ],
-            repository_root,
-        )
-
     # Immutable image tags are checked locally first, so a normal server restart
     # does not wait on a registry request just to learn an image is already warm.
     for image in (OPENAPI_GENERATOR_IMAGE, GRADLE_GENERATOR_IMAGE):
@@ -174,7 +153,7 @@ def warmup_implementation_runtime(
 
     report = {
         "schemaVersion": WARMUP_SCHEMA,
-        "completedAt": datetime.now(timezone.utc).isoformat(),
+        "completedAt": datetime.now(UTC).isoformat(),
         "status": "SUCCEEDED" if all(step["status"] == "SUCCEEDED" for step in steps) else "PARTIAL",
         "steps": steps,
     }

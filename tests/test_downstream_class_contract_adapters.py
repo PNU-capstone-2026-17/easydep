@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import copy
-import shutil
-import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -14,10 +11,6 @@ from app.design.services.api_spec.normalization import control_contracts
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.erd.mapping import build_logical_model
 from app.design.services.sequence_diagram.projection import project_sequence_model
-
-_PUML2CODE_ROOT = Path("app/implementation/tools/puml2code-bce")
-_PUML2CODE_READY = (_PUML2CODE_ROOT / "src/parser/plantuml.js").is_file()
-
 
 def _collaboration_model() -> dict:
     return BCEModel.model_validate({
@@ -392,117 +385,3 @@ def test_api_normalization_reads_control_signature_from_typed_contract():
     )
 
     assert types[("OrderControl", "place")] == {"request": "OrderRequest"}
-
-
-@pytest.mark.skipif(
-    shutil.which("node") is None or not _PUML2CODE_READY,
-    reason="Node.js and generated puml2code parser are required",
-)
-def test_puml2code_generates_value_object_and_enum_java_sources():
-    tool_root = _PUML2CODE_ROOT
-    script = r'''
-const Puml = require('./src');
-const source = `@startuml
-package "Data Types" {
-class Money <<ValueObject>> {
-  amount : BigDecimal
-}
-enum PaymentStatus { PENDING, PAID }
-}
-@enduml`;
-Puml.fromString(source).generate('java', {basePackage: 'example.types'})
-  .then(output => output.print(value => process.stdout.write(value + '\n')))
-  .catch(error => { console.error(error); process.exitCode = 1; });
-'''
-    result = subprocess.run(
-        ["node", "-e", script], cwd=tool_root, text=True, capture_output=True, check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "public final class Money" in result.stdout
-    assert "private final BigDecimal amount" in result.stdout
-    assert "public enum PaymentStatus" in result.stdout
-
-
-@pytest.mark.skipif(
-    shutil.which("node") is None or not _PUML2CODE_READY,
-    reason="Node.js and generated puml2code parser are required",
-)
-def test_puml2code_generates_typed_entity_state_transition():
-    tool_root = _PUML2CODE_ROOT
-    script = r'''
-const Puml = require('./src');
-const source = `@startuml
-class CalculatorService <<Entity>> {
-  - status : ServiceStatus
-  + stop(): void
-}
-enum ServiceStatus { RUNNING, STOPPED }
-@enduml`;
-Puml.fromString(source).generate('java', {basePackage: 'example.types'})
-  .then(output => output.print(value => process.stdout.write(value + '\n')))
-  .catch(error => { console.error(error); process.exitCode = 1; });
-'''
-    result = subprocess.run(
-        ["node", "-e", script], cwd=tool_root, text=True, capture_output=True, check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "public void stop()" in result.stdout
-    assert "this.status = ServiceStatus.STOPPED;" in result.stdout
-
-
-@pytest.mark.skipif(
-    shutil.which("node") is None or not _PUML2CODE_READY,
-    reason="Node.js and generated puml2code parser are required",
-)
-def test_puml2code_generates_closed_java_types_and_bounded_self_query():
-    tool_root = _PUML2CODE_ROOT
-    script = r'''
-const Puml = require('./src');
-const source = `@startuml
-class LogEntry <<Entity>> {
-  - logId : uuid
-  - timestamp : instant
-  + findRecent(limit : int): list<LogEntry>
-}
-class Result <<ValueObject>> {
-  - amount : number
-  - error : optional<String>
-}
-@enduml`;
-Puml.fromString(source).generate('java', {basePackage: 'example.types'})
-  .then(output => output.print(value => process.stdout.write(value + '\n')))
-  .catch(error => { console.error(error); process.exitCode = 1; });
-'''
-    result = subprocess.run(
-        ["node", "-e", script], cwd=tool_root, text=True, capture_output=True, check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "private UUID logId;" in result.stdout
-    assert "private Instant timestamp;" in result.stdout
-    assert "List<LogEntry> findRecent(int limit)" in result.stdout
-    assert "return limit > 0 ? List.of(this) : List.of();" in result.stdout
-    assert "private final BigDecimal amount;" in result.stdout
-    assert "private final Optional<String> error;" in result.stdout
-
-
-@pytest.mark.skipif(
-    shutil.which("node") is None or not _PUML2CODE_READY,
-    reason="Node.js and generated puml2code parser are required",
-)
-def test_puml2code_blocks_unknown_class_placeholder_source():
-    tool_root = _PUML2CODE_ROOT
-    script = r'''
-const Puml = require('./src');
-Puml.fromString('@startuml\nclass UnknownClass {\n}\n@enduml').generate('java')
-  .then(() => { process.exitCode = 2; })
-  .catch(error => { console.log(error.message); });
-'''
-    result = subprocess.run(
-        ["node", "-e", script], cwd=tool_root, text=True, capture_output=True, check=False,
-    )
-
-    assert result.returncode == 0
-    assert "unresolved placeholder" in result.stdout

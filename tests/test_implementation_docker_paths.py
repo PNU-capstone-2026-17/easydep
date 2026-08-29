@@ -4,31 +4,49 @@ from pathlib import Path
 from app.implementation.domain.models import CommandEvidence, JobSpec
 from app.implementation.generation.orchestrator import (
     GRADLE_GENERATOR_IMAGE,
-    PUML2CODE_IMAGE,
     PrototypeOrchestrator,
 )
 
 
 def _orchestrator(tmp_path: Path) -> PrototypeOrchestrator:
-    puml2code = tmp_path / "app" / "implementation" / "tools" / "puml2code-bce"
-    (puml2code / "bin").mkdir(parents=True)
-    (puml2code / "bin" / "puml2code").write_text("#!/usr/bin/env node\n", encoding="utf-8")
-    (puml2code / "Dockerfile").write_text("FROM node:20\n", encoding="utf-8")
-    bce = tmp_path / "design" / "class-diagram.puml"
-    bce.parent.mkdir()
+    design = tmp_path / "design"
+    design.mkdir()
+    bce = design / "class-diagram.puml"
     bce.write_text("class Order <<Entity>>\n", encoding="utf-8")
+    bce_model = design / "class-model.json"
+    bce_model.write_text(json.dumps({
+        "Classes": [{
+            "className": "Order",
+            "stereotype": "Entity",
+            "use_case_ids": ["UC1"],
+            "identifier": ["orderId"],
+            "fields": ["orderId : UUID"],
+            "operations": [],
+        }],
+        "DataTypes": [],
+        "Relationships": [],
+        "Collaborations": [],
+    }), encoding="utf-8")
+    sequence_model = design / "sequence-model.json"
+    sequence_model.write_text(json.dumps({"Diagrams": []}), encoding="utf-8")
+    api_model = design / "api-model.json"
+    api_model.write_text(json.dumps({"Endpoints": []}), encoding="utf-8")
     spec = JobSpec(
         job_type="INITIAL_IMPLEMENTATION",
         feedback="",
         name="orders",
         workspace_root=tmp_path,
-        inputs={"bceClass": bce},
+        inputs={
+            "bceClass": bce,
+            "bceModel": bce_model,
+            "sequenceModel": sequence_model,
+            "apiModel": api_model,
+        },
         required_inputs=[],
         base_package="com.example.orders",
         allow_assumptions=True,
         verify_compile=True,
         output_root=tmp_path / ".easydep" / "implementation-runs" / "orders" / "generated" / "runs",
-        puml2code_root=puml2code,
         agent_mode="plan-only",
         agent_model="model",
         agent_base_url="http://localhost",
@@ -56,20 +74,18 @@ def _recorded_commands(orchestrator: PrototypeOrchestrator) -> list[list[str]]:
     return commands
 
 
-def test_bce_generator_uses_posix_container_paths_on_windows_and_linux(tmp_path: Path) -> None:
+def test_bce_generator_writes_typed_java_without_external_command(tmp_path: Path) -> None:
     orchestrator = _orchestrator(tmp_path)
     commands = _recorded_commands(orchestrator)
     java_root = tmp_path / ".easydep" / "implementation-runs" / "orders" / "application" / "src" / "main" / "java"
 
     orchestrator._generate_bce(java_root)
 
-    build, command = commands
-    assert build[:4] == ["docker", "build", "--tag", PUML2CODE_IMAGE]
-    assert command[command.index("-v") + 1] == f"{tmp_path.resolve()}:/workspace"
-    assert command[command.index("-w") + 1] == "/workspace"
-    assert PUML2CODE_IMAGE in command
-    assert command[command.index("-i") + 1] == "/workspace/design/class-diagram.puml"
-    assert command[command.index("-o") + 1] == "/workspace/.easydep/implementation-runs/orders/application/src/main/java"
+    generated = java_root / "com/example/orders/bce/Order.java"
+    assert commands == []
+    assert generated.is_file()
+    assert "public class Order" in generated.read_text(encoding="utf-8")
+    assert orchestrator.manifest.tools["typed-java-scaffolder"]["input"] == "BCEModel"
 
 
 def test_gradle_compile_uses_posix_workdir_and_workspace_volume(tmp_path: Path) -> None:
@@ -114,15 +130,15 @@ def test_container_path_rejects_a_path_outside_the_workspace(tmp_path: Path) -> 
         raise AssertionError("Expected an outside workspace path to be rejected")
 
 
-def test_input_hash_tracks_bce_generator_source_changes(tmp_path: Path) -> None:
+def test_input_hash_tracks_typed_bce_changes(tmp_path: Path) -> None:
     orchestrator = _orchestrator(tmp_path)
-    source = orchestrator.spec.puml2code_root / "src" / "parser" / "plantuml.pegjs"
-    source.parent.mkdir(parents=True)
-    source.write_text("first generator grammar", encoding="utf-8")
     orchestrator._validate_inputs()
-
     first_hash = orchestrator._combined_input_hash()
-    source.write_text("updated generator grammar", encoding="utf-8")
+    source = orchestrator.spec.inputs["bceModel"]
+    model = json.loads(source.read_text(encoding="utf-8"))
+    model["Classes"][0]["fields"].append("status : String")
+    source.write_text(json.dumps(model), encoding="utf-8")
+    orchestrator._validate_inputs()
 
     assert orchestrator._combined_input_hash() != first_hash
 
@@ -228,7 +244,7 @@ def test_parallel_generators_record_evidence_in_declared_order(tmp_path: Path) -
     java_root.mkdir(parents=True)
 
     # Finish in the exact reverse of the declared order.
-    delays = {"puml2code-bce": 0.25, "openapi-generator": 0.15}
+    delays = {"openapi-generator": 0.15}
 
     def record(
         name: str,
@@ -253,8 +269,6 @@ def test_parallel_generators_record_evidence_in_declared_order(tmp_path: Path) -
 
     names = [item.name for item in orchestrator.manifest.commands]
     assert names == [
-        "puml2code-bce-image",
-        "puml2code-bce",
         "openapi-generator",
         "easydep-frontend-generator",
     ]
@@ -294,5 +308,5 @@ def test_parallel_generator_failure_propagates(tmp_path: Path) -> None:
 
     # A failed run still has to report what the other generators did.
     names = [item.name for item in orchestrator.manifest.commands]
-    assert "puml2code-bce" in names
+    assert "typed-java-scaffolder" in orchestrator.manifest.tools
     assert "easydep-frontend-generator" in names
