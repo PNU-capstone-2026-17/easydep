@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 
 from app.db.models import Base
@@ -1093,53 +1091,6 @@ def test_failed_testing_is_an_actionable_repair_gate(monkeypatch) -> None:
     assert result["job"]["implementation_job_id"] == "implementation-1"
 
 
-def test_implementation_progress_snapshot_extracts_active_file_and_class(tmp_path) -> None:
-    run_root = tmp_path / "run-001"
-    events_dir = run_root / "reports" / "agent-executions"
-    events_dir.mkdir(parents=True)
-    journal = events_dir / "task-1.attempt-001.events.jsonl"
-    journal.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "tool": "restricted_file_editor",
-                        "event": {
-                            "command": "create",
-                            "path": "/workspace/application/src/main/java/com/example/OrderController.java",
-                        },
-                    }
-                ),
-                json.dumps(
-                    {
-                        "tool": "finish",
-                        "event": {"status": "completed"},
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {
-                "job_id": "job-1",
-                "app_id": "app-1",
-                "status": "RUNNING",
-                "run_root": str(run_root),
-            }
-        )
-    finally:
-        service.shutdown()
-
-    assert progress["current_file"].endswith("OrderController.java")
-    assert progress["current_class"] == "OrderController"
-    assert progress["progress_detail"] == "Editing OrderController.java"
-
-
 def test_implementation_progress_snapshot_exposes_generation_milestones() -> None:
     service = WorkspaceService()
     try:
@@ -1147,8 +1098,8 @@ def test_implementation_progress_snapshot_exposes_generation_milestones() -> Non
             {
                 "status": "GENERATING",
                 "progress": {
-                    "status": "PREPARING_BUILD",
-                    "message": "생성된 프로젝트를 준비하고 있습니다.",
+                    "status": "GENERATING_SOURCES",
+                    "message": "Generating application sources.",
                 },
             }
         )
@@ -1158,94 +1109,52 @@ def test_implementation_progress_snapshot_exposes_generation_milestones() -> Non
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["prepare-job"]["status"] == "running"
     assert updates["validate-input"]["status"] == "completed"
-    assert updates["generate-sources"]["status"] == "completed"
-    assert updates["prepare-build"] == {
-        "step": "prepare-build",
-        "label": "빌드 환경 구성",
-        "status": "running",
-        "detail": "생성된 프로젝트를 준비하고 있습니다.",
-    }
+    assert updates["generate-sources"]["status"] == "running"
 
 
-def test_implementation_progress_snapshot_exposes_workflow_phase_and_verification(
-    tmp_path,
-) -> None:
-    run_root = tmp_path / "run-001"
-    reports = run_root / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "persistence",
-                "phases": [
-                    {"phaseId": "control", "status": "SUCCEEDED"},
-                    {"phaseId": "persistence", "status": "RUNNING"},
-                ],
-                "tasks": [
-                    {"taskId": "implement-control", "phase": "control", "status": "SUCCEEDED"},
-                    {"taskId": "create-entity", "phase": "persistence", "status": "RUNNING"},
-                ],
-                "currentActivity": {
-                    "id": "verify-persistence",
-                    "label": "Repository 빌드 및 Unit Test",
-                    "status": "RUNNING",
-                    "detail": "변경된 소스를 빌드하고 Unit Test를 실행하고 있습니다.",
-                },
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
+def test_implementation_progress_snapshot_uses_public_workflow_phases() -> None:
     service = WorkspaceService()
     try:
         progress = service._implementation_progress_snapshot(
-            {"status": "RUNNING", "run_root": str(run_root)}
+            {
+                "status": "RUNNING",
+                "workflow": {
+                    "status": "RUNNING",
+                    "currentPhase": "persistence",
+                    "phases": [
+                        {"phaseId": "control", "status": "SUCCEEDED"},
+                        {"phaseId": "persistence", "status": "RUNNING"},
+                    ],
+                    "tasks": [
+                        {
+                            "taskId": "create-entity",
+                            "phase": "persistence",
+                            "status": "RUNNING",
+                        }
+                    ],
+                },
+            }
         )
     finally:
         service.shutdown()
 
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["phase-backend"]["status"] == "running"
-    assert updates["sub-backend-persistence"]["status"] == "running"
-    assert "activity-backend" not in updates
 
 
-def test_implementation_progress_snapshot_prefers_terminal_job_failure(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "persistence",
-                "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
-                "tasks": [
-                    {
-                        "taskId": "persistence-1",
-                        "phase": "persistence",
-                        "status": "SUCCEEDED",
-                    }
-                ],
-                "currentActivity": {
-                    "id": "verify-persistence",
-                    "status": "RUNNING",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+def test_implementation_progress_snapshot_marks_terminal_failure() -> None:
     service = WorkspaceService()
     try:
         progress = service._implementation_progress_snapshot(
             {
                 "status": "FAILED",
-                "run_root": str(run),
                 "error": "npm ci timed out",
+                "workflow": {
+                    "status": "RUNNING",
+                    "currentPhase": "persistence",
+                    "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
+                    "tasks": [],
+                },
             }
         )
     finally:
@@ -1253,449 +1162,44 @@ def test_implementation_progress_snapshot_prefers_terminal_job_failure(
 
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["phase-backend"]["status"] == "failed"
-    assert updates["implementation-result"] == {
-        "step": "implementation-result",
-        "label": "구현 작업 실패",
-        "status": "failed",
-        "detail": "npm ci timed out",
-    }
+    assert updates["implementation-result"]["status"] == "failed"
     assert progress["progress_status"] == "failed"
+    assert progress["progress_detail"] == "npm ci timed out"
 
 
-def test_implementation_progress_snapshot_nests_backend_tasks_and_hides_duplicate_activity(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "persistence",
-                "phases": [
-                    {"phaseId": "control", "status": "SUCCEEDED"},
-                    {"phaseId": "persistence", "status": "RUNNING"},
-                ],
-                "tasks": [
-                    {"taskId": "control-1", "phase": "control", "status": "SUCCEEDED"},
-                    {"taskId": "persistence-1", "phase": "persistence", "status": "RUNNING"},
-                ],
-                "currentActivity": {"id": "persistence-1", "status": "RUNNING"},
-            }
-        ),
-        encoding="utf-8",
-    )
+def test_implementation_progress_snapshot_marks_completed_workflow() -> None:
     service = WorkspaceService()
-
-    progress = service._implementation_progress_snapshot(
-        {"job_id": "job-1", "run_root": str(run), "status": "RUNNING"}
-    )
-
-    updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["phase-backend"]["status"] == "running"
-    assert updates["sub-backend-persistence"]["status"] == "running"
-    assert "activity-backend" not in updates
-
-
-def test_implementation_progress_snapshot_hides_aggregate_backend_activity_duplicate(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
+    try:
+        progress = service._implementation_progress_snapshot(
             {
-                "status": "RUNNING",
-                "currentPhase": "persistence",
-                "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
-                "tasks": [
-                    {"taskId": "persistence-1", "phase": "persistence", "status": "RUNNING"}
-                ],
-                "currentActivity": {
-                    "id": "verify-backend",
-                    "status": "RUNNING",
-                    "detail": "Running backend verification",
+                "status": "COMPLETED",
+                "workflow": {
+                    "status": "COMPLETE",
+                    "currentPhase": "frontend",
+                    "phases": [
+                        {"phaseId": "control", "status": "SUCCEEDED"},
+                        {"phaseId": "frontend", "status": "SUCCEEDED"},
+                    ],
+                    "tasks": [
+                        {
+                            "taskId": "control-1",
+                            "phase": "control",
+                            "status": "SUCCEEDED",
+                        },
+                        {
+                            "taskId": "frontend-1",
+                            "phase": "frontend",
+                            "status": "SUCCEEDED",
+                        },
+                    ],
                 },
             }
-        ),
-        encoding="utf-8",
-    )
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {"run_root": str(run), "status": "RUNNING"}
-        )
-    finally:
-        service.shutdown()
-
-    updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["phase-backend"]["status"] == "running"
-    assert "activity-backend" not in updates
-
-
-def test_implementation_progress_snapshot_hides_between_phase_completion_audit(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "api-adapters",
-                "phases": [
-                    {"phaseId": "control", "status": "SUCCEEDED"},
-                    {"phaseId": "api-adapters", "status": "RUNNING"},
-                ],
-                "tasks": [
-                    {"taskId": "control-1", "phase": "control", "status": "SUCCEEDED"},
-                    {"taskId": "api-adapter-1", "phase": "api-adapters", "status": "RUNNING"},
-                ],
-                "currentActivity": {
-                    "id": "completion-audit",
-                    "status": "RUNNING",
-                    "detail": "Checking the completed Control phase",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {"run_root": str(run), "status": "RUNNING"}
-        )
-    finally:
-        service.shutdown()
-
-    updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["phase-backend"]["status"] == "running"
-    assert "activity-implementation" not in updates
-
-
-def test_implementation_progress_snapshot_deduplicates_activity_label_suffix(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "api-adapters",
-                "phases": [{"phaseId": "api-adapters", "status": "RUNNING"}],
-                "tasks": [
-                    {"taskId": "api-adapter-1", "phase": "api-adapters", "status": "RUNNING"}
-                ],
-                "currentActivity": {
-                    "id": "release-verification",
-                    "status": "RUNNING",
-                    "detail": "Checking the implementation",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {"run_root": str(run), "status": "RUNNING"}
-        )
-    finally:
-        service.shutdown()
-
-    updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["activity-implementation"]["label"] == "Backend 구현 결과 확인"
-
-
-def test_implementation_progress_snapshot_collapses_backend_tasks_by_phase(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "persistence",
-                "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
-                "tasks": [
-                    {"taskId": "entity-1", "phase": "persistence", "status": "SUCCEEDED"},
-                    {"taskId": "repository-1", "phase": "persistence", "status": "RUNNING"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {"run_root": str(run), "status": "RUNNING"}
-        )
-    finally:
-        service.shutdown()
-
-    subtasks = [item for item in progress["updates"] if item["step"].startswith("sub-backend-")]
-    assert [item["step"] for item in subtasks] == ["sub-backend-persistence"]
-    assert subtasks[0]["status"] == "running"
-
-
-def test_implementation_progress_snapshot_hides_completed_repository_when_wiring_runs(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "wiring",
-                "phases": [
-                    {"phaseId": "persistence", "status": "SUCCEEDED"},
-                    {"phaseId": "wiring", "status": "RUNNING"},
-                ],
-                "tasks": [
-                    {"taskId": "repository-1", "phase": "persistence", "status": "SUCCEEDED"},
-                    {"taskId": "wiring-1", "phase": "wiring", "status": "RUNNING"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {"run_root": str(run), "status": "RUNNING"}
-        )
-    finally:
-        service.shutdown()
-
-    subtasks = [item for item in progress["updates"] if item["step"].startswith("sub-backend-")]
-    assert [item["step"] for item in subtasks] == ["sub-backend-wiring"]
-
-
-def test_implementation_progress_snapshot_keeps_backend_parent_after_backend_finishes(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "frontend",
-                "phases": [
-                    {"phaseId": "control", "status": "SUCCEEDED"},
-                    {"phaseId": "persistence", "status": "SUCCEEDED"},
-                    {"phaseId": "api-adapters", "status": "SUCCEEDED"},
-                    {"phaseId": "boundary-adapters", "status": "SUCCEEDED"},
-                    {"phaseId": "outbound-adapters", "status": "UNPLANNED"},
-                    {"phaseId": "wiring", "status": "SUCCEEDED"},
-                    {"phaseId": "frontend", "status": "RUNNING"},
-                ],
-                "tasks": [
-                    {"taskId": "control-1", "phase": "control", "status": "SUCCEEDED"},
-                    {"taskId": "frontend-1", "phase": "frontend", "status": "RUNNING"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {"run_root": str(run), "status": "RUNNING"}
-        )
-    finally:
-        service.shutdown()
-
-    updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["phase-backend"]["status"] == "completed"
-    assert not [item for item in progress["updates"] if item["step"].startswith("sub-backend-")]
-
-
-def test_implementation_progress_snapshot_treats_completed_task_alias_as_terminal(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "frontend",
-                "phases": [
-                    {"phaseId": "persistence", "status": "COMPLETED"},
-                    {"phaseId": "control", "status": "COMPLETED"},
-                    {"phaseId": "api-adapters", "status": "COMPLETED"},
-                    {"phaseId": "boundary-adapters", "status": "COMPLETED"},
-                    {"phaseId": "outbound-adapters", "status": "UNPLANNED"},
-                    {"phaseId": "wiring", "status": "COMPLETED"},
-                    {"phaseId": "frontend", "status": "RUNNING"},
-                ],
-                "tasks": [
-                    {"taskId": "persistence-1", "phase": "persistence", "status": "COMPLETED"},
-                    {"taskId": "control-1", "phase": "control", "status": "COMPLETED"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot({"run_root": str(run), "status": "RUNNING"})
-    finally:
-        service.shutdown()
-
-    updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["phase-backend"]["status"] == "completed"
-    assert not [item for item in progress["updates"] if item["step"].startswith("sub-backend-")]
-
-
-def test_implementation_progress_snapshot_hides_pending_backend_tasks(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "RUNNING",
-                "currentPhase": "persistence",
-                "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
-                "tasks": [
-                    {"taskId": "queued", "phase": "persistence", "status": "PENDING"},
-                    {"taskId": "active", "phase": "persistence", "status": "RUNNING"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {"run_root": str(run), "status": "RUNNING"}
-        )
-    finally:
-        service.shutdown()
-
-    subtasks = [item for item in progress["updates"] if item["step"].startswith("sub-backend-")]
-    assert [item["step"] for item in subtasks] == ["sub-backend-persistence"]
-
-
-def test_implementation_progress_snapshot_keeps_preparation_parent_active_during_generation(
-    tmp_path: Path,
-) -> None:
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {
-                "run_root": str(run),
-                "status": "GENERATING_SOURCES",
-                "progress": {"status": "GENERATING_SOURCES", "message": "Generating sources"},
-            }
-        )
-    finally:
-        service.shutdown()
-
-    updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["prepare-job"]["status"] == "running"
-    assert updates["generate-sources"]["status"] == "running"
-
-
-def test_implementation_progress_snapshot_closes_release_verification_for_drained_ready_workflow(
-    tmp_path,
-) -> None:
-    run_root = tmp_path / "run-001"
-    reports = run_root / "reports"
-    reports.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "READY",
-                "currentPhase": "outbound-adapters",
-                "phases": [
-                    {"phaseId": "persistence", "status": "SUCCEEDED"},
-                    {"phaseId": "outbound-adapters", "status": "UNPLANNED"},
-                ],
-                "tasks": [{"taskId": "task-1", "phase": "persistence", "status": "SUCCEEDED"}],
-                "nextRunnableTasks": [],
-                "blockingReason": None,
-                "currentActivity": {
-                    "id": "release-verification",
-                    "label": "최종 릴리스 검증",
-                    "status": "RUNNING",
-                },
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {"status": "COMPLETED", "run_root": str(run_root)}
         )
     finally:
         service.shutdown()
 
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["release-verification"]["status"] == "completed"
-
-
-def test_implementation_progress_snapshot_does_not_reopen_completed_file_activity(
-    tmp_path,
-) -> None:
-    run_root = tmp_path / "run-001"
-    reports = run_root / "reports"
-    events = reports / "agent-executions"
-    events.mkdir(parents=True)
-    (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "status": "READY",
-                "phases": [
-                    {"phaseId": "persistence", "status": "SUCCEEDED"},
-                    {"phaseId": "outbound-adapters", "status": "UNPLANNED"},
-                ],
-                "tasks": [{"taskId": "task-1", "phase": "persistence", "status": "SUCCEEDED"}],
-                "nextRunnableTasks": [],
-                "blockingReason": None,
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    (events / "task.events.jsonl").write_text(
-        json.dumps(
-            {"tool": "restricted_file_editor", "event": {"path": "application/src/Main.java"}},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {"status": "COMPLETED", "run_root": str(run_root)}
-        )
-    finally:
-        service.shutdown()
-
-    assert "current_file" not in progress
     assert progress["progress_status"] == "completed"
 
 

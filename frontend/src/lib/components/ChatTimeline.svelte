@@ -56,13 +56,6 @@
           event.metadata?.reset_implementation_timeline === true
       )?.event_id ?? 0
   );
-  let implementationFocus = $derived.by(() => {
-    const metadata = latestProgress?.metadata ?? {};
-    const file = String(metadata.current_file ?? '');
-    const className = String(metadata.current_class ?? '');
-    if (!file && !className) return null;
-    return { file, className };
-  });
   let activeSpecTasks = $derived(
     Array.isArray(latestProgress?.metadata?.active_spec_tasks)
       ? latestProgress.metadata.active_spec_tasks
@@ -104,16 +97,12 @@
       if (id === 'prepare-job') return 10;
       if (id.startsWith('validate-') || id.startsWith('generate-') || id.startsWith('prepare-') || id.startsWith('verify-') || id === 'plan-workflow') return 20;
       if (id === 'phase-backend') return 100;
-      if (id.startsWith('sub-backend-')) return 110;
       if (id === 'phase-frontend') return 200;
       if (id === 'phase-e2e') return 300;
       return 400;
     };
     return [...steps.values()].sort((left, right) => order(left.id) - order(right.id));
   });
-  let backendSubtasks = $derived(
-    progressSteps.filter((step) => step.id.startsWith('sub-backend-'))
-  );
   let preparationSubtasks = $derived(
     progressSteps.filter((step) =>
       ['validate-input', 'generate-sources', 'prepare-build', 'verify-generated', 'plan-workflow'].includes(step.id)
@@ -243,24 +232,13 @@
           <time class="text-[10px] text-[#a0a29a]">{formatTime(event.created_at)}</time>
         </div>
         <div class="space-y-2">
-          {#if implementationFocus}
-            <div class="rounded-lg border border-[#dfe6dd] bg-[#f3f7f2] px-2.5 py-2 text-[10px] leading-5 text-[#3b453f]">
-              <div class="font-medium text-[#2f3d33]">Current implementation target</div>
-              <div class="mt-0.5 flex flex-wrap items-center gap-1.5">
-                <span class="font-mono text-[9px] text-[#57615d]">{implementationFocus.file}</span>
-                {#if implementationFocus.className}
-                  <span class="rounded bg-[#dfeee2] px-1.5 py-0.5 text-[9px] font-semibold text-[#2d7354]">{implementationFocus.className}</span>
-                {/if}
-              </div>
-            </div>
-          {/if}
           {#if progressSteps.length === 0}
             <div class="flex items-center gap-2">
               <LoaderCircle size={13} class="shrink-0 animate-spin text-[#2d7354]" />
               <span>{event.text}</span>
             </div>
           {:else}
-            {#each progressSteps.filter((step) => !step.id.startsWith('sub-backend-') && !['validate-input', 'generate-sources', 'prepare-build', 'verify-generated', 'plan-workflow'].includes(step.id)) as step (step.id)}
+            {#each progressSteps.filter((step) => !['validate-input', 'generate-sources', 'prepare-build', 'verify-generated', 'plan-workflow'].includes(step.id)) as step (step.id)}
               <div class="flex items-start gap-2">
                 {#if step.status === 'completed'}
                   <CheckCircle2 size={13} class="mt-0.5 shrink-0 text-[#5d806c]" />
@@ -280,22 +258,6 @@
                         <li class="flex items-start gap-1.5">
                           <LoaderCircle size={10} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
                           <span><span class="font-mono">{task.id}</span> · {task.name}</span>
-                        </li>
-                      {/each}
-                    </ul>
-                  {/if}
-                  {#if step.id === 'phase-backend' && backendSubtasks.length}
-                    <ul class="mt-1.5 space-y-1 border-l-2 border-[#dce3dd] pl-3 text-[10px] leading-4 text-[#62675f]">
-                      {#each backendSubtasks as task (task.id)}
-                        <li class="flex items-start gap-1.5">
-                          {#if task.status === 'completed'}
-                            <CheckCircle2 size={11} class="mt-0.5 shrink-0 text-[#5d806c]" />
-                          {:else if task.status === 'failed' || task.status === 'timeout' || task.status === 'needs_review'}
-                            <AlertTriangle size={11} class="mt-0.5 shrink-0 text-[#a8433a]" />
-                          {:else}
-                            <LoaderCircle size={11} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
-                          {/if}
-                          <span>{task.label}</span>
                         </li>
                       {/each}
                     </ul>

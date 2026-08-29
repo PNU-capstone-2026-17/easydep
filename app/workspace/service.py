@@ -6,7 +6,6 @@ import time
 import uuid
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from threading import Lock
 from typing import Any, cast
 
@@ -78,6 +77,18 @@ def _blocker_keys(result: dict[str, Any]) -> tuple[str, ...]:
             if isinstance(blocker, dict)
         )
     )
+
+
+def _resource_questions(
+    result: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """리소스 질문 목록과 화면에서 먼저 물을 질문을 함께 고른다."""
+    questions = list(result.get("resource_questions") or [])
+    selected = next(
+        (question for question in questions if question.get("kind") != "suggested"),
+        questions[0] if questions else None,
+    )
+    return questions, selected
 
 
 def _merge_delegated_repair_state(
@@ -174,16 +185,6 @@ _IMPLEMENTATION_GENERATION_STEPS = (
     ("verify-generated", "초기 컴파일 검증"),
     ("plan-workflow", "구현 작업 계획"),
 )
-_IMPLEMENTATION_WORKFLOW_PHASES = (
-    ("control", "Control 구현"),
-    ("persistence", "Repository 구현"),
-    ("api-adapters", "API Adapter 구현"),
-    ("boundary-adapters", "Boundary Adapter 구현"),
-    ("outbound-adapters", "Outbound Adapter 구현"),
-    ("wiring", "Application Setup"),
-    ("frontend", "Frontend 구현"),
-    ("end-to-end", "E2E Test 실행"),
-)
 _IMPLEMENTATION_DISPLAY_PHASES = (
     (
         "backend",
@@ -221,13 +222,7 @@ class WorkspaceService:
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def reconcile_implementation_command(self, app_id: str) -> dict[str, Any] | None:
-        """Close a stale workspace command after the durable worker completed.
-
-        A completed workflow can be persisted as ``READY`` by older runners.
-        The implementation worker is authoritative, so reconcile that state
-        when the workspace is read instead of leaving the UI in an endless
-        running state after a server restart or monitor interruption.
-        """
+        """구현 작업은 끝났지만 Workspace 명령만 남은 경우 완료 상태를 맞춘다."""
         command = repository.latest_command(app_id)
         if not command or command.get("status") not in {"RUNNING", "INTERRUPTED"}:
             return command
@@ -246,11 +241,9 @@ class WorkspaceService:
         except Exception:
             return command
         job_status = str(job.get("status") or "")
-        workflow = job.get("workflow")
-        workflow_complete = isinstance(
-            workflow, dict
-        ) and implementation_worker._workflow_is_complete(workflow)
-        if job_status != "COMPLETED" and not (job_status == "READY" and workflow_complete):
+        # READY workflow의 완료 여부는 구현 작업 서비스가 판정하여 공개 상태를
+        # COMPLETED로 바꾼다. Workspace가 그 내부 규칙을 다시 구현하지 않는다.
+        if job_status != "COMPLETED":
             return command
         result = {
             "message": "Review the generated implementation artifacts below.",
@@ -440,9 +433,7 @@ class WorkspaceService:
             raise ValueError("This command is not awaiting change confirmation.")
 
     def infer_stage(self, app_id: str, action: str, payload: dict[str, Any]) -> str:
-        if action == "apply_deployment_preferences":
-            return "requirements"
-        if action == "retry_requirements":
+        if action in {"apply_deployment_preferences", "retry_requirements"}:
             return "requirements"
         if action in {"start_design", "retry_design"}:
             return "design"
@@ -549,8 +540,8 @@ class WorkspaceService:
 
     def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         action = str(command["action"])
-        if action in {"message", "advance", "apply_deployment_preferences"}:
-            return self._stage_message(command, advance=action == "advance")
+        if action in {"message", "advance", "apply_deployment_preferences", "start_design"}:
+            return self._stage_message(command, advance=action in {"advance", "start_design"})
         if action == "delegate_repair":
             action_id = str(command["payload"].get("action_id") or "")
             prior = repository.get_command(action_id) or {}
@@ -603,8 +594,6 @@ class WorkspaceService:
                 ),
             }
             return self._stage_message(delegated, advance=False)
-        if action == "start_design":
-            return self._stage_message(command, advance=True)
         if action == "retry_requirements":
             app_id = str(command["app_id"])
             progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
@@ -724,14 +713,12 @@ class WorkspaceService:
                     with requirements_telemetry.progress_scope(progress):
                         result = analyze_requirements(request)
                     return self._requirements_result(result)
-                resource_questions = list(previous_result.get("resource_questions") or [])
-                resource_question = previous_result.get("resource_question") or next(
-                    (
-                        question
-                        for question in resource_questions
-                        if question.get("kind") != "suggested"
-                    ),
-                    resource_questions[0] if resource_questions else None,
+                resource_questions, selected_resource_question = _resource_questions(
+                    previous_result
+                )
+                resource_question = (
+                    previous_result.get("resource_question")
+                    or selected_resource_question
                 )
                 resource_field = str((resource_question or {}).get("field") or "")
                 if text and resource_field:
@@ -825,6 +812,7 @@ class WorkspaceService:
                 )
             context = payload.get("context") or {}
             target_feedbacks = self._sequence_target_feedbacks(context)
+            revised: dict[str, Any] | None = None
             if target_feedbacks:
                 # Every entry has an explicit UC and its own instruction.  The
                 # batch service keeps all revisions in memory until all of them
@@ -833,21 +821,13 @@ class WorkspaceService:
                     app_id,
                     BatchReviseRequest(revisions=target_feedbacks),
                 )
-                return {
-                    "awaiting_input": bool(status.get("active")),
-                    "kind": "action_required",
-                    "message": (
-                        f"Revised {len(target_feedbacks)} selected use-case diagrams and "
-                        "only their trace-linked artifacts. Review the result or continue."
-                    ),
-                    "current_stage": status.get("stage") or "design",
-                    "changed": revised.get("changed") or [],
-                    "touched": revised.get("touched") or {},
-                    "related": revised.get("related") or {},
-                    "design": revised,
-                }
+                revision_message = (
+                    f"Revised {len(target_feedbacks)} selected use-case diagrams and "
+                    "only their trace-linked artifacts. Review the result or continue."
+                )
+                related_default: list[Any] | dict[str, Any] = {}
             element_ref = str(context.get("element_ref") or "").strip()
-            if text and element_ref:
+            if revised is None and text and element_ref:
                 # A UI-selected element is an explicit local-edit request, not
                 # ordinary stage feedback.  In particular, sequence feedback
                 # must carry ``sequence_diagram:UCn`` so we never rewind and
@@ -856,17 +836,20 @@ class WorkspaceService:
                     app_id,
                     ReviseRequest(target=element_ref, feedback=text),
                 )
+                revision_message = (
+                    f"Revised the selected {element_ref} and only its "
+                    "trace-linked artifacts. Review the result or continue."
+                )
+                related_default = []
+            if revised is not None:
                 return {
                     "awaiting_input": bool(status.get("active")),
                     "kind": "action_required",
-                    "message": (
-                        f"Revised the selected {element_ref} and only its "
-                        "trace-linked artifacts. Review the result or continue."
-                    ),
+                    "message": revision_message,
                     "current_stage": status.get("stage") or "design",
                     "changed": revised.get("changed") or [],
                     "touched": revised.get("touched") or {},
-                    "related": revised.get("related") or [],
+                    "related": revised.get("related") or related_default,
                     "design": revised,
                 }
             current_stage = str(status.get("stage") or "")
@@ -1305,15 +1288,7 @@ class WorkspaceService:
                 )
                 if result.get(key)
             ]
-            resource_questions = list(result.get("resource_questions") or [])
-            resource_question = next(
-                (
-                    question
-                    for question in resource_questions
-                    if question.get("kind") != "suggested"
-                ),
-                resource_questions[0] if resource_questions else None,
-            )
+            resource_questions, resource_question = _resource_questions(result)
             if resource_question:
                 field = str(resource_question.get("field") or "")
                 question = str(
@@ -1376,6 +1351,7 @@ class WorkspaceService:
         requires_revision = bool(findings)
         repair_history = stage_validation.get("repair_history") or {}
         repair_status = str(repair_history.get("status") or "")
+        attempts = list(repair_history.get("attempts") or [])
         repair_state = {
             "status": (
                 "WAITING_EXTERNAL"
@@ -1386,24 +1362,24 @@ class WorkspaceService:
                 if findings
                 else "COMPLETED"
             ),
-            "attempt_count": len(repair_history.get("attempts") or []),
+            "attempt_count": len(attempts),
             "accepted_count": sum(
                 attempt.get("outcome") in {"improved", "clean"}
-                for attempt in repair_history.get("attempts") or []
+                for attempt in attempts
                 if isinstance(attempt, dict)
             ),
-            "recent_attempts": list(repair_history.get("attempts") or [])[-5:],
+            "recent_attempts": attempts[-5:],
             "tried_strategies": sorted(
                 {
                     str(attempt.get("strategy_key") or "")
-                    for attempt in repair_history.get("attempts") or []
+                    for attempt in attempts
                     if isinstance(attempt, dict) and attempt.get("strategy_key")
                 }
             ),
             "rejected_candidate_digests": sorted(
                 {
                     str(attempt.get("candidate_digest") or "")
-                    for attempt in repair_history.get("attempts") or []
+                    for attempt in attempts
                     if isinstance(attempt, dict)
                     and attempt.get("candidate_digest")
                     and attempt.get("outcome") not in {"improved", "clean"}
@@ -1490,32 +1466,12 @@ class WorkspaceService:
 
     @staticmethod
     def _implementation_progress_snapshot(job: dict[str, Any]) -> dict[str, Any]:
-        """Build user-facing implementation milestones from durable checkpoints.
+        """공개 구현 작업 상태를 화면에 표시할 주요 진행 단계로 바꾼다.
 
-        ``generation-progress.json`` covers the deterministic generator, while
-        ``workflow-state.json`` is checkpointed before and after every agent
-        task.  Reading both lets the chat show useful progress without exposing
-        the implementation run directory to the browser.
+        구현 작업 서비스가 ``progress``와 ``workflow``를 공개 상태에 포함하므로,
+        Workspace는 내부 작업 파일이나 실행 디렉터리를 다시 읽지 않는다.
         """
-        job_id = str(job.get("job_id") or "")
-        private_job = job
-        if job_id:
-            try:
-                private_job = implementation_worker._read(job_id)
-            except Exception:  # Progress reporting must not interrupt a job.
-                private_job = job
-
-        run_root = str(private_job.get("run_root") or job.get("run_root") or "").strip()
-        workflow = private_job.get("workflow")
-        run_path = Path(run_root) if run_root else None
-        if run_path is not None:
-            state_path = run_path / "reports" / "workflow-state.json"
-            try:
-                state = json.loads(state_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                state = None
-            if isinstance(state, dict):
-                workflow = state
+        workflow = job.get("workflow")
 
         updates: list[dict[str, str]] = []
 
@@ -1529,9 +1485,9 @@ class WorkspaceService:
                 }
             )
 
-        job_status = str(job.get("status") or private_job.get("status") or "")
+        job_status = str(job.get("status") or "")
         terminal_failure = job_status in {"FAILED", "CANCELLED", "REJECTED"}
-        failure_error = str(private_job.get("error") or job.get("error") or "").strip()
+        failure_error = str(job.get("error") or "").strip()
         failure_lines = [line.strip() for line in failure_error.splitlines() if line.strip()]
         failure_detail = (
             failure_lines[-1][-500:] if failure_lines else "구현 작업이 완료되지 않았습니다."
@@ -1596,7 +1552,6 @@ class WorkspaceService:
             add_update("validate-input", "입력 및 설계 검증", "completed")
             add_update("prepare-feedback", "피드백 적용 준비", "running", progress_message)
 
-        workflow_complete = False
         if isinstance(workflow, dict):
             workflow_status = str(workflow.get("status") or "")
             current_phase = str(workflow.get("currentPhase") or "")
@@ -1607,11 +1562,7 @@ class WorkspaceService:
                 if isinstance(phase, dict)
             }
             for display_id, label, phase_ids in _IMPLEMENTATION_DISPLAY_PHASES:
-                display_phases = [
-                    phase_id
-                    for phase_id, _phase_label in _IMPLEMENTATION_WORKFLOW_PHASES
-                    if phase_id in phase_ids
-                ]
+                display_phases = list(phase_ids)
                 display_tasks = [
                     task for task in tasks if str(task.get("phase") or "") in phase_ids
                 ]
@@ -1657,126 +1608,8 @@ class WorkspaceService:
                         "running",
                         f"{label}을 진행하고 있습니다.",
                     )
-                if display_id == "backend" and not all_succeeded:
-                    # Keep backend's concrete workflow tasks visible while the
-                    # phase is active.  They are rendered as indented children
-                    # of the single Backend implementation row and disappear
-                    # once the phase itself is complete.
-                    tasks_by_phase: dict[str, list[dict[str, Any]]] = {}
-                    for task in display_tasks:
-                        task_status = str(task.get("status") or "PENDING").lower()
-                        # Pending tasks have not started and must not look like
-                        # active work in the progress card. They will appear
-                        # once the coordinator marks them RUNNING or SUCCEEDED.
-                        if task_status not in {
-                            "running",
-                            "succeeded",
-                            "completed",
-                            "failed",
-                            "timeout",
-                            "needs_review",
-                        }:
-                            continue
-                        tasks_by_phase.setdefault(str(task.get("phase") or ""), []).append(task)
-                    for task_phase, phase_tasks in tasks_by_phase.items():
-                        # Only expose tasks from the phase that is actually
-                        # executing.  Keeping completed persistence tasks in
-                        # the backend card while Application Setup (or a later
-                        # phase) is running makes the UI look as if the
-                        # workflow restarted at Repository.
-                        if current_phase and task_phase != current_phase:
-                            continue
-                        statuses = {
-                            str(task.get("status") or "PENDING").lower() for task in phase_tasks
-                        }
-                        if (
-                            "failed" in statuses
-                            or "timeout" in statuses
-                            or "needs_review" in statuses
-                        ):
-                            task_status = next(
-                                status
-                                for status in ("failed", "timeout", "needs_review")
-                                if status in statuses
-                            )
-                        elif statuses and statuses <= {"succeeded", "completed"}:
-                            task_status = "completed"
-                        elif "running" in statuses:
-                            task_status = "running"
-                        else:
-                            task_status = "pending"
-                        task_label = next(
-                            (
-                                phase_label
-                                for phase_id, phase_label in _IMPLEMENTATION_WORKFLOW_PHASES
-                                if phase_id == task_phase
-                            ),
-                            task_phase,
-                        )
-                        details = [str(task.get("detail") or "") for task in phase_tasks]
-                        detail = next((item for item in details if item), "")
-                        add_update(
-                            f"sub-backend-{task_phase}",
-                            task_label,
-                            task_status,
-                            detail,
-                        )
-
-            workflow_complete = workflow_status == "COMPLETE" or (
-                workflow_status == "READY" and implementation_worker._workflow_is_complete(workflow)
-            )
-            activity = workflow.get("currentActivity")
-            if (
-                not terminal_failure
-                and not workflow_complete
-                and isinstance(activity, dict)
-                and str(activity.get("id") or "")
-            ):
-                activity_status = str(activity.get("status") or "running").lower()
-                if activity_status == "succeeded":
-                    activity_status = "completed"
-                activity_id = str(activity["id"])
-                activity_phase = activity_id.removeprefix("verify-").removeprefix("audit-")
-                # Some workflow runners report the aggregate backend phase as
-                # ``verify-backend``/``audit-backend`` instead of naming one
-                # concrete backend phase.  Keep that activity attached to the
-                # single Backend row; otherwise the fallback display id makes
-                # the UI render a duplicate "Backend 구현 구현 결과 확인" row
-                # while backend work is still running.
-                if activity_phase == "backend":
-                    display_id, display_label = "backend", "Backend 구현"
-                else:
-                    display_id, display_label, _ = next(
-                        (
-                            item
-                            for item in _IMPLEMENTATION_DISPLAY_PHASES
-                            if activity_phase in item[2]
-                        ),
-                        ("implementation", "Backend 구현", frozenset()),
-                    )
-                activity_prefix = (
-                    "빌드 및 Unit Test" if activity_id.startswith("verify-") else "구현 결과 확인"
-                )
-                activity_label = f"{display_label} {activity_prefix}"
-                if display_label.endswith(" 구현") and activity_prefix.startswith("구현 "):
-                    activity_label = f"{display_label} {activity_prefix.removeprefix('구현 ')}"
-                # Backend already exposes its concrete workflow tasks under
-                # the Backend row.  Adding a second "Backend 구현 결과 확인"
-                # row duplicates the same phase in the timeline.
-                # ``completion-audit`` is an internal checkpoint between
-                # workflow phases.  The parent phase row already communicates
-                # that Backend work is being reconciled, so exposing this
-                # aggregate activity as a second result row creates the
-                # misleading "Backend 구현 구현 결과 확인" message just as
-                # the next API Adapter task begins.
-                if activity_id != "completion-audit" and display_id != "backend":
-                    add_update(
-                        "activity-" + display_id,
-                        activity_label,
-                        activity_status,
-                        str(activity.get("detail") or ""),
-                    )
-            elif workflow_complete:
+            # READY 판정은 구현 서비스가 공개 job status를 COMPLETED로 바꾼다.
+            if job_status == "COMPLETED" or workflow_status == "COMPLETE":
                 add_update("release-verification", "최종 릴리스 검증", "completed")
 
         if terminal_failure:
@@ -1785,61 +1618,6 @@ class WorkspaceService:
                 "구현 작업 실패",
                 "failed",
                 failure_detail,
-            )
-
-        current_file: str | None = None
-        if workflow_complete or job_status in TERMINAL_JOB_STATUSES:
-            # Agent event journals retain the last edited file after the run
-            # drains. Do not append a synthetic running step that can mask the
-            # completed implementation message in the progress card.
-            run_path = None
-        if run_path is not None:
-            events_dir = run_path / "reports" / "agent-executions"
-            latest_path: Path | None = None
-            for candidate in sorted(events_dir.glob("*.events.jsonl")):
-                try:
-                    if (
-                        latest_path is None
-                        or candidate.stat().st_mtime >= latest_path.stat().st_mtime
-                    ):
-                        latest_path = candidate
-                except OSError:
-                    continue
-            if latest_path is not None:
-                try:
-                    lines = latest_path.read_text(encoding="utf-8").splitlines()
-                except OSError:
-                    lines = []
-                for line in lines:
-                    if not line.strip():
-                        continue
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    event = payload.get("event") if isinstance(payload, dict) else None
-                    tool_name = str(payload.get("tool") or "") if isinstance(payload, dict) else ""
-                    if not isinstance(event, dict):
-                        continue
-                    path_value = (
-                        event.get("path") or event.get("file_path") or event.get("filePath")
-                    )
-                    if not isinstance(path_value, str) or not path_value.strip():
-                        continue
-                    if "file_editor" not in tool_name and tool_name not in {
-                        "restricted_file_editor",
-                        "file_editor",
-                    }:
-                        continue
-                    current_file = path_value.strip()
-
-        if current_file:
-            file_name = Path(current_file).name
-            add_update(
-                "implementation-file",
-                "현재 구현 파일",
-                "running",
-                f"Editing {file_name}",
             )
 
         if not updates:
@@ -1852,10 +1630,6 @@ class WorkspaceService:
             "progress_detail": latest["detail"] or latest["label"],
             "progress_status": latest["status"],
         }
-        if current_file:
-            file_name = Path(current_file).name
-            snapshot["current_file"] = current_file
-            snapshot["current_class"] = Path(file_name).stem
         return snapshot
 
     def _monitor_implementation(
@@ -1912,11 +1686,6 @@ class WorkspaceService:
                             ),
                             "progress_detail": str(update.get("detail") or ""),
                             "progress_status": str(update.get("status") or "running"),
-                            **{
-                                key: progress[key]
-                                for key in ("current_file", "current_class")
-                                if isinstance(progress.get(key), str)
-                            },
                         },
                     )
                     last_progress[step] = progress_key

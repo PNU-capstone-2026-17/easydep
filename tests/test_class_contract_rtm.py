@@ -1,5 +1,5 @@
-from app.design.evaluation.seeded import CLEAN, CLEAN_STATE
 from app.design.rtm import build_design_rtm
+from tests.design_validation_fixtures import CLEAN, CLEAN_STATE
 
 
 def test_rtm_materializes_call_site_argument_provenance():

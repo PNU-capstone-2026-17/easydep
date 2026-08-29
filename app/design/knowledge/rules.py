@@ -1145,11 +1145,10 @@ RULES: tuple[Rule, ...] = (
     ),
     # "모든 테이블에 기본키가 있다"와 "외래키는 실재 테이블을 가리킨다"는 여기 없다.
     # 규칙으로 적어 봤다가 뺐다 — **사상이 구성에 의해 보장하므로 어떤 모델로도 위반을
-    # 만들 수 없다.** 걸 수 없는 규칙은 "0건"이 "없다"인지 "못 잡는다"인지 구별되지 않아
-    # 눈금이 아니다(`app/design/evaluation/seeded.py`가 세우려는 것이 그 눈금이다).
-    # 그 둘은 모델의 오류를 찾는 규칙이 아니라 **변환 코드가 항상 지켜야 할 조건**이고,
-    # 그 조건은
-    # 테스트다(`tests/test_erd_mapping.py`).
+    # 만들 수 없다.** 걸 수 없는 규칙은 모델 결함을 판정하는 규칙이 아니다. 대표 정상·실패
+    # 입력은 `tests/test_design_detectors.py`에서 직접 validator에 넣어 확인한다.
+    # 그 둘은 모델의 오류를 찾는 규칙이 아니라 **변환 코드가 항상 지켜야 할 조건**이다.
+    # 따라서 `tests/test_erd_mapping.py`의 변환 테스트가 확인한다.
     Rule(
         id="erd.entity-typed-field-needs-relationship",
         stage=ERD,
