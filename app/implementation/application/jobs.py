@@ -935,7 +935,8 @@ class ImplementationWorker:
         return result
 
     def shutdown(self) -> None:
-        """새 작업 접수를 멈추고 대기 중인 future를 취소한다."""
+        """새 작업 접수를 멈추고 실행 중인 하위 프로세스와 future를 정리한다."""
+        self.client.cancel_all()
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.warmup_executor.shutdown(wait=False, cancel_futures=True)
 

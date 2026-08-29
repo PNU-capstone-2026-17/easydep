@@ -91,6 +91,51 @@ def test_reconcile_implementation_command_recovers_interrupted_command(monkeypat
     assert result["status"] == "COMPLETED"
 
 
+def test_reconcile_implementation_command_restores_progress_after_restart(monkeypatch) -> None:
+    command = {
+        "command_id": "command-1",
+        "action": "approve_implementation",
+        "status": "RUNNING",
+        "payload": {"job_id": "job-1"},
+    }
+    events: list[dict] = []
+    monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {"job_id": "job-1", "status": "RUNNING"},
+    )
+    monkeypatch.setattr(repository, "list_events", lambda _app_id: [])
+    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_implementation_progress_snapshot",
+        staticmethod(
+            lambda _job: {
+                "progress_card_label": "구현 진행 상황",
+                "updates": [
+                    {
+                        "step": "phase-backend",
+                        "label": "Backend 구현",
+                        "status": "running",
+                        "detail": "Backend 구현을 진행하고 있습니다.",
+                    }
+                ],
+            }
+        ),
+    )
+
+    service = WorkspaceService()
+    try:
+        result = service.reconcile_implementation_command("app-1")
+    finally:
+        service.shutdown()
+
+    assert result == command
+    assert events[0]["metadata"]["step"] == "phase-backend"
+    assert events[0]["metadata"]["progress_status"] == "running"
+
+
 def test_chat_event_timestamp_is_returned_as_explicit_korean_time() -> None:
     event = repository.event_dict(
         SimpleNamespace(
