@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -23,15 +22,7 @@ from app.implementation.application.prototype import PrototypeClient, PrototypeE
 from app.implementation.config import ImplementationSettings
 from app.implementation.generation.orchestrator import PrototypeOrchestrator, load_job
 from app.implementation.interfaces.http import router
-from app.implementation.interfaces.schemas import (
-    CreateImplementationFeedbackJobRequest,
-    CreateImplementationJobRequest,
-)
 from tests.class_design_fixtures import typed_class_model_payload
-
-
-def test_job_contract_preserves_automated_placeholder_policy() -> None:
-    assert CreateImplementationJobRequest().allow_assumptions is True
 
 
 def test_missing_bce_signature_type_is_detected_before_implementation() -> None:
@@ -287,11 +278,6 @@ def test_ready_workflow_with_pending_tasks_remains_ready(tmp_path: Path) -> None
         implementation_worker.shutdown()
 
     assert record["status"] == "READY"
-
-
-def test_feedback_request_trims_feedback() -> None:
-    request = CreateImplementationFeedbackJobRequest(feedback="  rename the service  ")
-    assert request.feedback == "rename the service"
 
 
 def test_feedback_eligibility_rejects_design_contract_changes() -> None:
@@ -829,36 +815,6 @@ def test_prepare_job_rejects_work_root_outside_repository(tmp_path: Path) -> Non
     )
     with pytest.raises(PrototypeExecutionError, match="inside the EasyDep repository"):
         PrototypeClient(configured).prepare_job("job", "app", {}, "com.example", False)
-
-
-def test_cli_parser_uses_last_json_line(monkeypatch, tmp_path: Path) -> None:
-    client = PrototypeClient(settings(tmp_path))
-    captured = {}
-
-    class CompletedProcess:
-        returncode = 0
-
-        def communicate(self, timeout=None):
-            captured["timeout"] = timeout
-            return "OpenHands banner\n{\"status\": \"READY\"}\n", ""
-
-        def poll(self):
-            return self.returncode
-
-    def completed(command, **kwargs):
-        captured["command"] = command
-        captured["cwd"] = kwargs["cwd"]
-        return CompletedProcess()
-
-    monkeypatch.setattr(
-        subprocess,
-        "Popen",
-        completed,
-    )
-    assert client._call(["workflow-status", "run"])["status"] == "READY"
-    assert "app.implementation.interfaces.cli" in captured["command"]
-    assert captured["cwd"] == tmp_path
-    assert captured["timeout"] == 60
 
 
 def test_public_job_record_hides_host_source_paths() -> None:

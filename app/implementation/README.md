@@ -27,12 +27,12 @@
 | `application/` | job 생성·상태 전이, prototype subprocess와 feedback 접수 |
 | `domain/` | 구현 단계가 공유하는 모델과 소스 분석용 중간 표현(IR) |
 | `generation/` | typed BCE Java 초기 코드, OpenAPI·프론트엔드 생성 |
-| `planning/` | 설계 context를 작은 구현 task와 용량·provider 결정으로 변환 |
+| `planning/` | 설계 context를 작은 구현 task와 프런트엔드 계약으로 변환 |
 | `agents/` | 허용된 파일만 편집하는 LLM agent와 build·E2E·release 검사 |
 | `workflows/` | 작업 조정, repair, 요구사항 추적, 완료와 설계 일치 검사 순서 |
-| `delivery/` | Docker·Terraform·가상 머신 배포 파일 생성과 검사 |
+| `delivery/` | Docker·Terraform 배포 파일 생성과 검사 |
 | `runtime/` | subprocess, Docker 경로와 Linux runner 실행 경계 |
-| `interfaces/` | FastAPI와 CLI 요청·응답 모델 |
+| `interfaces/` | 구현 산출물 조회 HTTP와 제품 worker용 최소 CLI |
 | `tools/` | Gradle wrapper처럼 버전을 고정해야 하는 실행 도구 |
 
 ## 식별자와 디렉터리
