@@ -37,6 +37,7 @@ class _WalkContext:
 
     event_id: str | None = None
     command_id: str | None = None
+    stage: str | None = None
 
 
 def _walk(
@@ -52,11 +53,18 @@ def _walk(
             return _walk(value.get("payload"), context)
         event_id = context.event_id
         command_id = context.command_id
+        stage = context.stage
         if value.get("event_id") is not None:
             event_id = str(value["event_id"])
         if value.get("command_id"):
             command_id = str(value["command_id"])
-        current = _WalkContext(event_id=event_id, command_id=command_id)
+        if value.get("stage"):
+            stage = str(value["stage"])
+        current = _WalkContext(
+            event_id=event_id,
+            command_id=command_id,
+            stage=stage,
+        )
         found.append((value, current))
         for child in value.values():
             found.extend(_walk(child, current))
@@ -109,6 +117,7 @@ def collect_metric_evidence(observations: Sequence[object]) -> list[JsonObject]:
                     event_identity,
                     "requirements_call",
                     commandId=context.command_id,
+                    stage=context.stage or "requirements",
                     operation=str(progress.get("operation") or ""),
                     promptTokens=int(progress.get("promptTokens") or 0),
                     completionTokens=int(progress.get("completionTokens") or 0),
@@ -134,7 +143,15 @@ def collect_metric_evidence(observations: Sequence[object]) -> list[JsonObject]:
                 # 동일 timing event가 command 결과와 designLlmMetrics event에 함께 있어도
                 # 내용이 같으면 같은 ID가 된다. 시작 시각이 다른 실제 재호출은 다른 ID다.
                 identity = f"timing:{_stable_digest(raw)}"
-                collected[identity] = _evidence(identity, "timing", **raw)
+                collected[identity] = _evidence(
+                    identity,
+                    "timing",
+                    **{
+                        **raw,
+                        "commandId": context.command_id,
+                        "stage": context.stage,
+                    },
+                )
 
             # requirements 결과의 telemetry 합계는 progress event를 제공하지 않는 구형 또는
             # 잘린 응답에서만 쓰는 보조 자료다. summarize 단계에서 같은 command의 progress
@@ -151,6 +168,7 @@ def collect_metric_evidence(observations: Sequence[object]) -> list[JsonObject]:
                     identity,
                     "telemetry_summary",
                     commandId=context.command_id,
+                    stage=context.stage,
                     logicalCalls=int(item.get("llm_calls") or 0),
                     physicalCalls=int(item.get("llm_calls") or 0)
                     + int(item.get("structured_fallbacks") or 0),
@@ -168,6 +186,7 @@ def collect_metric_evidence(observations: Sequence[object]) -> list[JsonObject]:
                     "action",
                     action=str(item.get("action") or ""),
                     commandId=item.get("commandId"),
+                    stage=item.get("stage"),
                 )
 
             # command 자체의 provider 오류도 timing event가 없을 때 분류할 수 있게 남긴다.
@@ -179,6 +198,7 @@ def collect_metric_evidence(observations: Sequence[object]) -> list[JsonObject]:
                 collected[identity] = _evidence(
                     identity,
                     "command_error",
+                    stage=context.stage,
                     status=status,
                     error=item.get("error"),
                 )
@@ -210,7 +230,11 @@ def _provider_error_category(item: Mapping[str, Any]) -> str | None:
     return None
 
 
-def summarize_metric_evidence(evidence: Sequence[Mapping[str, Any]]) -> JsonObject:
+def summarize_metric_evidence(
+    evidence: Sequence[Mapping[str, Any]],
+    *,
+    required_stages: Sequence[str] = (),
+) -> JsonObject:
     """중복 제거된 evidence에서 호출·token·repair·cache 합계를 계산한다."""
     requirements_calls = [item for item in evidence if item.get("kind") == "requirements_call"]
     progress_commands = {
@@ -233,15 +257,24 @@ def summarize_metric_evidence(evidence: Sequence[Mapping[str, Any]]) -> JsonObje
     ]
 
     physical_timing = [item for item in timing if item.get("physicalRequest") is True]
-    logical_timing = sum(
+    # cache miss/coalesced 같은 logical-only event와 실제 physical event는 같은
+    # logicalRequestDigest를 공유한다. schema repair의 두 번째 physical 요청도 같은 digest다.
+    logical_digests = {
+        str(item["logicalRequestDigest"])
+        for item in timing
+        if item.get("logicalRequestDigest")
+    }
+    logical_without_digest = sum(
         1
         for item in timing
+        if not item.get("logicalRequestDigest")
         if (
             item.get("physicalRequest") is True
             and int(item.get("physicalRequestIndex") or 1) == 1
         )
         or item.get("physicalRequest") is False
     )
+    logical_timing = len(logical_digests) + logical_without_digest
     logical_calls = (
         len(requirements_calls)
         + logical_timing
@@ -275,6 +308,18 @@ def summarize_metric_evidence(evidence: Sequence[Mapping[str, Any]]) -> JsonObje
         if str(item.get("repairKind") or "").lower() == "semantic"
     ) + sum(1 for item in actions if item.get("action") == "delegate_repair")
     handoffs = sum(1 for item in timing if item.get("handoff"))
+    repair_evidence_ids = {
+        str(item.get("identity") or "")
+        for item in timing
+        if str(item.get("repairKind") or "").lower() in {"schema", "semantic"}
+        or int(item.get("schemaRepairAttempt") or 0) > 0
+        or bool(item.get("handoff"))
+    }
+    repair_evidence_ids.update(
+        str(item.get("identity") or "")
+        for item in actions
+        if item.get("action") == "delegate_repair"
+    )
     cache = Counter(
         str(item.get("cacheStatus") or "").lower()
         for item in timing
@@ -302,6 +347,13 @@ def summarize_metric_evidence(evidence: Sequence[Mapping[str, Any]]) -> JsonObje
     ) or any(item.get("action") == "delegate_repair" for item in actions)
     cache_observable = any("cacheStatus" in item for item in timing)
     provider_observable = bool(provider_sources or summaries)
+    measured_stages = {
+        str(item.get("stage") or "")
+        for item in [*requirements_calls, *timing, *summaries]
+        if item.get("stage")
+    }
+    missing_stages = [stage for stage in required_stages if stage not in measured_stages]
+    coverage_complete = not missing_stages
 
     if not calls_observable:
         unavailable.append("공개 응답에 LLM timing event나 합계가 없습니다.")
@@ -313,29 +365,38 @@ def summarize_metric_evidence(evidence: Sequence[Mapping[str, Any]]) -> JsonObje
         unavailable.append("공개 응답에 cache 결과가 없습니다.")
     if not provider_observable:
         unavailable.append("공개 응답에 provider 오류 상태가 없습니다.")
+    if missing_stages:
+        unavailable.append(
+            "LLM 사용량을 관측하지 못한 단계가 있습니다: "
+            + ", ".join(missing_stages)
+        )
+
+    expose_whole_run_calls = calls_observable and coverage_complete
+    expose_whole_run_tokens = token_observable and coverage_complete
+    expose_whole_run_repairs = repair_observable and coverage_complete
 
     return {
-        "logicalCalls": logical_calls if calls_observable else None,
-        "physicalCalls": physical_calls if calls_observable else None,
-        "inputTokens": input_tokens if token_observable else None,
-        "outputTokens": output_tokens if token_observable else None,
-        "totalTokens": input_tokens + output_tokens if token_observable else None,
+        "logicalCalls": logical_calls if expose_whole_run_calls else None,
+        "physicalCalls": physical_calls if expose_whole_run_calls else None,
+        "inputTokens": input_tokens if expose_whole_run_tokens else None,
+        "outputTokens": output_tokens if expose_whole_run_tokens else None,
+        "totalTokens": (
+            input_tokens + output_tokens if expose_whole_run_tokens else None
+        ),
         "repairs": {
-            "schema": schema_repairs if repair_observable else None,
-            "semantic": semantic_repairs if repair_observable else None,
-            "handoff": handoffs if repair_observable else None,
-            "total": (
-                schema_repairs + semantic_repairs + handoffs
-                if repair_observable
-                else None
-            ),
+            "schema": schema_repairs if expose_whole_run_repairs else None,
+            "semantic": semantic_repairs if expose_whole_run_repairs else None,
+            "handoff": handoffs if expose_whole_run_repairs else None,
+            "total": len(repair_evidence_ids) if expose_whole_run_repairs else None,
         },
         "cache": {
             "hit": cache["hit"] if cache_observable else None,
             "miss": cache["miss"] if cache_observable else None,
             "bypass": cache["bypass"] if cache_observable else None,
             "singleFlight": (
-                cache["single-flight"] + cache["single_flight"]
+                cache["single-flight"]
+                + cache["single_flight"]
+                + cache["coalesced"]
                 if cache_observable
                 else None
             ),
@@ -346,6 +407,12 @@ def summarize_metric_evidence(evidence: Sequence[Mapping[str, Any]]) -> JsonObje
             "timeout": provider_errors["timeout"] if provider_observable else None,
         },
         "measuredUnavailable": unavailable,
+        "coverage": {
+            "status": "complete" if coverage_complete else "partial",
+            "requiredStages": list(required_stages),
+            "measuredStages": sorted(measured_stages),
+            "missingStages": missing_stages,
+        },
     }
 
 
@@ -515,6 +582,16 @@ class RecordingTransport(ProductScenarioTransport):
     def stage_timings(self) -> list[JsonObject]:
         return [timing.as_dict() for timing in self._stage_timings.values()]
 
+    def finish_current_stage(self) -> None:
+        """사용자 입력 대기로 attempt가 끝날 때 열린 stage의 실제 경과 시간을 닫는다."""
+        if not self.current_stage:
+            return
+        timing = self._stage_timings.get(self.current_stage)
+        if timing is None or timing.finished_tick is not None:
+            return
+        timing.finished_at = self._timestamp()
+        timing.finished_tick = self.monotonic()
+
     def resume_record(self, *, reason: str = "평가 실행이 진행 중입니다.") -> JsonObject:
         """프로세스가 갑자기 끝나도 같은 앱에서 재개할 수 있는 공개 위치를 반환한다."""
         return {
@@ -548,6 +625,7 @@ class RecordingTransport(ProductScenarioTransport):
             "selectedAt": self._timestamp(),
             "action": str(payload.get("action") or ""),
             "payload": dict(payload),
+            "stage": self.current_stage,
         }
         response = self.inner.submit_command(app_id, payload)
         raw_command = response.get("command")

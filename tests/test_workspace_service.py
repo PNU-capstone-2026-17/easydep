@@ -533,7 +533,13 @@ def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> Non
         record_llm_timing(
             "ClassInventory",
             status="cache_hit",
-            metadata={"physicalRequest": False, "cacheStatus": "hit"},
+            metadata={
+                "physicalRequest": False,
+                "cacheStatus": "hit",
+                "failureContentSha256": "safe-digest",
+                "failureContentPrefix": "private response start",
+                "failureContentSuffix": "private response end",
+            },
         )
         return "done"
 
@@ -553,6 +559,11 @@ def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> Non
         "ClassInventory"
     )
     assert metrics["metadata"]["llm_timing_events"][0]["cacheStatus"] == "hit"
+    assert metrics["metadata"]["llm_timing_events"][0]["failureContentSha256"] == (
+        "safe-digest"
+    )
+    assert "failureContentPrefix" not in metrics["metadata"]["llm_timing_events"][0]
+    assert "failureContentSuffix" not in metrics["metadata"]["llm_timing_events"][0]
 
 
 def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -> None:

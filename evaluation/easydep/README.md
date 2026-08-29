@@ -197,7 +197,7 @@ python -X utf8 -m evaluation.easydep.product resume `
   --settings-json artifacts/product-settings.json
 ```
 
-재개할 때 입력 digest, provider, model, 설정 digest가 달라지면 중단한다. 서버의 현재 단계가
+재개할 때 입력 digest, Git commit, provider, model, 설정 digest가 달라지면 중단한다. 서버의 현재 단계가
 저장된 실패 단계보다 과거로 돌아간 경우도 중단한다. 이 검사 덕분에 다른 조건의 실행을 같은
 결과처럼 합치거나 이미 완료한 공개 단계를 처음부터 다시 실행하지 않는다.
 
@@ -205,8 +205,8 @@ python -X utf8 -m evaluation.easydep.product resume `
 
 ```powershell
 python -X utf8 -m evaluation.easydep.product report `
-  --input artifacts/product-evaluation `
-  --output artifacts/product-evaluation/report.json
+  --input artifacts/product-evaluation/quick `
+  --output artifacts/product-evaluation/quick/report.json
 ```
 
 집계에는 완주율, 최초 실패 단계별 건수, 전체 시간과 token의 p50/p95, repair 중앙값, 단계별

@@ -89,7 +89,7 @@ def test_failed_design_step_can_be_retried_from_the_composer() -> None:
 def test_failed_requirements_step_can_be_retried_from_the_composer() -> None:
     composer = _source("src/lib/components/Composer.svelte")
 
-    assert "command?.status === 'FAILED' && command.stage === 'requirements'" in composer
+    assert "['FAILED', 'INTERRUPTED'].includes(command.status)" in composer
     assert "onAction('retry_requirements'" in composer
     assert "saved checkpoint will be reused" in composer
 

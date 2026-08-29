@@ -4,6 +4,7 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
@@ -69,6 +70,22 @@ TERMINAL_JOB_STATUSES = {
     "NEEDS_INPUT",
     "NEEDS_PLANNER",
 }
+
+# 설계 실험에서는 schema 오류를 분석하기 위해 응답 앞뒤 일부를 timing collector에
+# 임시로 넣을 수 있다. Workspace event는 브라우저와 평가 산출물에 오래 남으므로
+# 그 문자열 표본은 공개 경계를 넘기지 않고, 길이·hash 같은 수치 정보만 전달한다.
+_PRIVATE_DESIGN_TIMING_FIELDS = frozenset(
+    {"failureContentPrefix", "failureContentSuffix"}
+)
+
+
+def _public_design_timing_event(event: Mapping[str, Any]) -> dict[str, Any]:
+    """설계 timing 한 건에서 LLM 응답 문자열 표본을 제거한다."""
+    return {
+        key: value
+        for key, value in event.items()
+        if key not in _PRIVATE_DESIGN_TIMING_FIELDS
+    }
 
 
 def _blocker_keys(result: dict[str, Any]) -> tuple[str, ...]:
@@ -1133,7 +1150,10 @@ class WorkspaceService:
                     metadata={
                         "progress_event": "designLlmMetrics",
                         "analysis_step": stage,
-                        "llm_timing_events": list(llm_timing_events),
+                        "llm_timing_events": [
+                            _public_design_timing_event(event)
+                            for event in llm_timing_events
+                        ],
                     },
                 )
             live_previews.mark_terminal(app_id, command_id)

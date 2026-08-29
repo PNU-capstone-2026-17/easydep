@@ -42,6 +42,15 @@ TransportFactory = Callable[[], ProductScenarioTransport]
 RunnerFactory = Callable[..., ProductScenarioRunner]
 
 
+def _required_llm_stages(target_stage: str) -> tuple[str, ...]:
+    """목표 지점까지 전체 LLM 합계를 주장하려면 관측해야 하는 공개 단계 목록이다."""
+    order = ("requirements", "design", "implementation", "testing")
+    try:
+        return order[: order.index(target_stage) + 1]
+    except ValueError:
+        return order
+
+
 class _ResumeActionPolicy:
     """명시적 재개 때만 화면에 보이는 실패 단계 재실행 버튼을 누른다."""
 
@@ -219,8 +228,11 @@ class ProductEvaluationRunner:
                 old_environment.get("settingsDigest") != environment.settings_digest
                 or old_environment.get("model") != environment.model
                 or old_environment.get("provider") != environment.provider
+                or old_environment.get("commit") != environment.commit
             ):
-                raise ValueError("재개할 때 model, provider, settings를 바꿀 수 없습니다.")
+                raise ValueError(
+                    "재개할 때 commit, model, provider, settings를 바꿀 수 없습니다."
+                )
             manifest = previous
             run_id = str(manifest.get("runId") or "")
             if not run_id:
@@ -271,6 +283,7 @@ class ProductEvaluationRunner:
             float(prior_wall) if isinstance(prior_wall, (int, float)) else 0.0
         )
         attempt_number = len(manifest.get("attempts") or []) + 1
+        required_llm_stages = _required_llm_stages(profile.target_stage)
 
         def persist_running_progress(recorder: RecordingTransport) -> None:
             """각 공개 HTTP 응답 직후 현재 앱과 계측 근거를 안전하게 저장한다."""
@@ -281,7 +294,10 @@ class ProductEvaluationRunner:
                 prior_evidence, current_evidence
             )
             manifest["metricEvidence"] = combined_evidence
-            manifest["llm"] = summarize_metric_evidence(combined_evidence)
+            manifest["llm"] = summarize_metric_evidence(
+                combined_evidence,
+                required_stages=required_llm_stages,
+            )
             manifest["events"] = merge_workspace_events(
                 prior_events, recorder.events
             )
@@ -347,17 +363,39 @@ class ProductEvaluationRunner:
                 failure_kind = type(error).__name__
         except Exception as error:  # noqa: BLE001 - 평가 manifest에 첫 실패를 반드시 남긴다.
             failure_kind = type(error).__name__
+            saved_resume = resume_record if isinstance(resume_record, Mapping) else {}
+            saved_versions = saved_resume.get("artifact_versions")
+            saved_version_map = (
+                dict(saved_versions) if isinstance(saved_versions, Mapping) else {}
+            )
             failure_report = {
-                "app_id": recorder.app_id,
-                "last_command_id": None,
-                "current_stage": None,
-                "event_cursor": recorder.event_cursor,
-                "implementation_job_id": None,
-                "testing_job_id": None,
-                "artifact_versions": {},
+                "app_id": recorder.app_id or saved_resume.get("app_id") or "",
+                "last_command_id": (
+                    recorder.last_command_id or saved_resume.get("last_command_id")
+                ),
+                "current_stage": (
+                    recorder.current_stage or saved_resume.get("current_stage")
+                ),
+                "event_cursor": max(
+                    recorder.event_cursor,
+                    int(saved_resume.get("event_cursor") or 0),
+                ),
+                "implementation_job_id": (
+                    recorder.implementation_job_id
+                    or saved_resume.get("implementation_job_id")
+                ),
+                "testing_job_id": (
+                    recorder.testing_job_id or saved_resume.get("testing_job_id")
+                ),
+                "artifact_versions": {
+                    **saved_version_map,
+                    **recorder.artifact_versions,
+                },
                 "reason": str(error),
             }
 
+        if checkpoint is None:
+            recorder.finish_current_stage()
         finished_at = self.now()
         wall_seconds = max(0.0, self.monotonic() - started_tick)
         current_evidence = collect_metric_evidence(
@@ -376,7 +414,10 @@ class ProductEvaluationRunner:
         ]
         current_metrics = summarize_metric_evidence(new_attempt_evidence)
         manifest["metricEvidence"] = combined_evidence
-        manifest["llm"] = summarize_metric_evidence(combined_evidence)
+        manifest["llm"] = summarize_metric_evidence(
+            combined_evidence,
+            required_stages=required_llm_stages,
+        )
         manifest["wallSeconds"] = previous_wall_seconds + wall_seconds
         manifest["finishedAt"] = finished_at.isoformat()
         manifest["stageTimings"] = [

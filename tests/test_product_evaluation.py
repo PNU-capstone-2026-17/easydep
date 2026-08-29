@@ -206,6 +206,30 @@ class EvaluationTransport:
         raise AssertionError("design까지만 실행할 때 구현 파일을 읽으면 안 됩니다.")
 
 
+class AwaitingDesignTransport(EvaluationTransport):
+    """design이 사람의 수정 지시를 기다리는 실제 AWAITING_INPUT 모양을 만든다."""
+
+    def get_workspace(self, app_id: str) -> Mapping[str, Any]:
+        if self.state != "design":
+            return super().get_workspace(app_id)
+        command = _command(
+            2,
+            "design",
+            "AWAITING_INPUT",
+            result={
+                "requires_revision": True,
+                "can_delegate_repair": False,
+                "blocking_findings": [{"message": "수정 지시가 필요합니다."}],
+            },
+        )
+        return {
+            "app_id": app_id,
+            "current_stage": "design",
+            "command": command,
+            "events": [],
+        }
+
+
 def _environment() -> RunEnvironment:
     return RunEnvironment(
         commit="abc123",
@@ -371,6 +395,94 @@ def test_timing_and_delegate_action_use_stable_identity_outside_nested_payload()
     assert metrics["repairs"]["total"] == 1
 
 
+def test_class_cold_cache_miss_and_physical_request_are_one_logical_unit() -> None:
+    observations = [
+        {
+            "stage": "design",
+            "operation": "class-fragment-cache",
+            "startedAt": "2026-08-29T01:00:00+00:00",
+            "logicalRequestDigest": "same-logical-unit",
+            "physicalRequest": False,
+            "cacheStatus": "miss",
+        },
+        {
+            "stage": "design",
+            "operation": "class-fragment",
+            "startedAt": "2026-08-29T01:00:01+00:00",
+            "logicalRequestDigest": "same-logical-unit",
+            "physicalRequest": True,
+            "physicalRequestIndex": 1,
+            "inputTokens": 20,
+            "outputTokens": 5,
+        },
+        {
+            "stage": "design",
+            "operation": "class-fragment-cache",
+            "startedAt": "2026-08-29T01:00:02+00:00",
+            "logicalRequestDigest": "coalesced-logical-unit",
+            "physicalRequest": False,
+            "cacheStatus": "coalesced",
+        },
+    ]
+
+    metrics = extract_llm_metrics(observations)
+
+    assert metrics["logicalCalls"] == 2
+    assert metrics["physicalCalls"] == 1
+    assert metrics["cache"]["miss"] == 1
+    assert metrics["cache"]["singleFlight"] == 1
+
+
+def test_whole_run_totals_are_hidden_when_required_stage_coverage_is_partial() -> None:
+    evidence = collect_metric_evidence([{"events": [_requirements_llm_event()]}])
+
+    metrics = summarize_metric_evidence(
+        evidence,
+        required_stages=("requirements", "design"),
+    )
+
+    assert metrics["logicalCalls"] is None
+    assert metrics["physicalCalls"] is None
+    assert metrics["totalTokens"] is None
+    assert metrics["repairs"]["total"] is None
+    assert metrics["coverage"] == {
+        "status": "partial",
+        "requiredStages": ["requirements", "design"],
+        "measuredStages": ["requirements"],
+        "missingStages": ["design"],
+    }
+    assert any("design" in reason for reason in metrics["measuredUnavailable"])
+
+
+def test_full_profile_does_not_claim_implementation_and_testing_are_zero_llm() -> None:
+    evidence = collect_metric_evidence(
+        [
+            {"events": [_requirements_llm_event()]},
+            {
+                "stage": "design",
+                "operation": "ClassFragment",
+                "logicalRequestDigest": "design-logical",
+                "physicalRequest": True,
+                "physicalRequestIndex": 1,
+                "inputTokens": 20,
+                "outputTokens": 5,
+                "repairKind": None,
+                "handoff": None,
+            },
+        ]
+    )
+
+    metrics = summarize_metric_evidence(
+        evidence,
+        required_stages=("requirements", "design", "implementation", "testing"),
+    )
+
+    assert metrics["coverage"]["measuredStages"] == ["design", "requirements"]
+    assert metrics["coverage"]["missingStages"] == ["implementation", "testing"]
+    assert metrics["logicalCalls"] is None
+    assert metrics["totalTokens"] is None
+
+
 def test_saved_and_resumed_metric_evidence_is_recalculated_without_double_counting() -> None:
     event = _requirements_llm_event()
     saved = collect_metric_evidence([{"events": [event]}])
@@ -394,6 +506,7 @@ def test_evaluation_run_uses_public_runner_and_writes_complete_manifest(
     tmp_path: Path,
 ) -> None:
     transport = EvaluationTransport()
+    transport.requirements_llm_event = _requirements_llm_event()
     case = load_catalog()["dev_stateless_conversion"]
     profile = load_profile("quick")
     runner = ProductEvaluationRunner(
@@ -409,14 +522,14 @@ def test_evaluation_run_uses_public_runner_and_writes_complete_manifest(
     assert transport.commands == [{"action": "start_design"}]
     assert manifest["status"] == "COMPLETED"
     assert manifest["finalStage"] == "design"
-    assert manifest["llm"]["logicalCalls"] == 2
-    assert manifest["llm"]["physicalCalls"] == 2
-    assert manifest["llm"]["totalTokens"] == 160
+    assert manifest["llm"]["logicalCalls"] == 3
+    assert manifest["llm"]["physicalCalls"] == 4
+    assert manifest["llm"]["totalTokens"] == 178
     assert manifest["llm"]["repairs"] == {
         "schema": 1,
         "semantic": 0,
         "handoff": 1,
-        "total": 2,
+        "total": 1,
     }
     assert manifest["llm"]["cache"]["hit"] == 1
     assert manifest["artifactVersions"]["deployment_diagram"]["versionNo"] == 1
@@ -473,6 +586,30 @@ def test_failed_run_resumes_same_app_without_restarting_completed_stage(
     assert resumed["attempts"][-1]["llm"]["totalTokens"] == 160
 
 
+def test_awaiting_input_closes_current_stage_wall_time(tmp_path: Path) -> None:
+    transport = AwaitingDesignTransport()
+    case = load_catalog()["dev_stateless_conversion"]
+    profile = load_profile("quick")
+    runner = ProductEvaluationRunner(
+        lambda: transport,
+        tmp_path,
+        poll_interval_seconds=0,
+        event_wait_seconds=0,
+    )
+
+    manifest = runner.run_case(case, profile, 1, _environment())
+
+    assert manifest["status"] == "NEEDS_INPUT"
+    design = next(
+        item
+        for item in manifest["stageTimings"]
+        if item["stage"] == "design"
+    )
+    assert design["finishedAt"] is not None
+    assert isinstance(design["wallSeconds"], float)
+    assert design["wallSeconds"] >= 0
+
+
 def test_requirements_failure_resumes_from_its_public_retry_action(
     tmp_path: Path,
 ) -> None:
@@ -517,6 +654,92 @@ class _InterruptAfterWorkspaceSnapshot:
         created = self.transport.create_app(message)
         self.transport.get_workspace(str(created["app_id"]))
         raise KeyboardInterrupt
+
+
+class _RaiseBeforeFirstGet:
+    """재개 runner가 공개 GET을 보내기 전에 환경 오류가 나는 상황이다."""
+
+    def __init__(self, _transport: Any, **_kwargs: Any) -> None:
+        pass
+
+    def resume_from(self, _report: Any, *, stop_after_stage: str) -> None:
+        assert stop_after_stage == "design"
+        raise RuntimeError("runner setup failed before first GET")
+
+
+def test_resume_rejects_a_different_commit_before_touching_same_app(
+    tmp_path: Path,
+) -> None:
+    transport = EvaluationTransport(fail_design=True)
+    case = load_catalog()["dev_stateless_conversion"]
+    profile = load_profile("quick")
+    runner = ProductEvaluationRunner(
+        lambda: transport,
+        tmp_path,
+        poll_interval_seconds=0,
+        event_wait_seconds=0,
+    )
+    runner.run_case(case, profile, 1, _environment())
+    manifest_path = next(tmp_path.rglob("manifest.json"))
+    changed_commit = RunEnvironment(
+        commit="different-commit",
+        provider="nvidia-nim",
+        model="test-model",
+        settings={"temperature": 0, "classConcurrency": 2},
+    )
+
+    with pytest.raises(ValueError, match="commit"):
+        runner.run_case(
+            case,
+            profile,
+            1,
+            changed_commit,
+            manifest_path=manifest_path,
+        )
+
+    assert transport.create_calls == 1
+
+
+def test_generic_resume_failure_before_first_get_preserves_saved_location(
+    tmp_path: Path,
+) -> None:
+    transport = EvaluationTransport(fail_design=True)
+    case = load_catalog()["dev_stateless_conversion"]
+    profile = load_profile("quick")
+    first_runner = ProductEvaluationRunner(
+        lambda: transport,
+        tmp_path,
+        poll_interval_seconds=0,
+        event_wait_seconds=0,
+    )
+    failed = first_runner.run_case(case, profile, 1, _environment())
+    manifest_path = next(tmp_path.rglob("manifest.json"))
+    saved = dict(failed["resumeRecord"])
+
+    broken_runner = ProductEvaluationRunner(
+        lambda: transport,
+        tmp_path,
+        runner_factory=_RaiseBeforeFirstGet,
+        poll_interval_seconds=0,
+        event_wait_seconds=0,
+    )
+    failed_again = broken_runner.run_case(
+        case,
+        profile,
+        1,
+        _environment(),
+        manifest_path=manifest_path,
+    )
+
+    assert failed_again["status"] == "RuntimeError"
+    assert failed_again["resumeRecord"]["app_id"] == saved["app_id"]
+    assert failed_again["resumeRecord"]["current_stage"] == saved["current_stage"]
+    assert failed_again["resumeRecord"]["last_command_id"] == saved["last_command_id"]
+    assert failed_again["resumeRecord"]["event_cursor"] == saved["event_cursor"]
+    assert failed_again["resumeRecord"]["implementation_job_id"] == saved[
+        "implementation_job_id"
+    ]
+    assert failed_again["resumeRecord"]["testing_job_id"] == saved["testing_job_id"]
 
 
 class _InterruptAfterAppCreation:
@@ -578,7 +801,8 @@ def test_running_manifest_is_atomic_and_can_resume_same_app_after_interrupt(
     assert running["resumeRecord"]["app_id"] == "app-evaluation"
     assert running["resumeRecord"]["last_command_id"] == "command-1"
     assert running["resumeRecord"]["event_cursor"] == 41
-    assert running["llm"]["totalTokens"] == 18
+    assert running["llm"]["totalTokens"] is None
+    assert running["llm"]["coverage"]["missingStages"] == ["design"]
     assert not list(manifest_path.parent.glob("*.tmp"))
 
     resumed_runner = ProductEvaluationRunner(
