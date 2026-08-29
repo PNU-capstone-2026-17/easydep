@@ -35,10 +35,6 @@ contract test를 호환 여부를 판단하는 기준으로 삼는다.
 - class accepted-unit cache는 단일 use-case cold 실행에서 inventory·operation·call-plan
   proposal을 각각 1회 호출하고 같은 process의 warm 실행에서는 외부 호출이 0이어야 한다.
   cache 객체·key metadata는 `ArchitectureState`, checkpoint 또는 disk JSON에 저장하지 않는다.
-- 별도 frozen E1 cache transport 실측은 cold physical 21회 뒤 warm physical 0회와 artifact
-  byte equality를 확인했다. 다만 양쪽 product gate는 실패했으므로 report 전체는 실패로
-  분류하고 최적화 설정은 채택하지 않았다. 상세와 ignored artifact SHA-256은
-  `evaluation/class_design_optimization_result_20260828.md`에 기록한다.
 - cache cold/warm은 `tests/test_class_design_service.py`, 현재 schema의 프로세스 재시작·재개는
   `tests/test_session_store.py`와 Workspace 공개 API 회귀 테스트를 최종 rollup gate에서 함께
   실행해 보장한다.

@@ -336,12 +336,3 @@ live protocol의 compact/candidate cell에서만 명시적으로 활성화한다
 input/output digest·token, repair attempt, handoff owner와 execution-slice metadata를
 남긴다. `DesignAdapter.start` 후 `resume`은 세션에 누적된 목록이 아니라 해당 invocation의
 event만 반환한다.
-
-## 최적화 평가와 실패 조건
-
-고정 E1 입력과 최대 9-cell protocol은
-[`evaluation/class_design_optimization_protocol.md`](../../../../evaluation/class_design_optimization_protocol.md)에
-정의한다. 오프라인 evaluator는 network/LLM을 호출하지 않고 frozen checkpoint digest와
-schema/reference/call/sequence gate를 평가한다. 실제 생성 runner는 retry 0, 독립 run ID,
-9개 cold cell과 same-process warm 검증을 강제한다. gate 실패, digest mismatch, token 상한
-초과면 후속 candidate를 즉시 중단하며 실패 cell을 재시도해 대체하지 않는다.
