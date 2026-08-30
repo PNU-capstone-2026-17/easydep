@@ -28,12 +28,12 @@ run_checks(checks, artifact, context) -> ValidationReport
     {
       "rule_id": "class.collaboration.bindings",
       "message": "argument source is not available before the call",
-      "location": "UC1:main:1::call:2#request",
+      "location": "UC1::call:2#request",
       "requires_user_input": false,
       "origin": "deterministic"
     }
   ],
-  "checked_rule_ids": ["class.collaboration.contract", "class.collaboration.order"],
+  "checked_rule_ids": ["class.collaboration.contract", "class.collaboration.bindings"],
   "errors": []
 }
 ```
@@ -93,7 +93,7 @@ replacement inventory를 반환하고, 같은 규칙을 다시 통과해야 한�
 
 Finding이 있으면 현재 fragment, finding 목록과 누적 거절 이력을 `previousFragment`와 함께
 전달해 교체한다. 숫자 상한은 두지 않는다. 같은 후보가 반복되면 같은 요청을 계속 보내지
-않고 더 넓은 유스케이스 수리로 넘긴다.
+않고 반복 사실과 이전 이력을 알려 같은 유스케이스의 전체 조각을 다르게 다시 받는다.
 다른 use case의 수락된 fragment는 prompt에도 replacement 대상에도 포함하지 않는다.
 
 ## Collaboration 규칙
@@ -112,8 +112,8 @@ Finding이 있으면 현재 fragment, finding 목록과 누적 거절 이력을 
 정상 예:
 
 ```text
-UC1:main:1::call:1#request
-UC1:main:1::call:2#result
+UC1::call:1#request
+UC1::call:2#result
 derived#OrderRequest(total=UC1:main:1#total)
 runtime#currentInstant
 ```
@@ -121,14 +121,16 @@ runtime#currentInstant
 실패 예:
 
 ```text
-UC1:main:1::call:3#result   # 현재 call보다 뒤의 반환값
+UC1::call:3#result          # 현재 call보다 뒤의 반환값
 literal#unknown            # 허용 후보에 없고 타입 근거도 없음
 derived#OrderRequest()     # 필수 필드 원천이 없음
 ```
 
 호출 계획이나 materialize가 실패하면 예외 메시지, 이전 계획과 짧은 수리 이력을 같은
 유스케이스의 `InteractionCallPlanRepair`에 전달한다. 숫자 횟수로 중단하지 않으며, 같은
-실패가 반복되면 operation까지 포함하는 유스케이스 수리로 범위를 넓힌다.
+finding과 후보가 반복되면 operation까지 포함하는 유스케이스 Combined 재생성으로 범위를
+넓힌다. provider 연결 오류와 구조화 응답 schema 오류는 collaboration finding으로 바꾸지
+않으며 이 수리 이력에 포함하지 않는다.
 
 ## 최종 모델과 readiness
 

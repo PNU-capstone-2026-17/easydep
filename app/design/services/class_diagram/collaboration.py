@@ -465,6 +465,15 @@ def materialize(
     return Collaboration.model_validate(candidate)
 
 
+class _CombinedReplacementRequired(RuntimeError):
+    """call-plan 수리가 반복되어 유스케이스 전체 교체가 필요함을 알린다."""
+
+    def __init__(self, use_case_id: str, issue: str) -> None:
+        super().__init__(issue)
+        self.use_case_id = use_case_id
+        self.issue = issue
+
+
 def _accepted_payload(
     index: ScenarioIndex,
     model: BCEModel,
@@ -475,6 +484,8 @@ def _accepted_payload(
     previous: CallPlanProposal | None = None
     finding = directive
     attempt = 0
+    seen_states: set[str] = set()
+    seen_findings: set[str] = set()
     while True:
         # Provider/schema 예외는 semantic finding으로 바꾸지 않는다.
         candidate = propose_call_plan(
@@ -484,6 +495,12 @@ def _accepted_payload(
             return materialize(index, model, use_case, candidate).model_dump(by_alias=True)
         except ValueError as error:
             error_text = f"{type(error).__name__}: {error}"
+            candidate_digest = stable_digest(candidate.model_dump(by_alias=True))
+            state_digest = stable_digest({
+                "candidate": candidate_digest,
+                "finding": error_text,
+            })
+            repeated = state_digest in seen_states or error_text in seen_findings
             ledger.record(RepairAttempt(
                 stage="design.class.collaboration",
                 target_ids=(use_case.id,),
@@ -491,12 +508,20 @@ def _accepted_payload(
                 input_digest=stable_digest(_use_case_payload(
                     index, model.model_dump(by_alias=True), use_case,
                 )),
-                candidate_digest=stable_digest(candidate.model_dump(by_alias=True)),
+                candidate_digest=candidate_digest,
                 finding_keys_before=(error_text,),
                 finding_keys_after=(error_text,),
-                outcome="no_improvement",
+                outcome="repeated_candidate" if repeated else "no_improvement",
                 detail=error_text,
             ))
+            if repeated:
+                raise _CombinedReplacementRequired(
+                    use_case.id,
+                    error_text + "\n\nAccumulated call-plan repair history:\n"
+                    + ledger.prompt_context(),
+                ) from error
+            seen_states.add(state_digest)
+            seen_findings.add(error_text)
             previous = candidate
             finding = (
                 f"{error_text}\n\nReturn a different full plan. Repair history:\n"

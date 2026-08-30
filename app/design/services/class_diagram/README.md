@@ -21,7 +21,9 @@ raw use-case JSON
 같은 입력에 같은 결과를 내는 코드 검사를 통과시킨다. 최초 생성은 한 유스케이스의
 메서드와 호출 계획을 한 응답으로 받되, 둘을 각각 정규화하고 검사한다. 호출 계획만 잘못된
 경우에는 수락된 메서드를 유지한 채 호출 계획만 다시 만든다. 이미 수락된 다른 유스케이스도
-다시 호출하지 않는다.
+다시 호출하지 않는다. 같은 오류와 같은 호출 계획이 반복되면 해당 유스케이스의 메서드와
+호출 계획을 `CombinedUnitProposal`로 다시 받고, 먼저 수락한 다른 유스케이스의 협업은 새
+메서드 골격에서도 유효한지 코드로 다시 확인해 재사용한다.
 
 ## 공개 입력과 출력
 
@@ -230,8 +232,8 @@ operation ID로 바꾸고, `collaboration.py`가 저장용 호출과 parameter �
 인과 순서로 계산한다.
 
 - `UC1:main:1#request`: 액터 입력 또는 선행조건의 이름 있는 값
-- `UC1:main:1::call:1#request`: 상위 호출이 받은 parameter
-- `UC1:main:1::call:2#result`: 앞선 호출의 반환값
+- `UC1::call:1#request`: 상위 호출이 받은 parameter
+- `UC1::call:2#result`: 앞선 호출의 반환값
 - `derived#OrderRequest(total=UC1:main:1#total)`: 필드별 원천에서 구성한 DTO
 - `runtime#currentDateTime`: 명시적으로 지원하는 런타임 시계
 
@@ -279,13 +281,16 @@ validation finding이 남으면
 
 | 수정 대상 | 주요 검사 | 숫자 상한 | 종료 조건 |
 |---|---|---:|---|
-| Inventory | 이름·타입·관계·유스케이스 범위 | 없음 | 수락 또는 거절 후보 반복 |
-| Operation fragment | 참조·단계 커버리지·값 흐름 | 없음 | 수락 또는 더 넓은 유스케이스 수리 |
-| Collaboration | 호출 계약·순서·binding provenance | 없음 | 수락 또는 거절 call-plan 반복 |
+| Inventory | 이름·타입·관계·유스케이스 범위 | 없음 | 수락할 때까지 전체 inventory 교체 |
+| Operation fragment | 참조·단계 커버리지·값 흐름 | 없음 | 수락할 때까지 같은 유스케이스 조각 교체 |
+| Collaboration | 호출 계약·순서·binding provenance | 없음 | 수락 또는 같은 유스케이스의 Combined 재생성 |
 | Final model | schema·canonical ID·협업 커버리지 | 해당 없음 | revise에서는 finding 반환 |
 
 이름 충돌은 다른 유스케이스의 수락 결과를 버리지 않고 충돌한 유스케이스만 다시 제안한다.
 호출 계획 오류도 승인된 operation을 보존하고 이전 후보와 정확한 finding을 함께 전달한다.
+동일 finding과 후보가 반복될 때에는 사용자 실패로 끝내지 않고 그 유스케이스의 Combined
+제안으로 수리 범위를 넓힌다. LLM provider 오류와 구조화 응답 schema 오류는 설계 finding이
+아니므로 수리 이력에 넣지 않고 호출자에게 그대로 전달한다.
 
 검증 구현과 rule별 의미는 [validation README](validation/README.md)를 따른다.
 

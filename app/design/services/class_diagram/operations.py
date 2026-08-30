@@ -1,20 +1,14 @@
-"""수락된 inventory에서 실행 슬라이스별 BCE 연산 조각을 생성하고 조립한다.
+"""유스케이스 operation 제안을 정규화·검사하고 BCE 모델로 조립한다.
 
-LLM에는 한 ``OperationUnit``의 단계, 고정 클래스·구조 타입과 앞선 wave가 예약한 이름만
-전달한다. ``OperationFragment`` 응답은 actor-entry 소유권과 타입을 정규화하고
-``OPERATION_CHECKS``를 통과한 뒤에만 ``AcceptedFragment``가 된다.
-
-이 모듈의 부작용은 이력 기반 LLM 수리, 최대 병렬도 2의 wave 실행과 클래스 미리보기 이벤트
-발행이다. 숫자 수리 상한은 없고 동일 후보가 반복될 때만 중단한다. collaboration을 만들거나
-graph state·저장소를 직접 읽지 않는다.
+생성 순서와 collaboration은 ``generation``이 맡는다. 이 모듈은 operation payload,
+피드백 수리, 결정론적 정규화·검사·compose와 진행 preview만 제공한다.
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
-from collections.abc import Callable, Mapping, MutableMapping
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -28,29 +22,16 @@ from app.design.services.class_diagram.cache import (
     record_cache_outcome,
 )
 from app.design.services.class_diagram.inventory import finding_text
-from app.design.services.class_diagram.models import (
-    AcceptedFragment,
-    AcceptedInventory,
-    CollaborationResult,
-)
+from app.design.services.class_diagram.models import AcceptedFragment, AcceptedInventory
 from app.design.services.class_diagram.models import (
     Collision as _Collision,
 )
 from app.design.services.class_diagram.models import (
     DataTypeCollision as _DataTypeCollision,
 )
-from app.design.services.class_diagram.models import (
-    OperationUnit as _OperationUnit,
-)
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.proposals import OperationFragment
-from app.design.services.class_diagram.scenario import (
-    ExecutionGroup,
-    ScenarioIndex,
-    UseCase,
-    id_key,
-    text,
-)
+from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, id_key, text
 from app.design.services.class_diagram.type_system import (
     field_type,
     reachable_data_type_names,
@@ -66,14 +47,14 @@ from app.design.services.class_diagram.validation.model import (
     type_can_default,
 )
 from app.design.services.common import fields
-from app.design.services.common.structured import bind_context, parse_structured
+from app.design.services.common.structured import parse_structured
 from app.validation import RepairAttempt, RepairLedger, run_checks, stable_digest
 
 logger = logging.getLogger(__name__)
 
 
 _OPERATION_PROMPT = ("""
-Build the complete operation fragment for exactly one execution slice. Use only
+Build the complete operation fragment for exactly one use case. Use only
 fixedClasses, fixedDataTypes, reserved contracts, and locally declared DataTypes.
 Cover every allowedStepRef. Return only the fields required by the response
 schema; do not return bindings, relationships, operation IDs, or classes outside
@@ -143,7 +124,6 @@ def _operation_payload(
     reserved: list[dict[str, Any]] | None = None,
     reserved_types: list[dict[str, Any]] | None = None,
     allowed_step_ids: tuple[str, ...] = (),
-    execution_group_id: str = "",
 ) -> dict[str, Any]:
     """한 실행 슬라이스의 유한한 연산 선택 공간을 JSON payload로 만든다.
 
@@ -203,7 +183,7 @@ def _operation_payload(
     payload: dict[str, Any] = {
         "useCase": summary,
         "executionSlice": {
-            "id": execution_group_id or use_case.id,
+            "id": use_case.id,
             "steps": [
                 {
                     "stepRef": step.id,
@@ -429,7 +409,6 @@ def normalize_operation_fragment(
     *,
     reserved_types: list[dict[str, Any]] | None = None,
     allowed_step_ids: tuple[str, ...] = (),
-    execution_group_id: str = "",
 ) -> AcceptedFragment:
     """raw operation 제안을 기존 저장 표기로 정규화한다."""
 
@@ -460,7 +439,6 @@ def normalize_operation_fragment(
     actor_entry_refs = {
         group.actor_step for group in index.groups
         if group.use_case_id == use_case.id and group.actor_step
-        and (not execution_group_id or group.id == execution_group_id)
     }
     candidate = _canonicalize_step_ownership(
         candidate, inventory_payload, actor_entry_refs, allowed_step_ids,
@@ -478,7 +456,6 @@ def _propose_fragment(
     reserved: list[dict[str, Any]] | None = None,
     reserved_types: list[dict[str, Any]] | None = None,
     allowed_step_ids: tuple[str, ...] = (),
-    execution_group_id: str = "",
     operation: str = "InteractionOperations",
 ) -> dict[str, Any]:
     """한 연산 unit을 LLM에 요청하고 저장 직전 fragment shape로 정규화한다.
@@ -498,7 +475,6 @@ def _propose_fragment(
         reserved=reserved,
         reserved_types=reserved_types,
         allowed_step_ids=allowed_step_ids,
-        execution_group_id=execution_group_id,
     )
     parsed = parse_structured(
         [
@@ -511,7 +487,7 @@ def _propose_fragment(
         operation=operation,
         metadata={
             "useCaseId": use_case.id,
-            "executionSlice": execution_group_id or use_case.id,
+            "executionSlice": use_case.id,
             "candidateCount": len(prompt_payload["fixedClasses"])
             + len(prompt_payload["executionSlice"]["steps"]),
         },
@@ -528,7 +504,7 @@ def _propose_fragment(
         text(item.get("name")) for item in reserved_types or []
         if isinstance(item, dict)
     }
-    # 3. 전역·앞선 wave가 이미 소유한 타입은 지역 선언에서 제거한다. 같은 이름의 다른
+    # 3. 전역·앞서 수락된 타입은 지역 선언에서 제거한다. 같은 이름의 다른
     # 정의는 compose 시 충돌로 드러나며 조용히 덮어쓰지 않는다.
     candidate["DataTypes"] = [
         {
@@ -547,9 +523,7 @@ def _propose_fragment(
     actor_entry_refs = {
         group.actor_step
         for group in index.groups
-        if group.use_case_id == use_case.id
-        and group.actor_step
-        and (not execution_group_id or group.id == execution_group_id)
+        if group.use_case_id == use_case.id and group.actor_step
     }
     # 5. actor entry는 Boundary만 소유한다. Control/Entity의 중복 stepRef를 제거한 뒤
     # 근거가 사라진 placeholder operation도 함께 제외한다.
@@ -568,13 +542,13 @@ def _checked_fragment_uncached(
     reserved: list[dict[str, Any]] | None = None,
     reserved_types: list[dict[str, Any]] | None = None,
     allowed_step_ids: tuple[str, ...] = (),
-    execution_group_id: str = "",
     operation: str = "InteractionOperations",
 ) -> dict[str, Any]:
     """연산 fragment를 제안·검사하고 현재 unit만 이력 기반으로 교체한다.
 
     각 보고서의 finding과 거절 후보 이력을 ``previousFragment``와 함께 다음 repair 호출에
-    전달한다. 숫자 상한은 없으며 같은 후보가 반복될 때만 명시적으로 실패한다.
+    전달한다. 숫자 상한은 없으며 같은 후보가 반복되면 그 사실까지 알려 다른 전체 조각을
+    계속 요청한다.
     """
     validation_inventory = {
         **inventory,
@@ -591,14 +565,13 @@ def _checked_fragment_uncached(
             ),
         ],
     }
-    # 검증 context는 다른 wave의 예약 타입까지 포함한다. 그렇지 않으면 유효한 재사용
+    # 검증 context는 앞서 예약된 타입까지 포함한다. 그렇지 않으면 유효한 재사용
     # 타입을 "존재하지 않음"으로 오판한다.
     context = OperationContext(
         index,
         validation_inventory,
         use_case,
         allowed_step_ids,
-        (execution_group_id,) if execution_group_id else (),
     )
     ledger = RepairLedger()
     input_digest = stable_digest({
@@ -607,7 +580,6 @@ def _checked_fragment_uncached(
         "reserved": reserved or [],
         "reservedTypes": reserved_types or [],
         "allowedStepIds": allowed_step_ids,
-        "executionGroupId": execution_group_id,
         "initialFindings": findings or [],
     })
     candidate = previous
@@ -623,7 +595,6 @@ def _checked_fragment_uncached(
             reserved=reserved,
             reserved_types=reserved_types,
             allowed_step_ids=allowed_step_ids,
-            execution_group_id=execution_group_id,
             operation=(
                 operation
                 if attempt == 0
@@ -652,7 +623,7 @@ def _checked_fragment_uncached(
         )
         ledger.record(RepairAttempt(
             stage="design.class.operations",
-            target_ids=(execution_group_id or use_case.id,),
+            target_ids=(use_case.id,),
             strategy_key=f"full-fragment-replacement-{attempt + 1}",
             input_digest=input_digest,
             candidate_digest=candidate_digest,
@@ -661,17 +632,15 @@ def _checked_fragment_uncached(
             outcome="repeated_candidate" if repeated else "no_improvement",
             detail="; ".join(current_findings),
         ))
-        if repeated:
-            ledger.status = "STALLED"
-            ledger.stall_reason = (
-                "The operation LLM repeated an already rejected fragment or failed state."
-            )
-            raise ValueError(
-                f"operation fragment {use_case.id} repair stalled on a repeated candidate: "
-                + "; ".join(current_findings)
-            )
         repair_findings = [
             *current_findings,
+            *(
+                [
+                    "The previous candidate repeated the same rejected state. "
+                    "Return a materially different complete fragment."
+                ]
+                if repeated else []
+            ),
             (
                 "Accumulated repair history (do not repeat any strategy or candidate):\n"
                 + ledger.prompt_context()
@@ -690,10 +659,9 @@ def _operation_cache_key(
     reserved: list[dict[str, Any]] | None,
     reserved_types: list[dict[str, Any]] | None,
     allowed_step_ids: tuple[str, ...],
-    execution_group_id: str,
     operation: str,
 ) -> str:
-    """execution slice의 수락 fragment에만 대응하는 cache key를 만든다."""
+    """한 유스케이스의 수락 fragment에 대응하는 cache key를 만든다."""
 
     payload = _operation_payload(
         index,
@@ -704,7 +672,6 @@ def _operation_cache_key(
         reserved=reserved,
         reserved_types=reserved_types,
         allowed_step_ids=allowed_step_ids,
-        execution_group_id=execution_group_id,
     )
     if isinstance(payload.get("findings"), list):
         payload["findings"] = [
@@ -737,7 +704,6 @@ def _validate_accepted_fragment(
     *,
     reserved_types: list[dict[str, Any]] | None,
     allowed_step_ids: tuple[str, ...],
-    execution_group_id: str,
 ) -> dict[str, Any]:
     """cache hit을 Pydantic과 기존 operation validator로 다시 수락한다."""
 
@@ -782,7 +748,6 @@ def _validate_accepted_fragment(
             validation_inventory,
             use_case,
             allowed_step_ids,
-            (execution_group_id,) if execution_group_id else (),
         ),
     )
     if report.errors or report.findings:
@@ -801,7 +766,6 @@ def validate_operation_fragment(
     *,
     reserved_types: list[dict[str, Any]] | None = None,
     allowed_step_ids: tuple[str, ...] = (),
-    execution_group_id: str = "",
 ) -> AcceptedFragment:
     """정규화한 fragment에 최소 operation 검사를 다시 실행한다."""
 
@@ -809,7 +773,6 @@ def validate_operation_fragment(
         fragment.as_payload(), index, inventory.as_payload(), use_case,
         reserved_types=reserved_types,
         allowed_step_ids=allowed_step_ids,
-        execution_group_id=execution_group_id,
     )
     return AcceptedFragment(use_case.id, payload)
 
@@ -824,7 +787,6 @@ def _checked_fragment(
     reserved: list[dict[str, Any]] | None = None,
     reserved_types: list[dict[str, Any]] | None = None,
     allowed_step_ids: tuple[str, ...] = (),
-    execution_group_id: str = "",
     operation: str = "InteractionOperations",
     cache: AcceptedUnitCache | None = None,
 ) -> dict[str, Any]:
@@ -840,7 +802,6 @@ def _checked_fragment(
             reserved=reserved,
             reserved_types=reserved_types,
             allowed_step_ids=allowed_step_ids,
-            execution_group_id=execution_group_id,
             operation=operation,
         )
     prompt_payload = _operation_payload(
@@ -852,10 +813,9 @@ def _checked_fragment(
         reserved=reserved,
         reserved_types=reserved_types,
         allowed_step_ids=allowed_step_ids,
-        execution_group_id=execution_group_id,
     )
     metadata = {
-        "executionSlice": execution_group_id or use_case.id,
+        "executionSlice": use_case.id,
         "candidateCount": len(prompt_payload["fixedClasses"])
         + len(prompt_payload["fixedDataTypes"]),
     }
@@ -863,7 +823,7 @@ def _checked_fragment(
         record_cache_outcome(
             None,
             operation=operation,
-            unit=execution_group_id or use_case.id,
+            unit=use_case.id,
             metadata=metadata,
         )
         candidate = compute()
@@ -878,7 +838,6 @@ def _checked_fragment(
                 reserved=reserved,
                 reserved_types=reserved_types,
                 allowed_step_ids=allowed_step_ids,
-                execution_group_id=execution_group_id,
                 operation=operation,
             ),
             compute,
@@ -886,7 +845,7 @@ def _checked_fragment(
         record_cache_outcome(
             result,
             operation=operation,
-            unit=execution_group_id or use_case.id,
+            unit=use_case.id,
             metadata=metadata,
         )
         candidate = result.value
@@ -897,7 +856,6 @@ def _checked_fragment(
         use_case,
         reserved_types=reserved_types,
         allowed_step_ids=allowed_step_ids,
-        execution_group_id=execution_group_id,
     )
 
 
@@ -1045,162 +1003,6 @@ def emit_preview(
         )
 
 
-def _build_fragments(
-    index: ScenarioIndex,
-    inventory: dict[str, Any],
-    *,
-    reconstruct_fragments: Callable[[ScenarioIndex, dict[str, Any]], dict[str, dict[str, Any]]],
-    cache: AcceptedUnitCache | None = None,
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    """Operation unit을 안정적인 wave로 실행하고 수락 순서대로 조립한다.
-
-    같은 wave는 동일한 reserved catalog를 보므로 독립적으로 병렬 실행할 수 있다. wave가
-    끝나면 결과를 unit ID 순서로 commit하고 다음 wave에 새 이름을 예약한다.
-    """
-    groups_by_use_case: dict[str, list[ExecutionGroup]] = {}
-    for group in index.groups:
-        groups_by_use_case.setdefault(group.use_case_id, []).append(group)
-    units = [
-        _OperationUnit(
-            group.id,
-            use_case,
-            tuple(group.step_ids),
-            group.id,
-        )
-        for use_case in index.use_cases
-        for group in groups_by_use_case.get(use_case.id, [])
-    ] + [
-        _OperationUnit(
-            use_case.id,
-            use_case,
-            tuple(step.id for step in use_case.steps),
-        )
-        for use_case in index.use_cases
-        if not groups_by_use_case.get(use_case.id)
-    ]
-    units.sort(key=lambda unit: id_key(unit.id))
-    # 설정값이 커도 현재 unit 수를 넘지 않는다. 기본값 2가 긴 LLM 호출의 동시성 경계다.
-    workers = max(1, min(
-        len(units) or 1,
-        int(getattr(settings, "design_class_behavior_parallelism", 2)),
-    ))
-    committed: list[tuple[str, dict[str, Any]]] = []
-    position = 0
-    for offset in range(0, len(units), workers):
-        wave = units[offset:offset + workers]
-        # wave 시작 시점의 snapshot을 모든 worker가 공유한다. worker별로 서로 다른 예약
-        # 목록을 주면 완료 순서에 따라 이름 충돌 결과가 달라진다.
-        current = _compose(inventory, committed)
-        reserved = _reserved_operations(current)
-        reserved_types = list(current.get("DataTypes") or [])
-        if len(wave) == 1:
-            proposals = [
-                _checked_fragment(
-                    index,
-                    inventory,
-                    wave[0].use_case,
-                    reserved=reserved,
-                    reserved_types=reserved_types,
-                    allowed_step_ids=wave[0].step_ids,
-                    execution_group_id=wave[0].execution_group_id,
-                    cache=cache,
-                )
-            ]
-        else:
-            with ThreadPoolExecutor(max_workers=len(wave)) as executor:
-                futures = [
-                    executor.submit(
-                        bind_context(_checked_fragment),
-                        index,
-                        inventory,
-                        unit.use_case,
-                        reserved=reserved,
-                        reserved_types=reserved_types,
-                        allowed_step_ids=unit.step_ids,
-                        execution_group_id=unit.execution_group_id,
-                        cache=cache,
-                    )
-                    for unit in wave
-                ]
-                proposals = [future.result() for future in futures]
-        for unit, fragment in zip(wave, proposals, strict=True):
-            collision_ledger = RepairLedger()
-            collision_input_digest = stable_digest({
-                "inventory": inventory,
-                "committed": committed,
-                "unit": unit.id,
-            })
-            while True:
-                try:
-                    candidate = _compose(
-                        inventory, [*committed, (unit.use_case.id, fragment)],
-                    )
-                    break
-                except (_Collision, _DataTypeCollision) as collision:
-                    # 충돌의 후발 소유자인 현재 unit만 이력 기반으로 교체한다. 이미 committed된
-                    # 형제 fragment를 다시 호출하지 않는 것이 국소성 보장의 핵심이다.
-                    candidate_digest = stable_digest(fragment)
-                    finding_keys = (str(collision),)
-                    repeated = (
-                        collision_ledger.candidate_seen(
-                            input_digest=collision_input_digest,
-                            candidate_digest=candidate_digest,
-                        )
-                        or collision_ledger.failure_seen(
-                            input_digest=collision_input_digest,
-                            finding_keys=finding_keys,
-                        )
-                    )
-                    collision_ledger.record(RepairAttempt(
-                        stage="design.class.operation-collision",
-                        target_ids=(unit.id,),
-                        strategy_key=(
-                            "replace-colliding-fragment-"
-                            f"{len(collision_ledger.attempts) + 1}"
-                        ),
-                        input_digest=collision_input_digest,
-                        candidate_digest=candidate_digest,
-                        finding_keys_before=finding_keys,
-                        finding_keys_after=finding_keys,
-                        outcome="repeated_candidate" if repeated else "no_improvement",
-                        detail=str(collision),
-                    ))
-                    if repeated:
-                        collision_ledger.status = "STALLED"
-                        collision_ledger.stall_reason = (
-                            "The operation collision repair repeated a rejected fragment."
-                        )
-                        raise ValueError(
-                            f"operation fragment {unit.id} collision repair stalled on a "
-                            f"repeated candidate: {collision}"
-                        ) from collision
-                    current = _compose(inventory, committed)
-                    fragment = _checked_fragment(
-                        index,
-                        inventory,
-                        unit.use_case,
-                        previous=fragment,
-                        findings=[
-                            str(collision),
-                            (
-                                "Accumulated collision repair history (do not repeat any "
-                                "candidate):\n" + collision_ledger.prompt_context()
-                            ),
-                        ],
-                        reserved=_reserved_operations(current),
-                        reserved_types=list(current.get("DataTypes") or []),
-                        allowed_step_ids=unit.step_ids,
-                        execution_group_id=unit.execution_group_id,
-                        operation="InteractionOperationCollisionRepair",
-                        cache=cache,
-                    )
-            committed.append((unit.use_case.id, fragment))
-            position += 1
-            emit_preview(candidate, "operations", unit.id, position + 1, len(units) + 1)
-    skeleton = _compose(inventory, committed, final=True)
-    return skeleton, reconstruct_fragments(index, skeleton)
-
-
 def _compose_fragments(
     inventory: dict[str, Any], fragments: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
@@ -1209,115 +1011,6 @@ def _compose_fragments(
         sorted(fragments.items(), key=lambda item: id_key(item[0])),
         final=True,
     )
-
-
-def _repair_failed_operations(
-    index: ScenarioIndex,
-    inventory: dict[str, Any],
-    fragments: dict[str, dict[str, Any]],
-    failures: list[CollaborationResult],
-    *,
-    operation: str = "InteractionOperationHandoff",
-    cache: AcceptedUnitCache | None = None,
-) -> set[str]:
-    """협업 실패가 가리킨 execution slice의 연산 부분만 보완한다.
-
-    같은 use case 안에서도 실패 group의 ``step_ids``와 겹치지 않는 연산은 preserved로
-    분리한다. LLM은 실패 slice의 이전 연산과 issue만 받고, 결과를 preserved 부분에 다시
-    합친다. 반환값은 service가 collaboration을 재계획할 use-case ID 집합이다.
-    """
-    group_by_id = {group.id: group for group in index.groups}
-    repaired: set[str] = set()
-    for result in sorted(failures, key=lambda item: id_key(item.group_id)):
-        group = group_by_id[result.group_id]
-        use_case_id = group.use_case_id
-        use_case = index.use_case(use_case_id)
-        existing = fragments[use_case_id]
-        group_steps = set(group.step_ids)
-        # 하나의 use case가 여러 actor entry group을 가질 수 있다. 실패 group과 겹치지
-        # 않는 operation은 prompt와 replacement 대상에서 모두 분리해 보존한다.
-        preserved_classes = []
-        previous_classes = []
-        for class_set in existing.get("Classes") or []:
-            if not isinstance(class_set, dict):
-                continue
-            preserved_operations = [
-                deepcopy(operation)
-                for operation in class_set.get("operations") or []
-                if isinstance(operation, dict)
-                and not (group_steps & set(operation.get("stepRefs") or []))
-            ]
-            previous_operations = [
-                deepcopy(operation)
-                for operation in class_set.get("operations") or []
-                if isinstance(operation, dict)
-                and group_steps & set(operation.get("stepRefs") or [])
-            ]
-            if preserved_operations:
-                preserved_classes.append({
-                    "className": text(class_set.get("className")),
-                    "operations": preserved_operations,
-                })
-            if previous_operations:
-                previous_classes.append({
-                    "className": text(class_set.get("className")),
-                    "operations": previous_operations,
-                })
-        preserved = {
-            "DataTypes": deepcopy(existing.get("DataTypes") or []),
-            "Classes": preserved_classes,
-        }
-        base_fragments = {
-            **{key: value for key, value in fragments.items() if key != use_case_id},
-            **({use_case_id: preserved} if preserved_classes else {}),
-        }
-        base = _compose_fragments(inventory, base_fragments)
-        # Collaboration의 구체적 failure text를 finding으로 전달해 "필요한 operation 없음"
-        # 같은 handoff 원인을 현재 slice 안에서 해결하게 한다.
-        candidate = _checked_fragment(
-            index,
-            inventory,
-            use_case,
-            previous={
-                "DataTypes": deepcopy(existing.get("DataTypes") or []),
-                "Classes": previous_classes,
-            },
-            findings=[f"execution group {result.group_id}: {result.issue}"],
-            reserved=_reserved_operations(base),
-            reserved_types=list(base.get("DataTypes") or []),
-            allowed_step_ids=tuple(group.step_ids),
-            execution_group_id=group.id,
-            operation=operation,
-            cache=cache,
-        )
-        merged_types = {
-            text(item.get("name")): deepcopy(item)
-            for item in existing.get("DataTypes") or [] if isinstance(item, dict)
-        }
-        merged_types.update({
-            text(item.get("name")): deepcopy(item)
-            for item in candidate.get("DataTypes") or [] if isinstance(item, dict)
-        })
-        merged_classes: dict[str, dict[str, Any]] = {
-            text(item.get("className")): deepcopy(item)
-            for item in preserved_classes
-        }
-        for class_set in candidate.get("Classes") or []:
-            if not isinstance(class_set, dict):
-                continue
-            owner = text(class_set.get("className"))
-            target = merged_classes.setdefault(
-                owner, {"className": owner, "operations": []},
-            )
-            target_operations = target.get("operations")
-            if isinstance(target_operations, list):
-                target_operations.extend(deepcopy(class_set.get("operations") or []))
-        fragments[use_case_id] = {
-            "DataTypes": list(merged_types.values()),
-            "Classes": list(merged_classes.values()),
-        }
-        repaired.add(use_case_id)
-    return repaired
 
 
 def reserved_operations(model: BCEModel) -> list[dict[str, Any]]:
@@ -1330,51 +1023,6 @@ def reserved_operations(model: BCEModel) -> list[dict[str, Any]]:
         class 이름과 수락 operation 목록만 포함하는 LLM payload 조각이다.
     """
     return _reserved_operations(model.model_dump(by_alias=True))
-
-
-def propose_fragment(
-    index: ScenarioIndex,
-    inventory: AcceptedInventory,
-    use_case: UseCase,
-    *,
-    previous: AcceptedFragment | None = None,
-    findings: list[str] | None = None,
-    reserved: list[dict[str, Any]] | None = None,
-    reserved_types: list[dict[str, Any]] | None = None,
-    allowed_step_ids: tuple[str, ...] = (),
-    execution_group_id: str = "",
-    operation: str = "InteractionOperation",
-) -> AcceptedFragment:
-    """고정 inventory 안에서 한 use-case 연산 fragment를 제안한다.
-
-    Args:
-        index: 단계와 실행 그룹의 정규화된 입력이다.
-        inventory: LLM이 변경할 수 없는 전역 구조다.
-        use_case: 이번 fragment가 소유할 유스케이스다.
-        previous: repair에서 참고할 이전 수락 후보다.
-        findings: replacement가 해결해야 할 검증·충돌 근거다.
-        reserved: 앞선 unit이 이미 소유한 operation 목록이다.
-        reserved_types: 앞선 unit이 이미 소유한 지역 타입 목록이다.
-        allowed_step_ids: 현재 실행 slice가 소유할 수 있는 단계다.
-        execution_group_id: use case보다 작은 실행 단위의 식별자다.
-        operation: 관측과 재개에 사용하는 영어 LLM operation 이름이다.
-
-    Returns:
-        정규화됐지만 별도 검사 budget은 적용하지 않은 ``AcceptedFragment``다.
-    """
-    candidate = _propose_fragment(
-        index,
-        inventory.as_payload(),
-        use_case,
-        previous=previous.as_payload() if previous else None,
-        findings=findings,
-        reserved=reserved,
-        reserved_types=reserved_types,
-        allowed_step_ids=allowed_step_ids,
-        execution_group_id=execution_group_id,
-        operation=operation,
-    )
-    return AcceptedFragment(use_case_id=use_case.id, payload=candidate)
 
 
 def checked_fragment(
@@ -1396,7 +1044,7 @@ def checked_fragment(
 
     Raises:
         RuntimeError: 검사기 자체가 완료되지 못한 경우다.
-        ValueError: 이미 거절된 동일 후보를 반복해 더 진전할 수 없는 경우다.
+        ValueError: 공급자 응답 또는 수락 후보를 스키마로 읽을 수 없는 경우다.
     """
     previous = kwargs.pop("previous", None)
     candidate = _checked_fragment(
@@ -1407,49 +1055,6 @@ def checked_fragment(
         **kwargs,
     )
     return AcceptedFragment(use_case_id=use_case.id, payload=candidate)
-
-
-def build_fragments(
-    index: ScenarioIndex,
-    inventory: AcceptedInventory,
-    *,
-    reconstruct_fragments: Callable[[ScenarioIndex, BCEModel], Mapping[str, AcceptedFragment]],
-    cache: AcceptedUnitCache | None = None,
-) -> tuple[BCEModel, dict[str, AcceptedFragment]]:
-    """실행 unit fragment를 bounded wave로 생성하고 BCE skeleton으로 수락한다.
-
-    Args:
-        index: unit과 안정적인 실행 순서를 제공하는 시나리오 인덱스다.
-        inventory: 모든 worker가 공유하는 고정 구조다.
-        reconstruct_fragments: 최종 skeleton에서 소유 fragment를 복원하는 typed adapter다.
-
-    Returns:
-        도달 가능한 연산·타입만 담은 skeleton과 use-case별 수락 fragment다.
-
-    Notes:
-        병렬 완료 순서가 아니라 unit ID 순서로 commit한다. 충돌 시 현재 unit만 교체한다.
-    """
-    def reconstruct_raw(
-        scenario_index: ScenarioIndex, skeleton: dict[str, Any],
-    ) -> dict[str, dict[str, Any]]:
-        accepted = reconstruct_fragments(
-            scenario_index, BCEModel.model_validate(skeleton),
-        )
-        return {key: value.as_payload() for key, value in accepted.items()}
-
-    skeleton, fragments = _build_fragments(
-        index,
-        inventory.as_payload(),
-        reconstruct_fragments=reconstruct_raw,
-        cache=cache,
-    )
-    return (
-        BCEModel.model_validate(skeleton),
-        {
-            use_case_id: AcceptedFragment(use_case_id=use_case_id, payload=fragment)
-            for use_case_id, fragment in fragments.items()
-        },
-    )
 
 
 def compose_fragments(
@@ -1477,7 +1082,7 @@ def compose_operation_units(
     *,
     final: bool = False,
 ) -> BCEModel:
-    """execution group별 fragment를 입력 순서대로 조립한다."""
+    """유스케이스별 fragment를 입력 순서대로 조립한다."""
 
     return BCEModel.model_validate(_compose(
         inventory.as_payload(),
@@ -1486,49 +1091,7 @@ def compose_operation_units(
     ))
 
 
-def repair_failed_operations(
-    index: ScenarioIndex,
-    inventory: AcceptedInventory,
-    fragments: MutableMapping[str, AcceptedFragment],
-    failures: list[CollaborationResult],
-    *,
-    operation: str = "InteractionOperationHandoff",
-    cache: AcceptedUnitCache | None = None,
-) -> set[str]:
-    """협업 실패 group의 연산 slice만 보완하고 수락 fragment를 갱신한다.
-
-    Args:
-        index: 실패 group과 use case의 대응을 제공한다.
-        inventory: 변경하지 않는 전역 구조다.
-        fragments: 성공한 형제 조각을 포함한 mutable 소유 mapping이다.
-        failures: collaboration이 없는 명시적 실패 결과다.
-        operation: 호출 목적을 구분하는 LLM operation 이름이다.
-
-    Returns:
-        연산이 바뀌어 collaboration 재계획이 필요한 use-case ID 집합이다.
-
-    Notes:
-        ``fragments``는 승인 작업 단위의 commit map이므로 의도적으로 제자리 갱신한다.
-        raw 후보는 내부에서만 사용하고 완료 후 다시 ``AcceptedFragment``로 감싼다.
-    """
-    raw_fragments = {key: value.as_payload() for key, value in fragments.items()}
-    repaired = _repair_failed_operations(
-        index,
-        inventory.as_payload(),
-        raw_fragments,
-        failures,
-        operation=operation,
-        cache=cache,
-    )
-    fragments.clear()
-    fragments.update({
-        use_case_id: AcceptedFragment(use_case_id=use_case_id, payload=fragment)
-        for use_case_id, fragment in raw_fragments.items()
-    })
-    return repaired
-
 __all__ = [
-    "build_fragments",
     "checked_fragment",
     "compose_fragments",
     "compose_operation_units",
@@ -1536,8 +1099,6 @@ __all__ = [
     "normalize_operation_fragment",
     "operation_payload",
     "operation_prompt",
-    "propose_fragment",
-    "repair_failed_operations",
     "reserved_operations",
     "validate_operation_fragment",
 ]

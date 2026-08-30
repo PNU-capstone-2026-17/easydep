@@ -217,11 +217,11 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
 
     Raises:
         RuntimeError: 검사기 자체가 예외를 내 검증을 완료하지 못한 경우다.
-        ValueError: LLM이 이미 거절한 동일 후보를 반복한 경우다.
 
     Notes:
         repair에는 최초 messages, 현재 전체 candidate, 모든 finding과 누적 실패 이력을 함께
-        보낸다. 부분 patch는 허용하지 않으며 모든 결과는 같은 schema와 규칙을 통과해야 한다.
+        보낸다. 같은 실패가 반복돼도 숫자 횟수로 중단하지 않고, 다음 요청에 반복 사실을
+        명시한다. 부분 patch는 허용하지 않으며 모든 결과는 같은 schema와 규칙을 통과해야 한다.
     """
 
     # 1. 원문을 재전송하지 않고 inventory 결정에 필요한 압축 payload를 한 번 만든다.
@@ -238,8 +238,12 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
         operation = "InteractionInventory" if attempt == 0 else "InteractionInventoryRepair"
         prompt = messages
         if candidate is not None:
+            repeated_state = ledger.attempts[-1].outcome == "repeated_candidate"
             prompt = [*messages, {"role": "user", "content": json.dumps({
                 "task": (
+                    "The previous response repeated the same rejected state. Choose a "
+                    "materially different structure and return the complete inventory."
+                    if repeated_state else
                     "Return one materially different full repaired inventory. Preserve valid "
                     "decisions, resolve every finding, and do not repeat a rejected candidate."
                 ),
@@ -294,15 +298,6 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
             outcome="repeated_candidate" if repeated else "no_improvement",
             detail="; ".join(findings),
         ))
-        if repeated:
-            ledger.status = "STALLED"
-            ledger.stall_reason = (
-                "The inventory LLM repeated an already rejected candidate or failed state."
-            )
-            raise ValueError(
-                "class inventory repair stalled on a repeated candidate: "
-                + "; ".join(findings)
-            )
         attempt += 1
 
 

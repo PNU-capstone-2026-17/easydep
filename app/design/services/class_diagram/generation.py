@@ -31,9 +31,13 @@ from app.design.services.class_diagram.scenario import (
     UseCase,
     id_key,
 )
+from app.design.services.class_diagram.validation.collaboration import (
+    COLLABORATION_CHECKS,
+    CollaborationContext,
+)
 from app.design.services.class_diagram.validation.model import validate_class_model
 from app.design.services.common.structured import bind_context, parse_structured
-from app.validation import stable_digest
+from app.validation import run_checks, stable_digest
 
 _COMBINED_PROMPT = operations.operation_prompt() + """
 
@@ -100,6 +104,7 @@ def _propose_unit(
 
     issue = initial_issue
     history: list[dict[str, str]] = []
+    seen_states: set[str] = set()
     prior = previous
     while True:
         prompt_payload = _payload(
@@ -148,7 +153,18 @@ def _propose_unit(
             return fragment, raw
         except (ValueError, TypeError) as error:
             issue = f"{type(error).__name__}: {error}"
-            history.append({"candidateDigest": stable_digest(raw), "error": issue})
+            candidate_digest = stable_digest(raw)
+            state_digest = stable_digest({
+                "candidate": candidate_digest, "finding": issue,
+            })
+            repeated = state_digest in seen_states
+            seen_states.add(state_digest)
+            history.append({"candidateDigest": candidate_digest, "error": issue})
+            if repeated:
+                issue += (
+                    "\nThe same candidate and finding repeated. Return a materially "
+                    "different complete operation fragment and call forest."
+                )
             prior = raw
 
 
@@ -198,6 +214,44 @@ def _resolved_plan(raw: dict[str, Any], model: BCEModel) -> CallPlanProposal:
     return CallPlanProposal.model_validate({"calls": resolved})
 
 
+def _materialize_use_case(
+    index: ScenarioIndex,
+    skeleton: BCEModel,
+    use_case: UseCase,
+    raw: dict[str, Any],
+) -> Collaboration:
+    """임시 calls를 쓰고, 실패하면 operation을 보존한 call-plan 수리를 시작한다."""
+
+    try:
+        return collaboration.materialize(
+            index, skeleton, use_case, _resolved_plan(raw, skeleton),
+        )
+    except ValueError as error:
+        return collaboration.process_use_case(
+            index,
+            skeleton,
+            use_case,
+            directive=(
+                "Preserve every operation and replace only the call plan. "
+                f"Resolve this exact issue: {type(error).__name__}: {error}"
+            ),
+        )
+
+
+def _collaboration_valid(
+    index: ScenarioIndex,
+    skeleton: BCEModel,
+    use_case: UseCase,
+    value: Collaboration,
+) -> bool:
+    report = run_checks(
+        COLLABORATION_CHECKS,
+        value.model_dump(by_alias=True),
+        CollaborationContext(index, skeleton.model_dump(by_alias=True), use_case),
+    )
+    return not report.errors and not report.findings
+
+
 def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEModel:
     use_cases = sorted(index.use_cases, key=lambda item: id_key(item.id))
     inventory_model = operations.compose_operation_units(inventory, [])
@@ -227,12 +281,21 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
     for position, (use_case, (fragment, raw)) in enumerate(
         zip(use_cases, proposed, strict=True), start=1,
     ):
+        collision_states: set[str] = set()
         while True:
             try:
                 preview = operations.compose_operation_units(inventory, [*committed, fragment])
                 break
             except (Collision, DataTypeCollision) as error:
                 snapshot = operations.compose_operation_units(inventory, committed)
+                issue = f"{type(error).__name__}: {error}"
+                state = stable_digest({"candidate": raw, "finding": issue})
+                if state in collision_states:
+                    issue += (
+                        "\nThe same colliding candidate repeated. Return a materially "
+                        "different complete unit."
+                    )
+                collision_states.add(state)
                 fragment, raw = _propose_unit(
                     index,
                     inventory,
@@ -242,7 +305,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         item.model_dump(by_alias=True) for item in snapshot.DataTypes
                     ],
                     previous=raw,
-                    initial_issue=f"{type(error).__name__}: {error}",
+                    initial_issue=issue,
                 )
         committed.append(fragment)
         raw_by_use_case[use_case.id] = raw
@@ -254,34 +317,85 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
 
     # 2단계: 완성된 operation catalog에서 provisional calls를 구체화한다. actor 없는
     # include는 독립 collaboration을 만들지 않고 부모 수리에서 후보 operation으로 쓰인다.
-    accepted: list[Collaboration] = []
+    accepted: dict[str, Collaboration] = {}
     standalone = [use_case for use_case in use_cases if _groups(index, use_case)]
-    for position, use_case in enumerate(standalone, start=1):
-        try:
-            plan = _resolved_plan(raw_by_use_case[use_case.id], skeleton)
-            value = collaboration.materialize(index, skeleton, use_case, plan)
-        except ValueError as error:
-            result = collaboration.process_use_case(
-                index,
-                skeleton,
-                use_case,
-                directive=(
-                    "Preserve every operation and replace only the call plan. "
-                    f"Resolve this exact issue: {type(error).__name__}: {error}"
-                ),
+    while len(accepted) < len(standalone):
+        for use_case in standalone:
+            current = accepted.get(use_case.id)
+            if current is not None and _collaboration_valid(
+                index, skeleton, use_case, current,
+            ):
+                continue
+            try:
+                value = _materialize_use_case(
+                    index, skeleton, use_case, raw_by_use_case[use_case.id],
+                )
+            except collaboration._CombinedReplacementRequired as signal:
+                # 같은 call-plan 상태가 반복되면 현재 유스케이스의 operation+calls만
+                # 다시 받고, 이미 수락된 다른 협업은 새 skeleton에서 재검사한다.
+                unit_index = use_cases.index(use_case)
+                others = [
+                    fragment for position, fragment in enumerate(committed)
+                    if position != unit_index
+                ]
+                snapshot = operations.compose_operation_units(inventory, others)
+                previous = raw_by_use_case[use_case.id]
+                issue = signal.issue
+                while True:
+                    fragment, raw = _propose_unit(
+                        index,
+                        inventory,
+                        use_case,
+                        reserved=operations.reserved_operations(snapshot),
+                        reserved_types=[
+                            item.model_dump(by_alias=True) for item in snapshot.DataTypes
+                        ],
+                        previous=previous,
+                        initial_issue=issue,
+                    )
+                    candidate_fragments = list(committed)
+                    candidate_fragments[unit_index] = fragment
+                    try:
+                        skeleton = operations.compose_operation_units(
+                            inventory, candidate_fragments, final=True,
+                        )
+                        break
+                    except (Collision, DataTypeCollision) as error:
+                        previous = raw
+                        issue = f"{type(error).__name__}: {error}"
+                committed = candidate_fragments
+                raw_by_use_case[use_case.id] = raw
+                accepted = {
+                    owner: collaboration_value
+                    for owner, collaboration_value in accepted.items()
+                    if _collaboration_valid(
+                        index,
+                        skeleton,
+                        index.use_case(owner),
+                        collaboration_value,
+                    )
+                }
+                break
+            accepted[use_case.id] = value
+            ordered_accepted = [
+                accepted[item.id] for item in standalone if item.id in accepted
+            ]
+            operations.emit_preview(
+                {
+                    **skeleton.model_dump(by_alias=True),
+                    "Collaborations": [
+                        item.model_dump(by_alias=True) for item in ordered_accepted
+                    ],
+                },
+                "collaborations", use_case.id, len(accepted), len(standalone),
             )
-            value = result
-        accepted.append(value)
-        operations.emit_preview(
-            {
-                **skeleton.model_dump(by_alias=True),
-                "Collaborations": [item.model_dump(by_alias=True) for item in accepted],
-            },
-            "collaborations", use_case.id, position, len(standalone),
-        )
+        else:
+            break
     return BCEModel.model_validate({
         **skeleton.model_dump(by_alias=True),
-        "Collaborations": accepted,
+        "Collaborations": [
+            accepted[use_case.id] for use_case in standalone
+        ],
     })
 
 

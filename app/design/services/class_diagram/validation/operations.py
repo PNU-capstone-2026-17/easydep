@@ -22,7 +22,6 @@ class OperationContext:
     inventory: dict[str, Any]
     use_case: UseCase
     allowed_step_ids: tuple[str, ...] = ()
-    execution_group_ids: tuple[str, ...] = ()
 
 
 def _allowed_operation_steps(context: OperationContext) -> set[str]:

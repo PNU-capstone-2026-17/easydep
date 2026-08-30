@@ -98,8 +98,7 @@ def test_class_design_reasoning_effort_is_independent_per_owned_stage(monkeypatc
     assert operations.operation_reasoning_effort() == "high"
     assert collaboration.call_plan_reasoning_effort() == "medium"
 
-    # Stage-specific reasoning is only a model policy. Repair termination is
-    # owned by validation progress and the append-only repair history.
+    # 단계별 reasoning은 모델 설정일 뿐 수리 횟수나 종료 조건을 바꾸지 않는다.
     assert not hasattr(settings, "design_max_repair_iters")
 
 
@@ -108,9 +107,7 @@ def test_inventory_repair_continues_past_one_replacement(monkeypatch):
     missing_control = inventory_proposal()
     missing_control["items"] = [missing_control["items"][0]]
     candidates.append(missing_control)
-    missing_boundary = inventory_proposal()
-    missing_boundary["items"] = [missing_boundary["items"][1]]
-    candidates.append(missing_boundary)
+    candidates.append(missing_control)
     candidates.append(inventory_proposal())
     inventory_calls = 0
 

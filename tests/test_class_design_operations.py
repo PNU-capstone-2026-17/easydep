@@ -29,7 +29,7 @@ def test_operation_generation_keeps_signature_data_types_in_the_persisted_model(
         "RequestData", "RequestResult",
     ]
 
-def test_operation_validation_rejects_step_ref_outside_execution_slice():
+def test_operation_validation_rejects_step_ref_outside_use_case_scope():
     index = build_scenario_index(single_use_case())
     fragment = operation_fragment()
     fragment["Classes"][0]["operations"][0]["stepRefs"] = ["UC1:main:2"]
@@ -55,7 +55,6 @@ def test_operation_validation_rejects_step_ref_outside_execution_slice():
                 "Relationships": [],
             },
             index.use_case("UC1"),
-            ("UC1:main:1",),
             ("UC1:main:1",),
         ),
     )
