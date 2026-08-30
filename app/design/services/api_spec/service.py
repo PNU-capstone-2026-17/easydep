@@ -7,15 +7,17 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.models import ApiSpecModel
-from app.design.services.api_spec.normalization import normalize_api_spec_model
+from app.design.services.api_spec.models import ApiSpecModel, ApiSpecProposal
+from app.design.services.api_spec.normalization import (
+    api_spec_proposal_from_model,
+    normalize_api_spec_model,
+)
 from app.design.services.api_spec.prompts import (
     API_SPEC_REVISION_SYSTEM_PROMPT,
     proposal_messages,
     revision_context,
 )
 from app.design.services.common.structured import parse_structured, revision_messages
-from app.design.services.sequence_diagram.projection import SequenceCollection
 
 ProposalCall = Callable[[list[dict[str, str]], type[BaseModel]], dict[str, Any]]
 
@@ -23,16 +25,14 @@ ProposalCall = Callable[[list[dict[str, str]], type[BaseModel]], dict[str, Any]]
 def generate_api_spec_model(
     scenario_text: str,
     bce_model: BCEModel,
-    sequence_model: SequenceCollection,
     *,
     proposal_call: ProposalCall | None = None,
 ) -> ApiSpecModel:
-    """승인된 BCE·시퀀스 입력에서 API 모델을 한 번 제안하고 정규화한다.
+    """승인된 BCE 입력에서 HTTP 계약을 한 번 제안하고 실행 정보를 채운다.
 
     Args:
         scenario_text: 현재 유스케이스 명세 문자열이다.
         bce_model: 검증이 끝난 클래스·연산·협업 모델이다.
-        sequence_model: BCE 모델에서 결정론적으로 투영된 시퀀스 모델이다.
         proposal_call: 테스트·adapter가 주입할 선택적 structured proposal 호출이다.
 
     Returns:
@@ -46,9 +46,9 @@ def generate_api_spec_model(
     if not scenario_text:
         return ApiSpecModel()
     propose = proposal_call or parse_structured
-    proposal = ApiSpecModel.model_validate(
+    proposal = ApiSpecProposal.model_validate(
         propose(
-            proposal_messages(scenario_text, bce_model, sequence_model), ApiSpecModel
+            proposal_messages(scenario_text, bce_model), ApiSpecProposal
         )
     )
     return normalize_api_spec_model(proposal, bce_model)
@@ -59,7 +59,6 @@ def revise_api_spec_model(
     feedback: str,
     scenario_text: str,
     bce_model: BCEModel,
-    sequence_model: SequenceCollection,
     targets: set[str] | None = None,
     *,
     proposal_call: ProposalCall | None = None,
@@ -71,7 +70,6 @@ def revise_api_spec_model(
         feedback: 사용자 또는 semantic gate의 제한된 수정 지시다.
         scenario_text: 현재 유스케이스 명세 문자열이다.
         bce_model: 검증이 끝난 BCE 모델이다.
-        sequence_model: 결정론적으로 투영된 시퀀스 모델이다.
         targets: graph가 정한 선택적 수정 대상 식별자 집합이다.
         proposal_call: 테스트·adapter가 주입할 선택적 structured proposal 호출이다.
 
@@ -86,18 +84,19 @@ def revise_api_spec_model(
     if not feedback:
         return current_model
     propose = proposal_call or parse_structured
-    revised = ApiSpecModel.model_validate(
+    current_proposal = api_spec_proposal_from_model(current_model, bce_model)
+    revised = ApiSpecProposal.model_validate(
         propose(
             revision_messages(
                 API_SPEC_REVISION_SYSTEM_PROMPT,
-                "Typed Use Case, BCE and Sequence Design",
-                revision_context(scenario_text, bce_model, sequence_model),
-                "Current API Endpoint Model",
-                current_model.model_dump(),
+                "Use Cases and Accepted Interaction Candidates",
+                revision_context(scenario_text, bce_model),
+                "Current HTTP Proposal",
+                current_proposal.model_dump(),
                 feedback,
                 targets,
             ),
-            ApiSpecModel,
+            ApiSpecProposal,
         )
     )
     return normalize_api_spec_model(revised, bce_model)

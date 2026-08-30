@@ -2260,14 +2260,10 @@ def _sequence_rule_findings(model: dict, state: dict) -> list[Finding]:
 
 
 def _collection_contract(model: dict, _state: dict) -> list[Finding]:
-    findings = [
+    return [
         Finding("sequence.call-return-links", message, "SequenceDiagramCollection")
         for message in interaction_sequence_findings(model or {})
     ]
-    for diagram in model.get("Diagrams") or []:
-        if isinstance(diagram, dict):
-            findings.extend(sequence_call_return_links(diagram, _state))
-    return findings
 
 
 def _collection_class_version(model: dict, state: dict) -> list[Finding]:
@@ -2283,173 +2279,12 @@ def _collection_class_version(model: dict, state: dict) -> list[Finding]:
     )]
 
 
-def _collection_coverage(model: dict, state: dict) -> list[Finding]:
-    diagrams = model.get("Diagrams") or []
-    known = _known_use_case_ids(state)
-    identifiers = [
-        str(diagram.get("use_case_id") or "").strip()
-        for diagram in diagrams
-        if isinstance(diagram, dict)
-    ]
-    found = [
-        Finding(
-            "sequence.usecase-step-coverage",
-            f"유스케이스 '{use_case_id}'의 시퀀스 다이어그램이 없음",
-            use_case_id,
-        )
-        for use_case_id in sorted(known - set(identifiers))
-    ]
-    seen: set[str] = set()
-    for use_case_id in identifiers:
-        if use_case_id in seen:
-            found.append(Finding(
-                "sequence.usecase-step-coverage",
-                f"유스케이스 '{use_case_id}'의 시퀀스 다이어그램이 중복됨",
-                use_case_id,
-            ))
-        seen.add(use_case_id)
-    return found
-
-
-def _collection_references(model: dict, state: dict) -> list[Finding]:
-    known = _known_use_case_ids(state)
-    identifiers = {
-        str(diagram.get("use_case_id") or "").strip()
-        for diagram in model.get("Diagrams") or []
-        if isinstance(diagram, dict)
-    }
-    return [
-        Finding(
-            "sequence.references-exist",
-            f"입력에 없는 유스케이스 '{use_case_id}'의 시퀀스 다이어그램이 있음",
-            use_case_id,
-        )
-        for use_case_id in sorted(identifiers - known if known else set())
-    ]
-
-
-def _collection_diagram_rule(
-    rule_id: str,
-    detector: Callable[[dict, dict], list[Finding]],
-) -> Callable[[dict, dict], list[Finding]]:
-    """Run one deterministic diagram rule across the typed collection."""
-
-    def check(model: dict, state: dict) -> list[Finding]:
-        findings: list[Finding] = []
-        for diagram in model.get("Diagrams") or []:
-            if not isinstance(diagram, dict):
-                continue
-            findings.extend(
-                finding
-                for finding in detector(diagram, state)
-                if finding.rule_id == rule_id
-            )
-        return findings
-
-    return check
-
-
-def _collection_bce_flow(model: dict, state: dict) -> list[Finding]:
-    """Validate BCE direction and the actor-facing Boundary-to-Control handoff."""
-
-    findings: list[Finding] = []
-    for diagram in model.get("Diagrams") or []:
-        if not isinstance(diagram, dict):
-            continue
-        findings.extend(sequence_bce_flow(diagram, state))
-        participants = {
-            _participant_id(item): str(item.get("kind") or "").strip().lower()
-            for item in diagram.get("Participants") or []
-            if isinstance(item, dict)
-        }
-        messages = diagram.get("Messages") or []
-        for index, message in enumerate(messages):
-            if not isinstance(message, dict):
-                continue
-            source = str(message.get("source") or "").strip()
-            boundary = str(message.get("target") or "").strip()
-            if (
-                str(message.get("type") or "sync").strip().lower() != "sync"
-                or participants.get(source) != "actor"
-                or participants.get(boundary) != "boundary"
-            ):
-                continue
-            call_id = str(message.get("call_id") or "").strip()
-            closing = next((
-                position
-                for position in range(index + 1, len(messages))
-                if isinstance(messages[position], dict)
-                and str(messages[position].get("type") or "").strip().lower()
-                == "return"
-                and str(messages[position].get("reply_to") or "").strip() == call_id
-            ), len(messages))
-            handed_off = any(
-                isinstance(candidate, dict)
-                and str(candidate.get("type") or "sync").strip().lower()
-                in {"sync", "async"}
-                and str(candidate.get("source") or "").strip() == boundary
-                and participants.get(str(candidate.get("target") or "").strip())
-                == "control"
-                for candidate in messages[index + 1:closing]
-            )
-            if not handed_off:
-                findings.append(Finding(
-                    "sequence.message-bce-flow",
-                    "actor-facing Boundary call must hand off to a Control before returning",
-                    f"{source} -> {boundary} : {message.get('label', '')}",
-                ))
-    return findings
-
-
-# Projection output is deterministic, but persisted/checkpoint state is still an external
-# boundary. Re-run the focused interaction invariants which can be broken by stale or
-# manually edited JSON without invoking repair or reconstructing calls from PlantUML.
+# 호출 순서와 BCE 의미는 원본인 클래스 collaboration에서 검사한다. 시퀀스는 그
+# 수락된 모델의 결정론적 투영이므로 저장 스키마·call/return 참조와 클래스 버전만 본다.
+# 여기서 같은 의미 규칙을 다시 실행하면 API 단계 직전에 새로운 사용자 수리가 생긴다.
 SEQUENCE_COLLECTION_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("sequence.call-return-links", _collection_contract),
-    CheckSpec(
-        "sequence.message-bce-flow",
-        _collection_bce_flow,
-    ),
-    CheckSpec(
-        "sequence.initial-message-entry",
-        _collection_diagram_rule("sequence.initial-message-entry", sequence_initial_entry),
-    ),
-    CheckSpec(
-        "sequence.return-label-matches-method-return",
-        _collection_diagram_rule(
-            "sequence.return-label-matches-method-return",
-            sequence_return_values_match_methods,
-        ),
-    ),
-    CheckSpec(
-        "sequence.causal-call-chain",
-        _collection_diagram_rule("sequence.causal-call-chain", sequence_causal_call_chain),
-    ),
-    CheckSpec(
-        "sequence.usecase-step-coverage",
-        _collection_diagram_rule("sequence.usecase-step-coverage", sequence_usecase_coverage),
-    ),
-    CheckSpec(
-        "sequence.flow-order",
-        _collection_diagram_rule("sequence.flow-order", sequence_flow_order),
-    ),
-    CheckSpec(
-        "sequence.fragment-condition-consistency",
-        _collection_diagram_rule(
-            "sequence.fragment-condition-consistency",
-            sequence_fragment_condition_consistency,
-        ),
-    ),
-    CheckSpec(
-        "sequence.duplicate-consecutive-messages",
-        _collection_diagram_rule(
-            "sequence.duplicate-consecutive-messages",
-            sequence_duplicate_consecutive_messages,
-        ),
-    ),
     CheckSpec("sequence.class-diagram-version", _collection_class_version),
-    CheckSpec("sequence.usecase-step-coverage", _collection_coverage),
-    CheckSpec("sequence.references-exist", _collection_references),
 )
 
 
@@ -2466,8 +2301,8 @@ def validate_sequence_model(
         규칙별 finding과 검사 오류를 포함한 불변 보고서다.
 
     Notes:
-        ``Diagrams`` 컬렉션은 결정론적 projection 계약만 검사한다. 이전 단일
-        다이어그램은 기존 detector 집합을 그대로 사용한다.
+        ``Diagrams`` 컬렉션은 투영 자체의 최소 계약만 검사한다. 이전 단일
+        다이어그램은 현재 생성 경로가 아니므로 기존 detector 집합에만 남아 있다.
     """
     diagrams = model.get("Diagrams") if isinstance(model, dict) else None
     checks = SEQUENCE_COLLECTION_CHECKS if isinstance(diagrams, list) else SEQUENCE_CHECKS

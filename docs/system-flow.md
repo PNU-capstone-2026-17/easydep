@@ -448,6 +448,23 @@ class SequenceMessage(BaseModel):
 ### 4.5 API 모델 타입
 
 ```python
+class ApiSpecProposal(BaseModel):
+    """LLM이 답하는 HTTP 계약. 실행 연결과 추적 정보는 없다."""
+    title: str
+    version: str
+    Endpoints: list[ApiEndpointProposal]
+    Schemas: list[ApiSchemaProposal]
+
+class ApiEndpointProposal(BaseModel):
+    interaction_id: str
+    path: str
+    method: str
+    operation_id: str
+    path_params: list[ApiField]
+    query_params: list[ApiField]
+    request_schema: str
+    responses: list[ApiResponse]
+
 class ApiSpecModel(BaseModel):
     title: str
     version: str
@@ -455,6 +472,7 @@ class ApiSpecModel(BaseModel):
     Schemas: list[ApiSchema]
 
 class ApiEndpoint(BaseModel):
+    interaction_id: str
     path: str
     method: str
     summary: str
@@ -474,10 +492,11 @@ class ApiControlBinding(BaseModel):
     outcomes: list[ApiControlOutcome]
 ```
 
-LLM은 완전한 OpenAPI 문서를 직접 쓰지 않는다. 위의 작은 모델을 제안하고, 코드가 경로·HTTP
-메서드·parameter 위치·collection 응답·schema 참조·Control operation 연결을 정리한 뒤
-OpenAPI JSON을 만든다. 구현 시작 전에는 최종 OpenAPI에 HTTP operation이 적어도 하나 있는지
-다시 확인한다.
+LLM은 `ApiSpecProposal`만 답한다. 즉, 이미 승인된 Boundary→Control 상호작용 ID를 골라
+경로, HTTP 메서드, 요청 값의 위치와 상태 코드를 제안한다. Control 클래스와 메서드,
+argument 출처, 반환 타입, 응답의 배열 여부, 클래스·유스케이스 추적 정보는 클래스 모델의
+`Collaborations`와 operation 선언에서 코드가 계산한다. 이 과정을 거친 `ApiSpecModel`로
+OpenAPI JSON을 만들며, 실제 차단 검사는 이 저장 모델과 OpenAPI 결과를 한 번만 확인한다.
 
 ### 4.6 ERD 모델
 

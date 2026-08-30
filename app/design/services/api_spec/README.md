@@ -1,99 +1,76 @@
 # API 명세 서비스
 
-이 패키지는 수락된 유스케이스·BCE·시퀀스 계약을 얕은 API 모델로 제안하고, 그 모델을
-결정론적으로 정규화·검증한 뒤 OpenAPI 3.1 문서로 투영한다. LLM이 OpenAPI 문서를 직접
-작성하거나 수정하지 않으며, 저장되는 `api_spec_model`이 의미의 원본이다.
+이 패키지는 승인된 유스케이스와 클래스 상호작용을 HTTP API와 OpenAPI 3.1 문서로 바꾼다.
+LLM은 HTTP 설계에 필요한 선택만 제안하고, 이미 클래스 모델에 있는 실행 정보는 코드가
+채운다. 저장되는 `api_spec_model`이 API 편집과 재개의 기준 데이터다.
 
-## 처리 경계
+## 처리 흐름
 
 ```text
-유스케이스 명세 + BCEModel + SequenceCollection
-  → ApiSpecModel proposal
-  → deterministic normalization
-  → normalized ApiSpecModel
-  → graph adapter의 observational model validation + 기존 semantic gate
-  → accepted ApiSpecModel
-  → deterministic OpenAPI 3.1 projection
+유스케이스 명세 + BCEModel.Collaborations
+  → LLM이 ApiSpecProposal 제안
+  → 코드가 Control 연결·타입·응답·추적 정보 계산
+  → ApiSpecModel 차단 검사
+  → OpenAPI 3.1 JSON 생성
 ```
 
-- `models.py`: 저장 JSON과 같은 `ApiSpecModel` 계열 typed 계약
-- `prompts.py`: 생성·수정용 LLM 지침과 메시지 조립
-- `normalization.py`: BCE parameter·return 계약에 따른 기계적 누락 보완
-- `validation.py`: schema, 참조, HTTP-to-Control binding의 결정론 검사
-- `service.py`: typed proposal·revision과 normalize 조율
-- `projection.py`: 수락 모델을 OpenAPI 3.1 JSON으로 투영
-- `legacy.py`: 이전 PlantUML 입력 호출자를 typed 입력으로 연결하는 격리 adapter
-- `extractor.py`, `reviser.py`, `openapi.py`: 기존 import 경로를 유지하는 호환 facade
+- `models.py`: 작은 LLM 응답인 `ApiSpecProposal`과 저장 모델인 `ApiSpecModel`
+- `prompts.py`: 생성·수정 지침과 LLM 입력 조립
+- `normalization.py`: 승인된 Boundary→Control 호출과 HTTP 제안을 결합
+- `service.py`: 생성·수정 LLM 호출과 정규화 순서 관리
+- `projection.py`: 승인 모델을 OpenAPI 3.1 JSON으로 변환
+
+## LLM과 코드의 역할
+
+LLM은 제공된 `interaction_id`마다 다음 HTTP 표현을 고른다.
+
+- path와 HTTP method
+- path/query/body 입력 위치
+- operation ID와 설명
+- 성공·실패 status와 HTTP 전용 schema
+
+코드는 `BCEModel.Collaborations`와 Control operation 선언에서 다음 값을 계산한다.
+
+- endpoint가 호출하는 Control 클래스와 메서드
+- HTTP 입력과 Control parameter의 연결
+- 빠진 요청 body schema와 그 필드 타입
+- 성공 응답 타입과 배열 여부
+- Boundary·Control 및 유스케이스 추적 정보
+- status에 대응하는 결과 이름
+
+따라서 LLM이 같은 연결 정보를 다시 추측하거나, 서로 모순되는 타입을 한 응답 안에 작성할
+필요가 없다. 수정할 때도 저장 모델에서 코드 생성 필드를 뺀 `ApiSpecProposal`만 LLM에 보낸다.
 
 ## 입력과 출력
-
-canonical 생성 경계는 다음 세 입력만 받는다.
 
 ```python
 generate_api_spec_model(
     scenario_text: str,
     bce_model: BCEModel,
-    sequence_model: SequenceCollection,
 ) -> ApiSpecModel
 ```
 
-- `scenario_text`는 유스케이스와 행위 근거다.
-- `BCEModel`은 Boundary·Control·Entity, 정확한 operation parameter와 return type의 원본이다.
-- `SequenceCollection`은 actor 진입과 Boundary→Control 호출, 유스케이스별 순서의 원본이다.
+시퀀스 다이어그램은 클래스의 승인된 `Collaborations`에서 코드로 만든 결과이므로 API 생성
+입력으로 다시 받지 않는다. `build_openapi_from_model`은 같은 `ApiSpecModel`에서 항상 같은
+OpenAPI JSON을 만든다. 하류의 구현 단계가 사용하는 `x-easydep-control`도 여기서 생성된다.
 
-수정 경계도 현재 `ApiSpecModel`과 동일한 typed 설계 문맥을 받는다. 출력은 정규화된
-`ApiSpecModel`이다. graph adapter만 `model_validate`로 체크포인트의 raw dict를 읽고,
-typed validation report를 관측한 뒤 `model_dump`로 기존 `Endpoints`, `Schemas`, snake_case
-필드 shape를 저장한다. repair를 결정하는 finding 집합은 기존 semantic detector와 동일하다.
+## 검사와 수리
 
-`projection.py`의 `build_openapi_from_model`은 같은 모델에 항상 같은 JSON을 반환한다. 외부
-계약인 `openapi`, `info`, `paths`, `components.schemas`와 `x-easydep-control` shape를 유지하며,
-RTM·deployment·implementation은 이 결과와 저장 모델을 기존 방식으로 소비한다.
+graph adapter는 저장 모델의 타입을 확인한 뒤 `api_spec_findings`를 실제 차단 검사로 한 번만
+실행한다. 별도의 관찰용 validator로 같은 규칙을 다시 검사하지 않는다. 문제가 있으면 기존
+설계 수리 흐름이 현재 HTTP 제안과 수리 이력을 LLM에 전달한다. API 서비스 안에 별도 수리
+루프는 두지 않는다.
 
-## 제안·정규화·검증·투영
+## 의존 관계와 부작용
 
-1. proposal은 endpoint, schema, traceability와 Control binding만 구조화 응답으로 받는다.
-2. normalization은 선택된 Control의 정확한 parameter·return 계약으로 query/body/response의
-   기계적 누락을 보완한다. 새 endpoint나 유스케이스 의미를 발명하지 않는다.
-3. validation은 path parameter, schema 참조, operation ID, Control argument와 sequence
-   call의 일치를 검사하고 모델을 바꾸지 않는 report를 반환한다.
-4. graph adapter는 이 report를 observational check로 실행한다. typed 규칙이 기존 detector의
-   유스케이스 범위·분해 경로 판정보다 엄격해 호출 수를 늘리지 않도록 repair finding에는
-   합치지 않고 표준 로그에만 기록한다. 로그는 checkpoint나 외부 telemetry schema에 저장하지
-   않는다. 기존 semantic finding이 있으면 history-aware repair가 API revision service만 다시
-   호출한다. 별도 repair loop를 추가하거나 BCE·sequence를 이 패키지에서 수정하지 않는다.
-5. graph가 수락한 모델만 OpenAPI로 투영한다. projection 실패를 LLM 출력으로 덮지 않는다.
-
-## Legacy PlantUML adapter
-
-이전 `extract_api_spec_model(scenario_text, class_puml, sequence_puml, ...)` 호출은 호환 facade와
-`legacy.py`에만 남는다. PlantUML parsing은 이전 체크포인트·호출자를 위한 fallback이며,
-canonical `service.py`, `normalization.py`, `validation.py`가 사용하는 기본 입력이 아니다.
-typed 모델이 함께 제공되면 그것을 계약 원본으로 사용하고 PlantUML에서 parameter나 return
-type을 다시 추론하지 않는다.
-
-## 부작용
-
-- LLM 호출은 `service.py`의 proposal/revision에서만 발생한다.
-- normalization, validation, projection은 순수 함수이며 네트워크, 저장소, graph state,
-  전역 체크포인트를 읽거나 쓰지 않는다.
-- persistence, raw state 검증, observational validation 실행, JSON dump, stage checkpoint와
-  feedback cascade는 graph adapter가 소유한다.
-
-## 사용하면 안 되는 import
-
-- API 서비스는 `app.design.graphs`, artifact repository, `ArchitectureState`를 import하지 않는다.
-- API 서비스는 requirements 내부 state나 implementation service를 import하지 않는다.
-- `service.py`는 클래스·시퀀스 PlantUML 문자열을 canonical 설계 입력으로 받지 않는다.
-- projection은 LLM, prompt, 설정 또는 legacy parser에 의존하지 않는다.
-- downstream 소비자를 위해 OpenAPI나 저장 JSON에 새 private 필드를 노출하지 않는다.
+- LLM 호출은 `service.py`에서만 발생한다.
+- 정규화와 OpenAPI 변환은 네트워크나 저장소를 사용하지 않는다.
+- API 서비스는 graph state, artifact repository, requirements 내부 state를 import하지 않는다.
+- PlantUML 문자열과 이전의 느슨한 API payload는 지원하지 않는다.
 
 ## 실패 조건
 
-- 입력 `BCEModel`, `SequenceCollection` 또는 proposal이 Pydantic 계약을 만족하지 않으면 실패한다.
-- 존재하지 않는 schema, path parameter 누락·중복 operation ID, 빈 operation 집합은 수락하지 않는다.
-- endpoint가 실제 Control operation과 모든 parameter를 연결하지 못하거나 sequence에서 호출을
-  찾지 못하면 typed report에 남긴다. 이 report는 현재 관측 전용이며 repair 범위를 넓히지 않는다.
-- graph의 기존 repair 전략이 소진된 뒤에도 finding이 남으면 실패를 반환하며 빈 placeholder endpoint,
-  fabricated class/use-case ID 또는 느슨한 `Object` 계약으로 통과시키지 않는다. API service는
-  자체 repair loop를 추가해 호출 수나 repair 범위를 넓히지 않는다.
+- 입력 BCE 모델이나 LLM proposal이 Pydantic 계약을 만족하지 않는다.
+- proposal의 `interaction_id`가 승인된 Boundary→Control 상호작용에 없다.
+- Control parameter에 대응하는 HTTP 입력을 하나로 정할 수 없다.
+- schema 참조, path parameter, operation ID 또는 OpenAPI 결과가 유효하지 않다.

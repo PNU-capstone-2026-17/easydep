@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import copy
 import json
-import logging
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -50,7 +49,6 @@ from app.design.services.api_spec.service import (
     generate_api_spec_model as extract_api_spec_model,
 )
 from app.design.services.api_spec.service import revise_api_spec_model
-from app.design.services.api_spec.validation import validate_api_spec_model
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.scenario import build_scenario_index
@@ -81,10 +79,9 @@ from app.design.services.erd.projection import project_logical_model
 from app.design.services.erd.service import revise_erd_model as revise_erd_classes
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.projection import (
-    SequenceCollection,
     project_sequence_model,
-    sequence_findings,
 )
+from app.design.services.sequence_diagram.validation import validate_sequence_model
 
 #: 설계 파이프라인의 순서. 상위 그래프의 엣지도, 저장 순회도 여기서만 나온다.
 #: 시퀀스·API는 클래스 다이어그램을, 배포는 그 앞의 모두를 재료로 쓴다. ERD는 클래스
@@ -96,8 +93,6 @@ DESIGN_STAGES: tuple[str, ...] = (
     "erd",
     "deployment_diagram",
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 # 수락 단위 cache는 process에만 존재한다. graph state와 checkpoint에는 기록하지 않는다.
 _CLASS_DESIGN_ACCEPTED_UNIT_CACHE = ProcessLocalAcceptedUnitCache(capacity=256)
@@ -292,17 +287,22 @@ def _class_model_findings(
 
 
 def _sequence_model_findings(
-    model: dict[str, Any], _state: ArchitectureState,
+    model: dict[str, Any], state: ArchitectureState,
 ) -> list[ArtifactFinding]:
-    """현재 시퀀스 컬렉션의 값싼 call/return finding을 graph 계약으로 투영한다."""
-    accepted = SequenceCollection.model_validate(model)
+    """결정론적 시퀀스 투영의 스키마·참조·클래스 버전만 확인한다."""
+
+    report = validate_sequence_model(model, dict(state))
+    if report.errors:
+        raise RuntimeError("; ".join(report.errors))
     return [
         ArtifactFinding(
-            rule_id="sequence.contract",
-            message=message,
-            location="SequenceDiagramCollection",
+            rule_id=finding.rule_id,
+            message=finding.message,
+            location=finding.location,
+            requires_user_input=finding.requires_user_input,
+            origin=finding.origin,
         )
-        for message in sequence_findings(accepted)
+        for finding in report.findings
     ]
 
 
@@ -381,24 +381,18 @@ def _stored_api_model(value: object) -> ApiSpecModel:
     return value if isinstance(value, ApiSpecModel) else ApiSpecModel.model_validate(value)
 
 
-def _api_design_inputs(
-    state: ArchitectureState,
-) -> tuple[BCEModel, SequenceCollection]:
-    """API 생성·수정이 공유하는 승인 BCE·시퀀스 입력을 검증한다."""
+def _api_class_model(state: ArchitectureState) -> BCEModel:
+    """API 생성·수정이 공유하는 승인 클래스 모델을 검증한다."""
 
-    bce_model = _stored_class_model(state.get("extracted_bce_classes") or {})
-    sequence_value = state.get("sequence_diagram_model")
-    if not isinstance(sequence_value, dict):
-        raise TypeError("stored sequence model must be an object")
-    return bce_model, SequenceCollection.model_validate(sequence_value)
+    return _stored_class_model(state.get("extracted_bce_classes") or {})
 
 
 def _extract_api_state(state: ArchitectureState) -> dict[str, Any]:
     """raw graph state를 typed API proposal service에 연결해 저장 JSON으로 반환한다."""
 
-    bce_model, sequence_model = _api_design_inputs(state)
+    bce_model = _api_class_model(state)
     proposed = extract_api_spec_model(
-        usecase_spec_text(state), bce_model, sequence_model,
+        usecase_spec_text(state), bce_model,
     )
     return _stored_api_model(proposed).model_dump()
 
@@ -411,13 +405,12 @@ def _revise_api_state(
 ) -> dict[str, Any]:
     """현재 API JSON과 graph feedback을 typed revision service에 연결한다."""
 
-    bce_model, sequence_model = _api_design_inputs(state)
+    bce_model = _api_class_model(state)
     revised = revise_api_spec_model(
         _stored_api_model(current),
         feedback,
         usecase_spec_text(state),
         bce_model,
-        sequence_model,
         targets,
     )
     return _stored_api_model(revised).model_dump()
@@ -432,35 +425,10 @@ def _render_api_model(model: dict[str, Any]) -> dict[str, Any]:
 def _api_model_findings(
     model: dict[str, Any], state: ArchitectureState,
 ) -> list[ArtifactFinding]:
-    """typed 계약을 관찰하되 기존 semantic repair finding만 반환한다.
+    """저장 스키마를 확인한 뒤 실제 차단 검사 결과만 반환한다."""
 
-    typed validator의 exact-call 판정은 기존 detector보다 엄격할 수 있다. 그 오류를 repair
-    finding에 더하면 호출 횟수와 수정 범위가 바뀌므로, 이 adapter에서는 typed 입력 정합성을
-    관찰만 하고 graph의 기존 detector가 repair 소유권을 계속 가진다.
-    """
-
-    accepted = _stored_api_model(model)
-    payload = accepted.model_dump()
-    findings = list(api_spec_findings(payload, cast(dict[str, Any], state)))
-    try:
-        bce_model, sequence_model = _api_design_inputs(state)
-    except (TypeError, ValueError):
-        # 기존 checkpoint의 class ``methods``/단일 sequence shape는 legacy detector가
-        # 계속 판정한다. 새 generation/revision 경로만 typed 입력을 강제한다.
-        return findings
-    report = validate_api_spec_model(accepted, bce_model, sequence_model)
-    log_level = logging.WARNING if report.errors else logging.DEBUG
-    _LOGGER.log(
-        log_level,
-        "typed API validation reported observational results",
-        extra={
-            "api_typed_validation": {
-                "valid": report.valid,
-                "errors": list(report.errors),
-            }
-        },
-    )
-    return findings
+    payload = _stored_api_model(model).model_dump()
+    return list(api_spec_findings(payload, cast(dict[str, Any], state)))
 
 
 def _revise_erd_state(

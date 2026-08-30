@@ -229,18 +229,27 @@ def _groups(
         actor_steps = _actor_steps(use_case)
         main_steps = [step for step in use_case.steps if step.branch == "main"]
         active: str | None = None
+        leading_steps: list[str] = []
         grouped: dict[str, list[str]] = {}
         owner_by_step: dict[str, str] = {}
         # 새 시스템 처리를 시작하는 actor 입력부터 다음 입력 직전까지가 호출 루트 하나다.
         # actor가 결과를 받는 마지막 단계는 새 입력이 아니므로 앞선 루트에 포함된다.
+        # 화면 표시처럼 첫 actor 입력보다 앞선 시스템 단계는 첫 루트의 준비 과정이다.
+        # 이를 버리면 클래스 모델은 통과해도 시퀀스에서 갑자기 누락 단계가 생긴다.
         # actor 입력이 전혀 없는 use case는 root 그룹 하나로 다룬다.
         for step in main_steps:
             if step.id in actor_steps:
                 active = step.id
-                grouped.setdefault(active, [])
+                group = grouped.setdefault(active, [])
+                if leading_steps:
+                    group.extend(leading_steps)
+                    owner_by_step.update(dict.fromkeys(leading_steps, active))
+                    leading_steps.clear()
             if active:
                 grouped[active].append(step.id)
                 owner_by_step[step.id] = active
+            else:
+                leading_steps.append(step.id)
         if not grouped:
             root = f"{use_case.id}:root"
             grouped[root] = [step.id for step in main_steps]

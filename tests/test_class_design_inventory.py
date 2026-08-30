@@ -28,6 +28,20 @@ def test_scenario_index_splits_actor_entries_and_attaches_extension_steps():
     assert first.trace_use_case_ids == ("UC1", "UC2")
 
 
+def test_scenario_index_keeps_system_steps_before_first_actor_entry():
+    value = single_use_case()
+    value["use_case_specs"][0]["main_scenario"].insert(0, {
+        "step_number": 0,
+        "subject_ref": "System",
+        "sentence": "System shows the request form.",
+    })
+
+    group = build_scenario_index(value).groups[0]
+
+    assert group.id == "UC1:main:1"
+    assert group.required_step_ids[:2] == ("UC1:main:0", "UC1:main:1")
+
+
 def test_internal_include_has_no_synthetic_standalone_group():
     index = build_scenario_index(scenario())
 
