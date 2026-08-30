@@ -1418,7 +1418,8 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
         ),
         encoding="utf-8",
     )
-    (event_dir / "boundary.events.jsonl").write_text(
+    journal_path = event_dir / "boundary.events.jsonl"
+    journal_path.write_text(
         json.dumps(
             {
                 "tool": "restricted_file_editor",
@@ -1435,6 +1436,21 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
                         )
                     }
                 },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (event_dir / "boundary-1.result.json").write_text(
+        json.dumps(
+            {
+                "taskId": "boundary-1",
+                "taskType": "boundary-adapter",
+                "status": "SUCCEEDED",
+                "changedFiles": ["application/src/main/java/BoundaryAdapter.java"],
+                "verification": {"exitCode": 0},
+                "repairHistory": {"attempts": []},
+                "eventJournal": "reports/agent-executions/boundary.events.jsonl",
+                "rawResponse": "Boundary adapter 구현을 완료했습니다.",
             }
         ),
         encoding="utf-8",
@@ -1460,6 +1476,18 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
         "application/src/main/java/BoundaryAdapter.java"
     )
     assert progress["current_class"] == "BoundaryAdapter"
+    assert progress["agent_results"] == [
+        {
+            "task_id": "boundary-1",
+            "task_type": "boundary-adapter",
+            "status": "SUCCEEDED",
+            "raw_response": "Boundary adapter 구현을 완료했습니다.",
+            "changed_files": ["application/src/main/java/BoundaryAdapter.java"],
+            "verification": {"exitCode": 0},
+            "repair_history": {"attempts": []},
+            "event_journal": "reports/agent-executions/boundary.events.jsonl",
+        }
+    ]
 
 
 def test_implementation_progress_snapshot_marks_terminal_failure() -> None:

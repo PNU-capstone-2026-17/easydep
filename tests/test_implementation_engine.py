@@ -175,6 +175,24 @@ paths:
             f"package com.example.orders.bce; public interface {name} {{}}",
             encoding="utf-8",
         )
+    (java / "bce/CheckoutScreen.java").write_text(
+        "package com.example.orders.bce; "
+        "public interface CheckoutScreen { CloseResult submit(String customerId); }",
+        encoding="utf-8",
+    )
+    (java / "bce/CloseResult.java").write_text(
+        "package com.example.orders.bce; public record CloseResult(String message) {}",
+        encoding="utf-8",
+    )
+    (java / "bce/OrderService.java").write_text(
+        "package com.example.orders.bce; "
+        "public interface OrderService { OrderReceipt createOrder(String customerId); }",
+        encoding="utf-8",
+    )
+    (java / "bce/OrderReceipt.java").write_text(
+        "package com.example.orders.bce; public record OrderReceipt(String orderId) {}",
+        encoding="utf-8",
+    )
 
     spec = load_job(job)
     ir = build_implementation_ir(spec, run)
@@ -208,6 +226,10 @@ paths:
         projection = context["deployment"]
         assert {"workloads", "connections"} <= set(projection)
         assert {"interfaces", "configuration", "storage"} <= set(projection["workloads"][0])
+        if task.task_type == "boundary-adapter":
+            assert "record CloseResult(String message)" in context["generatedJavaContracts"]
+        if task.task_type == "api-adapter":
+            assert "record OrderReceipt(String orderId)" in context["generatedJavaContracts"]
     gateway = generate_gateway_adapter_tasks(spec, run)[0]
     wiring = generate_wiring_tasks(spec, run)[0]
     for task in (gateway, wiring):

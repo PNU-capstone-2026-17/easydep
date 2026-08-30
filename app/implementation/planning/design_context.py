@@ -452,20 +452,27 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         api_interface = java_root / "api" / f"{stem}Api.java"
         api_sources = [api_interface]
         api_sources.extend(sorted((java_root / "api" / "model").glob("*.java")))
-        # API-to-application mapping can involve a Control whose class name does
-        # not match the resource noun. Inject all Control contracts and let the
-        # exact operation signatures/sequence establish the mapping.
-        bce_names = [*ir.controls, *ir.entities]
-        bce_sources = [java_root / "bce" / f"{name}.java" for name in bce_names]
-        exact_contracts = render_source_contracts(
-            run_root, [*api_sources, *bce_sources]
-        )
         bound_controls = {
             str(binding.get("control"))
             for operation in api_port.operations
             if (binding := control_bindings.get(operation.operation_id or ""))
             and str(binding.get("control") or "")
         }
+        # API 어댑터는 OpenAPI 타입과 실제로 호출할 Control 계약만 알면 된다.
+        # Control의 매개변수·반환형은 아래 함수가 Java 참조를 따라 함께 가져온다.
+        # 이렇게 해야 같은 이름의 API 모델과 BCE record가 있어도 agent가 두 타입의
+        # 접근 방식을 추측하지 않고 정확한 선언을 비교할 수 있다.
+        api_contracts = render_source_contracts(run_root, api_sources)
+        bce_contracts = read_generated_java_contracts(
+            run_root,
+            spec.base_package,
+            bound_controls or set(ir.controls),
+        )
+        exact_contracts = "\n\n".join(
+            value
+            for value in (api_contracts, bce_contracts)
+            if value and "No Java contracts found" not in value
+        ) or "// No Java contracts found"
         sequence_context = _project_sequence(
             _read_json(spec.inputs.get("sequenceModel")),
             bound_controls or set(ir.controls),
@@ -2327,12 +2334,28 @@ def read_generated_java_contracts(
         / Path(base_package.replace(".", "/"))
     )
     contracts = []
-    for name in sorted(names):
-        path = package_root / "bce" / f"{name}.java"
-        if path.is_file():
-            contracts.append(
-                f"// bce/{name}.java\n{path.read_text(encoding='utf-8').strip()}"
-            )
+    bce_root = package_root / "bce"
+    available_bce = {
+        path.stem: path for path in bce_root.glob("*.java") if path.is_file()
+    }
+    # 선택한 Boundary/Control의 반환형이나 매개변수형도 구현에 필요한 계약이다.
+    # 예를 들어 ``CloseResult`` record를 빼면 agent는 생성자 인자를 알 수 없어 수리
+    # 단계마다 다른 값을 추측한다. 전체 BCE를 보내지는 않고, 실제 Java 선언에서 이름이
+    # 참조된 type만 차례로 따라간다.
+    selected = {name for name in names if name in available_bce}
+    pending = sorted(selected)
+    while pending:
+        current = pending.pop(0)
+        source = available_bce[current].read_text(encoding="utf-8").strip()
+        for candidate in sorted(set(available_bce) - selected):
+            if re.search(rf"\b{re.escape(candidate)}\b", source):
+                selected.add(candidate)
+                pending.append(candidate)
+    for name in sorted(selected):
+        path = available_bce[name]
+        contracts.append(
+            f"// bce/{name}.java\n{path.read_text(encoding='utf-8').strip()}"
+        )
     for name in sorted(api_model_names or set()):
         path = package_root / "api" / "model" / f"{name}.java"
         if path.is_file():

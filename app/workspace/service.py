@@ -72,6 +72,41 @@ def _public_design_timing_event(event: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in event.items() if key not in _PRIVATE_DESIGN_TIMING_FIELDS}
 
 
+def _implementation_agent_results(run_path: Path) -> list[dict[str, Any]]:
+    """완료된 OpenHands 작업의 답변·수정 파일·검증·수리 이력을 읽는다."""
+
+    execution_dir = run_path / "reports" / "agent-executions"
+    results: list[dict[str, Any]] = []
+    # ``*.attempt-NNN.result.json``은 이력 보관본이고 ``<task>.result.json``이 최신본이다.
+    # 화면에는 작업별 최신본 하나만 보내 중복 표시를 피한다.
+    for path in sorted(execution_dir.glob("*.result.json")):
+        if ".attempt-" in path.name:
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        results.append(
+            {
+                "task_id": str(
+                    payload.get("taskId") or path.name.removesuffix(".result.json")
+                ),
+                "task_type": str(payload.get("taskType") or ""),
+                "status": str(payload.get("status") or ""),
+                "raw_response": str(payload.get("rawResponse") or ""),
+                "changed_files": list(payload.get("changedFiles") or []),
+                "verification": payload.get("verification")
+                or payload.get("verificationEvidence")
+                or {},
+                "repair_history": payload.get("repairHistory") or {},
+                "event_journal": str(payload.get("eventJournal") or ""),
+            }
+        )
+    return results
+
+
 def _blocker_keys(result: dict[str, Any]) -> tuple[str, ...]:
     """수리 전후를 비교할 안정된 공개 blocker 키를 만든다."""
     return tuple(
@@ -1703,6 +1738,7 @@ class WorkspaceService:
                 state = None
             if isinstance(state, dict):
                 workflow = state
+        agent_results = _implementation_agent_results(run_path) if run_path else []
 
         updates: list[dict[str, str]] = []
 
@@ -2038,6 +2074,8 @@ class WorkspaceService:
             file_name = Path(current_file).name
             snapshot["current_file"] = current_file
             snapshot["current_class"] = Path(file_name).stem
+        if agent_results:
+            snapshot["agent_results"] = agent_results
         return snapshot
 
     def _monitor_implementation(
@@ -2047,6 +2085,7 @@ class WorkspaceService:
         app_id = str(job.get("app_id") or "")
         last_status: str | None = None
         last_progress: dict[str, str] = {}
+        last_agent_results: dict[str, str] = {}
         while True:
             current = implementation_worker.get(job_id)
             status = str(current.get("status") or "")
@@ -2102,6 +2141,29 @@ class WorkspaceService:
                         },
                     )
                     last_progress[step] = progress_key
+                for result in progress.get("agent_results", []) if progress else []:
+                    if not isinstance(result, dict):
+                        continue
+                    task_id = str(result.get("task_id") or "")
+                    if not task_id:
+                        continue
+                    fingerprint = stable_digest(result)
+                    if last_agent_results.get(task_id) == fingerprint:
+                        continue
+                    raw_response = str(result.get("raw_response") or "").strip()
+                    repository.append_event(
+                        app_id,
+                        command_id=command_id,
+                        stage="implementation",
+                        kind="progress",
+                        actor="system",
+                        text=raw_response or f"{task_id} 작업 결과가 기록되었습니다.",
+                        metadata={
+                            "progress_event": "implementationAgentResult",
+                            **result,
+                        },
+                    )
+                    last_agent_results[task_id] = fingerprint
             if status == "AWAITING_APPROVAL":
                 request = current.get("transmission_request") or {}
                 return {

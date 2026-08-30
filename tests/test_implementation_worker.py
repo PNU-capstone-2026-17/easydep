@@ -347,7 +347,12 @@ def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path
     run = tmp_path / "run_repair"
     reports = run / "reports"
     reports.mkdir(parents=True)
-    (reports / "run-manifest.json").write_text(json.dumps({"input_hash": "input-hash"}), encoding="utf-8")
+    (reports / "run-manifest.json").write_text(json.dumps({
+        "input_hash": "input-hash",
+        "implementation_tasks": [
+            {"task_id": "deferred-e2e", "task_type": "integration-test"},
+        ],
+    }), encoding="utf-8")
     (reports / "repair-plan.json").write_text(json.dumps({
         "entries": [{"revision": 1, "ownerTaskIds": ["repair-api"], "revalidationTaskIds": ["repair-e2e"]}]
     }), encoding="utf-8")
@@ -369,10 +374,44 @@ def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path
     assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
     record["transmission_request"] = {"tasks": [{"taskId": "initial-wiring"}]}
     assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
+    record["transmission_request"] = {"tasks": [{"taskId": "deferred-e2e"}]}
+    assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
     (reports / "repair-plan.json").write_text(
         json.dumps({"status": "STALLED", "entries": []}), encoding="utf-8"
     )
     assert not ImplementationWorker._delegated_execution_is_active(record, str(approval))
+
+    # 자동 승인된 다음 묶음은 AWAITING_APPROVAL을 외부에 노출하지 않고, 앞선 실패
+    # task를 실제로 재실행할 수 있도록 retry_failed=True로 이어져야 한다.
+    (reports / "repair-plan.json").write_text(json.dumps({
+        "entries": [{"ownerTaskIds": ["repair-api"], "revalidationTaskIds": []}],
+    }), encoding="utf-8")
+    worker = ImplementationWorker(settings(tmp_path))
+    submitted: list[tuple[object, ...]] = []
+    worker.executor.submit = lambda *args: submitted.append(args)  # type: ignore[method-assign]
+    worker.client.run_phase = lambda *_args: {"status": "READY"}
+    worker.client.transmission_request = lambda *_args: {
+        "tasks": [{"taskId": "repair-api"}],
+    }
+    job = {
+        "job_id": "delegated-job",
+        "app_id": "app-1",
+        "job_path": str(tmp_path / "job.json"),
+        "run_root": str(run),
+        "status": "READY",
+        "transmission_request": None,
+        "created_at": "now",
+        "updated_at": "now",
+    }
+    worker._write(job)
+    try:
+        worker._run("delegated-job", str(approval), False)
+        resumed = worker._read("delegated-job")
+    finally:
+        worker.shutdown()
+
+    assert resumed["status"] == "QUEUED"
+    assert submitted and submitted[0][-1] is True
 
 
 def test_cancel_terminates_active_process_and_preserves_cancelled_status(

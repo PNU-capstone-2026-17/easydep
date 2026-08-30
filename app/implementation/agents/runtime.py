@@ -9,6 +9,7 @@ import threading
 import time
 import warnings
 from pathlib import Path
+from typing import Literal
 
 from app.config import settings
 from app.metrics import langsmith as langsmith_metrics
@@ -73,7 +74,11 @@ from .workspace import (
 )
 
 MAX_AGENT_ITERATIONS = 6
-MAX_REPAIR_ITERATIONS = 4
+# 수리는 진단을 읽고 기존 파일을 확인한 뒤 편집해야 하므로 최초 생성보다 도구 호출이
+# 적게 필요한 작업이라고 가정하면 안 된다. 이 값은 수리 횟수 상한이 아니라 한 번의
+# OpenHands 대화가 사용할 수 있는 도구 turn의 안전 한도이며, 실제 수리 대화는 진전이
+# 있는 동안 바깥 while loop에서 계속 이어진다.
+MAX_REPAIR_ITERATIONS = 8
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
@@ -147,17 +152,39 @@ def _api_adapter_repair_contract(context: dict[str, object]) -> str:
         for binding in [operation.get("controlBinding") or {}]
         if isinstance(binding, dict) and str(binding.get("control") or "").strip()
     }
-    sections = re.split(r"(?=^// application/src/main/java/)", contracts, flags=re.MULTILINE)
-    selected = [
+    sections = [
+        section.strip()
+        for section in re.split(r"(?=^// [^\n]+\.java\s*$)", contracts, flags=re.MULTILINE)
+        if section.strip()
+    ]
+    api_sections = [
         section
         for section in sections
-        if (
-            f"/api/{api_name}Api.java" in section
-            or "/api/model/" in section
-            or any(f"/bce/{control}.java" in section for control in controls)
-        )
+        if f"/api/{api_name}Api.java" in section or "/api/model/" in section
     ]
-    compact = "".join(selected).strip()
+    bce_sections = {
+        match.group(1): section
+        for section in sections
+        if (
+            match := re.match(
+                r"// (?:application/src/main/java/.+/)?bce/"
+                r"([A-Za-z_$][A-Za-z0-9_$]*)\.java",
+                section,
+            )
+        )
+    }
+    # 선택된 Control에서 실제로 언급된 BCE 타입만 따라간다. 수리 prompt가 전체
+    # 설계 문서로 다시 커지는 것을 막으면서 record/enum 접근자 누락도 방지한다.
+    selected_names = {name for name in controls if name in bce_sections}
+    pending = sorted(selected_names)
+    while pending:
+        source = bce_sections[pending.pop(0)]
+        for name in sorted(set(bce_sections) - selected_names):
+            if re.search(rf"\b{re.escape(name)}\b", source):
+                selected_names.add(name)
+                pending.append(name)
+    selected = [*api_sections, *(bce_sections[name] for name in sorted(selected_names))]
+    compact = "\n\n".join(selected).strip()
     # Preserve the beginning because it contains the API method signatures;
     # the bounded tail keeps a repair prompt from becoming a full re-send of
     # every generated design artifact.
@@ -172,6 +199,49 @@ def _repair_contract_context(context: dict[str, object]) -> str:
     if not isinstance(contracts, str):
         return ""
     return contracts[:16000]
+
+
+def _complete_referenced_bce_contracts(
+    run_root: Path,
+    task: dict[str, object],
+    context: dict[str, object],
+) -> str:
+    """오래 실행 중인 task에도 빠진 매개변수·반환형 계약을 보충한다.
+
+    새 task는 계획할 때 참조 type을 함께 넣는다. 이미 생성된 checkpoint는 예전의 짧은
+    계약을 가지고 있을 수 있으므로, 그 계약에 적힌 BCE 파일 이름에서 시작해 실제 생성
+    Java 파일의 참조 관계를 다시 따라간다. 반환값은 새로 발견한 계약만 담아 prompt 중복을
+    줄이고, context에는 수리 대화가 사용할 완전한 계약을 저장한다.
+    """
+
+    existing = context.get("generatedJavaContracts")
+    if not isinstance(existing, str) or not existing.strip():
+        return ""
+    names = set(
+        re.findall(
+            r"(?m)^// (?:application/src/main/java/.+/)?bce/"
+            r"([A-Za-z_$][A-Za-z0-9_$]*)\.java$",
+            existing,
+        )
+    )
+    if not names:
+        return ""
+    complete = read_generated_java_contracts(
+        run_root, task_base_package(task), names
+    )
+    existing_names = names
+    missing_sections = [
+        section.strip()
+        for section in re.split(r"(?=^// bce/)", complete, flags=re.MULTILINE)
+        if section.strip()
+        and not any(
+            section.startswith(f"// bce/{name}.java") for name in existing_names
+        )
+    ]
+    supplement = "\n\n".join(missing_sections)
+    if supplement:
+        context["generatedJavaContracts"] = existing.rstrip() + "\n\n" + supplement
+    return supplement
 
 
 def _configure_openhands_profile_store() -> None:
@@ -199,6 +269,7 @@ class EventJournal:
         self.path = path
         self.event_count = 0
         self.tool_counts: dict[str, int] = {}
+        self.latest_agent_message = ""
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("", encoding="utf-8")
 
@@ -207,14 +278,30 @@ class EventJournal:
         tool_name = getattr(event, "tool_name", None)
         if tool_name:
             self.tool_counts[tool_name] = self.tool_counts.get(tool_name, 0) + 1
+        event_payload = event.model_dump(mode="json")
         payload = {
             "sequence": self.event_count,
             "timestamp": time.time(),
             "type": event_type,
             "source": getattr(event, "source", None),
             "tool": tool_name,
-            "event": event.model_dump(mode="json"),
+            "event": event_payload,
         }
+        # Workspace 화면에는 숨겨진 reasoning이 아니라 모델이 사용자에게 반환한 마지막
+        # assistant 텍스트만 보여 준다. 실행 중 한 번 저장해 두므로 진행 조회 때 큰 journal을
+        # 매번 다시 읽지 않아도 된다.
+        if event_type == "MessageEvent" and event_payload.get("source") == "agent":
+            message = event_payload.get("llm_message")
+            content = message.get("content") if isinstance(message, dict) else None
+            text_parts = [
+                str(item.get("text"))
+                for item in content or []
+                if isinstance(item, dict)
+                and item.get("type") == "text"
+                and isinstance(item.get("text"), str)
+            ]
+            if text_parts:
+                self.latest_agent_message = "\n".join(text_parts)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.event_count += 1
@@ -378,6 +465,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     before = snapshot_files(sandbox)
     prompt = (run_root / task["prompt_file"]).read_text(encoding="utf-8")
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
+    referenced_contracts = _complete_referenced_bce_contracts(
+        run_root, task, context
+    )
+    if referenced_contracts:
+        prompt += (
+            "\n\n## Referenced generated BCE type contracts\n\n"
+            "```java\n" + referenced_contracts + "\n```\n"
+        )
     api_model_names = (
         set()
         if task_type == "frontend-implementation"
@@ -492,6 +587,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     callbacks=[journal],
                     max_iterations=round_iteration_limit,
                     reasoning_effort=reasoning_effort,
+                    write_only=repair_attempt > 0,
                     system_prompt=(
                         FRONTEND_SYSTEM_PROMPT
                         if task_type == "frontend-implementation"
@@ -594,23 +690,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         outcome="repeated_candidate" if repeated else "no_improvement",
                     )
                 )
-                if repeated:
-                    repair_ledger.status = "STALLED"
-                    repair_ledger.stall_reason = (
-                        "The implementation agent repeated the same missing-output candidate."
-                    )
-                    missing_error = RuntimeError(
-                        "Agent repeated a candidate without creating required task outputs: "
-                        + ", ".join(missing_outputs)
-                    )
-                    if conversation_error is not None:
-                        raise RuntimeError(
-                            "OpenHands conversation failed before required task "
-                            "outputs were created (missing: "
-                            + ", ".join(missing_outputs)
-                            + f"): {conversation_error}"
-                        ) from conversation_error
-                    raise missing_error
                 round_allowed = [
                     str((sandbox / path).resolve()) for path in missing_outputs
                 ]
@@ -628,6 +707,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         ],
                     ),
                 )
+                if repeated:
+                    round_prompt = (
+                        "The previous repair turn made no file change. The complete current "
+                        "source and repair history are included below. Use create or "
+                        "str_replace now; do not finish without changing a repair target.\n\n"
+                        + round_prompt
+                    )
                 round_prompt += (
                     "\n\n## Accumulated repair history\n\n"
                     + repair_ledger.prompt_context()
@@ -846,9 +932,26 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 break
             except WorkspaceVerificationError as error:
                 if _requires_cross_phase_repair(task_type, error.evidence):
-                    # The integration test only exposed an upstream persistence
-                    # defect. Do not spend local LLM repair rounds rewriting a
-                    # test that cannot own the SQL or JPA mapping.
+                    if task_type == "integration-test":
+                        # E2E 테스트가 의미 검사까지 통과했다면 테스트 소스는 유효하다. 실행이
+                        # 상위 애플리케이션 오류를 드러냈다는 이유로 이 파일을 버리지 않는다.
+                        # 파일은 성공 checkpoint로 보존하고, 이어지는 phase 검증이 실제 소유
+                        # 작업(Control, persistence 등)을 자동 수리하도록 같은 진단을 넘긴다.
+                        changed = changed_files(before, snapshot_files(sandbox))
+                        allowed = set(task["allowed_write_paths"])
+                        unauthorized = sorted(
+                            path for path in changed if path not in allowed
+                        )
+                        if unauthorized:
+                            _restore_unauthorized_files(
+                                sandbox, run_root, unauthorized
+                            )
+                            changed = {path for path in changed if path in allowed}
+                        verification = dict(error.evidence)
+                        verification["upstreamFailureDeferred"] = True
+                        break
+                    # 현재 작업의 허용 파일에 원인이 없으면 같은 작업을 되풀이하지 않고
+                    # phase 수리 계획으로 넘긴다.
                     raise
                 referenced = referenced_source_paths(error.evidence)
                 normalized_allowed = {
@@ -896,12 +999,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         detail=str(error.evidence)[-4000:],
                     )
                 )
-                if repeated:
-                    repair_ledger.status = "STALLED"
-                    repair_ledger.stall_reason = (
-                        "The implementation agent repeated a rejected source candidate."
-                    )
-                    raise
                 repair_paths = select_repair_paths(
                     error.evidence, task["allowed_write_paths"]
                 )
@@ -943,6 +1040,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     repair_paths,
                     **feedback_kwargs,
                 )
+                if repeated:
+                    round_prompt = (
+                        "The previous repair turn made no file change. The complete current "
+                        "source and repair history are included below. Use create or "
+                        "str_replace now; do not finish without changing a repair target.\n\n"
+                        + round_prompt
+                    )
                 round_prompt += (
                     "\n\n## Accumulated repair history\n\n"
                     + repair_ledger.prompt_context()
@@ -961,6 +1065,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "eventCount": journal.event_count,
             "toolCounts": journal.tool_counts,
             "eventJournal": str(journal.path.relative_to(run_root)).replace("\\", "/"),
+            "rawResponse": journal.latest_agent_message,
         }
         if isinstance(error, WorkspaceVerificationError):
             failure["verificationEvidence"] = error.evidence
@@ -983,6 +1088,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "eventCount": journal.event_count,
         "toolCounts": journal.tool_counts,
         "eventJournal": str(journal.path.relative_to(run_root)).replace("\\", "/"),
+        "rawResponse": journal.latest_agent_message,
         "status": "SUCCEEDED",
     }
     if repair_ledger.attempts:
@@ -1245,6 +1351,7 @@ def create_openhands_conversation(
     max_iterations: int = MAX_AGENT_ITERATIONS,
     reasoning_effort: str = "medium",
     system_prompt: str = IMPLEMENTATION_SYSTEM_PROMPT,
+    write_only: bool = False,
 ):
     global _RESTRICTED_EDITOR_REGISTERED
 
@@ -1263,6 +1370,16 @@ def create_openhands_conversation(
             description="Absolute path to the allowlisted file. Use the argument name path.",
             validation_alias=AliasChoices("path", "file_path"),
             serialization_alias="path",
+        )
+
+    class WriteOnlyFileEditorAction(CompatibleFileEditorAction):
+        """수리 prompt에 이미 실린 파일을 다시 조회하지 않고 바로 고치게 한다."""
+
+        command: Literal["create", "str_replace"] = Field(
+            description=(
+                "Repair the allowlisted file with create or str_replace. "
+                "The complete current source is already in the prompt."
+            )
         )
 
     class ReplaceableFileEditorExecutor(FileEditorExecutor):
@@ -1302,7 +1419,7 @@ def create_openhands_conversation(
 
     class RestrictedFileEditorTool(FileEditorTool):
         @classmethod
-        def create(cls, conv_state, allowed_edits_files):
+        def create(cls, conv_state, allowed_edits_files, write_only=False):
             instances = super().create(conv_state)
             return [
                 instance.model_copy(
@@ -1311,9 +1428,21 @@ def create_openhands_conversation(
                             workspace_root=conv_state.workspace.working_dir,
                             allowed_edits_files=allowed_edits_files,
                         ),
-                        "action_type": CompatibleFileEditorAction,
+                        "action_type": (
+                            WriteOnlyFileEditorAction
+                            if write_only
+                            else CompatibleFileEditorAction
+                        ),
                         "description": (
+                            (
+                                "Repair the explicitly allowlisted text files now. "
+                                "Their complete current contents are in the user prompt; "
+                                "use create or str_replace without viewing them again. "
+                            )
+                            if write_only
+                            else
                             "Create or edit only the explicitly allowlisted text files. "
+                        ) + (
                             "Their parent directories already exist and were write-tested. "
                             "Use the absolute paths from the user prompt and create every "
                             "requested file directly; do not browse directories. "
@@ -1368,7 +1497,10 @@ def create_openhands_conversation(
     )
     agent = Agent(
         llm=LLM(**llm_options),
-        tools=[Tool(name=registry_name, params={"allowed_edits_files": allowed_files})],
+        tools=[Tool(name=registry_name, params={
+            "allowed_edits_files": allowed_files,
+            "write_only": write_only,
+        })],
         include_default_tools=["FinishTool"],
         system_prompt=system_prompt,
     )

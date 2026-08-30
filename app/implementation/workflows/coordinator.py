@@ -417,6 +417,19 @@ def _run_workflow(
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         try:
             verification = verifier(run_root)
+        except Exception as error:
+            repaired = _continue_after_verification_failure(
+                run_root,
+                spec,
+                failure_id="verify-final-workspace",
+                failed_task_type="integration-test",
+                error=error,
+            )
+            if repaired is not None:
+                return repaired
+            _record_workflow_failure(run_root, state, error)
+            raise
+        try:
             audit = auditor(run_root)
         except Exception as error:
             _record_workflow_failure(run_root, state, error)
@@ -534,6 +547,17 @@ def _run_workflow(
         try:
             _verify_phase(run_root, phase_id, verifier)
         except Exception as error:
+            repaired = _continue_after_verification_failure(
+                run_root,
+                spec,
+                failure_id=f"verify-{phase_id}",
+                failed_task_type=(
+                    "integration-test" if phase_id == "end-to-end" else "configuration"
+                ),
+                error=error,
+            )
+            if repaired is not None:
+                return repaired
             _record_workflow_failure(run_root, state, error)
             raise
         if phase_id == "scaffold-completion":
@@ -585,6 +609,15 @@ def _run_workflow(
         try:
             verification = verifier(run_root)
         except Exception as error:
+            repaired = _continue_after_verification_failure(
+                run_root,
+                spec,
+                failure_id="verify-final-workspace",
+                failed_task_type="integration-test",
+                error=error,
+            )
+            if repaired is not None:
+                return repaired
             _record_workflow_failure(run_root, final_state, error)
             raise
         try:
@@ -832,6 +865,38 @@ def _record_workflow_failure(
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
 
 
+def _continue_after_verification_failure(
+    run_root: Path,
+    spec: JobSpec,
+    *,
+    failure_id: str,
+    failed_task_type: str,
+    error: Exception,
+) -> dict[str, object] | None:
+    """통합 compile/test 실패를 소유 작업의 다음 대화로 되돌린다.
+
+    작업 안에서 난 오류는 OpenHands가 바로 수리하지만, phase 또는 최종 검증은 여러 작업을
+    함께 빌드하므로 예전에는 Job 전체가 즉시 실패했다. 검증기가 남긴 구조화된 근거가 있을
+    때만 기존 repair planner에 넘기고, 원인을 찾지 못한 예외는 원래대로 호출자에게 전달한다.
+    """
+
+    if not isinstance(error, WorkspaceVerificationError):
+        return None
+    repair = schedule_cross_phase_repair(
+        run_root,
+        failure_id,
+        error.evidence,
+        failed_task_type=failed_task_type,
+    )
+    if repair is None:
+        return None
+    state = plan_workflow(run_root, spec)
+    state["repairPlan"] = "reports/repair-plan.json"
+    state["blockingReason"] = None
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+    return state
+
+
 def workflow_status(run_root: Path) -> dict[str, object]:
     path = run_root.resolve() / "reports" / "workflow-state.json"
     if not path.is_file():
@@ -849,8 +914,8 @@ def run_workflow_to_completion(
 ) -> dict[str, object]:
     """한 번의 위임 승인으로 완료 또는 명확한 중단 상태까지 실행한다.
 
-    기본 실행에는 repair 횟수 상한이 없다. 각 repair 계획은 실패 지문과 사용한 전략을
-    저장하며, 같은 실패에 같은 전략을 다시 쓰게 되면 계획 단계에서 ``STALLED``가 된다.
+    기본 실행에는 repair 횟수 상한이 없다. 각 repair 계획은 실패 지문, 수정 전 코드와 사용한
+    전략을 저장하며, 같은 결과가 반복되어도 이 이력을 다음 요청에 포함해 다른 수정을 시도한다.
     ``max_cycles``는 테스트와 멤버 프로세스가 승인 한 주기만 실행할 때 쓰는 선택 사항이다.
     """
     run_root = run_root.resolve()
@@ -1293,10 +1358,20 @@ def _valid_delegated_execution_approval(
         for entry in plan.get("entries", []) if isinstance(entry, dict)
         for task_id in [*entry.get("ownerTaskIds", []), *entry.get("revalidationTaskIds", [])]
     }
+    # E2E 작업은 production/adaptor 출력이 모두 생긴 뒤에야 정확히 계획할 수 있어 최초
+    # 승인 목록에는 없다. 그러나 같은 run과 같은 설계 입력에서 만들어지는 표준 마지막
+    # 작업이므로, 수리 승인을 위임한 실행에서는 별도 클릭 없이 이어서 실행한다.
+    deferred_ids = {
+        str(task.get("task_id"))
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict) and task.get("task_type") == "integration-test"
+    }
     current_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
     initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
     return bool(current_ids) and (
-        current_ids.issubset(initial_ids) or current_ids.issubset(planned_ids)
+        current_ids.issubset(initial_ids)
+        or current_ids.issubset(planned_ids)
+        or current_ids.issubset(deferred_ids)
     )
 
 

@@ -653,16 +653,21 @@ class ImplementationWorker:
         try:
             self._set_status(record, "RUNNING")
             workflow = self.client.run_phase(Path(record["run_root"]), Path(record["job_path"]), Path(approval_path), retry_failed)
+            # 수리 결과로 새 task 묶음이 생기면 workflow는 다음 전송 요청과 함께 READY를
+            # 반환한다. 위임 범위 안의 요청은 AWAITING_APPROVAL로 저장하지 않고 바로 큐에
+            # 넣어, 화면이 순간적으로 사용자 승인을 요구하거나 monitor가 먼저 종료하지
+            # 않게 한다. 이전 실패 task도 다시 실행해야 하므로 retry_failed는 True가 된다.
+            request = self.client.transmission_request(Path(record["run_root"]))
+            if request:
+                record["workflow"] = workflow
+                record["transmission_request"] = request
+                if self._delegated_execution_is_active(record, approval_path):
+                    record["status"] = "QUEUED"
+                    record["updated_at"] = _now()
+                    self._write(record)
+                    self.executor.submit(self._run, job_id, approval_path, True)
+                    return
             self._apply_workflow(record, workflow)
-            if (
-                record["status"] == "AWAITING_APPROVAL"
-                and self._delegated_execution_is_active(record, approval_path)
-            ):
-                record["status"] = "QUEUED"
-                record["updated_at"] = _now()
-                self._write(record)
-                self.executor.submit(self._run, job_id, approval_path, retry_failed)
-                return
             if record["status"] == "COMPLETED":
                 self._persist_outputs(record)
         except Exception as error:
@@ -815,11 +820,21 @@ class ImplementationWorker:
                 for entry in entries
                 for task_id in [*entry.get("ownerTaskIds", []), *entry.get("revalidationTaskIds", [])]
             }
+            deferred_ids = {
+                str(task.get("task_id"))
+                for task in manifest.get("implementation_tasks", [])
+                if isinstance(task, dict)
+                and task.get("task_type") == "integration-test"
+            }
             request_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
             initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
             return (
                 bool(request_ids)
-                and (request_ids.issubset(initial_ids) or request_ids.issubset(planned_ids))
+                and (
+                    request_ids.issubset(initial_ids)
+                    or request_ids.issubset(planned_ids)
+                    or request_ids.issubset(deferred_ids)
+                )
             )
         except (OSError, json.JSONDecodeError):
             return False

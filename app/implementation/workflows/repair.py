@@ -49,14 +49,35 @@ def schedule_cross_phase_repair(
     run_root: Path,
     failed_task_id: str,
     evidence: dict[str, object],
+    *,
+    failed_task_type: str | None = None,
 ) -> dict[str, object] | None:
-    """Plan history-aware upstream repairs and downstream revalidation."""
+    """실패 원인을 소유한 작업과 그 뒤의 재검증 작업을 다시 계획한다.
+
+    보통 ``failed_task_id``는 OpenHands 작업 ID다. 여러 작업을 합쳐 빌드하는 phase
+    검증에서 실패했다면 별도 작업 ID가 없으므로 ``failed_task_type``을 함께 받아 같은
+    원인 판별 규칙을 사용한다. 이 경우에도 compiler가 출력한 파일 경로가 우선한다.
+    """
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
     tasks = list(manifest.get("implementation_tasks", []))
     task_by_id = {str(task["task_id"]): task for task in tasks}
     failed = task_by_id.get(failed_task_id)
     if failed is None:
+        if not failed_task_type:
+            return None
+        failed = {
+            "task_id": failed_task_id,
+            "task_type": failed_task_type,
+            "allowed_write_paths": [],
+        }
+
+    # E2E 테스트 파일 자체의 의미 검사 실패는 그 테스트 작업 안에서 고쳐야 한다.
+    # API나 Control 문제로 잘못 분류하면 이미 성공한 구현 작업을 불필요하게 다시 생성한다.
+    if (
+        str(failed.get("task_type")) == "integration-test"
+        and evidence.get("command") == ["e2e-semantic-contract-gate"]
+    ):
         return None
 
     evidence_text = _evidence_text(evidence)
@@ -68,20 +89,16 @@ def schedule_cross_phase_repair(
             and "mappedby" in causal_evidence.lower()
         )
     )
-    e2e_runtime_contract_failure = (
-        str(failed.get("task_type")) == "integration-test"
-        and _is_e2e_runtime_contract_failure(causal_evidence.lower())
-    )
     # A compiler path normally identifies one owner. Hibernate's mappedBy
     # error is different: it describes an inconsistent pair, so prefer the
     # pair-aware inference even when its stack trace happens to include only
     # one entity source path.
     owner_ids = (
         _infer_upstream_owners(tasks, failed, causal_evidence)
-        if mapped_by_failure or e2e_runtime_contract_failure
+        if mapped_by_failure
         else _owners_named_in_evidence(tasks, failed_task_id, causal_evidence)
     )
-    if not owner_ids and not (mapped_by_failure or e2e_runtime_contract_failure):
+    if not owner_ids:
         owner_ids = _infer_upstream_owners(tasks, failed, causal_evidence)
     if not owner_ids:
         return None
@@ -102,18 +119,13 @@ def schedule_cross_phase_repair(
     )
     failure_fingerprint = _failure_fingerprint(causal_evidence)
     strategy_key = f"cross-phase:{','.join(sorted(owner_ids))}"
-    if any(
+    candidate_digest = _owner_candidate_digest(run_root, task_by_id, owner_ids)
+    repeated_candidate = any(
         entry.get("failureFingerprint") == failure_fingerprint
         and entry.get("strategyKey") == strategy_key
+        and entry.get("candidateDigest") == candidate_digest
         for entry in matching_entries
-    ):
-        plan["status"] = "STALLED"
-        plan["stallReason"] = (
-            f"No untried implementation strategy remains for {failed_task_id}."
-        )
-        plan["updatedAt"] = datetime.now(UTC).isoformat()
-        _write_json(plan_path, plan)
-        return None
+    )
     revision = len(matching_entries) + 1
     entry = {
         "failedTaskId": failed_task_id,
@@ -123,8 +135,11 @@ def schedule_cross_phase_repair(
         "evidenceSha256": evidence_sha,
         "failureFingerprint": failure_fingerprint,
         "strategyKey": strategy_key,
+        "candidateDigest": candidate_digest,
         "inputDigest": evidence_sha,
-        "outcome": "scheduled",
+        # 같은 코드와 진단이 다시 나와도 숫자 상한으로 멈추지 않는다. 이전 revision이
+        # 다음 prompt에 함께 들어가므로 모델은 실패 이력을 보고 다른 수정안을 시도한다.
+        "outcome": "scheduled_after_no_change" if repeated_candidate else "scheduled",
         "evidence": causal_evidence[-8000:],
         "revision": revision,
         "createdAt": min(
@@ -191,9 +206,12 @@ def schedule_source_conformance_repair(
     evidence_sha = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
     matching_entries = _entries_for_failure(plan, "source-design-conformance")
     strategy_key = f"source-conformance:{','.join(sorted(codes))}:{','.join(sorted(owners))}"
+    task_by_id = {str(task["task_id"]): task for task in tasks}
+    candidate_digest = _owner_candidate_digest(run_root, task_by_id, set(owners))
     if any(
         entry.get("evidenceSha256") == evidence_sha
         and entry.get("strategyKey") == strategy_key
+        and entry.get("candidateDigest") == candidate_digest
         for entry in matching_entries
     ):
         plan["status"] = "STALLED"
@@ -210,6 +228,7 @@ def schedule_source_conformance_repair(
         "evidenceSha256": evidence_sha,
         "failureFingerprint": _failure_fingerprint(evidence),
         "strategyKey": strategy_key,
+        "candidateDigest": candidate_digest,
         "inputDigest": evidence_sha,
         "outcome": "scheduled",
         "evidence": evidence,
@@ -252,10 +271,13 @@ def apply_repair_directives(run_root: Path) -> None:
 
     for task in manifest.get("implementation_tasks", []):
         task_id = str(task.get("task_id"))
+        # 실패한 파일을 소유한 작업만 다시 LLM에 맡긴다. 뒤 단계는 성공한 checkpoint를
+        # 그대로 두고 phase/final 검증으로 확인한다. 실제로 깨졌다면 그 검증 결과가 정확한
+        # 소유 작업을 새로 지정하므로, 성공한 API·프론트엔드 작업을 미리 재생성할 필요가 없다.
         relevant = [
-            entry for entry in entries
+            entry
+            for entry in entries
             if task_id in entry.get("ownerTaskIds", [])
-            or task_id in entry.get("revalidationTaskIds", [])
         ]
         prompt_path = run_root / str(task["prompt_file"])
         original_prompt = prompt_path.read_text(encoding="utf-8")
@@ -279,14 +301,8 @@ def apply_repair_directives(run_root: Path) -> None:
                 + "\n"
             )
         for entry in relevant[-5:]:
-            role = (
-                "repair the failure in your owned files"
-                if task_id in entry.get("ownerTaskIds", [])
-                else "regenerate and revalidate after an upstream repair"
-            )
+            role = "repair the failure in your owned files"
             evidence = str(entry.get("evidence", ""))
-            if task_id not in entry.get("ownerTaskIds", []):
-                evidence = _compact_evidence(evidence)
             additions.append(
                 f"\n### Revision {entry['revision']} from `{entry['failedTaskId']}`\n"
                 f"Your role is to {role}. Use the verification evidence below, preserve "
@@ -314,30 +330,30 @@ def apply_repair_directives(run_root: Path) -> None:
 
 
 def repair_task_ids(run_root: Path) -> set[str]:
-    """Return tasks whose successful checkpoint must be replayed for a repair.
+    """실패 원인을 소유하여 LLM 수리가 필요한 작업 ID만 반환한다.
 
-    Normal replanning can change a downstream prompt after its dependencies
-    land; that is not a reason to rerun a durable successful checkpoint.
-    Repair directives are different: their evidence is an explicit request to
-    regenerate an owner or revalidate a dependent task.
+    뒤 단계의 성공한 checkpoint는 다시 생성하지 않는다. 전체 phase/final 검증이 실제
+    호환성을 확인하고, 문제가 남아 있을 때에만 그 파일의 소유 작업을 별도로 수리한다.
     """
     plan_path = run_root / REPAIR_PLAN
     if not plan_path.is_file():
         return set()
     plan = _read_json(plan_path)
-    return {
-        str(task_id)
-        for entry in plan.get("entries", [])
-        if isinstance(entry, dict)
-        for task_id in (
-            list(entry.get("ownerTaskIds", []))
-            + list(entry.get("revalidationTaskIds", []))
-        )
-    }
+    entries = [entry for entry in plan.get("entries", []) if isinstance(entry, dict)]
+    if not entries:
+        return set()
+    return {str(task_id) for task_id in entries[-1].get("ownerTaskIds", [])}
 
 
 def referenced_source_paths(evidence: dict[str, object]) -> list[str]:
-    text = _evidence_text(evidence).replace("\\", "/")
+    # Gradle/Javac의 ``warning:``·``Note:``는 이번 실패와 무관한 다른 test 파일을
+    # 함께 출력할 수 있다. 그 경로 때문에 현재 작업이 자기 파일을 수리하지 못했다고
+    # 오판하지 않도록 실제 오류와 test failure 줄만 사용한다.
+    text = "\n".join(
+        line
+        for line in _evidence_text(evidence).splitlines()
+        if not re.match(r"\s*(?:warning:|note:)", line, re.IGNORECASE)
+    ).replace("\\", "/")
     matches = re.findall(r"(?:[A-Za-z]:)?[^\r\n:]*?(application/(?:src|build)/[^\r\n:]+?\.(?:java|sql|yml))(?=:\d|:|\s|$)", text)
     return sorted({match.strip().lstrip("/") for match in matches})
 
@@ -447,17 +463,26 @@ def _infer_upstream_owners(
                 in {"persistence-entities", "persistence-mapping", "persistence-schema"}
             }
         if _is_e2e_runtime_contract_failure(lowered):
-            # A real HTTP assertion means that the test reached the generated
-            # application graph.  Restricting the repair to API adapters
-            # leaves the common Control -> Boundary state/return contract
-            # untouched, which only repeats the E2E conversation.  These
-            # layers jointly own HTTP-observable behavior; persistence remains
-            # excluded unless the evidence names a persistence failure above.
+            # 실제 stack trace에 나온 클래스가 있으면 그 파일의 작업만 고친다. 아무 이름도
+            # 없을 때에만 HTTP 동작에 참여하는 작은 production 묶음을 후보로 사용한다.
+            runtime_types = {
+                "control", "api-adapter", "boundary-adapter", "configuration"
+            }
+            named = {
+                str(task["task_id"])
+                for task in tasks
+                if task.get("task_type") in runtime_types
+                and any(
+                    Path(str(path)).stem.lower() in lowered
+                    for path in task.get("allowed_write_paths", [])
+                )
+            }
+            if named:
+                return named
             return {
                 str(task["task_id"])
                 for task in tasks
-                if task.get("task_type")
-                in {"control", "api-adapter", "boundary-adapter", "configuration"}
+                if task.get("task_type") in runtime_types
             }
         api_tasks = [task for task in tasks if task.get("task_type") == "api-adapter"]
         named = {
@@ -537,6 +562,34 @@ def _failure_fingerprint(evidence: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _owner_candidate_digest(
+    run_root: Path,
+    task_by_id: dict[str, dict[str, object]],
+    owner_ids: set[str],
+) -> str:
+    """담당 작업이 현재 소유한 파일 내용을 한 값으로 요약한다.
+
+    오류 문구가 같더라도 수리 뒤 소스가 달라졌다면 새로운 후보이므로 다시 시도할 수 있다.
+    파일이 아직 없다는 사실도 후보의 일부로 넣어, 아무것도 바꾸지 않은 반복만 정확히
+    알아낸다.
+    """
+
+    files: list[dict[str, str]] = []
+    for task_id in sorted(owner_ids):
+        task = task_by_id.get(task_id, {})
+        for relative in sorted(str(path) for path in task.get("allowed_write_paths", [])):
+            path = run_root / relative
+            digest = (
+                hashlib.sha256(path.read_bytes()).hexdigest()
+                if path.is_file()
+                else "missing"
+            )
+            files.append({"taskId": task_id, "path": relative, "sha256": digest})
+    return hashlib.sha256(
+        json.dumps(files, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
 def _repair_chain_id(failed_task_id: str) -> str:
     return hashlib.sha256(failed_task_id.encode("utf-8")).hexdigest()[:16]
 
@@ -586,12 +639,6 @@ def _without_repair_directives(prompt: str) -> str:
         return prompt.split(REPAIR_PROMPT_START, 1)[0].rstrip()
     legacy = f"\n\n{REPAIR_PROMPT_HEADING}"
     return prompt.split(legacy, 1)[0].rstrip()
-
-
-def _compact_evidence(evidence: str, limit: int = 1200) -> str:
-    if len(evidence) <= limit:
-        return evidence
-    return "..." + evidence[-limit:]
 
 
 def _read_json(path: Path) -> dict[str, object]:

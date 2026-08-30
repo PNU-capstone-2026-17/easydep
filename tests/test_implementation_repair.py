@@ -5,7 +5,9 @@ from pathlib import Path
 
 from app.implementation.workflows.repair import (
     apply_repair_directives,
+    referenced_source_paths,
     repair_rounds,
+    repair_task_ids,
     schedule_cross_phase_repair,
     schedule_source_conformance_repair,
 )
@@ -128,7 +130,7 @@ def test_e2e_missing_repository_bean_targets_upstream_owners(tmp_path: Path) -> 
     ]
 
 
-def test_e2e_http_runtime_failure_targets_application_contract_owners(
+def test_phase_e2e_failure_targets_named_owner_and_records_history(
     tmp_path: Path,
 ) -> None:
     tasks = _tasks() + [
@@ -142,17 +144,12 @@ def test_e2e_http_runtime_failure_targets_application_contract_owners(
             "task_type": "boundary-adapter",
             "allowed_write_paths": ["application/src/main/java/example/RegistrationBoundaryAdapter.java"],
         },
-        {
-            "task_id": "implement-e2e",
-            "task_type": "integration-test",
-            "allowed_write_paths": ["application/src/test/java/example/FlowTest.java"],
-        },
     ]
     _write_run(tmp_path, tasks)
 
     repair = schedule_cross_phase_repair(
         tmp_path,
-        "implement-e2e",
+        "verify-end-to-end",
         {
             "testResults": (
                 "application/src/test/java/example/PortfolioApiControllerTest.java:42: "
@@ -160,15 +157,15 @@ def test_e2e_http_runtime_failure_targets_application_contract_owners(
                 "<500 INTERNAL_SERVER_ERROR>"
             )
         },
+        failed_task_type="integration-test",
     )
 
     assert repair is not None
-    assert repair["ownerTaskIds"] == [
-        "implement-application-wiring",
-        "implement-portfolio-api-adapter",
-        "implement-registration-boundary",
-        "implement-registration-control",
-    ]
+    assert repair["ownerTaskIds"] == ["implement-portfolio-api-adapter"]
+    plan = json.loads(
+        (tmp_path / "reports/repair-plan.json").read_text(encoding="utf-8")
+    )
+    assert plan["entries"] == [repair]
 
 
 def test_changed_failure_evidence_can_continue_without_a_numeric_budget(tmp_path: Path) -> None:
@@ -204,7 +201,7 @@ def test_changed_failure_evidence_can_continue_without_a_numeric_budget(tmp_path
     assert repair_rounds(plan) == 4
 
 
-def test_same_failure_and_strategy_stall_without_adding_duplicate_history(tmp_path: Path) -> None:
+def test_same_failure_continues_with_accumulated_history(tmp_path: Path) -> None:
     _write_run(tmp_path, _tasks())
     evidence = {
         "stderr": (
@@ -213,16 +210,37 @@ def test_same_failure_and_strategy_stall_without_adding_duplicate_history(tmp_pa
         )
     }
 
-    assert schedule_cross_phase_repair(
+    first = schedule_cross_phase_repair(
         tmp_path, "implement-application-wiring", evidence
-    ) is not None
-    assert schedule_cross_phase_repair(
+    )
+    second = schedule_cross_phase_repair(
         tmp_path, "implement-application-wiring", evidence
-    ) is None
+    )
+    assert first is not None
+    assert second is not None
+    assert second["revision"] == 2
+    assert second["outcome"] == "scheduled_after_no_change"
 
     plan = json.loads((tmp_path / "reports/repair-plan.json").read_text())
-    assert len(plan["entries"]) == 1
-    assert plan["status"] == "STALLED"
+    assert len(plan["entries"]) == 2
+    assert plan["status"] == "ACTIVE"
+
+    owner_source = (
+        tmp_path / "application/src/main/java/example/OrderRepository.java"
+    )
+    owner_source.parent.mkdir(parents=True)
+    owner_source.write_text("interface OrderRepository {}", encoding="utf-8")
+
+    repair = schedule_cross_phase_repair(
+        tmp_path, "implement-application-wiring", evidence
+    )
+    assert repair is not None
+    assert repair["revision"] == 3
+    plan = json.loads(
+        (tmp_path / "reports/repair-plan.json").read_text(encoding="utf-8")
+    )
+    assert len(plan["entries"]) == 3
+    assert plan["status"] == "ACTIVE"
 
 
 def test_warning_path_does_not_override_causal_owner(tmp_path: Path) -> None:
@@ -234,12 +252,21 @@ def test_warning_path_does_not_override_causal_owner(tmp_path: Path) -> None:
             "stderr": (
                 "warning: application/src/test/java/example/"
                 "PortfolioApiControllerTest.java uses unchecked operations\n"
-                "NoSuchBeanDefinitionException: repository bean failed"
+                "application/src/main/java/example/OrderRepository.java:12: "
+                "error: NoSuchBeanDefinitionException: repository bean failed"
             )
         },
     )
     assert repair is not None
     assert repair["ownerTaskIds"] == ["implement-repositories"]
+    assert referenced_source_paths(
+        {
+            "stderr": (
+                "Note: application/src/test/java/example/OtherTest.java is deprecated\n"
+                "application/src/main/java/example/OrderRepository.java:12: error"
+            )
+        }
+    ) == ["application/src/main/java/example/OrderRepository.java"]
 
 
 def test_schema_type_failure_in_wiring_targets_persistence_owners(tmp_path: Path) -> None:
@@ -309,6 +336,33 @@ def test_repair_prompt_is_idempotent_and_uses_real_bounded_evidence(
     assert first.count("## Orchestrated repair and revalidation directives") == 1
     assert "OrderRepository.java:12" in first
     assert "{entry['evidence']}" not in first
+    downstream_prompt = (
+        tmp_path
+        / "reports/implementation-tasks/implement-portfolio-api-adapter.prompt.md"
+    ).read_text(encoding="utf-8")
+    assert downstream_prompt == "base prompt for implement-portfolio-api-adapter"
+    assert repair_task_ids(tmp_path) == {"implement-repositories"}
+
+
+def test_e2e_semantic_gap_stays_in_the_integration_test_task(tmp_path: Path) -> None:
+    tasks = _tasks() + [
+        {
+            "task_id": "implement-e2e",
+            "task_type": "integration-test",
+            "allowed_write_paths": ["application/src/test/java/example/FlowTest.java"],
+        }
+    ]
+    _write_run(tmp_path, tasks)
+
+    assert schedule_cross_phase_repair(
+        tmp_path,
+        "implement-e2e",
+        {
+            "command": ["e2e-semantic-contract-gate"],
+            "stderr": "Missing HTTP path evidence",
+        },
+    ) is None
+    assert not (tmp_path / "reports/repair-plan.json").exists()
 
 
 def test_erd_conformance_failure_targets_persistence_repair(tmp_path: Path) -> None:
