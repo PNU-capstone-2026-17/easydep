@@ -2101,9 +2101,18 @@ def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
                 "configuration": [
                     {
                         key: config.get(key)
-                        for key in ("id", "name", "kind", "projection", "connectionRef")
+                        for key in (
+                            "id", "name", "kind", "projection", "connectionRef", "sensitive",
+                        )
                         if config.get(key) is not None
                     }
+                    | (
+                        {"value": config.get("value")}
+                        if config.get("kind") == "value"
+                        and config.get("sensitive") is not True
+                        and config.get("value") is not None
+                        else {}
+                    )
                     for config in item.get("configuration", [])
                     if isinstance(config, dict)
                 ],

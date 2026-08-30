@@ -7,10 +7,12 @@ import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.config import settings
+from app.design.contracts import bind_runtime_contract, build_provider_resource_plan
 from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import execute_openhands_task
@@ -35,6 +37,7 @@ from ..generation.orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
+from ..runtime.observations import observe_runtime_contract
 from .completion import audit_run_completion
 from .conformance import (
     SourceDesignConformanceError,
@@ -901,6 +904,109 @@ def run_workflow_to_completion(
             )
 
 
+def _bind_deployment_runtime(run_root: Path, spec: JobSpec) -> Path | None:
+    """완료된 배포 설계에 생성 앱의 실제 실행값을 넣어 새 bundle을 만든다.
+
+    원래 설계 파일은 입력 snapshot이므로 수정하지 않는다. 배포 설계가 아직 질문을
+    남긴 상태라면 로컬 Docker 검증만 계속하고, 완료된 설계에서 실행 계약이 다르면
+    IaC를 만들지 않고 구현 오류로 보고한다.
+    """
+    source = spec.inputs.get("deploymentBundle")
+    if source is None or not source.is_file():
+        return None
+    try:
+        bundle = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Deployment bundle could not be read: {error}") from error
+    if not isinstance(bundle, dict) or bundle.get("schemaVersion") != "easydep-deployment-diagram":
+        raise ValueError("Implementation requires a valid deployment diagram bundle")
+
+    reports = run_root / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    report_path = reports / "deployment-runtime.json"
+    observed = observe_runtime_contract(bundle, run_root / "application")
+    if bundle.get("status") != "completed":
+        _write_json_atomic(
+            report_path,
+            {
+                "schemaVersion": "easydep-implementation-runtime/v1alpha1",
+                "status": "NOT_APPLICABLE",
+                "reason": "Deployment design still needs input; local container verification continues.",
+                "runtimeContracts": observed,
+            },
+        )
+        return None
+
+    graph = bundle.get("workloadGraph")
+    projections = bundle.get("projections")
+    if not isinstance(graph, dict) or not isinstance(projections, list) or not projections:
+        raise ValueError("Completed deployment bundle has no workload graph or projections")
+    rebound: list[dict[str, object]] = []
+    bound_graph: dict[str, object] | None = None
+    for projection in projections:
+        if not isinstance(projection, dict) or projection.get("status") != "completed":
+            raise ValueError("Completed deployment bundle contains an incomplete projection")
+        deployment_plan = projection.get("deploymentPlan")
+        if not isinstance(deployment_plan, dict):
+            raise TypeError("Deployment projection has no deployment plan")
+        binding = bind_runtime_contract(graph, deployment_plan, observed)
+        if binding.get("status") != "bound":
+            issues = binding.get("issues") or []
+            _write_json_atomic(
+                report_path,
+                {
+                    "schemaVersion": "easydep-implementation-runtime/v1alpha1",
+                    "status": "FAILED",
+                    "runtimeContracts": observed,
+                    "issues": issues,
+                },
+            )
+            reasons = [str(item.get("reason") or item) for item in issues if isinstance(item, dict)]
+            raise RuntimeError(
+                "Generated application does not satisfy the deployment runtime contract: "
+                + "; ".join(reasons or ["unknown runtime mismatch"])
+            )
+        current_graph = binding.get("workloadGraph")
+        current_plan = binding.get("deploymentPlan")
+        if not isinstance(current_graph, dict) or not isinstance(current_plan, dict):
+            raise TypeError("Runtime binding returned no bound graph or deployment plan")
+        resource_plan = build_provider_resource_plan(
+            current_plan,
+            current_graph,
+            provider=str(projection.get("provider") or ""),
+            region=str(projection.get("region") or ""),
+        )
+        previous_digest = str(projection.get("resourcePlanStructureDigest") or "")
+        current_digest = str(resource_plan.get("structureDigest") or "")
+        if previous_digest and previous_digest != current_digest:
+            raise RuntimeError("Runtime binding changed the ResourcePlan structure")
+        rebound.append(
+            {
+                **projection,
+                "deploymentPlan": current_plan,
+                "deploymentPlanStructureDigest": current_plan.get("structureDigest"),
+                "resourcePlan": resource_plan,
+                "resourcePlanStructureDigest": current_digest,
+                "issues": [],
+            }
+        )
+        bound_graph = current_graph
+
+    bound_bundle = {**bundle, "workloadGraph": bound_graph or graph, "projections": rebound}
+    target = reports / "runtime-bound-deployment-bundle.json"
+    _write_json_atomic(target, bound_bundle)
+    _write_json_atomic(
+        report_path,
+        {
+            "schemaVersion": "easydep-implementation-runtime/v1alpha1",
+            "status": "BOUND",
+            "runtimeContracts": observed,
+            "boundBundle": target.relative_to(run_root).as_posix(),
+        },
+    )
+    return target
+
+
 def _render_deployment_if_configured(
     run_root: Path, spec: JobSpec
 ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
@@ -908,7 +1014,15 @@ def _render_deployment_if_configured(
     cloud = spec.inputs.get("cloud")
     deployment = spec.inputs.get("deployment")
     deployment_bundle = spec.inputs.get("deploymentBundle")
-    if (intent and intent.is_file()) or (cloud and cloud.is_file()):
+    has_bundle = bool(deployment_bundle and deployment_bundle.is_file())
+    if has_bundle:
+        # observer가 실제 EXPOSE와 실행 사용자를 읽을 수 있도록 먼저 결정론적인
+        # 로컬 Dockerfile을 만든다. 이후 IaC는 같은 파일과 bound bundle을 사용한다.
+        render_local_container(run_root)
+    bound_bundle = _bind_deployment_runtime(run_root, spec) if has_bundle else None
+    # 현재 제품 경로는 Docker-on-VM ResourcePlan이다. 구조화된 bundle이 있으면
+    # 예전 Kubernetes cloud inference를 함께 실행하지 않는다.
+    if not has_bundle and ((intent and intent.is_file()) or (cloud and cloud.is_file())):
         deployment_report = render_deployment(run_root, spec)
     elif deployment and deployment.is_file() and not (
         deployment_bundle and deployment_bundle.is_file()
@@ -920,7 +1034,13 @@ def _render_deployment_if_configured(
     else:
         deployment_report = None
     iac_report = None
-    if (cloud and cloud.is_file()) or (deployment_bundle and deployment_bundle.is_file()):
+    if bound_bundle is not None:
+        iac_spec = replace(
+            spec,
+            inputs={**spec.inputs, "deploymentBundle": bound_bundle},
+        )
+        iac_report = render_iac(run_root, iac_spec)
+    elif not has_bundle and cloud and cloud.is_file():
         iac_report = render_iac(run_root, spec)
     return deployment_report, iac_report
 

@@ -6,10 +6,6 @@ import io
 import hcl2
 import pytest
 
-from app.implementation.delivery.iac_renderer import (
-    render_open_tofu,
-    rendered_resource_types,
-)
 from app.design.services.deployment_diagram.bundle import build_deployment_diagram_bundle
 from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
@@ -17,6 +13,10 @@ from app.design.services.deployment_diagram.provider_plantuml import (
 )
 from app.design.services.deployment_diagram.provider_template import (
     validate_complete_provider_template,
+)
+from app.implementation.delivery.iac_renderer import (
+    render_open_tofu,
+    rendered_resource_types,
 )
 from scripts.generate_deployment_diagram_examples import (
     CASE_EXPECTATIONS,
@@ -760,6 +760,7 @@ def test_internal_managed_endpoint_preserves_declared_interface_port(
     state = next(item for item in graph["workloads"] if item["id"] == "state")
     state["replicationSafety"] = "interchangeable"
     state["interfaces"][0]["port"] = 9191
+    state["interfaces"][0]["healthPath"] = "/ready"
     state["storage"][0]["replicaSemantics"] = "perReplica"
     graph["constraints"].append(
         {
@@ -786,8 +787,16 @@ def test_internal_managed_endpoint_preserves_declared_interface_port(
         and isinstance(value, int)
     }
 
+    files = render_open_tofu(resource_plan)
     assert port_values == {9191}
-    assert "9191" in render_open_tofu(resource_plan)["main.tf"]
+    assert "9191" in files["main.tf"]
+    bootstrap = files["bootstrap_compute_2.sh.tftpl"]
+    assert "-p 9191:9191" in bootstrap
+    assert 'mountpoint -q "/mnt/easydep/state_volume"' in bootstrap
+    assert 'mkdir -p "/mnt/easydep/state_volume/data"' in bootstrap
+    assert 'chown 10001:10001 "/mnt/easydep/state_volume/data"' in bootstrap
+    assert "-v /mnt/easydep/state_volume/data:/var/lib/easydep/state" in bootstrap
+    assert 'path = "/ready"' in files["main.tf"] or 'request_path = "/ready"' in files["main.tf"]
 
 
 @pytest.mark.parametrize(

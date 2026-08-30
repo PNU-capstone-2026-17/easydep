@@ -432,11 +432,17 @@ def validate_workload_graph(
         connection_id = str(connection.get("id") or "")
         source_ref = str(connection.get("sourceRef") or "")
         bindings = endpoint_bindings_by_connection.get(connection_id, [])
-        if source_ref in generated_workloads and len(bindings) != 1:
+        if source_ref not in generated_workloads:
+            continue
+        projections = [str(binding.get("projection") or "") for _, binding in bindings]
+        valid_shape = projections == ["url"] or (
+            len(projections) == 2 and set(projections) == {"host", "port"}
+        )
+        if not valid_shape:
             issues.append(
                 _issue(
                     f"connections.{connection_id}.endpointBinding",
-                    "Each generated source workload connection requires exactly one endpoint environment binding.",
+                    "A generated source connection requires one URL binding or a host/port binding pair.",
                     source_refs=_refs(connection.get("sourceRefs")),
                 )
             )

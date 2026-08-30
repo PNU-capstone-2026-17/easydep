@@ -49,6 +49,14 @@
 재개하고, 새로운 workload·interface·mount가 필요하다는 runtime 관찰은 추측으로 고치지 않고
 배포 설계 재생성 대상으로 남긴다.
 
+## runtime 관찰에서 IaC까지
+
+1. 생성된 Dockerfile·설정·소스에서 실제 port, health path, 환경변수와 mount를 관찰한다.
+2. 관찰값을 기존 workload의 binding에만 붙인다. 새 workload·port·mount가 보이면 먼저
+   배포 설계를 다시 만든다.
+3. 구조 digest가 같을 때만 ResourcePlan을 다시 투영하고, 그 결과로 IaC와 health 검사를
+   실행한다. 실패하면 해당 관찰 보고서와 owner task부터 재개한다.
+
 ## 디렉터리 지도
 
 | 디렉터리 | 책임 |

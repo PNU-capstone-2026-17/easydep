@@ -295,7 +295,7 @@ def test_reference_integrity_and_ambiguous_exposure_are_blocking() -> None:
     assert any("targetRef" in item["field"] for item in model["issues"])
 
 
-def test_generated_connection_requires_one_valid_endpoint_environment_binding() -> None:
+def test_generated_connection_accepts_url_or_host_port_environment_bindings() -> None:
     source = workload("web", public=False)
     target = workload("api", public=False)
     value = graph(source, target)
@@ -330,6 +330,38 @@ def test_generated_connection_requires_one_valid_endpoint_environment_binding() 
     binding = next(item for item in plan["runtimeBindings"] if item["kind"] == "endpointEnvironment")
     assert binding["environmentName"] == "API_SERVICE_URL"
     assert binding["strategy"] == "containerDns"
+
+    source["configuration"] = [
+        {
+            "id": "api-host",
+            "name": "API_SERVICE_HOST",
+            "kind": "endpointBinding",
+            "connectionRef": "web-to-api",
+            "projection": "host",
+            "sourceRefs": ["sequence:CALL-API"],
+        },
+        {
+            "id": "api-port",
+            "name": "API_SERVICE_PORT",
+            "kind": "endpointBinding",
+            "connectionRef": "web-to-api",
+            "projection": "port",
+            "sourceRefs": ["sequence:CALL-API"],
+        },
+    ]
+    host_port = normalized(value)
+    assert not any(
+        item["field"].endswith("endpointBinding") for item in host_port["issues"]
+    )
+    bindings = [
+        item
+        for item in build_deployment_plan(host_port)["runtimeBindings"]
+        if item["kind"] == "endpointEnvironment"
+    ]
+    assert [(item["environmentName"], item["projection"]) for item in bindings] == [
+        ("API_SERVICE_HOST", "host"),
+        ("API_SERVICE_PORT", "port"),
+    ]
 
 
 def test_configuration_names_and_generated_mount_paths_are_design_contracts() -> None:

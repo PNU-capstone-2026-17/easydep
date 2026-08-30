@@ -36,6 +36,32 @@ def _attrs(node: dict[str, Any]) -> dict[str, Any]:
     return dict(node.get("attributes") or {})
 
 
+def _health_path(plan: dict[str, Any], health_owner: dict[str, Any]) -> str:
+    """health resource가 가리키는 workload의 실제 경로를 읽는다.
+
+    provider template의 late-binding 표식을 그대로 렌더링하면 생성 앱의 ``/healthz``와
+    무관한 경로가 생긴다. logicalRef로 workload를 찾되 서로 다른 경로가 여러 개면
+    임의로 하나를 고르지 않고 중단한다.
+    """
+
+    workload_id = str(health_owner.get("logicalRef") or "")
+    workload = next(
+        (
+            item for item in plan.get("workloads") or []
+            if str(item.get("id") or "") == workload_id
+        ),
+        {},
+    )
+    paths = {
+        str(interface.get("healthPath"))
+        for interface in workload.get("interfaces") or []
+        if isinstance(interface, dict) and interface.get("healthPath")
+    }
+    if len(paths) > 1:
+        raise ValueError(f"Workload {workload_id} declares multiple health paths")
+    return next(iter(paths), "/actuator/health")
+
+
 def _block(kind: str, label: str, body: str) -> str:
     body = body.replace("; ", "\n").replace("{ ", "{\n").replace(" }", "\n}")
     indented = "\n".join(f"  {line}" if line else "" for line in body.splitlines())
@@ -353,11 +379,11 @@ def _storage_setup_lines(
     compute_id: str,
     template_vars: dict[str, str],
 ) -> list[str]:
-    """Prepare only the block devices owned by one compute unit.
+    """한 compute가 소유한 block device를 안전한 애플리케이션 경로로 준비한다.
 
-    Attachments are created after a standalone VM, so bootstrap deliberately
-    waits for the stable provider device path.  Formatting is guarded by
-    ``blkid`` and the UUID mount is persisted in fstab.
+    filesystem root를 container에 직접 보이면 ``lost+found`` 같은 시스템 항목이 앱의
+    데이터 디렉터리에 섞인다. 따라서 상위 경로에 filesystem을 mount하고, 그 안의
+    ``data/``만 고정 UID/GID 10001 애플리케이션에 제공한다.
     """
 
     bindings = [
@@ -409,15 +435,18 @@ def _storage_setup_lines(
                     'done',
                 ]
             )
-        guest_path = f"/mnt/easydep/{storage_label}/data"
+        filesystem_path = f"/mnt/easydep/{storage_label}"
+        guest_path = f"{filesystem_path}/data"
         lines.extend(
             [
                 f'[ -n "$DISK_DEVICE" ] || {{ echo "disk {storage_id} did not attach" >&2; exit 1; }}',
                 'if ! blkid "$DISK_DEVICE" >/dev/null 2>&1; then mkfs.ext4 "$DISK_DEVICE"; fi',
                 'DISK_UUID=$(blkid -s UUID -o value "$DISK_DEVICE")',
+                f"mkdir -p {_quoted(filesystem_path)}",
+                f'grep -q "UUID=$DISK_UUID {_quoted(filesystem_path)} " /etc/fstab || printf "UUID=%s {filesystem_path} ext4 defaults,nofail 0 2\\n" "$DISK_UUID" >> /etc/fstab',
+                f"mountpoint -q {_quoted(filesystem_path)} || mount {_quoted(filesystem_path)}",
                 f"mkdir -p {_quoted(guest_path)}",
-                f'grep -q "UUID=$DISK_UUID {_quoted(guest_path)} " /etc/fstab || printf "UUID=%s {guest_path} ext4 defaults,nofail 0 2\\n" "$DISK_UUID" >> /etc/fstab',
-                f"mountpoint -q {_quoted(guest_path)} || mount {_quoted(guest_path)}",
+                f"chown 10001:10001 {_quoted(guest_path)}",
                 f"chmod 0750 {_quoted(guest_path)}",
             ]
         )
@@ -497,6 +526,7 @@ def _runtime_files(
             else:
                 image = str(container.get("image") or "")
             port_args: list[str] = []
+            published_ports: set[str] = set()
             for interface in container.get("interfaces") or []:
                 port = interface.get("port")
                 if isinstance(port, int):
@@ -505,8 +535,14 @@ def _runtime_files(
                     key = f"port_{workload_label}_{_label(interface.get('id'))}"
                     template_vars[key] = f"var.container_port_{workload_label}_{_label(interface.get('id'))}"
                     rendered_port = f"${{{key}}}"
-                if interface.get("exposure") == "public":
+                # 다른 VM과 내부 LB는 VM의 사설 주소로 host port에 접속한다. public
+                # interface만 publish하면 방화벽이 허용해도 container에 도달할 수 없다.
+                if (
+                    interface.get("exposure") in {"public", "internal"}
+                    and rendered_port not in published_ports
+                ):
                     port_args.append(f"-p {rendered_port}:{rendered_port}")
+                    published_ports.add(rendered_port)
             mount_args = [
                 f"-v /mnt/easydep/{_label(item.get('storageRef'))}/data:{item.get('mountPath')}"
                 for item in container.get("mounts") or []
@@ -771,9 +807,7 @@ def _aws_resources(
                 ),
                 {},
             )
-            health_attrs = _attrs(health)
-            health_path = health_attrs.get("path")
-            path = "/health" if isinstance(health_path, dict) else str(health_path or "/health")
+            path = _health_path(plan, health)
             body = f'name = substr("${{var.resource_prefix}}-tg-${{substr(sha1({_quoted(node_id)}), 0, 8)}}", 0, 32)\nport = {port}\nprotocol = "TCP"\nvpc_id = {context.dependency_ref(node_id, "vpc_id")}\nhealth_check {{ protocol = "HTTP"; path = {_quoted(path)}; port = "traffic-port" }}'
         elif kind == "aws_lb_listener":
             port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
@@ -986,7 +1020,7 @@ def _azure_resources(
             body = f'name = "backend"\nloadbalancer_id = {context.dependency_ref(node_id, "loadbalancer_id")} '
         elif kind == "azurerm_lb_probe":
             port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
-            body = f'name = "health"\nloadbalancer_id = {context.dependency_ref(node_id, "loadbalancer_id")}\nprotocol = "Http"\nport = {port}\nrequest_path = "/health"'
+            body = f'name = "health"\nloadbalancer_id = {context.dependency_ref(node_id, "loadbalancer_id")}\nprotocol = "Http"\nport = {port}\nrequest_path = {_quoted(_health_path(plan, node))}'
         elif kind == "azurerm_lb_rule":
             port = attributes.get("frontendPort") if isinstance(attributes.get("frontendPort"), int) else 8080
             frontend_name = context.dependency_ref(node_id, "frontend_ip_configuration_name")
@@ -1129,7 +1163,7 @@ def _gcp_resources(
             body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\naddress_type = "EXTERNAL"'
         elif kind == "google_compute_region_health_check":
             port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\nhttp_health_check {{ port = {port}; request_path = "/health" }}'
+            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\nhttp_health_check {{ port = {port}; request_path = {_quoted(_health_path(plan, node))} }}'
         elif kind == "google_compute_region_backend_service":
             health = context.target(node_id, "health_checks[]")
             health_ref = context.ref(health or "")

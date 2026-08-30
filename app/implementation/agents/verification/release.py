@@ -11,6 +11,10 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from app.implementation.config import DEFAULT_CONTAINER_PORT
+from app.implementation.runtime.observations import (
+    RUNTIME_OBSERVATIONS_REPORT,
+    health_path_from_observations,
+)
 
 
 def verify_container_runtime(
@@ -20,7 +24,7 @@ def verify_container_runtime(
     http_get: Callable[[str, float], tuple[int, str, str]] | None = None,
     startup_timeout_seconds: int = 90,
 ) -> dict[str, object]:
-    """Build the image and prove its backend and packaged frontend are reachable."""
+    """이미지를 만들고 backend health와 포함된 frontend를 실제 HTTP로 확인한다."""
     application = run_root / "application"
     frontend_required = (application / "frontend" / "package.json").is_file()
     separate_frontend = _separate_frontend_mode(run_root)
@@ -52,6 +56,8 @@ def verify_container_runtime(
     probe = probe or _tcp_probe
     http_get = http_get or _http_get
     frontend_runtime: dict[str, object] | None = None
+    health_path = _runtime_health_path(run_root)
+    health_runtime: dict[str, object] | None = None
     try:
         build = ["docker", "build", "--tag", image, "."]
         commands.append(build)
@@ -106,6 +112,23 @@ def verify_container_runtime(
             if match:
                 port = int(match.group(1))
                 if probe("127.0.0.1", port, 1.0):
+                    try:
+                        health_status, health_type, _ = http_get(
+                            f"http://127.0.0.1:{port}{health_path}", 3.0
+                        )
+                        if health_status < 200 or health_status >= 300:
+                            raise RuntimeError(
+                                f"Health endpoint returned HTTP {health_status}"
+                            )
+                        health_runtime = {
+                            "status": "SUCCEEDED",
+                            "path": health_path,
+                            "httpStatus": health_status,
+                            "contentType": health_type,
+                        }
+                    except (OSError, RuntimeError):
+                        time.sleep(1)
+                        continue
                     if frontend_required and not separate_frontend:
                         try:
                             frontend_runtime = _verify_frontend_http(
@@ -129,7 +152,8 @@ def verify_container_runtime(
                 check=False,
             )
             raise RuntimeError(
-                "Container did not accept connections before timeout: "
+                "Container health endpoint did not return a successful HTTP response "
+                "before timeout: "
                 + (logs.stderr[-3000:] or logs.stdout[-3000:])
             )
         if frontend_required and separate_frontend:
@@ -173,6 +197,10 @@ def verify_container_runtime(
         "durationMs": int((time.monotonic() - started) * 1000),
         "containerPort": DEFAULT_CONTAINER_PORT,
         "hostPort": port or None,
+        "healthRuntime": health_runtime or {
+            "status": "FAILED",
+            "path": health_path,
+        },
         "frontendRequired": frontend_required,
         "frontendRuntime": frontend_runtime,
         "commands": commands,
@@ -182,6 +210,25 @@ def verify_container_runtime(
     if status != "SUCCEEDED":
         raise RuntimeError("Generated container runtime smoke failed: " + error)
     return report
+
+
+def _runtime_health_path(run_root: Path) -> str:
+    """runtime binding 보고서에서 관찰한 health 경로를 읽는다.
+
+    보고서가 아직 없거나 여러 경로가 섞여 있으면 Spring Boot의 표준 Actuator
+    경로를 사용한다. 계획에 있던 값을 실제 관찰값인 것처럼 대신 쓰지는 않는다.
+    """
+
+    report_path = run_root / "reports" / RUNTIME_OBSERVATIONS_REPORT
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "/actuator/health"
+    contracts = report.get("runtimeContracts") if isinstance(report, dict) else None
+    observed = health_path_from_observations(
+        contracts if isinstance(contracts, dict) else {}
+    )
+    return observed if observed and observed.startswith("/") else "/actuator/health"
 
 
 def _tcp_probe(host: str, port: int, timeout: float) -> bool:

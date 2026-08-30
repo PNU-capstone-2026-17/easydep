@@ -53,10 +53,10 @@ Grounding and boundaries:
   source code will implement that path. Do not invent a mount path for a prebuilt
   image unless its explicit runtime catalog contract supplies it.
 - Every generated application that calls another workload or external dependency
-  needs one configuration entry with kind=endpointBinding, a stable id, an
-  UPPER_SNAKE_CASE environment-variable name, connectionRef, and projection
-  (url, host, or port). You may choose clear environment-variable names because
-  they are design outputs consumed by implementation. Do not guess endpoint values.
+  needs either one URL endpointBinding or a host/port endpointBinding pair. Each
+  entry has a stable id, a unique UPPER_SNAKE_CASE environment-variable name,
+  connectionRef, and projection. You may choose clear environment-variable names
+  because they are design outputs consumed by implementation. Do not guess values.
 - Secret inputs use kind=secretBinding and an UPPER_SNAKE_CASE environment-variable
   name. Never include a secret value or provider credential.
 - Configuration ids and names must be unique within a workload. Ordinary
@@ -82,9 +82,9 @@ return the complete graph.
 - Do not guess exposure, protocol, port, retention, replica safety, data execution
   mode, or prebuilt image details. Keep ambiguity for deterministic validation.
 - Every connection endpoint and referenced interface must exist in the full graph.
-- Every generated source workload connection has exactly one endpointBinding
-  configuration. Choose a stable id, a unique UPPER_SNAKE_CASE environment name,
-  and a url/host/port projection; never guess the endpoint value.
+- Every generated source workload connection has either one URL endpointBinding
+  or a host/port endpointBinding pair. Use stable ids and unique UPPER_SNAKE_CASE
+  environment names; never guess endpoint values.
 - A generated application's persistent storage has a design-selected absolute
   POSIX mountPath. Secret bindings have environment names but never secret values.
 

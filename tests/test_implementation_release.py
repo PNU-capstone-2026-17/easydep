@@ -12,21 +12,28 @@ def test_container_runtime_smoke_builds_starts_probes_and_cleans(tmp_path: Path)
     application.mkdir()
     (application / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
     commands: list[list[str]] = []
+    health_gets: list[str] = []
 
     def run(command: list[str], **_kwargs):
         commands.append(command)
         stdout = "127.0.0.1:49152\n" if command[1] == "port" else "ok"
         return subprocess.CompletedProcess(command, 0, stdout, "")
 
+    def http_get(url: str, _timeout: float) -> tuple[int, str, str]:
+        health_gets.append(url)
+        return 200, "application/json", '{"status":"UP"}'
+
     report = verify_container_runtime(
         tmp_path,
         run_command=run,
         probe=lambda host, port, timeout: (host, port, timeout)
         == ("127.0.0.1", 49152, 1.0),
+        http_get=http_get,
     )
 
     assert report["status"] == "SUCCEEDED"
     assert report["hostPort"] == 49152
+    assert health_gets
     assert any(command[1] == "build" for command in commands)
     assert any(command[1:3] == ["image", "rm"] for command in commands)
 

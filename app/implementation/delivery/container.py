@@ -45,9 +45,11 @@ COPY . .
 
 FROM {DEFAULT_DOCKER_JRE_IMAGE}
 WORKDIR /app
-RUN addgroup -S app && adduser -S app -G app
-COPY --from=build /tmp/app.jar app.jar
-USER app
+# VM bootstrap이 영속 경로의 소유권을 같은 숫자로 설정하므로 이미지마다 달라질 수
+# 있는 자동 할당 UID를 사용하지 않는다.
+RUN addgroup -S -g 10001 app && adduser -S -D -H -u 10001 -G app app
+COPY --chown=10001:10001 --from=build /tmp/app.jar app.jar
+USER 10001:10001
 EXPOSE {DEFAULT_CONTAINER_PORT}
 ENTRYPOINT ["java", "-jar", "app.jar"]"""
 
