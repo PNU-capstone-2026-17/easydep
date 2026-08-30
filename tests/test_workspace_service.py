@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 from app.db.models import Base
@@ -1332,6 +1334,83 @@ def test_implementation_progress_snapshot_uses_public_workflow_phases() -> None:
 
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["phase-backend"]["status"] == "running"
+    assert updates["sub-backend-persistence"]["status"] == "running"
+
+
+def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    reports = run_root / "reports"
+    event_dir = reports / "agent-executions"
+    event_dir.mkdir(parents=True)
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "currentPhase": "boundary-adapters",
+                "phases": [
+                    {"phaseId": "persistence", "status": "SUCCEEDED"},
+                    {"phaseId": "boundary-adapters", "status": "RUNNING"},
+                ],
+                "tasks": [
+                    {
+                        "taskId": "repository-1",
+                        "phase": "persistence",
+                        "status": "SUCCEEDED",
+                    },
+                    {
+                        "taskId": "boundary-1",
+                        "phase": "boundary-adapters",
+                        "status": "RUNNING",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (event_dir / "boundary.events.jsonl").write_text(
+        json.dumps(
+            {
+                "tool": "restricted_file_editor",
+                "event": {
+                    "action": {
+                        "path": str(
+                            tmp_path
+                            / "agent-workspace"
+                            / "application"
+                            / "src"
+                            / "main"
+                            / "java"
+                            / "BoundaryAdapter.java"
+                        )
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {
+                "status": "RUNNING",
+                "run_root": str(run_root),
+                "workflow": {"status": "READY", "tasks": []},
+            }
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert updates["phase-backend"]["status"] == "running"
+    assert updates["sub-backend-boundary-adapters"]["status"] == "running"
+    assert updates["implementation-file"]["detail"] == "Editing BoundaryAdapter.java"
+    assert progress["current_file"] == (
+        "application/src/main/java/BoundaryAdapter.java"
+    )
+    assert progress["current_class"] == "BoundaryAdapter"
 
 
 def test_implementation_progress_snapshot_marks_terminal_failure() -> None:
