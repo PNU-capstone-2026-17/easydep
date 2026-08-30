@@ -73,12 +73,12 @@ CLEAN: dict[str, Any] = {
     ],
     "Collaborations": [
         {
-            "collaborationId": "UC1:main:1",
+            "collaborationId": "UC1",
             "useCaseIds": ["UC1"],
             "entryActor": "Member",
             "calls": [
                 {
-                    "callId": "UC1:main:1::call:1",
+                    "callId": "UC1::call:1",
                     "receiverOperationId": "OrderForm::submitOrder(request:String)",
                     "stepRefs": ["UC1:main:1"],
                     "argumentBindings": [
@@ -89,14 +89,14 @@ CLEAN: dict[str, Any] = {
                     ],
                 },
                 {
-                    "callId": "UC1:main:1::call:2",
-                    "parentCallId": "UC1:main:1::call:1",
+                    "callId": "UC1::call:2",
+                    "parentCallId": "UC1::call:1",
                     "receiverOperationId": "OrderController::placeOrder(request:String)",
                     "stepRefs": ["UC1:main:2"],
                     "argumentBindings": [
                         {
                             "parameter": "request",
-                            "sourceRef": "UC1:main:1::call:1#request",
+                            "sourceRef": "UC1::call:1#request",
                         }
                     ],
                 },

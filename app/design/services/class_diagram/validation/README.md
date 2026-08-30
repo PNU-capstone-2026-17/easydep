@@ -77,8 +77,8 @@ replacement inventory를 반환하고, 같은 규칙을 다시 통과해야 한�
 
 ## Operation 규칙
 
-`OperationContext`는 검사 대상 조각이 사용할 수 있는 inventory, use case, 허용 step ID와
-execution group을 고정한다.
+`OperationContext`는 검사 대상 조각이 사용할 수 있는 inventory, use case와 허용 step ID를
+고정한다.
 
 - 연산 parameter·return type과 지역 DataType 참조가 존재해야 한다.
 - operation의 `stepRefs`가 허용된 슬라이스 밖을 가리키면 안 된다.
@@ -92,17 +92,19 @@ execution group을 고정한다.
 발명하지 않는다.
 
 Finding이 있으면 현재 fragment, finding 목록과 누적 거절 이력을 `previousFragment`와 함께
-전달해 교체한다. 숫자 상한은 두지 않고 동일 후보가 반복될 때 정체로 종료한다.
+전달해 교체한다. 숫자 상한은 두지 않는다. 같은 후보가 반복되면 같은 요청을 계속 보내지
+않고 더 넓은 유스케이스 수리로 넘긴다.
 다른 use case의 수락된 fragment는 prompt에도 replacement 대상에도 포함하지 않는다.
 
 ## Collaboration 규칙
 
-`CollaborationContext`는 전체 operation catalog와 정확히 한 execution group을 제공한다.
+`CollaborationContext`는 전체 operation catalog와 정확히 한 유스케이스를 제공한다. 그
+유스케이스에 actor 진입점이 여러 개면 각 진입점의 단계 범위도 순서대로 제공한다.
 
-- `collaborationId`와 canonical `callId`가 그룹·호출 위치와 일치해야 한다.
-- 첫 호출은 부모가 없어야 하고, 이후 호출의 부모는 반드시 앞선 호출이어야 한다.
+- `collaborationId`와 canonical `callId`가 유스케이스·호출 위치와 일치해야 한다.
+- 각 actor 진입점은 부모 없는 root로 시작하고, 나머지 호출의 부모는 반드시 앞선 호출이어야 한다.
 - Boundary → Entity 직접 호출 등 금지된 BCE 방향을 허용하지 않는다.
-- 그룹의 필수 단계가 정확한 receiver operation으로 커버되어야 한다.
+- 각 actor 진입점의 필수 단계가 정확한 receiver operation으로 커버되어야 한다.
 - 각 parameter에 정확히 하나의 타입 호환 source가 있어야 한다.
 - `call_result`는 현재 호출보다 앞서고 인과 경로상 사용할 수 있어야 한다.
 - `derived#Type(...)`은 대상 타입의 필수 필드를 모두 채워야 한다.
@@ -124,15 +126,15 @@ literal#unknown            # 허용 후보에 없고 타입 근거도 없음
 derived#OrderRequest()     # 필수 필드 원천이 없음
 ```
 
-호출 계획이나 materialize가 실패하면 예외 메시지와 이전 계획을 같은 execution group의
-`InteractionCallPlanRepair`에 전달한다. 두 번째 실패는 `CollaborationResult.issue`로
-반환되며 validation이 추가 LLM 호출을 시작하지 않는다.
+호출 계획이나 materialize가 실패하면 예외 메시지, 이전 계획과 짧은 수리 이력을 같은
+유스케이스의 `InteractionCallPlanRepair`에 전달한다. 숫자 횟수로 중단하지 않으며, 같은
+실패가 반복되면 operation까지 포함하는 유스케이스 수리로 범위를 넓힌다.
 
 ## 최종 모델과 readiness
 
 `validate_class_model`은 저장 schema를 먼저 확인한다. schema가 깨진 JSON이면 다른 규칙이
 잘못된 shape를 순회하지 않고 `class.model.schema`만 보고한다. 유효한 모델은 canonical
-operation ID, 구체적인 operation 이름, execution group과 collaboration의 정확한 커버리지,
+operation ID, 구체적인 operation 이름, 유스케이스와 collaboration의 정확한 커버리지,
 호출 계약을 검사한다.
 
 `class_diagram_validation_report`는 관계 endpoint, BCE 통신, stereotype, 필드 타입,

@@ -10,17 +10,18 @@ PlantUML, 시퀀스 생성, API와 ERD가 함께 사용하는 상호작용 기�
 raw use-case JSON
   → ScenarioIndex
   → AcceptedInventory
-  → use-case / execution-slice별 AcceptedFragment
-  → 연산이 합쳐진 BCEModel skeleton
-  → execution group별 CollaborationResult
+  → use-case별 CombinedUnitProposal
+  → AcceptedFragment를 합친 BCEModel 골격
+  → use-case별 Collaboration
   → 최종 BCEModel
   → PlantUML 및 SequenceCollection
 ```
 
 각 화살표는 수락 경계다. LLM의 구조화 응답을 그대로 다음 단계로 넘기지 않고 정규화와
-같은 입력에 같은 결과를 내는 코드 검사를 통과시킨다. 실패하면 finding이 가리키는 가장 작은 수정 대상만 교체하며,
-숫자 상한 없이 수락될 때까지 누적 수리 이력을 다음 요청에 전달한다. 이미 거절된 후보나
-동일한 실패 상태가 반복되면 `STALLED`로 끝내고, 이미 수락된 형제 단위는 유지한다.
+같은 입력에 같은 결과를 내는 코드 검사를 통과시킨다. 최초 생성은 한 유스케이스의
+메서드와 호출 계획을 한 응답으로 받되, 둘을 각각 정규화하고 검사한다. 호출 계획만 잘못된
+경우에는 수락된 메서드를 유지한 채 호출 계획만 다시 만든다. 이미 수락된 다른 유스케이스도
+다시 호출하지 않는다.
 
 ## 공개 입력과 출력
 
@@ -70,11 +71,11 @@ revise_class_model(
   "Relationships": [],
   "Collaborations": [
     {
-      "collaborationId": "UC1:main:1",
+      "collaborationId": "UC1",
       "useCaseIds": ["UC1"],
       "calls": [
         {
-          "callId": "UC1:main:1::call:1",
+          "callId": "UC1::call:1",
           "parentCallId": null,
           "receiverOperationId": "OrderBoundary::submit(request:OrderRequest)",
           "stepRefs": ["UC1:main:1"],
@@ -132,16 +133,16 @@ revise_class_model(
 `useCaseIds`를 가지며, 구조 관계도 schema로 제한된다. 코드는 이를 Java 필드 표기와 저장
 alias로 정규화해 `AcceptedInventory`로 수락한다.
 
-### 3. 연산 조각
+### 3. 최초 결합 생성
 
-`operations.py`는 한 유스케이스 또는 실행 슬라이스에 필요한 메서드와 지역 DTO만 생성한다.
-LLM에 보내는 payload는 다음 선택 공간으로 제한된다.
+`generation.py`는 한 유스케이스에 필요한 메서드와 짧은 호출 트리를 한 번에 생성한다.
+입력 payload는 `operations.py`가 만들며 다음 선택 공간으로 제한된다.
 
 ```json
 {
   "useCase": {"id": "UC1", "name": "Place order"},
   "executionSlice": {
-    "id": "UC1:main:1",
+    "id": "UC1",
     "steps": [{"stepRef": "UC1:main:1", "subject": "Buyer", "sentence": "submits"}]
   },
   "allowedStepRefs": ["UC1:main:1"],
@@ -152,26 +153,57 @@ LLM에 보내는 payload는 다음 선택 공간으로 제한된다.
 }
 ```
 
-응답 `OperationFragment`는 클래스별 `OperationProposal`과 지역 `DataTypes`만 포함한다.
-코드는 actor entry 소유권, 타입 도달성, canonical operation ID를 투영한 뒤 검사한다.
-동일 이름·동일 정의는 병합하지만 같은 이름의 다른 시그니처는 현재 조각만 다시 생성한다.
+응답 `CombinedUnitProposal`은 두 부분만 가진다.
 
-연산 조각은 최대 두 개씩 wave로 실행한다. 완료된 wave의 연산과 타입 이름을 다음 wave의
-예약 목록에 넣으므로 병렬 작업이 서로 다른 정의를 같은 이름으로 수락하지 않는다.
+```json
+{
+  "fragment": {
+    "DataTypes": [],
+    "Classes": [
+      {
+        "className": "OrderBoundary",
+        "operations": [
+          {
+            "name": "submit",
+            "parameters": [],
+            "returnType": "void",
+            "stepRefs": ["UC1:main:1"]
+          }
+        ]
+      }
+    ]
+  },
+  "calls": [
+    {"operationRef": "OrderBoundary.submit", "parentCallIndex": null}
+  ]
+}
+```
 
-### 4. 호출 계획과 값 binding
+`fragment`는 기존 `OperationFragment`와 같다. `calls`에는 아직 만들어지지 않은 긴 저장 ID
+대신 `ClassName.methodName`과 앞선 부모 위치만 담는다. 코드는 actor entry 소유권, 타입
+도달성과 canonical operation ID를 투영한 뒤 두 부분을 기존 검사로 각각 확인한다. 정규화로
+메서드가 제거되면 그 호출도 제거하고 자식을 가장 가까운 남은 부모에 다시 연결한다.
+존재하지 않는 짧은 참조는 임의로 보정하지 않고 호출 계획 수리로 넘긴다.
 
-`collaboration.py`는 수락된 연산 중 실제 실행 그룹이 호출할 메서드와 부모 호출만 LLM에
-고르게 한다. 동적 Pydantic schema의 `receiverOperationId`가 현재 허용된 operation ID의
-유한 enum이므로 새 클래스나 메서드를 발명할 수 없다.
+유스케이스 제안은 최대 두 개씩 병렬로 받는다. 이후 입력 순서대로 메서드를 합치며, 이미
+합친 메서드나 타입과 이름이 충돌한 유스케이스만 새 예약 목록을 보고 다시 제안한다. 모든
+메서드를 합친 골격이 완성된 뒤에 호출 계획을 구체화한다.
+
+### 4. 호출 구체화와 값 binding
+
+최초 호출 계획은 결합 응답에 들어 있다. `generation.py`가 짧은 참조를 수락된 실제
+operation ID로 바꾸고, `collaboration.py`가 저장용 호출과 parameter 값을 구체화한다.
+짧은 참조, 부모 관계 또는 값 출처에 문제가 있으면 operation은 그대로 두고 기존
+`CallPlanProposal` 수리만 실행한다. `resume`과 `revise`도 이 분리된 수리 경로를 사용한다.
 
 호출 계획 입력 예:
 
 ```json
 {
-  "collaborationId": "UC1:main:1",
-  "entryActor": "Buyer",
-  "requiredStepRefs": ["UC1:main:1", "UC1:main:2"],
+  "collaborationId": "UC1",
+  "actorEntries": [
+    {"actorStepRef": "UC1:main:1", "requiredStepRefs": ["UC1:main:1", "UC1:main:2"]}
+  ],
   "receiverOperations": [
     {
       "operationId": "OrderBoundary::submit(request:OrderRequest)",
@@ -183,7 +215,7 @@ LLM에 보내는 payload는 다음 선택 공간으로 제한된다.
 }
 ```
 
-응답은 다음처럼 operation과 앞선 부모의 1-based index만 가진다.
+분리 수리 응답은 다음처럼 operation과 앞선 부모의 1-based index만 가진다.
 
 ```json
 {
@@ -211,13 +243,13 @@ parameter의 실제 후보 enum에서 하나를 선택한다. 후보가 없으�
 
 `service.py`만 설정, 병렬 실행, 진행 이벤트와 단계 간 repair handoff를 조율한다.
 
-- `generate`: 인벤토리와 연산 skeleton을 만든 뒤 모든 execution group의 협업을 생성한다.
-- `resume`: 저장된 협업을 검사하고 누락되었거나 유효하지 않은 그룹만 다시 만든다.
+- `generate`: 인벤토리를 만든 뒤 유스케이스마다 operation과 호출 계획을 한 응답으로 생성한다.
+- `resume`: 저장된 협업을 검사하고 누락되었거나 유효하지 않은 유스케이스만 다시 만든다.
 - `revise`: 피드백을 inventory, operation, collaboration 중 가장 작은 소유자에 적용한다.
 
-협업이 필요한 메서드를 찾지 못하면 해당 그룹이 추적하는 유스케이스의 연산 조각만 보완한
-뒤 영향을 받은 그룹만 다시 계획한다. handoff도 누적 실패 이력을 operation prompt에 전달해
-진전하는 동안 반복하며, 정체되어도 성공한 형제 협업을 버리지 않는다.
+하나의 유스케이스 안에서 사용자가 시스템을 다시 호출하면 새 생성 단위로 나누지 않는다.
+같은 `Collaboration` 안에 부모가 없는 새 root를 추가하며, 뒤 root는 앞 root의 호출 결과를
+parameter 값으로 사용할 수 있다.
 
 ## LLM 호출 계약
 
@@ -225,47 +257,45 @@ parameter의 실제 후보 enum에서 하나를 선택한다. 후보가 없으�
 |---|---|---|---|
 | `InteractionInventory` | 새 전역 구조가 필요할 때 | `InventoryProposal` | inventory 검사 후 수락 |
 | `InteractionInventoryRepair` | inventory finding 발생 | `InventoryProposal` | 누적 이력과 함께 전체 inventory를 교체 후 재검사 |
-| `InteractionOperations` | 새 연산 조각 생성 | `OperationFragment` | 현재 조각만 검사 |
+| `InteractionCombinedUnit` | 최초 유스케이스 생성 | `CombinedUnitProposal` | operation과 호출 계획을 각각 정규화·검사 |
+| `InteractionCombinedUnitRepair` | operation까지 바꿔야 하는 결합 단위 오류 | `CombinedUnitProposal` | 현재 유스케이스만 전체 교체 |
+| `InteractionOperations` | 피드백으로 operation만 다시 생성 | `OperationFragment` | 현재 유스케이스 조각만 검사 |
 | `InteractionOperationsRepair` | 조각 finding 발생 | `OperationFragment` | 누적 이력과 함께 현재 조각을 교체 |
 | `InteractionOperationCollisionRepair` | 같은 이름의 수락 연산·타입과 정의 충돌 | `OperationFragment` | 충돌한 현재 조각만 다시 검사 |
-| `InteractionOperationHandoff` | 협업이 필요한 연산을 찾지 못함 | `OperationFragment` | 실패 그룹 소유 조각만 보완 |
 | `InteractionOperationFeedback` | operation 소유 피드백 | `OperationFragment` | 선택 use case 조각만 교체 |
-| `InteractionCallPlan` | execution group의 호출 트리 생성 | 유한 `CallPlanProposal` | materialize 후 collaboration 검사 |
-| `InteractionCallPlanRepair` | 계획·materialize 실패 | 유한 `CallPlanProposal` | 누적 이력과 함께 같은 그룹만 교체 |
+| `InteractionCallPlan` | 유스케이스 호출 트리 생성 | 유한 `CallPlanProposal` | materialize 후 collaboration 검사 |
+| `InteractionCallPlanRepair` | 계획·materialize 실패 | 유한 `CallPlanProposal` | 누적 이력과 함께 같은 유스케이스만 교체 |
 | `InteractionBindingSelection` | parameter 출처 후보가 복수 | 동적 유한 선택 schema | 모든 선택을 materialize에 병합 |
 | `InteractionFeedbackScope` | targets와 이름으로 소유자를 확정 못함 | `FeedbackScope` | 허용 candidate ID인지 재검사 |
 | `InteractionInventoryFeedback` | inventory 소유 피드백 | `InventoryProposal` | 지정되지 않은 item을 원본과 병합 후 검사 |
 
-정확한 prompt 문구는 `inventory.py`, `operations.py`, `collaboration.py`의 상수와
-`feedback.py`의 호출부다. 이 README의 예제는 shape를 설명하기 위한 축약본이며 prompt를
-복제하지 않는다. collision·handoff·feedback 전용 제안에도 validation finding이 남으면
+정확한 prompt 문구는 `inventory.py`, `operations.py`, `generation.py`,
+`collaboration.py`의 상수와 `feedback.py`의 호출부다. 이 README의 예제는 shape를
+설명하기 위한 축약본이며 prompt를 복제하지 않는다. collision·feedback 전용 제안에도
+validation finding이 남으면
 `_checked_fragment`가 같은 이름에 `Repair` 접미사를 붙여 누적 이력 기반 전체 교체를 한다.
-예를 들어 `InteractionOperationHandoffRepair`는 handoff 제안의 재검사 실패에서만 호출된다.
 
 ## 검증과 repair 종료 조건
 
 | 수정 대상 | 주요 검사 | 숫자 상한 | 종료 조건 |
 |---|---|---:|---|
 | Inventory | 이름·타입·관계·유스케이스 범위 | 없음 | 수락 또는 거절 후보 반복 |
-| Operation fragment | 참조·단계 커버리지·실행 그룹·값 흐름 | 없음 | 수락 또는 거절 후보 반복 |
+| Operation fragment | 참조·단계 커버리지·값 흐름 | 없음 | 수락 또는 더 넓은 유스케이스 수리 |
 | Collaboration | 호출 계약·순서·binding provenance | 없음 | 수락 또는 거절 call-plan 반복 |
-| Operation handoff | 실패 그룹이 요구한 연산 보완 | 없음 | 수락 또는 skeleton+실패 상태 반복 |
 | Final model | schema·canonical ID·협업 커버리지 | 해당 없음 | revise에서는 finding 반환 |
 
-commit 시 발견되는 이름 충돌과 collaboration 실패 뒤의 handoff는 앞선 proposal 검사의 반복이
-아니라 새로운 소유 사건이다. 둘 다 현재 fragment만 대상으로 하며, 각 사건의 제안은 검사
-finding과 이전 거절 후보 digest를 누적해 materially different replacement를 요청한다.
+이름 충돌은 다른 유스케이스의 수락 결과를 버리지 않고 충돌한 유스케이스만 다시 제안한다.
+호출 계획 오류도 승인된 operation을 보존하고 이전 후보와 정확한 finding을 함께 전달한다.
 
 검증 구현과 rule별 의미는 [validation README](validation/README.md)를 따른다.
 
 ## 피드백 범위
 
-피드백 대상 ID가 명시되면 다음 순서로 결정론적으로 분류한다.
+피드백 대상 ID가 명시되면 다음 순서로 범위를 좁힌다.
 
-1. execution group ID면 `collaboration`
-2. use-case ID면 `operation`
-3. 전역 클래스·구조 타입이면 `inventory`
-4. 지역 DTO 이름이면 그 DTO를 소유한 use case의 `operation`
+1. 전역 클래스·구조 타입이면 `inventory`
+2. 지역 DTO 이름이면 그 DTO를 소유한 use case의 `operation`
+3. 유스케이스 ID는 operation과 collaboration이 함께 사용하므로 피드백 문장까지 보고 고른다.
 
 명시적 ID가 없고 지역 타입 이름도 찾지 못할 때만 LLM이 제한된 후보에서 scope를 고른다.
 선택하지 않은 inventory item, 연산 조각과 collaboration은 그대로 유지한다.
@@ -279,6 +309,7 @@ finding과 이전 거절 후보 digest를 누적해 materially different replace
 | `models.py` | 단계 사이의 frozen 수락 단위 |
 | `inventory.py` | 전역 구조 제안·정규화 |
 | `operations.py` | 연산 조각 생성·충돌 처리·조립 |
+| `generation.py` | 최초 operation·호출 계획 결합 생성과 수락 순서 조율 |
 | `collaboration.py` | 호출 트리·parameter provenance |
 | `feedback.py` | 피드백 소유자 판정과 국소 교체 |
 | `service.py` | generate/resume/revise 오케스트레이션 |
@@ -303,8 +334,8 @@ graph adapter가 application-scope 인스턴스를 명시적으로 주입한다.
 
 - 입력: 정규화 slice, 고정 inventory, feedback/findings, prompt/schema digest, endpoint를
   포함한 provider identity와 model, seed/temperature/reasoning 설정, completion cap을 포함한
-  canonical cache key다. collaboration은 call-plan뿐 아니라 동적 binding selector의
-  prompt/schema-template/low-reasoning/effective-cap도 key에 포함한다.
+  canonical cache key다. 최초 결합 단위는 수락된 operation fragment와 완성된
+  collaboration을 함께 저장한다.
 - 출력: `CacheResult(value, status, key)`이며 status는 `hit`, `miss`, `coalesced` 중 하나다.
 - 부작용: 같은 key의 동시 계산은 single-flight로 합치고, 성공한 accepted value만 깊은
   복사해 LRU에 저장한다. 용량을 넘으면 가장 오래 사용하지 않은 완료 항목을 제거한다.
@@ -316,8 +347,9 @@ graph adapter가 application-scope 인스턴스를 명시적으로 주입한다.
   않고 실패하므로, warm 확인 자체가 새 provider 요청을 만들 수 없다.
 
 `generate`, `resume`, `revise` 모두 같은 cache 경계를 받는다. 같은 입력으로 generate를
-다시 실행하거나 누락된 collaboration을 resume할 때 accepted inventory/operation/call-plan
-hit이면 외부 LLM physical request는 발생하지 않는다. revise는 소유 operation 또는
+다시 실행할 때 accepted inventory/combined-unit hit이면 binding 선택을 포함한 외부 LLM
+physical request는 발생하지 않는다. 누락된 collaboration을 resume할 때는 분리 call-plan
+cache를 사용한다. revise는 소유 operation 또는
 collaboration slice와 feedback을 key에 포함해 영향받은 단위만 교체한다.
 
 ### Reasoning과 timing

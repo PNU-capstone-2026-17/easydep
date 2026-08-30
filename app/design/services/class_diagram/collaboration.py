@@ -1,12 +1,4 @@
-"""한 실행 그룹의 유한 호출 계획과 parameter provenance를 수락한다.
-
-입력은 ``ScenarioIndex``, 연산이 확정된 ``BCEModel``과 정확히 한 ``ExecutionGroup``이다.
-LLM은 현재 범위의 operation ID와 앞선 부모 index만 선택한다. 코드는 canonical call ID,
-step provenance와 parameter source 후보를 투영하고 ``Collaboration``을 검증한다.
-
-부작용은 호출 계획 LLM과, 후보가 복수일 때만 실행되는 binding 선택 LLM이다. 새 클래스,
-operation 또는 타입을 만들지 않으며 저장소·graph state를 직접 읽지 않는다.
-"""
+"""한 유스케이스의 여러 actor entry를 하나의 호출 계획으로 구체화한다."""
 from __future__ import annotations
 
 import json
@@ -19,18 +11,14 @@ from app.design.schemas.class_model import BCEModel, Collaboration, canonical_ca
 from app.design.services.class_diagram.cache import (
     AcceptedUnitCache,
     accepted_unit_key,
-    canonical_digest_key,
     configured_provider_identity,
     record_cache_outcome,
 )
-from app.design.services.class_diagram.models import CollaborationResult
-from app.design.services.class_diagram.proposals import (
-    CallPlanProposal,
-    ProposedCall,
-)
+from app.design.services.class_diagram.proposals import CallPlanProposal, ProposedCall
 from app.design.services.class_diagram.scenario import (
     ExecutionGroup,
     ScenarioIndex,
+    UseCase,
     text,
 )
 from app.design.services.class_diagram.type_system import (
@@ -53,32 +41,28 @@ from app.design.services.common.structured import parse_structured
 from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, stable_digest
 
 CALL_PLAN_PROMPT = """
-Build the ordered call tree for exactly one execution group. Select only the
-supplied receiverOperationId values. Step references are projected from the
-selected operation contracts; do not return them. Return no classes, methods,
-call ids, values, or argument bindings.
+Build one ordered call forest for the complete use case. Select only supplied
+receiverOperationId values. Return only receiverOperationId and parentCallIndex.
+Each actorEntry creates one root in the supplied order; a root has no parent.
+Every non-root points to an earlier call in the same root. A root is Boundary
+and delegates to Control; Control may delegate state work to Entity. Cover all
+required steps inside the matching actor entry. The same operation may be used
+in more than one root. Do not return ids, step refs, values, or bindings.
+""".strip()
 
-The first call has no parent. Every later call names the one-based index of an
-earlier caller. An actor group enters through Boundary and delegates to
-Control. Control delegates persistent-state work to Entity. Boundary never
-calls Entity directly. Cover every requiredStepRef, including included-flow
-steps, without repeating calls merely to repeat a step label.
+BINDING_PROMPT = """
+Select one sourceRef for each supplied finite choice. Prefer the source whose
+name and role match the receiver parameter. Return no explanation.
 """.strip()
 
 
 def call_plan_reasoning_effort() -> str:
-    """call-plan 전용 reasoning 설정이 없던 실행은 기존 정책으로 유지한다."""
-
     return str(getattr(
-        settings,
-        "design_class_call_plan_reasoning_effort",
-        settings.design_reasoning_effort,
+        settings, "design_class_call_plan_reasoning_effort", settings.design_reasoning_effort,
     ))
 
 
 def call_plan_max_completion_tokens() -> int:
-    """call-plan 전용 output cap이 없던 실행은 기존 collaboration cap을 유지한다."""
-
     return int(getattr(
         settings,
         "design_class_call_plan_max_completion_tokens",
@@ -86,21 +70,7 @@ def call_plan_max_completion_tokens() -> int:
     ))
 
 
-BINDING_PROMPT = """
-Select one sourceRef for each supplied choice. The response schema restricts
-every field to that parameter's finite candidates. Resolve all fields and
-return no explanation.
-Prefer the source whose name and role best match the receiver parameter; do
-not invent values or identifiers.
-""".strip()
-
-
 def _finite_schema(name: str, **fields: Any) -> type[BaseModel]:
-    """런타임 Pydantic 스키마의 동적 타입을 이 경계에서만 좁힌다.
-
-    ``create_model``은 전달된 유한 선택지로 클래스를 생성하므로 정적으로는
-    반환 하위 클래스를 알 수 없다. 이 한 곳의 cast가 그 동적 경계를 격리한다.
-    """
     return cast(type[BaseModel], create_model(name, **fields))
 
 
@@ -111,44 +81,55 @@ def _finding_text(findings: tuple[Finding, ...]) -> list[str]:
     ]
 
 
-def _group_operations(
-    model: dict[str, Any], group: ExecutionGroup,
+def _groups(index: ScenarioIndex, use_case: UseCase) -> tuple[ExecutionGroup, ...]:
+    return tuple(group for group in index.groups if group.use_case_id == use_case.id)
+
+
+def _use_case_operations(
+    index: ScenarioIndex, model: dict[str, Any], use_case: UseCase,
 ) -> dict[str, dict[str, Any]]:
-    """실행 그룹이 추적하는 유스케이스에 허용된 operation만 catalog로 좁힌다."""
-    allowed = set(group.trace_use_case_ids)
+    groups = _groups(index, use_case)
+    allowed = {use_case.id} | {
+        use_case_id for group in groups for use_case_id in group.trace_use_case_ids
+    }
+    class_scope = {
+        text(item.get("className")): {
+            text(value) for value in item.get("use_case_ids") or []
+        }
+        for item in model.get("Classes") or [] if isinstance(item, dict)
+    }
     return {
         operation_id: operation
         for operation_id, operation in operation_catalog(model).items()
-        if allowed & {
-            text(use_case_id)
-            for class_item in model.get("Classes") or [] if isinstance(class_item, dict)
-            if text(class_item.get("className")) == operation["className"]
-            for use_case_id in class_item.get("use_case_ids") or []
-        }
+        if allowed & class_scope.get(text(operation.get("className")), set())
     }
 
 
-def _group_payload(
-    index: ScenarioIndex, model: dict[str, Any], group: ExecutionGroup,
+def _use_case_payload(
+    index: ScenarioIndex, model: dict[str, Any], use_case: UseCase,
 ) -> dict[str, Any]:
-    """LLM이 호출 순서만 고를 수 있는 execution-group payload를 만든다.
-
-    ``receiverOperations``에 없는 ID는 동적 응답 schema에도 들어가지 않는다. 단계 문장은
-    판단 근거로 제공하지만 ``stepRefs``는 응답에서 받지 않고 선택된 operation에서 투영한다.
-    """
-    operations = _group_operations(model, group)
-    steps = {
-        step.id: step for use_case_id in group.trace_use_case_ids
+    groups = _groups(index, use_case)
+    operations = _use_case_operations(index, model, use_case)
+    step_by_id = {
+        step.id: step for group in groups for use_case_id in group.trace_use_case_ids
         for step in index.use_case(use_case_id).steps
     }
+    required = {ref for group in groups for ref in group.required_step_ids}
     return {
-        "collaborationId": group.id,
-        "entryActor": group.entry_actor,
-        "actorStepRef": group.actor_step,
-        "requiredStepRefs": list(group.required_step_ids),
+        "collaborationId": use_case.id,
+        "actorEntries": [
+            {
+                "actorStepRef": group.actor_step,
+                "requiredStepRefs": list(group.required_step_ids),
+            }
+            for group in groups
+        ],
         "steps": [
-            {"id": step_id, "sentence": steps[step_id].sentence}
-            for step_id in group.required_step_ids if step_id in steps
+            {"id": step_id, "sentence": step_by_id[step_id].sentence}
+            for step_id in dict.fromkeys(
+                ref for group in groups for ref in group.required_step_ids
+            )
+            if step_id in step_by_id
         ],
         "receiverOperations": [
             {
@@ -160,51 +141,42 @@ def _group_payload(
                 "stepRefs": operation.get("stepRefs") or [],
             }
             for operation_id, operation in sorted(operations.items())
-            if set(operation.get("stepRefs") or []) & set(group.required_step_ids)
+            if required & {text(ref) for ref in operation.get("stepRefs") or []}
         ],
     }
 
 
-def _propose_call_plan(
+def propose_call_plan(
     index: ScenarioIndex,
-    model: dict[str, Any],
-    group: ExecutionGroup,
+    model: BCEModel,
+    use_case: UseCase,
     *,
     previous: CallPlanProposal | None = None,
     finding: str = "",
 ) -> CallPlanProposal:
-    """유한 operation ID enum으로 한 execution group의 호출 계획을 요청한다.
+    """완성 skeleton에서 유스케이스 전체의 multiple-root 호출 계획을 제안한다."""
 
-    최초 호출은 ``previous``와 ``finding``이 없다. materialize 또는 validation 실패 뒤에는
-    이전 전체 계획과 오류·누적 이력을 함께 보내 같은 group의 full replacement를 요청한다.
-    """
-    # 1. 현재 group의 단계와 수락 operation만 payload에 포함한다.
-    payload = _group_payload(index, model, group)
+    payload = _use_case_payload(index, model.model_dump(by_alias=True), use_case)
     if previous is not None:
         payload["previousPlan"] = previous.model_dump(by_alias=True)
     if finding:
-        payload["task"] = "Return one full repaired call plan and resolve the finding."
+        payload["task"] = "Return a full repaired call plan and resolve the finding."
         payload["finding"] = finding
     operation_ids = tuple(item["operationId"] for item in payload["receiverOperations"])
     if not operation_ids:
-        raise ValueError(f"execution group has no receiver operations: {group.id}")
-    # 2. receiverOperationId를 실제 후보 Literal로 만든다. 자연어 prompt만으로 목록 밖
-    # 선택을 막지 않고 구조화 응답 파싱 단계에서 거부한다.
+        raise ValueError(f"use case has no receiver operations: {use_case.id}")
     finite_call = _finite_schema(
-        "FiniteProposedCall",
+        "FiniteUseCaseCall",
         __base__=ProposedCall,
         receiver_operation_id=(
-            Literal.__getitem__(operation_ids),
-            Field(alias="receiverOperationId"),
+            Literal.__getitem__(operation_ids), Field(alias="receiverOperationId"),
         ),
     )
     finite_plan = _finite_schema(
-        "FiniteCallPlan",
+        "FiniteUseCaseCallPlan",
         __base__=CallPlanProposal,
-        calls=(list[finite_call], Field(min_length=1, max_length=len(operation_ids))),  # type: ignore[valid-type]
+        calls=(list[finite_call], Field(min_length=len(payload["actorEntries"]))),  # type: ignore[valid-type]
     )
-    # 3. LLM은 operation과 earlier parent index만 반환한다. call ID, binding과 stepRefs는
-    # materialize 단계의 결정론적 책임이다.
     parsed = parse_structured(
         [
             {"role": "system", "content": CALL_PLAN_PROMPT},
@@ -215,14 +187,48 @@ def _propose_call_plan(
         max_completion_tokens=call_plan_max_completion_tokens(),
         operation="InteractionCallPlanRepair" if finding else "InteractionCallPlan",
         metadata={
-            "collaborationGroup": group.id,
-            "executionSlice": group.id,
+            "useCaseId": use_case.id,
+            "executionSlice": use_case.id,
             "candidateCount": len(operation_ids),
         },
     )
     return CallPlanProposal.model_validate(
         finite_plan.model_validate(parsed).model_dump(by_alias=True),
     )
+
+
+def _root_assignments(
+    plan: CallPlanProposal, root_count: int,
+) -> tuple[list[int], dict[int, int]]:
+    roots = [
+        position for position, call in enumerate(plan.calls, start=1)
+        if call.parent_call_index is None
+    ]
+    if len(roots) != root_count:
+        raise ValueError("root calls must match actor entries in scenario order")
+    root_ordinal = {position: ordinal for ordinal, position in enumerate(roots)}
+    assignments: dict[int, int] = {}
+    latest_root = -1
+    for position, call in enumerate(plan.calls, start=1):
+        if position in root_ordinal:
+            latest_root = root_ordinal[position]
+        parent = call.parent_call_index
+        if parent is not None and parent >= position:
+            raise ValueError("parentCallIndex must reference an earlier call")
+        current = position
+        visited: set[int] = set()
+        while current not in root_ordinal:
+            if current in visited:
+                raise ValueError("call parent chain contains a cycle")
+            visited.add(current)
+            parent = plan.calls[current - 1].parent_call_index
+            if parent is None or parent >= current:
+                raise ValueError("every non-root call requires an earlier parent")
+            current = parent
+        assignments[position] = root_ordinal[current]
+        if assignments[position] != latest_root:
+            raise ValueError("a call cannot return to an earlier actor root")
+    return roots, assignments
 
 
 def _ancestors(calls: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
@@ -238,8 +244,9 @@ def _ancestors(calls: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
 
 def _binding_candidates(
     model: dict[str, Any],
-    index: ScenarioIndex,
-    group: ExecutionGroup,
+    use_case: UseCase,
+    actor_step: str | None,
+    is_root: bool,
     calls: list[dict[str, Any]],
     call_index: int,
     parameter: dict[str, Any],
@@ -247,13 +254,6 @@ def _binding_candidates(
 ) -> list[str]:
     name = text(parameter.get("name"))
     target_type = text(parameter.get("type"))
-    if call_index == 0 and group.actor_step:
-        return [f"{group.actor_step}#{name}"]
-    if call_index == 0:
-        return [
-            f"{ref}#{name}" for use_case_id in group.trace_use_case_ids
-            for ref in index.use_case(use_case_id).precondition_refs
-        ]
     fields_by_type = structured_field_types(model)
     candidates: list[str] = []
     named_sources: dict[str, list[tuple[str, str]]] = {}
@@ -261,6 +261,10 @@ def _binding_candidates(
     def add_named(source_name: str, source_type: str, source_ref: str) -> None:
         named_sources.setdefault(source_name.casefold(), []).append((source_type, source_ref))
 
+    if is_root and actor_step:
+        candidates.append(f"{actor_step}#{name}")
+    if is_root:
+        candidates.extend(f"{ref}#{name}" for ref in use_case.precondition_refs)
     ancestors = _ancestors(calls, call_index)
     ancestor_ids = {text(item.get("callId")) for item in ancestors}
     for ancestor in ancestors:
@@ -278,37 +282,24 @@ def _binding_candidates(
                 projected = projected_field_type(source_type, field_path, fields_by_type)
                 field_ref = f"{source_ref}.{field_path}"
                 add_named(field_path, projected, field_ref)
-                # 이름이 달라도 타입이 맞으면 유한 후보에 포함한다. 예를 들어
-                # ``code: String``은 request의 ``sourceUnitCode``와
-                # ``targetUnitCode`` 중 하나일 수 있다. 둘 이상이면 아래의 저비용
-                # selector가 실제 후보 안에서만 고르므로 값을 새로 만들지 않는다.
                 if types_compatible(projected, target_type):
                     candidates.append(field_ref)
-        return_type = text(operation.get("returnType"))
-        if return_type.casefold() != "void" and types_compatible(return_type, target_type):
-            candidates.append(f"{ancestor['callId']}#result")
-        elif types_compatible(optional_inner_type(return_type), target_type):
-            candidates.append(f"{ancestor['callId']}#result.unwrap")
-        for field_path in fields_by_type.get(return_type, {}):
-            projected = projected_field_type(return_type, field_path, fields_by_type)
-            field_ref = f"{ancestor['callId']}#result.{field_path}"
-            add_named(field_path, projected, field_ref)
-            if types_compatible(projected, target_type):
-                candidates.append(field_ref)
     for earlier in reversed(calls[:call_index]):
-        if text(earlier.get("callId")) in ancestor_ids:
-            continue
         operation = operations[text(earlier.get("receiverOperationId"))]
         return_type = text(operation.get("returnType"))
+        result_ref = f"{earlier['callId']}#result"
         if return_type.casefold() != "void" and types_compatible(return_type, target_type):
-            candidates.append(f"{earlier['callId']}#result")
+            candidates.append(result_ref)
         elif types_compatible(optional_inner_type(return_type), target_type):
-            candidates.append(f"{earlier['callId']}#result.unwrap")
+            candidates.append(result_ref + ".unwrap")
         for field_path in fields_by_type.get(return_type, {}):
             projected = projected_field_type(return_type, field_path, fields_by_type)
-            field_ref = f"{earlier['callId']}#result.{field_path}"
+            field_ref = f"{result_ref}.{field_path}"
             add_named(field_path, projected, field_ref)
-            if field_path.casefold() == name.casefold() and types_compatible(projected, target_type):
+            if (
+                text(earlier.get("callId")) in ancestor_ids
+                or field_path.casefold() == name.casefold()
+            ) and types_compatible(projected, target_type):
                 candidates.append(field_ref)
     target_fields = fields_by_type.get(target_type, {})
     if not candidates and target_fields:
@@ -332,302 +323,194 @@ def _binding_candidates(
 
 
 def select_ambiguous_bindings(
-    group: ExecutionGroup,
-    ambiguous: dict[str, list[str]],
+    use_case: UseCase, ambiguous: dict[str, list[str]],
 ) -> dict[str, str]:
-    """복수의 타입 호환 source가 있는 parameter만 LLM 선택으로 해소한다.
-
-    Args:
-        group: 관측 metadata와 collaboration ID를 제공하는 실행 그룹이다.
-        ambiguous: ``callId#parameter``별 실제 유한 source 후보 목록이다.
-
-    Returns:
-        각 parameter 위치를 schema가 허용한 정확한 source 문자열에 연결한 mapping이다.
-
-    Raises:
-        ValueError: 후보 목록이 비어 동적 Literal schema를 만들 수 없는 경우다.
-
-    Notes:
-        후보가 0개면 상위 materialize가 실패하고, 1개면 코드가 직접 선택한다. 따라서 이
-        함수는 후보가 2개 이상인 field에 대해서만 호출되어 불필요한 LLM 판단을 만들지 않는다.
-    """
     fields: dict[str, tuple[Any, Any]] = {}
     choices: list[dict[str, Any]] = []
     locations: dict[str, str] = {}
     for position, (parameter, candidates) in enumerate(sorted(ambiguous.items()), start=1):
         field_name = f"choice{position}"
-        finite_values = tuple(dict.fromkeys(candidates))
-        if not finite_values:
-            raise ValueError(f"binding candidates are empty for {parameter}")
+        values = tuple(dict.fromkeys(candidates))
         fields[field_name] = (
-            Literal.__getitem__(finite_values), Field(description=f"Source for {parameter}"),
+            Literal.__getitem__(values), Field(description=f"Source for {parameter}"),
         )
-        choices.append({"choice": field_name, "parameter": parameter, "candidates": list(finite_values)})
+        choices.append({"choice": field_name, "parameter": parameter, "candidates": list(values)})
         locations[field_name] = parameter
-    # 각 응답 field의 Literal이 서로 다르다. 한 parameter의 유효 source를 다른 parameter에
-    # 복사하는 응답도 Pydantic 단계에서 거부된다.
-    selection_schema = _finite_schema(
+    schema = _finite_schema(
         "FiniteBindingChoices", __config__=ConfigDict(extra="forbid"), **fields,
     )
     parsed = parse_structured(
         [
             {"role": "system", "content": BINDING_PROMPT},
             {"role": "user", "content": json.dumps({
-                "collaborationId": group.id, "choices": choices,
+                "collaborationId": use_case.id, "choices": choices,
             }, ensure_ascii=False)},
         ],
-        selection_schema,
+        schema,
         reasoning_effort="low",
         max_completion_tokens=min(settings.design_class_collaboration_max_completion_tokens, 2048),
         operation="InteractionBindingSelection",
         metadata={
-            "collaborationGroup": group.id,
-            "executionSlice": group.id,
+            "useCaseId": use_case.id,
+            "executionSlice": use_case.id,
             "candidateCount": sum(len(choice["candidates"]) for choice in choices),
         },
     )
-    selected = selection_schema.model_validate(parsed).model_dump()
+    selected = schema.model_validate(parsed).model_dump()
     return {locations[field_name]: source_ref for field_name, source_ref in selected.items()}
 
 
-def _materialize(
+def materialize(
     index: ScenarioIndex,
-    model: dict[str, Any],
-    group: ExecutionGroup,
+    model: BCEModel,
+    use_case: UseCase,
     plan: CallPlanProposal,
-) -> dict[str, Any]:
-    """LLM call plan을 canonical 호출·binding이 포함된 collaboration으로 만든다.
+) -> Collaboration:
+    """flat multiple-root 계획을 canonical call·step·binding 협업으로 만든다."""
 
-    정상 예에서 두 번째 call의 ``parentCallIndex=1``은 첫 call의 canonical ID로 바뀐다.
-    실패 예에서 현재보다 뒤의 index, Boundary→Entity 직접 호출, 빈 source 후보는 즉시
-    ``ValueError``가 되며 임의 fallback call이나 literal을 만들지 않는다.
-    """
-    operations = _group_operations(model, group)
+    model_payload = model.model_dump(by_alias=True)
+    operations = _use_case_operations(index, model_payload, use_case)
+    groups = _groups(index, use_case)
+    roots, assignments = _root_assignments(plan, len(groups))
+    root_set = set(roots)
     calls: list[dict[str, Any]] = []
-    allowed = set(group.required_step_ids)
-    # 1. 응답 index를 안정적인 call ID와 step provenance로 투영한다.
     for position, proposed in enumerate(plan.calls, start=1):
         operation_id = text(proposed.receiver_operation_id)
-        if operation_id not in operations:
+        operation = operations.get(operation_id)
+        if operation is None:
             raise ValueError(f"unknown receiverOperationId: {operation_id}")
-        parent_index = proposed.parent_call_index
-        if position == 1 and parent_index is not None:
-            raise ValueError("the first call cannot have a parent")
-        if position > 1 and parent_index is None:
-            raise ValueError("every delegated call requires an earlier parent")
-        if parent_index is not None and parent_index >= position:
-            raise ValueError("parentCallIndex must reference an earlier call")
-        operation = operations[operation_id]
-        declared = {text(ref) for ref in operation.get("stepRefs") or []}
-        refs = [ref for ref in group.required_step_ids if ref in declared and ref in allowed]
+        group = groups[assignments[position]]
+        refs = [
+            ref for ref in group.required_step_ids
+            if ref in {text(value) for value in operation.get("stepRefs") or []}
+        ]
         if not refs:
-            raise ValueError("selected operation has no declared step in this group")
+            raise ValueError("selected operation has no declared step in its actor entry")
         calls.append({
-            "callId": canonical_call_id(group.id, position),
-            "parentCallId": canonical_call_id(group.id, parent_index) if parent_index else None,
+            "callId": canonical_call_id(use_case.id, position),
+            "parentCallId": (
+                canonical_call_id(use_case.id, proposed.parent_call_index)
+                if proposed.parent_call_index else None
+            ),
             "receiverOperationId": operation_id,
             "stepRefs": refs,
             "argumentBindings": [],
         })
-    # 2. binding 후보를 계산하기 전에 호출 방향 자체가 BCE 규칙을 지키는지 확인한다.
-    # 잘못된 트리를 값 후보 선택으로 덮으려 하면 provenance 오류가 연쇄적으로 늘어난다.
-    for call in calls[1:]:
-        parent = next(item for item in calls if item["callId"] == call["parentCallId"])
-        source = operations[parent["receiverOperationId"]]["stereotype"]
-        target = operations[call["receiverOperationId"]]["stereotype"]
-        if (source, target) in {
-            ("boundary", "boundary"), ("boundary", "entity"),
-            ("entity", "boundary"), ("entity", "control"),
-        }:
-            raise ValueError(f"BCE communication is invalid: {source} -> {target}")
-    # 3. 각 parameter의 source 후보를 이전 call과 ancestor 범위에서만 계산한다. 미래 call의
-    # return은 타입이 맞아도 인과적으로 사용할 수 없다.
+    control_roots: set[int] = set()
+    for position, call in enumerate(calls, start=1):
+        operation = operations[call["receiverOperationId"]]
+        stereotype = text(operation.get("stereotype"))
+        if position in root_set:
+            if stereotype != "boundary":
+                raise ValueError("actor entry must start at Boundary")
+        else:
+            parent = calls[(plan.calls[position - 1].parent_call_index or 1) - 1]
+            source = text(operations[parent["receiverOperationId"]].get("stereotype"))
+            if (
+                (source == "boundary" and stereotype != "control")
+                or (stereotype == "entity" and source != "control")
+                or source == "entity"
+            ):
+                raise ValueError(f"BCE communication is invalid: {source} -> {stereotype}")
+        if stereotype == "control":
+            control_roots.add(assignments[position])
+    if control_roots != set(range(len(groups))):
+        raise ValueError("each Boundary root must delegate to Control")
     ambiguous: dict[str, list[str]] = {}
     for call_index, call in enumerate(calls):
         operation = operations[call["receiverOperationId"]]
+        group = groups[assignments[call_index + 1]]
         for parameter in operation.get("parameters") or []:
             if not isinstance(parameter, dict):
                 raise TypeError("operation parameter must be an object")
-            candidates = _binding_candidates(model, index, group, calls, call_index, parameter, operations)
+            candidates = _binding_candidates(
+                model_payload, use_case, group.actor_step,
+                call_index + 1 in root_set, calls, call_index, parameter, operations,
+            )
             location = f"{call['callId']}#{text(parameter.get('name'))}"
             if not candidates:
                 raise ValueError(f"no finite source for {location}")
-            if len(candidates) > 1:
-                ambiguous[location] = candidates
-            else:
+            if len(candidates) == 1:
                 call["argumentBindings"].append({
                     "parameter": text(parameter.get("name")), "sourceRef": candidates[0],
                 })
-    # 4. 유일 후보는 코드가 이미 기록했고 복수 후보만 한 번의 저비용 LLM 호출로 선택한다.
-    selected = select_ambiguous_bindings(group, ambiguous) if ambiguous else {}
+            else:
+                ambiguous[location] = candidates
+    selected = select_ambiguous_bindings(use_case, ambiguous) if ambiguous else {}
     for call in calls:
         operation = operations[call["receiverOperationId"]]
-        existing = {text(binding.get("parameter")) for binding in call["argumentBindings"]}
+        existing = {text(item.get("parameter")) for item in call["argumentBindings"]}
         for parameter in operation.get("parameters") or []:
             name = text(parameter.get("name"))
             if name not in existing:
                 call["argumentBindings"].append({
                     "parameter": name, "sourceRef": selected[f"{call['callId']}#{name}"],
                 })
-    # 5. 모든 deterministic field를 합친 뒤 collaboration rule 전체를 통과해야 typed
-    # service 경계로 나갈 수 있다.
-    collaboration = {
-        "collaborationId": group.id,
-        "useCaseIds": list(group.trace_use_case_ids),
-        "entryActor": group.entry_actor,
+    trace_ids = list(dict.fromkeys(
+        [use_case.id, *(value for group in groups for value in group.trace_use_case_ids)]
+    ))
+    candidate = {
+        "collaborationId": use_case.id,
+        "useCaseIds": trace_ids,
+        "entryActor": use_case.primary_actor or None,
         "calls": calls,
     }
     report = run_checks(
-        COLLABORATION_CHECKS, collaboration, CollaborationContext(index, model, group),
+        COLLABORATION_CHECKS,
+        candidate,
+        CollaborationContext(index, model_payload, use_case),
     )
     if report.errors or report.findings:
         raise ValueError("; ".join([*report.errors, *_finding_text(report.findings)]))
-    return collaboration
+    return Collaboration.model_validate(candidate)
 
 
-def propose_call_plan(
+def _accepted_payload(
     index: ScenarioIndex,
     model: BCEModel,
-    group: ExecutionGroup,
-    *,
-    previous: CallPlanProposal | None = None,
-    finding: str = "",
-) -> CallPlanProposal:
-    """수락된 BCE 모델에서 한 실행 그룹의 유한 호출 계획을 제안한다.
-
-    Args:
-        index: 단계·include 범위와 값 원천을 제공하는 시나리오 인덱스다.
-        model: receiver operation이 모두 수락된 BCE skeleton이다.
-        group: 이번 계획이 정확히 커버할 execution group이다.
-        previous: 한정 repair가 참고할 이전 전체 계획이다.
-        finding: 이전 계획·materialize 실패를 설명하는 영어 런타임 메시지다.
-
-    Returns:
-        실제 operation ID와 부모 index만 포함한 ``CallPlanProposal``이다.
-    """
-    return _propose_call_plan(
-        index,
-        model.model_dump(by_alias=True),
-        group,
-        previous=previous,
-        finding=finding,
-    )
-
-
-def materialize(
-    index: ScenarioIndex,
-    model: BCEModel,
-    group: ExecutionGroup,
-    plan: CallPlanProposal,
-) -> Collaboration:
-    """호출 계획을 canonical ID·binding이 포함된 검증된 협업으로 구체화한다.
-
-    Args:
-        index: 단계와 provenance 원천의 기준이다.
-        model: operation과 구조 타입 catalog의 기준이다.
-        group: collaboration의 정확한 소유 실행 그룹이다.
-        plan: 유한 schema를 통과한 호출 계획이다.
-
-    Returns:
-        모든 collaboration rule을 통과한 저장 ``Collaboration``이다.
-    """
-    return Collaboration.model_validate(_materialize(
-        index, model.model_dump(by_alias=True), group, plan,
-    ))
-
-
-class _CollaborationUnitFailure(RuntimeError):
-    """한 execution group이 반복 후보로 정체됐음을 cache 밖으로 전달한다."""
-
-    def __init__(self, issue: str) -> None:
-        super().__init__(issue)
-        self.issue = issue
-
-
-def _accepted_collaboration_payload(
-    index: ScenarioIndex,
-    model: BCEModel,
-    group: ExecutionGroup,
-    directive: str = "",
+    use_case: UseCase,
+    directive: str,
 ) -> dict[str, Any]:
-    """한 execution group을 수락하거나 반복 실패를 cache 밖으로 보낸다."""
-
     ledger = RepairLedger()
-    input_digest = stable_digest(_group_payload(
-        index, model.model_dump(by_alias=True), group,
-    ))
     previous: CallPlanProposal | None = None
     finding = directive
     attempt = 0
     while True:
-        candidate: CallPlanProposal | None = None
+        # Provider/schema 예외는 semantic finding으로 바꾸지 않는다.
+        candidate = propose_call_plan(
+            index, model, use_case, previous=previous, finding=finding,
+        )
         try:
-            candidate = propose_call_plan(
-                index,
-                model,
-                group,
-                previous=previous,
-                finding=finding,
-            )
-            return materialize(index, model, group, candidate).model_dump(by_alias=True)
-        except Exception as error:
+            return materialize(index, model, use_case, candidate).model_dump(by_alias=True)
+        except ValueError as error:
             error_text = f"{type(error).__name__}: {error}"
-            candidate_digest = stable_digest(
-                candidate.model_dump(mode="json", by_alias=True)
-                if candidate is not None
-                else {"error": error_text}
-            )
-            finding_keys = (error_text,)
-            repeated = (
-                ledger.candidate_seen(
-                    input_digest=input_digest,
-                    candidate_digest=candidate_digest,
-                )
-                or ledger.failure_seen(
-                    input_digest=input_digest,
-                    finding_keys=finding_keys,
-                )
-            )
             ledger.record(RepairAttempt(
                 stage="design.class.collaboration",
-                target_ids=(group.id,),
+                target_ids=(use_case.id,),
                 strategy_key=f"full-call-plan-replacement-{attempt + 1}",
-                input_digest=input_digest,
-                candidate_digest=candidate_digest,
-                finding_keys_before=finding_keys,
-                finding_keys_after=finding_keys,
-                outcome="repeated_candidate" if repeated else "no_improvement",
+                input_digest=stable_digest(_use_case_payload(
+                    index, model.model_dump(by_alias=True), use_case,
+                )),
+                candidate_digest=stable_digest(candidate.model_dump(by_alias=True)),
+                finding_keys_before=(error_text,),
+                finding_keys_after=(error_text,),
+                outcome="no_improvement",
                 detail=error_text,
             ))
-            if repeated:
-                ledger.status = "STALLED"
-                ledger.stall_reason = (
-                    "The collaboration LLM repeated an already rejected call plan or failed state."
-                )
-                raise _CollaborationUnitFailure(
-                    "repair stalled on a repeated candidate: " + error_text
-                ) from error
             previous = candidate
             finding = (
-                f"{error_text}\n\n"
-                "Return a materially different full call plan. Do not repeat any rejected "
-                "strategy or candidate. Accumulated repair history:\n"
+                f"{error_text}\n\nReturn a different full plan. Repair history:\n"
                 + ledger.prompt_context()
             )
             attempt += 1
 
 
-def _collaboration_cache_key(
-    index: ScenarioIndex,
-    model: BCEModel,
-    group: ExecutionGroup,
-    directive: str,
+def _cache_key(
+    index: ScenarioIndex, model: BCEModel, use_case: UseCase, directive: str,
 ) -> str:
-    """수락된 skeleton과 한 execution group에 한정한 call-plan key다."""
-
     return accepted_unit_key(
-        "collaboration",
-        unit_slice=_group_payload(index, model.model_dump(by_alias=True), group),
+        "use-case-collaboration",
+        unit_slice=_use_case_payload(index, model.model_dump(by_alias=True), use_case),
         inventory=model.model_dump(by_alias=True),
         feedback=" ".join(directive.split()),
         prompt=CALL_PLAN_PROMPT,
@@ -639,17 +522,7 @@ def _collaboration_cache_key(
         reasoning_effort=call_plan_reasoning_effort(),
         max_completion_tokens=call_plan_max_completion_tokens(),
         extra={
-            "bindingPromptDigest": canonical_digest_key(
-                "easydep.class-diagram.binding-prompt", BINDING_PROMPT,
-            ),
-            "bindingSchemaDigest": canonical_digest_key(
-                "easydep.class-diagram.binding-schema-template",
-                {
-                    "version": 1,
-                    "extra": "forbid",
-                    "fieldType": "Literal[finite-source-candidates]",
-                },
-            ),
+            "bindingPrompt": BINDING_PROMPT,
             "bindingReasoningEffort": "low",
             "bindingMaxCompletionTokens": min(
                 settings.design_class_collaboration_max_completion_tokens, 2048,
@@ -658,93 +531,42 @@ def _collaboration_cache_key(
     )
 
 
-def _validate_accepted_collaboration(
-    payload: dict[str, Any],
+def process_use_case(
     index: ScenarioIndex,
     model: BCEModel,
-    group: ExecutionGroup,
-) -> Collaboration:
-    """cache hit도 typed collaboration과 기존 deterministic checks를 재실행한다."""
-
-    collaboration = Collaboration.model_validate(payload)
-    report = run_checks(
-        COLLABORATION_CHECKS,
-        collaboration.model_dump(by_alias=True),
-        CollaborationContext(index, model.model_dump(by_alias=True), group),
-    )
-    if report.errors or report.findings:
-        raise ValueError("cached collaboration is invalid: " + "; ".join(
-            [*report.errors, *_finding_text(report.findings)]
-        ))
-    return collaboration
-
-
-def process_group(
-    index: ScenarioIndex,
-    model: BCEModel,
-    group: ExecutionGroup,
+    use_case: UseCase,
     directive: str = "",
     *,
     cache: AcceptedUnitCache | None = None,
-) -> CollaborationResult:
-    """한 실행 그룹을 제안·materialize하고 이력 기반으로 국소 교체한다.
+) -> Collaboration:
+    """유스케이스 전체 call plan을 수락할 때까지 국소 교체한다."""
 
-    Args:
-        index: 실행 그룹의 단계와 추적 범위를 제공한다.
-        model: 호출 가능한 operation이 수락된 BCE skeleton이다.
-        group: 현재 worker가 독점하는 실행 그룹이다.
-        directive: collaboration 피드백 또는 상위 repair 지시다.
-        cache: 수락된 collaboration만 공유하는 선택적 process-local cache다.
-
-    Returns:
-        수락된 ``Collaboration`` 또는 반복 후보의 명시적 issue를 담은 결과다.
-
-    Notes:
-        예외를 전역으로 전파하지 않고 실패 결과로 바꾸는 이유는 형제 worker의 성공을
-        보존하고 service가 필요한 operation slice만 handoff repair할 수 있게 하기 위해서다.
-    """
-    try:
-        payload = _group_payload(index, model.model_dump(by_alias=True), group)
-        metadata = {
-            "executionSlice": group.id,
-            "candidateCount": len(payload["receiverOperations"]),
-        }
-        if cache is None:
-            record_cache_outcome(
-                None,
-                operation="InteractionCallPlan",
-                unit=group.id,
-                metadata=metadata,
-            )
-            accepted = _accepted_collaboration_payload(index, model, group, directive)
-        else:
-            result = cache.get_or_compute(
-                _collaboration_cache_key(index, model, group, directive),
-                lambda: _accepted_collaboration_payload(index, model, group, directive),
-            )
-            record_cache_outcome(
-                result,
-                operation="InteractionCallPlan",
-                unit=group.id,
-                metadata=metadata,
-            )
-            accepted = result.value
-        return CollaborationResult(
-            group.id,
-            _validate_accepted_collaboration(accepted, index, model, group),
+    if not _groups(index, use_case):
+        raise ValueError("use case has no actor entry")
+    if cache is None:
+        record_cache_outcome(None, operation="InteractionCallPlan", unit=use_case.id)
+        payload = _accepted_payload(index, model, use_case, directive)
+    else:
+        result = cache.get_or_compute(
+            _cache_key(index, model, use_case, directive),
+            lambda: _accepted_payload(index, model, use_case, directive),
         )
-    except _CollaborationUnitFailure as error:
-        return CollaborationResult(group.id, None, error.issue)
-    except Exception as error:
-        return CollaborationResult(group.id, None, f"{type(error).__name__}: {error}")
+        record_cache_outcome(result, operation="InteractionCallPlan", unit=use_case.id)
+        payload = result.value
+    accepted = Collaboration.model_validate(payload)
+    report = run_checks(
+        COLLABORATION_CHECKS,
+        accepted.model_dump(by_alias=True),
+        CollaborationContext(index, model.model_dump(by_alias=True), use_case),
+    )
+    if report.errors or report.findings:
+        raise ValueError("cached collaboration is invalid")
+    return accepted
 
-
-call_plan = propose_call_plan
 
 __all__ = [
-    "call_plan",
     "materialize",
-    "process_group",
+    "process_use_case",
     "propose_call_plan",
     "select_ambiguous_bindings",
 ]

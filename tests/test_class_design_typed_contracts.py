@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -35,6 +36,26 @@ def test_scenario_index_is_the_immutable_typed_boundary_for_raw_specs():
     assert isinstance(index.groups, tuple)
     assert index.step_ids == frozenset({"UC1:main:1", "UC1:main:2"})
     assert raw["use_case_specs"][0]["main_scenario"][0]["step_number"] == 1
+
+
+def test_e1_checkpoint_has_twelve_use_case_generation_units():
+    source = Path(
+        "artifacts/checkpoint-e2e/current/e1-aws/chain/stages/"
+        "03-use_cases-to-specifications/output"
+    )
+    index = build_scenario_index({
+        "use_cases": json.loads((source / "use_cases.json").read_text(encoding="utf-8")),
+        "use_case_specs": json.loads(
+            (source / "use_case_specs.json").read_text(encoding="utf-8")
+        ),
+        "relationships": {"includes": [], "extends": []},
+    })
+
+    assert len(index.use_cases) == 12
+    assert len(index.groups) == 14
+    assert [use_case.id for use_case in index.use_cases] == [
+        *(f"UC{number}" for number in range(1, 13)),
+    ]
 
 
 def test_scenario_index_rejects_duplicate_structured_use_case_specs():

@@ -102,13 +102,16 @@ def _collaboration_coverage(
     model: dict[str, Any], index: ScenarioIndex,
 ) -> list[Finding]:
     collaborations = _collaborations(model)
-    expected = {group.id for group in index.groups}
+    expected = {
+        use_case.id for use_case in index.use_cases
+        if any(group.use_case_id == use_case.id for group in index.groups)
+    }
     if set(collaborations) == expected:
         return []
     return [
         Finding(
             "class.model.collaboration-coverage",
-            f"collaborations must exactly cover execution groups; missing={sorted(expected - set(collaborations))}, extra={sorted(set(collaborations) - expected)}",
+            f"collaborations must exactly cover standalone use cases; missing={sorted(expected - set(collaborations))}, extra={sorted(set(collaborations) - expected)}",
             "Collaborations",
         )
     ]
@@ -117,7 +120,7 @@ def _collaboration_coverage(
 def _collaboration_rule(
     rule_id: str,
 ) -> CheckSpec[dict[str, Any], ScenarioIndex]:
-    """협업 검사를 완성 모델의 실행 그룹 순서로 투영한다.
+    """협업 검사를 완성 모델의 유스케이스 순서로 실행한다.
 
     협업 검증 모듈이 이 모듈의 타입 도우미를 사용하므로 import는 실행 시점에 한다.
     각 검사기는 자신의 ``rule_id``만 반환하며, 등록 순서가 보고서 순서가 된다.
@@ -136,17 +139,17 @@ def _collaboration_rule(
         owned_check = rules[rule_id]
         collaborations = _collaborations(model)
         findings: list[Finding] = []
-        for group in index.groups:
-            collaboration = collaborations.get(group.id)
+        for use_case in index.use_cases:
+            collaboration = collaborations.get(use_case.id)
             if collaboration:
-                context = CollaborationContext(index, model, group)
+                context = CollaborationContext(index, model, use_case)
                 findings.extend(owned_check(collaboration, context))
         return findings
 
     return CheckSpec(rule_id=rule_id, run=check)
 
 
-# schema와 execution group coverage를 확인한 뒤 실제 호출 참조와 binding만 다시 검사한다.
+# schema와 유스케이스 coverage를 확인한 뒤 실제 호출 참조와 binding만 다시 검사한다.
 CLASS_MODEL_CHECKS: tuple[CheckSpec[dict[str, Any], ScenarioIndex], ...] = (
     CheckSpec("class.model.schema", _model_schema),
     CheckSpec("class.model.collaboration-coverage", _collaboration_coverage),

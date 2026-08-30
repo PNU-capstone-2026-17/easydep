@@ -75,8 +75,9 @@ logger = logging.getLogger(__name__)
 _OPERATION_PROMPT = ("""
 Build the complete operation fragment for exactly one execution slice. Use only
 fixedClasses, fixedDataTypes, reserved contracts, and locally declared DataTypes.
-Cover every allowedStepRef and do not return calls, bindings, relationships,
-operation IDs, or classes outside the fixed inventory.
+Cover every allowedStepRef. Return only the fields required by the response
+schema; do not return bindings, relationships, operation IDs, or classes outside
+the fixed inventory.
 
 Follow the standard BCE roles: Boundary owns actor-facing input and output,
 Control coordinates the use-case flow, and Entity owns persistent state behavior.
@@ -93,6 +94,12 @@ the same class must not overload one method name with a different signature.
 Reuse fixed and reserved DataTypes by name. A new DataType must have resolved
 fields or enum values and must be referenced by an operation signature.
 """.strip() + "\n\n" + structure_type_contract())
+
+
+def operation_prompt() -> str:
+    """결합 생성기도 공유하는 operation 생성 규칙을 반환한다."""
+
+    return _OPERATION_PROMPT
 
 
 def operation_reasoning_effort() -> str:
@@ -401,6 +408,64 @@ def _canonicalize_step_ownership(
             class_sets.append({**class_set, "operations": operations})
     normalized["Classes"] = class_sets
     return normalized
+
+
+def operation_payload(
+    index: ScenarioIndex,
+    inventory: AcceptedInventory,
+    use_case: UseCase,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """한 실행 슬라이스의 결합 LLM 입력을 typed 경계에서 만든다."""
+
+    return _operation_payload(index, inventory.as_payload(), use_case, **kwargs)
+
+
+def normalize_operation_fragment(
+    proposal: OperationFragment | Mapping[str, Any],
+    index: ScenarioIndex,
+    inventory: AcceptedInventory,
+    use_case: UseCase,
+    *,
+    reserved_types: list[dict[str, Any]] | None = None,
+    allowed_step_ids: tuple[str, ...] = (),
+    execution_group_id: str = "",
+) -> AcceptedFragment:
+    """raw operation 제안을 기존 저장 표기로 정규화한다."""
+
+    inventory_payload = inventory.as_payload()
+    candidate = OperationFragment.model_validate(proposal).model_dump(by_alias=True)
+    fixed_names = {
+        class_name(item) for item in inventory_payload.get("Classes") or []
+        if isinstance(item, dict)
+    } | {
+        text(item.get("name")) for item in inventory_payload.get("DataTypes") or []
+        if isinstance(item, dict)
+    } | {
+        text(item.get("name")) for item in reserved_types or []
+        if isinstance(item, dict)
+    }
+    candidate["DataTypes"] = [
+        {
+            **item,
+            "fields": [
+                fields.normalize_java_field(f"{field['name']} : {field['type']}")
+                for field in item.get("fields") or []
+            ],
+        }
+        for item in candidate.get("DataTypes") or []
+        if text(item.get("name")) not in fixed_names
+    ]
+    candidate = _canonicalize_downstream_input_types(candidate, inventory_payload)
+    actor_entry_refs = {
+        group.actor_step for group in index.groups
+        if group.use_case_id == use_case.id and group.actor_step
+        and (not execution_group_id or group.id == execution_group_id)
+    }
+    candidate = _canonicalize_step_ownership(
+        candidate, inventory_payload, actor_entry_refs, allowed_step_ids,
+    )
+    return AcceptedFragment(use_case.id, candidate)
 
 
 def _propose_fragment(
@@ -728,6 +793,27 @@ def _validate_accepted_fragment(
     return normalized
 
 
+def validate_operation_fragment(
+    fragment: AcceptedFragment,
+    index: ScenarioIndex,
+    inventory: AcceptedInventory,
+    use_case: UseCase,
+    *,
+    reserved_types: list[dict[str, Any]] | None = None,
+    allowed_step_ids: tuple[str, ...] = (),
+    execution_group_id: str = "",
+) -> AcceptedFragment:
+    """정규화한 fragment에 최소 operation 검사를 다시 실행한다."""
+
+    payload = _validate_accepted_fragment(
+        fragment.as_payload(), index, inventory.as_payload(), use_case,
+        reserved_types=reserved_types,
+        allowed_step_ids=allowed_step_ids,
+        execution_group_id=execution_group_id,
+    )
+    return AcceptedFragment(use_case.id, payload)
+
+
 def _checked_fragment(
     index: ScenarioIndex,
     inventory: dict[str, Any],
@@ -909,7 +995,7 @@ def _compose(
                 target["use_case_ids"].append(use_case_id)
     result_classes = list(classes.values())
     relationships = deepcopy(inventory.get("Relationships") or [])
-    data_types = list(data_type_index.values())
+    data_types = [data_type_index[name] for name in sorted(data_type_index)]
     if final:
         # 화면을 단순화하기 위한 임의 삭제가 아니다. 실제 operation 계약에서 도달할 수
         # 없는 구조만 제거해 API/sequence 소비자가 쓸 수 없는 타입을 저장하지 않는다.
@@ -1385,6 +1471,21 @@ def compose_fragments(
     ))
 
 
+def compose_operation_units(
+    inventory: AcceptedInventory,
+    fragments: list[AcceptedFragment],
+    *,
+    final: bool = False,
+) -> BCEModel:
+    """execution group별 fragment를 입력 순서대로 조립한다."""
+
+    return BCEModel.model_validate(_compose(
+        inventory.as_payload(),
+        [(item.use_case_id, item.as_payload()) for item in fragments],
+        final=final,
+    ))
+
+
 def repair_failed_operations(
     index: ScenarioIndex,
     inventory: AcceptedInventory,
@@ -1426,15 +1527,17 @@ def repair_failed_operations(
     })
     return repaired
 
-
-
-
 __all__ = [
     "build_fragments",
     "checked_fragment",
     "compose_fragments",
+    "compose_operation_units",
     "emit_preview",
+    "normalize_operation_fragment",
+    "operation_payload",
+    "operation_prompt",
     "propose_fragment",
     "repair_failed_operations",
     "reserved_operations",
+    "validate_operation_fragment",
 ]

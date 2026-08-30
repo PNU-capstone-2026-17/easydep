@@ -156,7 +156,7 @@ def test_persisted_collaboration_defines_boundary_call_direction():
     state = {
         "extracted_bce_classes": {
             "Collaborations": [{
-                "collaborationId": "UC1:main:1",
+                "collaborationId": "UC1",
                 "useCaseIds": ["UC1"],
                 "calls": [],
             }],

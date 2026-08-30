@@ -211,7 +211,7 @@ def _project_collaboration(
     roots: list[str] = []
     seen: set[str] = set()
     # parent는 반드시 앞에 있어야 한다. 이 제약은 순환을 별도 탐색하지 않고도 차단하며
-    # roots가 정확히 하나인지 확인해 execution group 하나가 한 call tree임을 보장한다.
+    # root 배열 순서는 같은 actor가 다시 시스템을 호출하는 시간 순서다.
     for call in calls:
         call_id = text(call.get("callId"))
         parent_id = text(call.get("parentCallId"))
@@ -232,7 +232,7 @@ def _project_collaboration(
     # sequence diagram whose opt block is chronologically late.
     use_case = index.use_case(use_case_id)
     extension_anchors = {
-        text(extension.get("label")): int(extension.get("branch_step"))
+        text(extension.get("label")): extension["branch_step"]
         for extension in use_case.specification.get("extensions") or []
         if isinstance(extension, dict)
         and text(extension.get("label"))
@@ -256,8 +256,8 @@ def _project_collaboration(
         child_calls = [call_by_id[child_id] for child_id in child_ids]
         child_calls.sort(key=call_order)
         children[parent] = [text(call.get("callId")) for call in child_calls]
-    if len(roots) != 1:
-        raise ValueError("one execution collaboration requires one root call")
+    if not roots:
+        raise ValueError("a use-case collaboration requires at least one root call")
 
     participants: dict[str, dict[str, Any]] = {}
     class_aliases: dict[str, str] = {}
@@ -350,7 +350,8 @@ def _project_collaboration(
             "arguments": [],
         })
 
-    append(roots[0], actor_alias)
+    for root in roots:
+        append(root, actor_alias)
     return messages, list(participants.values())
 
 

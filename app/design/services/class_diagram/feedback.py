@@ -13,34 +13,24 @@ from __future__ import annotations
 
 import json
 from collections.abc import Set as AbstractSet
-from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import Any
 
 from app.config import settings
 from app.design.schemas.class_model import BCEModel
-from app.design.services.class_diagram import collaboration, inventory
+from app.design.services.class_diagram import inventory
 from app.design.services.class_diagram.cache import (
     AcceptedUnitCache,
     accepted_unit_key,
     configured_provider_identity,
     record_cache_outcome,
 )
-from app.design.services.class_diagram.models import (
-    AcceptedFragment,
-    AcceptedInventory,
-    CollaborationResult,
-)
+from app.design.services.class_diagram.models import AcceptedFragment, AcceptedInventory
 from app.design.services.class_diagram.proposals import (
     FeedbackScope,
     InventoryProposal,
 )
-from app.design.services.class_diagram.scenario import (
-    ExecutionGroup,
-    ScenarioIndex,
-    id_key,
-    text,
-)
+from app.design.services.class_diagram.scenario import ScenarioIndex, id_key, text
 from app.design.services.class_diagram.type_system import (
     field_name,
     field_type,
@@ -48,7 +38,7 @@ from app.design.services.class_diagram.type_system import (
 )
 from app.design.services.class_diagram.validation.inventory import INVENTORY_CHECKS
 from app.design.services.class_diagram.validation.model import class_name
-from app.design.services.common.structured import bind_context, parse_structured
+from app.design.services.common.structured import parse_structured
 from app.validation import run_checks
 
 
@@ -275,14 +265,13 @@ def _feedback_scope(
             if isinstance(item, dict):
                 local_type_owners.setdefault(text(item.get("name")), set()).add(use_case_id)
     use_case_ids = {use_case.id for use_case in index.use_cases}
-    group_ids = {group.id for group in index.groups}
+    collaboration_ids = {
+        use_case.id for use_case in index.use_cases
+        if any(group.use_case_id == use_case.id for group in index.groups)
+    }
     # 1. UI나 finding이 정확한 ID를 보냈다면 LLM을 호출하지 않는다. target 전체가 한
     # 소유 집합에 포함될 때만 확정해 부분적으로 잘못 해석된 ID를 조용히 버리지 않는다.
     if targets:
-        if targets <= group_ids:
-            return FeedbackScope(kind="collaboration", ids=sorted(targets, key=id_key))
-        if targets <= use_case_ids:
-            return FeedbackScope(kind="operation", ids=sorted(targets, key=id_key))
         if targets <= inventory_ids:
             return FeedbackScope(kind="inventory", ids=sorted(targets))
         if targets <= local_type_owners.keys():
@@ -318,7 +307,7 @@ def _feedback_scope(
                 "candidates": {
                     "inventory": sorted(inventory_ids),
                     "operation": sorted(use_case_ids, key=id_key),
-                    "collaboration": sorted(group_ids, key=id_key),
+                    "collaboration": sorted(collaboration_ids, key=id_key),
                 },
             }, ensure_ascii=False)},
         ],
@@ -331,7 +320,7 @@ def _feedback_scope(
     allowed = {
         "inventory": inventory_ids,
         "operation": use_case_ids,
-        "collaboration": group_ids,
+        "collaboration": collaboration_ids,
     }[scope.kind]
     if not set(scope.ids) <= allowed:
         raise ValueError("feedback scope selected an unknown target")
@@ -404,50 +393,6 @@ def _propose_inventory_revision(
             *report.errors, *inventory.finding_text(report.findings),
         ]))
     return candidate
-
-
-def _replace_selected_groups(
-    index: ScenarioIndex,
-    model: BCEModel,
-    groups: list[ExecutionGroup],
-    *,
-    feedback: str = "",
-    workers: int | None = None,
-    cache: AcceptedUnitCache | None = None,
-) -> list[CollaborationResult]:
-    """선택한 실행 그룹만 기존 collaboration 수리 규약으로 재계획한다.
-
-    ``workers``는 설정값과 그룹 수 중 작은 값으로 제한한다. 결과 목록은 병렬 완료 순서가
-    아니라 입력 그룹 순서이므로 직렬 실행과 JSON 순서가 같다.
-    """
-
-    workers = max(1, min(
-        workers if workers is not None else int(
-            getattr(settings, "design_class_behavior_parallelism", 2),
-        ),
-        len(groups) or 1,
-    ))
-    directive = f"Apply this user feedback to this call plan only: {feedback}" if feedback else ""
-    if workers == 1 or len(groups) <= 1:
-        return [
-            collaboration.process_group(index, model, group, directive, cache=cache)
-            for group in groups
-        ]
-    # 각 worker는 한 group만 소유한다. process_group의 한정 repair도 같은 group 안에서만
-    # 일어나므로 형제 결과를 공유하거나 덮어쓰지 않는다.
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [
-            executor.submit(
-                bind_context(collaboration.process_group),
-                index,
-                model,
-                group,
-                directive,
-                cache=cache,
-            )
-            for group in groups
-        ]
-        return [future.result() for future in futures]
 
 
 def inventory_from_model(model: BCEModel) -> AcceptedInventory:
@@ -596,37 +541,7 @@ def propose_inventory_revision(
     return accepted
 
 
-def replace_selected_groups(
-    index: ScenarioIndex,
-    model: BCEModel,
-    groups: list[ExecutionGroup],
-    *,
-    feedback: str = "",
-    workers: int | None = None,
-    cache: AcceptedUnitCache | None = None,
-) -> list[CollaborationResult]:
-    """선택한 실행 그룹의 협업만 재계획한다.
-
-    Args:
-        index: 실행 그룹과 provenance의 기준이다.
-        model: receiver operation이 수락된 BCE skeleton이다.
-        groups: 교체 권한을 가진 실행 그룹 목록이다.
-        feedback: collaboration 범위에서만 LLM에 전달할 피드백이다.
-        workers: 선택적 동시 실행 상한이다.
-
-    Returns:
-        입력 그룹 순서의 수락 collaboration 또는 명시적 실패 결과다.
-
-    Notes:
-        각 그룹의 이력 기반 repair와 반복 후보 종료 규약은 ``process_group``이 소유한다.
-    """
-    return _replace_selected_groups(
-        index, model, groups, feedback=feedback, workers=workers, cache=cache,
-    )
-
-
 revise_inventory = propose_inventory_revision
-run_selected_groups = replace_selected_groups
 
 __all__ = [
     "feedback_scope",
@@ -634,7 +549,5 @@ __all__ = [
     "inventory_as_proposal",
     "inventory_from_model",
     "propose_inventory_revision",
-    "replace_selected_groups",
     "revise_inventory",
-    "run_selected_groups",
 ]

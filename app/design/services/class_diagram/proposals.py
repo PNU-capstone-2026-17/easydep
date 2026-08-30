@@ -135,8 +135,25 @@ class ProposedCall(Proposal):
 
 
 class CallPlanProposal(Proposal):
-    """한 execution group의 순서 있는 최소 호출 계획이다."""
-    calls: list[ProposedCall] = Field(min_length=1)
+    """한 유스케이스의 여러 actor entry를 순서대로 담은 최소 호출 계획이다."""
+    calls: list[ProposedCall]
+
+
+class CombinedUnitCall(Proposal):
+    """한 결합 unit에서 operation을 짧은 owner.method 이름으로 고른 호출이다."""
+
+    operation_ref: str = Field(
+        alias="operationRef",
+        pattern=r"^[A-Z][A-Za-z0-9]*\.[A-Za-z_][A-Za-z0-9_]*$",
+    )
+    parent_call_index: int | None = Field(default=None, alias="parentCallIndex", ge=1)
+
+
+class CombinedUnitProposal(Proposal):
+    """operation 조각과 그 조각을 쓰는 호출 트리를 함께 받는 일시 계약이다."""
+
+    fragment: OperationFragment
+    calls: list[CombinedUnitCall]
 
 
 class FeedbackScope(Proposal):

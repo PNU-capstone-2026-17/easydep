@@ -11,10 +11,10 @@ def test_rtm_materializes_call_site_argument_provenance():
         if row["stage"] == "class_diagram"
     }
 
-    call_id = "UC1:main:1::call:2"
+    call_id = "UC1::call:2"
     assert rows[call_id]["sources"]["class_operation"] == [
         "OrderController::placeOrder(request:String)"
     ]
     assert rows[f"{call_id}#request"]["sources"]["value_source"] == [
-        "UC1:main:1::call:1#request"
+        "UC1::call:1#request"
     ]

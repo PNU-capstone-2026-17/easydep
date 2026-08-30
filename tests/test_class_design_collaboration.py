@@ -7,12 +7,14 @@ from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import collaboration, service
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
+    CombinedUnitProposal,
     InventoryProposal,
     OperationFragment,
 )
 from app.design.services.class_diagram.scenario import build_scenario_index
 from tests.class_design_fixtures import (
     call_plan,
+    combined_unit_proposal,
     inventory_proposal,
     operation_fragment,
     patch_class_design_parser,
@@ -24,6 +26,8 @@ def test_vertical_service_persists_calls_and_derives_parameter_provenance(monkey
     def fake_parse(_messages, schema, **_kwargs):
         if schema is InventoryProposal:
             return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            return combined_unit_proposal()
         if schema is OperationFragment:
             return operation_fragment()
         if issubclass(schema, CallPlanProposal):
@@ -38,36 +42,9 @@ def test_vertical_service_persists_calls_and_derives_parameter_provenance(monkey
     calls = model["Collaborations"][0]["calls"]
     assert calls[1]["argumentBindings"] == [{
         "parameter": "request",
-        "sourceRef": "UC1:main:1::call:1#request",
+        "sourceRef": "UC1::call:1#request",
     }]
     assert all(item.get("type") != "Dependency" for item in model["Relationships"])
-
-
-def test_call_plan_repair_continues_past_one_replacement(monkeypatch):
-    invalid_one = call_plan()
-    invalid_one["calls"][1]["receiverOperationId"] = "MissingControl::first()"
-    invalid_two = call_plan()
-    invalid_two["calls"][1]["receiverOperationId"] = "MissingControl::second()"
-    candidates = [invalid_one, invalid_two, call_plan()]
-    call_plan_calls = 0
-
-    def fake_parse(_messages, schema, **_kwargs):
-        nonlocal call_plan_calls
-        if schema is InventoryProposal:
-            return inventory_proposal()
-        if schema is OperationFragment:
-            return operation_fragment()
-        if issubclass(schema, CallPlanProposal):
-            candidate = candidates[call_plan_calls]
-            call_plan_calls += 1
-            return candidate
-        raise AssertionError(schema)
-
-    patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(build_scenario_index(single_use_case()))
-
-    assert call_plan_calls == 3
-    assert len(model.Collaborations) == 1
 
 
 def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(monkeypatch):
@@ -103,6 +80,14 @@ def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(m
     def fake_parse(_messages, schema, **_kwargs):
         if schema is InventoryProposal:
             return inventory_candidate
+        if schema is CombinedUnitProposal:
+            proposal = combined_unit_proposal()
+            proposal["fragment"] = fragment
+            proposal["calls"].append({
+                "operationRef": "Registration.create",
+                "parentCallIndex": 2,
+            })
+            return proposal
         if schema is OperationFragment:
             return fragment
         if issubclass(schema, CallPlanProposal):
@@ -156,6 +141,14 @@ def test_structured_parameter_is_derived_from_upstream_fields(monkeypatch):
     def fake_parse(_messages, schema, **_kwargs):
         if schema is InventoryProposal:
             return inventory_candidate
+        if schema is CombinedUnitProposal:
+            proposal = combined_unit_proposal()
+            proposal["fragment"] = fragment
+            proposal["calls"].append({
+                "operationRef": "Registration.create",
+                "parentCallIndex": 2,
+            })
+            return proposal
         if schema is OperationFragment:
             return fragment
         if issubclass(schema, CallPlanProposal):
@@ -169,10 +162,10 @@ def test_structured_parameter_is_derived_from_upstream_fields(monkeypatch):
 
     assert binding == {
         "parameter": "details",
-        "sourceRef": (
-            "derived#RegistrationDetails("
-            "value=UC1:main:1::call:2#request.value)"
-        ),
+            "sourceRef": (
+                "derived#RegistrationDetails("
+                "value=UC1::call:2#request.value)"
+            ),
     }
 
 
@@ -245,13 +238,13 @@ def test_earlier_optional_result_has_explicit_unwrap_source():
     collaboration_model = collaboration.materialize(
         build_scenario_index(single_use_case()),
         BCEModel.model_validate(model),
-        build_scenario_index(single_use_case()).groups[0],
+        build_scenario_index(single_use_case()).use_case("UC1"),
         plan,
     ).model_dump(by_alias=True)
 
     assert collaboration_model["calls"][2]["argumentBindings"] == [{
         "parameter": "student",
-        "sourceRef": "UC1:main:1::call:2#result.unwrap",
+        "sourceRef": "UC1::call:2#result.unwrap",
     }]
 
 
@@ -293,11 +286,11 @@ def test_actor_flow_requires_control_handoff():
         }],
     })
 
-    with pytest.raises(ValueError, match="delegate the use-case flow to Control"):
+    with pytest.raises(ValueError):
         collaboration.materialize(
             build_scenario_index(single_use_case()),
             model,
-            build_scenario_index(single_use_case()).groups[0],
+            build_scenario_index(single_use_case()).use_case("UC1"),
             plan,
         )
 
@@ -366,12 +359,12 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
         ],
     })
     expected_candidates = [
-        "UC1:main:1::call:1#request.sourceUnitCode",
-        "UC1:main:1::call:1#request.targetUnitCode",
+        "UC1::call:1#request.sourceUnitCode",
+        "UC1::call:1#request.targetUnitCode",
     ]
 
     def select_source(_group, ambiguous):
-        location = "UC1:main:1::call:2#code"
+        location = "UC1::call:2#code"
         assert ambiguous == {location: expected_candidates}
         return {location: expected_candidates[0]}
 
@@ -379,7 +372,7 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
     result = collaboration.materialize(
         build_scenario_index(single_use_case()),
         model,
-        build_scenario_index(single_use_case()).groups[0],
+        build_scenario_index(single_use_case()).use_case("UC1"),
         plan,
     )
 

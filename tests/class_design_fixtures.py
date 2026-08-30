@@ -72,6 +72,35 @@ def single_use_case() -> dict:
     }
 
 
+def multiple_entry_use_case() -> dict:
+    """한 유스케이스 안에서 같은 액터가 두 번 요청하는 공개 예시다."""
+
+    value = single_use_case()
+    value["use_case_specs"][0]["main_scenario"] = [
+        {
+            "step_number": 1,
+            "subject_ref": "Member",
+            "sentence": "Member submits a request.",
+        },
+        {
+            "step_number": 2,
+            "subject_ref": "System",
+            "sentence": "System returns the result.",
+        },
+        {
+            "step_number": 3,
+            "subject_ref": "Member",
+            "sentence": "Member asks for a receipt.",
+        },
+        {
+            "step_number": 4,
+            "subject_ref": "System",
+            "sentence": "System returns the receipt.",
+        },
+    ]
+    return value
+
+
 def inventory_proposal() -> dict:
     return {
         "items": [
@@ -135,17 +164,101 @@ def call_plan() -> dict:
     }
 
 
+def combined_unit_proposal() -> dict:
+    """최초 생성 호출이 반환하는 연산 조각과 짧은 호출 참조를 함께 만든다."""
+
+    return {
+        "fragment": operation_fragment(),
+        "calls": [
+            {
+                "operationRef": "RequestBoundary.submit",
+                "parentCallIndex": None,
+            },
+            {
+                "operationRef": "RequestControl.process",
+                "parentCallIndex": 1,
+            },
+        ],
+    }
+
+
+def multiple_root_combined_proposal() -> dict:
+    """두 actor 진입점과 앞선 결과를 잇는 한 유스케이스 제안이다."""
+
+    proposal = combined_unit_proposal()
+    proposal["fragment"]["DataTypes"].append({
+        "name": "ReceiptResult",
+        "kind": "valueObject",
+        "fields": [{"name": "receiptId", "type": "String"}],
+        "values": [],
+    })
+    boundary = proposal["fragment"]["Classes"][0]["operations"]
+    boundary[0]["returnType"] = "void"
+    boundary[0]["stepRefs"] = ["UC1:main:1"]
+    boundary.append({
+        "name": "requestReceipt",
+        "parameters": [],
+        "returnType": "ReceiptResult",
+        "stepRefs": ["UC1:main:3"],
+    })
+    control = proposal["fragment"]["Classes"][1]["operations"]
+    control[0]["stepRefs"] = ["UC1:main:2"]
+    control.append({
+        "name": "deliverReceipt",
+        "parameters": [{"name": "result", "type": "RequestResult"}],
+        "returnType": "ReceiptResult",
+        "stepRefs": ["UC1:main:4"],
+    })
+    proposal["calls"] = [
+        {"operationRef": "RequestBoundary.submit", "parentCallIndex": None},
+        {"operationRef": "RequestControl.process", "parentCallIndex": 1},
+        {"operationRef": "RequestBoundary.requestReceipt", "parentCallIndex": None},
+        {"operationRef": "RequestControl.deliverReceipt", "parentCallIndex": 3},
+    ]
+    return proposal
+
+
+def multiple_root_call_plan() -> dict:
+    """resume와 revise가 사용하는 두 root 저장 operation 참조다."""
+
+    return {
+        "calls": [
+            {
+                "receiverOperationId": "RequestBoundary::submit(request:RequestData)",
+                "parentCallIndex": None,
+            },
+            {
+                "receiverOperationId": "RequestControl::process(request:RequestData)",
+                "parentCallIndex": 1,
+            },
+            {
+                "receiverOperationId": "RequestBoundary::requestReceipt()",
+                "parentCallIndex": None,
+            },
+            {
+                "receiverOperationId": (
+                    "RequestControl::deliverReceipt(result:RequestResult)"
+                ),
+                "parentCallIndex": 3,
+            },
+        ],
+    }
+
+
 def valid_parse_response(_messages, schema, **_kwargs):
     """Return the standard synthetic response for a structured parser stub."""
 
     from app.design.services.class_diagram.proposals import (
         CallPlanProposal,
+        CombinedUnitProposal,
         InventoryProposal,
         OperationFragment,
     )
 
     if schema is InventoryProposal:
         return inventory_proposal()
+    if schema is CombinedUnitProposal:
+        return combined_unit_proposal()
     if schema is OperationFragment:
         return operation_fragment()
     if issubclass(schema, CallPlanProposal):
@@ -159,11 +272,12 @@ def patch_class_design_parser(monkeypatch, parser):
     from app.design.services.class_diagram import (
         collaboration,
         feedback,
+        generation,
         inventory,
         operations,
     )
 
-    for module in (collaboration, feedback, inventory, operations):
+    for module in (collaboration, feedback, generation, inventory, operations):
         monkeypatch.setattr(module, "parse_structured", parser)
 
 
