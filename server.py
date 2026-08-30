@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.artifacts_api import router as artifacts_router
 from app.db.session import init_db
+from app.design.services.common.plantuml import plantuml_renderer
 from app.implementation.application.jobs import worker as implementation_worker
 from app.implementation.interfaces.http import router as implementation_router
 from app.requirements.classifier import warmup_or_raise
@@ -43,30 +44,38 @@ async def lifespan(_app: FastAPI):
     # 시작 시점에 OpenAI SDK import가 가능한지 확인한다. 실제 LLM client 생성은 각 runtime이
     # 담당하므로 여기서는 환경을 바꾸거나 네트워크 요청을 보내지 않는다.
     _ = OpenAI
-    # Docker image와 dependency cache 준비는 별도 executor에서 수행한다. 준비가 오래 걸려도
-    # health check와 workspace command 처리를 막지 않기 위해 startup thread에서 기다리지 않는다.
-    if implementation_worker.start_warmup():
-        print("[startup] 구현 런타임 워밍업 시작")
-
-    # workspace_service.startup()은 저장된 command를 읽으므로 필요한 table을 먼저 만든다.
-    init_db()
-    interrupted = workspace_service.startup()
-
-    # BERT classifier는 첫 요구사항 요청의 지연을 줄이기 위해 미리 읽는다. 모델을 사용할 수
-    # 없는 환경에서는 warmup_or_raise()의 설정 정책에 따라 건너뛸 수 있다.
-    loaded = warmup_or_raise()
+    # 설계 이미지를 요청할 때마다 Docker/JVM을 새로 띄우지 않도록 PlantUML PicoWeb을 서버와
+    # 함께 시작한다. JAR가 없는 일부 단위 테스트 환경만 기존 단발 Docker 실행으로 물러난다.
+    renderer_started = plantuml_renderer.start()
     print(
-        "[startup] BERT classifier preloaded: "
-        f"{'yes' if loaded else 'skipped or unavailable'}; "
-        f"interrupted workspace commands: {interrupted}"
+        "[startup] PlantUML persistent renderer: "
+        f"{'ready' if renderer_started else 'JAR unavailable; compatibility fallback'}"
     )
     try:
+        # Docker image와 dependency cache 준비는 별도 executor에서 수행한다. 준비가 오래 걸려도
+        # health check와 workspace command 처리를 막지 않기 위해 startup thread에서 기다리지 않는다.
+        if implementation_worker.start_warmup():
+            print("[startup] 구현 런타임 워밍업 시작")
+
+        # workspace_service.startup()은 저장된 command를 읽으므로 필요한 table을 먼저 만든다.
+        init_db()
+        interrupted = workspace_service.startup()
+
+        # BERT classifier는 첫 요구사항 요청의 지연을 줄이기 위해 미리 읽는다. 모델을 사용할 수
+        # 없는 환경에서는 warmup_or_raise()의 설정 정책에 따라 건너뛸 수 있다.
+        loaded = warmup_or_raise()
+        print(
+            "[startup] BERT classifier preloaded: "
+            f"{'yes' if loaded else 'skipped or unavailable'}; "
+            f"interrupted workspace commands: {interrupted}"
+        )
         yield
     finally:
         # 새 command 접수를 중지한 뒤 구현 worker를 종료한다. 역순으로 정리해야 실행 중인
         # 구현 결과를 workspace가 이미 닫힌 저장소에 기록하려는 경쟁 상태를 줄일 수 있다.
         workspace_service.shutdown()
         implementation_worker.shutdown()
+        plantuml_renderer.stop()
 
 
 app = FastAPI(title="EasyDep Agents", lifespan=lifespan)

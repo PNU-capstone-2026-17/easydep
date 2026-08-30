@@ -27,6 +27,7 @@ from app.design.service import (
     rewind_design_session,
     start_design_session,
 )
+from app.design.services.common.plantuml import render_plantuml
 from app.design.services.common.structured import capture_llm_timings
 from app.implementation.application.jobs import worker as implementation_worker
 from app.repositories import artifact_repository
@@ -1155,6 +1156,27 @@ class WorkspaceService:
                 completed=int(fields.get("completed") or 0),
                 total=int(fields.get("total") or 0),
             )
+            try:
+                # preview가 나온 시점에 계속 실행 중인 renderer로 SVG를 준비한다. 브라우저가
+                # 처음 그림을 열 때까지 JVM 기동과 렌더링을 미루지 않으며, 같은 내용은 공통
+                # SHA cache가 재사용한다.
+                image = render_plantuml(snapshot.puml, "svg")
+                if image:
+                    live_previews.cache_svg(
+                        app_id,
+                        command_id,
+                        snapshot.stage,
+                        snapshot.revision,
+                        image,
+                    )
+            except Exception as error:
+                # 중간 preview 표시 실패가 클래스 모델 생성 자체를 중단해서는 안 된다. 최종
+                # 산출물 저장 때 다시 렌더링하며, 실패 유형만 timing event로 남긴다.
+                log_design_timing(
+                    "plantuml.preview_warmup.failed",
+                    error_type=type(error).__name__,
+                    preview_revision=snapshot.revision,
+                )
             record(
                 "running",
                 str(fields.get("detail") or "Updating the class diagram"),

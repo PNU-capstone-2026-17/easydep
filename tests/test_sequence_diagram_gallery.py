@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
+from app.artifact_images import artifact_image_cache, warm_artifact_images
 from app.artifacts_api import (
     get_sequence_diagram_image,
     get_stage_image,
@@ -16,6 +17,14 @@ from app.artifacts_api import (
 from app.design.service import resume_design_session, retry_design_session
 
 APP_ID = "00000000-0000-0000-0000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def clear_artifact_image_cache():
+    """각 테스트가 이전 테스트에서 준비한 이미지의 영향을 받지 않게 한다."""
+    artifact_image_cache.clear()
+    yield
+    artifact_image_cache.clear()
 
 
 def _diagram(use_case_id: str, use_case_name: str) -> dict:
@@ -72,19 +81,26 @@ def test_sequence_diagram_list_exposes_each_use_case() -> None:
     }
 
 
-def test_sequence_diagram_image_renders_only_requested_use_case() -> None:
-    with (
-        patch("app.artifacts_api.require_app", return_value=_state()),
-        patch("app.artifacts_api.render_plantuml", return_value=b"<svg />") as render,
+def test_sequence_diagram_image_serves_the_pre_rendered_use_case() -> None:
+    def render(puml: str, image_format: str) -> bytes:
+        use_case = "UC-02" if "UC-02" in puml else "UC-01"
+        return f"{image_format}:{use_case}".encode()
+
+    with patch("app.artifact_images.render_plantuml", side_effect=render) as renderer:
+        warm_artifact_images(APP_ID, "sequence_diagram", _state())
+
+    # cache hit에서는 앱 전체 상태를 다시 읽거나 renderer를 다시 호출하면 안 된다.
+    with patch(
+        "app.artifacts_api.require_app",
+        side_effect=AssertionError("cache hit loaded the database"),
     ):
         response = get_sequence_diagram_image(APP_ID, "UC-02", "svg")
 
-    plantuml = render.call_args.args[0]
-    assert "@startuml UC_02" in plantuml
-    assert "title UC-02 - 주문 조회" in plantuml
-    assert "UC-01" not in plantuml
-    assert render.call_args.args[1] == "svg"
-    assert response.body == b"<svg />"
+    assert any(
+        "title UC-02 - 주문 조회" in call.args[0] and call.args[1] == "svg"
+        for call in renderer.call_args_list
+    )
+    assert response.body == b"svg:UC-02"
     assert response.media_type == "image/svg+xml"
     assert response.headers["cache-control"] == "no-store, max-age=0"
 
@@ -92,6 +108,7 @@ def test_sequence_diagram_image_renders_only_requested_use_case() -> None:
 def test_sequence_diagram_image_returns_404_for_unknown_use_case() -> None:
     with (
         patch("app.artifacts_api.require_app", return_value=_state()),
+        patch("app.artifact_images.render_plantuml", return_value=b"image"),
         pytest.raises(HTTPException) as error,
     ):
         get_sequence_diagram_image(APP_ID, "UC-99", "png")
@@ -113,17 +130,20 @@ def test_sequence_diagram_draft_remains_visible_while_findings_block_advance() -
     assert response["artifact_status"]["sequence_diagram"] == "needs_review"
     assert response["validation"]["sequence_diagram"]["findings"]
 
-    with (
-        patch("app.artifacts_api.require_app", return_value=state),
-        patch("app.artifacts_api.render_plantuml", return_value=b"draft") as render,
+    with patch("app.artifact_images.render_plantuml", return_value=b"draft") as render:
+        warm_artifact_images(APP_ID, "sequence_diagram", state)
+
+    with patch(
+        "app.artifacts_api.require_app",
+        side_effect=AssertionError("cache hit loaded the database"),
     ):
         image = get_sequence_diagram_image(APP_ID, "UC-01", "png")
     assert image.body == b"draft"
     assert render.called
 
-    with (
-        patch("app.artifacts_api.require_app", return_value=state),
-        patch("app.artifacts_api.render_plantuml", return_value=b"draft"),
+    with patch(
+        "app.artifacts_api.require_app",
+        side_effect=AssertionError("cache hit loaded the database"),
     ):
         image = get_stage_image(APP_ID, "sequence_diagram", "png")
     assert image.body == b"draft"

@@ -27,16 +27,22 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, Response
 
+from app.artifact_images import (
+    MAIN_VIEW,
+    PROVISIONING_VIEW,
+    RUNTIME_VIEW,
+    artifact_image_cache,
+    sequence_diagrams_from_state,
+    sequence_view,
+    warm_artifact_images,
+)
 from app.db.models import FORMAT_JSON
 from app.design.schemas.architecture_state import ArchitectureState
-from app.design.services.common.plantuml import render_plantuml
-from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import STAGE_ARTIFACTS, AppNotFound
 
-# Diagram image endpoints render the current persisted model on every request.
-# Their URL does not contain an artifact version, so caching an image can show a
-# pre-feedback diagram even after the model and PlantUML source were revised.
+# URL에 version이 없으므로 브라우저가 그림을 영구 보관하면 피드백 전 이미지가 남을 수 있다.
+# process 안에서는 산출물 저장 직후 같은 route의 cache를 교체하므로 HTTP 응답만 no-store로 둔다.
 _NO_STORE_IMAGE_HEADERS = {"Cache-Control": "no-store, max-age=0"}
 
 router = APIRouter(tags=["apps"])
@@ -113,37 +119,6 @@ def require_app_exists(app_id: str) -> None:
 def validate_stage_name(stage: str) -> None:
     if stage not in STAGES:
         raise HTTPException(status_code=404, detail=f"Unknown stage: {stage}")
-
-
-def sequence_diagrams_from_state(state: ArchitectureState) -> list[dict[str, Any]]:
-    """저장 모델에서 프론트엔드가 개별 렌더링할 시퀀스 목록을 가져온다."""
-    model = state.get("sequence_diagram_model") or {}
-    if not isinstance(model, dict):
-        return []
-    diagrams = model.get("Diagrams") if isinstance(model, dict) else None
-    if isinstance(diagrams, list):
-        normalized: list[dict[str, Any]] = []
-        for index, diagram in enumerate(diagrams):
-            if not isinstance(diagram, dict):
-                continue
-            use_case_id = str(diagram.get("use_case_id") or f"sequence-{index + 1}")
-            normalized.append(
-                {
-                    **diagram,
-                    "use_case_id": use_case_id,
-                    "use_case_name": str(diagram.get("use_case_name") or use_case_id),
-                }
-            )
-        return normalized
-    if model.get("Participants") or model.get("Messages"):
-        return [
-            {
-                "use_case_id": "sequence",
-                "use_case_name": "Sequence Diagram",
-                **model,
-            }
-        ]
-    return []
 
 
 def to_web_response(result: Mapping[str, Any]) -> dict[str, Any]:
@@ -232,10 +207,11 @@ def get_stage_version(app_id: str, stage: str, version_no: int) -> JSONResponse:
 
 @router.get("/api/apps/{app_id}/stages/{stage}/image.{extension}")
 def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
-    """저장된 PlantUML 을 그 자리에서 이미지로 렌더해 돌려준다.
+    """산출물 저장 직후 미리 렌더링한 이미지를 돌려준다.
 
-    이미지는 저장하지 않는다 — MySQL 의 산출물 텍스트에서 매번 다시 만들어 흘려보낸다.
-    그래서 렌더 결과가 낡거나 디렉터리가 충돌할 자리가 없다.
+    정상 흐름에서는 메모리 cache만 읽는다. 서버 재시작 뒤 처음 보는 기존 산출물처럼 cache가
+    비어 있을 때만 현재 stage를 복원해 cache를 다시 채우며, 그 다음 요청부터는 DB와 renderer를
+    거치지 않는다.
     """
     validate_app_id(app_id)
     validate_stage_name(stage)
@@ -244,21 +220,16 @@ def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
     if stage not in PUML_FIELDS:
         raise HTTPException(status_code=404, detail="Stage has no diagram image.")
 
-    state = require_app(app_id)
-    if stage == "sequence_diagram":
-        # The stored sequence artifact is a multi-use-case model. Rendering
-        # that model's concatenated PlantUML as one image produces an invalid
-        # preview; the gallery endpoint renders each use case separately.
-        diagrams = sequence_diagrams_from_state(state)
-        puml_text = generate_sequence_from_model(diagrams[0]) if diagrams else ""
-    else:
-        puml_text = state.get(PUML_FIELDS[stage]["code"], "")
-    if not puml_text:
-        raise HTTPException(status_code=404, detail="Artifact has not been generated.")
-
-    image = render_plantuml(puml_text, extension)
+    image = artifact_image_cache.get(app_id, stage, MAIN_VIEW, extension)
+    if image is None:
+        state = require_app(app_id)
+        try:
+            warm_artifact_images(app_id, stage, state)
+        except Exception as error:
+            raise HTTPException(status_code=500, detail="Diagram rendering failed.") from error
+        image = artifact_image_cache.get(app_id, stage, MAIN_VIEW, extension)
     if not image:
-        raise HTTPException(status_code=500, detail="Diagram rendering failed.")
+        raise HTTPException(status_code=404, detail="Artifact has not been generated.")
 
     return Response(
         content=image,
@@ -269,23 +240,31 @@ def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
 
 @router.get("/api/apps/{app_id}/stages/deployment_diagram/views/{view}/image.{extension}")
 def get_deployment_diagram_view_image(app_id: str, view: str, extension: str) -> Response:
-    """Render one explicit deployment-diagram semantic view."""
+    """미리 렌더링한 deployment runtime 또는 provisioning 그림을 반환한다."""
     validate_app_id(app_id)
     if extension not in ("png", "svg"):
         raise HTTPException(status_code=404, detail="Unsupported image format.")
-    fields = {
-        "runtime": "deployment_diagram_puml",
-        "provisioning": "deployment_diagram_provisioning_puml",
+    views = {
+        "runtime": RUNTIME_VIEW,
+        "provisioning": PROVISIONING_VIEW,
     }
-    field = fields.get(view)
-    if field is None:
+    cache_view = views.get(view)
+    if cache_view is None:
         raise HTTPException(status_code=404, detail="Unknown deployment diagram view.")
-    puml_text = str(require_app(app_id).get(field) or "")
-    if not puml_text:
-        raise HTTPException(status_code=404, detail="Artifact has not been generated.")
-    image = render_plantuml(puml_text, extension)
+    image = artifact_image_cache.get(
+        app_id, "deployment_diagram", cache_view, extension,
+    )
+    if image is None:
+        state = require_app(app_id)
+        try:
+            warm_artifact_images(app_id, "deployment_diagram", state)
+        except Exception as error:
+            raise HTTPException(status_code=500, detail="Diagram rendering failed.") from error
+        image = artifact_image_cache.get(
+            app_id, "deployment_diagram", cache_view, extension,
+        )
     if not image:
-        raise HTTPException(status_code=500, detail="Diagram rendering failed.")
+        raise HTTPException(status_code=404, detail="Artifact has not been generated.")
     return Response(
         content=image,
         media_type="image/svg+xml" if extension == "svg" else "image/png",
@@ -313,24 +292,25 @@ def list_sequence_diagrams(app_id: str) -> JSONResponse:
 
 @router.get("/api/apps/{app_id}/stages/sequence_diagram/diagrams/{use_case_id}/image.{extension}")
 def get_sequence_diagram_image(app_id: str, use_case_id: str, extension: str) -> Response:
-    """선택한 유스케이스의 시퀀스 다이어그램 하나만 이미지로 렌더링한다."""
+    """선택한 유스케이스에 대해 미리 렌더링한 시퀀스 이미지를 반환한다."""
     validate_app_id(app_id)
     if extension not in ("png", "svg"):
         raise HTTPException(status_code=404, detail="Unsupported image format.")
-    state = require_app(app_id)
-    diagram = next(
-        (
-            item
-            for item in sequence_diagrams_from_state(state)
-            if str(item.get("use_case_id") or "") == use_case_id
-        ),
-        None,
+    cache_view = sequence_view(use_case_id)
+    image = artifact_image_cache.get(
+        app_id, "sequence_diagram", cache_view, extension,
     )
-    if diagram is None:
-        raise HTTPException(status_code=404, detail="Sequence diagram not found.")
-    image = render_plantuml(generate_sequence_from_model(diagram), extension)
+    if image is None:
+        state = require_app(app_id)
+        try:
+            warm_artifact_images(app_id, "sequence_diagram", state)
+        except Exception as error:
+            raise HTTPException(status_code=500, detail="Diagram rendering failed.") from error
+        image = artifact_image_cache.get(
+            app_id, "sequence_diagram", cache_view, extension,
+        )
     if not image:
-        raise HTTPException(status_code=500, detail="Diagram rendering failed.")
+        raise HTTPException(status_code=404, detail="Sequence diagram not found.")
     return Response(
         content=image,
         media_type="image/svg+xml" if extension == "svg" else "image/png",

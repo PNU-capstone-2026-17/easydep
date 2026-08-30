@@ -1,3 +1,5 @@
+FROM plantuml/plantuml@sha256:47870c1f76cfb3747bc7090bfe83013a4e3105b5a0bb1515e2baf5d3e2b3ee9d AS plantuml-runtime
+
 FROM eclipse-temurin:21-jdk-jammy AS jdk
 
 FROM node:22-alpine AS frontend-build
@@ -27,8 +29,14 @@ ENV GRADLE_USER_HOME=/app/.gradle-cache
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs npm curl \
+    && apt-get install -y --no-install-recommends \
+        nodejs npm curl graphviz fonts-dejavu-core fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
+
+# API process와 수명이 같은 PicoWeb renderer를 띄운다. 이전처럼 이미지 요청마다 Docker
+# container를 새로 만들지 않으며, 위의 Java와 Graphviz/font package가 이 JAR를 실행한다.
+COPY --from=plantuml-runtime /opt/plantuml.jar /opt/plantuml/plantuml.jar
+ENV PLANTUML_JAR=/opt/plantuml/plantuml.jar
 
 # 의존성 먼저 설치해 레이어 캐시 활용 (torch CPU 휠 포함)
 COPY requirements.txt .

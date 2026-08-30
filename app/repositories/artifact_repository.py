@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.artifact_images import warm_artifact_images
 from app.db.models import (
     FORMAT_JSON,
     FORMAT_PUML,
@@ -54,6 +56,8 @@ from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.projection import normalize_sequence_model
 from app.design.validation import rehydrated_check_state
+
+logger = logging.getLogger(__name__)
 
 
 class AppNotFound(Exception):
@@ -326,17 +330,30 @@ def save_stage(
     state: ArchitectureState,
     origin: str = ORIGIN_GENERATED,
 ) -> int | None:
-    """stage 결과를 새 산출물 버전으로 저장한다.
+    """stage 결과를 새 산출물 버전으로 저장하고 표시용 이미지를 미리 만든다.
 
     저장할 내용이 있으면 새 version ID를 반환한다. stage가 비어 있으면 버전을 만들지
-    않고 ``None``을 반환하지만, 앱의 현재 stage 표시는 요청받은 값으로 갱신한다.
+    않고 ``None``을 반환하지만, 앱의 현재 stage 표시는 요청받은 값으로 갱신한다. DB commit
+    뒤에 PlantUML을 렌더링하므로 느린 이미지 생성 중 transaction을 붙잡지 않는다.
     """
     with session_scope() as session:
         app = _require_app(session, app_id)
         version_id = _write_version(session, app_id, stage, state, origin)
 
         app.current_stage = stage
-        return version_id
+
+    if version_id is not None:
+        try:
+            warm_artifact_images(app_id, stage, state)
+        except Exception:
+            # 그림 renderer가 잠시 실패해도 기준 데이터인 typed model 저장까지 취소하지 않는다.
+            # 이미지 API의 cache-miss 경로가 같은 stage만 다시 준비할 수 있도록 원인을 남긴다.
+            logger.exception(
+                "PlantUML image warmup failed after saving app=%s stage=%s",
+                app_id,
+                stage,
+            )
+    return version_id
 
 
 def list_versions(app_id: str, stage: str) -> list[dict[str, Any]]:

@@ -759,6 +759,10 @@ def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -
     events = []
     live_previews.clear()
     monkeypatch.setattr(
+        "app.workspace.service.render_plantuml",
+        lambda _puml, _image_format: b"<svg />",
+    )
+    monkeypatch.setattr(
         repository,
         "append_event",
         lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
@@ -794,6 +798,7 @@ def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -
     assert preview is not None
     assert preview.revision == 2
     assert preview.unit == "UC1"
+    assert preview.image_svg == b"<svg />"
     preview_events = [
         event for event in events
         if event["metadata"].get("progress_event") == "classDiagramPreviewUpdated"
