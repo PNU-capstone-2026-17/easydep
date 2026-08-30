@@ -10,6 +10,8 @@ LLM을 부르는 스테이지 함수는 전부 대체한다 — 그래프의 흐
 """
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
@@ -193,6 +195,13 @@ def stub_llm(monkeypatch):
 
         return call
 
+    sequence = SequenceCollection.model_validate(_SEQUENCE).model_copy(
+        update={
+            "class_diagram_hash": hashlib.sha256(
+                sg.generate_plantuml_from_bce_json(_BCE).encode("utf-8")
+            ).hexdigest()
+        }
+    )
     for name, stage, mode, model in (
         (
             "generate_class_model",
@@ -210,7 +219,7 @@ def stub_llm(monkeypatch):
             "project_sequence_model",
             "sequence_diagram",
             "gen",
-            SequenceCollection.model_validate(_SEQUENCE),
+            sequence,
         ),
         ("extract_api_spec_model", "api_spec", "gen", _API),
         ("revise_api_spec_model", "api_spec", "fb", _API),

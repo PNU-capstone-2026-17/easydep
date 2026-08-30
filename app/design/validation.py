@@ -27,7 +27,7 @@ def validate_class_model(model: dict[str, Any], state: dict[str, Any]) -> Valida
 
 
 def validate_sequence_model(model: dict[str, Any], state: dict[str, Any]) -> ValidationReport:
-    """시퀀스 모델의 전체 규칙을 typed 보고서로 반환한다."""
+    """결정론적 시퀀스 투영의 저장·참조·버전 검사를 반환한다."""
     return _validate_sequence_model(model or {}, state or {})
 
 
@@ -79,7 +79,7 @@ def design_readiness_report(
         model = state.get(model_key)
         if not isinstance(model, dict) or not model:
             continue
-        checked = check(model, state)
+        checked = check(model, dict(state))
         validation_status = checked.status
         # ValidationReport stores the shared base finding. Stage validators add
         # presentation-specific ``as_issue`` subclasses, and a sequence finding is

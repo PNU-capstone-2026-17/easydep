@@ -1,7 +1,7 @@
 """API 제안과 승인 endpoint가 공유하는 타입 계약이다.
 
-LLM은 OpenAPI 대신 의도적으로 얕은 이 모델만 제안한다. 같은 Pydantic 계약을 제안
-경계와 코드 기반 정규화 뒤에 사용하며, 렌더된 OpenAPI가 아니라 이 모델을 수정 기준으로 삼는다.
+LLM은 작은 proposal만 답하고, 코드는 실행 연결이 추가된 저장 모델을 만든다.
+렌더된 OpenAPI가 아니라 이 두 Pydantic 모델을 생성과 수정의 기준으로 삼는다.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class ApiSpecRecord(BaseModel):
-    """기존 제안 schema의 Pydantic extra 수용 정책을 유지하는 공통 기반이다."""
+    """API proposal과 저장 모델이 공유하는 Pydantic 기반이다."""
 
 
 class ApiField(ApiSpecRecord):
@@ -24,6 +24,13 @@ class ApiResponse(ApiSpecRecord):
     description: str = Field(default="")
     schema_name: str = Field(default="")
     is_array: bool = Field(default=False)
+
+
+class ApiResponseProposal(ApiSpecRecord):
+    """LLM이 정하는 HTTP 상태다. 응답 데이터 타입은 코드가 채운다."""
+
+    status: int = Field(default=200)
+    description: str = Field(default="")
 
 
 class ApiControlArgument(ApiSpecRecord):
@@ -49,7 +56,39 @@ class ApiControlBinding(ApiSpecRecord):
     outcomes: list[ApiControlOutcome] = Field(default_factory=list)
 
 
+class ApiEndpointProposal(ApiSpecRecord):
+    """LLM이 고르는 HTTP 표현이다. 실행 연결은 포함하지 않는다."""
+
+    interaction_id: str = Field(min_length=1)
+    path: str = Field(default="/")
+    method: str = Field(default="get")
+    summary: str = Field(default="")
+    operation_id: str = Field(default="")
+    path_params: list[ApiField] = Field(default_factory=list)
+    query_params: list[ApiField] = Field(default_factory=list)
+    request_schema: str = Field(default="")
+    responses: list[ApiResponseProposal] = Field(default_factory=list)
+
+
+class ApiSchemaProposal(ApiSpecRecord):
+    """LLM이 제안하는 HTTP 요청 body 스키마다."""
+
+    name: str
+    description: str = Field(default="")
+    fields: list[ApiField] = Field(default_factory=list)
+
+
+class ApiSpecProposal(ApiSpecRecord):
+    """Control 연결과 추적 필드를 제외한 작은 LLM 응답 계약이다."""
+
+    title: str = Field(default="API")
+    version: str = Field(default="1.0.0")
+    Endpoints: list[ApiEndpointProposal] = Field(default_factory=list)
+    Schemas: list[ApiSchemaProposal] = Field(default_factory=list)
+
+
 class ApiEndpoint(ApiSpecRecord):
+    interaction_id: str = Field(default="")
     path: str = Field(default="/")
     method: str = Field(default="get")
     summary: str = Field(default="")

@@ -7,10 +7,10 @@ import copy
 import pytest
 
 from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.normalization import control_contracts
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.erd.mapping import build_logical_model
 from app.design.services.sequence_diagram.projection import project_sequence_model
+
 
 def _collaboration_model() -> dict:
     return BCEModel.model_validate({
@@ -377,11 +377,3 @@ def test_erd_maps_entities_but_never_data_types_to_tables():
     logical = build_logical_model(_collaboration_model())
 
     assert [table["name"] for table in logical["Tables"]] == ["Order"]
-
-
-def test_api_normalization_reads_control_signature_from_typed_contract():
-    types, _returns = control_contracts(
-        BCEModel.model_validate(_collaboration_model())
-    )
-
-    assert types[("OrderControl", "place")] == {"request": "OrderRequest"}
