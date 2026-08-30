@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     base_url: str | None = None
     model: str = "openai/gpt-oss-120b"
-    temperature: float = 0.0
+    temperature: float = 0.2
     seed: int = 42
 
     # Specific Agent Models
@@ -50,7 +50,9 @@ class Settings(BaseSettings):
 
     # Database Settings
     db_host: str = "127.0.0.1"
-    db_port: int = 3306
+    # 개발 스크립트가 MySQL 컨테이너의 3306을 호스트 33060으로 공개한다. 백엔드는
+    # 호스트에서 실행되므로 스크립트를 거치지 않아도 같은 공개 포트를 기본으로 쓴다.
+    db_port: int = 33060
     db_user: str = "root"
     db_password: str = ""
     db_name: str = "easydep"
@@ -68,13 +70,15 @@ class Settings(BaseSettings):
     # Implementation and design execution config. Semantic repair attempts are
     # governed by progress/history, not numeric settings.
     design_sequence_parallelism: int = 2
-    # Long design calls are independent, but hosted NIM is more stable and each
-    # prompt easier to observe when no more than two are in flight.
-    design_class_behavior_parallelism: int = 2
+    # E1에서 8개 동시 요청에도 429, 연결 오류, timeout이 없었다. 한 번의 전체 시간은
+    # LLM 수리 편차가 크므로 이후 여러 실행의 중앙값과 완주율로 다시 조정한다.
+    design_class_behavior_parallelism: int = 8
     # Stage-specific caps retain the former broad defaults until the frozen E1
     # experiment justifies a lower 2K/4K/8K/16K tier.
     design_class_inventory_max_completion_tokens: int = 16384
-    design_class_operation_max_completion_tokens: int = 8192
+    # E1의 결합 operation 수리 응답이 8,192 토큰에서 실제로 잘렸으므로 다음
+    # provider tier인 16,384를 사용한다. 짧은 call plan은 기존 상한이면 충분하다.
+    design_class_operation_max_completion_tokens: int = 16384
     design_class_call_plan_max_completion_tokens: int = 8192
     # The global inventory needs enough combined reasoning/output budget to
     # finish strict JSON.  Choice-space reduction happens in its compact input,

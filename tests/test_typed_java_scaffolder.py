@@ -195,6 +195,7 @@ def test_maps_scalar_collection_optional_and_time_types() -> None:
         ("list<int>", "List<Integer>"),
         ("set<boolean>", "Set<Boolean>"),
         ("map<string, double>", "Map<String,Double>"),
+        ("byte[]", "byte[]"),
     ],
 )
 def test_boxes_primitive_types_inside_java_generics(

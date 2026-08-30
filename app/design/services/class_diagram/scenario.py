@@ -135,17 +135,33 @@ def _preconditions(use_case_id: str, specification: dict[str, Any]) -> tuple[str
 
 
 def _actor_steps(use_case: UseCase) -> set[str]:
+    """새 시스템 처리를 시작하는 주 액터 단계만 반환한다.
+
+    첫 액터 단계는 유스케이스의 시작점이다. 이후 액터 단계는 다음 시스템 단계가 있을
+    때만 새 입력으로 본다. 마지막의 "사용자가 결과를 받는다" 같은 단계는 이미 앞선
+    시스템 호출의 결과이므로 별도 호출 루트를 만들지 않는다.
+    """
+
     actor = use_case.primary_actor.casefold()
     if not actor:
         return set()
-    return {
-        step.id for step in use_case.steps
+    main_steps = [step for step in use_case.steps if step.branch == "main"]
+    candidates = [
+        position for position, step in enumerate(main_steps)
         if step.subject.casefold() == actor
         or (
             not step.subject
             and re.match(rf"^(?:the )?{re.escape(actor)}\b", step.sentence.casefold())
         )
-    }
+    ]
+    if not candidates:
+        return set()
+    entries = {main_steps[candidates[0]].id}
+    for ordinal, position in enumerate(candidates[1:], start=1):
+        next_actor = candidates[ordinal + 1] if ordinal + 1 < len(candidates) else len(main_steps)
+        if position + 1 < next_actor:
+            entries.add(main_steps[position].id)
+    return entries
 
 
 def _aliases(use_cases: tuple[UseCase, ...]) -> dict[str, str]:
@@ -215,8 +231,9 @@ def _groups(
         active: str | None = None
         grouped: dict[str, list[str]] = {}
         owner_by_step: dict[str, str] = {}
-        # actor 입력 하나부터 다음 actor 입력 직전까지가 하나의 독립 실행 슬라이스다.
-        # actor step이 전혀 없는 use case는 root 그룹 하나로 다룬다.
+        # 새 시스템 처리를 시작하는 actor 입력부터 다음 입력 직전까지가 호출 루트 하나다.
+        # actor가 결과를 받는 마지막 단계는 새 입력이 아니므로 앞선 루트에 포함된다.
+        # actor 입력이 전혀 없는 use case는 root 그룹 하나로 다룬다.
         for step in main_steps:
             if step.id in actor_steps:
                 active = step.id
@@ -225,7 +242,12 @@ def _groups(
                 grouped[active].append(step.id)
                 owner_by_step[step.id] = active
         if not grouped:
-            grouped[f"{use_case.id}:root"] = [step.id for step in main_steps]
+            root = f"{use_case.id}:root"
+            grouped[root] = [step.id for step in main_steps]
+            # actor 표기가 요약과 문장에서 다르면 안전하게 유스케이스 전체를 root 하나로
+            # 묶는다. 이때도 extension의 branch step이 어느 root에 속하는지는 남겨야
+            # 조건 흐름이 required step과 이후 collaboration에서 빠지지 않는다.
+            owner_by_step.update({step.id: root for step in main_steps})
         # extension handling은 branch_step을 포함하는 actor slice에 붙인다. 별도 group으로
         # 떼면 조건 분기의 call/return이 주 흐름과 인과적으로 분리된다.
         for extension in use_case.specification.get("extensions") or []:

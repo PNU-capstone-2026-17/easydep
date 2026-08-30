@@ -300,13 +300,20 @@ def _project_collaboration(
         text(ref) for call in calls for ref in call.get("stepRefs") or []
     }
 
-    def append(call_id: str, caller: str) -> None:
+    def append(
+        call_id: str,
+        caller: str,
+        inherited_fragments: list[dict[str, str]] | None = None,
+    ) -> None:
         """한 call과 모든 자식을 기록한 다음 정확히 한 return을 닫는다."""
         call = call_by_id[call_id]
         operation = operations[text(call.get("receiverOperationId"))]
         callee = participant(operation)
         refs = [text(ref) for ref in call.get("stepRefs") or []]
-        fragment_path = _fragment_path(refs, fragments)
+        fragment_path = [dict(item) for item in inherited_fragments or []]
+        for item in _fragment_path(refs, fragments):
+            if all(existing["id"] != item["id"] for existing in fragment_path):
+                fragment_path.append(item)
         arguments = [
             {
                 "parameter": text(binding.get("parameter")),
@@ -336,7 +343,9 @@ def _project_collaboration(
         })
         # 깊이 우선 순회는 activation stack과 같은 call/return 중첩을 자연스럽게 만든다.
         for child_id in children.get(call_id, []):
-            append(child_id, callee)
+            # 조건부 호출의 자식은 그 호출이 실행될 때만 실행된다. 자식 자신의 stepRefs가
+            # main과 extension을 함께 추적하더라도 부모의 조건 경로를 잃지 않게 전달한다.
+            append(child_id, callee, fragment_path)
         messages.append({
             "source": callee,
             "target": actual_caller,

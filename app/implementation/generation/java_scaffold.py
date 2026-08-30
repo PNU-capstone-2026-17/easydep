@@ -18,7 +18,7 @@ from app.design.schemas.class_model import (
     DataType,
 )
 
-JAVA_SCAFFOLDER_VERSION = "1.0.1"
+JAVA_SCAFFOLDER_VERSION = "1.0.2"
 
 _JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 _FIELD = re.compile(
@@ -361,7 +361,10 @@ def java_type(design_type: str) -> str:
         return java
 
     converted = re.sub(r"[A-Za-z_$][A-Za-z0-9_$]*", replace, source)
-    if not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*(?:<[A-Za-z0-9_$<>,?]+>)?", converted):
+    if not re.fullmatch(
+        r"[A-Za-z_$][A-Za-z0-9_$]*(?:<[A-Za-z0-9_$<>,?]+>)?(?:\[\])*$",
+        converted,
+    ):
         raise ValueError(f"unsupported Java design type: {design_type}")
     return converted
 

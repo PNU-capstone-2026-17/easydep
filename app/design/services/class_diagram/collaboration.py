@@ -43,9 +43,16 @@ from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, sta
 CALL_PLAN_PROMPT = """
 Build one ordered call forest for the complete use case. Select only supplied
 receiverOperationId values. Return only receiverOperationId and parentCallIndex.
-Each actorEntry creates one root in the supplied order; a root has no parent.
-Every non-root points to an earlier call in the same root. A root is Boundary
-and delegates to Control; Control may delegate state work to Entity. Cover all
+Each actorEntry creates exactly one root in the supplied order; no other root is
+allowed. A root has no parent. Every non-root uses the one-based position of an
+earlier call in the same root as parentCallIndex. A root is Boundary and
+delegates to Control, which may delegate state work to Entity. Ordinary results
+return through the existing call chain. Use a Control-to-Boundary call only when
+the scenario explicitly requires the system to initiate a separate interaction
+with an external actor or system through that Boundary, such as an asynchronous
+notification; parent it to Control, never to Boundary. Entities may collaborate
+with other Entities, but do not call a Control or Boundary directly. The Boundary
+class used by a root must not appear again inside that root. Cover all
 required steps inside the matching actor entry. The same operation may be used
 in more than one root. Do not return ids, step refs, values, or bindings.
 """.strip()
@@ -284,6 +291,8 @@ def _binding_candidates(
                 add_named(field_path, projected, field_ref)
                 if types_compatible(projected, target_type):
                     candidates.append(field_ref)
+                elif types_compatible(optional_inner_type(projected), target_type):
+                    candidates.append(field_ref + ".unwrap")
     for earlier in reversed(calls[:call_index]):
         operation = operations[text(earlier.get("receiverOperationId"))]
         return_type = text(operation.get("returnType"))
@@ -299,8 +308,11 @@ def _binding_candidates(
             if (
                 text(earlier.get("callId")) in ancestor_ids
                 or field_path.casefold() == name.casefold()
-            ) and types_compatible(projected, target_type):
-                candidates.append(field_ref)
+            ):
+                if types_compatible(projected, target_type):
+                    candidates.append(field_ref)
+                elif types_compatible(optional_inner_type(projected), target_type):
+                    candidates.append(field_ref + ".unwrap")
     target_fields = fields_by_type.get(target_type, {})
     if not candidates and target_fields:
         mappings: dict[str, str] = {}
@@ -396,6 +408,12 @@ def materialize(
             "stepRefs": refs,
             "argumentBindings": [],
         })
+    root_boundary_classes = {
+        assignments[position]: text(
+            operations[calls[position - 1]["receiverOperationId"]].get("className")
+        )
+        for position in roots
+    }
     control_roots: set[int] = set()
     for position, call in enumerate(calls, start=1):
         operation = operations[call["receiverOperationId"]]
@@ -405,11 +423,17 @@ def materialize(
                 raise ValueError("actor entry must start at Boundary")
         else:
             parent = calls[(plan.calls[position - 1].parent_call_index or 1) - 1]
-            source = text(operations[parent["receiverOperationId"]].get("stereotype"))
+            parent_operation = operations[parent["receiverOperationId"]]
+            source = text(parent_operation.get("stereotype"))
+            target_class = text(operation.get("className"))
             if (
                 (source == "boundary" and stereotype != "control")
-                or (stereotype == "entity" and source != "control")
-                or source == "entity"
+                or (source == "entity" and stereotype != "entity")
+                or (
+                    source == "control"
+                    and stereotype == "boundary"
+                    and target_class == root_boundary_classes[assignments[position]]
+                )
             ):
                 raise ValueError(f"BCE communication is invalid: {source} -> {stereotype}")
         if stereotype == "control":
@@ -465,13 +489,19 @@ def materialize(
     return Collaboration.model_validate(candidate)
 
 
-class _CombinedReplacementRequired(RuntimeError):
+class CombinedReplacementRequired(RuntimeError):
     """call-plan 수리가 반복되어 유스케이스 전체 교체가 필요함을 알린다."""
 
-    def __init__(self, use_case_id: str, issue: str) -> None:
+    def __init__(
+        self,
+        use_case_id: str,
+        issue: str,
+        previous_plan: CallPlanProposal,
+    ) -> None:
         super().__init__(issue)
         self.use_case_id = use_case_id
         self.issue = issue
+        self.previous_plan = previous_plan
 
 
 def _accepted_payload(
@@ -500,6 +530,9 @@ def _accepted_payload(
                 "candidate": candidate_digest,
                 "finding": error_text,
             })
+            # call 순서를 바꿨는데도 같은 값 출처나 BCE 방향 오류가 다시 나오면
+            # operation 자체가 원인일 가능성이 높다. 같은 finding을 두 번 고치게 하지
+            # 않고 operation+call 결합 교체로 곧바로 범위를 넓힌다.
             repeated = state_digest in seen_states or error_text in seen_findings
             ledger.record(RepairAttempt(
                 stage="design.class.collaboration",
@@ -515,10 +548,11 @@ def _accepted_payload(
                 detail=error_text,
             ))
             if repeated:
-                raise _CombinedReplacementRequired(
+                raise CombinedReplacementRequired(
                     use_case.id,
                     error_text + "\n\nAccumulated call-plan repair history:\n"
                     + ledger.prompt_context(),
+                    candidate,
                 ) from error
             seen_states.add(state_digest)
             seen_findings.add(error_text)
@@ -590,6 +624,7 @@ def process_use_case(
 
 
 __all__ = [
+    "CombinedReplacementRequired",
     "materialize",
     "process_use_case",
     "propose_call_plan",

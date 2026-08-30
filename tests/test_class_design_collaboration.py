@@ -169,7 +169,7 @@ def test_structured_parameter_is_derived_from_upstream_fields(monkeypatch):
     }
 
 
-def test_earlier_optional_result_has_explicit_unwrap_source():
+def test_optional_results_use_explicit_unwrap_sources():
     model = {
         "Classes": [
             {
@@ -210,20 +210,56 @@ def test_earlier_optional_result_has_explicit_unwrap_source():
             },
             {
                 "className": "Registration",
-                "stereotype": "Control",
+                "stereotype": "Entity",
                 "use_case_ids": ["UC1"],
                 "fields": [],
                 "identifier": [],
                 "operations": [{
-                    "operationId": "Registration::create(student:Student)",
+                    "operationId": (
+                        "Registration::create("
+                        "student:Student,failureCode:ValidationFailureCode)"
+                    ),
                     "name": "create",
-                    "parameters": [{"name": "student", "type": "Student"}],
+                    "parameters": [
+                        {"name": "student", "type": "Student"},
+                        {
+                            "name": "failureCode",
+                            "type": "ValidationFailureCode",
+                        },
+                    ],
                     "returnType": "Registration",
                     "stepRefs": ["UC1:main:2"],
                 }],
             },
+            {
+                "className": "RegistrationPolicy",
+                "stereotype": "Entity",
+                "use_case_ids": ["UC1"],
+                "fields": [],
+                "identifier": [],
+                "operations": [{
+                    "operationId": "RegistrationPolicy::validate()",
+                    "name": "validate",
+                    "parameters": [],
+                    "returnType": "ValidationResult",
+                    "stepRefs": ["UC1:main:2"],
+                }],
+            },
         ],
-        "DataTypes": [],
+        "DataTypes": [
+            {
+                "name": "ValidationResult",
+                "kind": "valueObject",
+                "fields": [
+                    "failureCode : optional<ValidationFailureCode>",
+                ],
+            },
+            {
+                "name": "ValidationFailureCode",
+                "kind": "enumeration",
+                "values": ["NOT_ELIGIBLE"],
+            },
+        ],
         "Relationships": [],
         "Collaborations": [],
     }
@@ -231,7 +267,17 @@ def test_earlier_optional_result_has_explicit_unwrap_source():
         "calls": [
             {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": None},
             {"receiverOperationId": "StudentLookup::find()", "parentCallIndex": 1},
-            {"receiverOperationId": "Registration::create(student:Student)", "parentCallIndex": 1},
+            {
+                "receiverOperationId": "RegistrationPolicy::validate()",
+                "parentCallIndex": 2,
+            },
+            {
+                "receiverOperationId": (
+                    "Registration::create("
+                    "student:Student,failureCode:ValidationFailureCode)"
+                ),
+                "parentCallIndex": 3,
+            },
         ],
     })
 
@@ -242,10 +288,50 @@ def test_earlier_optional_result_has_explicit_unwrap_source():
         plan,
     ).model_dump(by_alias=True)
 
-    assert collaboration_model["calls"][2]["argumentBindings"] == [{
-        "parameter": "student",
-        "sourceRef": "UC1::call:2#result.unwrap",
-    }]
+    assert collaboration_model["calls"][3]["argumentBindings"] == [
+        {
+            "parameter": "student",
+            "sourceRef": "UC1::call:2#result.unwrap",
+        },
+        {
+            "parameter": "failureCode",
+            "sourceRef": "UC1::call:3#result.failureCode.unwrap",
+        },
+    ]
+
+    entity_to_control = CallPlanProposal.model_validate({
+        "calls": [
+            {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": None},
+            {"receiverOperationId": "StudentLookup::find()", "parentCallIndex": 1},
+            {
+                "receiverOperationId": "RegistrationPolicy::validate()",
+                "parentCallIndex": 2,
+            },
+            {"receiverOperationId": "StudentLookup::find()", "parentCallIndex": 3},
+        ],
+    })
+    with pytest.raises(ValueError, match="entity -> control"):
+        collaboration.materialize(
+            build_scenario_index(single_use_case()),
+            BCEModel.model_validate(model),
+            build_scenario_index(single_use_case()).use_case("UC1"),
+            entity_to_control,
+        )
+
+    same_boundary_response = CallPlanProposal.model_validate({
+        "calls": [
+            {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": None},
+            {"receiverOperationId": "StudentLookup::find()", "parentCallIndex": 1},
+            {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": 2},
+        ],
+    })
+    with pytest.raises(ValueError, match="control -> boundary"):
+        collaboration.materialize(
+            build_scenario_index(single_use_case()),
+            BCEModel.model_validate(model),
+            build_scenario_index(single_use_case()).use_case("UC1"),
+            same_boundary_response,
+        )
 
 
 def test_actor_flow_requires_control_handoff():

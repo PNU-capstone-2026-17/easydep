@@ -1545,6 +1545,31 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
         ]
         if not positions:
             continue
+        fragment_id = f"{use_case_id}:extension:{label}"
+        fragment_positions = [
+            index
+            for index in positions
+            if any(
+                str(fragment.get("id") or "").strip() == fragment_id
+                for fragment in messages[index].get("fragments") or []
+                if isinstance(fragment, dict)
+            )
+        ]
+        # Typed projection에서는 fragment가 실제 조건부 실행 범위의 기준이다. 같은
+        # extension step을 정상 흐름 operation이 근거로 함께 추적해도, fragment 밖의
+        # 메시지를 조건 분기의 실행 위치로 오인하지 않는다.
+        if fragment_positions:
+            positions = fragment_positions
+        # 분기 단계와 첫 extension 입력은 같은 호출이 함께 근거로 삼을 수 있다. 그
+        # 호출은 extension이 늦게 배치된 것이 아니라 정확히 분기가 시작되는 위치다.
+        # 실제 분기 이후 메시지만 다음 main 단계 전에 놓였는지 검사한다.
+        branch_positions = {
+            position for position in positions
+            if any(
+                _main_step_number(str(step_id), use_case_id) == branch_step
+                for step_id in messages[position].get("step_ids") or []
+            )
+        }
         if all(
             any(
                 (number := _main_step_number(str(step_id), use_case_id)) is not None
@@ -1572,9 +1597,11 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
             for number, indexes in main_positions.items()
             if number > branch_step
             for index in indexes
+            if index not in positions
         ]
         next_main = min(later_main) if later_main else len(messages)
-        if min(positions) <= branch_end or max(positions) >= next_main:
+        placed = [position for position in positions if position not in branch_positions]
+        if placed and (min(placed) <= branch_end or max(placed) >= next_main):
             found.append(
                 Finding(
                     rule_id,

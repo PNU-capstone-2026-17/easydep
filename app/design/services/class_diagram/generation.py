@@ -42,12 +42,41 @@ from app.validation import run_checks, stable_digest
 _COMBINED_PROMPT = operations.operation_prompt() + """
 
 Also return a flat call forest for this complete use case. Refer to operations
-only as ClassName.methodName. Each supplied actorEntry creates one Boundary root
-in the same order and each non-root points to an earlier call in the latest root.
+only as ClassName.methodName. Each supplied actorEntry creates exactly one
+Boundary root in the same order; no other root is allowed. Each non-root uses
+the one-based position of an earlier call in the latest root as parentCallIndex.
+Ordinary results return through the existing call chain. Use a Control-to-
+Boundary call only when the scenario explicitly requires the system to initiate
+a separate interaction with an external actor or system through that Boundary,
+such as an asynchronous notification, and parent it to Control. The Boundary
+class used by a root must not appear again inside that root. Entities may
+collaborate with other Entities, but do not call a Control or Boundary directly.
 The same operation may be called in several roots. Cover each actor entry's step
 range through Boundary to Control and, when needed, Entity. If actorEntries is
 empty, return no calls; its operations can be used by an including use case.
 """
+
+
+def _same_boundary_response_operations(raw: dict[str, Any]) -> set[str]:
+    """결합 call forest가 최초 Boundary로 되돌아간 operation을 찾는다.
+
+    같은 root 안에서 최초 Boundary 클래스가 다시 receiver로 등장하면 현재 요청의
+    결과를 별도 호출로 표현한 것이다. 다른 Boundary 클래스 호출은 외부 시스템과의
+    상호작용일 수 있으므로 그대로 둔다.
+    """
+
+    result: set[str] = set()
+    root_owner = ""
+    for call in raw.get("calls") or []:
+        if not isinstance(call, dict):
+            continue
+        operation_ref = str(call.get("operationRef") or "")
+        owner = operation_ref.partition(".")[0]
+        if call.get("parentCallIndex") is None:
+            root_owner = owner
+        elif root_owner and owner == root_owner:
+            result.add(operation_ref)
+    return result
 
 
 def _groups(index: ScenarioIndex, use_case: UseCase) -> tuple[ExecutionGroup, ...]:
@@ -141,6 +170,9 @@ def _propose_unit(
                 use_case,
                 reserved_types=reserved_types,
                 allowed_step_ids=tuple(step.id for step in use_case.steps),
+                same_boundary_response_operations=(
+                    _same_boundary_response_operations(raw)
+                ),
             )
             fragment = operations.validate_operation_fragment(
                 fragment,
@@ -257,11 +289,10 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
     inventory_model = operations.compose_operation_units(inventory, [])
     reserved: list[dict[str, Any]] = []
     reserved_types = [item.model_dump(by_alias=True) for item in inventory_model.DataTypes]
-    # 1단계: 모든 유스케이스는 같은 inventory snapshot을 보고 최대 두 개씩 병렬 제안한다.
+    # 1단계: 모든 유스케이스는 같은 inventory snapshot을 보고 설정된 수만큼 병렬 제안한다.
     workers = max(1, min(
         len(use_cases) or 1,
-        int(getattr(settings, "design_class_behavior_parallelism", 2)),
-        2,
+        int(getattr(settings, "design_class_behavior_parallelism", 4)),
     ))
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
@@ -330,7 +361,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                 value = _materialize_use_case(
                     index, skeleton, use_case, raw_by_use_case[use_case.id],
                 )
-            except collaboration._CombinedReplacementRequired as signal:
+            except collaboration.CombinedReplacementRequired as signal:
                 # 같은 call-plan 상태가 반복되면 현재 유스케이스의 operation+calls만
                 # 다시 받고, 이미 수락된 다른 협업은 새 skeleton에서 재검사한다.
                 unit_index = use_cases.index(use_case)
@@ -399,6 +430,94 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
     })
 
 
+def _previous_combined_unit(
+    fragment: AcceptedFragment,
+    model: BCEModel,
+    plan: CallPlanProposal,
+) -> dict[str, Any]:
+    """분리 수리에서 반복된 call plan을 결합 수리 입력으로 되돌린다."""
+
+    operation_refs = {
+        operation.operation_id: f"{owner.class_name}.{operation.name}"
+        for owner in model.Classes for operation in owner.operations
+    }
+    return {
+        "fragment": fragment.as_payload(),
+        "calls": [
+            {
+                "operationRef": operation_refs[call.receiver_operation_id],
+                "parentCallIndex": call.parent_call_index,
+            }
+            for call in plan.calls
+        ],
+    }
+
+
+def replace_use_case_unit(
+    index: ScenarioIndex,
+    current: BCEModel,
+    use_case: UseCase,
+    signal: collaboration.CombinedReplacementRequired,
+) -> tuple[BCEModel, Collaboration]:
+    """반복된 call-plan 수리를 operation과 calls의 결합 교체로 넓힌다."""
+
+    from app.design.services.class_diagram.feedback import (
+        fragments_from_model,
+        inventory_from_model,
+    )
+
+    inventory = inventory_from_model(current)
+    fragments = fragments_from_model(index, current)
+    fragment = fragments.get(use_case.id)
+    if fragment is None:
+        raise ValueError(f"use case has no operation fragment: {use_case.id}")
+    others = {key: value for key, value in fragments.items() if key != use_case.id}
+    snapshot = operations.compose_fragments(inventory, others)
+    previous = _previous_combined_unit(fragment, current, signal.previous_plan)
+    issue = signal.issue
+    collision_states: set[str] = set()
+    while True:
+        replacement, raw = _propose_unit(
+            index,
+            inventory,
+            use_case,
+            reserved=operations.reserved_operations(snapshot),
+            reserved_types=[
+                item.model_dump(by_alias=True) for item in snapshot.DataTypes
+            ],
+            previous=previous,
+            initial_issue=issue,
+        )
+        candidate_fragments = {**others, use_case.id: replacement}
+        try:
+            skeleton = operations.compose_fragments(inventory, candidate_fragments)
+        except (Collision, DataTypeCollision) as error:
+            issue = f"{type(error).__name__}: {error}"
+            state = stable_digest({"candidate": raw, "finding": issue})
+            if state in collision_states:
+                issue += (
+                    "\nThe same colliding candidate repeated. Return a materially "
+                    "different complete unit."
+                )
+            collision_states.add(state)
+            previous = raw
+            continue
+        operations.emit_preview(
+            skeleton.model_dump(by_alias=True),
+            "operations",
+            use_case.id,
+            len(candidate_fragments) + 1,
+            len(index.use_cases) + 1,
+        )
+        try:
+            accepted = _materialize_use_case(index, skeleton, use_case, raw)
+        except collaboration.CombinedReplacementRequired as repeated:
+            previous = raw
+            issue = repeated.issue
+            continue
+        return skeleton, accepted
+
+
 def _model_cache_key(index: ScenarioIndex, inventory: AcceptedInventory) -> str:
     return accepted_unit_key(
         "complete-class-model",
@@ -419,7 +538,7 @@ def _model_cache_key(index: ScenarioIndex, inventory: AcceptedInventory) -> str:
             "callPlanPrompt": collaboration.CALL_PLAN_PROMPT,
             "callPlanCap": collaboration.call_plan_max_completion_tokens(),
             "bindingPrompt": collaboration.BINDING_PROMPT,
-            "version": 2,
+            "version": 3,
         },
     )
 
@@ -473,4 +592,4 @@ def build_model(
     return model
 
 
-__all__ = ["build_model"]
+__all__ = ["build_model", "replace_use_case_unit"]

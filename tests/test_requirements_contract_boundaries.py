@@ -93,6 +93,7 @@ def test_agent_state_public_key_order_is_preserved() -> None:
         "phase",
         "deployment_needs",
         "capability_contract",
+        "capability_answers",
         "resource_constraints_text",
         "initial_cloud_constraints",
         "resource_constraint_extraction",

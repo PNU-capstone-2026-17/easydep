@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import projections, service
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.proposals import (
@@ -86,9 +87,10 @@ def test_class_render_keeps_structure_and_projects_call_dependencies(monkeypatch
 
 def test_multiple_roots_project_in_order_to_one_use_case_diagram(monkeypatch):
     class_model = _accepted_multiple_root_model(monkeypatch)
+    scenario = multiple_entry_use_case()
 
     sequence = project_sequence_model(
-        build_scenario_index(multiple_entry_use_case()),
+        build_scenario_index(scenario),
         class_model,
         "@startuml\n@enduml",
     )
@@ -110,6 +112,31 @@ def test_multiple_roots_project_in_order_to_one_use_case_diagram(monkeypatch):
     }
     assert any(message.label == "void" for message in returns)
     assert sequence_findings(sequence) == []
+
+    scenario["use_case_specs"][0]["extensions"] = [{
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "The member requests an alternate receipt",
+        "handling_steps": [{
+            "sub_step": "3a1",
+            "subject_ref": "System",
+            "sentence": "System prepares the alternate receipt.",
+        }],
+    }]
+    payload = class_model.model_dump(by_alias=True)
+    calls = payload["Collaborations"][0]["calls"]
+    calls[2]["stepRefs"] = ["UC1:extension:3a:3a1"]
+    calls[3]["stepRefs"] = ["UC1:main:4", "UC1:extension:3a:3a1"]
+    conditional = project_sequence_model(
+        build_scenario_index(scenario), BCEModel.model_validate(payload),
+    )
+    inherited = next(
+        message for message in conditional.Diagrams[0].Messages
+        if message.call_id == "UC1::call:4"
+    )
+    assert [fragment.id for fragment in inherited.fragments] == [
+        "UC1:extension:3a"
+    ]
 
 
 def test_nested_generic_is_a_valid_return_label():

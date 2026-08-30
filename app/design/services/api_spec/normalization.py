@@ -78,7 +78,7 @@ def response_contract_for_control(return_type: str) -> tuple[str, bool]:
 
     normalized = re.sub(r"\s+", "", return_type or "")
     collection = re.fullmatch(
-        r"(?:java\.util\.)?(?:List|Set|Collection|Iterable)<(.+)>",
+        r"(?:java\.util\.)?(?:List|Set|Collection|Iterable|Array)<(.+)>",
         normalized,
         re.IGNORECASE,
     )
@@ -106,7 +106,9 @@ def api_field_type_for_control(type_name: str) -> str:
     """BCE scalar 또는 collection을 JSON wire 타입으로 투영한다."""
 
     token = re.sub(r"\s+", "", type_name).lower()
-    if re.match(r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>", token):
+    if re.match(
+        r"(?:java\.util\.)?(?:list|set|collection|iterable|array)<.+>", token,
+    ):
         return "array"
     if token.endswith("[]"):
         return "array"

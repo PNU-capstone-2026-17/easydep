@@ -83,7 +83,7 @@ def fresh_client() -> Any:
 def test_default_sampling_is_reproducible() -> None:
     """temperature와 seed의 재현성 기본값을 고정한다."""
 
-    assert settings.temperature == 0.0
+    assert settings.temperature == 0.2
     assert settings.seed is not None
 
 

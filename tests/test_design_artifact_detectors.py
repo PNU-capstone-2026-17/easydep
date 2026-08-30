@@ -1317,6 +1317,41 @@ def test_flow_order_allows_outer_return_after_nested_later_step():
 
     assert sequence_validation.sequence_flow_order(model, STATE) == []
 
+    branch_state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1}, {"step_number": 2}],
+                "extensions": [{
+                    "label": "1a",
+                    "branch_step": 1,
+                    "handling_steps": [{"sub_step": "1a1"}, {"sub_step": "1a2"}],
+                }],
+            }]
+        }
+    }
+    branch_model = {
+        "use_case_id": "UC1",
+        "Messages": [
+            {
+                "source": "Actor", "target": "Boundary", "type": "sync",
+                "label": "submit()", "call_id": "root",
+                "step_ids": ["UC1:main:1", "UC1:extension:1a:1a1"],
+            },
+            {
+                "source": "Boundary", "target": "Control", "type": "sync",
+                "label": "alternate()", "call_id": "extension",
+                "step_ids": ["UC1:extension:1a:1a2"],
+            },
+            {
+                "source": "Boundary", "target": "Control", "type": "sync",
+                "label": "continue()", "call_id": "main",
+                "step_ids": ["UC1:main:2"],
+            },
+        ],
+    }
+    assert sequence_validation.sequence_flow_order(branch_model, branch_state) == []
+
 
 def test_flow_order_reports_extension_when_branch_main_step_is_missing():
     state = {

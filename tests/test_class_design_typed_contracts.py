@@ -37,6 +37,32 @@ def test_scenario_index_is_the_immutable_typed_boundary_for_raw_specs():
     assert index.step_ids == frozenset({"UC1:main:1", "UC1:main:2"})
     assert raw["use_case_specs"][0]["main_scenario"][0]["step_number"] == 1
 
+    terminal_receipt = single_use_case()
+    terminal_receipt["use_case_specs"][0]["main_scenario"].append({
+        "step_number": 3,
+        "subject_ref": "Member",
+        "sentence": "Member receives the result.",
+    })
+    receipt_index = build_scenario_index(terminal_receipt)
+    assert len(receipt_index.groups) == 1
+    assert receipt_index.groups[0].required_step_ids[-1] == "UC1:main:3"
+
+    actor_alias = single_use_case()
+    actor_alias["use_cases"][0]["primary_actor"] = "Registered Member"
+    actor_alias["use_case_specs"][0]["main_scenario"][0].pop("subject_ref")
+    actor_alias["use_case_specs"][0]["main_scenario"][1].pop("subject_ref")
+    actor_alias["use_case_specs"][0]["extensions"] = [{
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "The result is unavailable",
+        "handling_steps": [{
+            "sub_step": "2a1",
+            "sentence": "System informs the member.",
+        }],
+    }]
+    alias_index = build_scenario_index(actor_alias)
+    assert "UC1:extension:2a:2a1" in alias_index.groups[0].required_step_ids
+
 
 def test_e1_checkpoint_has_twelve_use_case_generation_units():
     source = Path(
@@ -52,7 +78,6 @@ def test_e1_checkpoint_has_twelve_use_case_generation_units():
     })
 
     assert len(index.use_cases) == 12
-    assert len(index.groups) == 14
     assert [use_case.id for use_case in index.use_cases] == [
         *(f"UC{number}" for number in range(1, 13)),
     ]

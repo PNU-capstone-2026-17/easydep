@@ -911,7 +911,7 @@ class WorkspaceService:
 
         if stage == "design":
             status = session_status(app_id)
-            if status.get("retryable"):
+            if status.get("retryable") and command.get("action") != "start_design":
                 failed_stage = str(status.get("stage") or "design")
                 raise ValueError(
                     f"The {failed_stage} step failed. Retry that checkpoint before "
@@ -964,7 +964,16 @@ class WorkspaceService:
                 raise ValueError(
                     "Select one or more use-case targets and provide feedback for each target."
                 )
-            if status.get("active"):
+            if command.get("action") == "start_design":
+                # start_design은 현재 gate의 '다음' 버튼이 아니라 설계를 처음부터 다시
+                # 시작하는 공개 action이다. 기존 checkpoint가 남아 있어도 service가
+                # reset한 뒤 반드시 class diagram부터 실행해야 한다.
+                operation_stage = DESIGN_STAGES[0]
+                verb = "Generating"
+
+                def operation():
+                    return start_design_session(app_id)
+            elif status.get("active"):
                 if text:
                     operation_stage = current_stage
                     verb = "Revising"

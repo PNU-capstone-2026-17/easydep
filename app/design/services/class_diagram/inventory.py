@@ -46,6 +46,8 @@ typed state and identifiers name declared fields. Declare a valueObject or
 enumeration here only when an Entity field transitively requires it. Request,
 criteria, summary, result, and export types belong to the later use-case
 operation task and must not be declared in this inventory.
+Use non-empty fields and no values for a valueObject. Use non-empty values and
+no fields for an enumeration.
 
 Prefer cohesive reusable classes over one class per sentence or use case.
 Boundary classes represent actor channels or cohesive interfaces, not use-case

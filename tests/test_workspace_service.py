@@ -613,6 +613,44 @@ def test_design_operation_emits_a_named_progress_card(monkeypatch) -> None:
     ]
     assert events[-1]["metadata"]["progress_card_label"] == "Design generation"
 
+    calls: list[str] = []
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {
+            "exists": True,
+            "active": True,
+            "retryable": True,
+            "stage": "sequence_diagram",
+        },
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "start_design_session",
+        lambda _app_id: calls.append("start") or {"status": "need_feedback"},
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "resume_design_session",
+        lambda *_args: calls.append("resume") or {"status": "need_feedback"},
+    )
+    service = WorkspaceService()
+    monkeypatch.setattr(service, "_design_result", lambda response: response)
+    try:
+        service._stage_message(
+            {
+                "command_id": "restart-command",
+                "app_id": "app-1",
+                "action": "start_design",
+                "stage": "design",
+                "payload": {"text": ""},
+            },
+            advance=True,
+        )
+    finally:
+        service.shutdown()
+    assert calls == ["start"]
+
 
 def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> None:
     events = []

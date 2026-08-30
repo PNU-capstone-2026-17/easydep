@@ -253,7 +253,7 @@ def test_body_collection_field_is_normalized_to_json_array() -> None:
     }
     class_diagram = """@startuml
 class ScheduleController <<Control>> {
-  + formatSchedule(schedule : List<Enrollment>, format : String): String
+  + formatSchedule(schedule : array<Enrollment>, format : String): String
 }
 @enduml"""
 

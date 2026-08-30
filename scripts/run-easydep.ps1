@@ -173,6 +173,26 @@ function Wait-ForDatabase {
     throw "MySQL was not ready within 180 seconds. Run: docker logs $databaseContainer"
 }
 
+function Get-DatabaseHostPort {
+    # ``docker port``는 컨테이너 상태나 Docker CLI 버전에 따라 빈 결과를 돌려줄 수 있다.
+    # 생성 시 저장된 HostConfig를 읽으면 중지된 컨테이너도 같은 방식으로 확인할 수 있다.
+    $raw = & docker inspect $databaseContainer 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($raw -join ""))) {
+        return $null
+    }
+    try {
+        $details = @($raw | ConvertFrom-Json)[0]
+        $bindings = $details.HostConfig.PortBindings.'3306/tcp'
+    }
+    catch {
+        return $null
+    }
+    if ($null -eq $bindings -or $bindings.Count -eq 0 -or -not $bindings[0].HostPort) {
+        return $null
+    }
+    return [int]$bindings[0].HostPort
+}
+
 function Test-HttpEndpoint {
     param([Parameter(Mandatory = $true)][string]$Uri)
     try {
@@ -254,6 +274,21 @@ else {
 
 $existingDatabase = & docker ps -a --filter "name=^/$databaseContainer$" --format "{{.Names}}"
 if ($existingDatabase -eq $databaseContainer) {
+    $currentDatabasePort = Get-DatabaseHostPort
+    if ($null -eq $currentDatabasePort) {
+        throw (
+            "The existing MySQL container port could not be read. " +
+            "The container was left unchanged: $databaseContainer"
+        )
+    }
+    if ($currentDatabasePort -ne $DatabasePort) {
+        throw (
+            "The existing MySQL container uses host port $currentDatabasePort, " +
+            "not $DatabasePort. The container was left unchanged."
+        )
+    }
+}
+if ($existingDatabase -eq $databaseContainer) {
     $runningDatabase = & docker ps --filter "name=^/$databaseContainer$" --format "{{.Names}}"
     if ($runningDatabase -ne $databaseContainer) {
         Write-Host "[EasyDep] Restarting the existing MySQL container."
@@ -295,7 +330,7 @@ $env:DB_NAME = "easydep"
 Write-Host "[EasyDep] Starting the FastAPI backend. Logs: $runRoot"
 $server = Start-Process `
     -FilePath $python `
-    -ArgumentList @("-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", [string]$Port) `
+    -ArgumentList @("-X", "utf8", "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", [string]$Port) `
     -WorkingDirectory $repoRoot `
     -WindowStyle Hidden `
     -RedirectStandardOutput $stdoutPath `

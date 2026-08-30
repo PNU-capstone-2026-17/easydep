@@ -60,10 +60,16 @@ Cover every allowedStepRef. Return only the fields required by the response
 schema; do not return bindings, relationships, operation IDs, or classes outside
 the fixed inventory.
 
-Follow the standard BCE roles: Boundary owns actor-facing input and output,
-Control coordinates the use-case flow, and Entity owns persistent state behavior.
-Choose concrete operations supported by the supplied steps. Every parameter and
-return type must resolve to a fixed class/type, a primitive, or a local DataType.
+Follow the standard BCE roles: Boundary receives actor-facing input, Control
+coordinates the use-case flow, and Entity owns persistent state behavior. Close
+an ordinary request-response flow through return values: the root Boundary
+operation may cover both the actor input and the resulting actor-visible output.
+Do not add present/show/confirm/notify Boundary operations merely to deliver the
+result of the current request. Add a separate outbound Boundary operation only
+when the scenario explicitly requires an out-of-band push, callback, or later
+notification. Choose concrete operations supported by the supplied steps. Every
+parameter and return type must resolve to a fixed class/type, a primitive, or a
+local DataType.
 
 Keep signatures as a closed value flow. A delegated parameter must be available
 from an entry input, an earlier operation result, an explicit precondition, or a
@@ -73,7 +79,9 @@ values produced earlier. Do not invent caller input merely to satisfy a signatur
 Reuse an exact reserved operation signature when it represents the same behavior;
 the same class must not overload one method name with a different signature.
 Reuse fixed and reserved DataTypes by name. A new DataType must have resolved
-fields or enum values and must be referenced by an operation signature.
+fields or enum values and must be referenced by an operation signature. Use
+kind=valueObject with non-empty fields and no values, or kind=enumeration with
+non-empty values and no fields.
 """.strip() + "\n\n" + structure_type_contract())
 
 
@@ -348,9 +356,16 @@ def _canonicalize_step_ownership(
     candidate: dict[str, Any],
     inventory: dict[str, Any],
     actor_entry_refs: set[str],
+    shared_actor_entry_refs: set[str],
     allowed_step_ids: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """추가 LLM 호출 없이 actor-entry step의 고정 Boundary 소유 규칙을 투영한다."""
+    """actor 입력 단계의 일반적인 Boundary 소유 규칙을 투영한다.
+
+    실행 묶음이 actor 입력 한 단계뿐이면 그 문장에 조회나 저장 같은 시스템 처리까지
+    함께 적힌 것이다. 이때는 Control이 같은 단계 근거를 공유해야 Boundary가 실제로
+    위임할 수 있다. 뒤에 별도 시스템 단계가 있는 묶음에서만 actor 입력을 Boundary가
+    단독으로 소유한다.
+    """
 
     normalized = deepcopy(candidate)
     allowed_refs = set(allowed_step_ids)
@@ -380,13 +395,108 @@ def _canonicalize_step_ownership(
             if stereotypes.get(owner) != "boundary":
                 owned["stepRefs"] = [
                     ref for ref in owned.get("stepRefs") or []
-                    if text(ref) not in actor_entry_refs
+                    if (
+                        text(ref) not in actor_entry_refs
+                        or text(ref) in shared_actor_entry_refs
+                    )
                 ]
             if owned.get("stepRefs"):
                 operations.append(owned)
         if operations:
             class_sets.append({**class_set, "operations": operations})
     normalized["Classes"] = class_sets
+    return normalized
+
+
+def _fold_same_boundary_responses(
+    candidate: dict[str, Any],
+    inventory: dict[str, Any],
+    index: ScenarioIndex,
+    use_case: UseCase,
+    operation_refs: set[str],
+) -> dict[str, Any]:
+    """같은 요청의 응답 단계를 최초 Boundary operation으로 합친다.
+
+    한 유스케이스 안에서 최초 Boundary operation을 다시 호출해 화면 표시나 확인을
+    전달하면 ``Control -> Boundary`` 왕복이 생긴다. 동기 요청의 결과는 최초 호출의
+    반환으로 전달되므로, 결합 제안의 call forest에서 실제로 같은 Boundary로 되돌아간
+    operation만 최초 operation의 ``stepRefs``로 옮긴다. 다른 Boundary 클래스는 외부
+    시스템 호출일 수 있으므로 건드리지 않는다.
+
+    이 변환은 메서드 이름이나 업무 분야를 보지 않는다. ``ScenarioIndex``가 계산한
+    actor entry 범위와 BCE 클래스 역할만 사용하므로 특정 골드셋 표현에 의존하지 않는다.
+    """
+
+    normalized = deepcopy(candidate)
+    stereotypes = {
+        class_name(item): text(item.get("stereotype")).casefold()
+        for item in inventory.get("Classes") or [] if isinstance(item, dict)
+    }
+    class_sets = {
+        text(item.get("className")): item
+        for item in normalized.get("Classes") or [] if isinstance(item, dict)
+    }
+    groups = tuple(
+        group for group in index.groups
+        if group.use_case_id == use_case.id and group.actor_step
+    )
+    actor_entries = {group.actor_step for group in groups}
+
+    for group in groups:
+        root: tuple[str, dict[str, Any]] | None = None
+        for owner, class_set in class_sets.items():
+            if stereotypes.get(owner) != "boundary":
+                continue
+            for operation in class_set.get("operations") or []:
+                if (
+                    isinstance(operation, dict)
+                    and group.actor_step in {text(ref) for ref in operation.get("stepRefs") or []}
+                ):
+                    root = owner, operation
+                    break
+            if root is not None:
+                break
+        # operation 검증기가 누락된 actor entry를 정확히 보고하도록, 여기서 임의의
+        # Boundary operation을 root로 추측하지 않는다.
+        if root is None:
+            continue
+
+        owner, root_operation = root
+        required = set(group.required_step_ids)
+        class_set = class_sets[owner]
+        for operation in class_set.get("operations") or []:
+            if not isinstance(operation, dict) or operation is root_operation:
+                continue
+            operation_ref = f"{owner}.{text(operation.get('name'))}"
+            if operation_ref not in operation_refs:
+                continue
+            refs = [text(ref) for ref in operation.get("stepRefs") or []]
+            response_refs = [
+                ref for ref in refs if ref in required and ref not in actor_entries
+            ]
+            if not response_refs:
+                continue
+            root_operation["stepRefs"] = list(dict.fromkeys([
+                *(text(ref) for ref in root_operation.get("stepRefs") or []),
+                *response_refs,
+            ]))
+            operation["stepRefs"] = [ref for ref in refs if ref not in response_refs]
+
+    normalized["Classes"] = [
+        {
+            **class_set,
+            "operations": [
+                operation for operation in class_set.get("operations") or []
+                if isinstance(operation, dict) and operation.get("stepRefs")
+            ],
+        }
+        for class_set in normalized.get("Classes") or []
+        if isinstance(class_set, dict)
+        and any(
+            isinstance(operation, dict) and operation.get("stepRefs")
+            for operation in class_set.get("operations") or []
+        )
+    ]
     return normalized
 
 
@@ -409,6 +519,7 @@ def normalize_operation_fragment(
     *,
     reserved_types: list[dict[str, Any]] | None = None,
     allowed_step_ids: tuple[str, ...] = (),
+    same_boundary_response_operations: set[str] | None = None,
 ) -> AcceptedFragment:
     """raw operation 제안을 기존 저장 표기로 정규화한다."""
 
@@ -440,9 +551,27 @@ def normalize_operation_fragment(
         group.actor_step for group in index.groups
         if group.use_case_id == use_case.id and group.actor_step
     }
+    shared_actor_entry_refs = {
+        group.actor_step for group in index.groups
+        if group.use_case_id == use_case.id
+        and group.actor_step
+        and len(group.required_step_ids) == 1
+    }
     candidate = _canonicalize_step_ownership(
-        candidate, inventory_payload, actor_entry_refs, allowed_step_ids,
+        candidate,
+        inventory_payload,
+        actor_entry_refs,
+        shared_actor_entry_refs,
+        allowed_step_ids,
     )
+    if same_boundary_response_operations:
+        candidate = _fold_same_boundary_responses(
+            candidate,
+            inventory_payload,
+            index,
+            use_case,
+            same_boundary_response_operations,
+        )
     return AcceptedFragment(use_case.id, candidate)
 
 
@@ -525,10 +654,21 @@ def _propose_fragment(
         for group in index.groups
         if group.use_case_id == use_case.id and group.actor_step
     }
+    shared_actor_entry_refs = {
+        group.actor_step
+        for group in index.groups
+        if group.use_case_id == use_case.id
+        and group.actor_step
+        and len(group.required_step_ids) == 1
+    }
     # 5. actor entry는 Boundary만 소유한다. Control/Entity의 중복 stepRef를 제거한 뒤
     # 근거가 사라진 placeholder operation도 함께 제외한다.
     return _canonicalize_step_ownership(
-        candidate, inventory, actor_entry_refs, allowed_step_ids,
+        candidate,
+        inventory,
+        actor_entry_refs,
+        shared_actor_entry_refs,
+        allowed_step_ids,
     )
 
 

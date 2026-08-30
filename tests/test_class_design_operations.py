@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.design.services.class_diagram import service
+from app.design.services.class_diagram import operations, service
+from app.design.services.class_diagram.models import AcceptedInventory
 from app.design.services.class_diagram.proposals import (
     OperationFragment,
 )
@@ -28,6 +29,46 @@ def test_operation_generation_keeps_signature_data_types_in_the_persisted_model(
     assert [item["name"] for item in model["DataTypes"]] == [
         "RequestData", "RequestResult",
     ]
+
+    # 요청과 시스템 처리가 한 문장에 합쳐진 유스케이스는 Boundary와 Control이 같은
+    # 단계 근거를 공유해야 실제 Boundary -> Control 호출을 만들 수 있다.
+    one_step = single_use_case()
+    one_step["use_case_specs"][0]["main_scenario"] = [
+        one_step["use_case_specs"][0]["main_scenario"][0]
+    ]
+    index = build_scenario_index(one_step)
+    proposal = operation_fragment()
+    for class_set in proposal["Classes"]:
+        for operation in class_set["operations"]:
+            operation["stepRefs"] = ["UC1:main:1"]
+    inventory = AcceptedInventory.from_payload({
+        "Classes": [
+            {
+                "className": "RequestBoundary",
+                "stereotype": "Boundary",
+                "useCaseIds": ["UC1"],
+            },
+            {
+                "className": "RequestControl",
+                "stereotype": "Control",
+                "useCaseIds": ["UC1"],
+            },
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+    })
+    accepted = operations.normalize_operation_fragment(
+        proposal,
+        index,
+        inventory,
+        index.use_case("UC1"),
+        allowed_step_ids=("UC1:main:1",),
+    ).as_payload()
+    control = next(
+        item for item in accepted["Classes"]
+        if item["className"] == "RequestControl"
+    )
+    assert control["operations"][0]["stepRefs"] == ["UC1:main:1"]
 
 def test_operation_validation_rejects_step_ref_outside_use_case_scope():
     index = build_scenario_index(single_use_case())

@@ -43,7 +43,6 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from app.validation import CheckSpec, ValidationReport, run_checks
 from app.design.services.class_diagram.validation.diagram import (
     Finding,
     _broken_stereotypes,
@@ -68,6 +67,7 @@ from app.design.services.sequence_diagram.validation import (
 from app.design.services.sequence_diagram.validation import (
     _known_flow_step_ids as _sequence_known_flow_step_ids,
 )
+from app.validation import CheckSpec, ValidationReport, run_checks
 
 
 def _known_flow_step_ids(state: dict) -> set[str]:
@@ -597,7 +597,7 @@ def _contract_types_compatible(actual: str, expected: str) -> bool:
     if actual_normalized == expected_normalized:
         return True
     if actual_normalized == "array" and re.match(
-        r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>",
+        r"(?:java\.util\.)?(?:list|set|collection|iterable|array)<.+>",
         expected_normalized,
     ):
         return True
@@ -836,7 +836,7 @@ def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
                 continue
             is_array = bool(response.get("is_array"))
             is_collection = bool(re.match(
-                r"(?:java\.util\.)?(?:list|set|collection|iterable)<.+>",
+                r"(?:java\.util\.)?(?:list|set|collection|iterable|array)<.+>",
                 return_type,
             ))
             if is_array != is_collection:

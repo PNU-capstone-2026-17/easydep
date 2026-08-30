@@ -153,16 +153,26 @@ def _collaboration_contract(
         parent = call_by_id.get(parent_id)
         if parent:
             parent_operation = operations.get(text(parent.get("receiverOperationId")), {})
+            root_operation = (
+                operations.get(text(calls[root_position].get("receiverOperationId")), {})
+                if root_position is not None else {}
+            )
             source = text(parent_operation.get("stereotype"))
             target = text(operation.get("stereotype"))
             if (
                 (source == "boundary" and target != "control")
-                or (target == "entity" and source != "control")
-                or source == "entity"
+                or (source == "entity" and target != "entity")
+                or (
+                    source == "control"
+                    and target == "boundary"
+                    and text(operation.get("className"))
+                    == text(root_operation.get("className"))
+                )
             ):
                 findings.append(Finding(
                     "class.collaboration.contract",
-                    "call tree must follow Boundary to Control to Entity responsibilities",
+                    "Boundary must hand off to Control; Entity may call only another "
+                    "Entity; a root Boundary returns results instead of being called again",
                     call_id,
                 ))
     for ordinal, group in enumerate(groups):
@@ -218,8 +228,6 @@ def _source_type(
     if path == "result" or path.startswith("result."):
         source_type = text(operation.get("returnType"))
         field_path = path.removeprefix("result.") if path.startswith("result.") else ""
-        if field_path == "unwrap":
-            return optional_inner_type(source_type)
     else:
         parameter_name, dot, field_path = path.partition(".")
         source_type = next((
@@ -228,7 +236,14 @@ def _source_type(
         ), "")
         if not dot:
             field_path = ""
-    return projected_field_type(source_type, field_path, fields_by_type) if field_path else source_type
+    unwrap = field_path == "unwrap" or field_path.endswith(".unwrap")
+    if unwrap:
+        field_path = "" if field_path == "unwrap" else field_path.removesuffix(".unwrap")
+    resolved = (
+        projected_field_type(source_type, field_path, fields_by_type)
+        if field_path else source_type
+    )
+    return optional_inner_type(resolved) if unwrap else resolved
 
 
 def _collaboration_bindings(

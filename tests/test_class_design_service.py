@@ -33,7 +33,20 @@ def test_generate_uses_one_combined_call_and_keeps_the_public_model(monkeypatch)
         if schema is InventoryProposal:
             return inventory_proposal()
         if schema is CombinedUnitProposal:
-            return multiple_root_combined_proposal()
+            proposal = multiple_root_combined_proposal()
+            proposal["fragment"]["Classes"][0]["operations"].append({
+                "name": "showResult",
+                "parameters": [{"name": "result", "type": "RequestResult"}],
+                "returnType": "void",
+                "stepRefs": ["UC1:main:2"],
+            })
+            proposal["calls"].insert(2, {
+                "operationRef": "RequestBoundary.showResult",
+                "parentCallIndex": 2,
+            })
+            proposal["calls"][3]["parentCallIndex"] = None
+            proposal["calls"][4]["parentCallIndex"] = 4
+            return proposal
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
@@ -46,6 +59,11 @@ def test_generate_uses_one_combined_call_and_keeps_the_public_model(monkeypatch)
     roots = [call for call in collaboration.calls if call.parent_call_id is None]
     assert len(roots) == 2
     assert collaboration.calls[3].argument_bindings[0].source_ref == "UC1::call:2#result"
+    boundary = next(item for item in model.Classes if item.class_name == "RequestBoundary")
+    assert [operation.name for operation in boundary.operations] == [
+        "submit", "requestReceipt",
+    ]
+    assert boundary.operations[0].step_refs == ["UC1:main:1", "UC1:main:2"]
 
 
 def test_combined_cache_skips_warm_calls_and_revalidates_the_hit(monkeypatch):
@@ -104,12 +122,16 @@ def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
 def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
     revised = False
     failure = ""
+    combined_calls = 0
+    call_plan_calls = 0
+    previews: list[tuple] = []
 
     def fake_parse(_messages, schema, **_kwargs):
-        nonlocal revised
+        nonlocal call_plan_calls, combined_calls, revised
         if schema is InventoryProposal:
             return inventory_proposal()
         if schema is CombinedUnitProposal:
+            combined_calls += 1
             return multiple_root_combined_proposal()
         if schema is FeedbackScope:
             return {"kind": "operation", "ids": ["UC1"]}
@@ -119,17 +141,21 @@ def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
             fragment["Classes"][0]["operations"][0]["name"] = "send"
             return fragment
         if issubclass(schema, CallPlanProposal):
+            call_plan_calls += 1
             if failure == "provider":
                 raise RuntimeError("provider unavailable")
             if failure == "schema":
                 return {"calls": []}
             plan = deepcopy(multiple_root_call_plan())
+            if failure == "repeat":
+                plan["calls"][2]["parentCallIndex"] = 2
             if revised:
                 plan["calls"][0]["receiverOperationId"] = "RequestBoundary::send(request:RequestData)"
             return plan
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
+    monkeypatch.setattr(service.operations, "emit_preview", lambda *args: previews.append(args))
     index = build_scenario_index(multiple_entry_use_case())
     current = service.generate_class_model(index)
     current.Collaborations = []
@@ -141,10 +167,15 @@ def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
         with pytest.raises(error_type):
             service.resume_class_model(index, current)
 
-    failure = ""
+    failure = "repeat"
+    before_repair = combined_calls, call_plan_calls
+    previews.clear()
     resumed = service.resume_class_model(index, current)
     assert [item.collaboration_id for item in resumed.Collaborations] == ["UC1"]
+    assert (combined_calls - before_repair[0], call_plan_calls - before_repair[1]) == (1, 2)
+    assert {item[1] for item in previews} == {"operations", "collaborations"}
 
+    failure = ""
     result = service.revise_class_model(
         resumed, index, "Rename the actor-facing operation.", {"UC1"},
     )
