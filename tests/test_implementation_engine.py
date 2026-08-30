@@ -21,6 +21,7 @@ from app.implementation.generation.orchestrator import load_job
 from app.implementation.planning.design_context import (
     generate_api_adapter_tasks,
     generate_gateway_adapter_tasks,
+    generate_implementation_tasks,
     generate_wiring_tasks,
 )
 from app.implementation.workflows.conformance import (
@@ -332,6 +333,109 @@ def test_source_conformance_rejects_agent_changes_to_generated_contract(
     assert "GENERATED_CONTRACT_STRUCTURE_CHANGED" in {
         item["code"] for item in report["violations"]
     }
+
+
+def test_entity_body_can_change_without_changing_its_public_signature(
+    tmp_path: Path,
+) -> None:
+    """Entity의 동작은 작성할 수 있지만 설계가 정한 호출 계약은 유지한다."""
+    bce = tmp_path / "application/src/main/java/com/example/demo/bce"
+    bce.mkdir(parents=True)
+    entity = bce / "Order.java"
+    entity.write_text(
+        "public class Order { public String rename(String value) { return value; } }",
+        encoding="utf-8",
+    )
+    class_model = tmp_path / "class.puml"
+    class_model.write_text("class Order <<Entity>> { + rename(value: string): string }", encoding="utf-8")
+    sequence = tmp_path / "sequence.puml"
+    sequence.write_text("", encoding="utf-8")
+    spec = SimpleNamespace(
+        base_package="com.example.demo",
+        inputs={"bceClass": class_model, "sequence": sequence},
+    )
+    capture_generated_contracts(tmp_path, spec.base_package)
+
+    entity.write_text(
+        entity.read_text(encoding="utf-8").replace("return value", "return value.trim()"),
+        encoding="utf-8",
+    )
+    assert verify_source_design_conformance(tmp_path, spec)["status"] == "PASSED"
+
+    entity.write_text(
+        entity.read_text(encoding="utf-8").replace("String value", "Integer value"),
+        encoding="utf-8",
+    )
+    with pytest.raises(SourceDesignConformanceError):
+        verify_source_design_conformance(tmp_path, spec)
+
+
+def test_entity_tasks_own_one_file_and_keep_typed_sequence_details(tmp_path: Path) -> None:
+    """Entity 작업은 파일별로 나뉘고 구조화된 호출·반환 정보를 잃지 않는다."""
+    inputs = {
+        "bceClass": tmp_path / "bce.puml",
+        "sequence": tmp_path / "sequence.puml",
+        "erd": tmp_path / "erd.puml",
+        "bceModel": tmp_path / "bce-model.json",
+        "sequenceModel": tmp_path / "sequence-model.json",
+        "erdBceModel": tmp_path / "erd-model.json",
+    }
+    inputs["bceClass"].write_text(
+        "class Order <<Entity>> { + rename(title: string): void }\n"
+        "class Customer <<Entity>> {}\n"
+        "class OrderControl <<Control>> { + place(order: Order): Order }\n",
+        encoding="utf-8",
+    )
+    inputs["sequence"].write_text("OrderControl -> Order : rename(title)\n", encoding="utf-8")
+    inputs["erd"].write_text('entity "Order" as Order { * id : VARCHAR }', encoding="utf-8")
+    inputs["bceModel"].write_text(json.dumps({"Classes": [
+        {"className": "Order", "stereotype": "Entity",
+         "fields": ["operation : OperationType"], "operations": []},
+        {"className": "Customer", "stereotype": "Entity", "fields": [], "operations": []},
+        {"className": "OrderControl", "stereotype": "Control", "fields": [], "operations": []},
+    ], "DataTypes": [
+        {"name": "OperationType", "kind": "enumeration", "values": ["CREATE", "UPDATE"]}
+    ]}), encoding="utf-8")
+    inputs["erdBceModel"].write_text(json.dumps({"Classes": [], "Relationships": []}), encoding="utf-8")
+    inputs["sequenceModel"].write_text(json.dumps({"Diagrams": [{
+        "use_case_id": "UC_ORDER",
+        "Participants": [
+            {"alias": "control", "source_class": "OrderControl"},
+            {"alias": "order", "source_class": "Order"},
+        ],
+        "Messages": [
+            {"source": "control", "target": "order", "type": "sync",
+             "call_id": "call-1", "step_ids": ["UC_ORDER:main:1"],
+             "arguments": [{"source_kind": "input", "source_ref": "#title"}]},
+            {"source": "order", "target": "control", "type": "return",
+             "reply_to": "call-1", "step_ids": ["UC_ORDER:main:1"]},
+        ],
+    }]}), encoding="utf-8")
+    spec = SimpleNamespace(
+        name="orders", base_package="com.example.orders", inputs=inputs,
+        agent_model="test", agent_base_url="", agent_temperature=0.2,
+        agent_top_p=1.0, agent_max_output_tokens=1, agent_reasoning_budget=1,
+    )
+    run = tmp_path / "run"
+    bce = run / "application/src/main/java/com/example/orders/bce"
+    bce.mkdir(parents=True)
+    for name in ("Order", "Customer", "OrderControl"):
+        (bce / f"{name}.java").write_text(f"public class {name} {{}}", encoding="utf-8")
+    (bce / "OperationType.java").write_text(
+        "public enum OperationType { CREATE, UPDATE }", encoding="utf-8"
+    )
+
+    tasks = generate_implementation_tasks(spec, run)
+    entities = [task for task in tasks if task.task_type == "entity"]
+    assert {task.control for task in entities} == {"Order", "Customer"}
+    assert all(len(task.allowed_write_paths) == 1 for task in entities)
+    assert not any(task.task_type == "scaffold-completion" for task in tasks)
+    order = next(task for task in entities if task.control == "Order")
+    context = json.loads((run / order.context_file).read_text(encoding="utf-8"))
+    call, reply = context["sequence"][0]["messages"]
+    assert call["arguments"][0]["source_kind"] == "input"
+    assert reply["reply_to"] == call["call_id"]
+    assert "public enum OperationType" in context["relatedJavaContracts"]
 
 
 def test_placeholder_gate_checks_production_sources_only(tmp_path: Path) -> None:

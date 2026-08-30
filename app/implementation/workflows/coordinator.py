@@ -38,6 +38,7 @@ from ..generation.orchestrator import (
 from .completion import audit_run_completion
 from .conformance import (
     SourceDesignConformanceError,
+    capture_generated_contracts,
     restore_generated_contracts,
     verify_source_design_conformance,
 )
@@ -53,11 +54,14 @@ from .traceability import build_rtm_traceability_map
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
 TRANSMISSION_SCHEMA = "external-transmission-request/v1alpha1"
 PHASES = (
+    ("scaffold-completion", (), {"scaffold-completion"}),
+    # Entity끼리는 파일이 겹치지 않는다. 이후 단계는 완성된 domain 동작을 읽는다.
+    ("entity", ("scaffold-completion",), {"entity"}),
     # Persistence contracts are generated from the ERD before Control services
     # are implemented.  Repositories are implementation details, so they do
     # not need to appear in the BCE class diagram, but Control services must be
     # able to compile against the generated repository interfaces.
-    ("persistence", (), {
+    ("persistence", ("entity",), {
         "persistence-entities",
         "persistence-repositories",
         "persistence-mapping",
@@ -77,13 +81,15 @@ PHASES = (
 # entities must land first, after which repositories, mapping, and schema are
 # independent.
 PARALLEL_PHASES = frozenset(
-    {"control", "api-adapters", "boundary-adapters", "outbound-adapters"}
+    {"entity", "control", "api-adapters", "boundary-adapters", "outbound-adapters"}
 )
 # Individual tasks already compile their owned production sources and run only
 # their owned tests.  A full workspace build is valuable at integration seams,
 # but repeating it after every independent phase dominated the end-to-end run.
 FULL_VERIFICATION_PHASES = frozenset({"wiring", "end-to-end"})
 PHASE_LABELS = {
+    "scaffold-completion": "설계 타입 보완",
+    "entity": "Entity",
     "control": "Control",
     "persistence": "Repository",
     "api-adapters": "API Adapter",
@@ -243,9 +249,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             and same_output_checkpoint
             and complete_outputs
             and not repair_replay_required
-        ):
-            status = "SUCCEEDED"
-        elif result_matches and not old:
+        ) or (result_matches and not old):
             status = "SUCCEEDED"
         elif (
             result.get("status") == "FAILED"
@@ -328,12 +332,10 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             [] if status == "NEEDS_INPUT" else _next_runnable_tasks(tasks, phases)
         ),
         "blockingReason": (
-            (
-                "End-to-end generation is blocked by unresolved design contracts; "
-                "see reports/design-gaps/end-to-end-flow.json."
-                if status == "NEEDS_INPUT"
-                else (None if pending else "Implemented phases are complete; the audit backlog requires the next planner.")
-            )
+            "End-to-end generation is blocked by unresolved design contracts; "
+            "see reports/design-gaps/end-to-end-flow.json."
+            if status == "NEEDS_INPUT"
+            else (None if pending else "Implemented phases are complete; the audit backlog requires the next planner.")
         ),
         "blockingDetails": blocking_details if status == "NEEDS_INPUT" else [],
         "approval": previous.get("approval"),
@@ -531,6 +533,9 @@ def _run_workflow(
         except Exception as error:
             _record_workflow_failure(run_root, state, error)
             raise
+        if phase_id == "scaffold-completion":
+            # 타입 표식이 해결된 공개 signature를 Entity 작업의 기준으로 다시 저장한다.
+            capture_generated_contracts(run_root, spec.base_package)
         state["currentActivity"] = {
             "id": f"audit-{phase_id}",
             "label": f"{PHASE_LABELS[phase_id]} 구현 결과 확인",
@@ -1088,13 +1093,13 @@ def validate_workflow_approval(
     """Accept an exact approval or a remaining subset of an already approved run scope."""
     try:
         return validate_approval(path, str(request["requestId"]))
-    except PermissionError as exact_error:
+    except PermissionError:
         if path is None or not path.is_file():
             raise
         approval = _read_json(path)
         approved_request_id = str(approval.get("requestId", ""))
         if approval.get("approved") is not True:
-            raise exact_error
+            raise
         if _valid_delegated_execution_approval(approval, request, state, run_root):
             return {
                 "requestId": str(request["requestId"]),
@@ -1145,7 +1150,7 @@ def validate_workflow_approval(
                 "approvedAt": approval.get("approvedAt"),
                 "approvedBy": approval.get("approvedBy"),
             }
-        raise exact_error
+        raise
 
 
 def _valid_delegated_execution_approval(

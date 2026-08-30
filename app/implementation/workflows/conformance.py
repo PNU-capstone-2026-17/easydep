@@ -1,10 +1,7 @@
-"""Deterministic post-test conformance checks for generated source contracts.
+"""생성된 Java 코드가 설계 계약을 지켰는지 결정론적으로 확인한다.
 
-This module deliberately does not use an LLM.  The generated BCE/OpenAPI Java
-files are an immutable implementation boundary, so their byte hashes are kept
-from the moment the prototype is generated.  A small structural parser makes
-the failure evidence useful to a developer without turning a heuristic into the
-pass/fail decision.
+Boundary, Control, API와 DataType 파일은 그대로 보존하고, Entity는 공개 Java
+signature가 같을 때 메서드 본문 변경만 허용한다. 이 검사는 LLM을 호출하지 않는다.
 """
 from __future__ import annotations
 
@@ -14,7 +11,6 @@ import re
 from pathlib import Path
 
 from ..domain.implementation_ir import parse_components
-
 
 SCHEMA_VERSION = "source-design-conformance/v1alpha1"
 SNAPSHOT_FILE = "reports/generated-source-contracts.json"
@@ -85,15 +81,21 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
             else:
                 current = path.read_text(encoding="utf-8")
                 if _sha256(current) != item.get("sha256"):
-                    check["status"] = "FAILED"
-                    check["integrity"] = "FAILED"
                     changes = _structural_changes(
                         item.get("structure", {}), _java_structure(current)
                     )
                     check["changes"] = changes
-                    violations.append({"code": "GENERATED_CONTRACT_MODIFIED", "path": relative,
-                                   "message": "Generated BCE/OpenAPI contract differs from its pre-agent snapshot."})
-                    if _has_structural_changes(changes):
+                    if _is_entity_contract(item) and _same_public_java_signature(
+                        str(item.get("content", "")), current
+                    ):
+                        check["integrity"] = "MODIFIED"
+                        check["body"] = "ALLOWED"
+                    else:
+                        check["status"] = "FAILED"
+                        check["integrity"] = "FAILED"
+                        violations.append({"code": "GENERATED_CONTRACT_MODIFIED", "path": relative,
+                                       "message": "Generated BCE/OpenAPI contract differs from its pre-agent snapshot."})
+                    if check["status"] == "FAILED" and _has_structural_changes(changes):
                         check["contract"] = "FAILED"
                         violations.append({
                             "code": "GENERATED_CONTRACT_STRUCTURE_CHANGED",
@@ -203,7 +205,7 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
 
 
 def restore_generated_contracts(run_root: Path) -> list[str]:
-    """Restore changed generated contracts from their local pre-agent baseline."""
+    """변경된 계약만 복구하되, 같은 공개 signature의 Entity 본문은 보존한다."""
     snapshot_path = run_root / SNAPSHOT_FILE
     if not snapshot_path.is_file():
         return []
@@ -216,11 +218,44 @@ def restore_generated_contracts(run_root: Path) -> list[str]:
             continue
         path = run_root / relative
         current = path.read_text(encoding="utf-8") if path.is_file() else None
+        if current is not None and _is_entity_contract(item) and _same_public_java_signature(
+            content, current
+        ):
+            continue
         if current != content:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
             restored.append(relative)
     return restored
+
+
+def entity_public_signature_violations(
+    run_root: Path, candidate_root: Path, relative_paths: list[str]
+) -> list[str]:
+    """Entity 작업이 공개 Java 호출 계약을 바꿨으면 파일별 오류를 반환한다."""
+    snapshot_path = run_root / SNAPSHOT_FILE
+    if not snapshot_path.is_file():
+        return ["Generated Java contract baseline is missing."]
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    baseline = {
+        str(item.get("path", "")): item
+        for item in snapshot.get("files", [])
+        if _is_entity_contract(item)
+    }
+    violations: list[str] = []
+    for relative in relative_paths:
+        item = baseline.get(str(relative).replace("\\", "/"))
+        candidate = candidate_root / relative
+        if item is None or not candidate.is_file():
+            violations.append(f"{relative}: Entity contract or candidate source is missing")
+            continue
+        if not _same_public_java_signature(
+            str(item.get("content", "")), candidate.read_text(encoding="utf-8")
+        ):
+            violations.append(
+                f"{relative}: preserve the generated public class and method signatures exactly"
+            )
+    return violations
 
 
 class SourceDesignConformanceError(RuntimeError):
@@ -231,6 +266,34 @@ class SourceDesignConformanceError(RuntimeError):
 
 def _sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _is_entity_contract(item: object) -> bool:
+    """BCE class만 Entity로 보고 interface·record·enum은 기존처럼 고정한다."""
+    if not isinstance(item, dict) or "/bce/" not in f"/{item.get('path', '')}":
+        return False
+    structure = item.get("structure", {})
+    types = structure.get("types", {}) if isinstance(structure, dict) else {}
+    return isinstance(types, dict) and "class" in types.values()
+
+
+def _same_public_java_signature(before: str, after: str) -> bool:
+    """본문과 공백을 제외하고 외부 호출자가 보는 공개 선언만 비교한다."""
+    def signatures(source: str) -> tuple[str, ...]:
+        clean = re.sub(r"/\*.*?\*/|//[^\n]*", "", source, flags=re.DOTALL)
+        normalized = re.sub(r"\s*\n\s*", " ", clean)
+        matches = re.findall(
+            r"\bpublic\s+(?:final\s+)?(?:class|interface|enum|record)\s+[A-Za-z_$]\w*|"
+            r"\bpublic\s+(?:(?:abstract|final|static)\s+)*[A-Za-z_$][\w$<>,.?\[\] ]*\s+"
+            r"[A-Za-z_$]\w*\s*\([^)]*\)(?:\s+throws\s+[^{;]+)?(?=\s*[{;])|"
+            r"\bpublic\s+[A-Za-z_$]\w*\s*\([^)]*\)(?=\s*\{)|"
+            r"\bpublic\s+(?:(?:static|final)\s+)*[A-Za-z_$][\w$<>,.?\[\] ]*\s+"
+            r"[A-Za-z_$]\w*\s*(?=[=;])",
+            normalized,
+        )
+        # 선언 순서는 무시하지만 같은 method가 두 번 생긴 경우는 놓치지 않는다.
+        return tuple(sorted(re.sub(r"\s+", "", match) for match in matches))
+    return signatures(before) == signatures(after)
 
 
 def _verify_erd_conformance(

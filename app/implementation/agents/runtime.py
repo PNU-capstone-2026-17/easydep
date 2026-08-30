@@ -18,6 +18,7 @@ from ..planning.design_context import (
     read_generated_java_contracts,
     referenced_openapi_model_names,
 )
+from ..workflows.conformance import entity_public_signature_violations
 from ..workflows.repair import referenced_source_paths
 from .prompts import (
     FRONTEND_SYSTEM_PROMPT,
@@ -437,6 +438,12 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             + persistence_contracts
             + "\n```\n"
         )
+    if task_type in {"entity", "scaffold-completion"}:
+        # 타입 보완 단계가 먼저 실행된 경우에도 Entity가 처음 만든 scaffold가 아니라
+        # 현재 파일을 보도록, 허용된 source를 실행 직전에 다시 붙인다.
+        prompt += "\n\n## Current allowed source\n\n" + read_allowed_sources(
+            sandbox, list(task["allowed_write_paths"])
+        )
     allowed_absolute = [str((sandbox / path).resolve()) for path in task["allowed_write_paths"]]
     prompt += "\n\n## Enforced absolute write paths\n\n" + "\n".join(
         f"- `{path}`" for path in allowed_absolute
@@ -713,6 +720,21 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                                 "durationMs": 0,
                                 "stdout": "",
                                 "stderr": "\n".join(boundary_violations),
+                                "testResults": "",
+                            }
+                        )
+                if task_type == "entity":
+                    signature_violations = entity_public_signature_violations(
+                        run_root, sandbox, list(task["allowed_write_paths"])
+                    )
+                    if signature_violations:
+                        raise WorkspaceVerificationError(
+                            {
+                                "command": ["entity-public-signature-gate"],
+                                "exitCode": 1,
+                                "durationMs": 0,
+                                "stdout": "",
+                                "stderr": "\n".join(signature_violations),
                                 "testResults": "",
                             }
                         )

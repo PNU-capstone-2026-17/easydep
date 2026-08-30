@@ -12,6 +12,8 @@ REPAIR_PROMPT_HEADING = "## Orchestrated repair and revalidation directives"
 REPAIR_PROMPT_START = "<!-- easydep:repair-directives:start -->"
 REPAIR_PROMPT_END = "<!-- easydep:repair-directives:end -->"
 TASK_PHASES = {
+    "scaffold-completion": "scaffold-completion",
+    "entity": "entity",
     "control": "control",
     "persistence-entities": "persistence",
     "persistence-repositories": "persistence",
@@ -25,8 +27,10 @@ TASK_PHASES = {
     "integration-test": "end-to-end",
 }
 PHASE_DEPENDENCIES = {
-    "control": (),
-    "persistence": ("control",),
+    "scaffold-completion": (),
+    "entity": ("scaffold-completion",),
+    "persistence": ("entity",),
+    "control": ("persistence",),
     "api-adapters": ("control",),
     "boundary-adapters": ("control",),
     "outbound-adapters": ("control", "persistence"),

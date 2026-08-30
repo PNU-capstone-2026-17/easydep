@@ -83,7 +83,10 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
 
-    tasks: list[ImplementationTask] = []
+    tasks = [
+        *_generate_scaffold_completion_task(spec, run_root, output),
+        *_generate_entity_tasks(spec, run_root, output),
+    ]
     class_by_name = {item.name: item for item in classes}
     ir = build_implementation_ir(spec, run_root)
     repositories = {
@@ -182,6 +185,125 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
         )
         (output / f"{task_slug}.task.json").write_text(
             json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        tasks.append(task)
+    return tasks
+
+
+def _generate_scaffold_completion_task(
+    spec: JobSpec, run_root: Path, output: Path
+) -> list[ImplementationTask]:
+    """알 수 없는 타입 표식이 있는 BCE 파일만 먼저 보완하는 작업을 만든다."""
+    package_path = spec.base_package.replace(".", "/")
+    bce_root = run_root / "application/src/main/java" / package_path / "bce"
+    bce_files = sorted(bce_root.glob("*.java"))
+    allowed = [
+        path.relative_to(run_root).as_posix()
+        for path in bce_files
+        if "TODO(EasyDep)" in path.read_text(encoding="utf-8")
+    ]
+    if not allowed:
+        return []
+
+    context = {
+        "schemaVersion": "implementation-context/v1alpha1",
+        "taskId": "scaffold-completion",
+        "taskType": "scaffold-completion",
+        "files": allowed,
+    }
+    prompt = """# Scaffold type completion
+
+Replace only `Object` declarations marked with `TODO(EasyDep)` in the allowed files.
+Use the original type written in each marker, remove every marker you resolve, and preserve
+all other declarations. Do not add accessors, constructors, operations, or new files.
+""" + render_allowed_output_rules(allowed)
+    task = ImplementationTask(
+        task_id="scaffold-completion",
+        control="scaffold completion",
+        prompt_file=_write_task_file(run_root, output / "scaffold-completion.prompt.md", prompt),
+        context_file=_write_task_file(
+            run_root,
+            output / "scaffold-completion.context.json",
+            json.dumps(context, ensure_ascii=False, indent=2),
+        ),
+        allowed_write_paths=allowed,
+        immutable_paths=[
+            *(path.relative_to(run_root).as_posix() for path in bce_files
+              if path.relative_to(run_root).as_posix() not in allowed),
+            f"application/src/main/java/{package_path}/api",
+        ],
+        source_artifacts=_typed_source_artifacts(spec),
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        llm=_llm_config(spec),
+        task_type="scaffold-completion",
+    )
+    _write_task_file(
+        run_root,
+        output / "scaffold-completion.task.json",
+        json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
+    )
+    return [task]
+
+
+def _generate_entity_tasks(
+    spec: JobSpec, run_root: Path, output: Path
+) -> list[ImplementationTask]:
+    """구조화된 설계에서 Entity별 Java 구현 작업을 만든다."""
+    model = _read_json(spec.inputs.get("bceModel"))
+    entities = [
+        item for item in model.get("Classes", [])
+        if isinstance(item, dict)
+        and str(item.get("stereotype", "")).casefold() == "entity"
+    ]
+    package_path = spec.base_package.replace(".", "/")
+    bce_root = run_root / "application/src/main/java" / package_path / "bce"
+    all_bce = [path.relative_to(run_root).as_posix() for path in sorted(bce_root.glob("*.java"))]
+    sequence = _read_json(spec.inputs.get("sequenceModel"))
+    erd = _read_json(spec.inputs.get("erdBceModel"))
+    tasks: list[ImplementationTask] = []
+    for entity in sorted(entities, key=lambda item: str(item.get("className", ""))):
+        name = str(entity.get("className", ""))
+        if not name:
+            continue
+        slug = camel_to_kebab(name)
+        allowed = f"application/src/main/java/{package_path}/bce/{name}.java"
+        task_id = f"implement-{slug}-entity"
+        related_types = _referenced_data_types(entity, model)
+        context = {
+            "schemaVersion": "implementation-context/v1alpha1",
+            "taskId": task_id,
+            "taskType": "entity",
+            "entity": {key: entity.get(key, []) for key in ("className", "fields", "operations")},
+            "sequence": _entity_sequence(sequence, name),
+            "erd": _entity_erd(erd, name),
+            "relatedJavaContracts": read_generated_java_contracts(
+                run_root, spec.base_package, related_types
+            ),
+        }
+        prompt = _render_entity_prompt(name, context, allowed)
+        task = ImplementationTask(
+            task_id=task_id,
+            control=name,
+            prompt_file=_write_task_file(run_root, output / f"{slug}-entity.prompt.md", prompt),
+            context_file=_write_task_file(
+                run_root,
+                output / f"{slug}-entity.context.json",
+                json.dumps(context, ensure_ascii=False, indent=2),
+            ),
+            allowed_write_paths=[allowed],
+            immutable_paths=[
+                *(path for path in all_bce if path != allowed),
+                f"application/src/main/java/{package_path}/api",
+            ],
+            source_artifacts=_typed_source_artifacts(spec),
+            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            llm=_llm_config(spec),
+            task_type="entity",
+        )
+        _write_task_file(
+            run_root,
+            output / f"{slug}-entity.task.json",
+            json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
         )
         tasks.append(task)
     return tasks
@@ -1864,6 +1986,104 @@ def slice_erd(source: str, entity_names: set[str]) -> str:
     return "\n\n".join(dict.fromkeys(blocks)) if blocks else "' No directly related ERD entity"
 
 
+def _entity_sequence(model: dict[str, object], entity: str) -> list[dict[str, object]]:
+    """Entity가 직접 참여한 유스케이스의 구조화된 메시지만 고른다."""
+    diagrams = model.get("Diagrams", [model])
+    if not isinstance(diagrams, list):
+        return []
+    selected: list[dict[str, object]] = []
+    for diagram in diagrams:
+        if not isinstance(diagram, dict):
+            continue
+        participants = [
+            item for item in diagram.get("Participants", []) if isinstance(item, dict)
+        ]
+        entity_aliases = {
+            str(item.get("alias", "")) for item in participants
+            if str(item.get("source_class") or item.get("name") or "") == entity
+        }
+        messages = [
+            item for item in diagram.get("Messages", [])
+            if isinstance(item, dict)
+            and {str(item.get("source", "")), str(item.get("target", ""))} & entity_aliases
+        ]
+        if not messages:
+            continue
+        involved = {
+            str(message.get(side, ""))
+            for message in messages
+            for side in ("source", "target")
+        }
+        selected.append({
+            "useCaseId": diagram.get("use_case_id", ""),
+            "useCaseName": diagram.get("use_case_name", ""),
+            "participants": [
+                item for item in participants if str(item.get("alias", "")) in involved
+            ],
+            # argument source, call/reply 연결, step ID와 fragment 정보는 그대로 보존한다.
+            "messages": messages,
+        })
+    return selected
+
+
+def _entity_erd(model: dict[str, object], entity: str) -> dict[str, object]:
+    """한 Entity와 직접 연결된 ERD 정보만 반환한다."""
+    classes = [item for item in model.get("Classes", []) if isinstance(item, dict)]
+    return {
+        "entity": next((item for item in classes if item.get("className") == entity), {}),
+        "relationships": [
+            item for item in model.get("Relationships", [])
+            if isinstance(item, dict) and entity in {item.get("source"), item.get("target")}
+        ],
+    }
+
+
+def _referenced_data_types(
+    entity: dict[str, object], model: dict[str, object]
+) -> set[str]:
+    """Entity 선언에서 실제로 사용한 enum·record 이름만 고른다."""
+    source = json.dumps(entity, ensure_ascii=False)
+    return {
+        str(item.get("name", ""))
+        for item in model.get("DataTypes", [])
+        if isinstance(item, dict)
+        and item.get("name")
+        and re.search(rf"\b{re.escape(str(item['name']))}\b", source)
+    }
+
+
+def _render_entity_prompt(
+    entity_name: str, context: dict[str, object], allowed: str
+) -> str:
+    """Entity 하나의 설계와 현재 Java 계약을 짧은 작업 지시로 만든다."""
+    return f"""# Entity implementation: {entity_name}
+
+Implement only `{allowed}`. Fill the declared operations with domain behavior. Preserve every
+public Java signature; do not add guessed accessors, constructors, JPA mappings, or new files.
+Use only the typed sequence messages below. The runtime appends the current source before work.
+
+## Entity
+```json
+{json.dumps(context['entity'], ensure_ascii=False, indent=2)}
+```
+
+## Typed sequence involvement
+```json
+{json.dumps(context['sequence'], ensure_ascii=False, indent=2)}
+```
+
+## Related ERD
+```json
+{json.dumps(context['erd'], ensure_ascii=False, indent=2)}
+```
+
+## Related Java contracts
+```java
+{context['relatedJavaContracts'] or '// None'}
+```
+""" + render_allowed_output_rules([allowed])
+
+
 def render_prompt(spec: JobSpec, context: dict[str, object], allowed: list[str]) -> str:
     repositories = list(context.get("repositories", []))
     repository_rule = (
@@ -1959,6 +2179,28 @@ def camel_to_kebab(value: str) -> str:
 
 def _read(path: Path | None) -> str:
     return path.read_text(encoding="utf-8") if path and path.is_file() else ""
+
+
+def _read_json(path: Path | None) -> dict[str, object]:
+    """선택 입력이 없거나 JSON object가 아니면 빈 설계로 처리한다."""
+    try:
+        value = json.loads(_read(path))
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _write_task_file(run_root: Path, path: Path, content: str) -> str:
+    path.write_text(content, encoding="utf-8")
+    return _relative(run_root, path)
+
+
+def _typed_source_artifacts(spec: JobSpec) -> dict[str, str]:
+    names = {"bceModel", "sequenceModel", "erdBceModel"}
+    return {
+        name: str(path) for name, path in spec.inputs.items()
+        if name in names and path.is_file()
+    }
 
 
 def _relative(root: Path, path: Path) -> str:

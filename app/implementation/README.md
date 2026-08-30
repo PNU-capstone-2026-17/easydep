@@ -20,6 +20,21 @@
   → 결과 저장과 승인 요청
 ```
 
+## 작업별 소유 계약
+
+구현 작업은 설계 계약을 지키면서 서로 다른 파일을 나누어 작성한다.
+
+- `scaffold-completion`은 `TODO(EasyDep)` 타입 표식이 남은 생성 파일만 보완한다. 표식이
+  없으면 이 작업은 계획하지 않는다.
+- `entity`는 BCE Entity마다 하나의 Java 파일만 소유한다. 별도의 기계적 단위 테스트 파일은
+  생성하지 않으며, 설계에 선언된 메서드의 본문을 작성한다. 설계에 없는 getter/setter를
+  임의로 추가하거나 공개 class·field·method signature를 바꾸지 않는다.
+- `control`, API adapter와 생성된 BCE/OpenAPI contract는 각각 자기 허용 경로만 쓴다. 생성된
+  Control/API 파일의 바이트를 수정하지 않으며, 계약 변경은 구현 수리가 아니라 설계 입력으로
+  되돌린다.
+- Entity 작업이 성공한 뒤에야 persistence와 Control 작업이 실행된다. 실패하면 성공한 작업은
+  재사용하고 해당 소유 작업부터 재개한다.
+
 ## 디렉터리 지도
 
 | 디렉터리 | 책임 |
