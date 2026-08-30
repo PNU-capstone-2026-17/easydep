@@ -18,7 +18,7 @@ from app.design.schemas.class_model import (
     DataType,
 )
 
-JAVA_SCAFFOLDER_VERSION = "1.0.2"
+JAVA_SCAFFOLDER_VERSION = "1.1.0"
 
 _JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 _FIELD = re.compile(
@@ -34,70 +34,18 @@ _JAVA_KEYWORDS = frozenset({
     "try", "void", "volatile", "while", "record", "sealed", "permits", "yield",
 })
 _TYPE_ALIASES = {
-    "any": "Object",
-    "object": "Object",
     "string": "String",
-    "str": "String",
-    "integer": "int",
-    "int": "int",
-    "long": "long",
-    "short": "short",
-    "byte": "byte",
-    "float": "double",
-    "double": "double",
-    "bool": "boolean",
-    "boolean": "boolean",
-    "character": "char",
-    "char": "char",
-    "biginteger": "BigInteger",
+    "integer": "Integer",
+    "boolean": "Boolean",
     "bigdecimal": "BigDecimal",
     "decimal": "BigDecimal",
-    "number": "BigDecimal",
-    "uuid": "UUID",
-    "guid": "UUID",
-    "localdate": "LocalDate",
-    "date": "LocalDate",
-    "localtime": "LocalTime",
-    "time": "LocalTime",
-    "localdatetime": "LocalDateTime",
-    "offsetdatetime": "OffsetDateTime",
-    "datetime": "OffsetDateTime",
-    "instant": "Instant",
-    "timestamp": "Instant",
-    "list": "List",
-    "array": "List",
-    "collection": "List",
-    "page": "List",
-    "set": "Set",
-    "map": "Map",
-    "optional": "Optional",
-    "iterable": "Iterable",
-    "void": "void",
 }
-_BOXED_GENERIC_TYPES = {
-    "boolean": "Boolean",
-    "byte": "Byte",
-    "short": "Short",
-    "int": "Integer",
-    "long": "Long",
-    "float": "Float",
-    "double": "Double",
-    "char": "Character",
-}
+_BINARY_TYPE_NAMES = frozenset({"bytes", "byte[]", "bytes[]"})
+_GENERIC_TYPES = {"list": "List", "optional": "Optional"}
 _IMPORTS = {
     "BigDecimal": "java.math.BigDecimal",
-    "BigInteger": "java.math.BigInteger",
-    "Instant": "java.time.Instant",
-    "LocalDate": "java.time.LocalDate",
-    "LocalDateTime": "java.time.LocalDateTime",
-    "LocalTime": "java.time.LocalTime",
-    "OffsetDateTime": "java.time.OffsetDateTime",
-    "Iterable": "java.lang.Iterable",
     "List": "java.util.List",
-    "Map": "java.util.Map",
     "Optional": "java.util.Optional",
-    "Set": "java.util.Set",
-    "UUID": "java.util.UUID",
 }
 
 
@@ -132,7 +80,7 @@ class JavaScaffoldInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_java_names(self) -> JavaScaffoldInput:
-        """파일을 만들기 전에 모든 Java 이름과 field 선언을 확인한다."""
+        """파일을 만들기 전에 Java 이름과 field 선언 형식만 확인한다."""
         models = [self.bce_model]
         if self.erd_bce_model is not None:
             models.append(self.erd_bce_model)
@@ -149,12 +97,10 @@ class JavaScaffoldInput(BaseModel):
                     _parse_field(field, owner=component.class_name)
                 for operation in component.operations:
                     _require_identifier(operation.name, "operation name")
-                    java_type(operation.return_type)
                     for parameter in operation.parameters:
                         _require_identifier(
                             parameter.name, f"parameter in {operation.name}"
                         )
-                        java_type(parameter.type)
         if self.erd_bce_model is not None:
             class_entities = {
                 item.class_name
@@ -196,11 +142,15 @@ def render_java_scaffold(scaffold: JavaScaffoldInput) -> dict[str, str]:
     """
     package_name = f"{scaffold.base_package}.bce"
     package_path = package_name.replace(".", "/")
+    declared_types = {
+        *(item.class_name for item in scaffold.bce_model.Classes),
+        *(item.name for item in scaffold.bce_model.DataTypes),
+    }
     files: dict[str, str] = {}
     for data_type in sorted(scaffold.bce_model.DataTypes, key=lambda item: item.name):
         _require_identifier(data_type.name, "DataType name")
         files[f"{package_path}/{data_type.name}.java"] = _render_data_type(
-            package_name, data_type
+            package_name, data_type, declared_types
         )
     erd_entities = {
         item.class_name: item
@@ -216,7 +166,7 @@ def render_java_scaffold(scaffold: JavaScaffoldInput) -> dict[str, str]:
                 "identifier": list(erd_component.identifier),
             })
         files[f"{package_path}/{component.class_name}.java"] = _render_component(
-            package_name, component
+            package_name, component, declared_types
         )
     return dict(sorted(files.items()))
 
@@ -257,7 +207,10 @@ def build_java_scaffold_trace(
     }
 
 
-def _render_data_type(package_name: str, data_type: DataType) -> str:
+def _render_data_type(
+    package_name: str, data_type: DataType, declared_types: set[str]
+) -> str:
+    """설계 DataType을 enum 또는 record로 렌더링한다."""
     if data_type.kind == "enumeration":
         values = []
         for value in data_type.values:
@@ -270,112 +223,160 @@ def _render_data_type(package_name: str, data_type: DataType) -> str:
             f"public enum {data_type.name} {{\n{body}\n}}\n"
         )
 
-    fields = [_parse_field(item, owner=data_type.name) for item in data_type.fields]
-    declarations = ", ".join(f"{field_type} {name}" for name, field_type in fields)
-    imports = _render_imports(field_type for _name, field_type in fields)
+    fields = [
+        _field(item, owner=data_type.name, declared_types=declared_types)
+        for item in data_type.fields
+    ]
+    imports = _render_imports(field_type for _name, field_type, _todo_type in fields)
+    if any(todo_type for _name, _field_type, todo_type in fields):
+        declarations = ",\n".join(
+            f"{_todo(todo_type, indent='    ')}    {field_type} {name}"
+            for name, field_type, todo_type in fields
+        )
+        record_body = f"(\n{declarations}\n)"
+    else:
+        declarations = ", ".join(
+            f"{field_type} {name}" for name, field_type, _todo_type in fields
+        )
+        record_body = f"({declarations})"
     return (
         f"package {package_name};\n\n{imports}"
         "/** 값과 생성자를 함께 고정하는 Java 21 record 계약이다. */\n"
-        f"public record {data_type.name}({declarations}) {{}}\n"
+        f"public record {data_type.name}{record_body} {{}}\n"
     )
 
 
-def _render_component(package_name: str, component: AcceptedBCEClass) -> str:
+def _render_component(
+    package_name: str, component: AcceptedBCEClass, declared_types: set[str]
+) -> str:
+    """BCE class를 설계에 있는 필드와 operation만 가진 최소 Java 선언으로 만든다."""
+    signatures: set[str] = set()
+    for operation in component.operations:
+        parameter_types = ",".join(
+            java_type(parameter.type, declared_types=declared_types)
+            for parameter in operation.parameters
+        )
+        signature = f"{operation.name}({parameter_types})"
+        if signature in signatures:
+            raise ValueError(
+                f"{component.class_name} emits duplicate Java signature: {signature}"
+            )
+        signatures.add(signature)
+    methods = [_method_declaration(operation, declared_types) for operation in component.operations]
+    fields = [
+        _field(item, owner=component.class_name, declared_types=declared_types)
+        for item in component.fields
+    ]
     method_types = [
-        java_type(operation.return_type)
+        java_type(operation.return_type, declared_types=declared_types)
         for operation in component.operations
     ] + [
-        java_type(parameter.type)
+        java_type(parameter.type, declared_types=declared_types)
         for operation in component.operations
         for parameter in operation.parameters
     ]
-    fields = [_parse_field(item, owner=component.class_name) for item in component.fields]
-    imports = _render_imports([*method_types, *(kind for _name, kind in fields)])
+    imports = _render_imports([
+        *method_types, *(field_type for _name, field_type, _todo_type in fields)
+    ])
     header = f"package {package_name};\n\n{imports}"
     if component.stereotype in {"Boundary", "Control"}:
-        methods = "\n".join(
-            f"    {_method_declaration(operation)};"
-            for operation in component.operations
+        interface_methods = "\n".join(
+            f"{_todo(todo_types, indent='    ')}    {declaration};"
+            for declaration, _return_type, todo_types in methods
         )
-        if methods:
-            methods += "\n"
+        if interface_methods:
+            interface_methods += "\n"
         return (
             header
             + f"/** {component.stereotype} 역할의 변경 금지 Java 계약이다. */\n"
-            + f"public interface {component.class_name} {{\n{methods}}}\n"
+            + f"public interface {component.class_name} {{\n{interface_methods}}}\n"
         )
 
     lines = [
         header + "/** Entity의 상태와 설계에 선언된 연산을 보존하는 초기 코드다. */",
         f"public class {component.class_name} {{",
     ]
-    for name, field_type in fields:
-        lines.append(f"    private {field_type} {name};")
-    if fields:
+    for name, field_type, todo_type in fields:
+        lines.append(f"{_todo(todo_type, indent='    ')}    private {field_type} {name};")
+    for declaration, return_type, todo_types in methods:
         lines.append("")
-    lines.extend([
-        f"    public {component.class_name}() {{}}",
-    ])
-    if fields:
-        parameters = ", ".join(f"{field_type} {name}" for name, field_type in fields)
-        lines.extend(["", f"    public {component.class_name}({parameters}) {{"])
-        lines.extend(f"        this.{name} = {name};" for name, _field_type in fields)
-        lines.append("    }")
-        for name, field_type in fields:
-            suffix = name[:1].upper() + name[1:]
-            lines.extend([
-                "",
-                f"    public {field_type} get{suffix}() {{",
-                f"        return this.{name};",
-                "    }",
-                "",
-                f"    public void set{suffix}({field_type} {name}) {{",
-                f"        this.{name} = {name};",
-                "    }",
-            ])
-    for operation in component.operations:
-        lines.extend(["", f"    public {_method_declaration(operation)} {{"])
-        statement = _default_return(operation.return_type, component.class_name)
-        if statement:
-            lines.append(f"        {statement}")
+        lines.append(f"{_todo(todo_types, indent='    ')}    public {declaration} {{")
+        if return_type != "void":
+            lines.append("        return null;")
         lines.append("    }")
     lines.append("}")
     return "\n".join(lines) + "\n"
 
 
-def java_type(design_type: str) -> str:
-    """설계 타입 어휘를 닫힌 Java 타입 어휘로 바꾼다."""
+def java_type(design_type: str, *, declared_types: set[str] | None = None) -> str:
+    """설계 타입 하나를 컴파일 가능한 Java 타입으로 바꾼다.
+
+    ``declared_types``에는 같은 BCE 설계에 실제로 선언된 class·DataType 이름을 넣는다.
+    목록에 없는 타입은 추측하지 않고 ``Object``가 된다. 렌더러는 이때 함께 얻는 TODO
+    정보를 사용하지만, 이 공개 helper는 호출자가 바로 쓸 Java 타입 문자열만 반환한다.
+    """
+    return _java_type(design_type, declared_types=declared_types or set())[0]
+
+
+def _java_type(
+    design_type: str, *, declared_types: set[str]
+) -> tuple[str, str | None]:
+    """작은 변환표만 적용하고, 모르는 원문은 TODO를 위해 함께 돌려준다."""
     source = re.sub(r"\s+", "", str(design_type))
     if not source:
-        raise ValueError("Java type must not be empty")
+        return "Object", "(비어 있는 설계 타입)"
+    if source.casefold() in _BINARY_TYPE_NAMES:
+        return "byte[]", None
+    if source == "void":
+        return "void", None
+    if source.casefold() == "object":
+        return "Object", None
 
-    def replace(match: re.Match[str]) -> str:
-        token = match.group(0)
-        java = _TYPE_ALIASES.get(token.casefold(), token)
-        # Java generic arguments must be reference types.  Keep primitive
-        # aliases for ordinary fields and parameters, but box them inside a
-        # collection or Optional (for example optional<integer> becomes
-        # Optional<Integer>, never Optional<int>).
-        if "<" in source[: match.start()]:
-            return _BOXED_GENERIC_TYPES.get(java, java)
-        return java
+    alias = _TYPE_ALIASES.get(source.casefold())
+    if alias is not None:
+        return alias, None
 
-    converted = re.sub(r"[A-Za-z_$][A-Za-z0-9_$]*", replace, source)
-    if not re.fullmatch(
-        r"[A-Za-z_$][A-Za-z0-9_$]*(?:<[A-Za-z0-9_$<>,?]+>)?(?:\[\])*$",
-        converted,
-    ):
-        raise ValueError(f"unsupported Java design type: {design_type}")
-    return converted
+    generic = re.fullmatch(
+        r"(?P<outer>List|Optional)<(?P<argument>.+)>", source, re.IGNORECASE
+    )
+    if generic is not None:
+        argument, todo_type = _java_type(
+            generic.group("argument"), declared_types=declared_types
+        )
+        return f"{_GENERIC_TYPES[generic.group('outer').casefold()]}<{argument}>", (
+            source if todo_type else None
+        )
+
+    if source in declared_types:
+        return source, None
+    return "Object", source
 
 
-def _method_declaration(operation: ClassOperation) -> str:
+def _method_declaration(
+    operation: ClassOperation, declared_types: set[str]
+) -> tuple[str, str, str | None]:
+    """operation의 Java 선언과 TODO가 필요한 원래 타입을 만든다."""
     _require_identifier(operation.name, "operation name")
-    parameters = []
+    parameters: list[str] = []
+    todo_types: list[str] = []
     for parameter in operation.parameters:
         _require_identifier(parameter.name, f"parameter in {operation.name}")
-        parameters.append(f"{java_type(parameter.type)} {parameter.name}")
-    return f"{java_type(operation.return_type)} {operation.name}({', '.join(parameters)})"
+        parameter_type, todo_type = _java_type(
+            parameter.type, declared_types=declared_types
+        )
+        parameters.append(f"{parameter_type} {parameter.name}")
+        if todo_type:
+            todo_types.append(todo_type)
+    return_type, todo_type = _java_type(
+        operation.return_type, declared_types=declared_types
+    )
+    if todo_type:
+        todo_types.append(todo_type)
+    return (
+        f"{return_type} {operation.name}({', '.join(parameters)})",
+        return_type,
+        ", ".join(dict.fromkeys(todo_types)) or None,
+    )
 
 
 def _parse_field(value: str, *, owner: str) -> tuple[str, str]:
@@ -384,7 +385,15 @@ def _parse_field(value: str, *, owner: str) -> tuple[str, str]:
         raise ValueError(f"{owner} has an invalid field declaration: {value}")
     name = match.group("name")
     _require_identifier(name, f"field in {owner}")
-    return name, java_type(match.group("type"))
+    return name, match.group("type")
+
+
+def _field(
+    value: str, *, owner: str, declared_types: set[str]
+) -> tuple[str, str, str | None]:
+    name, design_type = _parse_field(value, owner=owner)
+    field_type, todo_type = _java_type(design_type, declared_types=declared_types)
+    return name, field_type, todo_type
 
 
 def _render_imports(types: Any) -> str:
@@ -400,27 +409,10 @@ def _render_imports(types: Any) -> str:
     return "".join(f"import {path};\n" for path in imports) + "\n"
 
 
-def _default_return(return_type: str, owner: str) -> str:
-    java = java_type(return_type)
-    if java == "void":
+def _todo(design_type: str | None, *, indent: str) -> str:
+    if not design_type:
         return ""
-    if java == owner:
-        return "return this;"
-    if java == "boolean":
-        return "return false;"
-    if java == "char":
-        return "return '\\0';"
-    if java in {"byte", "short", "int", "long", "float", "double"}:
-        return "return 0;"
-    if java.startswith("Optional<"):
-        return "return Optional.empty();"
-    if java.startswith("List<"):
-        return "return List.of();"
-    if java.startswith("Set<"):
-        return "return Set.of();"
-    if java.startswith("Map<"):
-        return "return Map.of();"
-    return "return null;"
+    return f"{indent}// TODO(EasyDep): 설계 타입 `{design_type}`에 맞는 Java 타입으로 교체한다.\n"
 
 
 def _valid_identifier(value: str) -> bool:

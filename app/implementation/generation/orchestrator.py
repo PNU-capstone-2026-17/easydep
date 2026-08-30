@@ -65,15 +65,6 @@ PROGRESS_SCHEMA = "easydep-implementation-progress/v1alpha1"
 # implementation input below one fixed container root so BCE, OpenAPI, and
 # Gradle all use the same portable contract.
 CONTAINER_WORKSPACE = PurePosixPath("/workspace")
-JAVA_BUILTIN_TYPES = {
-    "boolean", "byte", "char", "double", "float", "int", "long", "short", "void",
-    "Boolean", "Byte", "Character", "Double", "Float", "Integer", "Long", "Short",
-    "String", "string", "DateTime", "Instant", "LocalDate", "LocalDateTime",
-    "OffsetDateTime", "ZonedDateTime", "BigDecimal", "Decimal",
-    "List", "Map", "Set", "Object",
-}
-
-
 def load_job(path: Path) -> JobSpec:
     job_path = path.resolve()
     data = json.loads(job_path.read_text(encoding="utf-8"))
@@ -234,7 +225,6 @@ class PrototypeOrchestrator:
             self._write_gradle_project(application)
             self._write_application_entrypoint(java_root)
             self._write_runtime_configuration(application)
-            self._write_missing_type_placeholders(java_root)
             # Capture before any OpenHands task runs.  These files are the
             # immutable BCE/OpenAPI source contract for the implementation.
             capture_generated_contracts(staging, self.spec.base_package)
@@ -802,33 +792,6 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             encoding="utf-8",
         )
 
-    def _write_missing_type_placeholders(self, java_root: Path) -> None:
-        source = self.spec.inputs["bceClass"].read_text(encoding="utf-8")
-        missing = find_undefined_bce_types(source)
-        if not missing:
-            return
-        if not self.spec.allow_assumptions:
-            raise ValueError(f"Undefined BCE types require input: {', '.join(missing)}")
-
-        package = f"{self.spec.base_package}.bce"
-        target_dir = java_root / Path(package.replace(".", "/"))
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for type_name in missing:
-            source = (
-                f"package {package};\n\n"
-                f"/** Assumed placeholder for an undefined BCE type. */\n"
-                f"public final class {type_name} {{}}\n"
-            )
-            (target_dir / f"{type_name}.java").write_text(
-                source,
-                encoding="utf-8",
-            )
-            assumption = f"Generated placeholder for undefined BCE type: {type_name}"
-            self.manifest.assumptions.append(assumption)
-            self.manifest.diagnostics.append(
-                Diagnostic("BCE_UNDEFINED_TYPE_ASSUMED", "WARNING", assumption, str(self.spec.inputs["bceClass"]))
-            )
-
     def _compile(self, application: Path) -> None:
         # Do not mount the Windows-host Gradle cache into the container. Gradle's
         # FileAccessTimeJournal is lock-sensitive and can fail before compilation
@@ -1145,45 +1108,3 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def find_undefined_bce_types(source: str) -> list[str]:
-    """Find member types that have no class declaration in the BCE diagram.
-
-    Notes and relationship labels deliberately remain outside the scan; they are
-    natural-language data, not type declarations.
-    """
-    declarations = set(re.findall(r"(?m)^\s*class\s+([A-Za-z_]\w*)", source))
-    member_lines: list[str] = []
-    inside_class = False
-    for line in source.splitlines():
-        if re.match(r"^\s*class\s+[A-Za-z_]\w*.*\{\s*$", line):
-            inside_class = True
-            continue
-        if inside_class and re.match(r"^\s*}\s*$", line):
-            inside_class = False
-            continue
-        if inside_class and re.match(r"^\s*[+#~-]\s+", line):
-            member_lines.append(line)
-
-    type_fragments: list[str] = []
-    for line in member_lines:
-        type_fragments.extend(
-            re.findall(
-                r":\s*((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*"
-                r"(?:\s*<[^>]+>)?(?:\[\])?)",
-                line,
-            )
-        )
-    referenced: set[str] = set()
-    # Keep qualified names intact.  Splitting ``java.time.LocalDate`` into
-    # ``java``, ``time`` and ``LocalDate`` makes the first segment look like an
-    # undefined BCE class; the placeholder writer then emits ``java.java`` and
-    # shadows the JDK's real ``java`` package during compilation.  Qualified
-    # names refer to external/library types, not BCE declarations, so they are
-    # deliberately excluded from placeholder generation below.
-    qualified_name = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
-    for fragment in type_fragments:
-        referenced.update(re.findall(qualified_name, fragment))
-    external = {name for name in referenced if "." in name}
-    return sorted(referenced - declarations - JAVA_BUILTIN_TYPES - external)

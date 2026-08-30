@@ -25,16 +25,27 @@
 - 값 객체는 Java `record`, enum은 Java `enum`으로 만든다.
 - Boundary와 Control은 메서드 모양을 선언하는 `interface`로 만든다.
 - Entity는 설계에 있는 필드와 메서드를 가진 `class`로 만든다.
+- Entity 필드만 보고 생성자나 getter/setter를 자동으로 만들지 않는다. 접근 메서드도 클래스
+  설계에 operation으로 적힌 경우에만 한 번 생성한다.
 - 내용이 아직 없는 Entity 메서드는 컴파일할 수 있는 기본 반환만 넣는다. 메서드 동작을
   스캐폴더가 추측하지 않는다.
+- 타입 변환이 끝난 Java 메서드 이름과 인자 타입이 같은 경우에는 중복 signature로 거부한다.
 - 같은 typed 입력을 두 번 주면 파일 경로, 파일 순서와 내용이 모두 같아야 한다.
 
 ## 타입 이름 처리
 
-설계 모델에는 사람이 자주 쓰는 `integer`, `decimal`, `datetime`, `list<T>`, `optional<T>` 같은
-표현이 들어올 수 있다. 스캐폴더는 이를 각각 Java의 `int`, `BigDecimal`, `OffsetDateTime`,
-`List<T>`, `Optional<T>`로 바꾸고 필요한 표준 라이브러리 import를 추가한다. 알 수 없는 이름은
-업무 도메인의 사용자 정의 타입일 수 있으므로 임의로 다른 타입으로 바꾸지 않는다.
+설계 모델에는 사람이 자주 쓰는 타입 이름이 들어올 수 있다. 스캐폴더는 의미가 분명한 작은
+목록만 Java 타입으로 바꾼다.
+
+- `string`, `integer`, `boolean`, `decimal`은 `String`, `Integer`, `Boolean`, `BigDecimal`
+  로 바꾼다.
+- `bytes`, `byte[]`, `bytes[]`는 `byte[]`로 바꾼다.
+- `List<T>`와 `Optional<T>`는 안쪽 타입에도 같은 규칙을 적용한다.
+- 같은 `BCEModel`에 선언된 class, record와 enum 이름은 그대로 사용한다.
+
+그 밖의 이름은 별도의 추론 규칙으로 맞히지 않는다. 우선 컴파일 가능한 `Object`를 쓰고 바로
+위에 `TODO(EasyDep)` 주석으로 원래 설계 타입을 남긴다. 이 표식은 뒤의 구현 작업에 타입을
+보완해야 한다는 사실과 원문을 전달한다.
 
 Java에서 사용할 수 없는 패키지나 타입 이름은 파일을 일부 만든 뒤 실패시키지 않고 입력 검증
 단계에서 바로 거부한다. 따라서 호출자는 `ValidationError`를 사용자에게 입력 오류로 설명할 수
@@ -44,6 +55,8 @@ Java에서 사용할 수 없는 패키지나 타입 이름은 파일을 일부 �
 
 - PlantUML 분석
 - 업무 로직 추측
+- 클래스 모델에 없는 생성자·getter/setter 추가
+- 정규식으로 임시 Java 타입 파일 생성
 - 생성 파일을 디스크에 직접 저장
 - Gradle 실행이나 Java 컴파일
 - React/TypeScript 화면 구현
