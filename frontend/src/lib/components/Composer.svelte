@@ -42,9 +42,15 @@
   let canDelegateRepair = $derived(Boolean(result?.can_delegate_repair));
   let implementationAction = $derived(
     command?.stage === 'implementation' &&
-      ['approve_implementation', 'rerun_implementation', 'start_implementation'].includes(command.action)
+      ['approve_implementation', 'retry_implementation', 'rerun_implementation', 'start_implementation'].includes(command.action)
       ? command.action
       : null
+  );
+  let implementationJobId = $derived(
+    String(result?.job_id ?? result?.job?.job_id ?? command?.payload?.job_id ?? '')
+  );
+  let checkpointRetryable = $derived(
+    Boolean(result?.checkpoint_retryable ?? result?.job?.checkpoint_retryable)
   );
   let implementationResponse = $derived(
     implementationAction && implementationAction !== 'approve_implementation' && ['QUEUED', 'RUNNING'].includes(command?.status ?? '')
@@ -215,10 +221,19 @@
     </div>
   {:else if command?.status === 'FAILED' && command.stage === 'implementation'}
     <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">
-      <Button size="sm" onclick={() => onAction('rerun_implementation', { base_package: 'com.easydep.app', allow_assumptions: true })} disabled={busy}>
-        <RotateCcw size={13} /> Retry failed implementation
+      {#if checkpointRetryable && implementationJobId}
+        <Button size="sm" onclick={() => onAction('retry_implementation', { action_id: command?.command_id, job_id: implementationJobId })} disabled={busy}>
+          <RotateCcw size={13} /> Retry from checkpoint
+        </Button>
+      {/if}
+      <Button size="sm" variant={checkpointRetryable ? 'outline' : 'default'} onclick={() => onAction('rerun_implementation', { base_package: 'com.easydep.app', allow_assumptions: true })} disabled={busy}>
+        <RotateCcw size={13} /> Start over
       </Button>
-      <span class="text-xs text-[#85524c]">The app design context will be reused for a fresh implementation pass.</span>
+      <span class="text-xs text-[#85524c]">
+        {checkpointRetryable
+          ? 'Retry only the failed task, or start over with the same design context.'
+          : 'No approved execution checkpoint is available; start a fresh implementation pass.'}
+      </span>
     </div>
   {:else if command?.status === 'FAILED' && command.stage === 'testing'}
     <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">

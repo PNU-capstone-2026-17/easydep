@@ -138,6 +138,50 @@ def test_reconcile_implementation_command_restores_progress_after_restart(monkey
     assert events[0]["metadata"]["progress_status"] == "running"
 
 
+def test_reconcile_failed_implementation_exposes_checkpoint_retry(monkeypatch) -> None:
+    command = {
+        "command_id": "command-1",
+        "app_id": "app-1",
+        "action": "approve_implementation",
+        "stage": "implementation",
+        "status": "FAILED",
+        "payload": {"job_id": "job-1"},
+        "result": None,
+    }
+    failed_job = {
+        "job_id": "job-1",
+        "app_id": "app-1",
+        "status": "FAILED",
+        "checkpoint_retryable": True,
+    }
+    monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: failed_job,
+    )
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_sync_implementation_progress",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda _command_id, **changes: {**command, **changes},
+    )
+
+    service = WorkspaceService()
+    try:
+        reconciled = service.reconcile_implementation_command("app-1")
+    finally:
+        service.shutdown()
+
+    assert reconciled is not None
+    assert reconciled["result"]["job_id"] == "job-1"
+    assert reconciled["result"]["checkpoint_retryable"] is True
+
+
 def test_chat_event_timestamp_is_returned_as_explicit_korean_time() -> None:
     event = repository.event_dict(
         SimpleNamespace(
@@ -1477,6 +1521,7 @@ def test_implementation_progress_snapshot_marks_completed_workflow() -> None:
 def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     calls: list[dict] = []
     events: list[dict] = []
+    command_updates: list[dict] = []
 
     def fake_create_job(app_id, _design, base_package, allow_assumptions):
         calls.append(
@@ -1493,6 +1538,11 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
         workspace_module.repository,
         "append_event",
         lambda *args, **kwargs: events.append(kwargs),
+    )
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "update_command",
+        lambda _command_id, **changes: command_updates.append(changes) or changes,
     )
     monkeypatch.setattr(
         workspace_module,
@@ -1522,3 +1572,60 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     assert calls and calls[0]["app_id"] == "app-1"
     assert result["job"]["job_id"] == "new-job"
     assert events and events[0]["metadata"]["reset_implementation_timeline"] is True
+    assert command_updates[0]["payload"]["job_id"] == "new-job"
+
+
+def test_retry_implementation_resumes_the_failed_job_checkpoint(monkeypatch) -> None:
+    calls: list[str] = []
+    events: list[dict] = []
+    job = {
+        "job_id": "failed-job",
+        "app_id": "app-1",
+        "status": "QUEUED",
+        "checkpoint_retryable": False,
+    }
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {**job, "status": "FAILED", "checkpoint_retryable": True},
+    )
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "retry_failed",
+        lambda job_id: calls.append(job_id) or job,
+    )
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "append_event",
+        lambda *args, **kwargs: events.append(kwargs),
+    )
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_monitor_implementation",
+        lambda _self, current, command_id=None: {
+            "job": current,
+            "command_id": command_id,
+        },
+    )
+
+    service = WorkspaceService()
+    try:
+        result = service._dispatch(
+            {
+                "action": "retry_implementation",
+                "app_id": "app-1",
+                "command_id": "retry-command",
+                "stage": "implementation",
+                "payload": {
+                    "action_id": "failed-command",
+                    "job_id": "failed-job",
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert calls == ["failed-job"]
+    assert result["job"]["job_id"] == "failed-job"
+    assert result["command_id"] == "retry-command"
+    assert events[0]["metadata"]["status"] == "CHECKPOINT_RETRY_STARTED"

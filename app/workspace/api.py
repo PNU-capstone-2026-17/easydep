@@ -122,6 +122,7 @@ class WorkspaceCommandRequest(BaseModel):
         "retry_requirements",
         "retry_design",
         "start_implementation",
+        "retry_implementation",
         "rerun_implementation",
         "approve_implementation",
         "reject_implementation",

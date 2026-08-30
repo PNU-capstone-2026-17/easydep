@@ -279,6 +279,7 @@ class WorkspaceService:
             return command
         if command.get("action") not in {
             "start_implementation",
+            "retry_implementation",
             "rerun_implementation",
             "approve_implementation",
         }:
@@ -296,6 +297,17 @@ class WorkspaceService:
         # COMPLETED로 바꾼다. Workspace가 그 내부 규칙을 다시 구현하지 않는다.
         if job_status != "COMPLETED":
             self._sync_implementation_progress(app_id, str(command["command_id"]), job)
+            if job_status == "FAILED":
+                result = {
+                    **dict(command.get("result") or {}),
+                    "job_id": job_id,
+                    "job": job,
+                    "checkpoint_retryable": bool(job.get("checkpoint_retryable")),
+                }
+                return repository.update_command(
+                    command["command_id"],
+                    result=result,
+                )
             return command
         result = {
             "message": "Review the generated implementation artifacts below.",
@@ -509,6 +521,7 @@ class WorkspaceService:
             "delegate_repair": ("action_id",),
             "retry_requirements": ("action_id",),
             "retry_design": ("action_id",),
+            "retry_implementation": ("action_id", "job_id"),
             "rerun_implementation": (),
             "confirm_change": ("action_id",),
             "dismiss_change": ("action_id",),
@@ -539,6 +552,12 @@ class WorkspaceService:
                     f"Only a failed or interrupted {expected_stage} command can be retried."
                 )
             return
+        if action == "retry_implementation":
+            if prior["status"] != "FAILED" or prior["stage"] != "implementation":
+                raise ValueError(
+                    "Only a failed implementation command can be retried from its checkpoint."
+                )
+            return
         if prior["status"] != "AWAITING_INPUT":
             raise ValueError("The command was already handled or is not awaiting a response.")
         result = prior.get("result") or {}
@@ -555,6 +574,7 @@ class WorkspaceService:
             return "design"
         if action in {
             "start_implementation",
+            "retry_implementation",
             "rerun_implementation",
             "approve_implementation",
             "reject_implementation",
@@ -755,7 +775,40 @@ class WorkspaceService:
                 str(command["payload"].get("base_package") or "com.easydep.app"),
                 bool(command["payload"].get("allow_assumptions", True)),
             )
+            persisted_payload = {
+                **dict(command["payload"]),
+                "job_id": str(job["job_id"]),
+            }
+            command["payload"] = persisted_payload
+            repository.update_command(
+                str(command["command_id"]),
+                payload=persisted_payload,
+            )
             return self._monitor_implementation(job, command_id=str(command["command_id"]))
+        if action == "retry_implementation":
+            payload = command["payload"]
+            current_job = implementation_worker.get(str(payload["job_id"]))
+            if str(current_job.get("app_id") or "") != str(command["app_id"]):
+                raise ValueError(
+                    "The implementation checkpoint does not belong to this app."
+                )
+            repository.append_event(
+                str(command["app_id"]),
+                command_id=str(command["command_id"]),
+                stage="implementation",
+                kind="status",
+                actor="system",
+                text="Resuming the failed implementation checkpoint.",
+                metadata={
+                    "status": "CHECKPOINT_RETRY_STARTED",
+                    "job_id": str(payload["job_id"]),
+                },
+            )
+            job = implementation_worker.retry_failed(str(payload["job_id"]))
+            return self._monitor_implementation(
+                job,
+                command_id=str(command["command_id"]),
+            )
         if action in {"approve_implementation", "reject_implementation"}:
             payload = command["payload"]
             app_id = str(command["app_id"])

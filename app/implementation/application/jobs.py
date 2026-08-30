@@ -486,7 +486,58 @@ class ImplementationWorker:
 
     def get(self, job_id: str) -> dict[str, Any]:
         """호스트 내부 경로를 제외한 구현 작업 상태를 반환한다."""
-        return self.public_record(self._with_live_generation_progress(self._read(job_id)))
+        record = self._with_live_generation_progress(self._read(job_id))
+        record["checkpoint_retryable"] = self._checkpoint_retryable(record)
+        return self.public_record(record)
+
+    def retry_failed(self, job_id: str) -> dict[str, Any]:
+        """실패한 실행의 durable checkpoint에서 실패 단계만 다시 시작한다."""
+        record = self._read(job_id)
+        if record.get("status") != "FAILED":
+            raise InvalidJobState(
+                f"Only a failed implementation job can be retried: {record.get('status')}"
+            )
+        if not self._checkpoint_retryable(record):
+            raise InvalidJobState(
+                "The failed implementation job has no approved execution checkpoint; "
+                "start a fresh implementation run instead."
+            )
+
+        approval_path = Path(record["job_path"]).parent / "approval.json"
+        record["status"] = "QUEUED"
+        record["checkpoint_retry_count"] = int(
+            record.get("checkpoint_retry_count", 0)
+        ) + 1
+        record["updated_at"] = _now()
+        record.pop("error", None)
+        record.pop("blocking_details", None)
+        self._write(record)
+        self.executor.submit(
+            self._run,
+            job_id,
+            str(approval_path),
+            True,
+        )
+        record["checkpoint_retryable"] = False
+        return self.public_record(record)
+
+    @staticmethod
+    def _checkpoint_retryable(record: dict[str, Any]) -> bool:
+        """승인된 실행 checkpoint를 같은 Job에서 안전하게 재사용할 수 있는지 확인한다."""
+        if record.get("status") != "FAILED":
+            return False
+        job_path_value = record.get("job_path")
+        run_root_value = record.get("run_root")
+        if not isinstance(job_path_value, str) or not isinstance(run_root_value, str):
+            return False
+        job_path = Path(job_path_value)
+        run_root = Path(run_root_value)
+        return (
+            job_path.is_file()
+            and (job_path.parent / "approval.json").is_file()
+            and (run_root / "reports" / "run-manifest.json").is_file()
+            and (run_root / "reports" / "workflow-state.json").is_file()
+        )
 
     def get_testing_input(self, job_id: str) -> dict[str, Any]:
         """Testing API가 버전이 고정된 입력을 만들 때 필요한 정보를 반환한다.

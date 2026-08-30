@@ -620,6 +620,90 @@ def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -
     assert "job_path" not in public
 
 
+def test_failed_job_retries_the_same_approved_checkpoint(tmp_path: Path) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    job_id = "failed-job"
+    job_dir = implementation_worker.settings.work_root / job_id
+    job_path = job_dir / "job.json"
+    run_root = job_dir / "outputs" / "run_checkpoint"
+    reports = run_root / "reports"
+    reports.mkdir(parents=True)
+    job_path.write_text("{}", encoding="utf-8")
+    (job_dir / "approval.json").write_text(
+        json.dumps({"requestId": "request", "approved": True}),
+        encoding="utf-8",
+    )
+    (reports / "run-manifest.json").write_text(
+        json.dumps({"status": "SUCCEEDED"}),
+        encoding="utf-8",
+    )
+    (reports / "workflow-state.json").write_text(
+        json.dumps({"status": "FAILED"}),
+        encoding="utf-8",
+    )
+    implementation_worker._write(
+        {
+            "job_id": job_id,
+            "app_id": "app-1",
+            "status": "FAILED",
+            "job_path": str(job_path),
+            "run_root": str(run_root),
+            "workflow": {"status": "FAILED"},
+            "error": "provider failed",
+            "updated_at": "before",
+        }
+    )
+    submitted: list[tuple[object, ...]] = []
+    implementation_worker.executor.submit = (  # type: ignore[method-assign]
+        lambda *args, **_kwargs: submitted.append(args)
+    )
+
+    try:
+        before = implementation_worker.get(job_id)
+        retried = implementation_worker.retry_failed(job_id)
+        persisted = implementation_worker._read(job_id)
+    finally:
+        implementation_worker.shutdown()
+
+    assert before["checkpoint_retryable"] is True
+    assert retried["job_id"] == job_id
+    assert retried["status"] == "QUEUED"
+    assert retried["checkpoint_retryable"] is False
+    assert persisted["checkpoint_retry_count"] == 1
+    assert "error" not in persisted
+    assert submitted == [
+        (
+            implementation_worker._run,
+            job_id,
+            str(job_dir / "approval.json"),
+            True,
+        )
+    ]
+
+
+def test_failed_job_without_approved_checkpoint_requires_a_fresh_run(
+    tmp_path: Path,
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    job_id = "generation-failed"
+    implementation_worker._write(
+        {
+            "job_id": job_id,
+            "app_id": "app-1",
+            "status": "FAILED",
+            "job_path": str(tmp_path / "missing-job.json"),
+            "run_root": None,
+            "error": "generation failed",
+        }
+    )
+    try:
+        assert implementation_worker.get(job_id)["checkpoint_retryable"] is False
+        with pytest.raises(RuntimeError, match="no approved execution checkpoint"):
+            implementation_worker.retry_failed(job_id)
+    finally:
+        implementation_worker.shutdown()
+
+
 def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: Path) -> None:
     implementation_worker = ImplementationWorker(settings(tmp_path))
     implementation_worker.client.prepare_job = lambda *_args, **_kwargs: pytest.fail(
