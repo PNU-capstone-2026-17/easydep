@@ -1353,6 +1353,60 @@ def test_flow_order_allows_outer_return_after_nested_later_step():
     assert sequence_validation.sequence_flow_order(branch_model, branch_state) == []
 
 
+def test_flow_order_allows_extension_nested_in_active_later_main_call():
+    """A parent call is not a completed later step until its return is emitted."""
+
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1}, {"step_number": 2}],
+                "extensions": [{
+                    "label": "1a",
+                    "branch_step": 1,
+                    "handling_steps": [{"sub_step": "1a1"}],
+                }],
+            }]
+        }
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [
+            {
+                "source": "Actor", "target": "Boundary", "type": "sync",
+                "label": "login()", "call_id": "root",
+                "step_ids": ["UC1:main:1"],
+            },
+            {
+                "source": "Boundary", "target": "Control", "type": "sync",
+                "label": "authenticate()", "call_id": "authenticate",
+                "step_ids": ["UC1:main:2"],
+            },
+            {
+                "source": "Control", "target": "Audit", "type": "sync",
+                "label": "recordFailure()", "call_id": "failure",
+                "step_ids": ["UC1:extension:1a:1a1"],
+                "fragments": [{
+                    "id": "UC1:extension:1a", "type": "opt",
+                    "branch": "main", "condition": "credentials are invalid",
+                }],
+            },
+            {
+                "source": "Control", "target": "Boundary", "type": "return",
+                "label": "AuthResult", "reply_to": "authenticate",
+                "step_ids": ["UC1:main:2"],
+            },
+            {
+                "source": "Boundary", "target": "Actor", "type": "return",
+                "label": "void", "reply_to": "root",
+                "step_ids": ["UC1:main:1"],
+            },
+        ],
+    }
+
+    assert sequence_validation.sequence_flow_order(model, state) == []
+
+
 def test_flow_order_reports_extension_when_branch_main_step_is_missing():
     state = {
         "usecase_spec": {

@@ -1592,15 +1592,40 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
             )
             continue
         branch_end = max(main_positions[branch_step])
+        placed = [position for position in positions if position not in branch_positions]
+
+        # A later-main call may be the operation whose conditional result realizes
+        # the extension.  In a call tree that parent necessarily appears before its
+        # nested opt message, even though the scenario branch itself has not advanced
+        # past the extension yet.  Treat only *completed or unrelated* later-main
+        # calls as chronological successors.  Otherwise a valid
+        # ``call(main 2) -> opt(extension 1a) -> return(main 2)`` activation is
+        # indistinguishable from an extension emitted after main step 2.
+        return_positions = {
+            str(message.get("reply_to") or "").strip(): index
+            for index, message in enumerate(messages)
+            if str(message.get("type") or "").casefold() == "return"
+            and str(message.get("reply_to") or "").strip()
+        }
+
+        def encloses_extension(index: int) -> bool:
+            call_id = str(messages[index].get("call_id") or "").strip()
+            return_index = return_positions.get(call_id)
+            return bool(
+                placed
+                and return_index is not None
+                and all(index < position < return_index for position in placed)
+            )
+
         later_main = [
             index
             for number, indexes in main_positions.items()
             if number > branch_step
             for index in indexes
             if index not in positions
+            and not encloses_extension(index)
         ]
         next_main = min(later_main) if later_main else len(messages)
-        placed = [position for position in positions if position not in branch_positions]
         if placed and (min(placed) <= branch_end or max(placed) >= next_main):
             found.append(
                 Finding(

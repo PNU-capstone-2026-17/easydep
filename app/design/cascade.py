@@ -74,18 +74,37 @@ def _apply(
 ) -> dict[str, Any]:
     """한 스테이지에서 대상 항목만 고치고, 검사·렌더까지 마친 상태 조각을 돌려준다."""
     original = state.get(spec.model_key) or {}
-    revised = spec.revise(original, feedback, state, targets)
-    merged = merge_model(spec, original, revised, targets)
+    delta: dict[str, Any] = {}
+    if spec.revise_state is not None:
+        # Sequence feedback owns an upstream class-collaboration revision as one
+        # atomic state transition.  Calling only ``spec.revise`` would merely
+        # re-project the unchanged class model and then make the cascade guess an
+        # unrelated reverse class edit from RTM links.
+        delta = spec.revise_state(original, feedback, state, targets)
+        if spec.model_key not in delta:
+            raise ValueError(
+                f"{spec.stage} state revision did not return {spec.model_key}"
+            )
+        revised = delta[spec.model_key]
+    else:
+        revised = spec.revise(original, feedback, state, targets)
+
+    merge_targets = set(targets)
+    if spec.stage == "class_diagram":
+        merge_targets.update(
+            _class_collaboration_dependency_targets(original, revised, targets)
+        )
+    merged = merge_model(spec, original, revised, merge_targets)
     # The LLM boundary ends here: merge_model must retain every non-target
     # value from the persisted source before a deterministic finalizer derives
     # its own runtime bundle fields.
-    assert_untargeted_elements_preserved(spec, original, merged, targets)
+    assert_untargeted_elements_preserved(spec, original, merged, merge_targets)
 
     # 지목 수정은 비대상 보존이 계약이므로 전체 흐름 재추출을 포함하는 reconcile은
     # 실행하지 않는다. 대신 최종 구성 규칙은 반드시 적용해, 새 시퀀스 호출의 메서드는
     # 수신 클래스에 결정론적으로 보강한 뒤에만 렌더한다.
-    working: ArchitectureState = {**state, spec.model_key: merged}
-    patch: dict[str, Any] = {spec.model_key: merged}
+    working: ArchitectureState = {**state, **delta, spec.model_key: merged}
+    patch: dict[str, Any] = {**delta, spec.model_key: merged}
     if spec.finalize:
         finalized = spec.finalize(working)
         patch.update(finalized)
@@ -96,6 +115,50 @@ def _apply(
     if spec.check_key:
         patch[spec.check_key] = _check_report(spec, merged, working)
     return patch
+
+
+def _class_collaboration_dependency_targets(
+    original: dict[str, Any],
+    revised: dict[str, Any],
+    targets: set[str],
+) -> set[str]:
+    """Include collaborations whose operation reference changes with a class.
+
+    Operation IDs contain the parameter signature.  Replacing a targeted class
+    can therefore turn ``Boundary::login(request:LoginRequest)`` into a different
+    canonical ID.  Keeping the old collaboration byte-for-byte then creates a
+    dangling receiverOperationId.  ``revise_class_model`` already returns a fully
+    validated model with repaired collaborations, so accept only those exact
+    dependency-owned collaboration replacements alongside the selected class.
+    """
+
+    def operation_ids(model: dict[str, Any]) -> set[str]:
+        return {
+            str(operation.get("operationId") or "").strip()
+            for class_item in model.get("Classes") or []
+            if isinstance(class_item, dict)
+            and str(class_item.get("className") or "").strip() in targets
+            for operation in class_item.get("operations") or []
+            if isinstance(operation, dict)
+            and str(operation.get("operationId") or "").strip()
+        }
+
+    owned_operations = operation_ids(original) | operation_ids(revised)
+    if not owned_operations:
+        return set()
+    return {
+        str(collaboration.get("collaborationId") or "").strip()
+        for model in (original, revised)
+        for collaboration in model.get("Collaborations") or []
+        if isinstance(collaboration, dict)
+        and str(collaboration.get("collaborationId") or "").strip()
+        and any(
+            isinstance(call, dict)
+            and str(call.get("receiverOperationId") or "").strip()
+            in owned_operations
+            for call in collaboration.get("calls") or []
+        )
+    }
 
 
 def _refs_by_stage(refs: list[str]) -> dict[str, set[str]]:
@@ -212,6 +275,7 @@ def revise_and_cascade(
     changed: list[str] = []
     touched: dict[str, list[str]] = {}
     processed: dict[str, set[str]] = {}
+    revised_upstream_stages: set[str] = set()
 
     def apply_targets(
         target_stage: str, targets: set[str], revision_feedback: str
@@ -220,7 +284,23 @@ def revise_and_cascade(
         pending = targets - processed.get(target_stage, set())
         if not pending:
             return
-        working.update(_apply(DESIGN_SPECS[target_stage], working, revision_feedback, pending))
+        patch = _apply(
+            DESIGN_SPECS[target_stage], working, revision_feedback, pending
+        )
+        working.update(patch)
+        upstream_stages = {
+            str(value)
+            for value in patch.get("revised_upstream_stages") or []
+            if str(value) in DESIGN_SPECS and str(value) != target_stage
+        }
+        revised_upstream_stages.update(upstream_stages)
+        for upstream in sorted(
+            upstream_stages,
+            key=lambda value: list(DESIGN_SPECS).index(value),
+        ):
+            if upstream not in changed:
+                changed.append(upstream)
+                touched[upstream] = []
         processed.setdefault(target_stage, set()).update(pending)
         if target_stage not in changed:
             changed.append(target_stage)
@@ -240,7 +320,10 @@ def revise_and_cascade(
     # A sequence/API element may change an earlier class contract only when the
     # direct-link builder proved the route.  Class edits stay element-targeted;
     # a guessed class name is never passed to a reviser.
-    if stage in {"sequence_diagram", "api_spec"}:
+    if (
+        stage in {"sequence_diagram", "api_spec"}
+        and "class_diagram" not in revised_upstream_stages
+    ):
         apply_targets(
             "class_diagram",
             directly_linked.get("class_diagram", set()),
@@ -290,6 +373,12 @@ def revise_and_cascade(
         scheduled.get("deployment_diagram", set()),
         trace_feedback,
     )
+
+    # ``persist_cascade`` saves every stage recorded above itself.  Do not leave
+    # the graph-only upstream marker in the synchronized checkpoint, where a
+    # later ordinary graph persist could save the same class revision again.
+    if revised_upstream_stages:
+        working["revised_upstream_stages"] = []
 
     return {
         "state": working,
