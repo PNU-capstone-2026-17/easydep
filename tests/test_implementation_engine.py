@@ -9,6 +9,7 @@ import pytest
 
 from app.implementation.agents.verification.build import (
     api_adapter_contract_violations,
+    boundary_adapter_contract_violations,
     persistence_entity_schema_violations,
     production_placeholder_markers,
     verify_run_workspace,
@@ -20,6 +21,7 @@ from app.implementation.domain.implementation_ir import build_implementation_ir
 from app.implementation.generation.orchestrator import load_job
 from app.implementation.planning.design_context import (
     generate_api_adapter_tasks,
+    generate_boundary_adapter_tasks,
     generate_gateway_adapter_tasks,
     generate_implementation_tasks,
     generate_wiring_tasks,
@@ -53,6 +55,48 @@ end
 """,
         encoding="utf-8",
     )
+    (tmp_path / "sequence-model.json").write_text(
+        json.dumps(
+            {
+                "Diagrams": [{
+                    "use_case_id": "UC_ORDER",
+                    "use_case_name": "Create order",
+                    "Participants": [
+                        {
+                            "name": "CheckoutScreen",
+                            "alias": "screen",
+                            "kind": "boundary",
+                            "source_class": "CheckoutScreen",
+                        },
+                        {
+                            "name": "OrderService",
+                            "alias": "service",
+                            "kind": "control",
+                            "source_class": "OrderService",
+                        },
+                    ],
+                    "Messages": [
+                        {
+                            "source": "screen",
+                            "target": "service",
+                            "type": "sync",
+                            "arguments": [{"parameter": "customerId"}],
+                            "call_id": "create-order::call:1",
+                            "fragments": [{"type": "alt", "condition": "valid"}],
+                        },
+                        {
+                            "source": "service",
+                            "target": "screen",
+                            "type": "return",
+                            "reply_to": "create-order::call:1",
+                            "fragments": [],
+                        },
+                    ],
+                }]
+            }
+        ),
+        encoding="utf-8",
+    )
     (tmp_path / "erd.puml").write_text(
         'entity "Order" as Order { * order_id : VARCHAR }',
         encoding="utf-8",
@@ -71,6 +115,27 @@ paths:
 """,
         encoding="utf-8",
     )
+    (tmp_path / "deployment.json").write_text(
+        json.dumps(
+            {
+                "workloadGraph": {
+                    "workloads": [{
+                        "id": "orders",
+                        "artifact": {"kind": "generatedApplication"},
+                        "interfaces": [{"id": "http", "port": 8080}],
+                        "configuration": [{
+                            "id": "payments-url",
+                            "name": "PAYMENTS_URL",
+                            "kind": "endpointBinding",
+                        }],
+                        "storage": [{"id": "orders-data", "mountPath": "/data"}],
+                    }],
+                    "connections": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     job = tmp_path / "job.json"
     job.write_text(
         json.dumps(
@@ -80,8 +145,10 @@ paths:
                 "inputs": {
                     "bceClass": "bce.puml",
                     "sequence": "sequence.puml",
+                    "sequenceModel": "sequence-model.json",
                     "erd": "erd.puml",
                     "openapi": "openapi.yaml",
+                    "deploymentBundle": "deployment.json",
                 },
                 "generation": {"basePackage": "com.example.orders"},
             }
@@ -126,7 +193,27 @@ paths:
         "implement-order-store-gateway-adapter",
         "implement-payment-gateway-adapter",
     }
-    generate_wiring_tasks(spec, run)
+    control = next(
+        task for task in generate_implementation_tasks(spec, run)
+        if task.task_type == "control"
+    )
+    tasks = [control, *generate_boundary_adapter_tasks(spec, run), *generate_api_adapter_tasks(spec, run)]
+    for task in tasks:
+        context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
+        diagram = next(item for item in context["sequence"] if item["use_case_id"] == "UC_ORDER")
+        messages = diagram["Messages"]
+        assert any(message.get("arguments") for message in messages)
+        assert any(message.get("reply_to") for message in messages)
+        assert any(message.get("fragments") for message in messages)
+        projection = context["deployment"]
+        assert {"workloads", "connections"} <= set(projection)
+        assert {"interfaces", "configuration", "storage"} <= set(projection["workloads"][0])
+    gateway = generate_gateway_adapter_tasks(spec, run)[0]
+    wiring = generate_wiring_tasks(spec, run)[0]
+    for task in (gateway, wiring):
+        projection = json.loads((run / task.context_file).read_text(encoding="utf-8"))["deployment"]
+        assert {"workloads", "connections"} <= set(projection)
+        assert {"interfaces", "configuration", "storage"} <= set(projection["workloads"][0])
     assert (java / "OrderManagementApplication.java").is_file()
 
 
@@ -167,10 +254,10 @@ def test_final_workspace_verification_publishes_success_report(
     ).is_file()
 
 
-def test_api_adapter_gate_accepts_contract_and_rejects_missing_interface(
+def test_adapter_gates_reject_missing_contract_behavior(
     tmp_path: Path,
 ) -> None:
-    """컴파일 가능한 빈 컨트롤러가 API 구현으로 통과하지 못하게 한다."""
+    """API interface 누락과 Boundary의 빈 반환을 같은 adapter 검사에서 막는다."""
     relative = "application/src/main/java/com/example/StudentsApiController.java"
     controller = tmp_path / relative
     controller.parent.mkdir(parents=True)
@@ -189,6 +276,26 @@ def test_api_adapter_gate_accepts_contract_and_rejects_missing_interface(
         encoding="utf-8",
     )
     assert api_adapter_contract_violations(tmp_path, [relative]) == []
+
+    boundary_relative = "application/src/main/java/com/example/OrderAdapter.java"
+    boundary = tmp_path / boundary_relative
+    boundary.write_text(
+        "class OrderAdapter { String submit() { return null; } }",
+        encoding="utf-8",
+    )
+    typed_sequence = [{
+        "Participants": [
+            {"alias": "boundary", "kind": "boundary"},
+            {"alias": "control", "kind": "control"},
+        ],
+        "Messages": [{
+            "source": "boundary", "target": "control", "type": "sync",
+        }],
+    }]
+    violations = boundary_adapter_contract_violations(
+        tmp_path, [boundary_relative], typed_sequence
+    )
+    assert any("return null" in violation for violation in violations)
 
 
 def test_e2e_gate_accepts_complete_scenario_and_rejects_wrong_status(

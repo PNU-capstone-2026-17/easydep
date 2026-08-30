@@ -11,7 +11,6 @@ from pathlib import Path
 from ..workspace import prepare_agent_workspace
 from .frontend import run_frontend_command, run_frontend_verification
 
-
 SQL_RESERVED_IDENTIFIERS = (
     "year",
     "order",
@@ -564,7 +563,7 @@ def api_adapter_contract_violations(
 
 
 def boundary_adapter_contract_violations(
-    sandbox: Path, allowed_write_paths: list[str], sequence: str = ""
+    sandbox: Path, allowed_write_paths: list[str], sequence: object = None
 ) -> list[str]:
     """Reject a state adapter that discards a required Boundary -> Control flow.
 
@@ -575,11 +574,7 @@ def boundary_adapter_contract_violations(
     The sequence contract is used only to identify this required delegation;
     no domain-specific method names are assumed.
     """
-    if not sequence or "->" not in sequence:
-        return []
-    has_forward_flow = bool(
-        re.search(r"\b[A-Za-z_]\w*\s*->\s*[A-Za-z_]\w*\s*:", sequence)
-    )
+    has_forward_flow = _has_boundary_control_request(sequence)
     if not has_forward_flow:
         return []
     violations: list[str] = []
@@ -597,6 +592,30 @@ def boundary_adapter_contract_violations(
                 "delegate/configure the exact contract result instead"
             )
     return violations
+
+
+def _has_boundary_control_request(sequence: object) -> bool:
+    """typed sequence에서 Boundary가 Control에 보낸 요청이 있는지 확인한다."""
+    if isinstance(sequence, str):
+        return bool(re.search(r"\b[A-Za-z_]\w*\s*->\s*[A-Za-z_]\w*\s*:", sequence))
+    diagrams = sequence if isinstance(sequence, list) else [sequence]
+    for diagram in diagrams:
+        if not isinstance(diagram, dict):
+            continue
+        participant_kinds = {
+            str(item.get("alias", "")): str(item.get("kind", "")).casefold()
+            for item in diagram.get("participants", diagram.get("Participants", []))
+            if isinstance(item, dict)
+        }
+        if any(
+            isinstance(message, dict)
+            and str(message.get("type", "")).casefold() in {"sync", "async"}
+            and participant_kinds.get(str(message.get("source", ""))) == "boundary"
+            and participant_kinds.get(str(message.get("target", ""))) == "control"
+            for message in diagram.get("messages", diagram.get("Messages", []))
+        ):
+            return True
+    return False
 
 
 def production_placeholder_markers(

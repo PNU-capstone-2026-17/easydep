@@ -74,7 +74,6 @@ HTTP_STATUS_ENUMS = {
 
 def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
     bce = _read(spec.inputs.get("bceClass"))
-    sequence = _read(spec.inputs.get("sequence"))
     erd = _read(spec.inputs.get("erd"))
     openapi = _read(spec.inputs.get("openapi"))
     classes = parse_design_classes(bce)
@@ -106,7 +105,13 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
         relation_context = "\n".join(
             line for left, right, line in relations if control in {left, right}
         )
-        sequence_context = slice_sequence(sequence, relevant_names)
+        # PlantUML은 표시용 산출물이라 alias/분기 정보를 잃기 쉽다. 구현 작업에는
+        # 호출 인자와 reply 연결을 보존한 typed 모델만 넘긴다.
+        # 관련 클래스까지 선택 기준에 넣으면 actor 표시 흐름까지 딸려 와 같은
+        # 유스케이스를 거의 통째로 보낸다. Control이 직접 주고받은 호출이면 충분하다.
+        sequence_context = _project_sequence(
+            _read_json(spec.inputs.get("sequenceModel")), {control}
+        )
         entity_names = {
             name for name in relevant_names
             if name in class_by_name and class_by_name[name].stereotype.lower() == "entity"
@@ -146,6 +151,9 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
                 if repository.removesuffix("Repository") in entity_names
             ),
         }
+        deployment_context = _deployment_context(spec, relevant_names)
+        if deployment_context:
+            context["deployment"] = deployment_context
         context_path = output / f"{task_slug}.context.json"
         context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
         prompt = render_prompt(spec, context, [relative_java, relative_test])
@@ -163,7 +171,8 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
             ],
             source_artifacts={
                 name: str(path) for name, path in spec.inputs.items()
-                if name in {"bceClass", "sequence", "erd", "openapi"} and path.is_file()
+                if name in {"bceClass", "sequenceModel", "erd", "openapi", "deploymentBundle"}
+                and path.is_file()
             },
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             llm={
@@ -434,7 +443,6 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
-    sequence = _read(spec.inputs.get("sequence"))
     control_bindings = _openapi_control_bindings(_read(spec.inputs.get("openapi")))
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
@@ -452,7 +460,16 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         exact_contracts = render_source_contracts(
             run_root, [*api_sources, *bce_sources]
         )
-        sequence_context = slice_sequence(sequence, set(bce_names))
+        bound_controls = {
+            str(binding.get("control"))
+            for operation in api_port.operations
+            if (binding := control_bindings.get(operation.operation_id or ""))
+            and str(binding.get("control") or "")
+        }
+        sequence_context = _project_sequence(
+            _read_json(spec.inputs.get("sequenceModel")),
+            bound_controls or set(ir.controls),
+        )
         kebab = camel_to_kebab(stem)
         task_id = f"implement-{kebab}-api-adapter"
         allowed = [
@@ -477,6 +494,9 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
             "sequence": sequence_context,
             "generatedJavaContracts": exact_contracts,
         }
+        deployment_context = _deployment_context(spec, {stem, *bound_controls})
+        if deployment_context:
+            context["deployment"] = deployment_context
         context_path = output / f"{kebab}-api-adapter.context.json"
         context_path.write_text(
             json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -491,6 +511,7 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
                 for operation in api_port.operations
                 if operation.operation_id in control_bindings
             },
+            deployment_context,
         ) + render_allowed_output_rules(allowed)
         prompt_path = output / f"{kebab}-api-adapter.prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
@@ -507,7 +528,8 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
             ],
             source_artifacts={
                 name: str(path) for name, path in spec.inputs.items()
-                if name in {"openapi", "sequence", "bceClass"} and path.is_file()
+                if name in {"openapi", "sequenceModel", "bceClass", "deploymentBundle"}
+                and path.is_file()
             },
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             llm=_llm_config(spec),
@@ -525,7 +547,6 @@ def generate_boundary_adapter_tasks(
 ) -> list[ImplementationTask]:
     """Plan one bounded headless adapter task per BCE Boundary contract."""
     bce = _read(spec.inputs.get("bceClass"))
-    sequence = _read(spec.inputs.get("sequence"))
     classes = parse_design_classes(bce)
     boundaries = sorted(
         (item for item in classes if item.stereotype.lower() == "boundary"),
@@ -540,28 +561,16 @@ def generate_boundary_adapter_tasks(
     output.mkdir(parents=True, exist_ok=True)
     tasks: list[ImplementationTask] = []
     for boundary in boundaries:
-        sequence_context = slice_sequence(sequence, {boundary.name})
-        # Messages are written with PlantUML aliases, so discover collaborating
-        # BCE contracts from the original participant declarations rather than
-        # searching the sliced text for canonical class names.
-        participant_aliases: dict[str, str] = {}
-        for raw in sequence.splitlines():
-            match = re.match(
-                r"^\s*(?:actor|boundary|control|entity|participant|database)\s+"
-                r"(?:\"(?P<quoted>[^\"]+)\"\s+as\s+(?P<quoted_alias>[A-Za-z_]\w*)|"
-                r"(?P<plain>[A-Za-z_]\w*)(?:\s+as\s+(?P<plain_alias>[A-Za-z_]\w*))?)",
-                raw,
-            )
-            if match:
-                display = match.group("quoted") or match.group("plain")
-                alias = match.group("quoted_alias") or match.group("plain_alias") or display
-                participant_aliases[alias] = display
+        sequence_context = _project_sequence(
+            _read_json(spec.inputs.get("sequenceModel")), {boundary.name}
+        )
+        # Typed 참가자의 source_class는 alias 역파싱보다 안전하게 협력 BCE 계약을 가리킨다.
         peers = {
-            participant_aliases[alias]
-            for alias in participant_aliases
-            if re.search(rf"\b{re.escape(alias)}\b", sequence_context)
-            and participant_aliases[alias] != boundary.name
-            and participant_aliases[alias] in class_names
+            str(participant.get("source_class") or participant.get("name") or "")
+            for diagram in sequence_context
+            for participant in diagram["Participants"]
+            if str(participant.get("source_class") or participant.get("name") or "")
+            in class_names - {boundary.name}
         }
         contracts = read_generated_java_contracts(
             run_root, spec.base_package, {boundary.name, *peers}
@@ -580,12 +589,15 @@ def generate_boundary_adapter_tasks(
             "sequence": sequence_context,
             "generatedJavaContracts": contracts,
         }
+        deployment_context = _deployment_context(spec, {boundary.name, *peers})
+        if deployment_context:
+            context["deployment"] = deployment_context
         context_path = output / f"{slug}-boundary-adapter.context.json"
         context_path.write_text(
             json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         prompt = render_boundary_adapter_prompt(
-            spec, boundary.name, contracts, sequence_context
+            spec, boundary.name, contracts, sequence_context, deployment_context
         ) + render_allowed_output_rules(allowed)
         prompt_path = output / f"{slug}-boundary-adapter.prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
@@ -604,7 +616,8 @@ def generate_boundary_adapter_tasks(
             ],
             source_artifacts={
                 name: str(path) for name, path in spec.inputs.items()
-                if name in {"bceClass", "sequence"} and path.is_file()
+                if name in {"bceClass", "sequenceModel", "deploymentBundle"}
+                and path.is_file()
             },
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             llm=_llm_config(spec),
@@ -675,6 +688,7 @@ def generate_gateway_adapter_tasks(
     tasks: list[ImplementationTask] = []
     for task_id, gateway, allowed, source_paths, prompt_header in specifications:
         contracts = render_source_contracts(run_root, source_paths)
+        deployment_context = _deployment_context(spec, {gateway.name})
         context = {
             "schemaVersion": "implementation-context/v1alpha1",
             "taskId": task_id,
@@ -685,12 +699,18 @@ def generate_gateway_adapter_tasks(
             "erd": _read(spec.inputs.get("erd")),
             "sequence": _read(spec.inputs.get("sequence")),
         }
+        if deployment_context:
+            context["deployment"] = deployment_context
         slug = task_id.removeprefix("implement-")
         context_path = output / f"{slug}.context.json"
         context_path.write_text(
             json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        prompt = prompt_header + f"\n\n## Exact generated contracts\n\n```java\n{contracts}\n```\n"
+        prompt = (
+            prompt_header
+            + f"\n\n## Exact generated contracts\n\n```java\n{contracts}\n```\n"
+            + _render_deployment_context(deployment_context)
+        )
         prompt += render_allowed_output_rules(allowed)
         prompt_path = output / f"{slug}.prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
@@ -707,7 +727,9 @@ def generate_gateway_adapter_tasks(
             ],
             source_artifacts={
                 name: str(path) for name, path in spec.inputs.items()
-                if name in {"bceClass", "sequence", "erd", "deployment", "cloud"}
+                if name in {
+                    "bceClass", "sequence", "erd", "deployment", "deploymentBundle", "cloud",
+                }
                 and path.is_file()
             },
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
@@ -741,6 +763,9 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         f"application/src/test/java/{package_path}/config/ApplicationContextTest.java",
     ]
     task_id = "implement-application-wiring"
+    deployment_context = _deployment_context(
+        spec, {spec.name, ir.application_class, *(item.name for item in ir.components)}
+    )
     context = {
         "schemaVersion": "implementation-context/v1alpha1",
         "taskId": task_id,
@@ -748,6 +773,8 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         "generatedJavaContracts": contracts,
         "applicationClass": ir.application_class,
     }
+    if deployment_context:
+        context["deployment"] = deployment_context
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
     context_path = output / "application-wiring.context.json"
@@ -755,6 +782,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     prompt = render_wiring_prompt(spec, ir.application_class, contracts)
+    prompt += _render_deployment_context(deployment_context)
     prompt += render_allowed_output_rules(allowed)
     prompt_path = output / "application-wiring.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
@@ -774,7 +802,9 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         ],
         source_artifacts={
             name: str(path) for name, path in spec.inputs.items()
-            if name in {"bceClass", "sequence", "erd", "openapi", "deployment", "cloud"}
+            if name in {
+                "bceClass", "sequence", "erd", "openapi", "deployment", "deploymentBundle", "cloud",
+            }
             and path.is_file()
         },
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
@@ -795,7 +825,14 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[Implementatio
         raise ValueError("OpenAPI Generator frontend client was not found")
     openapi = json.loads(_read(spec.inputs.get("openapi")))
     bce = _read(spec.inputs.get("bceClass"))
-    sequence = _read(spec.inputs.get("sequence"))
+    classes = parse_design_classes(bce)
+    bce_names = {item.name for item in classes}
+    boundary_names = {
+        item.name for item in classes if item.stereotype.casefold() == "boundary"
+    }
+    sequence_context = _project_sequence(
+        _read_json(spec.inputs.get("sequenceModel")), boundary_names
+    )
     pages = frontend_page_names(openapi)
     operations = operation_ids(openapi)
     client_contracts = GeneratedClientContracts.discover(generated)
@@ -817,13 +854,16 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[Implementatio
         "taskId": task_id,
         "taskType": "frontend-implementation",
         "classDiagram": bce,
-        "sequenceDiagram": sequence,
+        "sequence": sequence_context,
         "openapi": openapi,
         "pages": pages,
         "operationIds": operations,
         "generatedTypescriptContracts": generated_contracts,
         "generatedImportRoot": client_contracts.import_root,
     }
+    deployment_context = _deployment_context(spec, {"frontend", *bce_names})
+    if deployment_context:
+        context["deployment"] = deployment_context
     context_path = output / "frontend-application.context.json"
     context_path.write_text(
         json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -845,7 +885,7 @@ Rules:
   `Configuration` instead of hand-writing HTTP calls.
 - Never call `fetch`, axios, XMLHttpRequest, or hard-code an endpoint path in an application file.
 - Use `API_BASE_URL` from `src/config.ts` when constructing generated client configuration.
-- Derive screens and user actions from BCE Boundary responsibilities and the sequence flow.
+- Derive screens and user actions from BCE Boundary responsibilities and the typed sequence flow.
 - Create an accessible responsive UI with explicit loading, empty, success, validation, and
   API-error states. Mutating operations must announce success with `role="status"` or an
   `aria-live` region. Every `aria-describedby` token must reference an existing element ID,
@@ -872,9 +912,9 @@ Rules:
 {bce}
 ```
 
-## Sequence design
-```plantuml
-{sequence}
+## Typed sequence context
+```json
+{_prompt_json(sequence_context)}
 ```
 
 ## OpenAPI contract
@@ -886,6 +926,7 @@ Rules:
 ```typescript
 {generated_contracts}
 ```
+{_render_deployment_context(deployment_context)}
 """
     prompt += render_allowed_output_rules(allowed)
     prompt_path = output / "frontend-application.prompt.md"
@@ -908,7 +949,8 @@ Rules:
             **{
                 name: str(path)
                 for name, path in spec.inputs.items()
-                if name in {"bceClass", "sequence", "openapi"} and path.is_file()
+                if name in {"bceClass", "sequenceModel", "openapi", "deploymentBundle"}
+                and path.is_file()
             },
             "generatedClientContracts": str(contracts_path),
         },
@@ -1260,12 +1302,28 @@ def _openapi_control_bindings(source: str) -> dict[str, dict[str, object]]:
     return bindings
 
 
+def _render_deployment_context(deployment: object) -> str:
+    """배포 정보는 구현 계약을 흐리지 않도록 있을 때만 짧은 JSON으로 붙인다."""
+    return "" if not deployment else f"""
+## Relevant runtime context
+```json
+{_prompt_json(deployment)}
+```
+"""
+
+
+def _prompt_json(value: object) -> str:
+    """구조는 그대로 두고 LLM 입력에 불필요한 화면용 들여쓰기만 없앤다."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def render_api_adapter_prompt(
     spec: JobSpec,
     api_port: ApiPortIR,
     contracts: str,
-    sequence: str,
+    sequence: list[dict[str, object]],
     control_bindings: dict[str | None, dict[str, object]] | None = None,
+    deployment: dict[str, object] | None = None,
 ) -> str:
     bound_controls = sorted(
         {
@@ -1287,77 +1345,30 @@ def render_api_adapter_prompt(
     ) or "- No parsed OpenAPI operations; implement only methods present in the exact interface."
     return f"""# Implementation task: {api_port.name} OpenAPI adapter
 
-Implement `{api_port.name}Api` as a Spring REST controller and create a focused unit/contract test.
+Implement the exact generated `{api_port.name}Api` as a `@RestController` plus its focused test.
 
 Rules:
-- Use package `{spec.base_package}.adapter.in.web` and implement the exact generated `{api_port.name}Api` interface.
-- Annotate the class with `@RestController`; do not duplicate or change generated request mappings.
-- Use constructor injection for BCE application Control ports. Never instantiate a service directly.
-- Preserve exact `ResponseEntity` generic types and documented HTTP status semantics.
-- Never invent methods, access private DTO fields, use reflection, or edit generated contracts.
-- Test every generated interface operation, response status/body mapping, and Control invocation. Instantiate the real controller and mock only its Control collaborators.
-- Select Control operations only from the exact injected interfaces and sequence messages. Match
-  request fields by name and compatible type; never fabricate domain values or silently drop a
-  required input.
-- HTTP request DTOs and BCE input types are separate generated contracts. Do not pass an API
-  `Object` or API-model instance directly to a BCE method unless Java declares them assignable.
-  Convert the request explicitly to the exact BCE parameter type using only public constructors,
-  accessors, and fields present in both contracts. For a named empty request DTO whose BCE type
-  has no state, create the BCE value with its public no-argument constructor; never cast an
-  `Object` body or hide the mismatch with reflection.
-- Follow the reviewed API-to-Control binding below when one is supplied. Its `arguments` map
-  is the only permitted HTTP-to-Control value flow and its `outcomes` map is the required
-  Control-result-to-HTTP-status mapping. Do not replace it with a resource-name guess.
-- The only permitted Control collaborators for this API are the exact types listed below.
-  Import them from the exact BCE package shown in the generated contracts.
-  Never derive a resource-named Control from the API name or create/import a
-  resource-named substitute such as `{api_port.name}Control`; an API name is not a Control contract. If an
-  operation has no reviewed binding, report that design gap in the task completion message
-  rather than guessing a collaborator. Do not encode a design gap as
-  an `UnsupportedOperationException` in production code or as an exception expectation in a test.
-- Map every documented OpenAPI response status below to an explicit, observable Control outcome.
-  A null result must not be assigned an arbitrary status. If the generated contracts cannot
-  represent a documented response, report the design gap and keep every generated source and
-  test compilable; never manufacture a failing or contradictory implementation to expose it.
-- Make the focused test arrangement match the executable binding exactly: when a boolean
-  Control result maps to a success status, stub the exact method and exact converted request
-  arguments to return `true`; when the same result maps to a conflict status, use `false`.
-  Do not rely on Mockito's default `false`, and do not assert success after arranging the
-  conflict value. Assert the status declared by this operation's OpenAPI contract.
-- Successful commands with no response body use `204` and may keep transport-level failures
-  (400/401/403/404/500/503) in the API contract for global validation, authorization, or
-  exception handling. Do not invent controller branches for those statuses. Domain decisions
-  such as `409` or `422` require a dedicated BCE result/outcome type; a `void`, entity, scalar,
-  or collection return cannot represent them.
-- `@ApiResponse` and `@ApiResponses` are documentation only. They never satisfy an executable
-  response mapping. Add a reachable `ResponseEntity` branch only for a status represented by
-  the exact Control contract; never add annotations as a substitute for missing behavior.
-- Map BCE return values into generated API DTOs field by field using exact public accessors.
-- Unit tests must cover every documented status and verify exact Control arguments.
-- Do not manufacture a `500` test that expects the Control not to be called. A 500
-  response is transport/global exception handling unless the reviewed BCE contract
-  exposes an explicit error outcome; keep such handling out of focused controller
-  tests and test only executable statuses represented by the binding.
-- Never leave placeholder, empty fallback, or speculative response comments in production code.
-  If a Control cannot supply the documented response or error outcome, report the design gap in
-  the task completion message. Do not fabricate a response, throw a placeholder exception, or
-  create a test that expects such an exception.
+- Use only `{spec.base_package}.adapter.in.web`, the generated interface/mappings, exact `ResponseEntity` types, and constructor-injected Control ports.
+- The Java contracts and reviewed binding below are authoritative: use only their methods, argument flow, and observable response outcomes. Do not infer a Control from the API name.
+- Convert API DTOs to BCE types explicitly with shown public constructors/accessors; never cast `Object`, access private fields, use reflection, or edit generated code.
+- A documented status needs an exact Control outcome. If it is not representable, report the design gap while keeping both files compilable; do not invent fallback branches, exceptions, or placeholder comments.
+- Test each generated operation's executable status, response mapping, and exact Control arguments. Mock only the injected Control collaborators.
 - Create both contracted files, then finish immediately.
 
 ## OpenAPI response contract
 
 {operations}
 
-## Relevant sequence messages
+## Typed sequence messages
 
-```plantuml
-{sequence}
+```json
+{_prompt_json(sequence)}
 ```
 
 ## Reviewed API-to-Control bindings
 
 ```json
-{json.dumps(control_bindings or {}, ensure_ascii=False, indent=2)}
+{_prompt_json(control_bindings or {})}
 ```
 
 ## Exact permitted Control collaborators
@@ -1369,13 +1380,18 @@ Rules:
 ```java
 {contracts}
 ```
+{_render_deployment_context(deployment)}
 """
 
 
 def render_boundary_adapter_prompt(
-    spec: JobSpec, boundary: str, contracts: str, sequence: str
+    spec: JobSpec,
+    boundary: str,
+    contracts: str,
+    sequence: list[dict[str, object]],
+    deployment: dict[str, object] | None = None,
 ) -> str:
-    no_sequence_delegation = sequence.strip().startswith("' No directly matched")
+    no_sequence_delegation = not sequence
     delegation_rule = (
         "- No sequence message matches this Boundary. Do not import, inject, infer, "
         "or call any Control; implement only the Boundary's own state behavior.\n"
@@ -1391,8 +1407,8 @@ Rules:
 - Use package `{spec.base_package}.adapter.in.boundary` and implement the exact generated `{boundary}` interface.
 - Do not add REST mappings or edit generated BCE/API contracts. OpenAPI web adapters remain the HTTP boundary.
 - Do not annotate the adapter as a Spring bean yet; production bean ownership and cycle-free wiring are decided by the wiring phase.
-- Follow direction in the sequence: a Boundary-to-Control message delegates to that exact Control operation; a Control-to-Boundary message stores or exposes presentation/input state and must not call back into the Control.
-- Treat `->` as a request and `-->` as its return message. When the sequence contains a Boundary-to-Control request and the Boundary method returns a value, never implement it as `return null`; provide one minimal deterministic configuration/submission seam for the exact return value and delegate the request through the exact Control port.
+- Follow direction in the typed sequence: `sync`/`async` from Boundary to Control delegates to that exact Control operation; `return` and Control-to-Boundary messages must not call back into the Control.
+- When the sequence contains a Boundary-to-Control request and the Boundary method returns a value, never implement it as `return null`; provide one minimal deterministic configuration/submission seam for the exact return value and delegate the request through the exact Control port.
 - Retain values received by `on*`, `show*`, or equivalent methods. Return the last submitted/configured value from matching `get*`, `ask*`, or `prompt*` methods.
 - When the interface has a return method but no submission method, accept the return value through a constructor or one explicit adapter-only submission method. Do not invent methods on BCE contracts.
 - Reject only clearly invalid null input needed to preserve adapter state; do not invent business validation absent from the contracts.
@@ -1403,10 +1419,10 @@ Rules:
 - Test every Boundary interface method, state transition, returned value, and required Control invocation. Use Mockito only for generated Control collaborators.
 - Create both contracted files, then finish immediately.
 
-## Relevant sequence messages
+## Typed sequence messages
 
-```plantuml
-{sequence}
+```json
+{_prompt_json(sequence)}
 ```
 
 ## Exact generated Boundary and collaborating contracts
@@ -1414,6 +1430,7 @@ Rules:
 ```java
 {contracts}
 ```
+{_render_deployment_context(deployment)}
 """
 
 
@@ -1988,6 +2005,26 @@ def slice_erd(source: str, entity_names: set[str]) -> str:
 
 def _entity_sequence(model: dict[str, object], entity: str) -> list[dict[str, object]]:
     """Entity가 직접 참여한 유스케이스의 구조화된 메시지만 고른다."""
+    return [
+        {
+            "useCaseId": diagram["use_case_id"],
+            "useCaseName": diagram["use_case_name"],
+            "participants": diagram["Participants"],
+            "messages": diagram["Messages"],
+        }
+        for diagram in _project_sequence(model, {entity})
+    ]
+
+
+def _project_sequence(
+    model: dict[str, object], names: set[str]
+) -> list[dict[str, object]]:
+    """구현 대상이 참여한 typed 시퀀스만, 원래 호출 메타데이터와 함께 남긴다.
+
+    PlantUML alias를 다시 해석하면 ``arguments``와 ``call_id`` 같은 실행 계약이
+    사라진다. 따라서 모든 구현 task가 이 작은 projection을 공유해 원본 메시지
+    dict를 그대로 전달한다.
+    """
     diagrams = model.get("Diagrams", [model])
     if not isinstance(diagrams, list):
         return []
@@ -1998,32 +2035,89 @@ def _entity_sequence(model: dict[str, object], entity: str) -> list[dict[str, ob
         participants = [
             item for item in diagram.get("Participants", []) if isinstance(item, dict)
         ]
-        entity_aliases = {
-            str(item.get("alias", "")) for item in participants
-            if str(item.get("source_class") or item.get("name") or "") == entity
+        aliases = {
+            str(item.get("alias") or item.get("name") or "")
+            for item in participants
+            if str(item.get("source_class") or item.get("name") or "") in names
+            or str(item.get("alias") or "") in names
         }
         messages = [
             item for item in diagram.get("Messages", [])
             if isinstance(item, dict)
-            and {str(item.get("source", "")), str(item.get("target", ""))} & entity_aliases
+            and {str(item.get("source") or ""), str(item.get("target") or "")} & aliases
         ]
         if not messages:
             continue
         involved = {
-            str(message.get(side, ""))
+            str(message.get(side) or "")
             for message in messages
             for side in ("source", "target")
         }
         selected.append({
-            "useCaseId": diagram.get("use_case_id", ""),
-            "useCaseName": diagram.get("use_case_name", ""),
-            "participants": [
-                item for item in participants if str(item.get("alias", "")) in involved
+            "use_case_id": diagram.get("use_case_id", ""),
+            "use_case_name": diagram.get("use_case_name", ""),
+            "Participants": [
+                item for item in participants
+                if str(item.get("alias") or item.get("name") or "") in involved
             ],
-            # argument source, call/reply 연결, step ID와 fragment 정보는 그대로 보존한다.
-            "messages": messages,
+            # arguments, call_id, reply_to, step_ids, fragments를 복사하지 않고 보존한다.
+            "Messages": messages,
         })
     return selected
+
+
+def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
+    """구현 대상과 연결된 generatedApplication 실행 조건만 작게 전달한다.
+
+    배포 bundle 전체에는 CSP 계획처럼 코드 task가 소비하지 않는 정보가 많다.
+    sourceRefs가 대상 이름을 가리키는 workload를 우선 고르고, 단일 앱인 경우만
+    안전하게 fallback하여 interface/configuration/storage/connection 계약을 남긴다.
+    """
+    graph = _read_json(spec.inputs.get("deploymentBundle")).get("workloadGraph")
+    if not isinstance(graph, dict):
+        return {}
+    generated = [
+        item for item in graph.get("workloads", [])
+        if isinstance(item, dict)
+        and str((item.get("artifact") or {}).get("kind") or "") == "generatedApplication"
+    ]
+    matched = [
+        item for item in generated
+        if any(
+            name.lower() in json.dumps(item.get("sourceRefs") or [], ensure_ascii=False).lower()
+            for name in names
+        )
+    ]
+    workloads = matched or (generated if len(generated) == 1 else [])
+    if not workloads:
+        return {}
+    workload_ids = {str(item.get("id") or "") for item in workloads}
+    return {
+        "workloads": [
+            {
+                "id": item.get("id"),
+                "interfaces": list(item.get("interfaces") or []),
+                # 설정값 자체(특히 secret)는 코드 task가 소비하지 않는다.
+                "configuration": [
+                    {
+                        key: config.get(key)
+                        for key in ("id", "name", "kind", "projection", "connectionRef")
+                        if config.get(key) is not None
+                    }
+                    for config in item.get("configuration", [])
+                    if isinstance(config, dict)
+                ],
+                "storage": list(item.get("storage") or []),
+            }
+            for item in workloads
+        ],
+        "connections": [
+            connection for connection in graph.get("connections", [])
+            if isinstance(connection, dict)
+            and {str(connection.get("sourceRef") or ""), str(connection.get("targetRef") or "")}
+            & workload_ids
+        ],
+    }
 
 
 def _entity_erd(model: dict[str, object], entity: str) -> dict[str, object]:
@@ -2069,7 +2163,7 @@ Use only the typed sequence messages below. The runtime appends the current sour
 
 ## Typed sequence involvement
 ```json
-{json.dumps(context['sequence'], ensure_ascii=False, indent=2)}
+{_prompt_json(context['sequence'])}
 ```
 
 ## Related ERD
@@ -2137,8 +2231,8 @@ Rules:
 
 ## Sequence context
 
-```plantuml
-{context['sequence']}
+```json
+{_prompt_json(context['sequence'])}
 ```
 
 ## ERD context
@@ -2165,6 +2259,7 @@ Rules:
 
 The list above is derived from the exact Java sources. An empty contract has no callable members.
 Any test that calls a getter on one is invalid and will fail compilation.
+{_render_deployment_context(context.get('deployment'))}
 """
 
 

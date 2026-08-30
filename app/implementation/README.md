@@ -35,6 +35,20 @@
 - Entity 작업이 성공한 뒤에야 persistence와 Control 작업이 실행된다. 실패하면 성공한 작업은
   재사용하고 해당 소유 작업부터 재개한다.
 
+## typed sequence와 runtime 입력
+
+구현 작업의 기준 입력은 표시용 PlantUML이 아니라 `sequenceModel`이다. 작업 context의
+`sequence[]`는 유스케이스(`use_case_id`), `Participants`, `Messages`를 묶어
+전달하며, 각 message의 `arguments`, `call_id`, `reply_to`, `fragments`를 그대로 보존한다.
+따라서 Control·Boundary·API·Frontend가 같은 호출 인자와 호출/반환 연결을 읽는다. PlantUML은
+사람이 다이어그램을 보는 용도로만 사용한다.
+
+배포 실행 정보는 필요한 작업에만 `deployment`로 투영한다. 투영에는 `workloads[].id`,
+`interfaces`, `configuration`, `storage`와 연결된 `connections`만 들어가며, 전체 CSP 계획이나
+원본 bundle을 작업자에게 넘기지 않는다. 작업이 실패하면 해당 task의 보고서와 owner부터
+재개하고, 새로운 workload·interface·mount가 필요하다는 runtime 관찰은 추측으로 고치지 않고
+배포 설계 재생성 대상으로 남긴다.
+
 ## 디렉터리 지도
 
 | 디렉터리 | 책임 |

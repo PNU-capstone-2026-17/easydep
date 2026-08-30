@@ -699,16 +699,16 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             }
                         )
                 if task_type == "boundary-adapter":
-                    sequence_context = ""
+                    sequence_context: object = []
                     context_file = task.get("context_file")
                     if context_file:
                         try:
                             task_context = json.loads(
                                 (run_root / str(context_file)).read_text(encoding="utf-8")
                             )
-                            sequence_context = str(task_context.get("sequence", ""))
+                            sequence_context = task_context.get("sequence", [])
                         except (OSError, json.JSONDecodeError):
-                            sequence_context = ""
+                            sequence_context = []
                     boundary_violations = boundary_adapter_contract_violations(
                         sandbox, list(task["allowed_write_paths"]), sequence_context
                     )

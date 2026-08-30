@@ -7,19 +7,19 @@ from pathlib import Path
 import pytest
 
 from app.db.models import TYPE_FRONTEND_SOURCE_CODE
-from app.implementation.config import ImplementationSettings
-from app.implementation.agents.workspace import snapshot_files
 from app.implementation.agents.verification.build import verify_frontend_workspace
 from app.implementation.agents.verification.frontend import (
     frontend_contract_violations,
     repair_frontend_accessibility_contract,
+    repair_responsive_table_styles,
     run_frontend_verification,
 )
-from app.implementation.agents.verification.frontend import repair_responsive_table_styles
-from app.implementation.planning.design_context import generate_frontend_tasks
-from app.implementation.planning.frontend_contracts import (
-    FrontendContractBudgetExceeded,
-    GeneratedClientContracts,
+from app.implementation.agents.workspace import snapshot_files
+from app.implementation.application.jobs import ImplementationWorker
+from app.implementation.config import ImplementationSettings
+from app.implementation.domain.models import CommandEvidence
+from app.implementation.generation.frontend import (
+    repair_typescript_fetch_export_collisions,
 )
 from app.implementation.generation.frontend_scaffold import (
     FrontendScaffoldError,
@@ -28,12 +28,11 @@ from app.implementation.generation.frontend_scaffold import (
     resolve_api_base_url,
     validate_openapi,
 )
-from app.implementation.generation.frontend import (
-    repair_typescript_fetch_export_collisions,
+from app.implementation.planning.design_context import generate_frontend_tasks
+from app.implementation.planning.frontend_contracts import (
+    FrontendContractBudgetExceeded,
+    GeneratedClientContracts,
 )
-from app.implementation.application.jobs import ImplementationWorker
-from app.implementation.domain.models import CommandEvidence
-
 
 OPENAPI = {
     "openapi": "3.0.3",
@@ -327,9 +326,25 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     openapi = tmp_path / "openapi.json"
     bce = tmp_path / "class.puml"
     sequence = tmp_path / "sequence.puml"
+    sequence_model = tmp_path / "sequence-model.json"
     openapi.write_text(json.dumps(OPENAPI), encoding="utf-8")
     bce.write_text("class OrderScreen <<Boundary>> {}", encoding="utf-8")
     sequence.write_text("OrderScreen -> OrderController : getOrder()", encoding="utf-8")
+    sequence_model.write_text(json.dumps({"Diagrams": [{
+        "use_case_id": "UC_ORDER", "use_case_name": "Get order",
+        "Participants": [
+            {"alias": "screen", "kind": "boundary", "source_class": "OrderScreen"},
+            {"alias": "control", "kind": "control", "source_class": "OrderController"},
+        ],
+        "Messages": [
+            {"source": "screen", "target": "control", "type": "sync",
+             "use_case_ids": ["UC_ORDER"], "call_id": "get-order::call:1",
+             "arguments": [{"parameter": "orderId", "source_kind": "input", "source_ref": "UC_ORDER:main:1#orderId"}],
+             "fragments": [{"id": "get-order:main", "type": "opt", "branch": "main", "condition": "requested"}]},
+            {"source": "control", "target": "screen", "type": "return",
+             "use_case_ids": ["UC_ORDER"], "reply_to": "get-order::call:1", "arguments": [], "fragments": []},
+        ],
+    }]}), encoding="utf-8")
     run = tmp_path / "run"
     generated = run / "application/frontend/src/generated/apis"
     generated.mkdir(parents=True)
@@ -342,7 +357,12 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
         feedback="",
         name="orders",
         workspace_root=tmp_path,
-        inputs={"bceClass": bce, "sequence": sequence, "openapi": openapi},
+        inputs={
+            "bceClass": bce,
+            "sequence": sequence,
+            "sequenceModel": sequence_model,
+            "openapi": openapi,
+        },
         required_inputs=[],
         base_package="com.example",
         allow_assumptions=True,
@@ -365,11 +385,20 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     assert phase_for_task(task.task_type) == "frontend"
     assert set(task.source_artifacts) == {
         "bceClass",
-        "sequence",
+        "sequenceModel",
         "openapi",
         "generatedClientContracts",
     }
     assert "requirements" not in context
+    diagram = next(
+        item for item in context["sequence"]
+        if item.get("use_case_id") == "UC_ORDER"
+    )
+    messages = diagram["Messages"]
+    assert any(message.get("arguments") for message in messages)
+    assert any(message.get("reply_to") for message in messages)
+    assert any(message.get("fragments") for message in messages)
+    assert "deployment" not in context
     assert "OrderScreen" in prompt and "getOrder" in prompt
     assert "src/generated" in prompt
     assert context["generatedImportRoot"] == "src/generated"
@@ -563,7 +592,7 @@ def test_frontend_verification_requires_dependency_lock(tmp_path: Path) -> None:
     frontend.mkdir(parents=True)
     (frontend / "package.json").write_text("{}", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="package-lock.json"):
+    with pytest.raises(RuntimeError, match=r"package-lock\.json"):
         verify_frontend_workspace(tmp_path)
 
 
