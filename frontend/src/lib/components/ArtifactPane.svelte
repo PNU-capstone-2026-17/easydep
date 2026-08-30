@@ -1,11 +1,12 @@
 <script lang="ts">
   import { Braces, Check, CheckCircle2, Clock3, Copy, FileCode2, FileText, Image, Layers3, LoaderCircle, Maximize2, ShieldCheck, X } from '@lucide/svelte';
-  import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
-  import { getArtifactFile, getFileArtifactVersions, getSequenceDiagrams, getVersions } from '$lib/api';
+  import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceFile, LiveSourceSnapshot, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
+  import { getArtifactFile, getFileArtifactVersions, getLiveImplementationFile, getSequenceDiagrams, getVersions } from '$lib/api';
   import { errorMessage } from '$lib/utils';
   import ArtifactVisualization from '$lib/components/ArtifactVisualization.svelte';
   import ArtifactNavigator from '$lib/components/ArtifactNavigator.svelte';
   import DraggableDiagramViewport from '$lib/components/DraggableDiagramViewport.svelte';
+  import ReadOnlySourceViewer from '$lib/components/ReadOnlySourceViewer.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { artifactLabels, artifactPresent, diagramArtifactTypes, requirementsArtifactTypes } from '$lib/artifacts';
 
@@ -13,6 +14,8 @@
     appId,
     document,
     fileArtifacts,
+    liveSources = null,
+    preferredFile = '',
     events,
     classPreview,
     classGenerating = false,
@@ -22,11 +25,14 @@
     sequenceFeedbackSubmitting = false,
     sequenceMethodApprovalAvailable = false,
     onSequenceMethodApproval,
+    onFileSelect,
     onClose
   }: {
     appId: string;
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
+    liveSources?: LiveSourceSnapshot | null;
+    preferredFile?: string;
     events: WorkspaceEvent[];
     classPreview?: LiveDiagramPreview | null;
     classGenerating?: boolean;
@@ -38,6 +44,7 @@
     sequenceFeedbackSubmitting?: boolean;
     sequenceMethodApprovalAvailable?: boolean;
     onSequenceMethodApproval?: () => void;
+    onFileSelect?: (path: string) => void;
     onClose?: () => void;
   } = $props();
   let tab = $state<'artifact' | 'validation' | 'changes' | 'evidence'>('artifact');
@@ -49,6 +56,7 @@
   let selectedFile = $state('');
   let fileContent = $state('');
   let fileError = $state('');
+  let loadedFileKey = '';
   let copiedFile = $state(false);
   let sequenceDiagrams = $state<SequenceDiagramSummary[]>([]);
   let sequenceError = $state('');
@@ -64,11 +72,15 @@
     selected === 'class_diagram' ? classPreview ?? null : null
   );
   let displayContent = $derived(liveClassPreview?.puml ?? content);
-  let fileArtifact = $derived(fileArtifacts[selected]);
-  let implementationStages = $derived(
-    Object.keys(fileArtifacts).filter((stage) => Boolean(fileArtifacts[stage]))
+  let fileArtifact = $derived(
+    selected === 'LIVE_SOURCE' ? liveSources ?? undefined : fileArtifacts[selected]
   );
-  let fileLines = $derived(fileContent.split('\n'));
+  let implementationStages = $derived(
+    (liveSources ? ['LIVE_SOURCE'] : []).concat(
+      Object.keys(fileArtifacts).filter((stage) => Boolean(fileArtifacts[stage]))
+    )
+  );
+  let fileTreeRows = $derived(buildFileTree(fileArtifact?.files ?? []));
   let validation = $derived(document?.validation?.[selected]);
   // The sequence artifact itself changes when feedback is applied, even when
   // the UC summary list keeps the same IDs.  Track it separately so images
@@ -79,6 +91,7 @@
     Object.keys(document?.artifacts ?? {})
       .filter((key) => key in artifactLabels && artifactPresent(document?.artifacts?.[key]))
       .concat(Object.keys(fileArtifacts))
+      .concat(liveSources ? ['LIVE_SOURCE'] : [])
       .concat(classPreview || classGenerating ? ['class_diagram'] : [])
       .filter((stage, index, stages) => stages.indexOf(stage) === index)
   );
@@ -99,7 +112,7 @@
     if (!appId || !selected) return;
     versions = [];
     versionsError = '';
-    if (liveClassPreview) return;
+    if (liveClassPreview || selected === 'LIVE_SOURCE') return;
     const loader = fileArtifacts[selected] ? getFileArtifactVersions : getVersions;
     loader(appId, selected)
       .then((result) => (versions = result.versions))
@@ -139,26 +152,78 @@
   });
 
   $effect(() => {
-    const snapshot = fileArtifacts[selected];
+    const snapshot = fileArtifact;
     if (!snapshot) {
       selectedFile = '';
       fileContent = '';
+      loadedFileKey = '';
       return;
     }
-    selectedFile = snapshot.files[0]?.path ?? '';
-    void loadFile(selectedFile);
+    const candidates = snapshot.files.filter((file) => !('exists' in file) || file.exists);
+    const preferredCandidates = [
+      preferredFile,
+      preferredFile.startsWith('frontend/') ? preferredFile.slice('frontend/'.length) : ''
+    ].filter(Boolean);
+    const nextFile =
+      candidates.find((file) => file.path === selectedFile) ??
+      candidates.find((file) => preferredCandidates.includes(file.path)) ??
+      candidates[0];
+    if (!nextFile) {
+      selectedFile = '';
+      fileContent = '';
+      loadedFileKey = '';
+      return;
+    }
+    const nextKey = `${selected}:${nextFile.path}:${nextFile.sha256}`;
+    if (loadedFileKey !== nextKey) void loadFile(nextFile.path, nextKey);
   });
 
-  async function loadFile(path: string) {
+  async function loadFile(path: string, expectedKey = '') {
     if (!path) return;
     selectedFile = path;
+    onFileSelect?.(path);
     fileError = '';
+    const requestSelection = selected;
     try {
-      fileContent = (await getArtifactFile(appId, selected, path)).content;
+      const response =
+        requestSelection === 'LIVE_SOURCE' && liveSources
+          ? await getLiveImplementationFile(appId, liveSources.job_id, path)
+          : await getArtifactFile(appId, requestSelection, path);
+      if (requestSelection !== selected || path !== selectedFile) return;
+      fileContent = response.content;
+      loadedFileKey = expectedKey || `${requestSelection}:${path}:${response.sha256}`;
     } catch (error) {
+      if (requestSelection !== selected || path !== selectedFile) return;
       fileError = errorMessage(error);
       fileContent = '';
+      loadedFileKey = '';
     }
+  }
+
+  type TreeRow =
+    | { kind: 'directory'; path: string; label: string; depth: number }
+    | { kind: 'file'; path: string; label: string; depth: number; file: FileArtifactSnapshot['files'][number] | LiveSourceFile };
+
+  function buildFileTree(files: Array<FileArtifactSnapshot['files'][number] | LiveSourceFile>): TreeRow[] {
+    const rows: TreeRow[] = [];
+    const directories = new Set<string>();
+    for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
+      const parts = file.path.split('/');
+      for (let index = 0; index < parts.length - 1; index += 1) {
+        const path = parts.slice(0, index + 1).join('/');
+        if (directories.has(path)) continue;
+        directories.add(path);
+        rows.push({ kind: 'directory', path, label: parts[index], depth: index });
+      }
+      rows.push({
+        kind: 'file',
+        path: file.path,
+        label: parts.at(-1) ?? file.path,
+        depth: Math.max(0, parts.length - 1),
+        file
+      });
+    }
+    return rows;
   }
 
   function fileLanguage(path: string): string {
@@ -284,7 +349,7 @@
         <strong class="text-xs">Artifact index</strong>
         <span class="text-[10px] text-[#85877e]">Select an output</span>
       </div>
-      <ArtifactNavigator {document} {fileArtifacts} {classPreview} {classGenerating} {selected} onSelect={selectFromIndex} />
+      <ArtifactNavigator {document} {fileArtifacts} liveSourceAvailable={Boolean(liveSources)} {classPreview} {classGenerating} {selected} onSelect={selectFromIndex} />
     </div>
   {/if}
 
@@ -336,7 +401,7 @@
           <header class="border-b border-[#e4e7e1] bg-[#f6f8f4] px-3 py-3">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <p class="text-[10px] font-bold uppercase tracking-[.13em] text-[#65806d]">Implementation review</p>
+                <p class="text-[10px] font-bold uppercase tracking-[.13em] text-[#65806d]">{selected === 'LIVE_SOURCE' ? 'Writing now' : 'Implementation review'}</p>
                 <h3 class="mt-0.5 text-sm font-semibold text-[#30362f]">{artifactLabels[selected]}</h3>
               </div>
               <span class="rounded-full border border-[#d4e5d9] bg-white px-2 py-1 text-[10px] font-semibold text-[#467055]">{fileArtifact.files.length} files</span>
@@ -356,15 +421,30 @@
             <nav class="scrollbar-thin overflow-auto border-r border-[#e4e7e1] bg-[#f5f7f3] p-2" aria-label="Source files">
               <p class="px-2 pb-2 pt-1 text-[9px] font-bold uppercase tracking-[.13em] text-[#83887e]">Explorer</p>
               <div class="space-y-0.5">
-                {#each fileArtifact.files as file}
-                  <button
-                    class="focus-ring flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition {selectedFile === file.path ? 'bg-[#dceee1] text-[#24553d]' : 'text-[#596057] hover:bg-[#e9eee9]'}"
-                    onclick={() => loadFile(file.path)}
-                    title={file.path}
-                  >
-                    <FileCode2 size={13} class="shrink-0" />
-                    <span class="min-w-0 truncate font-mono">{file.path}</span>
-                  </button>
+                {#each fileTreeRows as row (`${row.kind}:${row.path}`)}
+                  {#if row.kind === 'directory'}
+                    <div
+                      class="flex items-center gap-1.5 py-1 text-[10px] font-semibold text-[#7a8077]"
+                      style={`padding-left: ${0.5 + row.depth * 0.75}rem`}
+                      title={row.path}
+                    >
+                      <span class="text-[#9aa198]">▾</span><span class="truncate">{row.label}</span>
+                    </div>
+                  {:else}
+                    <button
+                      class="focus-ring flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[11px] transition {selectedFile === row.path ? 'bg-[#dceee1] text-[#24553d]' : 'text-[#596057] hover:bg-[#e9eee9]'} disabled:cursor-wait disabled:opacity-60"
+                      style={`padding-left: ${0.75 + row.depth * 0.75}rem`}
+                      onclick={() => loadFile(row.path)}
+                      disabled={'exists' in row.file && !row.file.exists}
+                      title={row.path}
+                    >
+                      <FileCode2 size={13} class="shrink-0" />
+                      <span class="min-w-0 flex-1 truncate font-mono">{row.label}</span>
+                      {#if 'status' in row.file && row.file.status === 'writing'}
+                        <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-[#3c8d62]" title="작성 중"></span>
+                      {/if}
+                    </button>
+                  {/if}
                 {/each}
               </div>
             </nav>
@@ -381,13 +461,8 @@
               {#if fileError}
                 <p class="m-3 rounded-md border border-[#8e4a42] bg-[#3b2623] p-2 text-xs text-[#ffb8ae]">{fileError}</p>
               {:else}
-                <div class="scrollbar-thin flex-1 overflow-auto py-3 font-mono text-[12px] leading-6" aria-label="Source code">
-                  {#each fileLines as line, index}
-                    <div class="grid min-w-max grid-cols-[3.5rem_minmax(0,1fr)] px-3 hover:bg-white/[0.035]">
-                      <span class="select-none pr-4 text-right text-[#778179]">{index + 1}</span>
-                      <code class="whitespace-pre text-[#e3ebe4]">{line || ' '}</code>
-                    </div>
-                  {/each}
+                <div class="min-h-0 flex-1" aria-label="Source code">
+                  <ReadOnlySourceViewer path={selectedFile} value={fileContent} />
                 </div>
               {/if}
             </div>

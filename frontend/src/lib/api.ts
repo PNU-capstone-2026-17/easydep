@@ -9,7 +9,8 @@ import type {
   CloudRegionOption,
   DeploymentPreferences,
   SequenceDiagramSummary,
-  LiveDiagramPreview
+  LiveDiagramPreview,
+  LiveSourceSnapshot
 } from '$lib/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -102,6 +103,21 @@ export function getFileArtifactVersions(appId: string, artifactType: string) {
 export function getArtifactFile(appId: string, artifactType: string, path: string) {
   return request<{ path: string; content: string; sha256: string }>(
     `/api/implementation/apps/${appId}/artifacts/${artifactType}/files/${path
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}`
+  );
+}
+
+export function getLiveImplementationSources(appId: string, jobId: string) {
+  return request<LiveSourceSnapshot>(
+    `/api/implementation/apps/${encodeURIComponent(appId)}/jobs/${encodeURIComponent(jobId)}/live`
+  );
+}
+
+export function getLiveImplementationFile(appId: string, jobId: string, path: string) {
+  return request<{ path: string; content: string; sha256: string; size: number }>(
+    `/api/implementation/apps/${encodeURIComponent(appId)}/jobs/${encodeURIComponent(jobId)}/live/files/${path
       .split('/')
       .map(encodeURIComponent)
       .join('/')}`

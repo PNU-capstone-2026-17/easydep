@@ -1019,3 +1019,95 @@ def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> 
         "SOURCE_CODE",
         "TEST_CODE",
     }
+
+
+def test_live_source_api_reads_only_safe_files_for_the_matching_job(
+    tmp_path: Path, monkeypatch
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    job_id = "a" * 32
+    job_root = implementation_worker.settings.work_root / job_id
+    run_root = job_root / "generated" / "runs" / "run_live"
+    application_root = run_root / "application"
+    source = application_root / "src/main/java/com/example/App.java"
+    frontend = application_root / "frontend/src/App.svelte"
+    source.parent.mkdir(parents=True)
+    frontend.parent.mkdir(parents=True)
+    source.write_text("class App {}", encoding="utf-8")
+    frontend.write_text("<main>Hello</main>", encoding="utf-8")
+    (application_root / ".env").write_text("TOKEN=secret", encoding="utf-8")
+    build_file = application_root / "build/generated.txt"
+    build_file.parent.mkdir(parents=True)
+    build_file.write_text("generated", encoding="utf-8")
+    reports = run_root / "reports"
+    reports.mkdir()
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"taskId": "control", "status": "RUNNING"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": "control",
+                        "allowed_write_paths": [
+                            "application/src/main/java/com/example/App.java",
+                            "application/src/test/java/com/example/AppTest.java",
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    implementation_worker._write(
+        {
+            "job_id": job_id,
+            "app_id": "app-1",
+            "status": "RUNNING",
+            "run_root": str(run_root),
+        }
+    )
+    monkeypatch.setattr("app.implementation.interfaces.http.worker", implementation_worker)
+    application = FastAPI()
+    application.include_router(router)
+
+    try:
+        client = TestClient(application)
+        listing = client.get(
+            f"/api/implementation/apps/app-1/jobs/{job_id}/live"
+        )
+        content = client.get(
+            f"/api/implementation/apps/app-1/jobs/{job_id}/live/files/"
+            "src/main/java/com/example/App.java"
+        )
+        wrong_app = client.get(
+            f"/api/implementation/apps/app-2/jobs/{job_id}/live"
+        )
+        secret = client.get(
+            f"/api/implementation/apps/app-1/jobs/{job_id}/live/files/.env"
+        )
+        with pytest.raises(FileNotFoundError):
+            implementation_worker.live_source_file(job_id, "app-1", "../job.json")
+    finally:
+        implementation_worker.shutdown()
+
+    assert listing.status_code == 200
+    files = {item["path"]: item for item in listing.json()["files"]}
+    assert set(files) == {
+        "frontend/src/App.svelte",
+        "src/main/java/com/example/App.java",
+        "src/test/java/com/example/AppTest.java",
+    }
+    assert files["src/main/java/com/example/App.java"]["status"] == "writing"
+    assert files["src/test/java/com/example/AppTest.java"]["exists"] is False
+    assert content.json()["content"] == "class App {}"
+    assert wrong_app.status_code == 404
+    assert secret.status_code == 404

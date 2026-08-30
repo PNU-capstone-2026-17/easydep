@@ -25,6 +25,8 @@ from app.db.models import (
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import AppNotFound
 
+from ..application.jobs import JobNotFound, worker
+
 router = APIRouter(prefix="/api/implementation", tags=["implementation"])
 FILE_ARTIFACT_TYPES = {
     TYPE_SOURCE_CODE,
@@ -33,6 +35,30 @@ FILE_ARTIFACT_TYPES = {
     TYPE_DEPLOYMENT_FILE,
     TYPE_IAC_CODE,
 }
+
+
+@router.get("/apps/{app_id}/jobs/{job_id}/live")
+def get_live_implementation_sources(app_id: str, job_id: str) -> dict[str, Any]:
+    """진행 중인 구현 폴더의 안전한 text 파일 목록을 반환한다."""
+
+    try:
+        return worker.live_sources(job_id, app_id)
+    except JobNotFound as error:
+        raise HTTPException(
+            status_code=404, detail="Active implementation sources are unavailable."
+        ) from error
+
+
+@router.get("/apps/{app_id}/jobs/{job_id}/live/files/{file_path:path}")
+def get_live_implementation_file(
+    app_id: str, job_id: str, file_path: str
+) -> dict[str, Any]:
+    """진행 중인 구현 폴더에서 검사가 끝난 UTF-8 text 파일 하나를 반환한다."""
+
+    try:
+        return worker.live_source_file(job_id, app_id, file_path)
+    except (JobNotFound, FileNotFoundError) as error:
+        raise HTTPException(status_code=404, detail="Live source file not found.") from error
 
 
 @router.get("/apps/{app_id}/download")

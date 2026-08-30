@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -32,6 +33,12 @@ from app.repositories import artifact_repository
 from ..config import ImplementationSettings
 from .feedback import assess_feedback_eligibility
 from .prototype import PrototypeClient
+from .source_files import (
+    classify_source_path,
+    is_visible_source_path,
+    iter_application_sources,
+    read_application_source,
+)
 
 # 일부 설계 finding은 구현을 진행하면서 구체적인 코드와 함께 확인할 수 있다. 그러나
 # 아래 규칙의 오류는 입력 계약 자체를 만들 수 없게 하거나 BCE 필드와 JPA 필드의 대응을
@@ -490,6 +497,129 @@ class ImplementationWorker:
         record["checkpoint_retryable"] = self._checkpoint_retryable(record)
         return self.public_record(record)
 
+    def live_sources(self, job_id: str, app_id: str) -> dict[str, Any]:
+        """실행 중 폴더에서 화면에 보여 줄 소스 목록을 만든다.
+
+        HTTP 계층에는 ``run_root``를 넘기지 않는다. 작업 ID와 앱 ID가 모두 맞는지 확인한 뒤
+        해당 job 폴더 안의 ``application``만 읽으며, 현재 OpenHands 작업의 출력 예정 경로도
+        합쳐 아직 생성되지 않은 파일을 ``writing`` 상태로 보여 준다.
+        """
+
+        record, run_root, application = self._live_application(job_id, app_id)
+        writing_paths = self._running_write_paths(run_root)
+        files = {
+            item.workspace_path: {
+                "path": item.workspace_path,
+                "artifact_type": item.artifact_type,
+                "artifact_path": item.artifact_path,
+                "sha256": item.sha256,
+                "size": item.size,
+                "exists": True,
+                "status": (
+                    "writing" if item.workspace_path in writing_paths else "available"
+                ),
+            }
+            for item in iter_application_sources(application)
+        }
+        for workspace_path in writing_paths:
+            if workspace_path in files or not is_visible_source_path(workspace_path):
+                continue
+            artifact_type, artifact_path = classify_source_path(workspace_path)
+            files[workspace_path] = {
+                "path": workspace_path,
+                "artifact_type": artifact_type,
+                "artifact_path": artifact_path,
+                "sha256": "",
+                "size": 0,
+                "exists": False,
+                "status": "writing",
+            }
+        ordered = [files[path] for path in sorted(files)]
+        revision_input = "\n".join(
+            f"{item['path']}:{item['status']}:{item['sha256']}" for item in ordered
+        )
+        return {
+            "job_id": job_id,
+            "run_id": run_root.name,
+            "status": str(record.get("status") or ""),
+            "revision": hashlib.sha256(revision_input.encode("utf-8")).hexdigest(),
+            "files": ordered,
+        }
+
+    def live_source_file(
+        self, job_id: str, app_id: str, workspace_path: str
+    ) -> dict[str, Any]:
+        """실행 중 애플리케이션의 UTF-8 text 파일 하나를 반환한다."""
+
+        _record, _run_root, application = self._live_application(job_id, app_id)
+        item = read_application_source(application, workspace_path)
+        return {
+            "path": item.workspace_path,
+            "artifact_type": item.artifact_type,
+            "artifact_path": item.artifact_path,
+            "content": item.content,
+            "sha256": item.sha256,
+            "size": item.size,
+        }
+
+    def _live_application(
+        self, job_id: str, app_id: str
+    ) -> tuple[dict[str, Any], Path, Path]:
+        """job 기록을 확인하고 허용된 실제 application 폴더를 찾는다."""
+
+        if re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+            raise JobNotFound(job_id)
+        record = self._read(job_id)
+        if str(record.get("app_id")) != app_id:
+            raise JobNotFound(job_id)
+        run_root_value = record.get("run_root")
+        if not isinstance(run_root_value, str):
+            raise JobNotFound(job_id)
+        job_root = (self.settings.work_root / job_id).resolve()
+        run_root = Path(run_root_value).resolve()
+        try:
+            run_root.relative_to(job_root)
+        except ValueError as error:
+            raise JobNotFound(job_id) from error
+        application = run_root / "application"
+        if not application.is_dir():
+            raise JobNotFound(job_id)
+        return record, run_root, application
+
+    @staticmethod
+    def _running_write_paths(run_root: Path) -> set[str]:
+        """현재 RUNNING task가 작성할 application 상대 경로를 읽는다."""
+
+        try:
+            state = json.loads(
+                (run_root / "reports" / "workflow-state.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            manifest = json.loads(
+                (run_root / "reports" / "run-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+        except (OSError, json.JSONDecodeError):
+            return set()
+        running_ids = {
+            str(task.get("taskId"))
+            for task in state.get("tasks", [])
+            if isinstance(task, dict) and task.get("status") == "RUNNING"
+        }
+        paths = {
+            str(path).replace("\\", "/").lstrip("/")
+            for task in manifest.get("implementation_tasks", [])
+            if isinstance(task, dict) and str(task.get("task_id")) in running_ids
+            for path in task.get("allowed_write_paths", [])
+        }
+        return {
+            path.removeprefix("application/")
+            for path in paths
+            if path.startswith("application/")
+        }
+
     def retry_failed(self, job_id: str) -> dict[str, Any]:
         """실패한 실행의 durable checkpoint에서 실패 단계만 다시 시작한다."""
         record = self._read(job_id)
@@ -742,33 +872,8 @@ class ImplementationWorker:
                 TYPE_IAC_CODE,
             )
         }
-        for path in application.rglob("*"):
-            # build 결과와 Gradle cache는 소스 산출물이 아니며 크기도 크므로 제외한다.
-            if not path.is_file() or "build" in path.parts or ".gradle" in path.parts:
-                continue
-            relative = path.relative_to(application).as_posix()
-            try:
-                content = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                # 파일 산출물 계약은 UTF-8 text다. 이미지나 binary 파일은 저장하지 않는다.
-                continue
-            lowered = relative.lower()
-            if relative.startswith("frontend/"):
-                kind = TYPE_FRONTEND_SOURCE_CODE
-                relative = relative.removeprefix("frontend/")
-            elif relative.startswith("deployment-bundle/"):
-                kind = TYPE_DEPLOYMENT_FILE
-            elif "/test/" in f"/{lowered}":
-                kind = TYPE_TEST_CODE
-            elif relative == ".dockerignore" or any(
-                token in lowered for token in ("k8s/", "dockerfile", "helm/")
-            ):
-                kind = TYPE_DEPLOYMENT_FILE
-            elif any(token in lowered for token in ("terraform/", ".tf", "pulumi/")):
-                kind = TYPE_IAC_CODE
-            else:
-                kind = TYPE_SOURCE_CODE
-            groups[kind][relative] = content
+        for source in iter_application_sources(application):
+            groups[source.artifact_type][source.artifact_path] = source.content
         metadata = {
             "implementation_job_id": record["job_id"],
             "run_id": Path(record["run_root"]).name,

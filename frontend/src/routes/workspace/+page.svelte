@@ -7,8 +7,8 @@
   import ChatTimeline from '$lib/components/ChatTimeline.svelte';
   import Composer from '$lib/components/Composer.svelte';
   import StageRail from '$lib/components/StageRail.svelte';
-  import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getWorkspace, listApps, saveDeploymentPreferences, sendCommand } from '$lib/api';
-  import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, LiveDiagramPreview, Stage, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
+  import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getLiveImplementationSources, getWorkspace, listApps, saveDeploymentPreferences, sendCommand } from '$lib/api';
+  import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, Stage, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
   import { errorMessage } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -34,6 +34,9 @@
   let source: EventSource | null = null;
   let artifactRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let classPreview = $state<LiveDiagramPreview | null>(null);
+  let liveSources = $state<LiveSourceSnapshot | null>(null);
+  let selectedSourcePath = $state('');
+  let liveOpenedForJob = '';
   let previewOpenedForCommand = '';
   let timelineScroller = $state<HTMLDivElement>();
   let followTimeline = $state(true);
@@ -75,8 +78,13 @@
       ['QUEUED', 'RUNNING'].includes(command?.status ?? '') &&
       !artifactPresent(artifacts?.artifacts?.class_diagram)
   );
+  let implementationJobId = $derived(findImplementationJobId(command, events));
+  let implementationActive = $derived(
+    command?.stage === 'implementation' &&
+      ['QUEUED', 'RUNNING', 'AWAITING_INPUT'].includes(command?.status ?? '')
+  );
   let selectedStage = $derived(
-    fileArtifactTypes.includes(selectedArtifact)
+    selectedArtifact === 'LIVE_SOURCE' || fileArtifactTypes.includes(selectedArtifact)
       ? 'implementation'
       : ['refined_requirements', 'usecase_spec', 'usecase_diagram'].includes(selectedArtifact)
       ? 'requirements'
@@ -113,6 +121,15 @@
     const id = appId;
     source?.close();
     if (id) void loadApp(id);
+  });
+
+  $effect(() => {
+    const id = appId;
+    const jobId = implementationJobId;
+    if (!initialized || !artifactOpen || !implementationActive || !id || !jobId) return;
+    void refreshLiveSources(id, jobId);
+    const timer = window.setInterval(() => void refreshLiveSources(id, jobId), 2000);
+    return () => window.clearInterval(timer);
   });
 
   $effect(() => {
@@ -162,6 +179,14 @@
       currentStage = (command?.stage ?? snapshot.current_stage ?? 'requirements') as Stage;
       const loadedFileArtifacts = await loadFileArtifacts(id);
       applyArtifactSnapshot(document, loadedFileArtifacts, true);
+      const liveJobId = findImplementationJobId(command, events);
+      if (
+        command?.stage === 'implementation' &&
+        ['QUEUED', 'RUNNING', 'AWAITING_INPUT'].includes(command.status) &&
+        liveJobId
+      ) {
+        await refreshLiveSources(id, liveJobId);
+      }
       const previewEvent = [...events].reverse().find(
         (event) => event.metadata?.progress_event === 'classDiagramPreviewUpdated'
       );
@@ -220,6 +245,7 @@
     if (!id) return;
     const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
     const nextCommand = snapshot.command ?? null;
+    events = snapshot.events;
     command = nextCommand;
     deploymentPreferences = snapshot.deployment_preferences ?? null;
     currentStage = (command?.stage ?? snapshot.current_stage ?? currentStage) as Stage;
@@ -228,7 +254,67 @@
       nextFileArtifacts = await loadFileArtifacts(id);
     }
     applyArtifactSnapshot(document, nextFileArtifacts);
+    const liveJobId = findImplementationJobId(nextCommand, snapshot.events);
+    if (
+      nextCommand?.stage === 'implementation' &&
+      ['QUEUED', 'RUNNING', 'AWAITING_INPUT'].includes(nextCommand.status) &&
+      liveJobId
+    ) {
+      await refreshLiveSources(id, liveJobId);
+    } else if (Object.keys(nextFileArtifacts).length) {
+      transitionFromLiveSnapshot(nextFileArtifacts);
+    }
     await refreshApps();
+  }
+
+  function findImplementationJobId(
+    current: WorkspaceCommand | null,
+    history: WorkspaceEvent[]
+  ): string {
+    const payloadJobId = current?.payload?.job_id;
+    if (typeof payloadJobId === 'string' && payloadJobId) return payloadJobId;
+    const resultJobId = current?.result?.job_id;
+    if (typeof resultJobId === 'string' && resultJobId) return resultJobId;
+    const event = [...history]
+      .reverse()
+      .find((item) => item.stage === 'implementation' && typeof item.metadata?.job_id === 'string');
+    return typeof event?.metadata?.job_id === 'string' ? event.metadata.job_id : '';
+  }
+
+  async function refreshLiveSources(id: string, jobId: string) {
+    try {
+      const snapshot = await getLiveImplementationSources(id, jobId);
+      if (id !== appId || jobId !== findImplementationJobId(command, events)) return;
+      liveSources = snapshot;
+      if (snapshot.files.length && liveOpenedForJob !== jobId) {
+        liveOpenedForJob = jobId;
+        selectedArtifact = 'LIVE_SOURCE';
+        if (window.innerWidth >= 900) artifactOpen = true;
+      }
+    } catch {
+      // run_root가 만들어지기 전의 짧은 404와 task 교체 중의 읽기 경쟁은 다음 event/poll에서
+      // 다시 확인한다. 이미 받은 파일 목록은 완료 snapshot으로 전환할 때까지 유지한다.
+    }
+  }
+
+  function transitionFromLiveSnapshot(files: Record<string, FileArtifactSnapshot>) {
+    if (!liveSources) return;
+    if (selectedArtifact === 'LIVE_SOURCE') {
+      const selectedLive = liveSources.files.find((file) => file.path === selectedSourcePath);
+      const targetType = selectedLive?.artifact_type;
+      const targetPath = selectedLive?.artifact_path;
+      if (
+        targetType &&
+        targetPath &&
+        files[targetType]?.files.some((file) => file.path === targetPath)
+      ) {
+        selectedArtifact = targetType;
+        selectedSourcePath = targetPath;
+      } else {
+        selectedArtifact = Object.keys(files).at(-1) ?? selectedArtifact;
+      }
+    }
+    liveSources = null;
   }
 
   function artifactSnapshotSignatures(
@@ -456,6 +542,8 @@
             {appId}
             document={artifacts}
             {fileArtifacts}
+            {liveSources}
+            preferredFile={selectedSourcePath}
             {events}
             {classPreview}
             {classGenerating}
@@ -465,6 +553,7 @@
             sequenceFeedbackSubmitting={busy}
             sequenceMethodApprovalAvailable={canApproveSequenceMethodProposals}
             onSequenceMethodApproval={approveSequenceMethodProposals}
+            onFileSelect={(path) => (selectedSourcePath = path)}
             onClose={() => (artifactOpen = false)}
           />
         {/if}

@@ -6,6 +6,7 @@
   let {
     document,
     fileArtifacts,
+    liveSourceAvailable = false,
     classPreview,
     classGenerating = false,
     selected,
@@ -13,6 +14,7 @@
   }: {
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
+    liveSourceAvailable?: boolean;
     classPreview?: LiveDiagramPreview | null;
     classGenerating?: boolean;
     selected: string;
@@ -28,12 +30,13 @@
       label: 'Design',
       stages: ['class_diagram', 'sequence_diagram', 'api_spec', 'erd', 'deployment_diagram']
     },
-    { label: 'Implementation', stages: fileArtifactTypes }
+    { label: 'Implementation', stages: ['LIVE_SOURCE', ...fileArtifactTypes] }
   ];
 
   function available(stage: string) {
     return (
       Boolean(fileArtifacts[stage]) ||
+      (stage === 'LIVE_SOURCE' && liveSourceAvailable) ||
       artifactPresent(document?.artifacts?.[stage]) ||
       (stage === 'class_diagram' && (classGenerating || Boolean(classPreview)))
     );

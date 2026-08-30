@@ -11,7 +11,8 @@ export const artifactLabels: Record<string, string> = {
   FRONTEND_SOURCE_CODE: 'Frontend source',
   TEST_CODE: 'Test code',
   DEPLOYMENT_FILE: 'Docker and deployment files',
-  IAC_CODE: 'Terraform IaC'
+  IAC_CODE: 'Terraform IaC',
+  LIVE_SOURCE: 'Live implementation source'
 };
 
 export const diagramArtifactTypes = new Set([

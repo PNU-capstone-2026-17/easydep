@@ -160,3 +160,21 @@ export interface CommandPayload {
   implementation_job_id?: string;
   repair_testing_job_id?: string;
 }
+
+export interface LiveSourceFile {
+  path: string;
+  artifact_type: string;
+  artifact_path: string;
+  sha256: string;
+  size: number;
+  exists: boolean;
+  status: 'available' | 'writing';
+}
+
+export interface LiveSourceSnapshot {
+  job_id: string;
+  run_id: string;
+  status: string;
+  revision: string;
+  files: LiveSourceFile[];
+}
