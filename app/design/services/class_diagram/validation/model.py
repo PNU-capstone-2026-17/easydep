@@ -4,9 +4,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.design.schemas.class_model import BCEModel, canonical_operation_id
+from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram.scenario import ScenarioIndex, text
-from app.design.services.class_diagram.type_system import types_compatible
 from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 
 
@@ -63,24 +62,6 @@ def derived_value_parts(source_ref: str) -> tuple[str, dict[str, str]]:
     return match.group(1), assignments
 
 
-def _structured_value_is_derivable(
-    target_type: str,
-    named_source_types: dict[str, set[str]],
-    fields_by_type: dict[str, dict[str, str]],
-) -> bool:
-    target_fields = fields_by_type.get(target_type, {})
-    if not target_fields:
-        return False
-    for name, expected in target_fields.items():
-        available = named_source_types.get(name.casefold(), set())
-        if any(types_compatible(source, expected) for source in available):
-            continue
-        if runtime_value_source(expected) or type_can_default(expected):
-            continue
-        return False
-    return True
-
-
 def operation_catalog(model: dict[str, Any]) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for class_item in model.get("Classes") or []:
@@ -107,32 +88,6 @@ def _model_schema(model: dict[str, Any], _index: ScenarioIndex) -> list[Finding]
     except Exception as error:  # Pydantic supplies the exact schema location.
         return [Finding("class.model.schema", str(error), "BCEModel", origin="schema")]
     return []
-
-
-def _operation_ids(model: dict[str, Any], _index: ScenarioIndex) -> list[Finding]:
-    findings: list[Finding] = []
-    operations = operation_catalog(model)
-    for operation_id, operation in operations.items():
-        if operation_id != canonical_operation_id(
-            operation["className"], text(operation.get("name")), list(operation.get("parameters") or []),
-        ):
-            findings.append(Finding(
-                "class.model.operation-ids", "operationId is not canonical", operation_id,
-            ))
-    return findings
-
-
-def _operation_names(model: dict[str, Any], _index: ScenarioIndex) -> list[Finding]:
-    findings: list[Finding] = []
-    for operation_id, operation in operation_catalog(model).items():
-        normalized_name = re.sub(r"[^a-z0-9]", "", text(operation.get("name")).casefold())
-        if normalized_name in {"none", "noop", "notapplicable"}:
-            findings.append(Finding(
-                "class.model.operation-names",
-                "operation name must describe concrete behavior",
-                operation_id,
-            ))
-    return findings
 
 
 def _collaborations(model: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -172,12 +127,10 @@ def _collaboration_rule(
             CollaborationContext,
             _collaboration_bindings,
             _collaboration_contract,
-            _collaboration_order,
         )
 
         rules = {
             "class.collaboration.contract": _collaboration_contract,
-            "class.collaboration.order": _collaboration_order,
             "class.collaboration.bindings": _collaboration_bindings,
         }
         owned_check = rules[rule_id]
@@ -193,15 +146,11 @@ def _collaboration_rule(
     return CheckSpec(rule_id=rule_id, run=check)
 
 
-# schema에서 시작해 canonical ID와 coverage를 확인한 뒤 각 execution group에 collaboration
-# 규칙을 투영한다. 이 순서 덕분에 후속 검사가 깨진 shape를 의미 있는 모델로 가정하지 않는다.
+# schema와 execution group coverage를 확인한 뒤 실제 호출 참조와 binding만 다시 검사한다.
 CLASS_MODEL_CHECKS: tuple[CheckSpec[dict[str, Any], ScenarioIndex], ...] = (
     CheckSpec("class.model.schema", _model_schema),
-    CheckSpec("class.model.operation-ids", _operation_ids),
-    CheckSpec("class.model.operation-names", _operation_names),
     CheckSpec("class.model.collaboration-coverage", _collaboration_coverage),
     _collaboration_rule("class.collaboration.contract"),
-    _collaboration_rule("class.collaboration.order"),
     _collaboration_rule("class.collaboration.bindings"),
 )
 

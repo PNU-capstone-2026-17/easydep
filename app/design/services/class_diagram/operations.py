@@ -73,62 +73,25 @@ logger = logging.getLogger(__name__)
 
 
 _OPERATION_PROMPT = ("""
-Build the complete operation fragment for exactly one execution slice within one use case and the
-fixed inventory. Use only listed classes, structural types, and locally declared
-DataTypes. Cover every allowedStepRef.
-An actor entry is owned by one Boundary operation and delegates to Control.
-Persistent state behavior is owned by Entity and called through Control.
-Do not emit placeholder operations such as none or noop. Only Boundary owns the
-actor entry step; delegated Control and Entity operations own system steps.
+Build the complete operation fragment for exactly one execution slice. Use only
+fixedClasses, fixedDataTypes, reserved contracts, and locally declared DataTypes.
+Cover every allowedStepRef and do not return calls, bindings, relationships,
+operation IDs, or classes outside the fixed inventory.
 
-Group adjacent specification steps into cohesive reusable operations; do not
-create one method per sentence. A Boundary operation may cover both an actor
-request and the later result produced by its return. Do not invent display,
-notify, or inform methods merely to cover an output sentence. Actor-facing
-operations that return stated data or outcomes are non-void. Do not require
-unstated generated identifiers, clocks, or defaults as caller inputs.
+Follow the standard BCE roles: Boundary owns actor-facing input and output,
+Control coordinates the use-case flow, and Entity owns persistent state behavior.
+Choose concrete operations supported by the supplied steps. Every parameter and
+return type must resolve to a fixed class/type, a primitive, or a local DataType.
 
-Operations in reservedOperations already belong to accepted use cases. Reuse
-an exact signature or choose a distinct cohesive name; do not overload a name
-with another parameter or return signature. DataTypes in reservedDataTypes also
-belong to accepted fragments: reuse their exact definition or choose a distinct
-name. Return no calls, bindings,
-relationships, operation ids, or classes outside the inventory. You may declare
-request, command, criteria, summary, detail, result, or export DataTypes used by
-this use case's operation signatures. Do not redeclare a fixed type. Declare no
-unused local type.
+Keep signatures as a closed value flow. A delegated parameter must be available
+from an entry input, an earlier operation result, an explicit precondition, or a
+supported runtime value. Declare a result type when later work needs several
+values produced earlier. Do not invent caller input merely to satisfy a signature.
 
-Expose one orchestration operation per Control class rather than public helper
-operations or Control self-calls. An Entity may expose distinct read and change
-operations only when the flow actually calls both. Select
-only the Entity candidates whose persistent state this use case directly reads
-or changes. Prefer one local request or criteria valueObject when four or more
-cohesive inputs would otherwise expand a Boundary or Control signature.
-
-Design signatures as one closed value flow. Every delegated parameter must be
-obtainable from an ancestor operation parameter or from the result of an
-earlier completed call. If actor or precondition context is needed downstream,
-expose it through the Boundary signature. If later work needs data discovered
-by an earlier operation, return that data in a declared result type. Keep
-generated clocks, sequence positions, and defaults inside their owning
-operation instead of inventing caller inputs.
-An authenticated precondition is not a caller value source by itself. Do not
-invent an identity lookup such as `readByExternalId(criteria)` merely because
-the actor is authenticated, and do not introduce a criteria DTO whose value
-is absent from the preceding flow. Reuse an existing request/result field, or
-omit the lookup when the receiving operation can resolve the current actor
-from its established session context.
-When an Entity mutation applies actor-supplied data, consume a compatible
-upstream request or details value. Do not make that mutation parameterless
-merely to evade provenance.
-An Entity operation must not accept its own complete Entity type as a
-parameter: the Entity is already the receiver. Accept compatible upstream
-request fields or create its owned state internally.
-
-A Control operation owns the full contiguous coordination span of the calls it
-delegates. Its stepRefs begin no later than any nested Entity or Control call;
-do not label a coordinator only with a later persistence or retrieval step
-when it must first perform validation or authorization.
+Reuse an exact reserved operation signature when it represents the same behavior;
+the same class must not overload one method name with a different signature.
+Reuse fixed and reserved DataTypes by name. A new DataType must have resolved
+fields or enum values and must be referenced by an operation signature.
 """.strip() + "\n\n" + structure_type_contract())
 
 

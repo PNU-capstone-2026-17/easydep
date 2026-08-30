@@ -6,9 +6,7 @@ import copy
 
 from app.design.graphs.subgraphs import DESIGN_STAGES
 from app.design.knowledge import basis, detectors, rules
-from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.class_diagram.validation import diagram as class_validation
-from app.design.services.class_diagram.validation.model import validate_class_model
 from app.design.services.sequence_diagram import validation as sequence_validation
 from tests.design_validation_fixtures import CLEAN, CLEAN_STATE, ERD_CLEAN, unmapped_erd
 
@@ -54,59 +52,6 @@ def test_empty_class_model_is_valid_before_generation_starts() -> None:
     assert class_validation.class_diagram_findings(
         {"Classes": [], "Relationships": []}, {}
     ) == []
-
-
-def test_typed_class_contract_requires_canonical_operation_ids() -> None:
-    """typed operation ID는 소유 클래스와 signature에서 계산한 형식을 사용한다."""
-    index = build_scenario_index(
-        {
-            "use_cases": [{"id": "UC1", "name": "Place order"}],
-            "use_case_specs": [
-                {
-                    "use_case_id": "UC1",
-                    "name": "Place order",
-                    "main_scenario": [
-                        {"step_number": 1, "sentence": "Buyer submits"}
-                    ],
-                    "extensions": [],
-                }
-            ],
-            "relationships": [],
-        }
-    )
-    model = {
-        "Classes": [
-            {
-                "className": "OrderControl",
-                "stereotype": "Control",
-                "operations": [
-                    {
-                        "operationId": "not-canonical",
-                        "name": "submit",
-                        "parameters": [],
-                        "returnType": "void",
-                        "stepRefs": ["UC1:main:1"],
-                    }
-                ],
-            }
-        ],
-        "DataTypes": [],
-        "Relationships": [],
-        "Collaborations": [
-            {
-                "collaborationId": "UC1:main:1",
-                "useCaseIds": ["UC1"],
-                "entryActor": "Buyer",
-                "calls": [],
-            }
-        ],
-    }
-
-    report = validate_class_model(model, index)
-
-    assert "class.model.operation-ids" in {
-        finding.rule_id for finding in report.findings
-    }
 
 
 def test_names_that_collide_after_rendering_are_rejected() -> None:

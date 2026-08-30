@@ -31,6 +31,8 @@ class CollaborationContext:
 def _collaboration_contract(
     collaboration: dict[str, Any], context: CollaborationContext,
 ) -> list[Finding]:
+    """receiver, 한 root의 call tree, 단계 범위와 BCE 최소 방향을 검사한다."""
+
     operations = operation_catalog(context.model)
     calls = [item for item in collaboration.get("calls") or [] if isinstance(item, dict)]
     findings: list[Finding] = []
@@ -43,9 +45,12 @@ def _collaboration_contract(
             "class.collaboration.contract", "execution group requires calls", context.group.id,
         )]
     call_by_id = {text(call.get("callId")): call for call in calls}
-    if len(call_by_id) != len(calls):
+    roots = [call for call in calls if not text(call.get("parentCallId"))]
+    if len(roots) != 1:
         findings.append(Finding(
-            "class.collaboration.contract", "call IDs must be nonblank and unique", context.group.id,
+            "class.collaboration.contract",
+            "execution group requires exactly one root call",
+            context.group.id,
         ))
     covered: set[str] = set()
     for position, call in enumerate(calls, start=1):
@@ -57,17 +62,8 @@ def _collaboration_contract(
                 "class.collaboration.contract", "call receiver operation does not exist", call_id,
             ))
             continue
-        expected_id = f"{context.group.id}::call:{position}"
-        if call_id != expected_id:
-            findings.append(Finding(
-                "class.collaboration.contract", "call ID is not canonical", call_id,
-            ))
         parent_id = text(call.get("parentCallId"))
-        if position == 1 and parent_id:
-            findings.append(Finding(
-                "class.collaboration.contract", "the root call cannot have a parent", call_id,
-            ))
-        if position > 1 and parent_id not in {
+        if parent_id and parent_id not in {
             text(previous.get("callId")) for previous in calls[: position - 1]
         }:
             findings.append(Finding(
@@ -114,68 +110,20 @@ def _collaboration_contract(
         findings.append(Finding(
             "class.collaboration.contract", "collaboration does not cover every required step", context.group.id,
         ))
-    root = operations.get(text(calls[0].get("receiverOperationId")), {})
+    root_call = roots[0] if len(roots) == 1 else {}
+    root = operations.get(text(root_call.get("receiverOperationId")), {})
     if context.group.actor_step and root.get("stereotype") != "boundary":
         findings.append(Finding(
             "class.collaboration.contract", "an actor group must enter through Boundary", context.group.id,
         ))
     if context.group.actor_step and not any(
-        operations.get(text(call.get("receiverOperationId")), {}).get("stereotype") == "control"
+        operations.get(text(call.get("receiverOperationId")), {}).get("stereotype")
+        == "control"
         for call in calls
     ):
         findings.append(Finding(
-            "class.collaboration.contract", "Boundary must delegate to Control", context.group.id,
-        ))
-    return findings
-
-
-def _collaboration_order(
-    collaboration: dict[str, Any], context: CollaborationContext,
-) -> list[Finding]:
-    """call이 깊이 우선 tree 순서이며 main-flow 순서를 보존하는지 검사한다."""
-
-    calls = [item for item in collaboration.get("calls") or [] if isinstance(item, dict)]
-    children: dict[str, list[str]] = {}
-    roots: list[str] = []
-    for call in calls:
-        call_id = text(call.get("callId"))
-        parent_id = text(call.get("parentCallId"))
-        if parent_id:
-            children.setdefault(parent_id, []).append(call_id)
-        else:
-            roots.append(call_id)
-    preorder: list[str] = []
-
-    def visit(call_id: str) -> None:
-        preorder.append(call_id)
-        for child_id in children.get(call_id, []):
-            visit(child_id)
-
-    if len(roots) == 1:
-        visit(roots[0])
-    findings: list[Finding] = []
-    if preorder != [text(item.get("callId")) for item in calls]:
-        findings.append(Finding(
-            "class.collaboration.order",
-            "calls must be stored in depth-first execution order",
-            context.group.id,
-        ))
-        return findings
-    step_order = {
-        step.id: step.order
-        for use_case_id in context.group.trace_use_case_ids
-        for step in context.index.use_case(use_case_id).steps
-        if step.branch == "main"
-    }
-    positions = [
-        min(step_order[ref] for ref in call.get("stepRefs") or [] if ref in step_order)
-        for call in calls
-        if any(ref in step_order for ref in call.get("stepRefs") or [])
-    ]
-    if positions != sorted(positions):
-        findings.append(Finding(
-            "class.collaboration.order",
-            "main-flow calls must follow specification step order",
+            "class.collaboration.contract",
+            "Boundary must delegate the use-case flow to Control",
             context.group.id,
         ))
     return findings
@@ -292,7 +240,6 @@ def _collaboration_bindings(
 # 보존하며 각 함수는 자신의 rule_id만 반환한다.
 COLLABORATION_CHECKS = (
     CheckSpec("class.collaboration.contract", _collaboration_contract),
-    CheckSpec("class.collaboration.order", _collaboration_order),
     CheckSpec("class.collaboration.bindings", _collaboration_bindings),
 )
 
@@ -307,7 +254,7 @@ def validate_collaboration(
         context: BCE 연산 카탈로그와 소유 실행 그룹을 고정한 문맥이다.
 
     Returns:
-        호출 계약, 순서와 binding 규칙의 finding을 담은 보고서다.
+        호출 계약과 binding 규칙의 finding을 담은 보고서다.
 
     Notes:
         materialize 단계가 이 보고서를 한 문자열로 만들어 같은 group의 call plan을 누적

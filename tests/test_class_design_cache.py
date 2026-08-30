@@ -140,9 +140,9 @@ def test_operation_cache_hit_is_revalidated_before_it_is_accepted():
         "Relationships": [],
     })
     invalid = operation_fragment()
-    # The model is schema-valid, but this system step is owned by Control while
-    # the actor entry step must remain owned by Boundary.
-    invalid["Classes"][1]["operations"][0]["stepRefs"] = ["UC1:main:1"]
+    # 스키마 모양은 맞아도 현재 실행 범위에 없는 단계 참조는 cache hit에서 다시
+    # 검사해야 한다. 설계 취향이 아니라 후속 trace를 깨뜨리는 참조 오류를 사용한다.
+    invalid["Classes"][1]["operations"][0]["stepRefs"] = ["UC9:main:1"]
 
     class InvalidHit:
         def get_or_compute(self, key, _compute):

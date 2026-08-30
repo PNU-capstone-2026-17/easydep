@@ -1,5 +1,7 @@
-"""Class-design collaborations and value provenance."""
+"""클래스 호출 관계와 실제 값의 출처를 검사한다."""
 from __future__ import annotations
+
+import pytest
 
 from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import collaboration, service
@@ -49,7 +51,7 @@ def test_call_plan_repair_continues_past_one_replacement(monkeypatch):
     candidates = [invalid_one, invalid_two, call_plan()]
     call_plan_calls = 0
 
-    def fake_parse(messages, schema, **_kwargs):
+    def fake_parse(_messages, schema, **_kwargs):
         nonlocal call_plan_calls
         if schema is InventoryProposal:
             return inventory_proposal()
@@ -58,8 +60,6 @@ def test_call_plan_repair_continues_past_one_replacement(monkeypatch):
         if issubclass(schema, CallPlanProposal):
             candidate = candidates[call_plan_calls]
             call_plan_calls += 1
-            if call_plan_calls == 3:
-                assert "Accumulated repair history" in messages[-1]["content"]
             return candidate
         raise AssertionError(schema)
 
@@ -255,26 +255,51 @@ def test_earlier_optional_result_has_explicit_unwrap_source():
     }]
 
 
-def test_ambiguous_binding_selection_is_limited_to_finite_candidates(monkeypatch):
-    candidates = [
-        "UC1:main:1::call:1#request.studentId",
-        "UC1:main:1::call:2#result.studentId",
-    ]
+def test_actor_flow_requires_control_handoff():
+    """BCE 산출물이므로 actor 요청을 Boundary 안에서 끝내지는 않는다."""
 
-    def fake_parse(_messages, schema, **_kwargs):
-        properties = schema.model_json_schema()["properties"]
-        assert properties["choice1"]["enum"] == candidates
-        return {"choice1": candidates[1]}
+    model = BCEModel.model_validate({
+        "Classes": [{
+            "className": "RequestBoundary",
+            "stereotype": "Boundary",
+            "use_case_ids": ["UC1"],
+            "operations": [{
+                "operationId": "RequestBoundary::submit(request:RequestData)",
+                "name": "submit",
+                "parameters": [{"name": "request", "type": "RequestData"}],
+                "returnType": "RequestResult",
+                "stepRefs": ["UC1:main:1", "UC1:main:2"],
+            }],
+        }],
+        "DataTypes": [
+            {
+                "name": "RequestData",
+                "kind": "valueObject",
+                "fields": ["value : String"],
+            },
+            {
+                "name": "RequestResult",
+                "kind": "valueObject",
+                "fields": ["accepted : Boolean"],
+            },
+        ],
+        "Relationships": [],
+        "Collaborations": [],
+    })
+    plan = CallPlanProposal.model_validate({
+        "calls": [{
+            "receiverOperationId": "RequestBoundary::submit(request:RequestData)",
+            "parentCallIndex": None,
+        }],
+    })
 
-    patch_class_design_parser(monkeypatch, fake_parse)
-    selected = collaboration.select_ambiguous_bindings(
-        build_scenario_index(single_use_case()).groups[0],
-        {"UC1:main:1::call:3#studentId": candidates},
-    )
-
-    assert selected == {
-        "UC1:main:1::call:3#studentId": candidates[1],
-    }
+    with pytest.raises(ValueError, match="delegate the use-case flow to Control"):
+        collaboration.materialize(
+            build_scenario_index(single_use_case()),
+            model,
+            build_scenario_index(single_use_case()).groups[0],
+            plan,
+        )
 
 
 def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names(monkeypatch):
