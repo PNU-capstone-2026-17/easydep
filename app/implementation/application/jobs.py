@@ -27,6 +27,7 @@ from app.db.models import (
     TYPE_SOURCE_CODE,
     TYPE_TEST_CODE,
 )
+from app.design.services.api_spec.models import ApiSpecModel
 from app.design.validation import design_readiness_report
 from app.repositories import artifact_repository
 
@@ -43,10 +44,17 @@ from .source_files import (
 # 일부 설계 finding은 구현을 진행하면서 구체적인 코드와 함께 확인할 수 있다. 그러나
 # 아래 규칙의 오류는 입력 계약 자체를 만들 수 없게 하거나 BCE 필드와 JPA 필드의 대응을
 # 잃게 만든다. 구현기가 임의로 데이터 저장 방식을 정하지 않도록 이 경우만 시작 전에 막는다.
-_IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
+_API_IMPLEMENTATION_BLOCKING_RULES = frozenset({
     "api.operations-present",
-    # API 추적, 타입, 응답 finding은 보고서에 남긴 채 구현을 진행할 수 있다. 다만 HTTP
-    # operation이 하나도 없으면 구현할 endpoint가 없으므로 작업 자체를 시작할 수 없다.
+    "api.schema-references-exist",
+    "api.control-binding-exists",
+    "api.control-arguments-match",
+    "api.control-outcomes-cover-responses",
+    "api.control-call-in-sequence",
+    "api.executable-schema-fields",
+})
+_IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
+    *_API_IMPLEMENTATION_BLOCKING_RULES,
     "erd.surrogate-key-collides",
 })
 _OPENAPI_HTTP_METHODS = frozenset({
@@ -70,6 +78,92 @@ def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bo
         if isinstance(finding, dict)
         for rule_id in _IMPLEMENTATION_BLOCKING_DESIGN_RULES
     )
+
+
+def api_implementation_repair_findings(
+    design: dict[str, Any],
+    readiness: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """구현 코드로 추측하지 말고 API 설계에서 고쳐야 할 finding을 반환한다."""
+    readiness = readiness or design_readiness_report(design, stages=["api_spec"])
+    if not _has_rendered_openapi_operation(design.get("api_spec")):
+        readiness = _missing_openapi_operation_report(readiness)
+    findings = [
+        finding
+        for finding in readiness.get("findings") or []
+        if isinstance(finding, dict)
+        and any(
+            rule_id in str(finding.get("finding") or "")
+            for rule_id in _API_IMPLEMENTATION_BLOCKING_RULES
+        )
+    ]
+    findings.extend(_api_schema_field_findings(design.get("api_spec_model")))
+    return findings
+
+
+def _api_schema_field_findings(raw_model: object) -> list[dict[str, Any]]:
+    """요청·응답에서 실제 사용하는 이름 있는 schema가 비어 있는지 확인한다."""
+    try:
+        model = ApiSpecModel.model_validate(raw_model)
+    except (TypeError, ValueError):
+        return []
+    primitive = {
+        "string", "integer", "number", "boolean", "uuid", "localdate",
+        "localdatetime", "localtime", "instant", "byte",
+    }
+    used: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for endpoint in model.Endpoints:
+        if endpoint.request_schema:
+            used.add(endpoint.request_schema)
+        used.update(
+            response.schema_name
+            for response in endpoint.responses
+            if response.schema_name and response.schema_name.casefold() not in primitive
+        )
+        for field in (*endpoint.path_params, *endpoint.query_params):
+            type_name = field.type.strip()
+            lowered = type_name.casefold()
+            if lowered in {"array", "object"}:
+                result.append(
+                    {
+                        "stage": "api_spec",
+                        "finding": (
+                            f"API parameter `{field.name}` 타입 `{type_name}`에 구체적인 값 "
+                            "타입이 없음 [api.executable-schema-fields]"
+                        ),
+                    }
+                )
+                continue
+            item_type = type_name.removesuffix("[]")
+            if item_type and item_type.casefold() not in primitive:
+                used.add(item_type)
+    by_name = {schema.name: schema for schema in model.Schemas}
+    for name in sorted(used):
+        schema = by_name.get(name)
+        if schema is None or not schema.fields:
+            result.append(
+                {
+                    "stage": "api_spec",
+                    "finding": (
+                        f"구현에서 사용하는 API schema `{name}`에 field가 없어 요청이나 "
+                        "응답 값을 표현할 수 없음 [api.executable-schema-fields]"
+                    ),
+                }
+            )
+            continue
+        for field in schema.fields:
+            if field.type.casefold() in {"array", "object"}:
+                result.append(
+                    {
+                        "stage": "api_spec",
+                        "finding": (
+                            f"API schema `{name}`의 field `{field.name}` 타입 `{field.type}`에 "
+                            "구체적인 값 타입이 없음 [api.executable-schema-fields]"
+                        ),
+                    }
+                )
+    return result
 
 
 def _has_rendered_openapi_operation(api_spec: object) -> bool:
@@ -173,6 +267,19 @@ class ImplementationWorker:
                 base_package,
                 _missing_openapi_operation_report(readiness),
             )
+        executable_api_findings = api_implementation_repair_findings(design, readiness)
+        if executable_api_findings:
+            readiness = {**readiness}
+            readiness["status"] = "NEEDS_INPUT"
+            readiness["findings"] = [
+                *list(readiness.get("findings") or []),
+                *[
+                    item
+                    for item in executable_api_findings
+                    if item not in (readiness.get("findings") or [])
+                ],
+            ]
+            return self._create_design_blocked_job(app_id, base_package, readiness)
         if missing_models:
             return self._create_design_blocked_job(
                 app_id, base_package, self._missing_design_model_report(missing_models)

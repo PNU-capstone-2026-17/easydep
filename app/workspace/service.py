@@ -29,7 +29,13 @@ from app.design.service import (
 )
 from app.design.services.common.plantuml import render_plantuml
 from app.design.services.common.structured import capture_llm_timings
-from app.implementation.application.jobs import worker as implementation_worker
+from app.design.validation import design_readiness_report
+from app.implementation.application.jobs import (
+    api_implementation_repair_findings,
+)
+from app.implementation.application.jobs import (
+    worker as implementation_worker,
+)
 from app.repositories import artifact_repository
 from app.requirements.config import settings as requirements_settings
 from app.requirements.contracts.request import (
@@ -798,9 +804,13 @@ class WorkspaceService:
                     metadata={"reset_implementation_timeline": True},
                 )
             app_id = str(command["app_id"])
+            design_state = cast(dict[str, Any], artifact_repository.load_state(app_id))
+            design_state = self._repair_api_contract_before_implementation(
+                app_id, design_state
+            )
             job = implementation_worker.create_job(
                 app_id,
-                cast(dict[str, Any], artifact_repository.load_state(app_id)),
+                design_state,
                 str(command["payload"].get("base_package") or "com.easydep.app"),
                 bool(command["payload"].get("allow_assumptions", True)),
             )
@@ -2177,6 +2187,55 @@ class WorkspaceService:
                     "review_artifacts": True,
                 }
             time.sleep(1)
+
+    def _repair_api_contract_before_implementation(
+        self, app_id: str, design: dict[str, Any]
+    ) -> dict[str, Any]:
+        """구현에 필요한 API 타입·Control 연결을 설계 단계에서 자동으로 고친다.
+
+        빈 DTO를 구현 에이전트가 임의로 채우게 두지 않는다. 이미 있는 설계 그래프를 API
+        단계로 되감고, 결정론적 finding을 같은 그래프의 피드백 입력으로 전달한다. 수정된
+        API 뒤의 ERD·배포 설계도 그래프 순서대로 다시 확인한 후 구현을 시작한다.
+        """
+        findings = api_implementation_repair_findings(design)
+        if not findings:
+            return design
+
+        rewind_design_session(app_id, "api_spec")
+        fingerprints: list[str] = []
+        while True:
+            status = session_status(app_id)
+            if not status.get("active"):
+                return cast(dict[str, Any], artifact_repository.load_state(app_id))
+            stage = str(status.get("stage") or "")
+            current = cast(dict[str, Any], artifact_repository.load_state(app_id))
+            if stage == "api_spec":
+                stage_findings = api_implementation_repair_findings(current)
+            else:
+                readiness = design_readiness_report(current, stages=[stage])
+                stage_findings = [
+                    item
+                    for item in readiness.get("findings") or []
+                    if isinstance(item, dict)
+                ]
+            if not stage_findings:
+                resume_design_session(app_id, "")
+                continue
+
+            fingerprint = stable_digest(stage_findings)
+            repeated = fingerprint in fingerprints
+            fingerprints.append(fingerprint)
+            feedback = (
+                "다음 검증 오류를 사용자 결정 없이 고칠 수 있는 기술 오류로 처리하세요. "
+                "관련 타입과 연결만 수정하고 요구사항에 없는 정책은 만들지 마세요.\n"
+                + json.dumps(stage_findings, ensure_ascii=False, indent=2)
+            )
+            if repeated:
+                feedback += (
+                    "\n같은 오류가 다시 나왔습니다. 직전과 같은 수정은 반복하지 말고, "
+                    "현재 모델과 검증 기준을 대조해 다른 방법으로 원인을 고치세요."
+                )
+            resume_design_session(app_id, feedback)
 
     def _monitor_testing(self, job: dict[str, Any]) -> dict[str, Any]:
         job_id = str(job["job_id"])

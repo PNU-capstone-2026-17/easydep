@@ -29,6 +29,9 @@ def sanitize_path(path: str) -> str:
 
 def _field_schema(field: dict[str, Any], known: set[str]) -> dict[str, Any]:
     raw = str(field.get("type", "string")).strip()
+    if raw.endswith("[]"):
+        item = _field_schema({"type": raw[:-2]}, known)
+        return {"type": "array", "items": item}
     lowered = raw.lower()
     if lowered in _PRIMITIVES:
         schema: dict[str, Any] = {"type": lowered}

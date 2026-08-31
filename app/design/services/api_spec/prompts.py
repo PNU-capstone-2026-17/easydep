@@ -18,7 +18,10 @@ operationId, parameters, request schema, responses, and schemas.
 - Use request bodies only for POST, PUT, and PATCH.
 - Include the successful status and failures stated by the use-case extensions.
 - Use Schemas only for request bodies that are not already supplied schema sources.
-- Schema field types are JSON primitives or another supplied schema name.
+- Every request or response schema used by an endpoint must contain the fields needed by
+  that interaction. Schema field types are JSON primitives or another supplied schema
+  name; write collections as `Type[]` so the item type is explicit. Do not return a named
+  schema with an empty field list when the HTTP body carries business data.
 - Do not infer Control bindings, argument sources, result names, class traces, or
   use-case traces. The application derives those from the accepted collaboration.
 - Do not invent an interactionId or add an endpoint without a supplied candidate.
@@ -29,6 +32,8 @@ Return only the structured response.
 API_SPEC_REVISION_SYSTEM_PROMPT = """
 Revise only the HTTP contract requested by the feedback. Keep interactionId values
 grounded in the supplied candidates and return the full compact API proposal.
+Every schema used by a request or response must contain its needed fields; write
+collections as `Type[]` with an explicit item type.
 Do not add Control bindings, argument mappings, outcomes, or trace fields; the
 application derives them from the accepted class collaboration.
 """.strip()

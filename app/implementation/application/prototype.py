@@ -144,6 +144,16 @@ class PrototypeClient:
         write("sequenceModel", "sequence-model.json", design.get("sequence_diagram_model"))
         write("apiModel", "api-model.json", design.get("api_spec_model"))
         write("erdBceModel", "erd-class-model.json", design.get("erd_bce_classes"))
+        # 구현 에이전트는 설계 다이어그램만으로 비즈니스 규칙을 추측하면 안 된다.
+        # 요구사항 단계가 확정한 문장과 유스케이스의 사전·사후 조건, 기본 흐름, 예외
+        # 흐름을 같은 작업 스냅샷에 넣어 테스트와 실제 코드를 같은 근거에서 작성한다.
+        write("rawRequirements", "raw-requirements.json", design.get("raw_requirements"))
+        write(
+            "refinedRequirements",
+            "refined-requirements.json",
+            design.get("refined_requirements"),
+        )
+        write("useCaseSpec", "use-case-specifications.json", design.get("usecase_spec"))
         # 하나의 파일에 유스케이스별 @startuml 블록을 모두 보존한다. 구현 계획·정합성
         # 검사는 이 입력 전체를 순회하므로 모든 유스케이스 호출 흐름이 소스 생성에 반영된다.
         write("sequence", "sequence-diagrams.puml", design.get("sequence_diagram_puml"))

@@ -152,12 +152,12 @@ def api_input_type_for_control(type_name: str) -> str:
     """Control 타입을 JSON primitive 또는 도메인 schema 이름으로 바꾼다."""
 
     item, is_array = _type_parts(type_name)
-    if is_array:
-        return "array"
     lowered = item.casefold()
     if lowered.startswith("java.time."):
-        return "string"
-    return _JSON_TYPES.get(lowered, item or "string")
+        normalized = "string"
+    else:
+        normalized = _JSON_TYPES.get(lowered, item or "string")
+    return f"{normalized}[]" if is_array else normalized
 
 
 def response_contract_for_control(return_type: str) -> tuple[str, bool]:
@@ -197,7 +197,16 @@ def normalize_api_spec_model(
     request_schemas = {
         endpoint.request_schema for endpoint in endpoints if endpoint.request_schema
     }
-    used_schemas = set(domain_schemas) | _schema_dependencies(request_schemas, schemas)
+    response_schemas = {
+        response.schema_name
+        for endpoint in endpoints
+        for response in endpoint.responses
+        if response.schema_name
+    }
+    used_schemas = set(domain_schemas) | _schema_dependencies(
+        request_schemas | response_schemas,
+        schemas,
+    )
     return ApiSpecModel.model_validate({
         "title": proposal.title,
         "version": proposal.version,
