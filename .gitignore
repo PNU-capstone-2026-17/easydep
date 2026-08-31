@@ -95,3 +95,7 @@ app/cloudkb/depkb/experiments/**/*.pem
 app/cloudkb/depkb/experiments/**/id_depkb*
 app/cloudkb/depkb/experiments/**/ca.crt
 
+# 로컬 연구 배경·개발 이력 보고서 자료. 개인 연구 기록으로만 보존하고 커밋하지 않는다.
+/docs/research-history/
+/scripts/build_history_research_inventory.py
+
