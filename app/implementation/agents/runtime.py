@@ -583,8 +583,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         detail=str(error.evidence)[-4000:],
                     )
                 )
-                repair_paths = select_repair_paths(
-                    error.evidence, editable_paths
+                # 유스케이스 test의 컴파일 오류에는 보통 호출한 test 경로만 나오고,
+                # 실제로 빠진 Adapter나 Service 경로는 나오지 않는다. 이때 test 하나만
+                # 편집하게 하면 가짜 구현을 test 안에 넣도록 유도한다. 유스케이스 작업은
+                # planner가 이미 기능 단위로 좁힌 소유 파일 전체에서 원인을 고치게 한다.
+                repair_paths = (
+                    list(editable_paths)
+                    if task_type == "use-case"
+                    else select_repair_paths(error.evidence, editable_paths)
                 )
                 round_allowed = [str((sandbox / path).resolve()) for path in repair_paths]
                 round_iteration_limit = MAX_REPAIR_TURN_ITERATIONS
