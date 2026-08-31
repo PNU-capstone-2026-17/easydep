@@ -334,21 +334,11 @@ def _build_use_case_task(
         "dependsOn": depends_on,
         "requirementIds": _artifact_ids(requirements),
         "useCaseIds": list(bundle.use_case_ids),
-        "requirements": requirements,
-        "useCaseArtifacts": use_cases,
-        "scenarios": scenarios,
-        "apiEndpoints": list(bundle.endpoints),
-        "implementationIR": ir.to_dict(),
-        "generatedJavaContracts": contracts,
-        "controllerScaffolds": scaffolds,
         "controllerPaths": [
             path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
         ],
         "controllerBodyMarkers": controller_markers,
         "readSourcePaths": dependency_source_paths,
-        "entityBodySources": entity_sources,
-        "requiredOutputs": required,
-        "requiredTestPaths": [test_path],
     }
     deployment_context = _deployment_context(spec, component_names)
     if deployment_context:
@@ -670,20 +660,13 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     deployment_context = _deployment_context(
         spec, {spec.name, ir.application_class, *(item.name for item in ir.components)}
     )
-    requirements, use_cases, requirement_sources = _all_requirement_artifacts(spec)
+    _requirements, use_cases, requirement_sources = _all_requirement_artifacts(spec)
     context = {
         "schemaVersion": "implementation-context/v1alpha1",
         "taskId": task_id,
         "taskType": "wiring",
-        "implementationIR": ir.to_dict(),
-        "generatedJavaContracts": contracts,
         "applicationClass": ir.application_class,
-        "requirements": requirements,
-        "useCaseArtifacts": use_cases,
-        "scenarios": _all_scenarios(spec),
-        "e2eScenarios": [asdict(item) for item in ir.e2e_scenarios],
-        "apiModel": _read_json(spec.inputs.get("apiModel")),
-        "requiredOutputs": [],
+        "useCaseIds": _artifact_ids(use_cases),
     }
     if deployment_context:
         context["deployment"] = deployment_context
