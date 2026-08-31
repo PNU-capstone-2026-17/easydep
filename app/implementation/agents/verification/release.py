@@ -61,6 +61,7 @@ def verify_container_runtime(
     health_path = _runtime_health_path(run_root)
     health_runtime: dict[str, object] | None = None
     last_probe_error = ""
+    container_started = False
     try:
         build = ["docker", "build", "--tag", image, "."]
         commands.append(build)
@@ -101,6 +102,7 @@ def verify_container_runtime(
         )
         if result.returncode:
             raise RuntimeError(result.stderr[-4000:] or result.stdout[-4000:])
+        container_started = True
 
         port_command = [
             "docker", "port", container, f"{DEFAULT_CONTAINER_PORT}/tcp"
@@ -228,6 +230,11 @@ def verify_container_runtime(
     }
     _write_report(report_path, report)
     if status != "SUCCEEDED":
+        if not container_started:
+            # Docker daemon, image build와 container 생성 실패는 애플리케이션 source를
+            # 편집해도 해결되지 않는다. 이를 wiring 수리에 넣으면 같은 코드로 LLM 호출만
+            # 반복하므로 외부 실행 환경 오류로 그대로 보고한다.
+            raise RuntimeError(f"Container runtime preparation failed: {error}")
         # 컨테이너는 wiring 작업이 만든 Spring 설정과 정적 파일을 실제로 실행한다.
         # 이 실패도 compile/test 실패와 같은 구조로 넘겨야 코딩 에이전트가 사용자 입력 없이
         # 설정을 고치고 다시 검증할 수 있다.
