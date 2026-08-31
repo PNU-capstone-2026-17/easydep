@@ -661,7 +661,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         write_execution_result(execution_dir, task_id, attempt, failure)
         shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
         raise
-    _promote_changed_files(sandbox, run_root, changed)
+    # 실패 뒤 재사용한 임시 작업 공간에는 필수 결과가 이미 존재할 수 있다. 그런 파일은
+    # 이번 대화 시작 시점과 비교하면 changed가 아니지만, 실제 run에는 아직 없을 수 있다.
+    # 성공한 작업의 계약 결과는 항상 run으로 복사해 체크포인트와 source를 일치시킨다.
+    promoted_files = changed | {
+        path for path in required_paths if (sandbox / path).is_file()
+    }
+    _promote_changed_files(sandbox, run_root, promoted_files)
     result = {
         "taskId": task_id,
         "taskType": task.get("task_type", "control"),
