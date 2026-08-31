@@ -156,13 +156,10 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         required_outputs = task.get("required_output_paths", task.get("allowed_write_paths", []))
         output_hashes = _output_hashes(run_root, required_outputs)
         complete_outputs = len(output_hashes) == len(required_outputs)
-        # A downstream task's prompt can legitimately change after an earlier
-        # phase completes because its context embeds the newly generated
-        # sources.  That must not replay an already successful task when the
-        # task's own outputs have not changed.  Output hashes are the durable
-        # checkpoint; the prompt hash remains relevant for failed attempts so
-        # a repair prompt can be retried.
-        same_output_checkpoint = old.get("outputHashes") == output_hashes
+        # 여러 유스케이스 작업이 Controller나 Boundary adapter를 순서대로 보완한다.
+        # 따라서 뒤 작업이 공유 파일을 정상적으로 수정한 뒤에는 앞 작업의 output hash가
+        # 달라지는 것이 자연스럽다. 이미 성공한 작업은 필요한 파일이 남아 있는지만
+        # 확인하고 재사용한다. 최종 내용의 정확성은 마지막 scenario와 build가 검사한다.
         result_matches = (
             result.get("status") == "SUCCEEDED"
             and complete_outputs
@@ -180,7 +177,6 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             )
         elif (
             old.get("status") == "SUCCEEDED"
-            and same_output_checkpoint
             and complete_outputs
             and not repair_replay_required
         ) or (result_matches and not old):

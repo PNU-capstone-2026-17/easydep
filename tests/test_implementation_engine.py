@@ -20,7 +20,11 @@ from app.implementation.workflows.conformance import (
     capture_generated_contracts,
     verify_source_design_conformance,
 )
-from app.implementation.workflows.coordinator import plan_workflow, run_workflow
+from app.implementation.workflows.coordinator import (
+    plan_workflow,
+    reconcile_workflow_state,
+    run_workflow,
+)
 from tests.class_design_fixtures import (
     typed_class_model_payload,
     typed_sequence_model_payload,
@@ -58,6 +62,60 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
         "use-case",
         ["application/src/test/java/com/example/OrderScenarioTest.java"],
     ) == ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"]
+
+
+def test_resume_keeps_successful_task_after_later_task_updates_shared_file(
+    tmp_path: Path,
+) -> None:
+    """뒤 작업이 공유 adapter를 보완해도 끝난 앞 작업을 다시 실행하지 않는다."""
+    reports = tmp_path / "reports"
+    executions = reports / "agent-executions"
+    executions.mkdir(parents=True)
+    shared = tmp_path / "application/src/main/java/com/example/SharedAdapter.java"
+    shared.parent.mkdir(parents=True)
+    shared.write_text("class SharedAdapter { void laterChange() {} }", encoding="utf-8")
+    task_id = "implement-first-use-case"
+    relative = shared.relative_to(tmp_path).as_posix()
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": task_id,
+                        "task_type": "use-case",
+                        "prompt_sha256": "prompt-v1",
+                        "required_output_paths": [relative],
+                        "allowed_write_paths": [relative],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "taskId": task_id,
+                        "status": "SUCCEEDED",
+                        "attempts": 1,
+                        "outputHashes": {relative: "hash-before-later-task"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (executions / f"{task_id}.result.json").write_text(
+        json.dumps({"status": "SUCCEEDED", "promptSha256": "prompt-v1"}),
+        encoding="utf-8",
+    )
+
+    state = reconcile_workflow_state(tmp_path)
+
+    assert state["tasks"][0]["status"] == "SUCCEEDED"
+    assert state["tasks"][0]["attempts"] == 1
 
 
 def test_planned_manifest_uses_work_units_and_scopes_repairs_to_contracts(
