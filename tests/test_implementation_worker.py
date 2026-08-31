@@ -216,6 +216,57 @@ def test_job_execution_lease_rejects_a_second_process(
         worker.shutdown()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows process 조회 경로만 검증한다")
+def test_job_execution_lease_checks_windows_owner_without_signalling_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """두 worker가 같은 서버 PID를 확인해도 그 서버에 signal을 보내지 않는다."""
+    first_worker = ImplementationWorker(settings(tmp_path))
+    second_worker = ImplementationWorker(settings(tmp_path))
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.os.kill",
+        lambda *_args: pytest.fail("Windows lease 확인에서 os.kill을 호출하면 안 된다"),
+    )
+    try:
+        token = first_worker._claim_job_execution("job-shared")
+        assert token is not None
+        assert second_worker._claim_job_execution("job-shared") is None
+        first_worker._release_job_execution("job-shared", token)
+    finally:
+        first_worker.shutdown()
+        second_worker.shutdown()
+
+
+def test_job_execution_lease_keeps_a_recent_partial_file(tmp_path: Path) -> None:
+    """다른 process가 JSON을 쓰는 중인 새 lease를 stale 파일로 지우지 않는다."""
+    worker = ImplementationWorker(settings(tmp_path))
+    path = worker._lease_path("job-partial")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    try:
+        assert worker._claim_job_execution("job-partial") is None
+        assert path.is_file()
+    finally:
+        worker.shutdown()
+
+
+def test_job_execution_lease_reclaims_an_abandoned_partial_file(tmp_path: Path) -> None:
+    """작성 process가 사라진 오래된 빈 lease는 다음 실행이 회수할 수 있다."""
+    worker = ImplementationWorker(settings(tmp_path))
+    worker.client.terminate_orphaned_process = lambda _job_id: None
+    path = worker._lease_path("job-abandoned")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    os.utime(path, (0, 0))
+    try:
+        token = worker._claim_job_execution("job-abandoned")
+        assert token is not None
+        worker._release_job_execution("job-abandoned", token)
+    finally:
+        worker.shutdown()
+
+
 def test_feedback_eligibility_rejects_design_contract_changes() -> None:
     result = assess_feedback_eligibility("OpenAPI 엔드포인트와 응답 스키마를 변경해줘")
 

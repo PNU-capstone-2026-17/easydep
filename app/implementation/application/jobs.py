@@ -60,6 +60,9 @@ _IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
 _OPENAPI_HTTP_METHODS = frozenset({
     "delete", "get", "head", "options", "patch", "post", "put", "trace",
 })
+_INCOMPLETE_LEASE_GRACE_SECONDS = 30.0
+
+
 def _now() -> str:
     """작업 기록에 사용할 현재 UTC 시각을 ISO 8601 문자열로 반환한다."""
     return datetime.now(UTC).isoformat()
@@ -69,6 +72,27 @@ def _pid_is_alive(pid: int) -> bool:
     """추가 dependency 없이 lease 소유 서버가 실행 중인지 확인한다."""
     if pid <= 0:
         return False
+    if os.name == "nt":
+        # Windows의 ``os.kill(pid, 0)``은 POSIX의 존재 확인과 다르다. Python은 0을
+        # console signal로 해석하지 못해 ``TerminateProcess``로 보낼 수 있으므로, 실행 중인
+        # EasyDep 서버를 확인하다가 종료시키는 문제가 생긴다. 읽기 전용 process handle로
+        # 종료 코드만 확인한다.
+        import _winapi  # type: ignore[import-not-found]
+
+        process_query_limited_information = 0x1000
+        try:
+            handle = _winapi.OpenProcess(
+                process_query_limited_information,
+                False,
+                pid,
+            )
+        except OSError as error:
+            # 다른 계정의 process라 조회 권한이 없다는 응답은 process가 존재한다는 뜻이다.
+            return error.winerror == _winapi.ERROR_ACCESS_DENIED
+        try:
+            return _winapi.GetExitCodeProcess(handle) == _winapi.STILL_ACTIVE
+        finally:
+            _winapi.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except OSError:
@@ -994,6 +1018,15 @@ class ImplementationWorker:
                         lease = json.loads(path.read_text(encoding="utf-8"))
                         owner_pid = int(lease.get("ownerPid", -1))
                     except (OSError, ValueError, json.JSONDecodeError):
+                        # O_EXCL로 파일을 만든 직후 JSON을 쓰는 아주 짧은 동안 다른 process가
+                        # 빈 파일을 볼 수 있다. 새 파일을 죽은 lease로 판단해 지우면 두 실행이
+                        # 동시에 같은 Job을 차지한다. 최근 파일은 작성 중인 것으로 보고 양보한다.
+                        try:
+                            age = time.time() - path.stat().st_mtime
+                        except OSError:
+                            continue
+                        if age < _INCOMPLETE_LEASE_GRACE_SECONDS:
+                            return None
                         owner_pid = -1
                     if _pid_is_alive(owner_pid):
                         return None
