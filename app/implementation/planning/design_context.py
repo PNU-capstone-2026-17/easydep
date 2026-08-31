@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -21,15 +21,7 @@ from .frontend_contracts import GeneratedClientContracts
 
 
 @dataclass(frozen=True)
-class DesignClass:
-    name: str
-    stereotype: str
-    block: str
-    body: str
-
-
-@dataclass(frozen=True)
-class ImplementationTask:
+class TaskSpec:
     task_id: str
     control: str
     prompt_file: str
@@ -67,30 +59,16 @@ class ImplementationTask:
         return asdict(self)
 
 
-CLASS_PATTERN = re.compile(
-    r"(?ms)^\s*class\s+(?P<name>[A-Za-z_]\w*)\s+"
-    r"<<(?P<stereotype>[^>]+)>>\s*\{(?P<body>.*?)\}"
-)
-RELATION_PATTERN = re.compile(
-    r"(?m)^\s*(?P<left>[A-Za-z_]\w*)\s+[^\n:]+?\s+"
-    r"(?P<right>[A-Za-z_]\w*)\s*(?::[^\n]*)?$"
-)
-STOP_WORDS = {
-    "manager", "controller", "service", "get", "set", "is", "on", "log",
-    "string", "boolean", "int", "float", "void", "message", "record",
-}
-def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
-    """Plan one shared OpenHands work unit for the ERD persistence slice."""
-    erd = _read(spec.inputs.get("erd"))
-    if not erd:
-        raise ValueError("ERD input is required to plan persistence tasks")
+def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
+    """typed Entity 모델을 함께 구현할 persistence 작업 하나로 만든다."""
+    erd_model = _read_json(spec.inputs.get("erdBceModel"))
+    if not erd_model:
+        raise ValueError("erdBceModel is required to plan persistence tasks")
     ir = build_implementation_ir(spec, run_root)
     entity_names = list(ir.persistent_entities)
     if not entity_names:
         raise ValueError("ERD contains no BCE Entity aliases to persist")
-    contracts = read_generated_java_contracts(
-        run_root, spec.base_package, set(entity_names)
-    )
+    contracts = read_generated_java_contracts(run_root, spec.base_package, set(entity_names))
     package_path = spec.base_package.replace(".", "/")
     repository_files = [
         f"application/src/main/java/{package_path}/persistence/repository/{name}Repository.java"
@@ -128,7 +106,7 @@ def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         "taskId": task_id,
         "taskType": "persistence",
         "implementationIR": ir.to_dict(),
-        "erd": erd,
+        "erdBceModel": erd_model,
         "bceEntities": entity_names,
         "generatedJavaContracts": contracts,
         "requirements": requirements,
@@ -156,8 +134,8 @@ def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         "## Related persistence requirements and scenarios\n```json\n"
         + _prompt_json({"requirements": requirements, "useCases": use_cases})
         + "\n```\n\n"
-        "## ERD\n```plantuml\n"
-        + erd
+        "## Typed persistence model\n```json\n"
+        + _prompt_json(erd_model)
         + "\n```\n\n## Generated contracts\n```java\n"
         + contracts
         + "\n```\n\n## Editable directories\n"
@@ -165,7 +143,7 @@ def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
     ) + render_allowed_output_rules(required)
     prompt_path = output / "shared-persistence.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
-    task = ImplementationTask(
+    task = TaskSpec(
         task_id=task_id,
         control="shared persistence",
         prompt_file=_relative(run_root, prompt_path),
@@ -177,9 +155,9 @@ def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
             f"application/src/main/java/{package_path}/api",
         ],
         source_artifacts={
-            name: str(path) for name, path in spec.inputs.items()
-            if name in {"bceClass", "erd", "erdBceModel", *requirement_sources}
-            and path.is_file()
+            name: str(path)
+            for name, path in spec.inputs.items()
+            if name in {"bceModel", "erdBceModel", *requirement_sources} and path.is_file()
         },
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         llm=_llm_config(spec),
@@ -199,7 +177,7 @@ class _UseCaseBundle:
     endpoints: tuple[dict[str, object], ...]
 
 
-def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
+def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     """같은 구현 source를 공유하는 유스케이스를 한 작업으로 묶는다."""
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
@@ -213,7 +191,7 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         path.relative_to(run_root).as_posix()
         for path in sorted((java_root / "bce").rglob("*.java"))
     ]
-    tasks: list[ImplementationTask] = []
+    tasks: list[TaskSpec] = []
     writers: dict[str, str] = {}
     for index, bundle in enumerate(bundles, start=1):
         task = _build_use_case_task(
@@ -261,8 +239,7 @@ def _use_case_bundles(
             use_case_id
             for endpoint in endpoints
             if any(
-                _operation_matches_endpoint(operation, endpoint)
-                for operation in port.operations
+                _operation_matches_endpoint(operation, endpoint) for operation in port.operations
             )
             for use_case_id in _use_case_ids(endpoint)
         }
@@ -295,20 +272,21 @@ def _use_case_bundles(
     if common_components or common_ports:
         bundles.append(_UseCaseBundle((), common_components, common_ports, ()))
     planned = [
-        bundle for bundle in bundles
+        bundle
+        for bundle in bundles
         if bundle.ports or any(_is_work_component(item) for item in bundle.components)
     ]
     return sorted(
         planned,
-        key=lambda bundle: _use_case_sort_key(bundle.use_case_ids[0])
-        if bundle.use_case_ids
-        else (10**9, "common"),
+        key=lambda bundle: (
+            _use_case_sort_key(bundle.use_case_ids[0]) if bundle.use_case_ids else (10**9, "common")
+        ),
     )
 
 
 def _grant_exclusive_write_roots(
-    tasks: list[ImplementationTask],
-) -> list[ImplementationTask]:
+    tasks: list[TaskSpec],
+) -> list[TaskSpec]:
     """한 기능만 사용하는 package에는 OpenHands가 새 파일을 만들 수 있게 한다.
 
     여러 작업이 같은 Java package를 사용하면 각자 약속된 파일만 편집한다. 한 작업만 쓰는
@@ -324,8 +302,7 @@ def _grant_exclusive_write_roots(
         replace(
             task,
             allowed_write_roots=sorted(
-                root for root, task_ids in owners.items()
-                if task_ids == {task.task_id}
+                root for root, task_ids in owners.items() if task_ids == {task.task_id}
             ),
         )
         for task in tasks
@@ -359,7 +336,10 @@ def _bundle_for_ids(
 
 def _is_work_component(component: ComponentIR) -> bool:
     return component.stereotype.casefold() in {
-        "control", "boundary", "entity", "gateway",
+        "control",
+        "boundary",
+        "entity",
+        "gateway",
     }
 
 
@@ -373,53 +353,48 @@ def _build_use_case_task(
     bundle: _UseCaseBundle,
     writers: dict[str, str],
     index: int,
-) -> ImplementationTask:
+) -> TaskSpec:
     """선택한 설계 slice와 필수 JUnit 클래스를 하나의 작업 계약으로 만든다."""
     label = ", ".join(bundle.use_case_ids) or "common"
     suffix = "-".join(item.casefold() for item in bundle.use_case_ids) or "common"
     task_id = f"implement-use-cases-{suffix}"
     test_path = (
-        f"application/src/test/java/{package_path}/application/impl/"
-        f"UseCaseBundle{index}Test.java"
+        f"application/src/test/java/{package_path}/application/impl/UseCaseBundle{index}Test.java"
     )
-    controls = [
-        item.name for item in bundle.components if item.stereotype.casefold() == "control"
-    ]
+    controls = [item.name for item in bundle.components if item.stereotype.casefold() == "control"]
     boundaries = [
         item.name for item in bundle.components if item.stereotype.casefold() == "boundary"
     ]
-    entities = [
-        item.name for item in bundle.components if item.stereotype.casefold() == "entity"
-    ]
+    entities = [item.name for item in bundle.components if item.stereotype.casefold() == "entity"]
     gateway_kinds = {item.name: item.kind for item in ir.gateways}
     gateways = [item for item in bundle.components if item.name in gateway_kinds]
-    required = sorted({
-        *(
-            f"application/src/main/java/{package_path}/application/impl/{name}Service.java"
-            for name in controls
-        ),
-        *(
-            f"application/src/main/java/{package_path}/adapter/in/web/{port.name}ApiController.java"
-            for port in bundle.ports
-        ),
-        *(
-            f"application/src/main/java/{package_path}/adapter/in/boundary/{name}Adapter.java"
-            for name in boundaries
-        ),
-        *(
-            _gateway_adapter_path(package_path, item.name, gateway_kinds[item.name])
-            for item in gateways
-        ),
-        test_path,
-    })
+    required = sorted(
+        {
+            *(
+                f"application/src/main/java/{package_path}/application/impl/{name}Service.java"
+                for name in controls
+            ),
+            *(
+                f"application/src/main/java/{package_path}/adapter/in/web/{port.name}ApiController.java"
+                for port in bundle.ports
+            ),
+            *(
+                f"application/src/main/java/{package_path}/adapter/in/boundary/{name}Adapter.java"
+                for name in boundaries
+            ),
+            *(
+                _gateway_adapter_path(package_path, item.name, gateway_kinds[item.name])
+                for item in gateways
+            ),
+            test_path,
+        }
+    )
     entity_sources = [
         f"application/src/main/java/{package_path}/bce/{name}.java" for name in entities
     ]
     editable = _work_unit_editable_paths(run_root, required, entity_sources)
     depends_on = sorted({writers[path] for path in editable if path in writers})
-    requirements, use_cases, sources = _related_requirement_artifacts(
-        spec, bundle.use_case_ids
-    )
+    requirements, use_cases, sources = _related_requirement_artifacts(spec, bundle.use_case_ids)
     scenarios = _scenarios_for_use_cases(spec, bundle.use_case_ids)
     component_names = {item.name for item in bundle.components}
     contracts = read_generated_java_contracts(
@@ -445,9 +420,7 @@ def _build_use_case_task(
         "generatedJavaContracts": contracts,
         "controllerScaffolds": scaffolds,
         "controllerBodyPaths": [
-            path.relative_to(run_root).as_posix()
-            for path in controller_paths
-            if path.is_file()
+            path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
         ],
         "entityBodySources": entity_sources,
         "requiredOutputs": required,
@@ -457,10 +430,9 @@ def _build_use_case_task(
     if deployment_context:
         context["deployment"] = deployment_context
     context_path = output / f"{task_id}.context.json"
-    context_path.write_text(
-        json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    prompt = f"""# Application use-case bundle: {label}
+    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    prompt = (
+        f"""# Application use-case bundle: {label}
 
 Implement only this design-backed bundle after persistence. Do not invent behavior outside
 the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
@@ -491,10 +463,13 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 ~~~java
 {scaffolds}
 ~~~
-""" + _render_deployment_context(deployment_context) + render_allowed_output_rules(required)
+"""
+        + _render_deployment_context(deployment_context)
+        + render_allowed_output_rules(required)
+    )
     prompt_path = output / f"{task_id}.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
-    task = ImplementationTask(
+    task = TaskSpec(
         task_id=task_id,
         control=f"use cases {label}",
         prompt_file=_relative(run_root, prompt_path),
@@ -532,31 +507,34 @@ def _component_use_case_ids(spec: JobSpec) -> dict[str, set[str]]:
 
 
 def _ids_for_components(spec: JobSpec, names: set[str]) -> tuple[str, ...]:
-    ids = set().union(*(
-        use_case_ids
-        for component, use_case_ids in _component_use_case_ids(spec).items()
-        if component in names
-    )) if names else set()
+    ids = (
+        set().union(
+            *(
+                use_case_ids
+                for component, use_case_ids in _component_use_case_ids(spec).items()
+                if component in names
+            )
+        )
+        if names
+        else set()
+    )
     return tuple(sorted(ids, key=_use_case_sort_key))
 
 
 def _api_model_endpoints(spec: JobSpec) -> list[dict[str, object]]:
     endpoints = _read_json(spec.inputs.get("apiModel")).get("Endpoints", [])
-    return [
-        item for item in endpoints if isinstance(item, dict)
-    ] if isinstance(endpoints, list) else []
+    return (
+        [item for item in endpoints if isinstance(item, dict)]
+        if isinstance(endpoints, list)
+        else []
+    )
 
 
-def _operation_matches_endpoint(
-    operation: ApiOperationIR, endpoint: dict[str, object]
-) -> bool:
+def _operation_matches_endpoint(operation: ApiOperationIR, endpoint: dict[str, object]) -> bool:
     return (
         operation.method.casefold() == str(endpoint.get("method") or "").casefold()
         and operation.path == str(endpoint.get("path") or "")
-        and (
-            not operation.operation_id
-            or operation.operation_id == endpoint.get("operation_id")
-        )
+        and (not operation.operation_id or operation.operation_id == endpoint.get("operation_id"))
     )
 
 
@@ -601,9 +579,7 @@ def _related_requirement_artifacts(
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, str]]:
     wanted = set(use_case_ids)
     requirements, use_cases, sources = _all_requirement_artifacts(spec)
-    selected_use_cases = [
-        item for item in use_cases if _use_case_ids(item) & wanted
-    ]
+    selected_use_cases = [item for item in use_cases if _use_case_ids(item) & wanted]
     requirement_ids = {
         str(value)
         for item in selected_use_cases
@@ -616,8 +592,7 @@ def _related_requirement_artifacts(
         [
             item
             for item in requirements
-            if str(item.get("id") or "") in requirement_ids
-            or bool(_use_case_ids(item) & wanted)
+            if str(item.get("id") or "") in requirement_ids or bool(_use_case_ids(item) & wanted)
         ],
         selected_use_cases,
         sources,
@@ -659,14 +634,18 @@ def _all_requirement_artifacts(
         ("useCases", "useCaseSpecs", "use_case_specs"),
     )
     names = {
-        "bceClass", "bceModel", "sequenceModel", "apiModel", "erd", "openapi",
-        *requirement_sources, *use_case_sources,
+        "bceModel",
+        "sequenceModel",
+        "apiModel",
+        "erdBceModel",
+        *requirement_sources,
+        *use_case_sources,
     }
-    return requirements, use_cases, {
-        name: str(path)
-        for name, path in spec.inputs.items()
-        if name in names and path.is_file()
-    }
+    return (
+        requirements,
+        use_cases,
+        {name: str(path) for name, path in spec.inputs.items() if name in names and path.is_file()},
+    )
 
 
 def _job_artifact_items(
@@ -678,17 +657,23 @@ def _job_artifact_items(
         if re.sub(r"[^a-z]", "", name.casefold()) not in input_names:
             continue
         value = _read_json_value(path)
-        candidates = value if isinstance(value, list) else next(
-            (
-                value.get(field, [])
-                for field in fields
-                if isinstance(value, dict) and field in value
-            ),
-            [],
+        candidates = (
+            value
+            if isinstance(value, list)
+            else next(
+                (
+                    value.get(field, [])
+                    for field in fields
+                    if isinstance(value, dict) and field in value
+                ),
+                [],
+            )
         )
-        items = [
-            item for item in candidates if isinstance(item, dict)
-        ] if isinstance(candidates, list) else []
+        items = (
+            [item for item in candidates if isinstance(item, dict)]
+            if isinstance(candidates, list)
+            else []
+        )
         if items:
             result.extend(items)
             sources.add(name)
@@ -704,18 +689,21 @@ def _scenarios_for_use_cases(
 ) -> list[dict[str, object]]:
     diagrams = _read_json(spec.inputs.get("sequenceModel")).get("Diagrams", [])
     wanted = set(use_case_ids)
-    return [
-        item for item in diagrams
-        if isinstance(item, dict) and item.get("use_case_id") in wanted
-    ] if isinstance(diagrams, list) else []
+    return (
+        [item for item in diagrams if isinstance(item, dict) and item.get("use_case_id") in wanted]
+        if isinstance(diagrams, list)
+        else []
+    )
 
 
 def _all_scenarios(spec: JobSpec) -> list[dict[str, object]]:
     diagrams = _read_json(spec.inputs.get("sequenceModel")).get("Diagrams", [])
-    return [item for item in diagrams if isinstance(item, dict)] if isinstance(diagrams, list) else []
+    return (
+        [item for item in diagrams if isinstance(item, dict)] if isinstance(diagrams, list) else []
+    )
 
 
-def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
+def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     """통합 실패가 있을 때만 실행할 Spring 설정 수리 작업을 준비한다.
 
     정상 경로의 entrypoint, datasource와 health 설정은 generator가 이미 만든다. 여기서는
@@ -723,12 +711,8 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     """
     package_path = spec.base_package.replace(".", "/")
     ir = build_implementation_ir(spec, run_root)
-    package_root = (
-        run_root / "application" / "src" / "main" / "java" / package_path
-    )
-    write_spring_boot_entrypoint(
-        run_root, spec.base_package, ir.application_class
-    )
+    package_root = run_root / "application" / "src" / "main" / "java" / package_path
+    write_spring_boot_entrypoint(run_root, spec.base_package, ir.application_class)
     source_paths: list[Path] = []
     for relative in ("application/impl", "adapter", "bce", "persistence/repository"):
         source_paths.extend(sorted((package_root / relative).rglob("*.java")))
@@ -771,7 +755,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         "useCaseArtifacts": use_cases,
         "scenarios": _all_scenarios(spec),
         "e2eScenarios": [asdict(item) for item in ir.e2e_scenarios],
-        "openapi": _read(spec.inputs.get("openapi")),
+        "apiModel": _read_json(spec.inputs.get("apiModel")),
         "requiredOutputs": [],
     }
     if deployment_context:
@@ -779,9 +763,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
     context_path = output / "application-wiring.context.json"
-    context_path.write_text(
-        json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     prompt = render_wiring_prompt(spec, ir.application_class, contracts)
     prompt += (
         "\n\nThis task is invoked only after a real compile, context, or HTTP failure. "
@@ -795,7 +777,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     prompt += render_allowed_output_rules(repair_paths)
     prompt_path = output / "application-wiring.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
-    task = ImplementationTask(
+    task = TaskSpec(
         task_id=task_id,
         control="Spring application wiring",
         prompt_file=_relative(run_root, prompt_path),
@@ -813,9 +795,16 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
             "application/src/main/resources/db/migration",
         ],
         source_artifacts={
-            name: str(path) for name, path in spec.inputs.items()
-            if name in {
-                "bceClass", "sequence", "erd", "openapi", "deployment", "deploymentBundle", "cloud",
+            name: str(path)
+            for name, path in spec.inputs.items()
+            if name
+            in {
+                "bceModel",
+                "sequenceModel",
+                "apiModel",
+                "erdBceModel",
+                "deploymentBundle",
+                "cloud",
                 *requirement_sources,
             }
             and path.is_file()
@@ -835,18 +824,25 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     return [task]
 
 
-def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
-    """Plan the UI implementation from system-design artifacts and generated API client."""
+def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
+    """typed 화면 흐름과 생성된 API client를 한 frontend 구현 작업으로 만든다."""
     frontend = run_root / "application" / "frontend"
     generated = frontend / "src" / "generated"
     if not generated.is_dir():
         raise ValueError("OpenAPI Generator frontend client was not found")
     openapi = json.loads(_read(spec.inputs.get("openapi")))
-    bce = _read(spec.inputs.get("bceClass"))
-    classes = parse_design_classes(bce)
-    bce_names = {item.name for item in classes}
+    bce_model = _read_json(spec.inputs.get("bceModel"))
+    bce_classes = bce_model.get("Classes", [])
+    classes = (
+        [item for item in bce_classes if isinstance(item, dict)]
+        if isinstance(bce_classes, list)
+        else []
+    )
+    bce_names = {str(item["className"]) for item in classes if item.get("className")}
     boundary_names = {
-        item.name for item in classes if item.stereotype.casefold() == "boundary"
+        str(item["className"])
+        for item in classes
+        if item.get("className") and str(item.get("stereotype", "")).casefold() == "boundary"
     }
     sequence_context = _project_sequence(
         _read_json(spec.inputs.get("sequenceModel")), boundary_names
@@ -884,7 +880,7 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[Implementatio
         "schemaVersion": "frontend-implementation-context/v1alpha1",
         "taskId": task_id,
         "taskType": "frontend-implementation",
-        "classDiagram": bce,
+        "classModel": bce_model,
         "sequence": sequence_context,
         "openapi": openapi,
         "pages": pages,
@@ -897,9 +893,7 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[Implementatio
     if deployment_context:
         context["deployment"] = deployment_context
     context_path = output / "frontend-application.context.json"
-    context_path.write_text(
-        json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     page_list = "\n".join(f"- `{name}`" for name in pages)
     operation_list = "\n".join(f"- `{name}`" for name in operations)
     page_import_root = client_contracts.page_import_root
@@ -939,9 +933,9 @@ Rules:
 ## OpenAPI operations that the UI must expose where meaningful
 {operation_list}
 
-## BCE class design
-```plantuml
-{bce}
+## Typed BCE class model
+```json
+{_prompt_json(bce_model)}
 ```
 
 ## Typed sequence context
@@ -961,7 +955,8 @@ Rules:
 {_render_deployment_context(deployment_context)}
 """
     prompt += "\n## Editable paths\n" + "\n".join(
-        f"- `{path}`" for path in [
+        f"- `{path}`"
+        for path in [
             "application/frontend/src/App.tsx",
             "application/frontend/src/styles.css",
             *editable_directories,
@@ -970,7 +965,7 @@ Rules:
     prompt += render_allowed_output_rules(required)
     prompt_path = output / "frontend-application.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
-    task = ImplementationTask(
+    task = TaskSpec(
         task_id=task_id,
         control=f"{spec.name} frontend application",
         prompt_file=_relative(run_root, prompt_path),
@@ -989,7 +984,7 @@ Rules:
             **{
                 name: str(path)
                 for name, path in spec.inputs.items()
-                if name in {"bceClass", "sequenceModel", "openapi", "deploymentBundle"}
+                if name in {"bceModel", "sequenceModel", "openapi", "deploymentBundle"}
                 and path.is_file()
             },
             "generatedClientContracts": str(contracts_path),
@@ -1017,12 +1012,16 @@ def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
 
 def _render_deployment_context(deployment: object) -> str:
     """배포 정보는 구현 계약을 흐리지 않도록 있을 때만 짧은 JSON으로 붙인다."""
-    return "" if not deployment else f"""
+    return (
+        ""
+        if not deployment
+        else f"""
 ## Relevant runtime context
 ```json
 {_prompt_json(deployment)}
 ```
 """
+    )
 
 
 def _prompt_json(value: object) -> str:
@@ -1030,9 +1029,7 @@ def _prompt_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def render_wiring_prompt(
-    spec: JobSpec, application_class: str, contracts: str
-) -> str:
+def render_wiring_prompt(spec: JobSpec, application_class: str, contracts: str) -> str:
     return f"""# Implementation task: Spring application wiring
 
 The system has already created the complete `{application_class}` Spring Boot entry point.
@@ -1086,15 +1083,11 @@ def _llm_config(spec: JobSpec) -> dict[str, object]:
     }
 
 
-def write_spring_boot_entrypoint(
-    run_root: Path, base_package: str, application_class: str
-) -> Path:
-    """Write the framework bootstrap that has no domain-level implementation choice.
+def write_spring_boot_entrypoint(run_root: Path, base_package: str, application_class: str) -> Path:
+    """업무 판단이 필요 없는 Spring Boot 시작 클래스를 정해진 형태로 만든다.
 
-    The application name and Java package are fixed by the implementation job.
-    A plain ``@SpringBootApplication`` entry point is therefore a complete,
-    deterministic artifact; delegating it to the wiring conversation only adds
-    token use and lets an agent accidentally alter repository discovery.
+    애플리케이션 이름과 Java package는 Job에서 이미 정해졌다. 따라서 이 파일을 wiring
+    대화에 맡기지 않아도 되고, 코딩 에이전트가 repository 탐색 설정을 실수로 바꿀 일도 없다.
     """
     target = (
         run_root
@@ -1125,47 +1118,10 @@ public class {application_class} {{
 
 
 def render_allowed_output_rules(allowed: list[str]) -> str:
-    return "\n\n## Contracted outputs\n\n" + "\n".join(
-        f"- `{path}`" for path in allowed
-    ) + "\n"
+    return "\n\n## Contracted outputs\n\n" + "\n".join(f"- `{path}`" for path in allowed) + "\n"
 
 
-def parse_design_classes(source: str) -> list[DesignClass]:
-    return [
-        DesignClass(match.group("name"), match.group("stereotype"), match.group(0).strip(), match.group("body").strip())
-        for match in CLASS_PATTERN.finditer(source)
-    ]
-
-
-def parse_relations(source: str) -> list[tuple[str, str, str]]:
-    result: list[tuple[str, str, str]] = []
-    for line in source.splitlines():
-        if not re.search(r"(?:-->|\.\.>|\*--|o--)", line):
-            continue
-        names = re.findall(r"[A-Za-z_]\w*", line.split(":", 1)[0])
-        if len(names) >= 2:
-            result.append((names[0], names[-1], line.strip()))
-    return result
-
-
-def slice_erd(source: str, entity_names: set[str]) -> str:
-    if not entity_names:
-        return "' No directly related ERD entity"
-    blocks: list[str] = []
-    for name in sorted(entity_names):
-        pattern = re.compile(rf'(?ms)^entity\s+"{re.escape(name)}"\s+as\s+{re.escape(name)}\s*\{{.*?^\}}')
-        match = pattern.search(source)
-        if match:
-            blocks.append(match.group(0))
-    for line in source.splitlines():
-        if any(re.search(rf"\b{re.escape(name)}\b", line) for name in entity_names) and re.search(r"(?:\.\.|--)", line):
-            blocks.append(line.strip())
-    return "\n\n".join(dict.fromkeys(blocks)) if blocks else "' No directly related ERD entity"
-
-
-def _project_sequence(
-    model: dict[str, object], names: set[str]
-) -> list[dict[str, object]]:
+def _project_sequence(model: dict[str, object], names: set[str]) -> list[dict[str, object]]:
     """구현 대상이 참여한 typed 시퀀스만, 원래 호출 메타데이터와 함께 남긴다.
 
     PlantUML alias를 다시 해석하면 ``arguments``와 ``call_id`` 같은 실행 계약이
@@ -1179,9 +1135,7 @@ def _project_sequence(
     for diagram in diagrams:
         if not isinstance(diagram, dict):
             continue
-        participants = [
-            item for item in diagram.get("Participants", []) if isinstance(item, dict)
-        ]
+        participants = [item for item in diagram.get("Participants", []) if isinstance(item, dict)]
         aliases = {
             str(item.get("alias") or item.get("name") or "")
             for item in participants
@@ -1189,27 +1143,29 @@ def _project_sequence(
             or str(item.get("alias") or "") in names
         }
         messages = [
-            item for item in diagram.get("Messages", [])
+            item
+            for item in diagram.get("Messages", [])
             if isinstance(item, dict)
             and {str(item.get("source") or ""), str(item.get("target") or "")} & aliases
         ]
         if not messages:
             continue
         involved = {
-            str(message.get(side) or "")
-            for message in messages
-            for side in ("source", "target")
+            str(message.get(side) or "") for message in messages for side in ("source", "target")
         }
-        selected.append({
-            "use_case_id": diagram.get("use_case_id", ""),
-            "use_case_name": diagram.get("use_case_name", ""),
-            "Participants": [
-                item for item in participants
-                if str(item.get("alias") or item.get("name") or "") in involved
-            ],
-            # arguments, call_id, reply_to, step_ids, fragments를 복사하지 않고 보존한다.
-            "Messages": messages,
-        })
+        selected.append(
+            {
+                "use_case_id": diagram.get("use_case_id", ""),
+                "use_case_name": diagram.get("use_case_name", ""),
+                "Participants": [
+                    item
+                    for item in participants
+                    if str(item.get("alias") or item.get("name") or "") in involved
+                ],
+                # arguments, call_id, reply_to, step_ids, fragments를 복사하지 않고 보존한다.
+                "Messages": messages,
+            }
+        )
     return selected
 
 
@@ -1224,12 +1180,14 @@ def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
     if not isinstance(graph, dict):
         return {}
     generated = [
-        item for item in graph.get("workloads", [])
+        item
+        for item in graph.get("workloads", [])
         if isinstance(item, dict)
         and str((item.get("artifact") or {}).get("kind") or "") == "generatedApplication"
     ]
     matched = [
-        item for item in generated
+        item
+        for item in generated
         if any(
             name.lower() in json.dumps(item.get("sourceRefs") or [], ensure_ascii=False).lower()
             for name in names
@@ -1249,7 +1207,12 @@ def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
                     {
                         key: config.get(key)
                         for key in (
-                            "id", "name", "kind", "projection", "connectionRef", "sensitive",
+                            "id",
+                            "name",
+                            "kind",
+                            "projection",
+                            "connectionRef",
+                            "sensitive",
                         )
                         if config.get(key) is not None
                     }
@@ -1268,17 +1231,13 @@ def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
             for item in workloads
         ],
         "connections": [
-            connection for connection in graph.get("connections", [])
+            connection
+            for connection in graph.get("connections", [])
             if isinstance(connection, dict)
             and {str(connection.get("sourceRef") or ""), str(connection.get("targetRef") or "")}
             & workload_ids
         ],
     }
-
-
-def split_words(value: str) -> list[str]:
-    expanded = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
-    return re.findall(r"[a-z]+", expanded.lower())
 
 
 def _read(path: Path | None) -> str:
@@ -1304,12 +1263,10 @@ def _work_unit_editable_paths(
     required: list[str],
     scopes: list[str],
 ) -> list[str]:
-    """Expand a package scope into the concrete editable files in this run.
+    """package 범위를 현재 실행에서 편집할 수 있는 실제 파일 목록으로 바꾼다.
 
-    The runtime's restricted editor receives file paths, while planning should
-    express a repair boundary as a package or directory.  Keep both meanings:
-    required outputs are included even before they exist and all existing files
-    below a scope are editable.  Generated contracts are never supplied here.
+    아직 만들어지지 않은 필수 파일은 그대로 포함하고, 지정한 디렉터리에 이미 있는 파일도
+    함께 넣는다. 생성된 공개 계약은 호출자가 이 범위에 넘기지 않는다.
     """
     paths = {path.replace("\\", "/") for path in required}
     for scope in scopes:
@@ -1318,9 +1275,7 @@ def _work_unit_editable_paths(
             paths.add(root.relative_to(run_root).as_posix())
         elif root.is_dir():
             paths.update(
-                path.relative_to(run_root).as_posix()
-                for path in root.rglob("*")
-                if path.is_file()
+                path.relative_to(run_root).as_posix() for path in root.rglob("*") if path.is_file()
             )
     return sorted(paths)
 
@@ -1337,18 +1292,11 @@ def read_generated_java_contracts(
     repository_names: set[str] | None = None,
 ) -> str:
     package_root = (
-        run_root
-        / "application"
-        / "src"
-        / "main"
-        / "java"
-        / Path(base_package.replace(".", "/"))
+        run_root / "application" / "src" / "main" / "java" / Path(base_package.replace(".", "/"))
     )
     contracts = []
     bce_root = package_root / "bce"
-    available_bce = {
-        path.stem: path for path in bce_root.glob("*.java") if path.is_file()
-    }
+    available_bce = {path.stem: path for path in bce_root.glob("*.java") if path.is_file()}
     # 선택한 Boundary/Control의 반환형이나 매개변수형도 구현에 필요한 계약이다.
     # 예를 들어 ``CloseResult`` record를 빼면 agent는 생성자 인자를 알 수 없어 수리
     # 단계마다 다른 값을 추측한다. 전체 BCE를 보내지는 않고, 실제 Java 선언에서 이름이
@@ -1364,9 +1312,7 @@ def read_generated_java_contracts(
                 pending.append(candidate)
     for name in sorted(selected):
         path = available_bce[name]
-        contracts.append(
-            f"// bce/{name}.java\n{path.read_text(encoding='utf-8').strip()}"
-        )
+        contracts.append(f"// bce/{name}.java\n{path.read_text(encoding='utf-8').strip()}")
     for name in sorted(api_model_names or set()):
         path = package_root / "api" / "model" / f"{name}.java"
         if path.is_file():
@@ -1377,13 +1323,6 @@ def read_generated_java_contracts(
         path = package_root / "persistence" / "repository" / f"{name}.java"
         if path.is_file():
             contracts.append(
-                f"// persistence/repository/{name}.java\n"
-                f"{path.read_text(encoding='utf-8').strip()}"
+                f"// persistence/repository/{name}.java\n{path.read_text(encoding='utf-8').strip()}"
             )
     return "\n\n".join(contracts) or "// No generated Java contracts found"
-
-
-def referenced_openapi_model_names(openapi_context: str) -> set[str]:
-    return set(
-        re.findall(r"#/components/schemas/([A-Za-z_$][A-Za-z0-9_$]*)", openapi_context)
-    )

@@ -67,9 +67,6 @@ PHASE_LABELS = {
     "frontend": "Frontend",
 }
 
-WORK_UNIT_TYPES = frozenset({"persistence", "use-case", "frontend-implementation", "wiring"})
-
-
 def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     """Idempotently plan implemented phases and persist a resumable checkpoint."""
     run_root = run_root.resolve()
@@ -77,13 +74,13 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
         apply_repair_directives(run_root)
         return reconcile_workflow_state(run_root)
     ir = build_implementation_ir(spec, run_root)
-    erd_path = spec.inputs.get("erd")
-    erd_source = erd_path.read_text(encoding="utf-8") if erd_path and erd_path.is_file() else ""
+    erd_model_path = spec.inputs.get("erdBceModel")
+    erd_model = _read_json(erd_model_path) if erd_model_path and erd_model_path.is_file() else {}
     bce_entities = set(ir.entities)
-    contract = assess_bce_erd_entity_contract(erd_source, bce_entities)
+    contract = assess_bce_erd_entity_contract(erd_model, bce_entities)
     if bce_entities and not contract.erd_entities:
         raise ValueError(
-            "ERD input must contain Entity definitions matching the BCE Entity components"
+            "erdBceModel must contain Entity definitions matching bceModel"
         )
     unexpected_erd_entities = set(contract.unexpected_erd_entities)
     missing_erd_entities = set(contract.missing_bce_entities)
@@ -95,16 +92,14 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
             details.append("missing in ERD: " + ", ".join(missing_in_erd))
         if missing_in_bce:
             details.append("missing in BCE: " + ", ".join(missing_in_bce))
-        raise ValueError("BCE/ERD entity mismatch; " + "; ".join(details))
+        raise ValueError("bceModel/erdBceModel Entity mismatch; " + "; ".join(details))
     needs_persistence = bool(bce_entities) or any(
         gateway.kind == "persistence" for gateway in ir.gateways
     )
-    _discard_legacy_workflow_tasks(run_root)
     if needs_persistence:
-        erd = erd_path
-        if erd is None or not erd.is_file():
+        if erd_model_path is None or not erd_model_path.is_file():
             raise ValueError(
-                "ERD input is required because the BCE design contains persistent entities or Gateways"
+                "erdBceModel is required because bceModel contains persistent Entity classes"
             )
         plan_persistence_tasks(spec, run_root)
     plan_api_adapter_tasks(spec, run_root)
@@ -114,23 +109,6 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
-
-
-def _discard_legacy_workflow_tasks(run_root: Path) -> None:
-    """Replace old file-owner tasks when a run is resumed after this refactor."""
-    path = run_root / "reports" / "run-manifest.json"
-    manifest = _read_json(path)
-    tasks = manifest.get("implementation_tasks", [])
-    if not isinstance(tasks, list):
-        return
-    current = [
-        item
-        for item in tasks
-        if isinstance(item, dict) and item.get("task_type") in WORK_UNIT_TYPES
-    ]
-    if current != tasks:
-        manifest["implementation_tasks"] = current
-        _write_json_atomic(path, manifest)
 
 
 def reconcile_workflow_state(run_root: Path) -> dict[str, object]:

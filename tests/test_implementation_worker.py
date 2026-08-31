@@ -447,7 +447,7 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     }
     assert job["generation"]["basePackage"] == "com.example.orders"
     assert job["requiredInputs"] == [
-        "bceClass", "sequence", "openapi", "bceModel", "sequenceModel", "apiModel",
+        "bceModel", "sequenceModel", "apiModel", "openapi",
     ]
     assert (tmp_path / job["inputs"]["openapi"]).is_file()
     sequence_path = tmp_path / job["inputs"]["sequence"]

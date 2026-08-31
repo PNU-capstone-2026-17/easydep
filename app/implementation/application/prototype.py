@@ -170,8 +170,7 @@ class PrototypeClient:
         )
         write("cloud", "resource-spec.json", design.get("resource_spec"))
         required_inputs = [
-            "bceClass", "sequence", "openapi",
-            "bceModel", "sequenceModel", "apiModel",
+            "bceModel", "sequenceModel", "apiModel", "openapi",
         ]
         if "erdBceModel" in inputs:
             required_inputs.append("erdBceModel")

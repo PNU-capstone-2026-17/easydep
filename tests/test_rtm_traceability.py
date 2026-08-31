@@ -13,38 +13,31 @@ from app.implementation.workflows.traceability import build_rtm_traceability_map
 def test_rtm_traceability_map_building() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        bce = root / "bce.puml"
-        bce.write_text(
-            "@startuml\n"
-            "class OrderController <<control>> {\n  +startOrder()\n}\n"
-            "class OrderEntity <<entity>> {\n  -id: Long\n}\n"
-            "@startuml",
-            encoding="utf-8",
-        )
-        openapi = root / "openapi.json"
-        openapi.write_text(
-            json.dumps({
-                "paths": {
-                    "/api/orders": {
-                        "post": {
-                            "operationId": "createOrder",
-                            "responses": {"200": {"description": "ok"}},
-                        }
-                    }
-                },
-                "components": {"schemas": {"OrderRequest": {"type": "object"}}},
-            }),
-            encoding="utf-8",
-        )
-        erd = root / "erd.puml"
-        erd.write_text("@startuml\nentity OrderEntity {\n}\n@enduml", encoding="utf-8")
+        bce_model = root / "bce-model.json"
+        model = {
+            "Classes": [
+                {"className": "OrderController", "stereotype": "Control",
+                 "operations": [{"name": "startOrder", "parameters": [], "returnType": "void"}]},
+                {"className": "OrderEntity", "stereotype": "Entity", "operations": []},
+            ],
+        }
+        bce_model.write_text(json.dumps(model), encoding="utf-8")
+        erd_model = root / "erd-model.json"
+        erd_model.write_text(json.dumps(model), encoding="utf-8")
+        api_model = root / "api-model.json"
+        api_model.write_text(json.dumps({"Endpoints": []}), encoding="utf-8")
         cloud = root / "resource-spec.json"
         cloud.write_text('{"provider": "aws"}', encoding="utf-8")
 
         spec = SimpleNamespace(
             name="orders",
             base_package="com.example.demo",
-            inputs={"bceClass": bce, "openapi": openapi, "erd": erd, "cloud": cloud},
+            inputs={
+                "bceModel": bce_model,
+                "apiModel": api_model,
+                "erdBceModel": erd_model,
+                "cloud": cloud,
+            },
         )
 
         rtm_map = build_rtm_traceability_map(spec, root / "run")
@@ -54,7 +47,7 @@ def test_rtm_traceability_map_building() -> None:
         mappings = {m["element_name"]: m for m in rtm_map["mappings"]}
         assert "OrderController" in mappings
         assert mappings["OrderController"]["contract_level"] == "IMMUTABLE_CONTRACT"
-        assert mappings["OrderController"]["origin_artifact"] == "bceClass"
+        assert mappings["OrderController"]["origin_artifact"] == "bceModel"
         assert mappings["OrderController"]["verificationStatus"] == "MISSING"
         assert rtm_map["summary"]["missing"] == rtm_map["summary"]["expected"]
         # 리소스 입력만 있고 배포 설계가 미완료라면 Terraform은 선택 산출물이다.

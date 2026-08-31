@@ -10,8 +10,6 @@ from typing import Any
 
 from .models import JobSpec
 
-HTTP_METHODS = {"get", "put", "post", "delete", "patch", "head", "options"}
-
 
 @dataclass(frozen=True)
 class ComponentIR:
@@ -75,7 +73,7 @@ class ImplementationIR:
 
 @dataclass(frozen=True)
 class ErdEntityContract:
-    """BCE entities and ERD-only physical tables described by one ERD input."""
+    """BCE와 ERD typed 모델의 Entity 이름 비교 결과다."""
 
     erd_entities: frozenset[str]
     allowed_physical_entities: frozenset[str]
@@ -86,17 +84,19 @@ class ErdEntityContract:
 def build_implementation_ir(
     spec: JobSpec, run_root: Path, *, persist: bool = True
 ) -> ImplementationIR:
-    bce = _read(spec.inputs.get("bceClass"))
-    openapi = _read(spec.inputs.get("openapi"))
-    erd = _read(spec.inputs.get("erd"))
-    components = tuple(parse_components(bce))
-    api_operations = tuple(parse_openapi_operations(openapi))
+    """저장된 typed 설계 모델을 구현 작업이 쓰는 작은 모델로 옮긴다."""
+    bce_model = _read_json(spec.inputs.get("bceModel"))
+    api_model = _read_json(spec.inputs.get("apiModel"))
+    erd_model = _read_json(spec.inputs.get("erdBceModel"))
+    components = tuple(components_from_model(bce_model))
+    api_operations = tuple(api_operations_from_model(api_model))
     api_ports = tuple(discover_api_ports(spec, run_root, api_operations))
     gateways = tuple(
-        GatewayIR(item.name, classify_gateway(item))
+        GatewayIR(item.name, "external")
         for item in components
         if item.stereotype.lower() == "gateway"
     )
+    erd_entities = entity_names(erd_model)
     ir = ImplementationIR(
         schema_version="implementation-ir/v1alpha1",
         application_name=spec.name,
@@ -106,10 +106,7 @@ def build_implementation_ir(
         boundaries=tuple(sorted(c.name for c in components if c.stereotype.lower() == "boundary")),
         entities=tuple(sorted(c.name for c in components if c.stereotype.lower() == "entity")),
         persistent_entities=tuple(
-            sorted(
-                {c.name for c in components if c.stereotype.lower() == "entity"}
-                & parse_erd_entities(erd)
-            )
+            sorted({c.name for c in components if c.stereotype.lower() == "entity"} & erd_entities)
         ),
         gateways=gateways,
         api_ports=api_ports,
@@ -124,95 +121,78 @@ def build_implementation_ir(
     return ir
 
 
-def parse_components(source: str) -> list[ComponentIR]:
-    pattern = re.compile(
-        r"(?ms)^\s*(?:class|interface|entity)\s+(?P<name>[A-Za-z_]\w*)\s+"
-        r"<<(?P<stereotype>[^>]+)>>\s*\{(?P<body>.*?)\}"
-    )
+def components_from_model(model: dict[str, object]) -> list[ComponentIR]:
+    """BCEModel의 class와 operation을 문자열 다이어그램을 거치지 않고 읽는다."""
+    classes = model.get("Classes", [])
+    if not isinstance(classes, list):
+        return []
     result: list[ComponentIR] = []
-    for match in pattern.finditer(source):
-        operations = tuple(
-            line.strip().lstrip("+").strip()
-            for line in match.group("body").splitlines()
-            if "(" in line and ")" in line
-        )
-        result.append(
-            ComponentIR(match.group("name"), match.group("stereotype").strip(), operations)
-        )
-    return result
-
-
-def parse_openapi_operations(source: str) -> list[ApiOperationIR]:
-    if source.lstrip().startswith("{"):
-        document = json.loads(source)
-        result: list[ApiOperationIR] = []
-        for path, path_item in document.get("paths", {}).items():
-            if not isinstance(path_item, dict):
-                continue
-            for method, operation in path_item.items():
-                if str(method).lower() not in HTTP_METHODS or not isinstance(operation, dict):
-                    continue
-                responses = tuple(
-                    ApiResponseIR(int(status), str(value.get("description", "")))
-                    for status, value in operation.get("responses", {}).items()
-                    if str(status).isdigit() and isinstance(value, dict)
-                )
-                result.append(
-                    ApiOperationIR(
-                        str(method).upper(),
-                        str(path),
-                        operation.get("operationId"),
-                        responses,
-                    )
-                )
-        return result
-    lines = source.splitlines()
-    result: list[ApiOperationIR] = []
-    index = 0
-    while index < len(lines):
-        path_match = re.match(r"^  (/[^:]+):\s*$", lines[index])
-        if not path_match:
-            index += 1
+    for item in classes:
+        if not isinstance(item, dict) or not item.get("className"):
             continue
-        path = path_match.group(1)
-        index += 1
-        while index < len(lines) and not re.match(r"^  /[^:]+:\s*$", lines[index]):
-            method_match = re.match(r"^    ([a-z]+):\s*$", lines[index])
-            if not method_match or method_match.group(1) not in HTTP_METHODS:
-                if lines[index] and not lines[index].startswith(" "):
-                    break
-                index += 1
-                continue
-            method = method_match.group(1).upper()
-            start = index
-            index += 1
-            while index < len(lines):
-                if re.match(r"^    [a-z]+:\s*$", lines[index]) or re.match(
-                    r"^  /[^:]+:\s*$", lines[index]
-                ) or (lines[index] and not lines[index].startswith(" ")):
-                    break
-                index += 1
-            block = lines[start:index]
-            operation_id = None
-            responses: list[ApiResponseIR] = []
-            for offset, line in enumerate(block):
-                op_match = re.match(r"^\s+operationId:\s*([^#]+)", line)
-                if op_match:
-                    operation_id = op_match.group(1).strip().strip('"\'')
-                status_match = re.match(r"^\s{8}['\"]?(\d{3})['\"]?:\s*$", line)
-                if not status_match:
-                    continue
-                description = ""
-                for following in block[offset + 1 :]:
-                    if re.match(r"^\s{8}['\"]?\d{3}['\"]?:\s*$", following):
-                        break
-                    desc_match = re.match(r"^\s+description:\s*(.*)$", following)
-                    if desc_match:
-                        description = desc_match.group(1).strip().strip('"\'')
-                        break
-                responses.append(ApiResponseIR(int(status_match.group(1)), description))
-            result.append(ApiOperationIR(method, path, operation_id, tuple(responses)))
+        operations = item.get("operations", [])
+        result.append(
+            ComponentIR(
+                name=str(item["className"]),
+                stereotype=str(item.get("stereotype", "")),
+                operations=tuple(
+                    _operation_contract(operation)
+                    for operation in operations
+                    if isinstance(operation, dict) and operation.get("name")
+                ) if isinstance(operations, list) else (),
+            )
+        )
     return result
+
+
+def api_operations_from_model(model: dict[str, object]) -> list[ApiOperationIR]:
+    """ApiSpecModel endpoint를 구현·HTTP 검사에 필요한 항목으로 줄인다."""
+    endpoints = model.get("Endpoints", [])
+    if not isinstance(endpoints, list):
+        return []
+    result: list[ApiOperationIR] = []
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict) or not endpoint.get("path") or not endpoint.get("method"):
+            continue
+        responses = endpoint.get("responses", [])
+        result.append(
+            ApiOperationIR(
+                method=str(endpoint["method"]).upper(),
+                path=str(endpoint["path"]),
+                operation_id=str(endpoint.get("operation_id") or "") or None,
+                responses=tuple(
+                    ApiResponseIR(
+                        int(response.get("status", 200)),
+                        str(response.get("description", "")),
+                    )
+                    for response in responses
+                    if isinstance(response, dict)
+                ) if isinstance(responses, list) else (),
+            )
+        )
+    return result
+
+
+def entity_names(model: dict[str, object]) -> set[str]:
+    classes = model.get("Classes", [])
+    return {
+        str(item["className"])
+        for item in classes
+        if isinstance(item, dict)
+        and item.get("className")
+        and str(item.get("stereotype", "")).casefold() == "entity"
+    } if isinstance(classes, list) else set()
+
+
+def _operation_contract(operation: dict[str, object]) -> str:
+    parameters = operation.get("parameters", [])
+    arguments = ", ".join(
+        f"{item.get('name', '')}:{item.get('type', 'Object')}"
+        for item in parameters
+        if isinstance(item, dict)
+    ) if isinstance(parameters, list) else ""
+    return_type = str(operation.get("returnType") or "void")
+    return f"{operation['name']}({arguments}): {return_type}"
 
 
 def discover_api_ports(
@@ -241,145 +221,21 @@ def discover_api_ports(
     return result
 
 
-def classify_gateway(component: ComponentIR) -> str:
-    text = " ".join((component.name, *component.operations)).lower()
-    persistence_terms = ("persist", "repository", "save", "store", "load", "find", "delete")
-    return "persistence" if any(term in text for term in persistence_terms) else "external"
+def assess_bce_erd_entity_contract(
+    erd_model: dict[str, object], base_entities: set[str]
+) -> ErdEntityContract:
+    """BCE와 ERD 단계가 저장한 Entity 이름이 같은지 확인한다.
 
-
-def parse_erd_entities(source: str) -> set[str]:
-    quoted = re.findall(
-        r'(?m)^\s*entity\s+"[^"]+"\s+as\s+([A-Za-z_]\w*)', source
-    )
-    plain = re.findall(r"(?m)^\s*entity\s+([A-Za-z_]\w*)\s*\{", source)
-    return set(quoted) | set(plain)
-
-
-def parse_erd_association_entities(source: str, base_entities: set[str]) -> set[str]:
-    """Find ERD join entities that connect at least two BCE entities.
-
-    ERDs commonly materialize many-to-many relationships as entities such as
-    ``CourseSection``.  These aliases are physical persistence details, not BCE
-    Entity components, so requiring exact BCE/ERD equality incorrectly rejects
-    otherwise valid designs.
+    조인 테이블과 다중값용 물리 테이블은 렌더링 결과일 뿐 ``erdBceModel``의 도메인 Entity가
+    아니다. 따라서 표시용 PlantUML 주석과 이름을 추측하는 예전 예외 규칙이 필요 없다.
     """
-    entities = parse_erd_entities(source)
-    neighbors: dict[str, set[str]] = {name: set() for name in entities}
-    relation_pattern = re.compile(
-        r"(?m)^\s*(?P<left>[A-Za-z_]\w*)\s+[^\n]*(?:--|\.\.)[^\n]*\s+"
-        r"(?P<right>[A-Za-z_]\w*)\s*$"
-    )
-    for match in relation_pattern.finditer(source):
-        left, right = match.group("left"), match.group("right")
-        if left in entities and right in entities:
-            neighbors[left].add(right)
-            neighbors[right].add(left)
-    associations: set[str] = set()
-    for name in entities - base_entities:
-        base_neighbors = neighbors.get(name, set()) & base_entities
-        if len(base_neighbors) >= 2:
-            associations.add(name)
-            continue
-        # A self-referential many-to-many relation is materialized by the
-        # design exporter as a synthetic ``EntityEntity`` table with only one
-        # visible edge back to that Entity.  It is still a join entity, not an
-        # undeclared BCE domain entity.
-        if len(base_neighbors) == 1:
-            for base in base_neighbors:
-                if name == f"{base}{base}":
-                    associations.add(name)
-                    break
-    return associations
-
-
-def parse_erd_multivalued_entities(source: str, base_entities: set[str]) -> set[str]:
-    """Find 1NF child tables produced from a BCE collection field.
-
-    New ERDs carry an ``easydep:erd-origin`` annotation emitted by the
-    deterministic ERD renderer.  We still recognise older rendered artifacts,
-    but only when their explicit 1NF section, parent relationship, name and
-    value-column shape all agree.  That fallback deliberately does not accept
-    arbitrary one-parent tables such as ``StudentProfile``.
-    """
-    entities = parse_erd_entities(source)
-    neighbors = _erd_neighbors(source, entities)
-    annotated: dict[str, tuple[str, str]] = {}
-    annotation_pattern = re.compile(
-        r"(?m)^\s*'\s*easydep:erd-origin\s+kind=multivalued\s+"
-        r"alias=(?P<alias>[A-Za-z_]\w*)\s+parent=(?P<parent>[A-Za-z_]\w*)\s+"
-        r"field=(?P<field>[A-Za-z_]\w*)\s*$"
-    )
-    for match in annotation_pattern.finditer(source):
-        annotated[match.group("alias")] = (match.group("parent"), match.group("field"))
-
-    legacy_start = source.find("' === 제1정규화(1NF) 분리 테이블 ===")
-    legacy_entities = (
-        set(parse_erd_entities(source[legacy_start:])) if legacy_start >= 0 else set()
-    )
-    accepted: set[str] = set()
-    for name in entities - base_entities:
-        parent_field = annotated.get(name)
-        if parent_field is not None:
-            parent, field = parent_field
-        elif name in legacy_entities:
-            parent = next(iter(neighbors.get(name, set()) & base_entities), "")
-            field = name[len(parent):] if parent and name.lower().startswith(parent.lower()) else ""
-        else:
-            continue
-        if not _is_multivalued_child_shape(source, name, parent, field, neighbors, base_entities):
-            continue
-        accepted.add(name)
-    return accepted
-
-
-def assess_bce_erd_entity_contract(source: str, base_entities: set[str]) -> ErdEntityContract:
-    """Classify domain entities separately from generated physical ERD tables."""
-    erd_entities = parse_erd_entities(source)
-    allowed = parse_erd_association_entities(source, base_entities)
-    allowed.update(parse_erd_multivalued_entities(source, base_entities))
+    erd_entities = entity_names(erd_model)
     return ErdEntityContract(
         erd_entities=frozenset(erd_entities),
-        allowed_physical_entities=frozenset(allowed),
+        allowed_physical_entities=frozenset(),
         missing_bce_entities=frozenset(base_entities - erd_entities),
-        unexpected_erd_entities=frozenset(erd_entities - base_entities - allowed),
+        unexpected_erd_entities=frozenset(erd_entities - base_entities),
     )
-
-
-def _erd_neighbors(source: str, entities: set[str]) -> dict[str, set[str]]:
-    neighbors: dict[str, set[str]] = {name: set() for name in entities}
-    relation_pattern = re.compile(
-        r"(?m)^\s*(?P<left>[A-Za-z_]\w*)\s+[^\n]*(?:--|\.\.)[^\n]*\s+"
-        r"(?P<right>[A-Za-z_]\w*)\s*$"
-    )
-    for match in relation_pattern.finditer(source):
-        left, right = match.group("left"), match.group("right")
-        if left in entities and right in entities:
-            neighbors[left].add(right)
-            neighbors[right].add(left)
-    return neighbors
-
-
-def _is_multivalued_child_shape(
-    source: str,
-    name: str,
-    parent: str,
-    field: str,
-    neighbors: dict[str, set[str]],
-    base_entities: set[str],
-) -> bool:
-    if not parent or not field or parent not in base_entities:
-        return False
-    if not name.lower().startswith(parent.lower()):
-        return False
-    if (neighbors.get(name, set()) & base_entities) != {parent}:
-        return False
-    block = re.search(
-        rf'(?ms)^\s*entity\s+"[^"]+"\s+as\s+{re.escape(name)}\s*\{{(?P<body>.*?)^\s*\}}',
-        source,
-    )
-    if not block:
-        return False
-    return bool(re.search(rf"(?mi)^\s*{re.escape(field)}_value\b", block.group("body")))
 
 
 def derive_e2e_scenarios(
@@ -425,12 +281,15 @@ def kebab_case(value: str) -> str:
 camel_to_kebab = kebab_case
 
 
-def _read(path: Path | None) -> str:
-    return path.read_text(encoding="utf-8") if path and path.is_file() else ""
+def _read_json(path: Path | None) -> dict[str, object]:
+    if not path or not path.is_file():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    return value if isinstance(value, dict) else {}
 
 
 def remove_readonly(function: Any, path: str, _error: Any) -> None:
-    """Retry managed bundle cleanup when Windows marks a copied file read-only."""
+    """Windows가 복사 파일을 읽기 전용으로 표시한 경우 권한을 풀고 정리를 재시도한다."""
     try:
         os.chmod(path, stat.S_IWRITE)
     except OSError:

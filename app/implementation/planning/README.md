@@ -7,7 +7,7 @@
 
 - **입력:** 구조화된 설계 산출물과 `JobSpec`. 선택적으로
   `requirements`/`refinedRequirements`, `useCases`/`useCaseSpecs` 입력을 받는다.
-- **출력:** `ImplementationTask`와 프런트엔드 계약.
+- **출력:** `TaskSpec`과 프런트엔드 계약.
 - **부수효과:** 계획 계산은 파일, 네트워크, 별도 프로세스, LLM을 호출하지 않는
   메모리 작업이다.
 - **사용하면 안 되는 import:** `app.core` 레거시 경로와 설계 서비스 내부, 배포 실행기,

@@ -1,13 +1,13 @@
 """Design-artifact analysis and implementation task planning."""
 
 from .design_context import (
-    ImplementationTask,
+    TaskSpec,
     generate_frontend_tasks,
 )
 from .frontend_contracts import GeneratedClientContracts
 
 __all__ = [
     "GeneratedClientContracts",
-    "ImplementationTask",
+    "TaskSpec",
     "generate_frontend_tasks",
 ]

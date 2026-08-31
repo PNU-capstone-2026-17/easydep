@@ -18,15 +18,15 @@ from app.config import settings
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
+    api_operations_from_model,
     assess_bce_erd_entity_contract,
-    parse_components,
-    parse_openapi_operations,
+    entity_names,
     pascal_case,
     remove_readonly,
 )
 from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from ..planning.design_context import (
-    ImplementationTask,
+    TaskSpec,
     generate_api_adapter_tasks,
     generate_frontend_tasks,
     generate_persistence_tasks,
@@ -42,7 +42,7 @@ from .java_scaffold import (
     render_openapi_controller_scaffold,
 )
 
-OPTIONAL_DESIGN_INPUTS = ("erd", "deployment", "cloud")
+OPTIONAL_DESIGN_INPUTS = ("erdBceModel", "deploymentBundle", "cloud")
 IMPLEMENTATION_PIPELINE_VERSION = "0.6.0-strict-release"
 OPENAPI_GENERATOR_IMAGE = "openapitools/openapi-generator-cli:v7.24.0"
 GRADLE_GENERATOR_IMAGE = "gradle:8.14.2-jdk21"
@@ -83,7 +83,10 @@ def load_job(path: Path) -> JobSpec:
         workspace_root=root,
         inputs=inputs,
         required_inputs=list(
-            data.get("requiredInputs", ["bceClass", "sequence", "openapi"])
+            data.get(
+                "requiredInputs",
+                ["bceModel", "sequenceModel", "apiModel", "openapi"],
+            )
         ),
         base_package=generation.get("basePackage", "com.example.generated"),
         allow_assumptions=bool(generation.get("allowAssumptions", False)),
@@ -345,7 +348,7 @@ class PrototypeOrchestrator:
         )
         prompt_path = task_dir / "source-feedback.prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
-        task = ImplementationTask(
+        task = TaskSpec(
             task_id="apply-source-feedback",
             control="Natural-language source feedback",
             prompt_file=str(prompt_path.relative_to(staging)).replace("\\", "/"),
@@ -401,103 +404,63 @@ class PrototypeOrchestrator:
             }
 
         if self.spec.job_type != "FEEDBACK_REVISION":
-            sequence = self.spec.inputs.get("sequence")
-            if sequence and sequence.is_file() and not re.search(
-                r"(?m)^\s*[A-Za-z_]\w*\s*(?:-|--)+>+\s*[A-Za-z_]\w*\s*:",
-                sequence.read_text(encoding="utf-8"),
-            ):
+            def read_model(name: str) -> dict[str, object]:
+                path = self.spec.inputs.get(name)
+                if not path or not path.is_file():
+                    return {}
+                value = json.loads(path.read_text(encoding="utf-8"))
+                return value if isinstance(value, dict) else {}
+
+            sequence_model = read_model("sequenceModel")
+            diagrams = sequence_model.get("Diagrams", [])
+            messages = [
+                message
+                for diagram in diagrams
+                if isinstance(diagram, dict)
+                for message in diagram.get("Messages", [])
+                if isinstance(message, dict) and message.get("type") != "return"
+            ] if isinstance(diagrams, list) else []
+            if not messages:
                 self.manifest.diagnostics.append(
                     Diagnostic(
                         "SEQUENCE_HAS_NO_CALLS",
                         "ERROR",
-                        "Sequence input contains no executable participant calls.",
-                        str(sequence),
+                        "sequenceModel contains no executable participant calls.",
+                        str(self.spec.inputs.get("sequenceModel", "")),
                     )
                 )
-            openapi = self.spec.inputs.get("openapi")
-            if openapi and openapi.is_file():
-                openapi_readable = True
-                try:
-                    operations = parse_openapi_operations(
-                        openapi.read_text(encoding="utf-8")
-                    )
-                except (
-                    OSError,
-                    UnicodeDecodeError,
-                    json.JSONDecodeError,
-                    AttributeError,
-                    TypeError,
-                ) as error:
-                    self.manifest.diagnostics.append(
-                        Diagnostic(
-                            "OPENAPI_INVALID_DOCUMENT",
-                            "ERROR",
-                            f"OpenAPI input could not be read as a document: {error}",
-                            str(openapi),
-                        )
-                    )
-                    openapi_readable = False
-                    operations = []
-                if openapi_readable and not operations:
-                    self.manifest.diagnostics.append(
-                        Diagnostic(
-                            "OPENAPI_NO_OPERATIONS",
-                            "ERROR",
-                            "OpenAPI paths must contain at least one HTTP operation before implementation can start.",
-                            str(openapi),
-                        )
-                    )
-                missing = [
-                    f"{operation.method} {operation.path}"
-                    for operation in operations
-                    if not operation.operation_id
-                ]
-                for operation in missing:
-                    self.manifest.diagnostics.append(
-                        Diagnostic(
-                            "OPENAPI_MISSING_OPERATION_ID",
-                            "ERROR",
-                            f"OpenAPI operation requires operationId: {operation}",
-                            str(openapi),
-                        )
-                    )
-            deployment = self.spec.inputs.get("deployment")
-            cloud = self.spec.inputs.get("cloud")
-            intent = self.spec.inputs.get("deploymentIntent")
-            if (
-                deployment
-                and deployment.is_file()
-                and not (cloud and cloud.is_file())
-                and not (intent and intent.is_file())
-            ):
+            api_model = read_model("apiModel")
+            operations = api_operations_from_model(api_model)
+            if not operations:
                 self.manifest.diagnostics.append(
                     Diagnostic(
-                        "DEPLOYMENT_INTENT_SOURCE_MISSING",
+                        "API_MODEL_NO_OPERATIONS",
                         "ERROR",
-                        "Deployment diagram requires cloud or deploymentIntent input.",
-                        str(deployment),
+                        "apiModel must contain at least one endpoint before implementation can start.",
+                        str(self.spec.inputs.get("apiModel", "")),
                     )
                 )
-            bce = self.spec.inputs.get("bceClass")
-            erd = self.spec.inputs.get("erd")
-            bce_entities = {
-                item.name
-                for item in (
-                    parse_components(bce.read_text(encoding="utf-8"))
-                    if bce and bce.is_file()
-                    else []
-                )
-                if item.stereotype.lower() == "entity"
-            }
-            erd_source = erd.read_text(encoding="utf-8") if erd and erd.is_file() else ""
-            contract = assess_bce_erd_entity_contract(erd_source, bce_entities)
+            for operation in operations:
+                if not operation.operation_id:
+                    self.manifest.diagnostics.append(
+                        Diagnostic(
+                            "API_MODEL_MISSING_OPERATION_ID",
+                            "ERROR",
+                            f"API endpoint requires operation_id: {operation.method} {operation.path}",
+                            str(self.spec.inputs.get("apiModel", "")),
+                        )
+                    )
+            bce_model = read_model("bceModel")
+            erd_model = read_model("erdBceModel")
+            bce_entities = entity_names(bce_model)
+            contract = assess_bce_erd_entity_contract(erd_model, bce_entities)
             if bce_entities and not contract.erd_entities:
                 self.manifest.diagnostics.append(
                     Diagnostic(
                         "ERD_REQUIRED_FOR_BCE_ENTITIES",
                         "ERROR",
-                        "ERD input is required when BCE contains Entity components.",
-                        str(bce),
+                        "erdBceModel is required when bceModel contains Entity classes.",
+                        str(self.spec.inputs.get("bceModel", "")),
                     )
                 )
             elif contract.missing_bce_entities or contract.unexpected_erd_entities:
@@ -508,11 +471,11 @@ class PrototypeOrchestrator:
                         Diagnostic(
                             "BCE_ERD_ENTITY_MISMATCH",
                             "ERROR",
-                            "BCE and ERD entity aliases must match (generated physical tables are allowed): "
+                            "bceModel and erdBceModel Entity names must match: "
                             f"BCE={sorted(bce_entities)}, ERD={sorted(contract.erd_entities)}, "
                             f"unmatched ERD={sorted(unexpected_erd_entities)}, "
                             f"missing ERD={sorted(missing_erd_entities)}",
-                            str(erd),
+                            str(self.spec.inputs.get("erdBceModel", "")),
                         )
                     )
 
@@ -1006,7 +969,7 @@ public class SecurityConfiguration {{
             writer.writerow(["source_artifact", "source_sha256", "generated_file"])
             for name, metadata in sorted(self.manifest.inputs.items()):
                 for generated in self.manifest.generated_files:
-                    if (name == "bceClass" and "/bce/" in generated) or (
+                    if (name == "bceModel" and "/bce/" in generated) or (
                         name == "openapi" and ("/api/" in generated or "/api/model/" in generated)
                     ):
                         writer.writerow([name, metadata["sha256"], generated])

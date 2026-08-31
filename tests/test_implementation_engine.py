@@ -517,6 +517,7 @@ class Order <<Entity>> { - id: UUID }
             "sequence": sequence,
             "sequenceModel": sequence_model,
             "erd": erd,
+            "erdBceModel": class_model,
             "openapi": openapi,
             "apiModel": api_model,
             "refinedRequirements": requirements,

@@ -54,21 +54,22 @@ run의 전체 repair 횟수에는 숫자 상한을 두지 않는다. NIM 연결�
 - 유스케이스 묶음 작업은 같은 Control·Entity를 사용하는 Control, API/Boundary adapter와
   관련 테스트를 함께 구현한다.
 - frontend 작업은 API client, 화면과 사용자 흐름을 함께 구현한다.
-- wiring·실행 작업은 Spring 설정, 외부 연결, 실행 검사와 배포 연결을 마무리한다.
+- Spring 설정은 생성기가 만들고, wiring 작업은 실제 연결 오류가 생겼을 때만 수리한다.
 
-생성된 BCE·Java·OpenAPI 공개 계약은 읽기 전용이다. 순차 실행하는 backend 유스케이스 작업은
-`application/src/main/java`의 구현 source를 처음부터 함께 수정할 수 있다. 이 범위 안에서도
-API 파일과 BCE의 기존 공개 메서드는 바꿀 수 없다. Entity에는 기존 메서드를 보존하면서
-생성자·getter·persistence 변환·내부 helper를 추가할 수 있다. 생성된 계약 자체의 변경이
-필요하면 구현 repair가 아니라 설계 입력을 다시 만든다.
+생성된 BCE·Java·OpenAPI 공개 계약은 읽기 전용이다. 한 기능만 사용하는 package에서는
+OpenHands가 새 helper 파일도 만들 수 있다. 여러 작업이 같은 package를 공유하면 각 작업에
+기록된 파일만 수정해 병렬 실행 충돌을 막는다. Entity에는 기존 메서드를 보존하면서 생성자,
+persistence 변환과 내부 helper를 추가할 수 있다. 생성된 계약 자체의 변경이 필요하면 구현
+repair가 아니라 설계 입력을 다시 만든다.
 
-## typed sequence와 runtime 입력
+## typed 설계와 runtime 입력
 
-구현 작업의 기준 입력은 표시용 PlantUML이 아니라 `sequenceModel`이다. 작업 context의
+구현 작업의 기준 입력은 `bceModel`, `sequenceModel`, `apiModel`, `erdBceModel`과
+`deploymentBundle`이다. 표시용 PlantUML과 OpenAPI는 화면·다운로드와 외부 코드 생성기에만
+사용하며 구현 계획이 다시 정규식으로 읽지 않는다. 작업 context의
 `sequence[]`는 유스케이스(`use_case_id`), `Participants`, `Messages`를 묶어
 전달하며, 각 message의 `arguments`, `call_id`, `reply_to`, `fragments`를 그대로 보존한다.
-따라서 Control·Boundary·API·Frontend가 같은 호출 인자와 호출/반환 연결을 읽는다. PlantUML은
-사람이 다이어그램을 보는 용도로만 사용한다.
+따라서 Control·Boundary·API·Frontend가 같은 호출 인자와 호출/반환 연결을 읽는다.
 
 배포 실행 정보는 필요한 작업에만 `deployment`로 투영한다. 투영에는 `workloads[].id`,
 `interfaces`, `configuration`, `storage`와 연결된 `connections`만 들어가며, 전체 CSP 계획이나

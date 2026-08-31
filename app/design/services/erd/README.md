@@ -105,7 +105,8 @@ table, relation, Unmapped를 반환한다.
 
 `plantuml.render_logical_model`은 논리 모델을 기존 `entity "N" as N { ... }` 형태로만 그린다.
 `Unmapped`는 실제 관계인 것처럼 그리지 않는다. table과 relation 순서, 빈 줄, 1NF provenance
-주석과 crow-foot symbol은 하류 implementation parser도 소비하므로 byte-level 계약이다.
+주석과 crow-foot symbol은 사람이 데이터 구조와 생성 근거를 확인하는 표시 계약이다. 구현
+단계는 `erdBceModel`을 직접 사용하므로 이 문자열의 줄바꿈이나 주석을 다시 해석하지 않는다.
 
 - `mapping.build_logical_model(dict)`는 이전 dict 입력 호출자의 호환 facade다.
 - `reviser.revise_erd_classes(dict, ...)`는 이전 dict 수정 호출자의 호환 facade다.

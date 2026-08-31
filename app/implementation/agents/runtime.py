@@ -13,10 +13,6 @@ from app.config import settings
 from app.metrics import langsmith as langsmith_metrics
 from app.validation import RepairAttempt, RepairLedger, stable_digest
 
-from ..planning.design_context import (
-    read_generated_java_contracts,
-    referenced_openapi_model_names,
-)
 from ..workflows.conformance import entity_public_signature_violations
 from ..workflows.repair import active_repair_for_task
 from .prompts import (
@@ -51,7 +47,6 @@ from .workspace import (
     path_is_editable,
     prepare_agent_workspace,
     snapshot_files,
-    task_base_package,
 )
 
 # 하나의 기능 작업은 여러 파일을 함께 만들므로 한 대화가 중간에 끊기지 않을 만큼의
@@ -351,23 +346,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         prompt_file = str(task["prompt_file"])
     prompt = (run_root / prompt_file).read_text(encoding="utf-8")
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
-    api_model_names = (
-        set()
-        if task_type == "frontend-implementation"
-        else referenced_openapi_model_names(str(context.get("openapi", "")))
-    )
-    missing_api_models = {
-        name for name in api_model_names if f"// api/model/{name}.java" not in prompt
-    }
-    if missing_api_models and active_repair is None:
-        prompt += "\n\n## Exact generated OpenAPI model contracts\n\n```java\n"
-        prompt += read_generated_java_contracts(
-            run_root,
-            task_base_package(task),
-            set(),
-            missing_api_models,
-        )
-        prompt += "\n```\n"
     allowed_absolute = [str((sandbox / path).resolve()) for path in editable_paths]
     editable_root_absolute = [
         str((sandbox / path).resolve()) for path in editable_roots
