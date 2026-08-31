@@ -18,9 +18,11 @@
 
 ## 유스케이스 작업
 
-- planner는 `bceModel`과 `apiModel`의 `use_case_ids`를 읽는다. 같은 Control, Boundary,
-  Entity, Gateway 또는 Controller source를 수정하는 유스케이스는 한 기능 작업으로 묶는다.
-  유스케이스 개수를 세 개처럼 임의의 숫자로 자르지 않는다.
+- planner는 `bceModel`과 `apiModel`의 `use_case_ids`를 읽는다. 같은 Control이 처리하는
+  유스케이스만 한 기능 작업으로 묶는다. 같은 Boundary, Entity 또는 Controller를 공유한다는
+  이유로 서로 다른 Control의 작업을 다시 합치지 않는다.
+- 여러 작업이 같은 파일을 수정하면 `depends_on`으로 순서만 정한다. 공유 Controller에서는
+  현재 작업에 해당하는 HTTP 메서드와 경로의 미완성 표식만 검사한다.
 - 서로 다른 기능 작업은 수정 파일과 package가 겹치지 않을 때만 병렬 실행할 수 있다. 한
   기능만 사용하는 package에서는 OpenHands가 helper 파일을 추가할 수 있고, 여러 기능이
   공유하는 package에서는 계획에 기록된 파일만 수정한다.
@@ -29,5 +31,8 @@
 - 각 작업 context에는 관련 요구사항, use-case artifact, typed sequence scenario를
   넣는다. 해당 선택 입력이 없으면 빈 목록으로 명시하며, 설계에 없는 작업은 만들지
   않는다.
+- 프롬프트에는 관련 Control·Entity의 BCE 선언과 결정론적으로 만든 JPA Entity·Repository의
+  정확한 선언을 넣는다. HTTP 변환은 생성된 Controller가 담당하므로 긴 OpenAPI model 구현
+  전체를 다시 싣지 않으며, 관련 없는 읽기 전용 파일을 탐색 후보로 나열하지 않는다.
 - API schema와 Control 연결 준비도는 planner 전에 Workspace가 확인·수리한다. planner는
   통과한 API 계약을 DTO나 Control로 추정해 바꾸지 않는다.

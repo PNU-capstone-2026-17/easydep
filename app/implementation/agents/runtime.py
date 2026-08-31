@@ -87,7 +87,9 @@ class EventJournal:
     def __call__(self, event) -> None:
         event_type = event.__class__.__name__
         tool_name = getattr(event, "tool_name", None)
-        if tool_name:
+        # SDK는 한 번의 도구 사용을 ActionEvent와 ObservationEvent 두 개로 남긴다.
+        # 사용량에는 실제 요청인 ActionEvent만 세어 화면에 두 배로 보이지 않게 한다.
+        if tool_name and event_type == "ActionEvent":
             self.tool_counts[tool_name] = self.tool_counts.get(tool_name, 0) + 1
         event_payload = event.model_dump(mode="json")
         payload = {
@@ -357,9 +359,16 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         prompt += "\n\n## Enforced writable implementation roots\n\n" + "\n".join(
             f"- `{path}`" for path in editable_root_absolute
         )
-    if immutable_absolute:
+    if immutable_absolute and task_type != "use-case":
         prompt += "\n\n## Read-only generated contract paths\n\n" + "\n".join(
             f"- `{path}`" for path in immutable_absolute
+        )
+    elif immutable_absolute:
+        # 실제 편집기는 아래 경로를 계속 차단한다. 기능 task에는 관련 계약이 이미 본문에
+        # 있으므로 모든 금지 파일명을 나열해 불필요한 탐색 후보를 늘리지 않는다.
+        prompt += (
+            "\n\nOther generated API and BCE contracts are read-only. "
+            "Do not search for unrelated implementations.\n"
         )
     if readable_absolute:
         # 선행 작업이 만든 실제 source는 프롬프트에 오래된 사본으로 넣지 않는다. 실행
@@ -551,15 +560,28 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 # EasyDep은 source를 정규식으로 고치지 않는다. OpenHands가 현재 파일과
                 # compiler/test 결과를 보고 수정하며, 공개 계약은 최종 conformance 검사에서
                 # 별도로 보호한다. 실제 HTTP 흐름 검사는 wiring 작업의 FlowTest에 포함된다.
-                controller_body_paths = context.get("controllerBodyPaths", [])
-                unfinished_controllers: list[str] = []
-                if isinstance(controller_body_paths, list):
-                    for path in controller_body_paths:
-                        if not isinstance(path, str) or not (sandbox / path).is_file():
-                            continue
-                        source = (sandbox / path).read_text(encoding="utf-8")
-                        if "EASYDEP_CONTROLLER_BODY_REQUIRED" in source:
-                            unfinished_controllers.append(path)
+                controller_paths = context.get("controllerPaths", [])
+                controller_markers = context.get("controllerBodyMarkers", [])
+                controller_sources = (
+                    {
+                        path: (sandbox / path).read_text(encoding="utf-8")
+                        for path in controller_paths
+                        if isinstance(path, str) and (sandbox / path).is_file()
+                    }
+                    if isinstance(controller_paths, list)
+                    else {}
+                )
+                unfinished_controllers = (
+                    [
+                        (marker, path)
+                        for marker in controller_markers
+                        if isinstance(marker, str)
+                        for path, source in controller_sources.items()
+                        if marker in source
+                    ]
+                    if isinstance(controller_markers, list)
+                    else []
+                )
                 if unfinished_controllers:
                     raise WorkspaceVerificationError(
                         {
@@ -568,8 +590,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             "durationMs": 0,
                             "stdout": "",
                             "stderr": "\n".join(
-                                f"Unimplemented Controller body: {path}"
-                                for path in unfinished_controllers
+                                f"Unimplemented Controller body {marker}: {path}"
+                                for marker, path in unfinished_controllers
                             ),
                             "testResults": "",
                         }

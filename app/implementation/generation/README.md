@@ -97,7 +97,7 @@ OpenAPI Generator가 만든 Java interface의 경로, annotation과 method signa
 
 API schema와 BCE 값 객체의 필드 이름·타입이 모두 대응하는 경우에만 요청과 성공 응답의 변환
 본문을 함께 만든다. `UUID`나 날짜처럼 표준 변환 방법이 있는 값도 이 범위에 포함한다. 다음
-경우에는 컴파일 가능한 `EASYDEP_CONTROLLER_BODY_REQUIRED` 표식을 남긴다.
+경우에는 컴파일 가능한 `EASYDEP_CONTROLLER_BODY_REQUIRED:HTTP메서드:경로` 표식을 남긴다.
 
 - API가 요구하는 필드가 BCE 결과에 없는 경우
 - 설계 타입이 `Object`로 남은 경우
@@ -105,6 +105,8 @@ API schema와 BCE 값 객체의 필드 이름·타입이 모두 대응하는 경
 - typed 모델만으로는 의미 있는 결과 변환을 정할 수 없는 경우
 
 표식이 있는 method는 해당 기능의 OpenHands 작업이 실제 요구사항과 테스트를 보면서 완성한다.
+공유 Controller에 다른 기능의 표식이 함께 있어도 현재 작업은 자신에게 배정된 HTTP 메서드와
+경로만 확인한다. 모든 기능 작업이 끝나면 완료 검사에서 전체 표식이 사라졌는지 한 번 더 본다.
 생성기는 누락 값을 `UNKNOWN`, `null` 또는 임의 ID로 채우지 않는다. HTTP Controller는 명시된
 Control을 직접 호출하므로 API에만 존재하는 path/query 값도 중간 Boundary 객체에서 잃지 않는다.
 Boundary interface 자체는 BCE 설계 계약으로 계속 생성하지만 별도의 중복 adapter는 만들지 않는다.

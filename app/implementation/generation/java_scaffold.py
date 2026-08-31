@@ -4,6 +4,7 @@
 ``BCEModel`` JSON을 검증한 뒤, 같은 입력에는 항상 같은 경로와 같은 UTF-8 내용을 만든다.
 생성 결과는 이후 LLM 구현 작업이 따라야 하는 공개 계약이며 업무 동작을 추측하지 않는다.
 """
+
 from __future__ import annotations
 
 import re
@@ -21,20 +22,68 @@ from app.design.schemas.class_model import (
 from app.design.services.api_spec.models import ApiEndpoint, ApiSpecModel
 
 JAVA_SCAFFOLDER_VERSION = "1.3.0"
+CONTROLLER_BODY_REQUIRED = "EASYDEP_CONTROLLER_BODY_REQUIRED"
 
 _JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
-_FIELD = re.compile(
-    r"^\s*[+#~\-]?\s*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?P<type>.+?)\s*$"
+_FIELD = re.compile(r"^\s*[+#~\-]?\s*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?P<type>.+?)\s*$")
+_JAVA_KEYWORDS = frozenset(
+    {
+        "abstract",
+        "assert",
+        "boolean",
+        "break",
+        "byte",
+        "case",
+        "catch",
+        "char",
+        "class",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "extends",
+        "final",
+        "finally",
+        "float",
+        "for",
+        "goto",
+        "if",
+        "implements",
+        "import",
+        "instanceof",
+        "int",
+        "interface",
+        "long",
+        "native",
+        "new",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "short",
+        "static",
+        "strictfp",
+        "super",
+        "switch",
+        "synchronized",
+        "this",
+        "throw",
+        "throws",
+        "transient",
+        "try",
+        "void",
+        "volatile",
+        "while",
+        "record",
+        "sealed",
+        "permits",
+        "yield",
+    }
 )
-_JAVA_KEYWORDS = frozenset({
-    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
-    "class", "const", "continue", "default", "do", "double", "else", "enum",
-    "extends", "final", "finally", "float", "for", "goto", "if", "implements",
-    "import", "instanceof", "int", "interface", "long", "native", "new", "package",
-    "private", "protected", "public", "return", "short", "static", "strictfp",
-    "super", "switch", "synchronized", "this", "throw", "throws", "transient",
-    "try", "void", "volatile", "while", "record", "sealed", "permits", "yield",
-})
 _TYPE_ALIASES = {
     "string": "String",
     "integer": "Integer",
@@ -59,17 +108,13 @@ _IMPORTS = {
     "Optional": "java.util.Optional",
     "UUID": "java.util.UUID",
 }
-_JAVA_INTERFACE = re.compile(
-    r"\bpublic\s+interface\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b[^\{]*\{"
-)
+_JAVA_INTERFACE = re.compile(r"\bpublic\s+interface\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b[^\{]*\{")
 _JAVA_IMPORT = re.compile(r"(?m)^import\s+[^;]+;$")
 _OPENAPI_METHOD = re.compile(
     r"(?ms)(?P<mapping>@RequestMapping\s*\(.*?\))\s*"
     r"(?P<signature>(?:(?:public|abstract|default)\s+)*[A-Za-z_$][^;{}]*?)\s*;"
 )
-_PATH_CONSTANT = re.compile(
-    r'\bString\s+(?P<name>[A-Z][A-Z0-9_]*)\s*=\s*"(?P<path>[^"]+)"\s*;'
-)
+_PATH_CONSTANT = re.compile(r'\bString\s+(?P<name>[A-Z][A-Z0-9_]*)\s*=\s*"(?P<path>[^"]+)"\s*;')
 
 
 class JavaScaffoldInput(BaseModel):
@@ -121,14 +166,10 @@ class JavaScaffoldInput(BaseModel):
                 for operation in component.operations:
                     _require_identifier(operation.name, "operation name")
                     for parameter in operation.parameters:
-                        _require_identifier(
-                            parameter.name, f"parameter in {operation.name}"
-                        )
+                        _require_identifier(parameter.name, f"parameter in {operation.name}")
         if self.erd_bce_model is not None:
             class_entities = {
-                item.class_name
-                for item in self.bce_model.Classes
-                if item.stereotype == "Entity"
+                item.class_name for item in self.bce_model.Classes if item.stereotype == "Entity"
             }
             erd_entities = {
                 item.class_name
@@ -136,15 +177,11 @@ class JavaScaffoldInput(BaseModel):
                 if item.stereotype == "Entity"
             }
             if class_entities != erd_entities:
-                raise ValueError(
-                    "bceModel and erdBceModel must contain the same Entity names"
-                )
+                raise ValueError("bceModel and erdBceModel must contain the same Entity names")
             class_relations = _entity_relation_pairs(self.bce_model, class_entities)
             erd_relations = _entity_relation_pairs(self.erd_bce_model, erd_entities)
             if class_relations != erd_relations:
-                raise ValueError(
-                    "bceModel and erdBceModel contain different Entity relationships"
-                )
+                raise ValueError("bceModel and erdBceModel contain different Entity relationships")
 
         # API schemas and BCE components intentionally use different Java
         # packages (``.api.model`` and ``.bce``).  A domain entity such as
@@ -184,44 +221,48 @@ def render_java_scaffold(scaffold: JavaScaffoldInput) -> dict[str, str]:
         _require_identifier(component.class_name, "className")
         if component.stereotype == "Entity" and component.class_name in erd_entities:
             erd_component = erd_entities[component.class_name]
-            component = component.model_copy(update={
-                "fields": list(erd_component.fields),
-                "identifier": list(erd_component.identifier),
-            })
+            component = component.model_copy(
+                update={
+                    "fields": list(erd_component.fields),
+                    "identifier": list(erd_component.identifier),
+                }
+            )
         files[f"{package_path}/{component.class_name}.java"] = _render_component(
             package_name, component, declared_types
         )
     return dict(sorted(files.items()))
 
 
-def build_java_scaffold_trace(
-    scaffold: JavaScaffoldInput, files: dict[str, str]
-) -> dict[str, Any]:
+def build_java_scaffold_trace(scaffold: JavaScaffoldInput, files: dict[str, str]) -> dict[str, Any]:
     """생성 파일을 BCE class·operation·use case와 연결하는 추적 정보를 만든다."""
     path_by_name = {path.rsplit("/", 1)[-1].removesuffix(".java"): path for path in files}
     mappings: list[dict[str, Any]] = []
     for component in sorted(scaffold.bce_model.Classes, key=lambda item: item.class_name):
-        mappings.append({
-            "file": path_by_name[component.class_name],
-            "type": component.class_name,
-            "kind": component.stereotype,
-            "useCaseIds": sorted(set(component.use_case_ids)),
-            "operations": [
-                {
-                    "operationId": operation.operation_id,
-                    "stepRefs": list(operation.step_refs),
-                }
-                for operation in component.operations
-            ],
-        })
+        mappings.append(
+            {
+                "file": path_by_name[component.class_name],
+                "type": component.class_name,
+                "kind": component.stereotype,
+                "useCaseIds": sorted(set(component.use_case_ids)),
+                "operations": [
+                    {
+                        "operationId": operation.operation_id,
+                        "stepRefs": list(operation.step_refs),
+                    }
+                    for operation in component.operations
+                ],
+            }
+        )
     for data_type in sorted(scaffold.bce_model.DataTypes, key=lambda item: item.name):
-        mappings.append({
-            "file": path_by_name[data_type.name],
-            "type": data_type.name,
-            "kind": data_type.kind,
-            "useCaseIds": [],
-            "operations": [],
-        })
+        mappings.append(
+            {
+                "file": path_by_name[data_type.name],
+                "type": data_type.name,
+                "kind": data_type.kind,
+                "useCaseIds": [],
+                "operations": [],
+            }
+        )
     return {
         "schemaVersion": "easydep-java-scaffold-trace/v1",
         "generatorVersion": JAVA_SCAFFOLDER_VERSION,
@@ -258,51 +299,42 @@ def render_openapi_controller_scaffold(
     for match in _OPENAPI_METHOD.finditer(interface_source):
         mapping = match.group("mapping")
         signature = match.group("signature")
+        endpoint: ApiEndpoint | None = None
         body: list[str] | None = None
         if api_model is not None and bce_model is not None:
             endpoint = _endpoint_for_mapping(mapping, constants, api_model)
             if endpoint is not None:
-                rendered = _controller_body(
-                    endpoint, signature, api_model, bce_model, base_package
-                )
+                rendered = _controller_body(endpoint, signature, api_model, bce_model, base_package)
                 if rendered is not None:
                     control_name, body = rendered
                     dependencies[control_name] = _field_name(control_name)
                     mapper_needed = mapper_needed or body is not None
-        methods.append(_render_controller_method(mapping, signature, body))
-    if not methods:
-        raise ValueError(
-            f"Generated OpenAPI interface {interface_name} has no overridable methods"
+        marker = (
+            controller_body_marker(endpoint.method, endpoint.path)
+            if endpoint is not None
+            else f"{CONTROLLER_BODY_REQUIRED}:{_java_method_parts(signature)[0]}"
         )
+        methods.append(_render_controller_method(mapping, signature, body, marker=marker))
+    if not methods:
+        raise ValueError(f"Generated OpenAPI interface {interface_name} has no overridable methods")
     controller_name = f"{interface_name}Controller"
-    imports = {
-        item.strip()
-        for item in _JAVA_IMPORT.findall(interface_source)
-    }
+    imports = {item.strip() for item in _JAVA_IMPORT.findall(interface_source)}
     imports.add(f"import {base_package}.api.{interface_name};")
     imports.add("import org.springframework.web.bind.annotation.RestController;")
-    imports.update(
-        f"import {base_package}.bce.{name};" for name in dependencies
-    )
+    imports.update(f"import {base_package}.bce.{name};" for name in dependencies)
     if mapper_needed:
         imports.add("import com.fasterxml.jackson.databind.ObjectMapper;")
 
-    fields = [
-        f"    private final {name} {field};"
-        for name, field in sorted(dependencies.items())
-    ]
+    fields = [f"    private final {name} {field};" for name, field in sorted(dependencies.items())]
     if mapper_needed:
         fields.append("    private final ObjectMapper objectMapper;")
     constructor = ""
     if fields:
-        parameters = [
-            f"{name} {field}" for name, field in sorted(dependencies.items())
-        ]
+        parameters = [f"{name} {field}" for name, field in sorted(dependencies.items())]
         if mapper_needed:
             parameters.append("ObjectMapper objectMapper")
         assignments = [
-            f"        this.{field} = {field};"
-            for _name, field in sorted(dependencies.items())
+            f"        this.{field} = {field};" for _name, field in sorted(dependencies.items())
         ]
         if mapper_needed:
             assignments.append("        this.objectMapper = objectMapper;")
@@ -332,11 +364,11 @@ def _render_controller_method(
     mapping: str,
     signature: str,
     body: list[str] | None = None,
+    *,
+    marker: str,
 ) -> str:
     """생성 interface 선언을 보존하고 확인된 호출 본문 또는 표식을 넣는다."""
-    signature = re.sub(
-        r"^(?:(?:public|abstract|default)\s+)+", "", signature.strip()
-    )
+    signature = re.sub(r"^(?:(?:public|abstract|default)\s+)+", "", signature.strip())
     if "(" not in signature or ")" not in signature:
         raise ValueError("Generated OpenAPI method declaration is incomplete")
     rendered = textwrap.indent(mapping.strip(), "    ") + "\n"
@@ -344,14 +376,17 @@ def _render_controller_method(
     rendered += "    public " + textwrap.indent(signature, "    ").lstrip()
     rendered += " {\n"
     if body is None:
-        rendered += (
-            '        throw new UnsupportedOperationException('
-            '"EASYDEP_CONTROLLER_BODY_REQUIRED");\n'
-        )
+        rendered += f'        throw new UnsupportedOperationException("{marker}");\n'
     else:
         rendered += "\n".join(f"        {line}" for line in body) + "\n"
     rendered += "    }"
     return rendered
+
+
+def controller_body_marker(method: str, path: str) -> str:
+    """API 작업과 생성 Controller가 함께 쓰는 읽기 쉬운 미완성 본문 표식이다."""
+
+    return f"{CONTROLLER_BODY_REQUIRED}:{method.upper()}:{path}"
 
 
 def _endpoint_for_mapping(
@@ -368,9 +403,7 @@ def _endpoint_for_mapping(
     )
     if method_match is None or value_match is None:
         return None
-    path = value_match.group("literal") or constants.get(
-        value_match.group("constant") or "", ""
-    )
+    path = value_match.group("literal") or constants.get(value_match.group("constant") or "", "")
     matches = [
         endpoint
         for endpoint in api_model.Endpoints
@@ -395,8 +428,7 @@ def _controller_body(
         (
             component
             for component in bce_model.Classes
-            if component.stereotype == "Control"
-            and component.class_name == binding.control
+            if component.stereotype == "Control" and component.class_name == binding.control
         ),
         None,
     )
@@ -409,9 +441,7 @@ def _controller_body(
     if operation is None:
         return None
     sources = _http_parameter_sources(signature)
-    binding_sources = {
-        item.name: item.source for item in binding.arguments
-    }
+    binding_sources = {item.name: item.source for item in binding.arguments}
     success = next(
         (response for response in endpoint.responses if 200 <= response.status < 300),
         None,
@@ -433,15 +463,10 @@ def _controller_body(
         expression = _http_source_expression(source, sources)
         if expression is None:
             return None
-        target_type = _qualified_bce_type(
-            parameter.type, base_package, declared_types
-        )
+        target_type = _qualified_bce_type(parameter.type, base_package, declared_types)
         arguments.append(_object_mapper_conversion(expression, target_type))
 
-    call = (
-        f"{_field_name(control.class_name)}.{operation.name}"
-        f"({', '.join(arguments)})"
-    )
+    call = f"{_field_name(control.class_name)}.{operation.name}({', '.join(arguments)})"
     _method_name, return_type, _parameters = _java_method_parts(signature)
     response_type = _response_body_type(return_type)
     if response_type in {None, "Void", "void"}:
@@ -459,9 +484,7 @@ def _controller_body(
             f".map(item -> objectMapper.convertValue(item, {item_type}.class)).toList();"
         )
     else:
-        body.append(
-            f"var response = {_object_mapper_conversion('result', response_type)};"
-        )
+        body.append(f"var response = {_object_mapper_conversion('result', response_type)};")
     body.append(f"return ResponseEntity.status({success.status}).body(response);")
     return control.class_name, body
 
@@ -554,9 +577,7 @@ def _qualified_bce_type(
 ) -> str:
     result = java_type(design_type, declared_types=declared_types)
     for name in sorted(declared_types, key=len, reverse=True):
-        result = re.sub(
-            rf"\b{re.escape(name)}\b", f"{base_package}.bce.{name}", result
-        )
+        result = re.sub(rf"\b{re.escape(name)}\b", f"{base_package}.bce.{name}", result)
     standard_types = {
         "BigDecimal": "java.math.BigDecimal",
         "LocalDate": "java.time.LocalDate",
@@ -623,9 +644,7 @@ def _controller_types_are_complete(
         return False
     if not response.schema_name:
         return operation.return_type == "void"
-    api_type = (
-        f"list<{response.schema_name}>" if response.is_array else response.schema_name
-    )
+    api_type = f"list<{response.schema_name}>" if response.is_array else response.schema_name
     source_type, source_optional = _without_optional(operation.return_type)
     if source_optional:
         return False
@@ -656,10 +675,14 @@ def _api_source_contract(
             None,
         )
         field_name = source.removeprefix("$body.")
-        field = next(
-            (item for item in schema.fields if item.name == field_name),
-            None,
-        ) if schema is not None else None
+        field = (
+            next(
+                (item for item in schema.fields if item.name == field_name),
+                None,
+            )
+            if schema is not None
+            else None
+        )
         return (field.type, field.required) if field is not None else None
     for prefix, fields in (
         ("$path.", endpoint.path_params),
@@ -687,9 +710,15 @@ def _types_are_structurally_compatible(
     bce_container, bce_item = _container_type(bce_type)
     if api_container != bce_container:
         # OpenAPI의 integer[]는 BCE의 byte[]를 손실 없이 표현한다.
-        return api_container == "list" and api_item.casefold() in {
-            "integer", "int",
-        } and bce_container == "binary"
+        return (
+            api_container == "list"
+            and api_item.casefold()
+            in {
+                "integer",
+                "int",
+            }
+            and bce_container == "binary"
+        )
     if api_container == "list":
         return _types_are_structurally_compatible(
             api_item,
@@ -710,13 +739,25 @@ def _types_are_structurally_compatible(
         ({"number", "decimal", "bigdecimal"}, {"decimal", "bigdecimal"}),
         ({"boolean", "bool"}, {"boolean", "bool"}),
     )
-    if any(api_name in api_names and bce_name in bce_names for api_names, bce_names in scalar_pairs):
+    if any(
+        api_name in api_names and bce_name in bce_names for api_names, bce_names in scalar_pairs
+    ):
         return True
     if api_name == bce_name and api_name not in {"object", "any"}:
         # 이름이 같은 값 객체는 아래에서 필드까지 확인하고, 알려진 Java scalar는 여기서 끝난다.
         if api_name in {
-            "string", "uuid", "localdate", "localdatetime", "localtime",
-            "integer", "int", "number", "decimal", "bigdecimal", "boolean", "bool",
+            "string",
+            "uuid",
+            "localdate",
+            "localdatetime",
+            "localtime",
+            "integer",
+            "int",
+            "number",
+            "decimal",
+            "bigdecimal",
+            "boolean",
+            "bool",
         }:
             return True
 
@@ -820,9 +861,7 @@ def _container_type(value: str) -> tuple[str, str]:
     return "scalar", compact
 
 
-def _render_data_type(
-    package_name: str, data_type: DataType, declared_types: set[str]
-) -> str:
+def _render_data_type(package_name: str, data_type: DataType, declared_types: set[str]) -> str:
     """설계 DataType을 enum 또는 record로 렌더링한다."""
     if data_type.kind == "enumeration":
         values = []
@@ -848,9 +887,7 @@ def _render_data_type(
         )
         record_body = f"(\n{declarations}\n)"
     else:
-        declarations = ", ".join(
-            f"{field_type} {name}" for name, field_type, _todo_type in fields
-        )
+        declarations = ", ".join(f"{field_type} {name}" for name, field_type, _todo_type in fields)
         record_body = f"({declarations})"
     return (
         f"package {package_name};\n\n{imports}"
@@ -871,9 +908,7 @@ def _render_component(
         )
         signature = f"{operation.name}({parameter_types})"
         if signature in signatures:
-            raise ValueError(
-                f"{component.class_name} emits duplicate Java signature: {signature}"
-            )
+            raise ValueError(f"{component.class_name} emits duplicate Java signature: {signature}")
         signatures.add(signature)
     methods = [_method_declaration(operation, declared_types) for operation in component.operations]
     fields = [
@@ -888,9 +923,9 @@ def _render_component(
         for operation in component.operations
         for parameter in operation.parameters
     ]
-    imports = _render_imports([
-        *method_types, *(field_type for _name, field_type, _todo_type in fields)
-    ])
+    imports = _render_imports(
+        [*method_types, *(field_type for _name, field_type, _todo_type in fields)]
+    )
     header = f"package {package_name};\n\n{imports}"
     if component.stereotype in {"Boundary", "Control"}:
         interface_methods = "\n".join(
@@ -931,9 +966,7 @@ def java_type(design_type: str, *, declared_types: set[str] | None = None) -> st
     return _java_type(design_type, declared_types=declared_types or set())[0]
 
 
-def _java_type(
-    design_type: str, *, declared_types: set[str]
-) -> tuple[str, str | None]:
+def _java_type(design_type: str, *, declared_types: set[str]) -> tuple[str, str | None]:
     """작은 변환표만 적용하고, 모르는 원문은 TODO를 위해 함께 돌려준다."""
     source = re.sub(r"\s+", "", str(design_type))
     if not source:
@@ -953,9 +986,7 @@ def _java_type(
         r"(?P<outer>List|Array|Optional)<(?P<argument>.+)>", source, re.IGNORECASE
     )
     if generic is not None:
-        argument, todo_type = _java_type(
-            generic.group("argument"), declared_types=declared_types
-        )
+        argument, todo_type = _java_type(generic.group("argument"), declared_types=declared_types)
         return f"{_GENERIC_TYPES[generic.group('outer').casefold()]}<{argument}>", (
             source if todo_type else None
         )
@@ -974,15 +1005,11 @@ def _method_declaration(
     todo_types: list[str] = []
     for parameter in operation.parameters:
         _require_identifier(parameter.name, f"parameter in {operation.name}")
-        parameter_type, todo_type = _java_type(
-            parameter.type, declared_types=declared_types
-        )
+        parameter_type, todo_type = _java_type(parameter.type, declared_types=declared_types)
         parameters.append(f"{parameter_type} {parameter.name}")
         if todo_type:
             todo_types.append(todo_type)
-    return_type, todo_type = _java_type(
-        operation.return_type, declared_types=declared_types
-    )
+    return_type, todo_type = _java_type(operation.return_type, declared_types=declared_types)
     if todo_type:
         todo_types.append(todo_type)
     return (
@@ -1001,22 +1028,22 @@ def _parse_field(value: str, *, owner: str) -> tuple[str, str]:
     return name, match.group("type")
 
 
-def _field(
-    value: str, *, owner: str, declared_types: set[str]
-) -> tuple[str, str, str | None]:
+def _field(value: str, *, owner: str, declared_types: set[str]) -> tuple[str, str, str | None]:
     name, design_type = _parse_field(value, owner=owner)
     field_type, todo_type = _java_type(design_type, declared_types=declared_types)
     return name, field_type, todo_type
 
 
 def _render_imports(types: Any) -> str:
-    imports = sorted({
-        import_path
-        for value in types
-        for token, import_path in _IMPORTS.items()
-        if re.search(rf"\b{re.escape(token)}\b", value)
-        and not import_path.startswith("java.lang.")
-    })
+    imports = sorted(
+        {
+            import_path
+            for value in types
+            for token, import_path in _IMPORTS.items()
+            if re.search(rf"\b{re.escape(token)}\b", value)
+            and not import_path.startswith("java.lang.")
+        }
+    )
     if not imports:
         return ""
     return "".join(f"import {path};\n" for path in imports) + "\n"
@@ -1037,9 +1064,7 @@ def _require_identifier(value: str, label: str) -> None:
         raise ValueError(f"{label} is not a valid Java identifier: {value}")
 
 
-def _entity_relation_pairs(
-    model: BCEModel, entity_names: set[str]
-) -> set[tuple[str, str]]:
+def _entity_relation_pairs(model: BCEModel, entity_names: set[str]) -> set[tuple[str, str]]:
     return {
         (
             min(relation.source, relation.target),

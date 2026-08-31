@@ -36,28 +36,32 @@ def _payload() -> dict[str, object]:
                     "className": "OrderBoundary",
                     "stereotype": "Boundary",
                     "use_case_ids": ["UC-ORDER"],
-                    "operations": [{
-                        "operationId": "입력값은 BCEModel이 다시 계산한다",
-                        "name": "submit",
-                        "parameters": [{"name": "request", "type": "OrderRequest"}],
-                        "returnType": "OrderReceipt",
-                        "stepRefs": ["UC-ORDER:main:1"],
-                    }],
+                    "operations": [
+                        {
+                            "operationId": "입력값은 BCEModel이 다시 계산한다",
+                            "name": "submit",
+                            "parameters": [{"name": "request", "type": "OrderRequest"}],
+                            "returnType": "OrderReceipt",
+                            "stepRefs": ["UC-ORDER:main:1"],
+                        }
+                    ],
                 },
                 {
                     "className": "OrderControl",
                     "stereotype": "Control",
                     "use_case_ids": ["UC-ORDER"],
-                    "operations": [{
-                        "operationId": "입력값은 BCEModel이 다시 계산한다",
-                        "name": "place",
-                        "parameters": [
-                            {"name": "request", "type": "OrderRequest"},
-                            {"name": "attempt", "type": "integer"},
-                        ],
-                        "returnType": "optional<OrderReceipt>",
-                        "stepRefs": ["UC-ORDER:main:2"],
-                    }],
+                    "operations": [
+                        {
+                            "operationId": "입력값은 BCEModel이 다시 계산한다",
+                            "name": "place",
+                            "parameters": [
+                                {"name": "request", "type": "OrderRequest"},
+                                {"name": "attempt", "type": "integer"},
+                            ],
+                            "returnType": "optional<OrderReceipt>",
+                            "stepRefs": ["UC-ORDER:main:2"],
+                        }
+                    ],
                 },
                 {
                     "className": "Order",
@@ -127,7 +131,8 @@ def _render() -> dict[str, str]:
 
 def _source(files: dict[str, str], type_name: str) -> str:
     matches = [
-        source for path, source in files.items()
+        source
+        for path, source in files.items()
         if path.replace("\\", "/").endswith(f"/{type_name}.java")
     ]
     assert len(matches) == 1
@@ -197,9 +202,7 @@ def test_erd_entities_generate_persistence_without_an_llm_mapper() -> None:
 
     files = render_persistence_scaffold(model, "com.example.orders")
 
-    entity = files[
-        "src/main/java/com/example/orders/persistence/entity/OrderEntity.java"
-    ]
+    entity = files["src/main/java/com/example/orders/persistence/entity/OrderEntity.java"]
     repository = files[
         "src/main/java/com/example/orders/persistence/repository/OrderRepository.java"
     ]
@@ -242,9 +245,7 @@ public interface OrdersApi {
 }
 """
 
-    controller_name, source = render_openapi_controller_scaffold(
-        interface, "com.example.orders"
-    )
+    controller_name, source = render_openapi_controller_scaffold(interface, "com.example.orders")
 
     assert controller_name == "OrdersApiController"
     assert "public class OrdersApiController implements OrdersApi" in source
@@ -258,6 +259,7 @@ public interface OrdersApi {
     assert '@PathVariable("orderId") String orderId' in source
     assert "@Valid @RequestBody CreateOrderRequest request" in source
     assert source.count("EASYDEP_CONTROLLER_BODY_REQUIRED") == 1
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED:submitOrderWithLongOperationIdentifier" in source
 
 
 def test_controller_scaffold_connects_typed_control_without_llm_rewrite() -> None:
@@ -319,9 +321,7 @@ public interface OrdersApi {
                 },
                 {
                     "name": "OrderReceipt",
-                    "fields": [
-                        {"name": "accepted", "type": "boolean", "required": True}
-                    ],
+                    "fields": [{"name": "accepted", "type": "boolean", "required": True}],
                 },
             ],
         }
@@ -336,7 +336,9 @@ public interface OrdersApi {
 
     assert "private final OrderControl orderControl;" in source
     assert "private final ObjectMapper objectMapper;" in source
-    assert "public OrdersApiController(OrderControl orderControl, ObjectMapper objectMapper)" in source
+    assert (
+        "public OrdersApiController(OrderControl orderControl, ObjectMapper objectMapper)" in source
+    )
     assert "var result = orderControl.place(" in source
     assert "com.example.orders.bce.OrderRequest.class" in source
     assert "return ResponseEntity.status(201).body(response);" in source
@@ -361,9 +363,7 @@ def test_controller_keeps_llm_body_when_typed_fields_do_not_match() -> None:
                     "method": "POST",
                     "path": "/orders",
                     "request_schema": "OrderRequest",
-                    "responses": [
-                        {"status": 201, "schema_name": "OrderReceipt"}
-                    ],
+                    "responses": [{"status": 201, "schema_name": "OrderReceipt"}],
                     "control_binding": {
                         "control": "OrderControl",
                         "method": "place",
@@ -407,7 +407,7 @@ public interface OrdersApi {
     )
 
     assert "private final OrderControl orderControl;" in source
-    assert "EASYDEP_CONTROLLER_BODY_REQUIRED" in source
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED:POST:/orders" in source
     assert "ObjectMapper objectMapper" not in source
     assert "missingValue" not in source
 

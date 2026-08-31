@@ -18,7 +18,7 @@ ENV PYTHONUTF8=1
 # and classpath snapshotting perform many small file operations, which are
 # disproportionately slow on that mount. Keep the cache in the Linux runner
 # filesystem for the lifetime of one member workflow instead.
-ENV GRADLE_USER_HOME=/opt/easydep/gradle-cache
+ENV GRADLE_USER_HOME=/tmp/easydep-gradle-cache
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \

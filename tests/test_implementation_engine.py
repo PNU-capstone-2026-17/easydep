@@ -27,6 +27,7 @@ from app.implementation.agents.workspace import (
 from app.implementation.delivery.container import render_deployment
 from app.implementation.delivery.terraform import render_iac
 from app.implementation.domain.models import JobSpec
+from app.implementation.workflows.completion import audit_run_completion
 from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
     capture_generated_contracts,
@@ -64,9 +65,7 @@ def test_final_workspace_verification_publishes_success_report(
     ):
         result = verify_run_workspace(run)
 
-    report = json.loads(
-        (run / "reports/final-verification.json").read_text(encoding="utf-8")
-    )
+    report = json.loads((run / "reports/final-verification.json").read_text(encoding="utf-8"))
     assert result["status"] == "SUCCEEDED"
     assert report["verification"] == verification
 
@@ -126,7 +125,9 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
         ["application/src/test/java/com/example/OrderScenarioTest.java"],
     ) == ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"]
     assert task_verification_command(["gradlew"]) == [
-        "gradlew", "test", "--build-cache",
+        "gradlew",
+        "test",
+        "--build-cache",
     ]
 
 
@@ -348,6 +349,50 @@ def test_verification_failure_continues_the_same_openhands_conversation(
     assert "int repaired" in source.read_text(encoding="utf-8")
 
 
+def test_completion_audit_rejects_an_unfinished_controller_body(
+    tmp_path: Path,
+) -> None:
+    """파일이 있어도 Controller 미완성 본문이 남으면 구현 완료로 보지 않는다."""
+    run = tmp_path / "run"
+    reports = run / "reports"
+    controller = run / "application/src/main/java/example/OrdersApiController.java"
+    context = reports / "implementation-tasks/orders.context.json"
+    controller.parent.mkdir(parents=True)
+    context.parent.mkdir(parents=True)
+    controller.write_text(
+        'throw new UnsupportedOperationException("EASYDEP_CONTROLLER_BODY_REQUIRED:POST:/orders");',
+        encoding="utf-8",
+    )
+    context.write_text(
+        json.dumps(
+            {"controllerPaths": ["application/src/main/java/example/OrdersApiController.java"]}
+        ),
+        encoding="utf-8",
+    )
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": "implement-orders",
+                        "task_type": "use-case",
+                        "context_file": "reports/implementation-tasks/orders.context.json",
+                        "required_output_paths": [
+                            "application/src/main/java/example/OrdersApiController.java"
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = audit_run_completion(run)
+
+    assert report["status"] == "INCOMPLETE"
+    assert "Unimplemented Controller body remains" in report["backlog"][0]["evidence"][0]
+
+
 @pytest.mark.parametrize(
     ("old_status", "result_prompt"),
     [("SUCCEEDED", "prompt-v1"), ("RUNNING", "prompt-before-replay")],
@@ -426,12 +471,24 @@ class Order <<Entity>> { - id: UUID }
         encoding="utf-8",
     )
     class_model_payload = typed_class_model_payload()
-    class_model_payload["Classes"].extend([
-        {"className": "Order", "stereotype": "Entity", "use_case_ids": ["UC1"],
-         "identifier": ["id"], "fields": ["id : UUID"], "operations": []},
-        {"className": "CancelControl", "stereotype": "Control", "use_case_ids": ["UC2"],
-         "operations": []},
-    ])
+    class_model_payload["Classes"].extend(
+        [
+            {
+                "className": "Order",
+                "stereotype": "Entity",
+                "use_case_ids": ["UC1"],
+                "identifier": ["id"],
+                "fields": ["id : UUID"],
+                "operations": [],
+            },
+            {
+                "className": "CancelControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC2"],
+                "operations": [],
+            },
+        ]
+    )
     class_model = design / "class-model.json"
     class_model.write_text(json.dumps(class_model_payload), encoding="utf-8")
     sequence_model = design / "sequence-model.json"
@@ -439,31 +496,74 @@ class Order <<Entity>> { - id: UUID }
     sequence = design / "sequence.puml"
     sequence.write_text("OrderBoundary -> OrderControl : place(request)\n", encoding="utf-8")
     requirements = design / "requirements.json"
-    requirements.write_text(json.dumps([
-        {"id": "FR-ORDER", "use_case_ids": ["UC1"]},
-        {"id": "FR-CANCEL", "use_case_ids": ["UC2"]},
-    ]), encoding="utf-8")
+    requirements.write_text(
+        json.dumps(
+            [
+                {"id": "FR-ORDER", "use_case_ids": ["UC1"]},
+                {"id": "FR-CANCEL", "use_case_ids": ["UC2"]},
+            ]
+        ),
+        encoding="utf-8",
+    )
     use_case_specs = design / "use-case-specs.json"
-    use_case_specs.write_text(json.dumps([
-        {"id": "UC1", "use_case_id": "UC1", "name": "Place order"},
-        {"id": "UC2", "use_case_id": "UC2", "name": "Cancel order"},
-    ]), encoding="utf-8")
+    use_case_specs.write_text(
+        json.dumps(
+            [
+                {"id": "UC1", "use_case_id": "UC1", "name": "Place order"},
+                {"id": "UC2", "use_case_id": "UC2", "name": "Cancel order"},
+            ]
+        ),
+        encoding="utf-8",
+    )
     erd = design / "erd.puml"
     erd.write_text('entity "Order" as Order {\n  * id : UUID\n}\n', encoding="utf-8")
     openapi = design / "openapi.json"
-    openapi.write_text(json.dumps({"openapi": "3.0.3", "paths": {
-        "/orders": {"post": {"operationId": "placeOrder",
-                                "responses": {"201": {"description": "Created"}}}},
-        "/orders/{id}": {"delete": {"operationId": "cancelOrder",
-                                       "responses": {"204": {"description": "Cancelled"}}}},
-    }}), encoding="utf-8")
+    openapi.write_text(
+        json.dumps(
+            {
+                "openapi": "3.0.3",
+                "paths": {
+                    "/orders": {
+                        "post": {
+                            "operationId": "placeOrder",
+                            "responses": {"201": {"description": "Created"}},
+                        }
+                    },
+                    "/orders/{id}": {
+                        "delete": {
+                            "operationId": "cancelOrder",
+                            "responses": {"204": {"description": "Cancelled"}},
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     api_model = design / "api-model.json"
-    api_model.write_text(json.dumps({"Endpoints": [
-        {"method": "POST", "path": "/orders", "operation_id": "placeOrder",
-         "use_case_ids": ["UC1"], "control_binding": {"control": "OrderControl"}},
-        {"method": "DELETE", "path": "/orders/{id}", "operation_id": "cancelOrder",
-         "use_case_ids": ["UC2"], "control_binding": {"control": "CancelControl"}},
-    ]}), encoding="utf-8")
+    api_model.write_text(
+        json.dumps(
+            {
+                "Endpoints": [
+                    {
+                        "method": "POST",
+                        "path": "/orders",
+                        "operation_id": "placeOrder",
+                        "use_case_ids": ["UC1"],
+                        "control_binding": {"control": "OrderControl"},
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/orders/{id}",
+                        "operation_id": "cancelOrder",
+                        "use_case_ids": ["UC2"],
+                        "control_binding": {"control": "CancelControl"},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
     run = tmp_path / "run"
     package_root = run / "application/src/main/java/com/example/orders"
@@ -471,13 +571,13 @@ class Order <<Entity>> { - id: UUID }
     (package_root / "bce").mkdir(parents=True)
     (package_root / "api/OrdersApi.java").write_text(
         "package com.example.orders.api;\n"
-        "public interface OrdersApi { String PATH = \"/orders\"; "
+        'public interface OrdersApi { String PATH = "/orders"; '
         "void placeOrder(); }\n",
         encoding="utf-8",
     )
     (package_root / "api/CancelApi.java").write_text(
         "package com.example.orders.api;\n"
-        "public interface CancelApi { String PATH = \"/orders/{id}\"; "
+        'public interface CancelApi { String PATH = "/orders/{id}"; '
         "void cancelOrder(); }\n",
         encoding="utf-8",
     )
@@ -497,9 +597,7 @@ class Order <<Entity>> { - id: UUID }
     generated = run / "application/frontend/src/generated/apis"
     generated.mkdir(parents=True)
     for name in ("OrdersApi", "CancelApi"):
-        (generated / f"{name}.ts").write_text(
-            f"export class {name} {{}}\n", encoding="utf-8"
-        )
+        (generated / f"{name}.ts").write_text(f"export class {name} {{}}\n", encoding="utf-8")
     reports = run / "reports"
     reports.mkdir(parents=True)
     (reports / "run-manifest.json").write_text(
@@ -538,47 +636,43 @@ class Order <<Entity>> { - id: UUID }
     )
 
     state = plan_workflow(run, spec)
-    manifest = json.loads(
-        (run / "reports/run-manifest.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads((run / "reports/run-manifest.json").read_text(encoding="utf-8"))
     tasks = manifest["implementation_tasks"]
     task_types = {task["task_type"] for task in tasks}
-    assert task_types == {
-        "use-case", "frontend-implementation", "wiring"
-    }
+    assert task_types == {"use-case", "frontend-implementation", "wiring"}
     assert (
-        run
-        / "application/src/main/java/com/example/orders/persistence/entity/OrderEntity.java"
+        run / "application/src/main/java/com/example/orders/persistence/entity/OrderEntity.java"
     ).is_file()
     assert (
         run
         / "application/src/main/java/com/example/orders/persistence/repository/OrderRepository.java"
     ).is_file()
-    assert (
-        run / "application/src/main/resources/db/migration/V1__initial_schema.sql"
-    ).is_file()
+    assert (run / "application/src/main/resources/db/migration/V1__initial_schema.sql").is_file()
     assert not any(
-        "BcePersistenceMapper" in path.as_posix()
-        for path in (run / "application").rglob("*.java")
+        "BcePersistenceMapper" in path.as_posix() for path in (run / "application").rglob("*.java")
     )
     for task in tasks:
         assert set(task["required_output_paths"]) <= set(task["allowed_write_paths"])
 
     use_cases = [task for task in tasks if task["task_type"] == "use-case"]
     wiring = next(task for task in tasks if task["task_type"] == "wiring")
-    assert len(use_cases) == 1
+    assert len(use_cases) == 2
     assert set(wiring["use_case_ids"]) == {"UC1", "UC2"}
     assert wiring["repair_only"] is True
     assert wiring["required_output_paths"] == []
     assert "implement-application-wiring" not in state["nextRunnableTasks"]
     contexts = [
-        json.loads((run / task["context_file"]).read_text(encoding="utf-8"))
-        for task in use_cases]
+        json.loads((run / task["context_file"]).read_text(encoding="utf-8")) for task in use_cases
+    ]
     expected_requirements = {"UC1": {"FR-ORDER"}, "UC2": {"FR-CANCEL"}}
     partitions = [set(context["useCaseIds"]) for context in contexts]
     assert set().union(*partitions) == set(expected_requirements)
-    assert partitions == [{"UC1", "UC2"}]
-    assert all(left.isdisjoint(right) for index, left in enumerate(partitions) for right in partitions[index + 1 :])
+    assert partitions == [{"UC1"}, {"UC2"}]
+    assert all(
+        left.isdisjoint(right)
+        for index, left in enumerate(partitions)
+        for right in partitions[index + 1 :]
+    )
     for context in contexts:
         assert set(context["requirementIds"]) == set().union(
             *(expected_requirements[use_case_id] for use_case_id in context["useCaseIds"])
@@ -593,8 +687,7 @@ class Order <<Entity>> { - id: UUID }
         "application/src/main/java/com/example/orders/api/CancelApi.java",
     }
     assert all(
-        not set(task["allowed_write_paths"]).intersection(generated_api)
-        for task in use_cases
+        not set(task["allowed_write_paths"]).intersection(generated_api) for task in use_cases
     )
     immutable_bce = {
         "application/src/main/java/com/example/orders/bce/OrderBoundary.java",
@@ -602,14 +695,14 @@ class Order <<Entity>> { - id: UUID }
         "application/src/main/java/com/example/orders/bce/CancelControl.java",
     }
     assert all(
-        not set(task["allowed_write_paths"]).intersection(immutable_bce)
-        for task in use_cases
+        not set(task["allowed_write_paths"]).intersection(immutable_bce) for task in use_cases
     )
     assert use_cases[0]["allowed_write_roots"]
 
 
 def test_scenario_failure_returns_to_automatic_repair_without_user_input(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """최종 검사도 오류 파일을 원래 소유한 기능 작업으로 돌려보낸다."""
     run = tmp_path / "run"
@@ -642,18 +735,22 @@ def test_scenario_failure_returns_to_automatic_repair_without_user_input(
         "app.implementation.workflows.coordinator.plan_workflow",
         lambda *_args: {
             "status": "COMPLETE",
-            "tasks": [{"taskId": "implement-order-use-cases", "status": "SUCCEEDED", "phase": "use-cases"}],
+            "tasks": [
+                {"taskId": "implement-order-use-cases", "status": "SUCCEEDED", "phase": "use-cases"}
+            ],
             "phases": [{"phaseId": "use-cases", "status": "SUCCEEDED"}],
             "nextRunnableTasks": [],
         },
     )
 
     def failed_scenario(_run_root: Path) -> dict[str, object]:
-        raise WorkspaceVerificationError({
-            "command": ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"],
-            "exitCode": 1,
-            "stderr": f"{flow_path}: scenario assertion failed",
-        })
+        raise WorkspaceVerificationError(
+            {
+                "command": ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"],
+                "exitCode": 1,
+                "stderr": f"{flow_path}: scenario assertion failed",
+            }
+        )
 
     result = run_workflow(run, SimpleNamespace(app_id="app-1"), None, verifier=failed_scenario)
 
@@ -689,9 +786,7 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
         "required_output_paths": [source_path],
         "immutable_paths": [],
     }
-    (task_dir / "wiring.task.json").write_text(
-        json.dumps(task), encoding="utf-8"
-    )
+    (task_dir / "wiring.task.json").write_text(json.dumps(task), encoding="utf-8")
     (reports / "run-manifest.json").write_text(
         json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
     )
@@ -708,12 +803,8 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     assert entry is not None
     apply_repair_directives(run)
 
-    stored_task = json.loads(
-        (task_dir / "wiring.task.json").read_text(encoding="utf-8")
-    )
-    repair_prompt = (run / stored_task["repair_prompt_file"]).read_text(
-        encoding="utf-8"
-    )
+    stored_task = json.loads((task_dir / "wiring.task.json").read_text(encoding="utf-8"))
+    repair_prompt = (run / stored_task["repair_prompt_file"]).read_text(encoding="utf-8")
     assert prompt_path.read_text(encoding="utf-8") == initial_prompt
     assert "INITIAL IMPLEMENTATION CONTEXT" not in repair_prompt
     assert "401 Unauthorized" in repair_prompt
@@ -725,9 +816,7 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     (sandbox / source_path).write_text("class Broken {}", encoding="utf-8")
     extra = sandbox / "application/src/main/java/com/example/Unrelated.java"
     extra.write_text("class Unrelated {}", encoding="utf-8")
-    restored = prepare_agent_workspace(
-        run, stored_task, preserve_failed_edits=False
-    )
+    restored = prepare_agent_workspace(run, stored_task, preserve_failed_edits=False)
     assert (restored / source_path).read_text(encoding="utf-8") == (
         "class ApplicationConfiguration { /* accepted */ }"
     )
@@ -736,7 +825,8 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
 
 
 def test_retried_release_failure_returns_to_wiring_repair(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """완료 작업을 재검증하다 난 컨테이너 오류도 wiring 수리로 이어진다."""
     run = tmp_path / "run"
@@ -801,9 +891,7 @@ def test_retried_release_failure_returns_to_wiring_repair(
 
     assert result.get("blockingReason") is None
     repair = json.loads((reports / "repair-plan.json").read_text(encoding="utf-8"))
-    assert repair["entries"][-1]["ownerTaskIds"] == [
-        "implement-application-wiring"
-    ]
+    assert repair["entries"][-1]["ownerTaskIds"] == ["implement-application-wiring"]
     assert "401 Unauthorized" in repair["entries"][-1]["evidence"]
 
 
@@ -825,7 +913,7 @@ def test_source_conformance_rejects_agent_changes_to_generated_contract(
     (java / "application/CheckoutService.java").write_text(
         "package com.example.demo.application; "
         "class CheckoutServiceImpl implements CheckoutService { "
-        "CheckoutGateway gateway; void run() { gateway.charge(\"order-1\"); } }",
+        'CheckoutGateway gateway; void run() { gateway.charge("order-1"); } }',
         encoding="utf-8",
     )
     bce = tmp_path / "class.puml"
@@ -858,14 +946,10 @@ def test_source_conformance_rejects_agent_changes_to_generated_contract(
         verify_source_design_conformance(tmp_path, spec)
 
     report = json.loads(
-        (tmp_path / "reports/source-design-conformance.json").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / "reports/source-design-conformance.json").read_text(encoding="utf-8")
     )
     assert report["status"] == "FAILED"
-    assert "GENERATED_CONTRACT_CHANGED" in {
-        item["code"] for item in report["violations"]
-    }
+    assert "GENERATED_CONTRACT_CHANGED" in {item["code"] for item in report["violations"]}
 
 
 def test_entity_can_add_helpers_while_preserving_generated_public_signatures(
@@ -880,7 +964,9 @@ def test_entity_can_add_helpers_while_preserving_generated_public_signatures(
         encoding="utf-8",
     )
     class_model = tmp_path / "class.puml"
-    class_model.write_text("class Order <<Entity>> { + rename(value: string): string }", encoding="utf-8")
+    class_model.write_text(
+        "class Order <<Entity>> { + rename(value: string): string }", encoding="utf-8"
+    )
     sequence = tmp_path / "sequence.puml"
     sequence.write_text("", encoding="utf-8")
     spec = SimpleNamespace(

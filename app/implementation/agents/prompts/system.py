@@ -18,10 +18,12 @@ API operations, framework APIs, or fallback domain behavior.
 Keep all related Java, SQL, configuration, and tests consistent. Write valid source rather
 than Markdown, avoid duplicate declarations, and leave no TODO, FIXME, placeholder, empty
 handler, dummy return, fabricated success, or unimplemented branch. A compiling stub is not a
-completed feature. Tests should exercise observable behavior with a few
-meaningful cases instead of internal calls or prompt wording. Create every required output,
-then call `finish`. If the supplied contracts are truly contradictory, preserve them and
-state the exact conflict in the final message.
+completed feature. Do not silently ignore an input field or fill a required response field
+with an empty or synthetic value. Tests should exercise each supplied input that affects the
+scenario and every required outcome with a few meaningful cases instead of internal calls or
+prompt wording. Create every required output, then call `finish`. If the supplied contracts
+cannot provide a required value or are truly contradictory, preserve them and state the exact
+conflict in the final message instead of weakening the test.
 """
 
 FRONTEND_SYSTEM_PROMPT = """You are a focused React and TypeScript implementation worker.

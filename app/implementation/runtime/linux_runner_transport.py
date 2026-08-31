@@ -6,6 +6,8 @@ import os
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
+from app.config import settings
+
 CONTAINER_WORKSPACE = PurePosixPath("/easydep-workspace")
 RUNNER_IMAGE_ENV = "EASYDEP_MEMBER_RUNNER_IMAGE"
 TRANSMITTED_ENVIRONMENT = (
@@ -28,7 +30,10 @@ TRANSMITTED_ENVIRONMENT = (
 
 
 def configured_runner_image(environment: dict[str, str] | None = None) -> str | None:
-    value = (environment or os.environ).get(RUNNER_IMAGE_ENV, "").strip()
+    source = os.environ if environment is None else environment
+    value = source.get(RUNNER_IMAGE_ENV, "").strip()
+    if not value and environment is None:
+        value = (settings.easydep_member_runner_image or "").strip()
     return value or None
 
 
@@ -69,6 +74,11 @@ def runner_command(
         f"PYTHONPATH={CONTAINER_WORKSPACE}/app/implementation/runtime/runtime_hooks:{CONTAINER_WORKSPACE}",
         "-e",
         "EASYDEP_FIXED_LINUX_RUNNER=1",
+        # 컨테이너의 쓰기 계층에 둔 캐시는 한 workflow 동안 모든 Gradle 검사에서
+        # 재사용된다. 오래된 이미지가 Windows bind mount 아래를 cache로 선택하더라도
+        # 이 값으로 덮어써 Docker Desktop의 간헐적인 I/O 오류를 피한다.
+        "-e",
+        "GRADLE_USER_HOME=/tmp/easydep-gradle-cache",
     ]
     experiment_session = environment.get("EASYDEP_EXPERIMENT_SESSION", "").strip()
     if experiment_session:
@@ -80,5 +90,18 @@ def runner_command(
     for name in TRANSMITTED_ENVIRONMENT:
         if environment.get(name):
             command.extend(["-e", name])
-    command.extend([image, operation, *arguments])
+    # 이미지 태그가 이전 코드로 만들어졌더라도 ENTRYPOINT에 저장된 Python 모듈명은
+    # 사용하지 않는다. bind mount한 현재 저장소의 고정 진입점을 항상 명시한다.
+    command.extend(
+        [
+            "--entrypoint",
+            "python",
+            image,
+            "-B",
+            "-m",
+            "app.implementation.runtime.member_linux_runner",
+            operation,
+            *arguments,
+        ]
+    )
     return command

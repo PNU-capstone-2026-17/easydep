@@ -4,7 +4,6 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field, replace
-from itertools import pairwise
 from pathlib import Path
 
 from app.config import settings
@@ -18,12 +17,8 @@ from ..domain.implementation_ir import (
 )
 from ..domain.models import JobSpec
 from ..generation.frontend_scaffold import frontend_page_names, operation_ids
+from ..generation.java_scaffold import controller_body_marker
 from .frontend_contracts import GeneratedClientContracts
-
-# 한 작업의 관련 요구사항·시퀀스·API 정보가 이 크기를 넘으면 같은 화면이나 Boundary를
-# 공유하더라도 나눈다. 유스케이스 개수를 고정하지 않고 실제로 LLM이 읽을 정보량을 기준으로
-# 삼아, 작은 기능은 함께 처리하고 수강신청처럼 큰 기능은 Control 단위로 유지한다.
-USE_CASE_BUNDLE_CONTEXT_LIMIT_BYTES = 48 * 1024
 
 
 @dataclass(frozen=True)
@@ -110,13 +105,12 @@ def _use_case_bundles(
     component_ids: dict[str, set[str]],
     endpoints: list[dict[str, object]],
 ) -> list[_UseCaseBundle]:
-    """같은 Control의 작업을 묶고, 작은 인접 작업만 추가로 합친다.
+    """같은 Control이 함께 처리하는 유스케이스만 하나의 작업으로 묶는다.
 
     Entity나 Boundary 하나가 여러 기능에 쓰인다는 이유만으로 모든 유스케이스를 한 대화에
-    넣으면 에이전트가 업무 규칙보다 파일 수습에 시간을 쓰게 된다. Control은 한 기능의
-    처리 흐름을 소유하므로 우선 함께 두고, 같은 Boundary나 API 파일을 쓰는 작업은 합친
-    입력이 충분히 작을 때만 합친다. 공유 파일은 뒤의 ``depends_on`` 계산이 실행 순서를
-    정하므로, 여기서 거대한 작업으로 만들 필요가 없다.
+    넣으면 에이전트가 업무 규칙보다 파일 탐색에 시간을 쓴다. Control은 한 기능의 처리
+    흐름을 소유하므로 그 범위만 함께 둔다. 같은 Controller나 Entity를 공유하는 작업은
+    뒤의 ``depends_on`` 계산으로 순서만 정하고 하나의 큰 대화로 다시 합치지 않는다.
     """
     for endpoint in endpoints:
         binding = endpoint.get("control_binding")
@@ -154,34 +148,6 @@ def _use_case_bundles(
         pending.difference_update(group)
         groups.append(tuple(sorted(group, key=_use_case_sort_key)))
 
-    # 같은 Boundary 또는 생성 Controller를 쓰는 작은 Control 작업은 한 번의 대화로 처리하면
-    # 중복 수정을 줄일 수 있다. 다만 합친 설계 문맥이 한도를 넘으면 별도 작업으로 남긴다.
-    related_sources = [
-        component_ids.get(component.name, set())
-        for component in ir.components
-        if component.stereotype.casefold() == "boundary"
-    ]
-    related_sources.extend(
-        {
-            use_case_id
-            for endpoint in endpoints
-            if any(
-                _operation_matches_endpoint(operation, endpoint) for operation in port.operations
-            )
-            for use_case_id in _use_case_ids(endpoint)
-        }
-        for port in ir.api_ports
-    )
-    for related in related_sources:
-        groups = _merge_small_related_groups(
-            spec,
-            ir,
-            component_ids,
-            endpoints,
-            groups,
-            related,
-        )
-
     bundles = [_bundle_for_ids(ir, component_ids, endpoints, group) for group in groups]
     assigned_components = {item.name for bundle in bundles for item in bundle.components}
     assigned_ports = {item.name for bundle in bundles for item in bundle.ports}
@@ -204,56 +170,6 @@ def _use_case_bundles(
             _use_case_sort_key(bundle.use_case_ids[0]) if bundle.use_case_ids else (10**9, "common")
         ),
     )
-
-
-def _merge_small_related_groups(
-    spec: JobSpec,
-    ir: ImplementationIR,
-    component_ids: dict[str, set[str]],
-    endpoints: list[dict[str, object]],
-    groups: list[tuple[str, ...]],
-    related: set[str],
-) -> list[tuple[str, ...]]:
-    """같은 adapter를 쓰는 인접 그룹을 LLM 입력 크기가 허용할 때만 합친다."""
-    if len(related) < 2:
-        return groups
-    result = list(groups)
-    while True:
-        indexes = [index for index, group in enumerate(result) if set(group) & related]
-        merged = False
-        for left, right in pairwise(indexes):
-            combined = tuple(sorted({*result[left], *result[right]}, key=_use_case_sort_key))
-            if (
-                _bundle_context_size(spec, ir, component_ids, endpoints, combined)
-                > USE_CASE_BUNDLE_CONTEXT_LIMIT_BYTES
-            ):
-                continue
-            result[left] = combined
-            result.pop(right)
-            merged = True
-            break
-        if not merged:
-            return result
-
-
-def _bundle_context_size(
-    spec: JobSpec,
-    ir: ImplementationIR,
-    component_ids: dict[str, set[str]],
-    endpoints: list[dict[str, object]],
-    use_case_ids: tuple[str, ...],
-) -> int:
-    """프롬프트에 들어갈 핵심 설계 정보를 UTF-8 byte 수로 가늠한다."""
-    bundle = _bundle_for_ids(ir, component_ids, endpoints, use_case_ids)
-    requirements, use_cases, _sources = _related_requirement_artifacts(spec, use_case_ids)
-    value = {
-        "requirements": requirements,
-        "useCases": use_cases,
-        "scenarios": _scenarios_for_use_cases(spec, use_case_ids),
-        "apiEndpoints": bundle.endpoints,
-        "components": [asdict(component) for component in bundle.components],
-    }
-    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 def _grant_exclusive_write_roots(
@@ -357,26 +273,60 @@ def _build_use_case_task(
     entity_sources = [
         f"application/src/main/java/{package_path}/bce/{name}.java" for name in entities
     ]
-    # persistence 골격은 LLM 작업보다 먼저 생성된다. 프롬프트에 파일 전체를 중복해서
-    # 붙이지 않고, OpenHands가 필요한 선언만 직접 읽을 수 있도록 정확한 위치를 준다.
-    dependency_source_paths = [
-        f"application/src/main/java/{package_path}/persistence/entity",
-        f"application/src/main/java/{package_path}/persistence/repository",
-        *entity_sources,
+    # persistence 골격은 LLM 작업보다 먼저 생성되고 이후 작업이 수정하지 않는다. 관련
+    # Entity와 Repository의 정확한 선언을 프롬프트에 넣어, 에이전트가 디렉터리 전체를
+    # 검색하거나 존재하지 않는 구현을 반복해서 찾지 않게 한다.
+    persistence_sources = [
+        path
+        for name in entities
+        for path in (
+            f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java",
+            f"application/src/main/java/{package_path}/persistence/repository/{name}Repository.java",
+        )
+        if (run_root / path).is_file()
     ]
+    dependency_source_paths = [path for path in entity_sources if (run_root / path).is_file()]
     editable = _work_unit_editable_paths(run_root, required, entity_sources)
     depends_on = sorted({writers[path] for path in editable if path in writers})
     requirements, use_cases, sources = _related_requirement_artifacts(spec, bundle.use_case_ids)
     scenarios = _scenarios_for_use_cases(spec, bundle.use_case_ids)
-    component_names = {item.name for item in bundle.components}
+    # HTTP Controller는 Boundary adapter를 거치지 않고 typed Control을 직접 호출한다.
+    # Boundary가 참조하는 다른 기능 DTO까지 closure에 끌어오지 않고 이번 구현에 실제로
+    # 쓰는 Control·Entity·Gateway 계약만 전달한다.
+    component_names = {
+        item.name for item in bundle.components if item.stereotype.casefold() != "boundary"
+    }
     contracts = read_generated_java_contracts(
         run_root,
         spec.base_package,
         component_names,
-        _endpoint_model_names(bundle.endpoints),
+        # Controller가 OpenAPI model과 BCE type 사이의 구조 변환을 이미 소유한다.
+        # 기능 구현 작업에는 실제로 호출할 BCE 선언만 필요하므로 수백 줄짜리 생성
+        # model 구현을 다시 싣지 않는다.
+        set(),
     )
     controller_paths = [run_root / path for path in required if "/adapter/in/web/" in path]
     scaffolds = render_source_contracts(run_root, controller_paths)
+    dependency_source_paths.extend(
+        path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
+    )
+    persistence_contracts = render_source_contracts(
+        run_root, [run_root / path for path in persistence_sources]
+    )
+    controller_markers = sorted(
+        {
+            marker
+            for endpoint in bundle.endpoints
+            for marker in [
+                controller_body_marker(
+                    str(endpoint.get("method") or ""),
+                    str(endpoint.get("path") or ""),
+                )
+            ]
+            if endpoint.get("method") and endpoint.get("path")
+            if marker in scaffolds
+        }
+    )
     context = {
         "schemaVersion": "implementation-context/v1alpha2",
         "taskId": task_id,
@@ -391,9 +341,10 @@ def _build_use_case_task(
         "implementationIR": ir.to_dict(),
         "generatedJavaContracts": contracts,
         "controllerScaffolds": scaffolds,
-        "controllerBodyPaths": [
+        "controllerPaths": [
             path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
         ],
+        "controllerBodyMarkers": controller_markers,
         "readSourcePaths": dependency_source_paths,
         "entityBodySources": entity_sources,
         "requiredOutputs": required,
@@ -413,11 +364,15 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 - BCE Entity sources may change only method bodies; preserve every public declaration.
 - Generated API interfaces are immutable. Controller routing, Control injection and
   structural API/BCE conversion are already present; change a Controller body only when the
-  focused scenario proves that a documented outcome needs business-specific handling.
+  focused scenario leaves one of this task's named body markers below.
 - Use the completed ERD repositories for persistent behavior; do not keep business state in
   an in-memory collection or invent another persistence port.
 - Write the focused JUnit scenario first, then implement until it passes. Assert returned
   values and persisted state changes, including that rejected requests leave state unchanged.
+- Exercise every supplied input that changes the scenario result, and assert every response
+  value named by the requirements. Never ignore a filter or fill a required result with an
+  empty, synthetic, or demo value. If the supplied contracts cannot produce a required value,
+  report that exact contract gap instead of fabricating a passing test.
 - Mark concrete Control services and Gateway adapters with the matching Spring stereotype
   and use constructor injection. Generated web Controllers are already Spring beans and call
   the typed Control binding directly; do not create duplicate HTTP or Boundary adapters.
@@ -433,16 +388,19 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 {contracts}
 ~~~
 
-## Deterministic Controller scaffolds
+## Deterministic persistence contracts
 ~~~java
-{scaffolds}
+{persistence_contracts}
 ~~~
 
-## Source to inspect before editing
-EasyDep generates these locations before this task starts. Use the read-only
-`view` operation to inspect their current declarations instead of guessing repository methods
-or previously implemented Entity bodies.
+## Current source to inspect before editing
+Only the following Controller and editable Entity files may contain work completed by an
+earlier task. Read each needed file once. The required Control service files do not exist yet,
+so create them directly instead of searching for another implementation.
 {chr(10).join(f"- `{path}`" for path in dependency_source_paths)}
+
+## Controller body markers owned by this task
+{chr(10).join(f"- `{marker}`" for marker in controller_markers) or "- none; the typed Controller is already complete"}
 """
         + _render_deployment_context(deployment_context)
         + render_allowed_output_rules(required)
@@ -516,22 +474,6 @@ def _operation_matches_endpoint(operation: ApiOperationIR, endpoint: dict[str, o
         and operation.path == str(endpoint.get("path") or "")
         and (not operation.operation_id or operation.operation_id == endpoint.get("operation_id"))
     )
-
-
-def _endpoint_model_names(endpoints: tuple[dict[str, object], ...]) -> set[str]:
-    names: set[str] = set()
-    for endpoint in endpoints:
-        request = str(endpoint.get("request_schema") or "")
-        if request:
-            names.add(request.rsplit("/", maxsplit=1)[-1])
-        responses = endpoint.get("responses")
-        if isinstance(responses, list):
-            names.update(
-                str(response.get("schema_name"))
-                for response in responses
-                if isinstance(response, dict) and response.get("schema_name")
-            )
-    return names
 
 
 def _use_case_ids(item: dict[str, object]) -> set[str]:
