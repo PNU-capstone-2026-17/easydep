@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import tempfile
 import threading
@@ -20,10 +19,7 @@ from ..planning.design_context import (
     referenced_openapi_model_names,
 )
 from ..workflows.conformance import entity_public_signature_violations
-from ..workflows.repair import (
-    referenced_source_paths,
-    repair_requires_owner_handoff,
-)
+from ..workflows.repair import referenced_source_paths
 from .prompts import (
     FRONTEND_SYSTEM_PROMPT,
     IMPLEMENTATION_SYSTEM_PROMPT,
@@ -41,211 +37,38 @@ from .provider import (
 )
 from .verification.build import (
     WorkspaceVerificationError,
-    api_adapter_contract_violations,
-    boundary_adapter_contract_violations,
-    control_boundary_dependency_violations,
-    ensure_persistence_schema_test,
-    persistence_entity_schema_violations,
-    persistence_reserved_identifier_markers,
-    production_placeholder_markers,
-    production_test_library_markers,
-    repair_invalid_inverse_entity_associations,
-    repair_persistence_schema_table_quoting,
     verify_agent_workspace,
 )
-from .verification.e2e import (
-    e2e_contract_violations,
-    repair_nested_e2e_members,
-    repair_orphaned_java_test_statements,
-    repair_spring_boot3_test_compatibility,
-)
-from .verification.frontend import (
-    frontend_contract_violations,
-    has_mutating_operations,
-    repair_frontend_accessibility_contract,
-    repair_responsive_table_styles,
-)
+from .verification.e2e import e2e_contract_violations
 from .workspace import (
     changed_files,
-    ensure_mapper_accessible_persistence_constructor,
+    cleanup_agent_workspace,
     load_task,
     missing_required_outputs,
     prepare_agent_workspace,
     read_allowed_sources,
-    read_persistence_entity_contracts,
     snapshot_files,
     task_base_package,
 )
 
-MAX_AGENT_ITERATIONS = 6
-# 수리는 진단을 읽고 기존 파일을 확인한 뒤 편집해야 하므로 최초 생성보다 도구 호출이
-# 적게 필요한 작업이라고 가정하면 안 된다. 이 값은 수리 횟수 상한이 아니라 한 번의
-# OpenHands 대화가 사용할 수 있는 도구 turn의 안전 한도이며, 실제 수리 대화는 진전이
-# 있는 동안 바깥 while loop에서 계속 이어진다.
-MAX_REPAIR_ITERATIONS = 8
+# 하나의 기능 작업은 여러 파일을 함께 만들므로 한 대화가 중간에 끊기지 않을 만큼의
+# tool turn을 준다. 두 값 모두 전체 생성·수리 횟수 상한이 아니다. 대화 하나가 멈추는
+# 것을 막는 안전 한도이며, 바깥 loop는 build가 통과할 때까지 새 대화로 계속된다.
+MAX_AGENT_TURN_ITERATIONS = 32
+MAX_REPAIR_TURN_ITERATIONS = 16
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
 
 
-def _repair_missing_generated_model_imports(
-    sandbox: Path, allowed_write_paths: list[str]
-) -> list[str]:
-    """Repair imports that point at an absent OpenAPI model with a BCE contract.
-
-    OpenAPI and BCE designs can legitimately contain a type with the same
-    simple name.  Agents occasionally import ``api.model.X`` even when the
-    generated OpenAPI sources contain no ``X.java`` and the exact BCE contract
-    does contain it.  In that case the import is unambiguously wrong and can be
-    corrected without changing behavior or inventing a contract.  Ambiguous or
-    genuinely missing types are left untouched for the compiler/repair loop.
-    """
-    repaired: list[str] = []
-    import_pattern = re.compile(
-        r"^(?P<indent>\s*)import\s+(?P<prefix>[\w.]+)\.api\.model\."
-        r"(?P<name>[A-Z][A-Za-z0-9_]*)\s*;\s*$",
-        re.MULTILINE,
-    )
-    for relative in allowed_write_paths:
-        normalized = str(relative).replace("\\", "/")
-        if not normalized.endswith(".java"):
-            continue
-        path = sandbox / relative
-        if not path.is_file():
-            continue
-        original = path.read_text(encoding="utf-8")
-
-        def replace_import(match: re.Match[str]) -> str:
-            prefix = match.group("prefix")
-            name = match.group("name")
-            api_model = sandbox / "application" / "src" / "main" / "java" / Path(
-                prefix.replace(".", "/")
-            ) / "api" / "model" / f"{name}.java"
-            bce_contract = sandbox / "application" / "src" / "main" / "java" / Path(
-                prefix.replace(".", "/")
-            ) / "bce" / f"{name}.java"
-            if api_model.is_file() or not bce_contract.is_file():
-                return match.group(0)
-            repaired.append(f"{normalized}: {name} api.model -> bce")
-            return f"{match.group('indent')}import {prefix}.bce.{name};"
-
-        updated = import_pattern.sub(replace_import, original)
-        if updated != original:
-            path.write_text(updated, encoding="utf-8")
-    return repaired
-
-
-def _api_adapter_repair_contract(context: dict[str, object]) -> str:
-    """Return the small, exact contract subset an API-adapter repair needs.
-
-    Repair conversations intentionally omit the original task prompt to keep
-    token use bounded.  Without the generated API signature and its permitted
-    BCE Controls, however, a repair agent has to guess imports and tends to
-    invent resource-named ports.  Keep just the API interface, generated API
-    models, and Controls selected by the reviewed operation bindings.
-    """
-    contracts = str(context.get("generatedJavaContracts") or "")
-    if not contracts:
-        return ""
-    api_name = str(context.get("api") or "").strip()
-    operations = context.get("operations")
-    controls = {
-        str(binding.get("control") or "").strip()
-        for operation in (operations if isinstance(operations, list) else [])
-        if isinstance(operation, dict)
-        for binding in [operation.get("controlBinding") or {}]
-        if isinstance(binding, dict) and str(binding.get("control") or "").strip()
-    }
-    sections = [
-        section.strip()
-        for section in re.split(r"(?=^// [^\n]+\.java\s*$)", contracts, flags=re.MULTILINE)
-        if section.strip()
-    ]
-    api_sections = [
-        section
-        for section in sections
-        if f"/api/{api_name}Api.java" in section or "/api/model/" in section
-    ]
-    bce_sections = {
-        match.group(1): section
-        for section in sections
-        if (
-            match := re.match(
-                r"// (?:application/src/main/java/.+/)?bce/"
-                r"([A-Za-z_$][A-Za-z0-9_$]*)\.java",
-                section,
-            )
-        )
-    }
-    # 선택된 Control에서 실제로 언급된 BCE 타입만 따라간다. 수리 prompt가 전체
-    # 설계 문서로 다시 커지는 것을 막으면서 record/enum 접근자 누락도 방지한다.
-    selected_names = {name for name in controls if name in bce_sections}
-    pending = sorted(selected_names)
-    while pending:
-        source = bce_sections[pending.pop(0)]
-        for name in sorted(set(bce_sections) - selected_names):
-            if re.search(rf"\b{re.escape(name)}\b", source):
-                selected_names.add(name)
-                pending.append(name)
-    selected = [*api_sections, *(bce_sections[name] for name in sorted(selected_names))]
-    compact = "\n\n".join(selected).strip()
-    # Preserve the beginning because it contains the API method signatures;
-    # the bounded tail keeps a repair prompt from becoming a full re-send of
-    # every generated design artifact.
-    return compact[:16000]
-
-
 def _repair_contract_context(context: dict[str, object]) -> str:
-    """Return a bounded generated-contract excerpt for any repair task."""
+    """수리에 필요한 생성 계약만 짧게 반환한다."""
     contracts = context.get("generatedJavaContracts")
     if not isinstance(contracts, str) or not contracts.strip():
         contracts = context.get("generatedTypescriptContracts")
     if not isinstance(contracts, str):
         return ""
     return contracts[:16000]
-
-
-def _complete_referenced_bce_contracts(
-    run_root: Path,
-    task: dict[str, object],
-    context: dict[str, object],
-) -> str:
-    """오래 실행 중인 task에도 빠진 매개변수·반환형 계약을 보충한다.
-
-    새 task는 계획할 때 참조 type을 함께 넣는다. 이미 생성된 checkpoint는 예전의 짧은
-    계약을 가지고 있을 수 있으므로, 그 계약에 적힌 BCE 파일 이름에서 시작해 실제 생성
-    Java 파일의 참조 관계를 다시 따라간다. 반환값은 새로 발견한 계약만 담아 prompt 중복을
-    줄이고, context에는 수리 대화가 사용할 완전한 계약을 저장한다.
-    """
-
-    existing = context.get("generatedJavaContracts")
-    if not isinstance(existing, str) or not existing.strip():
-        return ""
-    names = set(
-        re.findall(
-            r"(?m)^// (?:application/src/main/java/.+/)?bce/"
-            r"([A-Za-z_$][A-Za-z0-9_$]*)\.java$",
-            existing,
-        )
-    )
-    if not names:
-        return ""
-    complete = read_generated_java_contracts(
-        run_root, task_base_package(task), names
-    )
-    existing_names = names
-    missing_sections = [
-        section.strip()
-        for section in re.split(r"(?=^// bce/)", complete, flags=re.MULTILINE)
-        if section.strip()
-        and not any(
-            section.startswith(f"// bce/{name}.java") for name in existing_names
-        )
-    ]
-    supplement = "\n\n".join(missing_sections)
-    if supplement:
-        context["generatedJavaContracts"] = existing.rstrip() + "\n\n" + supplement
-    return supplement
 
 
 def _configure_openhands_profile_store() -> None:
@@ -354,24 +177,16 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
 
 
 def _render_missing_output_repair_prompt(
-    task_type: str,
     missing_outputs: list[str],
     contract_context: str = "",
     existing_outputs: str = "",
 ) -> str:
     """Keep missing-output retries small enough for agents that stopped silently."""
     missing_test = any("/src/test/" in path.replace("\\", "/") for path in missing_outputs)
-    if task_type == "integration-test":
+    if missing_test:
         task_hint = (
-            "For this integration-test task, create a compiling real HTTP flow test. "
-            "Do not modify production code."
-        )
-    elif task_type == "api-adapter" and missing_test:
-        task_hint = (
-            "For this API-adapter task, create only the missing focused JUnit/Mockito "
-            "controller test. Instantiate the existing controller shown below, mock only "
-            "its injected BCE Controls, and cover its generated API operations. Do not "
-            "modify production code."
+            "Create the missing focused test from the existing application and generated "
+            "contracts. Assert observable behavior; do not copy a prompt or private helper."
         )
     else:
         task_hint = "Use the existing generated application contract; do not inspect or list directories."
@@ -438,45 +253,25 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
     app_id = _run_app_id(run_root)
+    editable_paths = [str(path) for path in task.get("allowed_write_paths", [])]
+    required_paths = [
+        str(path)
+        for path in task.get("required_output_paths", editable_paths)
+    ]
+    immutable_paths = {
+        str(path).replace("\\", "/")
+        for path in task.get("immutable_paths", [])
+    }
 
     compatibility = openhands_compatibility()
     missing = [key for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured") if not compatibility[key]]
     if missing:
         raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
 
-    # Older runs can already contain protected JPA constructors from a completed
-    # entity task. Normalize that generated contract before copying it into the
-    # mapper sandbox, otherwise a retry can only rewrite the mapper and remains
-    # unable to repair the incompatible entity it depends on.
-    if task_type == "persistence-mapping":
-        entity_root = (
-            run_root
-            / "application"
-            / "src"
-            / "main"
-            / "java"
-            / Path(task_base_package(task).replace(".", "/"))
-            / "persistence"
-            / "entity"
-        )
-        entity_paths = [
-            str(path.relative_to(run_root))
-            for path in sorted(entity_root.glob("*Entity.java"))
-        ]
-        ensure_mapper_accessible_persistence_constructor(run_root, entity_paths)
-
     sandbox = prepare_agent_workspace(run_root, task)
     before = snapshot_files(sandbox)
     prompt = (run_root / task["prompt_file"]).read_text(encoding="utf-8")
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
-    referenced_contracts = _complete_referenced_bce_contracts(
-        run_root, task, context
-    )
-    if referenced_contracts:
-        prompt += (
-            "\n\n## Referenced generated BCE type contracts\n\n"
-            "```java\n" + referenced_contracts + "\n```\n"
-        )
     api_model_names = (
         set()
         if task_type == "frontend-implementation"
@@ -494,56 +289,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             missing_api_models,
         )
         prompt += "\n```\n"
-    if str(task.get("task_type", "")) in {
-        "persistence-repositories",
-        "persistence-mapping",
-        "persistence-schema",
-    }:
-        persistence_contracts = read_persistence_entity_contracts(
-            run_root, task_base_package(task)
-        )
-        prompt += (
-            "\n\n## Exact generated JPA persistence entity contracts\n\n"
-            "```java\n" + persistence_contracts + "\n```\n"
-        )
-    if task_type == "control":
-        repository_names = {
-            str(name).strip()
-            for name in context.get("repositories", [])
-            if str(name).strip()
-        }
-        if repository_names:
-            repository_contracts = read_generated_java_contracts(
-                run_root,
-                task_base_package(task),
-                set(),
-                repository_names=repository_names,
-            )
-            prompt += (
-                "\n\n## Exact generated ERD repository contracts\n\n"
-                "Use these concrete Spring Data interfaces exactly; do not create "
-                "a RepositoryPort or any other inferred port.\n\n```java\n"
-                + repository_contracts
-                + "\n```\n"
-            )
-        persistence_contracts = read_persistence_entity_contracts(
-            run_root, task_base_package(task)
-        )
-        prompt += (
-            "\n\n## Exact generated JPA entity contracts\n\n"
-            "Use only the accessors and relationship direction present in these "
-            "entities; do not infer a reverse association from the ERD.\n\n"
-            "```java\n"
-            + persistence_contracts
-            + "\n```\n"
-        )
-    if task_type in {"entity", "scaffold-completion"}:
-        # 타입 보완 단계가 먼저 실행된 경우에도 Entity가 처음 만든 scaffold가 아니라
-        # 현재 파일을 보도록, 허용된 source를 실행 직전에 다시 붙인다.
-        prompt += "\n\n## Current allowed source\n\n" + read_allowed_sources(
-            sandbox, list(task["allowed_write_paths"])
-        )
-    allowed_absolute = [str((sandbox / path).resolve()) for path in task["allowed_write_paths"]]
+    allowed_absolute = [str((sandbox / path).resolve()) for path in editable_paths]
     prompt += "\n\n## Enforced absolute write paths\n\n" + "\n".join(
         f"- `{path}`" for path in allowed_absolute
     )
@@ -561,11 +307,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     # 같은 작업이 다른 담당 오류 때문에 다시 실행되더라도 이전 수리 실패를 잊지 않는다.
     # 별도 저장 형식을 만들지 않고 이미 남긴 최신 실행 결과의 repairHistory를 재사용한다.
     repair_ledger = load_repair_ledger(execution_dir, task_id)
-    handoff_required = False
     try:
         round_prompt = prompt
         round_allowed = allowed_absolute
-        round_iteration_limit = MAX_AGENT_ITERATIONS
+        round_iteration_limit = MAX_AGENT_TURN_ITERATIONS
         provider_retries = 0
         repair_attempt = 0
         while True:
@@ -644,7 +389,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 # case do not repeat the generation and risk overwriting valid
                 # work; continue to deterministic verification instead.
                 if not missing_required_outputs(
-                    sandbox, task["allowed_write_paths"]
+                    sandbox, required_paths
                 ):
                     break
                 provider_retries += 1
@@ -656,19 +401,12 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 time.sleep(provider_retry_delay(provider_retries))
 
             missing_outputs = missing_required_outputs(
-                sandbox, task["allowed_write_paths"]
+                sandbox, required_paths
             )
-            if task_type == "persistence-schema" and missing_outputs:
-                ensure_persistence_schema_test(
-                    sandbox, list(task["allowed_write_paths"])
-                )
-                missing_outputs = missing_required_outputs(
-                    sandbox, task["allowed_write_paths"]
-                )
             if missing_outputs:
                 finding_keys = tuple(f"missing:{path}" for path in missing_outputs)
                 candidate_digest = stable_digest(
-                    read_allowed_sources(sandbox, task["allowed_write_paths"])
+                    read_allowed_sources(sandbox, editable_paths)
                 )
                 repeated = repair_attempt > 0 and any(
                     item.candidate_digest == candidate_digest
@@ -700,16 +438,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 round_allowed = [
                     str((sandbox / path).resolve()) for path in missing_outputs
                 ]
-                round_iteration_limit = MAX_REPAIR_ITERATIONS
+                round_iteration_limit = MAX_REPAIR_TURN_ITERATIONS
                 round_prompt = _render_missing_output_repair_prompt(
-                    task_type,
                     round_allowed,
                     _repair_contract_context(context),
                     read_allowed_sources(
                         sandbox,
                         [
                             path
-                            for path in task["allowed_write_paths"]
+                            for path in editable_paths
                             if path not in missing_outputs
                         ],
                     ),
@@ -729,176 +466,42 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 continue
 
             changed = changed_files(before, snapshot_files(sandbox))
-            allowed = set(task["allowed_write_paths"])
+            allowed = set(editable_paths)
             unauthorized = sorted(path for path in changed if path not in allowed)
             if unauthorized:
                 _restore_unauthorized_files(sandbox, run_root, unauthorized)
-                # Compare promotion ownership, not the pre-task hash: the
-                # sandbox and run root can legitimately differ before this
-                # task starts. Restored paths are deliberately excluded from
-                # this task's promotion set.
                 changed = {path for path in changed if path in allowed}
             try:
-                if str(task.get("task_type", "")) == "configuration":
-                    remove_duplicate_component_adapter_beans(sandbox, task)
-                    normalize_spring_boot_repository_discovery(sandbox, task)
-                    enforce_spring_persistence_validation(sandbox, task)
-                if str(task.get("task_type", "")) == "persistence-schema":
-                    repair_persistence_schema_table_quoting(
-                        sandbox, list(task["allowed_write_paths"])
-                    )
-                    # The migration is design-sensitive, but its metadata smoke
-                    # test is a deterministic projection.  Always replace an
-                    # agent-authored test so H2/JDBC identifier casing cannot
-                    # turn a valid migration into a failed implementation run.
-                    ensure_persistence_schema_test(
-                        sandbox, list(task["allowed_write_paths"]), overwrite=True
-                    )
-                if task_type == "persistence-entities":
-                    ensure_mapper_accessible_persistence_constructor(
-                        sandbox, list(task["allowed_write_paths"])
-                    )
-                    repair_invalid_inverse_entity_associations(
-                        sandbox, list(task["allowed_write_paths"])
-                    )
-                    schema_violations = persistence_entity_schema_violations(
-                        sandbox, list(task["allowed_write_paths"])
-                    )
-                    if schema_violations:
-                        raise WorkspaceVerificationError({
-                            "stderr": "Persistence entity schema mismatch: "
-                            + "; ".join(schema_violations),
-                        })
-                if task_type == "control":
-                    ensure_control_service_component(
-                        sandbox, list(task["allowed_write_paths"])
-                    )
-                    control_violations = control_boundary_dependency_violations(
-                        sandbox,
-                        list(task["allowed_write_paths"]),
-                        context.get("sequence", []),
-                    )
-                    if control_violations:
-                        raise WorkspaceVerificationError(
-                            {
-                                "command": ["control-dependency-contract-gate"],
-                                "exitCode": 1,
-                                "durationMs": 0,
-                                "stdout": "",
-                                "stderr": "\n".join(control_violations),
-                                "testResults": "",
-                            }
-                        )
-                _repair_missing_generated_model_imports(
-                    sandbox, list(task["allowed_write_paths"])
-                )
-                if task_type == "api-adapter":
-                    adapter_violations = api_adapter_contract_violations(
-                        sandbox, list(task["allowed_write_paths"])
-                    )
-                    if adapter_violations:
-                        raise WorkspaceVerificationError(
-                            {
-                                "command": ["api-adapter-contract-gate"],
-                                "exitCode": 1,
-                                "durationMs": 0,
-                                "stdout": "",
-                                "stderr": "\n".join(adapter_violations),
-                                "testResults": "",
-                            }
-                        )
-                if task_type == "boundary-adapter":
-                    sequence_context: object = []
-                    context_file = task.get("context_file")
-                    if context_file:
-                        try:
-                            task_context = json.loads(
-                                (run_root / str(context_file)).read_text(encoding="utf-8")
-                            )
-                            sequence_context = task_context.get("sequence", [])
-                        except (OSError, json.JSONDecodeError):
-                            sequence_context = []
-                    boundary_violations = boundary_adapter_contract_violations(
-                        sandbox, list(task["allowed_write_paths"]), sequence_context
-                    )
-                    if boundary_violations:
-                        raise WorkspaceVerificationError(
-                            {
-                                "command": ["boundary-adapter-contract-gate"],
-                                "exitCode": 1,
-                                "durationMs": 0,
-                                "stdout": "",
-                                "stderr": "\n".join(boundary_violations),
-                                "testResults": "",
-                            }
-                        )
-                if task_type == "entity":
-                    signature_violations = entity_public_signature_violations(
-                        run_root, sandbox, list(task["allowed_write_paths"])
-                    )
-                    if signature_violations:
-                        raise WorkspaceVerificationError(
-                            {
-                                "command": ["entity-public-signature-gate"],
-                                "exitCode": 1,
-                                "durationMs": 0,
-                                "stdout": "",
-                                "stderr": "\n".join(signature_violations),
-                                "testResults": "",
-                            }
-                        )
-                placeholders = production_placeholder_markers(
-                    sandbox, task["allowed_write_paths"]
-                )
-                test_libraries = production_test_library_markers(
-                    sandbox, task["allowed_write_paths"]
-                )
-                if placeholders or test_libraries:
-                    violations = []
-                    if placeholders:
-                        violations.append(
-                            "Production outputs contain unresolved TODO/FIXME or unimplemented-operation markers:"
-                        )
-                        violations.extend(placeholders)
-                    if test_libraries:
-                        violations.append(
-                            "Production outputs must not import or call Mockito/JUnit:"
-                        )
-                        violations.extend(test_libraries)
+                # EasyDep은 source를 정규식으로 고치지 않는다. OpenHands가 현재 파일과
+                # compiler/test 결과를 보고 수정하며, 공개 계약은 최종 conformance 검사에서
+                # 별도로 보호한다. 실제 HTTP 흐름 검사는 wiring 작업의 FlowTest에 포함된다.
+                editable_entities = [
+                    path
+                    for path in editable_paths
+                    if "/bce/" in "/" + path.replace("\\", "/")
+                    and path.endswith(".java")
+                ]
+                signature_violations = entity_public_signature_violations(
+                    run_root, sandbox, editable_entities
+                ) if editable_entities else []
+                if signature_violations:
                     raise WorkspaceVerificationError(
                         {
-                            "command": ["production-placeholder-gate"],
+                            "command": ["generated-entity-public-contract"],
                             "exitCode": 1,
                             "durationMs": 0,
                             "stdout": "",
-                            "stderr": "\n".join(violations),
+                            "stderr": "\n".join(signature_violations),
                             "testResults": "",
                         }
                     )
-                if task_type in {
-                    "persistence-entities",
-                    "persistence-mapping",
-                    "persistence-schema",
-                }:
-                    reserved_identifiers = persistence_reserved_identifier_markers(
-                        sandbox, task["allowed_write_paths"]
-                    )
-                    if reserved_identifiers:
-                        raise WorkspaceVerificationError(
-                            {
-                                "command": ["persistence-reserved-identifier-gate"],
-                                "exitCode": 1,
-                                "durationMs": 0,
-                                "stdout": "",
-                                "stderr": "\n".join(reserved_identifiers),
-                                "testResults": "",
-                            }
-                        )
-                if str(task.get("task_type", "")) == "integration-test":
-                    e2e_path = sandbox / str(task["allowed_write_paths"][0])
-                    repair_spring_boot3_test_compatibility(e2e_path)
-                    repair_nested_e2e_members(e2e_path)
-                    repair_orphaned_java_test_statements(e2e_path)
+                flow_tests = [
+                    path
+                    for path in required_paths
+                    if "/integration/" in path.replace("\\", "/")
+                    and path.endswith("FlowTest.java")
+                ]
+                if task_type == "wiring" and flow_tests:
                     context_path = run_root / str(task.get("context_file", ""))
                     semantic_contract = None
                     if context_path.is_file():
@@ -906,9 +509,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         candidate = context.get("semanticContract")
                         if isinstance(candidate, dict):
                             semantic_contract = candidate
-                    e2e_violations = e2e_contract_violations(
-                        e2e_path, semantic_contract
-                    )
+                    e2e_violations = [
+                        violation
+                        for relative in flow_tests
+                        for violation in e2e_contract_violations(
+                            sandbox / relative, semantic_contract
+                        )
+                    ]
                     if e2e_violations:
                         raise WorkspaceVerificationError(
                             {
@@ -920,94 +527,32 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                                 "testResults": "",
                             }
                         )
-                if task_type == "frontend-implementation":
-                    openapi_context = context.get("openapi", {})
-                    requires_success_feedback = has_mutating_operations(
-                        openapi_context
-                    )
-                    repair_responsive_table_styles(
-                        sandbox, task["allowed_write_paths"]
-                    )
-                    repair_frontend_accessibility_contract(
-                        sandbox, task["allowed_write_paths"]
-                    )
-                    violations = frontend_contract_violations(
-                        sandbox,
-                        task["allowed_write_paths"],
-                        requires_success_feedback=requires_success_feedback,
-                    )
-                    if violations:
-                        raise WorkspaceVerificationError(
-                            {
-                                "command": ["frontend-contract-gate"],
-                                "exitCode": 1,
-                                "durationMs": 0,
-                                "stdout": "",
-                                "stderr": "\n".join(violations),
-                                "testResults": "",
-                            }
-                        )
                 verification = verify_agent_workspace(
                     sandbox,
                     task_type,
-                    list(task["allowed_write_paths"]),
+                    editable_paths,
                     force_rerun=attempt > 1 or repair_attempt > 0,
                 )
-                # Include deterministic contract repairs in the promotion set.
                 changed = changed_files(before, snapshot_files(sandbox))
                 break
             except WorkspaceVerificationError as error:
-                if _requires_cross_phase_repair(task_type, error.evidence):
-                    if task_type == "integration-test":
-                        # E2E 테스트가 의미 검사까지 통과했다면 테스트 소스는 유효하다. 실행이
-                        # 상위 애플리케이션 오류를 드러냈다는 이유로 이 파일을 버리지 않는다.
-                        # 파일은 성공 checkpoint로 보존하고, 이어지는 phase 검증이 실제 소유
-                        # 작업(Control, persistence 등)을 자동 수리하도록 같은 진단을 넘긴다.
-                        changed = changed_files(before, snapshot_files(sandbox))
-                        allowed = set(task["allowed_write_paths"])
-                        unauthorized = sorted(
-                            path for path in changed if path not in allowed
-                        )
-                        if unauthorized:
-                            _restore_unauthorized_files(
-                                sandbox, run_root, unauthorized
-                            )
-                            changed = {path for path in changed if path in allowed}
-                        verification = dict(error.evidence)
-                        verification["upstreamFailureDeferred"] = True
-                        handoff_required = True
-                        break
-                    # 현재 작업의 허용 파일에 원인이 없으면 같은 작업을 되풀이하지 않고
-                    # phase 수리 계획으로 넘긴다.
-                    raise
                 referenced = referenced_source_paths(error.evidence)
-                candidate_changes = changed_files(before, snapshot_files(sandbox))
-                if repair_requires_owner_handoff(
-                    error.evidence,
-                    list(task["allowed_write_paths"]),
-                    candidate_changes,
-                ):
-                    # 오류가 다른 담당 파일에만 있다면 현재 작업자에게 호환용 우회
-                    # 코드를 만들게 하지 않는다. 현재 작업 결과는 보존하고 phase 검증이
-                    # 실제 오류 파일의 소유 작업을 다시 계획하도록 진단을 넘긴다.
-                    allowed = set(task["allowed_write_paths"])
-                    unauthorized = sorted(
-                        path for path in candidate_changes if path not in allowed
-                    )
-                    if unauthorized:
-                        _restore_unauthorized_files(sandbox, run_root, unauthorized)
-                        candidate_changes = {
-                            path for path in candidate_changes if path in allowed
-                        }
-                    changed = candidate_changes
-                    verification = dict(error.evidence)
-                    verification["upstreamFailureDeferred"] = True
-                    handoff_required = True
-                    break
+                # compiler나 test가 같은 애플리케이션의 관련 source를 가리키면 별도 owner
+                # task로 왕복하지 않고 현재 수리 대화의 편집 범위에 포함한다. 생성된 공개
+                # 계약은 immutable_paths로 계속 보호한다.
+                for path in referenced:
+                    normalized = path.replace("\\", "/")
+                    if (
+                        normalized.startswith("application/")
+                        and not _path_is_immutable(normalized, immutable_paths)
+                        and (sandbox / normalized).is_file()
+                        and normalized not in editable_paths
+                    ):
+                        editable_paths.append(normalized)
                 evidence_digest = stable_digest(error.evidence)
                 finding_keys = (f"verification:{evidence_digest}",)
                 candidate_digest = stable_digest(
-                    read_allowed_sources(sandbox, task["allowed_write_paths"])
+                    read_allowed_sources(sandbox, editable_paths)
                 )
                 repeated = repair_attempt > 0 and any(
                     item.candidate_digest == candidate_digest
@@ -1017,7 +562,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 repair_ledger.record(
                     RepairAttempt(
                         stage=f"implementation.{task_type}",
-                        target_ids=tuple(task["allowed_write_paths"]),
+                        target_ids=tuple(editable_paths),
                         strategy_key=(
                             "initial_generation"
                             if repair_attempt == 0
@@ -1038,10 +583,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     )
                 )
                 repair_paths = select_repair_paths(
-                    error.evidence, task["allowed_write_paths"]
+                    error.evidence, editable_paths
                 )
                 round_allowed = [str((sandbox / path).resolve()) for path in repair_paths]
-                round_iteration_limit = MAX_REPAIR_ITERATIONS
+                round_iteration_limit = MAX_REPAIR_TURN_ITERATIONS
                 feedback_renderer = (
                     render_frontend_verification_feedback
                     if task_type == "frontend-implementation"
@@ -1052,23 +597,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 # verifier and accumulated history are sufficient for a local correction.
                 feedback_kwargs = {}
                 repair_contract = _repair_contract_context(context)
-                if task_type == "api-adapter":
-                    feedback_kwargs["api_controls"] = sorted(
-                        {
-                            str(binding.get("control")).strip()
-                            for operation in context.get("operations", [])
-                            if isinstance(operation, dict)
-                            for binding in [operation.get("controlBinding") or {}]
-                            if isinstance(binding, dict)
-                            and str(binding.get("control") or "").strip()
-                        }
-                    )
-                    feedback_kwargs["api_contracts"] = _api_adapter_repair_contract(
-                        context
-                    )
-                elif repair_contract:
+                if repair_contract:
                     feedback_kwargs["generated_contracts"] = repair_contract
-                if task_type == "integration-test":
+                if task_type == "wiring":
                     semantic_contract = context.get("semanticContract")
                     if isinstance(semantic_contract, dict):
                         feedback_kwargs["semantic_contract"] = semantic_contract
@@ -1081,7 +612,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 read_only_references = [
                     path
                     for path in referenced
-                    if path not in task["allowed_write_paths"]
+                    if path not in repair_paths
                     and (sandbox / path).is_file()
                 ]
                 if read_only_references:
@@ -1132,7 +663,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "promptSha256": task.get("prompt_sha256"),
         "effectiveModel": configured_model(str(task["llm"]["model"])),
         "changedFiles": sorted(changed),
-        "outputFiles": list(task["allowed_write_paths"]),
+        "outputFiles": required_paths,
         "verification": verification,
         "tools": sorted(agent._tools) if agent is not None else [],
         "durationMs": int((time.monotonic() - started) * 1000),
@@ -1142,10 +673,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "rawResponse": journal.latest_agent_message,
         "status": "SUCCEEDED",
     }
-    if handoff_required:
-        # 현재 작업의 파일은 검증을 통과했지만 다른 담당 파일에 오류가 남았다는 뜻이다.
-        # coordinator가 이 표시를 보고 즉시 실제 담당 작업을 다시 계획한다.
-        result["handoffRequired"] = True
     if repair_ledger.attempts:
         repair_ledger.status = "COMPLETED"
         result["repairHistory"] = repair_ledger.model_dump(mode="json")
@@ -1153,6 +680,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         result["conversationWarning"] = conversation_warning
     write_execution_result(execution_dir, task_id, attempt, result)
     shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
+    cleanup_agent_workspace(sandbox)
     return result
 
 
@@ -1183,76 +711,6 @@ def _run_app_id(run_root: Path) -> str | None:
         return None
     app_id = manifest.get("app_id")
     return str(app_id) if app_id else None
-
-
-def _requires_cross_phase_repair(
-    task_type: str, evidence: dict[str, object]
-) -> bool:
-    output = "\n".join(
-        str(evidence.get(key, ""))
-        for key in ("stdout", "stderr", "testResults")
-    ).lower()
-    # Hibernate validates mappedBy while loading the application context. The
-    # failing task is often wiring or an integration test, but neither owns the
-    # persistence entity pair that defines the association. Return it to the
-    # cross-phase planner immediately instead of spending local LLM repair
-    # rounds on a task whose allowlist cannot contain the fix.
-    if task_type != "persistence-entities" and (
-        "is 'mappedby' a property named" in output
-        or ("annotationexception" in output and "mappedby" in output)
-    ):
-        return True
-    # A configuration task owns neither the entity nor Flyway migration.  A
-    # schema type mismatch must therefore be repaired by persistence owners,
-    # not by asking the wiring agent to repeatedly rewrite application.yml.
-    if task_type != "persistence-entities" and (
-        "jdbctyperecommendationexception" in output
-        or "could not determine recommended jdbctype" in output
-    ):
-        return True
-    if task_type not in {"persistence-entities", "persistence-schema"} and (
-        "schemamanagementexception" in output
-        and "schema-validation:" in output
-    ):
-        return True
-    if task_type == "configuration" and (
-        "schema-validation: wrong column type" in output
-        or ("schemamanagementexception" in output and "wrong column type" in output)
-    ):
-        return True
-    if task_type != "integration-test":
-        return False
-    return any(
-        marker in output
-        for marker in (
-            "jdbcsqlsyntaxerror",
-            "syntax error in sql statement",
-            'expected "identifier"',
-            "reserved keyword",
-            # An E2E test is allowed to create only its test source.  A missing
-            # Spring Data repository bean is owned by persistence discovery or
-            # application wiring, so retrying the test agent cannot resolve it.
-            "nosuchbeandefinitionexception",
-            "no qualifying bean of type",
-            "expected at least 1 bean which qualifies",
-            "qualifies as autowire candidate",
-            # An HTTP-level E2E assertion is evidence that the test reached
-            # the real application graph.  The integration-test allowlist
-            # cannot repair a controller's Control/Boundary collaboration,
-            # so send it to cross-phase repair instead of consuming local
-            # test-only repair attempts.
-            "assertionfailederror",
-            "expected: <",
-            "but was: <",
-            "expected http ",
-            "data integrity violation",
-            "dataintegrityviolationexception",
-            "stackoverflowerror",
-            "requested bean is currently in creation",
-            "circular reference",
-            "circular dependency",
-        )
-    )
 
 
 def execution_attempt(run_root: Path, task_id: str) -> int:
@@ -1412,8 +870,8 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "allowedWriteSucceeded": allowed_write_succeeded,
         "allowedOverwriteSucceeded": allowed_overwrite_succeeded,
         "filePathAliasAccepted": file_path_alias_accepted,
-        "maxIterations": MAX_AGENT_ITERATIONS,
-        "maxRepairIterations": MAX_REPAIR_ITERATIONS,
+        "maxConversationToolTurns": MAX_AGENT_TURN_ITERATIONS,
+        "maxRepairConversationToolTurns": MAX_REPAIR_TURN_ITERATIONS,
         "stuckDetection": False,
         "verificationRepairPolicy": "history-and-progress/v1",
         "reasoningBudgetCap": MAX_REASONING_BUDGET,
@@ -1445,7 +903,7 @@ def create_openhands_conversation(
     api_key: str,
     llm_config: dict[str, object],
     callbacks: list[object] | None = None,
-    max_iterations: int = MAX_AGENT_ITERATIONS,
+    max_iterations: int = MAX_AGENT_TURN_ITERATIONS,
     reasoning_effort: str = "medium",
     system_prompt: str = IMPLEMENTATION_SYSTEM_PROMPT,
     write_only: bool = False,
@@ -1612,329 +1070,6 @@ def create_openhands_conversation(
     return conversation, agent
 
 
-def ensure_control_service_component(
-    sandbox: Path, allowed_write_paths: list[str]
-) -> list[str]:
-    """Register generated BCE Control implementations as Spring services."""
-    changed: list[str] = []
-    for relative in allowed_write_paths:
-        normalized = str(relative).replace("\\", "/")
-        if "/src/main/java/" not in f"/{normalized}" or "/application/impl/" not in normalized:
-            continue
-        path = sandbox / relative
-        if not path.is_file() or not path.name.endswith("Service.java"):
-            continue
-        source = path.read_text(encoding="utf-8")
-        if "@Service" in source or not re.search(
-            r"\bclass\s+[A-Za-z_]\w*\s+implements\s+[A-Za-z_]\w*Controller\b", source
-        ):
-            continue
-        if not re.search(r"(?m)^\s*import\s+org\.springframework\.stereotype\.Service;", source):
-            imports = list(re.finditer(r"(?m)^import\s+[^;]+;\s*$", source))
-            import_line = "import org.springframework.stereotype.Service;\n"
-            if imports:
-                end = imports[-1].end()
-                source = source[:end] + "\n" + import_line.rstrip("\n") + source[end:]
-            else:
-                package = re.search(r"(?m)^package\s+[^;]+;\s*$", source)
-                if package:
-                    source = source[: package.end()] + "\n\n" + import_line + source[package.end() :]
-                else:
-                    source = import_line + source
-        source, count = re.subn(
-            r"(?m)^(\s*)(public\s+class\s+[A-Za-z_]\w*\s+implements\s+[A-Za-z_]\w*Controller\b)",
-            r"\1@Service\n\1\2",
-            source,
-            count=1,
-        )
-        if count:
-            path.write_text(source, encoding="utf-8")
-            changed.append(normalized)
-    return changed
-
-
-def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, object]) -> None:
-    """Remove manual beans for port adapters already discovered by component scanning.
-
-    The wiring task owns ApplicationConfiguration, whereas adapter tasks own their
-    classes.  Retaining both a scanned adapter and an LLM-created ``@Bean`` for its
-    port makes Spring injection non-deterministic.  This normalization deliberately
-    touches only the configuration output owned by the current task.
-    """
-    configuration = next(
-        (
-            sandbox / str(relative)
-            for relative in task.get("allowed_write_paths", [])
-            if str(relative).endswith("/config/ApplicationConfiguration.java")
-        ),
-        None,
-    )
-    if configuration is None or not configuration.is_file():
-        return
-    java_root = sandbox / "application" / "src" / "main" / "java"
-    component_ports: set[str] = set()
-    for source in java_root.rglob("*.java"):
-        if source == configuration:
-            continue
-        text = source.read_text(encoding="utf-8")
-        if not re.search(r"@(Component|Service|Repository|RestController)\b", text):
-            continue
-        match = re.search(r"\bimplements\s+([^\{]+)", text)
-        if not match:
-            continue
-        component_ports.update(
-            item.strip().split("<", 1)[0].rsplit(".", 1)[-1]
-            for item in match.group(1).split(",")
-            if item.strip()
-        )
-    text = configuration.read_text(encoding="utf-8")
-    # The wiring generator can leave explanatory comments such as "return an
-    # empty string as a placeholder" after it has emitted an otherwise valid
-    # factory method.  That wording is not a repair task for the LLM: remove it
-    # deterministically before the production-source gate runs.
-    text, placeholder_comments_removed = remove_placeholder_comments(text)
-    bean = re.compile(
-        r"(?ms)^\s*@Bean(?:\s*\([^)]*\))?\s*"
-        r"(?:public\s+)?([A-Za-z_]\w*)\s+\w+\s*\([^)]*\)\s*\{"
-    )
-    removals: list[tuple[int, int]] = []
-    for match in bean.finditer(text):
-        if match.group(1) not in component_ports:
-            continue
-        depth = 1
-        index = match.end()
-        while index < len(text) and depth:
-            if text[index] == "{":
-                depth += 1
-            elif text[index] == "}":
-                depth -= 1
-            index += 1
-        if depth == 0:
-            removals.append((match.start(), index))
-    for start, end in reversed(removals):
-        text = text[:start] + "\n" + text[end:]
-    # Plain persistence mappers are generated without Spring stereotypes.  They
-    # have no external side effects and are required constructor dependencies of
-    # component-scanned persistence adapters, so register their no-arg instances
-    # deterministically when the LLM omitted them from the configuration.
-    mapper_root = java_root / "persistence" / "mapper"
-    mapper_types: list[str] = []
-    if mapper_root.is_dir():
-        for mapper in sorted(mapper_root.glob("*.java")):
-            mapper_text = mapper.read_text(encoding="utf-8")
-            class_match = re.search(r"\bpublic\s+class\s+(\w+)", mapper_text)
-            package_match = re.search(r"(?m)^package\s+([\w.]+);", mapper_text)
-            if not class_match or not package_match:
-                continue
-            if re.search(r"@(Component|Service|Repository)\b", mapper_text):
-                continue
-            mapper_types.append(f"{package_match.group(1)}.{class_match.group(1)}")
-    for mapper_type in mapper_types:
-        simple = mapper_type.rsplit(".", 1)[-1]
-        if re.search(rf"\b{re.escape(simple)}\s+\w+\s*\(", text):
-            continue
-        method = (
-            "\n    @Bean\n"
-            f"    public {mapper_type} {simple[0].lower() + simple[1:]}() {{\n"
-            f"        return new {mapper_type}();\n"
-            "    }\n"
-        )
-        text = text.rsplit("}", 1)[0] + method + "}\n"
-    # Factory method parameters form the Spring construction graph.  An LLM can
-    # accidentally make a Boundary callback part of that graph (Control ->
-    # Boundary -> Control).  Detect cycles from the actual @Bean declarations
-    # and break only the corresponding parameter edge with @Lazy.  This does
-    # not enable Spring's global circular-reference escape hatch.
-    text, lazy_added = break_configuration_cycles(text)
-    if removals or mapper_types or lazy_added or placeholder_comments_removed:
-        configuration.write_text(text, encoding="utf-8")
-
-
-def normalize_spring_boot_repository_discovery(
-    sandbox: Path, task: dict[str, object]
-) -> None:
-    """Keep Spring Data repositories enabled in the generated application.
-
-    The wiring agent occasionally adds ``exclude`` attributes for JPA
-    auto-configuration after being shown an earlier context failure.  That
-    makes every ``JpaRepository`` disappear from the application context, so
-    the end-to-end test fails before it can exercise the flow.  Repository
-    discovery is part of the generated contract and the wiring prompt already
-    forbids this workaround; normalize the entry point deterministically so a
-    transient LLM deviation cannot ship a broken context.
-    """
-    entrypoint = next(
-        (
-            sandbox / str(relative)
-            for relative in task.get("allowed_write_paths", [])
-            if str(relative).endswith("Application.java")
-        ),
-        None,
-    )
-    if entrypoint is None or not entrypoint.is_file():
-        return
-    text = entrypoint.read_text(encoding="utf-8")
-    original = text
-    text = re.sub(
-        r"(?m)^\s*import\s+org\.springframework\.boot\.autoconfigure\.(?:orm\.jpa\.HibernateJpaAutoConfiguration|data\.jpa\.JpaRepositoriesAutoConfiguration);\s*\n?",
-        "",
-        text,
-    )
-    def remove_jpa_exclusions(match: re.Match[str]) -> str:
-        annotation = match.group(0)
-        if re.search(
-            r"(?:HibernateJpaAutoConfiguration|JpaRepositoriesAutoConfiguration)",
-            annotation,
-        ):
-            return "@SpringBootApplication"
-        return annotation
-
-    text = re.sub(
-        r"@SpringBootApplication\s*\(\s*exclude\s*=\s*(?:\{[^}]*\}|[^)]*)\s*\)",
-        remove_jpa_exclusions,
-        text,
-        flags=re.DOTALL,
-    )
-    if text != original:
-        entrypoint.write_text(text, encoding="utf-8")
-
-
-def enforce_spring_persistence_validation(
-    sandbox: Path, task: dict[str, object]
-) -> None:
-    """Keep the generated runtime honest about JPA-to-migration compatibility.
-
-    A context failure previously led the wiring agent to change ``ddl-auto``
-    to ``none``.  That only hides a broken entity/migration pair and lets a
-    release pass without validating its schema.  The configuration task owns
-    this file, so normalizing the setting here is a safe deterministic guard.
-    """
-    configuration = next(
-        (
-            sandbox / str(relative)
-            for relative in task.get("allowed_write_paths", [])
-            if str(relative).replace("\\", "/").endswith("/application.yml")
-        ),
-        None,
-    )
-    if configuration is None or not configuration.is_file():
-        return
-    text = configuration.read_text(encoding="utf-8")
-    original = text
-    # Support both the nested YAML form and a dotted Spring property.  Do not
-    # preserve a value such as ``none``/``update``: this file is the runtime
-    # verification contract and must validate the generated Flyway schema.
-    text, replacements = re.subn(
-        r"(?m)^(?P<prefix>\s*(?:ddl-auto|spring\.jpa\.hibernate\.ddl-auto)\s*:\s*).*?$",
-        r"\g<prefix>validate",
-        text,
-    )
-    if replacements == 0:
-        # A dotted YAML key is a valid Spring property and avoids duplicating a
-        # pre-existing top-level ``spring`` map just to add this single guard.
-        text = text.rstrip() + "\n\nspring.jpa.hibernate.ddl-auto: validate\n"
-    if text != original:
-        configuration.write_text(text, encoding="utf-8")
-
-
-def remove_placeholder_comments(text: str) -> tuple[str, bool]:
-    """Remove line comments that call generated configuration a placeholder.
-
-    This only alters comments in the wiring output owned by the current task;
-    it never changes the generated Java expression or any other task's source.
-    """
-    normalized = re.sub(
-        r"//[^\r\n]*\bplaceholder\b[^\r\n]*",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-    return normalized, normalized != text
-
-
-def break_configuration_cycles(text: str) -> tuple[str, bool]:
-    """Add ``@Lazy`` only to @Bean parameters that close a dependency cycle."""
-    bean = re.compile(
-        r"(?ms)^\s*@Bean(?:\s*\([^)]*\))?\s*"
-        r"(?:public\s+)?(?P<return>[A-Za-z_]\w*(?:\s*<[^>{}]*>)?)\s+"
-        r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^)]*)\)\s*\{"
-    )
-    methods = list(bean.finditer(text))
-    if not methods:
-        return text, False
-
-    return_to_name = {
-        _simple_java_type(match.group("return")): match.group("name") for match in methods
-    }
-    edges: dict[str, set[str]] = {}
-    for match in methods:
-        edges[match.group("name")] = {
-            return_to_name[param_type]
-            for param_type in _bean_parameter_types(match.group("params"))
-            if param_type in return_to_name
-        }
-
-    cyclic_edges: set[tuple[str, str]] = set()
-    for source, targets in edges.items():
-        for target in targets:
-            if source == target or _has_path(edges, target, source, {target}):
-                cyclic_edges.add((source, target))
-    if not cyclic_edges:
-        return text, False
-
-    def rewrite(match: re.Match[str]) -> str:
-        source = match.group("name")
-        params = match.group("params")
-        additions = {
-            return_type
-            for return_type, target in return_to_name.items()
-            if (source, target) in cyclic_edges
-        }
-        if not additions:
-            return match.group(0)
-        rewritten = re.sub(
-            r"(?<!@Lazy\s)(?P<parameter>(?:@[A-Za-z_]\w*(?:\([^)]*\))?\s+)*(?:final\s+)?(?:[\w.]+(?:\s*<[^>{}]*>)?)\s+[A-Za-z_]\w*)",
-            lambda parameter: (
-                "@Lazy " + parameter.group("parameter")
-                if _simple_java_type(parameter.group("parameter")) in additions
-                and "@Lazy" not in parameter.group("parameter")
-                else parameter.group("parameter")
-            ),
-            params,
-        )
-        return match.group(0).replace(params, rewritten, 1)
-
-    rewritten = bean.sub(rewrite, text)
-    if rewritten == text:
-        return text, False
-    if not re.search(r"(?m)^import\s+org\.springframework\.context\.annotation\.Lazy;", rewritten):
-        anchor = "import org.springframework.context.annotation.Configuration;"
-        if anchor in rewritten:
-            rewritten = rewritten.replace(anchor, anchor + "\nimport org.springframework.context.annotation.Lazy;", 1)
-        else:
-            package = re.search(r"(?m)^package\s+[^;]+;", rewritten)
-            if package:
-                rewritten = rewritten[: package.end()] + "\n\nimport org.springframework.context.annotation.Lazy;" + rewritten[package.end() :]
-    return rewritten, True
-
-
-def _simple_java_type(value: str) -> str:
-    cleaned = re.sub(r"@[A-Za-z_]\w*(?:\([^)]*\))?\s*", "", value)
-    cleaned = re.sub(r"\bfinal\s+", "", cleaned).strip()
-    return cleaned.split()[0].split("<", 1)[0].rsplit(".", 1)[-1] if cleaned else ""
-
-
-def _bean_parameter_types(params: str) -> set[str]:
-    return {_simple_java_type(parameter) for parameter in params.split(",") if parameter.strip()}
-
-
-def _has_path(edges: dict[str, set[str]], current: str, target: str, seen: set[str]) -> bool:
-    for next_node in edges.get(current, set()):
-        if next_node == target or (next_node not in seen and _has_path(edges, next_node, target, seen | {next_node})):
-            return True
-    return False
-
-
 def select_repair_paths(
     evidence: dict[str, object], allowed_paths: list[str]
 ) -> list[str]:
@@ -1957,3 +1092,13 @@ def select_repair_paths(
         or relative.replace("\\", "/") in output
     ]
     return selected or list(allowed_paths)
+
+
+def _path_is_immutable(path: str, immutable_paths: set[str]) -> bool:
+    """파일 경로가 생성 계약 파일 또는 그 하위에 있는지 확인한다."""
+    normalized = path.replace("\\", "/").rstrip("/")
+    return any(
+        normalized == root.rstrip("/")
+        or normalized.startswith(root.rstrip("/") + "/")
+        for root in immutable_paths
+    )

@@ -796,12 +796,6 @@ class ImplementationWorker:
                 for entry in entries
                 for task_id in [*entry.get("ownerTaskIds", []), *entry.get("revalidationTaskIds", [])]
             }
-            deferred_ids = {
-                str(task.get("task_id"))
-                for task in manifest.get("implementation_tasks", [])
-                if isinstance(task, dict)
-                and task.get("task_type") == "integration-test"
-            }
             request_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
             initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
             return (
@@ -809,7 +803,6 @@ class ImplementationWorker:
                 and (
                     request_ids.issubset(initial_ids)
                     or request_ids.issubset(planned_ids)
-                    or request_ids.issubset(deferred_ids)
                 )
             )
         except (OSError, json.JSONDecodeError):

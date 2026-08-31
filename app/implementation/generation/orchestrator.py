@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import hashlib
@@ -28,11 +28,7 @@ from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from ..planning.design_context import (
     ImplementationTask,
     generate_api_adapter_tasks,
-    generate_boundary_adapter_tasks,
-    generate_e2e_tasks,
     generate_frontend_tasks,
-    generate_gateway_adapter_tasks,
-    generate_implementation_tasks,
     generate_persistence_tasks,
     generate_wiring_tasks,
 )
@@ -234,8 +230,7 @@ class PrototypeOrchestrator:
                 self._compile(application)
 
             self._set_status("PLANNING", "구현 작업과 의존 관계를 계획하고 있습니다.")
-            tasks = generate_implementation_tasks(self.spec, staging)
-            self.manifest.implementation_tasks = [task.to_dict() for task in tasks]
+            self.manifest.implementation_tasks = []
             self.manifest.agent_execution = write_execution_plan(
                 staging,
                 self.manifest.implementation_tasks,
@@ -993,48 +988,6 @@ def plan_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, obje
     return [task.to_dict() for task in tasks]
 
 
-def plan_boundary_adapter_tasks(
-    spec: JobSpec, run_root: Path
-) -> list[dict[str, object]]:
-    """Add BCE Boundary adapter tasks to an existing run manifest."""
-    run_root = run_root.resolve()
-    tasks = generate_boundary_adapter_tasks(spec, run_root)
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task.to_dict() for task in tasks]
-
-
-def plan_gateway_adapter_tasks(
-    spec: JobSpec, run_root: Path
-) -> list[dict[str, object]]:
-    """Add outbound Gateway adapter tasks to an existing run manifest."""
-    run_root = run_root.resolve()
-    tasks = generate_gateway_adapter_tasks(spec, run_root)
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task.to_dict() for task in tasks]
-
-
 def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
     """Add the Spring application wiring task to an existing run manifest."""
     run_root = run_root.resolve()
@@ -1064,34 +1017,6 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]
         item.get("task_id"): item
         for item in manifest.get("implementation_tasks", [])
         if item.get("task_type") != "frontend-implementation"
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task.to_dict() for task in tasks]
-
-
-def plan_e2e_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
-    """Add the E2E task, or persist a structured NEEDS_INPUT design-gap report."""
-    run_root = run_root.resolve()
-    tasks = generate_e2e_tasks(spec, run_root)
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["implementation_tasks"] = [
-        item for item in manifest.get("implementation_tasks", [])
-        if item.get("task_type") != "integration-test"
-    ]
-    if not tasks:
-        manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        return []
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
     }
     for task in tasks:
         existing[task.task_id] = task.to_dict()

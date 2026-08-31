@@ -64,37 +64,6 @@ def test_reconcile_implementation_command_closes_stale_running_command(monkeypat
     assert events[0]["metadata"]["status"] == "COMPLETED"
 
 
-def test_reconcile_implementation_command_recovers_interrupted_command(monkeypatch) -> None:
-    command = {
-        "command_id": "command-1",
-        "action": "approve_implementation",
-        "status": "INTERRUPTED",
-        "payload": {"job_id": "job-1"},
-    }
-    updated = {**command, "status": "COMPLETED"}
-    monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
-    monkeypatch.setattr(
-        workspace_module.implementation_worker,
-        "get",
-        lambda _job_id: {"job_id": "job-1", "status": "COMPLETED"},
-    )
-    monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: updated)
-    monkeypatch.setattr(repository, "append_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        repository,
-        "now",
-        lambda: datetime.now(UTC).replace(tzinfo=None),  # noqa: PLW0108
-    )
-
-    service = WorkspaceService()
-    try:
-        result = service.reconcile_implementation_command("app-1")
-    finally:
-        service.shutdown()
-
-    assert result["status"] == "COMPLETED"
-
-
 def test_reconcile_implementation_command_restores_progress_after_restart(monkeypatch) -> None:
     command = {
         "command_id": "command-1",
@@ -1345,27 +1314,6 @@ def test_failed_testing_is_an_actionable_repair_gate(monkeypatch) -> None:
     assert result["job"]["implementation_job_id"] == "implementation-1"
 
 
-def test_implementation_progress_snapshot_exposes_generation_milestones() -> None:
-    service = WorkspaceService()
-    try:
-        progress = service._implementation_progress_snapshot(
-            {
-                "status": "GENERATING",
-                "progress": {
-                    "status": "GENERATING_SOURCES",
-                    "message": "Generating application sources.",
-                },
-            }
-        )
-    finally:
-        service.shutdown()
-
-    updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["prepare-job"]["status"] == "running"
-    assert updates["validate-input"]["status"] == "completed"
-    assert updates["generate-sources"]["status"] == "running"
-
-
 def test_implementation_progress_snapshot_uses_public_workflow_phases() -> None:
     service = WorkspaceService()
     try:
@@ -1408,10 +1356,10 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
         json.dumps(
             {
                 "status": "RUNNING",
-                "currentPhase": "boundary-adapters",
+                "currentPhase": "use-cases",
                 "phases": [
                     {"phaseId": "persistence", "status": "SUCCEEDED"},
-                    {"phaseId": "boundary-adapters", "status": "RUNNING"},
+                    {"phaseId": "use-cases", "status": "RUNNING"},
                 ],
                 "tasks": [
                     {
@@ -1420,8 +1368,8 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
                         "status": "SUCCEEDED",
                     },
                     {
-                        "taskId": "boundary-1",
-                        "phase": "boundary-adapters",
+                        "taskId": "use-cases-1",
+                        "phase": "use-cases",
                         "status": "RUNNING",
                     },
                 ],
@@ -1451,11 +1399,11 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
         ),
         encoding="utf-8",
     )
-    (event_dir / "boundary-1.result.json").write_text(
+    (event_dir / "use-cases-1.result.json").write_text(
         json.dumps(
             {
-                "taskId": "boundary-1",
-                "taskType": "boundary-adapter",
+                "taskId": "use-cases-1",
+                "taskType": "use-case",
                 "status": "SUCCEEDED",
                 "changedFiles": ["application/src/main/java/BoundaryAdapter.java"],
                 "verification": {"exitCode": 0},
@@ -1481,7 +1429,7 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
 
     updates = {item["step"]: item for item in progress["updates"]}
     assert updates["phase-backend"]["status"] == "running"
-    assert updates["sub-backend-boundary-adapters"]["status"] == "running"
+    assert updates["sub-backend-use-cases"]["status"] == "running"
     assert updates["implementation-file"]["detail"] == "Editing BoundaryAdapter.java"
     assert progress["current_file"] == (
         "application/src/main/java/BoundaryAdapter.java"
@@ -1489,8 +1437,8 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
     assert progress["current_class"] == "BoundaryAdapter"
     assert progress["agent_results"] == [
         {
-            "task_id": "boundary-1",
-            "task_type": "boundary-adapter",
+            "task_id": "use-cases-1",
+            "task_type": "use-case",
             "status": "SUCCEEDED",
             "raw_response": "Boundary adapter 구현을 완료했습니다.",
             "changed_files": ["application/src/main/java/BoundaryAdapter.java"],

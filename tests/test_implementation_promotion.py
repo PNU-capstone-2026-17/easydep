@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.implementation.generation import orchestrator as orchestrator_module
 from app.implementation.generation.orchestrator import PrototypeOrchestrator
 
 
@@ -11,62 +10,6 @@ def _orchestrator_with_output_root(tmp_path: Path) -> PrototypeOrchestrator:
     orchestrator = object.__new__(PrototypeOrchestrator)
     orchestrator.spec = type("Spec", (), {"output_root": tmp_path / "runs"})()
     return orchestrator
-
-
-def _windows_lock_error() -> PermissionError:
-    error = PermissionError("Docker bind mount has not released the directory")
-    error.winerror = 5  # type: ignore[attr-defined]
-    return error
-
-
-def test_promote_retries_a_transient_windows_directory_lock(monkeypatch, tmp_path: Path) -> None:
-    orchestrator = _orchestrator_with_output_root(tmp_path)
-    staging = tmp_path / "runs" / ".run.staging"
-    final = tmp_path / "runs" / "run"
-    staging.mkdir(parents=True)
-    (staging / "artifact.txt").write_text("ready", encoding="utf-8")
-
-    real_replace = orchestrator_module.os.replace
-    calls = 0
-    delays: list[float] = []
-
-    def replace_after_docker_release(source: Path, target: Path) -> None:
-        nonlocal calls
-        calls += 1
-        if calls < 3:
-            raise _windows_lock_error()
-        real_replace(source, target)
-
-    monkeypatch.setattr(orchestrator_module.os, "replace", replace_after_docker_release)
-    monkeypatch.setattr(orchestrator_module.time, "sleep", delays.append)
-
-    orchestrator._promote(staging, final)
-
-    assert calls == 3
-    assert delays == [0.25, 0.5]
-    assert not staging.exists()
-    assert (final / "artifact.txt").read_text(encoding="utf-8") == "ready"
-
-
-def test_promote_does_not_retry_unrelated_filesystem_errors(monkeypatch, tmp_path: Path) -> None:
-    orchestrator = _orchestrator_with_output_root(tmp_path)
-    staging = tmp_path / "runs" / ".run.staging"
-    final = tmp_path / "runs" / "run"
-    staging.mkdir(parents=True)
-    error = PermissionError("access denied by path policy")
-    error.winerror = 3  # type: ignore[attr-defined]
-    delays: list[float] = []
-
-    def reject_replace(source: Path, target: Path) -> None:
-        raise error
-
-    monkeypatch.setattr(orchestrator_module.os, "replace", reject_replace)
-    monkeypatch.setattr(orchestrator_module.time, "sleep", delays.append)
-
-    with pytest.raises(PermissionError, match="path policy"):
-        orchestrator._promote(staging, final)
-
-    assert delays == []
 
 
 def test_promote_preserves_an_existing_immutable_run(tmp_path: Path) -> None:

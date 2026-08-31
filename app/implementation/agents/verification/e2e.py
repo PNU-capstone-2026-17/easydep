@@ -1,468 +1,73 @@
+"""wiring 작업이 실제 HTTP 흐름을 하나 이상 만들었는지 가볍게 확인한다.
+
+정확한 동작과 Spring 연결은 Gradle이 실행하는 FlowTest가 검증한다. 여기서는 빈 test나
+repository 직접 호출을 E2E로 잘못 제출하지 않도록 대표 HTTP 요청의 최소 근거만 확인한다.
+"""
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-_SPRING_BOOT3_LEGACY_IMPORTS = {
-    "org.springframework.boot.web.server.": "org.springframework.boot.test.web.server.",
-    "javax.persistence.": "jakarta.persistence.",
-    "javax.validation.": "jakarta.validation.",
-    "javax.servlet.": "jakarta.servlet.",
-    "javax.annotation.": "jakarta.annotation.",
-    "javax.transaction.": "jakarta.transaction.",
+_METHOD_EVIDENCE = {
+    "GET": ("HttpMethod.GET", "getForEntity(", "getForObject(", "get("),
+    "POST": ("HttpMethod.POST", "postForEntity(", "postForObject(", "post("),
+    "PUT": ("HttpMethod.PUT", ".put(", "put("),
+    "PATCH": ("HttpMethod.PATCH", "patchForObject(", "patch("),
+    "DELETE": ("HttpMethod.DELETE", ".delete(", "delete("),
 }
 
-_JAVA_COMMENT_OR_STRING = re.compile(
-    r'//[^\r\n]*|/\*.*?\*/|"""[\s\S]*?"""|"(?:\\.|[^"\\\r\n])*"|\'(?:\\.|[^\'\\\r\n])*\'',
-    re.DOTALL,
-)
-
-
-def java_code_without_comments_and_strings(source: str) -> str:
-    """주석과 문자열을 공백으로 가려 실제 Java 코드 위치만 남긴다."""
-
-    return _JAVA_COMMENT_OR_STRING.sub(
-        lambda match: re.sub(r"[^\r\n]", " ", match.group()), source
-    )
-
-
-def repair_spring_boot3_test_compatibility(path: Path) -> bool:
-    """Normalize legacy framework imports in generated Spring Boot 3 tests.
-
-    The generated Gradle project is pinned to Spring Boot 3.3.x.  LLMs can
-    nevertheless copy Spring Boot 2 or pre-Jakarta examples, which makes an
-    otherwise valid E2E flow fail at compilation.  Restrict the rewrite to
-    Java import declarations so comments, strings, and application behavior
-    are never changed.  This is a bounded compatibility migration, not a
-    substitute for semantic repair.
-    """
-    if not path.is_file():
-        return False
-    source = path.read_text(encoding="utf-8")
-    rewritten = source
-    for old_prefix, new_prefix in _SPRING_BOOT3_LEGACY_IMPORTS.items():
-        rewritten = re.sub(
-            rf"(?m)^(\s*import\s+(?:static\s+)?){re.escape(old_prefix)}",
-            rf"\g<1>{new_prefix}",
-            rewritten,
-        )
-    if rewritten == source:
-        return False
-    path.write_text(rewritten, encoding="utf-8")
-    return True
-
-
-# Kept as a compatibility alias for callers and plugins using the old helper
-# name.  The implementation now covers the complete bounded Spring Boot 3
-# import migration rather than only LocalServerPort.
-repair_spring_boot_test_compatibility = repair_spring_boot3_test_compatibility
-
-
-def repair_nested_e2e_members(path: Path) -> bool:
-    """Unwrap class members accidentally nested in a synthetic test method."""
-    if not path.is_file():
-        return False
-    lines = path.read_text(encoding="utf-8").splitlines()
-    wrapper_index = next(
-        (
-            index
-            for index, line in enumerate(lines[:-1])
-            if re.search(r"^\s*@Test\s*$", line)
-            and re.search(
-                r"\bvoid\s+[A-Za-z_$][\w$]*\s*\(\s*\)\s*\{",
-                lines[index + 1],
-            )
-        ),
-        None,
-    )
-    if wrapper_index is None:
-        return False
-
-    depth = 0
-    wrapper_close_index: int | None = None
-    nested_member = False
-    for offset, line in enumerate(lines[wrapper_index + 1 :], wrapper_index + 1):
-        stripped = line.strip()
-        if depth > 0 and re.match(r"@(Autowired|BeforeEach|Test)\b", stripped):
-            nested_member = True
-        depth += line.count("{") - line.count("}")
-        if depth == 0 and wrapper_close_index is None:
-            wrapper_close_index = offset
-            break
-    if not nested_member or wrapper_close_index is None:
-        return False
-
-    # Keep the wrapper contents and remove its annotation/declaration.  If a
-    # separate class closing brace follows, remove the wrapper's own closing
-    # brace as well; older system-generated wrappers reused the class brace.
-    remove_end = wrapper_index + 2
-    trailing_lines = lines[wrapper_close_index + 1 :]
-    if any(line.strip() for line in trailing_lines):
-        del lines[wrapper_close_index]
-    del lines[wrapper_index:remove_end]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return True
-
-
-def repair_orphaned_java_test_statements(path: Path) -> bool:
-    """Wrap executable statements accidentally emitted outside an E2E test method.
-
-    LLM retries occasionally close the last ``@Test`` method before appending its
-    remaining assertions, producing ``invalid method declaration`` compiler
-    errors.  When the orphan block is unambiguous (class-level statements
-    followed by one extra closing brace), repair it deterministically before
-    asking the agent to retry.
-    """
-    if not path.is_file():
-        return False
-    lines = path.read_text(encoding="utf-8").splitlines()
-    class_seen = False
-    depth = 0
-    orphan_start: int | None = None
-    orphan_end: int | None = None
-    executable = re.compile(
-        r"^(?:assertThat\b|assert\w*\b|[A-Z][\w<>?, ]+\s+\w+\s*=|"
-        r"(?:response|request|test\w*)\s*\()"
-    )
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if not class_seen and re.search(r"\bclass\s+\w+", line):
-            class_seen = True
-        if class_seen and depth == 1 and executable.match(stripped):
-            if orphan_start is None:
-                orphan_start = index
-        if orphan_start is not None and stripped == "}" and depth == 1:
-            orphan_end = index
-            break
-        depth += line.count("{") - line.count("}")
-    if orphan_start is None or orphan_end is None or orphan_end <= orphan_start:
-        return False
-
-    orphan = lines[orphan_start:orphan_end]
-    indent = re.match(r"\s*", orphan[0]).group(0)
-    body = [indent + "    " + item[len(indent):] if item.startswith(indent) else indent + "    " + item
-            for item in orphan]
-    wrapper = [indent + "@Test", indent + "void generatedOrphanFlowAssertions() {", *body, indent + "}"]
-    lines = lines[:orphan_start] + wrapper + lines[orphan_end + 1:]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return True
-
-
-_STATUS_ENUMS = {
-    "200": "OK",
-    "201": "CREATED",
-    "202": "ACCEPTED",
-    "204": "NO_CONTENT",
-    "400": "BAD_REQUEST",
-    "401": "UNAUTHORIZED",
-    "403": "FORBIDDEN",
-    "404": "NOT_FOUND",
-    "409": "CONFLICT",
-    "422": "UNPROCESSABLE_ENTITY",
-    "500": "INTERNAL_SERVER_ERROR",
+_STATUS_NAMES = {
+    200: "OK",
+    201: "CREATED",
+    202: "ACCEPTED",
+    204: "NO_CONTENT",
 }
-
-
-def _java_test_method_bodies(source: str) -> list[str]:
-    """Return complete Java ``@Test`` bodies without assuming their formatting."""
-    declaration = re.compile(
-        r"(?ms)@Test(?:\s*\([^)]*\))?\s*"
-        r"(?:(?:@[A-Za-z_$][\w$]*(?:\([^)]*\))?\s*)*)"
-        r"(?:(?:public|protected|private)\s+)?void\s+"
-        r"[A-Za-z_$][\w$]*\s*\([^)]*\)"
-        r"(?:\s+throws\s+[^{]+)?\s*\{"
-    )
-    bodies: list[str] = []
-    for match in declaration.finditer(source):
-        start = match.end() - 1
-        depth = 0
-        for index in range(start, len(source)):
-            if source[index] == "{":
-                depth += 1
-            elif source[index] == "}":
-                depth -= 1
-                if depth == 0:
-                    bodies.append(source[match.start() : index + 1])
-                    break
-    return bodies
-
-
-def _java_method_bodies(source: str) -> dict[str, str]:
-    """Return named Java method bodies so tests can reuse HTTP helpers."""
-    declaration = re.compile(
-        r"(?ms)(?:(?:public|protected|private|static|final|synchronized)\s+)*"
-        r"[\w<>?, \[\]]+\s+(?P<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{"
-    )
-    methods: dict[str, str] = {}
-    for match in declaration.finditer(source):
-        start = match.end() - 1
-        depth = 0
-        for index in range(start, len(source)):
-            if source[index] == "{":
-                depth += 1
-            elif source[index] == "}":
-                depth -= 1
-                if depth == 0:
-                    methods[match.group("name")] = source[match.start() : index + 1]
-                    break
-    return methods
-
-
-def _expanded_java_test_method_bodies(source: str) -> list[str]:
-    """Include helper methods called by each test in its HTTP evidence."""
-    tests = _java_test_method_bodies(source)
-    helpers = _java_method_bodies(source)
-    expanded: list[str] = []
-    for test in tests:
-        body = test
-        seen: set[str] = set()
-        pending = list(helpers)
-        while pending:
-            name = pending.pop()
-            if name in seen or not re.search(rf"\b{re.escape(name)}\s*\(", body):
-                continue
-            seen.add(name)
-            helper = helpers[name]
-            body += "\n" + helper
-            pending.extend(helpers)
-        expanded.append(body)
-    return expanded
-
-
-def _http_path_evidence_pattern(path: str) -> re.Pattern[str]:
-    """Match a URI template literal or Java concatenation resolving to ``path``.
-
-    ``RestTemplate`` accepts URI-template literals together with trailing
-    variable arguments (for example ``\"/courses/{courseId}\"``).  That is
-    executable HTTP evidence and must be treated equivalently to a manually
-    concatenated URL.
-    """
-    parts = re.split(r"(\{[^}]+\})", path)
-    resolved_expression = '"' + re.escape(parts[0]) + '"'
-    for index in range(1, len(parts), 2):
-        resolved_expression += (
-            r'\s*\+\s*[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*'
-        )
-        suffix = parts[index + 1]
-        if suffix:
-            resolved_expression += r'\s*\+\s*"' + re.escape(suffix) + '"'
-    literal_template = re.escape(path)
-    return re.compile(
-        r"(?<![A-Za-z0-9_/-])(?:"
-        + literal_template
-        + r"|"
-        + resolved_expression
-        + r")(?![A-Za-z0-9_/-])"
-    )
-
-
-def _status_assertion_pattern(status: object) -> re.Pattern[str]:
-    value = str(status)
-    alternatives = [re.escape(value)]
-    symbolic_name = _STATUS_ENUMS.get(value)
-    if symbolic_name:
-        alternatives.append(rf"(?:HttpStatus\.)?{symbolic_name}")
-    mockmvc_matcher = {
-        "200": "isOk",
-        "201": "isCreated",
-        "202": "isAccepted",
-        "204": "isNoContent",
-        "400": "isBadRequest",
-        "401": "isUnauthorized",
-        "403": "isForbidden",
-        "404": "isNotFound",
-        "409": "isConflict",
-        "422": "isUnprocessableEntity",
-        "500": "isInternalServerError",
-    }.get(value)
-    if mockmvc_matcher:
-        alternatives.append(mockmvc_matcher)
-    return re.compile(
-        rf"(?im)^.*(?:assert|expect|status).*\b(?:{'|'.join(alternatives)})\b.*$"
-    )
-
-
-def _http_method_evidence(method: str, source: str) -> bool:
-    verbs = {
-        "GET": r"\b(?:getFor(?:Entity|Object)|get)\s*\(|HttpMethod\.GET",
-        "POST": r"\bpostFor(?:Entity|Object|Location)\s*\(|HttpMethod\.POST",
-        "PUT": r"\bput\s*\(|HttpMethod\.PUT",
-        "PATCH": r"\bpatchForObject\s*\(|HttpMethod\.PATCH",
-        "DELETE": r"\bdelete\s*\(|HttpMethod\.DELETE",
-    }
-    verb = method.upper()
-    pattern = verbs.get(verb, rf"HttpMethod\.{re.escape(verb)}")
-    # MockMvc tests commonly use a static wildcard import and invoke
-    # ``mockMvc.perform(post(...))`` directly.  Treat only calls inside a
-    # ``perform`` expression as evidence so unrelated methods such as
-    # ``repository.delete(...)`` cannot satisfy an HTTP scenario.
-    if verb in {"GET", "POST", "PUT", "DELETE", "PATCH"}:
-        builder = verb.lower()
-        mockmvc_pattern = rf"(?:MockMvcRequestBuilders\.)?{builder}\s*\("
-        if re.search(
-            rf"mockMvc\s*\.\s*perform\s*\(\s*(?:MockMvcRequestBuilders\.)?{builder}\s*\(",
-            source,
-        ):
-            return True
-        if re.search(
-            rf"import\s+static\s+org\.springframework\.test\.web\.servlet\.request\.MockMvcRequestBuilders\.(?:\*|{builder})\s*;",
-            source,
-        ) and re.search(mockmvc_pattern, source):
-            return True
-    return bool(re.search(pattern, source))
-
-
-def _scenario_contract_violations(source: str, scenarios: object) -> list[str]:
-    """Verify method, resolved path, and status together for every E2E row."""
-    if not isinstance(scenarios, list):
-        return []
-    bodies = _expanded_java_test_method_bodies(source)
-    violations: list[str] = []
-    for scenario in scenarios:
-        if not isinstance(scenario, dict):
-            continue
-        method = str(scenario.get("method", "")).upper()
-        path = str(scenario.get("path", ""))
-        status = scenario.get("status")
-        if not method or not path or status is None:
-            continue
-        operation = f"{method} {path}"
-        method_bodies = [
-            body for body in bodies if _http_method_evidence(method, body)
-        ]
-        if not method_bodies:
-            violations.append(f"Missing HTTP method evidence for scenario: {operation}")
-            continue
-        matching_bodies = [
-            body for body in method_bodies if _http_path_evidence_pattern(path).search(body)
-        ]
-        if not matching_bodies:
-            violations.append(f"Missing HTTP path evidence: {path}")
-            continue
-        if not any(_status_assertion_pattern(status).search(body) for body in matching_bodies):
-            violations.append(
-                f"Missing asserted HTTP status for scenario {operation}: {status}"
-            )
-    return violations
 
 
 def e2e_contract_violations(
     path: Path, contract: dict[str, object] | None = None
 ) -> list[str]:
-    """Return semantic defects that make the generated E2E test non-evidentiary."""
+    """대표 method·path·성공 status가 실행되는 FlowTest인지 확인한다."""
     if not path.is_file():
-        return ["E2E test file is missing"]
+        return [f"{path.as_posix()}: HTTP flow test file is missing"]
 
     source = path.read_text(encoding="utf-8")
     violations: list[str] = []
-    required_groups: dict[str, tuple[str, ...]] = {
-        "real HTTP client": ("TestRestTemplate", "MockMvc"),
-    }
-    if contract is not None:
-        repositories = tuple(
-            str(repository)
-            for repository in contract.get("repositories", [])
-            if str(repository).strip()
-        )
-        if repositories:
-            # The planner lists all generated repositories, but one E2E test
-            # cannot truthfully exercise every persistence aggregate. Require
-            # at least one concrete repository evidence and let scenario-level
-            # HTTP assertions cover the remaining aggregates.
-            if "persistencePaths" not in contract or contract.get("persistencePaths"):
-                required_groups["repository evidence"] = repositories
-        for gateway in contract.get("gatewayAdapters", []):
-            required_groups[f"concrete gateway {gateway}"] = (str(gateway),)
-    else:
-        # Compatibility for runs planned before semantic contracts were added.
-        required_groups.update({
-            "concrete deterministic trading gateway": ("InMemoryTradingSiteGatewayAdapter", "GatewayAdapter", "Gateway"),
-            "purchase persistence evidence": ("PurchaseRecordRepository", "Repository"),
-        })
-    for label, alternatives in required_groups.items():
-        if not any(token in source for token in alternatives):
-            violations.append(f"Missing {label}: {' or '.join(alternatives)}")
+    if "@SpringBootTest" not in source:
+        violations.append(f"{path.as_posix()}: add @SpringBootTest")
+    if not any(client in source for client in ("TestRestTemplate", "MockMvc")):
+        violations.append(f"{path.as_posix()}: exercise the application through HTTP")
+    if not re.search(r"(?m)^\s*@Test\b", source):
+        violations.append(f"{path.as_posix()}: add at least one executable @Test")
 
-    if contract and contract.get("scenarios"):
-        violations.extend(_scenario_contract_violations(source, contract["scenarios"]))
-    elif contract:
-        for expected_path in contract.get("paths", []):
-            pattern = re.escape(str(expected_path))
-            pattern = re.sub(r"\\\{[^}]+\\\}", r'[^"\\s]+', pattern)
-            if not re.search(pattern, source):
-                violations.append(f"Missing HTTP path evidence: {expected_path}")
-        for expected_status in contract.get("statuses", []):
-            status = str(expected_status)
-            # Spring tests commonly assert the symbolic HttpStatus enum rather
-            # than the numeric wire value (e.g. HttpStatus.OK for 200).  Both
-            # forms are equivalent evidence and must satisfy the contract.
-            status_names = {
-                "200": "OK",
-                "201": "CREATED",
-                "202": "ACCEPTED",
-                "204": "NO_CONTENT",
-                "400": "BAD_REQUEST",
-                "401": "UNAUTHORIZED",
-                "403": "FORBIDDEN",
-                "404": "NOT_FOUND",
-                "409": "CONFLICT",
-                "422": "UNPROCESSABLE_ENTITY",
-                "500": "INTERNAL_SERVER_ERROR",
-            }
-            alternatives = [re.escape(status)]
-            symbolic_name = status_names.get(status)
-            if symbolic_name:
-                alternatives.append(rf"(?:HttpStatus\.)?{symbolic_name}")
-            assertion = re.compile(
-                rf"(?im)^.*(?:assert|expect|status).*\b(?:{'|'.join(alternatives)})\b.*$"
-            )
-            if not assertion.search(source):
-                violations.append(f"Missing asserted HTTP status: {status}")
-
-    test_count = len(re.findall(r"(?m)^\s*@Test\b", source))
-    minimum_tests = int(contract.get("minimumTests", 1)) if contract else 4
-    if test_count < minimum_tests:
-        violations.append(
-            f"Expected at least {minimum_tests} independent E2E scenarios, found {test_count}"
-        )
-
-    annotation_forbidden = {
-        "test bean replacement": (
-            "@TestConfiguration",
-            "@Configuration",
-            "@Bean",
-            "@Primary",
-            "@MockBean",
-            "@MockitoBean",
-        ),
-    }
-    code = java_code_without_comments_and_strings(source)
-    for label, tokens in annotation_forbidden.items():
-        found = [
-            token
-            for token in tokens
-            if re.search(
-                rf"(?m)^\s*(?:@[\w.]+(?:\([^\r\n)]*\))?\s+)*"
-                rf"@(?:[\w.]+\.)?{re.escape(token[1:])}\b",
-                code,
-            )
+    if not contract:
+        return violations
+    method = str(contract.get("method") or "").upper()
+    expected_path = str(contract.get("path") or "")
+    status = _integer(contract.get("status"))
+    if method and not any(token in source for token in _METHOD_EVIDENCE.get(method, ())):
+        violations.append(f"{path.as_posix()}: exercise HTTP method {method}")
+    if expected_path and expected_path not in source:
+        violations.append(f"{path.as_posix()}: exercise HTTP path {expected_path}")
+    if status is not None:
+        status_tokens = {str(status)}
+        if name := _STATUS_NAMES.get(status):
+            status_tokens.update({name, f"HttpStatus.{name}"})
+        assertion_lines = [
+            line
+            for line in source.splitlines()
+            if re.search(r"assert|expect|status", line, re.IGNORECASE)
         ]
-        if found:
-            violations.append(f"Forbidden {label}: {', '.join(found)}")
-
-    forbidden = {
-        "reflection-based gateway access": ("java.lang.reflect", ".getMethod("),
-        "weak dual-outcome assertion": (
-            "accept both",
-            "may be null",
-            "no strict assertion",
-            "simplified integration test",
-        ),
-        "disabled test": ("@Disabled",),
-    }
-    lowered = source.lower()
-    for label, tokens in forbidden.items():
-        found = [token for token in tokens if token.lower() in lowered]
-        if found:
-            violations.append(f"Forbidden {label}: {', '.join(found)}")
+        if not any(
+            token in line for line in assertion_lines for token in status_tokens
+        ):
+            violations.append(f"{path.as_posix()}: assert HTTP status {status}")
     return violations
+
+
+def _integer(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None

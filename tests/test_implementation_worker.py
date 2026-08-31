@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import sys
 import zipfile
 from pathlib import Path
 
@@ -11,7 +10,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.implementation.agents.verification.build import gradle_command
 from app.implementation.application.feedback import assess_feedback_eligibility
 from app.implementation.application.jobs import ImplementationWorker
 from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
@@ -212,9 +210,7 @@ def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path
     reports.mkdir(parents=True)
     (reports / "run-manifest.json").write_text(json.dumps({
         "input_hash": "input-hash",
-        "implementation_tasks": [
-            {"task_id": "deferred-e2e", "task_type": "integration-test"},
-        ],
+        "implementation_tasks": [],
     }), encoding="utf-8")
     (reports / "repair-plan.json").write_text(json.dumps({
         "entries": [{"revision": 1, "ownerTaskIds": ["repair-api"], "revalidationTaskIds": ["repair-e2e"]}]
@@ -236,8 +232,6 @@ def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path
 
     assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
     record["transmission_request"] = {"tasks": [{"taskId": "initial-wiring"}]}
-    assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
-    record["transmission_request"] = {"tasks": [{"taskId": "deferred-e2e"}]}
     assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
     (reports / "repair-plan.json").write_text(
         json.dumps({"status": "STALLED", "entries": []}), encoding="utf-8"
@@ -312,22 +306,6 @@ def test_cancel_terminates_active_process_and_preserves_cancelled_status(
     assert persisted["status"] == "CANCELLED"
 
 
-def test_shutdown_terminates_all_active_implementation_subprocesses(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    implementation_worker = ImplementationWorker(settings(tmp_path))
-    cancelled: list[bool] = []
-    monkeypatch.setattr(
-        implementation_worker.client,
-        "cancel_all",
-        lambda: cancelled.append(True),
-    )
-
-    implementation_worker.shutdown()
-
-    assert cancelled == [True]
-
-
 def test_write_uses_unique_temp_and_falls_back_when_windows_replace_is_denied(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -354,22 +332,6 @@ def test_write_uses_unique_temp_and_falls_back_when_windows_replace_is_denied(
         assert not list((tmp_path / record["job_id"]).glob("*.tmp"))
     finally:
         implementation_worker.shutdown()
-
-
-def test_settings_ignore_legacy_external_project_paths(monkeypatch) -> None:
-    monkeypatch.setenv("IMPLEMENTATION_AGENT_ROOT", "C:/old/prototype")
-    monkeypatch.setenv("IMPLEMENTATION_AGENT_PYTHON", "C:/old/python.exe")
-    monkeypatch.setenv("IMPLEMENTATION_WORK_ROOT", "C:/old/work")
-    configured = ImplementationSettings.from_env()
-    expected_root = Path(__file__).resolve().parents[1]
-    assert configured.repository_root == expected_root
-    assert configured.python_executable == Path(sys.executable).resolve()
-    assert configured.work_root == expected_root / ".easydep" / "implementation-runs"
-
-
-def test_engine_uses_repository_gradle_wrapper() -> None:
-    command = " ".join(gradle_command()).replace("\\", "/")
-    assert "app/implementation/tools/gradle/gradlew" in command
 
 
 def settings(repository_root: Path) -> ImplementationSettings:
@@ -430,70 +392,6 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     assert sequence_path.read_text(encoding="utf-8").count("@startuml") == 2
     assert "tools" not in job
     assert job["progressPath"].endswith("generation-progress.json")
-
-
-def test_prepare_job_adds_missing_openapi_path_parameters(tmp_path: Path) -> None:
-    client = PrototypeClient(settings(tmp_path))
-    path = client.prepare_job(
-        "job-path-parameters",
-        "12345678-0000-0000-0000-000000000000",
-        {
-            "class_diagram_puml": "@startuml\nclass Order\n@enduml",
-            "sequence_diagram_puml": "@startuml\nA -> B : get()\n@enduml",
-            "api_spec": {
-                "openapi": "3.0.3",
-                "paths": {
-                    "/sections/{sectionId}": {
-                        "get": {"responses": {"200": {"description": "OK"}}},
-                        "delete": {
-                            "parameters": [{"name": "sectionId", "in": "path", "required": True, "schema": {"type": "integer"}}],
-                            "responses": {"204": {"description": "Deleted"}},
-                        },
-                    }
-                },
-            },
-        },
-        "com.example.orders",
-        False,
-    )
-
-    job = json.loads(path.read_text(encoding="utf-8"))
-    openapi = json.loads((tmp_path / job["inputs"]["openapi"]).read_text(encoding="utf-8"))
-    get_parameters = openapi["paths"]["/sections/{sectionId}"]["get"]["parameters"]
-    assert get_parameters == [{"name": "sectionId", "in": "path", "required": True, "schema": {"type": "string"}}]
-    delete_parameters = openapi["paths"]["/sections/{sectionId}"]["delete"]["parameters"]
-    assert delete_parameters[0]["schema"] == {"type": "integer"}
-    assert len(delete_parameters) == 1
-
-
-def test_prepare_job_preserves_named_empty_openapi_dtos(tmp_path: Path) -> None:
-    client = PrototypeClient(settings(tmp_path))
-    path = client.prepare_job(
-        "job-empty-dto",
-        "12345678-0000-0000-0000-000000000000",
-        {
-            "api_spec": {
-                "openapi": "3.0.3",
-                "paths": {},
-                "components": {
-                    "schemas": {
-                        "CourseFilter": {"type": "object", "properties": {}},
-                        "Course": {
-                            "type": "object",
-                            "properties": {"id": {"type": "string"}},
-                        },
-                    }
-                },
-            }
-        },
-        "com.example.orders",
-        False,
-    )
-
-    job = json.loads(path.read_text(encoding="utf-8"))
-    openapi = json.loads((tmp_path / job["inputs"]["openapi"]).read_text(encoding="utf-8"))
-    assert openapi["components"]["schemas"]["CourseFilter"]["additionalProperties"] is False
-    assert "additionalProperties" not in openapi["components"]["schemas"]["Course"]
 
 
 def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -> None:

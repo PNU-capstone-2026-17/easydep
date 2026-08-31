@@ -263,32 +263,19 @@ _IMPLEMENTATION_GENERATION_STEPS = (
     ("plan-workflow", "구현 작업 계획"),
 )
 _IMPLEMENTATION_WORKFLOW_PHASES = (
-    ("control", "Control 구현"),
-    ("persistence", "Repository 구현"),
-    ("api-adapters", "API Adapter 구현"),
-    ("boundary-adapters", "Boundary Adapter 구현"),
-    ("outbound-adapters", "Outbound Adapter 구현"),
-    ("wiring", "Application Setup"),
+    ("persistence", "Persistence 구현"),
+    ("use-cases", "유스케이스 Backend 구현"),
     ("frontend", "Frontend 구현"),
-    ("end-to-end", "E2E Test 실행"),
+    ("wiring", "Application 연결 및 HTTP 흐름 검증"),
 )
 _IMPLEMENTATION_DISPLAY_PHASES = (
     (
         "backend",
         "Backend 구현",
-        frozenset(
-            {
-                "control",
-                "persistence",
-                "api-adapters",
-                "boundary-adapters",
-                "outbound-adapters",
-                "wiring",
-            }
-        ),
+        frozenset({"persistence", "use-cases"}),
     ),
     ("frontend", "Frontend 구현", frozenset({"frontend"})),
-    ("e2e", "E2E 통합 테스트 실행", frozenset({"end-to-end"})),
+    ("e2e", "Application 실행 검증", frozenset({"wiring"})),
 )
 
 

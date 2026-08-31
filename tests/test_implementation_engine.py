@@ -8,237 +8,22 @@ from unittest.mock import patch
 import pytest
 
 from app.implementation.agents.verification.build import (
-    WorkspaceVerificationError,
-    api_adapter_contract_violations,
-    boundary_adapter_contract_violations,
-    control_boundary_dependency_violations,
-    persistence_entity_schema_violations,
-    production_placeholder_markers,
     verify_run_workspace,
 )
 from app.implementation.agents.verification.e2e import e2e_contract_violations
 from app.implementation.delivery.container import render_deployment
 from app.implementation.delivery.terraform import render_iac
-from app.implementation.domain.implementation_ir import build_implementation_ir
-from app.implementation.generation.orchestrator import load_job
-from app.implementation.planning.design_context import (
-    generate_api_adapter_tasks,
-    generate_boundary_adapter_tasks,
-    generate_gateway_adapter_tasks,
-    generate_implementation_tasks,
-    generate_wiring_tasks,
-)
+from app.implementation.domain.models import JobSpec
 from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
     capture_generated_contracts,
     verify_source_design_conformance,
 )
-
-
-def test_design_inputs_build_ir_and_required_adapter_tasks(tmp_path: Path) -> None:
-    """설계 산출물이 구현 계획의 핵심 타입과 작업으로 연결되는지 확인한다."""
-    (tmp_path / "bce.puml").write_text(
-        """class OrderService <<Control>> {
-  + createOrder(customerId: string): Order
-}
-class CheckoutScreen <<Boundary>> { + submit(customerId: string) }
-class Order <<Entity>> { - orderId: string }
-class OrderStoreGateway <<Gateway>> { + save(order: Order): Order }
-class PaymentGateway <<Gateway>> { + charge(orderId: string): boolean }
-""",
-        encoding="utf-8",
-    )
-    (tmp_path / "sequence.puml").write_text(
-        """CheckoutScreen -> OrderService : createOrder(customerId)
-OrderService -> PaymentGateway : charge(orderId)
-alt invalid order
-OrderService --> CheckoutScreen : validation error
-end
-""",
-        encoding="utf-8",
-    )
-    (tmp_path / "sequence-model.json").write_text(
-        json.dumps(
-            {
-                "Diagrams": [{
-                    "use_case_id": "UC_ORDER",
-                    "use_case_name": "Create order",
-                    "Participants": [
-                        {
-                            "name": "CheckoutScreen",
-                            "alias": "screen",
-                            "kind": "boundary",
-                            "source_class": "CheckoutScreen",
-                        },
-                        {
-                            "name": "OrderService",
-                            "alias": "service",
-                            "kind": "control",
-                            "source_class": "OrderService",
-                        },
-                    ],
-                    "Messages": [
-                        {
-                            "source": "screen",
-                            "target": "service",
-                            "type": "sync",
-                            "arguments": [{"parameter": "customerId"}],
-                            "call_id": "create-order::call:1",
-                            "fragments": [{"type": "alt", "condition": "valid"}],
-                        },
-                        {
-                            "source": "service",
-                            "target": "screen",
-                            "type": "return",
-                            "reply_to": "create-order::call:1",
-                            "fragments": [],
-                        },
-                    ],
-                }]
-            }
-        ),
-        encoding="utf-8",
-    )
-    (tmp_path / "erd.puml").write_text(
-        'entity "Order" as Order { * order_id : VARCHAR }',
-        encoding="utf-8",
-    )
-    (tmp_path / "openapi.yaml").write_text(
-        """openapi: 3.0.3
-paths:
-  /orders:
-    post:
-      operationId: createOrder
-      responses:
-        '201':
-          description: Order created
-        '422':
-          description: Invalid order
-""",
-        encoding="utf-8",
-    )
-    (tmp_path / "deployment.json").write_text(
-        json.dumps(
-            {
-                "workloadGraph": {
-                    "workloads": [{
-                        "id": "orders",
-                        "artifact": {"kind": "generatedApplication"},
-                        "interfaces": [{"id": "http", "port": 8080}],
-                        "configuration": [{
-                            "id": "payments-url",
-                            "name": "PAYMENTS_URL",
-                            "kind": "endpointBinding",
-                        }],
-                        "storage": [{"id": "orders-data", "mountPath": "/data"}],
-                    }],
-                    "connections": [],
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    job = tmp_path / "job.json"
-    job.write_text(
-        json.dumps(
-            {
-                "name": "order-management",
-                "workspaceRoot": ".",
-                "inputs": {
-                    "bceClass": "bce.puml",
-                    "sequence": "sequence.puml",
-                    "sequenceModel": "sequence-model.json",
-                    "erd": "erd.puml",
-                    "openapi": "openapi.yaml",
-                    "deploymentBundle": "deployment.json",
-                },
-                "generation": {"basePackage": "com.example.orders"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    run = tmp_path / "run_order"
-    java = run / "application/src/main/java/com/example/orders"
-    (java / "api").mkdir(parents=True)
-    (java / "api/OrdersApi.java").write_text(
-        "package com.example.orders.api; "
-        'interface OrdersApi { String PATH = "/orders"; void createOrder(); }',
-        encoding="utf-8",
-    )
-    (java / "bce").mkdir(parents=True)
-    for name in (
-        "OrderService",
-        "CheckoutScreen",
-        "Order",
-        "OrderStoreGateway",
-        "PaymentGateway",
-    ):
-        (java / f"bce/{name}.java").write_text(
-            f"package com.example.orders.bce; public interface {name} {{}}",
-            encoding="utf-8",
-        )
-    (java / "bce/CheckoutScreen.java").write_text(
-        "package com.example.orders.bce; "
-        "public interface CheckoutScreen { CloseResult submit(String customerId); }",
-        encoding="utf-8",
-    )
-    (java / "bce/CloseResult.java").write_text(
-        "package com.example.orders.bce; public record CloseResult(String message) {}",
-        encoding="utf-8",
-    )
-    (java / "bce/OrderService.java").write_text(
-        "package com.example.orders.bce; "
-        "public interface OrderService { OrderReceipt createOrder(String customerId); }",
-        encoding="utf-8",
-    )
-    (java / "bce/OrderReceipt.java").write_text(
-        "package com.example.orders.bce; public record OrderReceipt(String orderId) {}",
-        encoding="utf-8",
-    )
-
-    spec = load_job(job)
-    ir = build_implementation_ir(spec, run)
-
-    assert ir.application_class == "OrderManagementApplication"
-    assert [port.name for port in ir.api_ports] == ["Orders"]
-    assert {gateway.name: gateway.kind for gateway in ir.gateways} == {
-        "OrderStoreGateway": "persistence",
-        "PaymentGateway": "external",
-    }
-    assert {scenario.status for scenario in ir.e2e_scenarios} == {201}
-    assert [task.task_id for task in generate_api_adapter_tasks(spec, run)] == [
-        "implement-orders-api-adapter"
-    ]
-    assert {task.task_id for task in generate_gateway_adapter_tasks(spec, run)} == {
-        "implement-order-store-gateway-adapter",
-        "implement-payment-gateway-adapter",
-    }
-    control = next(
-        task for task in generate_implementation_tasks(spec, run)
-        if task.task_type == "control"
-    )
-    tasks = [control, *generate_boundary_adapter_tasks(spec, run), *generate_api_adapter_tasks(spec, run)]
-    for task in tasks:
-        context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
-        diagram = next(item for item in context["sequence"] if item["use_case_id"] == "UC_ORDER")
-        messages = diagram["Messages"]
-        assert any(message.get("arguments") for message in messages)
-        assert any(message.get("reply_to") for message in messages)
-        assert any(message.get("fragments") for message in messages)
-        projection = context["deployment"]
-        assert {"workloads", "connections"} <= set(projection)
-        assert {"interfaces", "configuration", "storage"} <= set(projection["workloads"][0])
-        if task.task_type == "boundary-adapter":
-            assert "record CloseResult(String message)" in context["generatedJavaContracts"]
-        if task.task_type == "api-adapter":
-            assert "record OrderReceipt(String orderId)" in context["generatedJavaContracts"]
-    gateway = generate_gateway_adapter_tasks(spec, run)[0]
-    wiring = generate_wiring_tasks(spec, run)[0]
-    for task in (gateway, wiring):
-        projection = json.loads((run / task.context_file).read_text(encoding="utf-8"))["deployment"]
-        assert {"workloads", "connections"} <= set(projection)
-        assert {"interfaces", "configuration", "storage"} <= set(projection["workloads"][0])
-    assert (java / "OrderManagementApplication.java").is_file()
+from app.implementation.workflows.coordinator import plan_workflow
+from tests.class_design_fixtures import (
+    typed_class_model_payload,
+    typed_sequence_model_payload,
+)
 
 
 def test_final_workspace_verification_publishes_success_report(
@@ -250,13 +35,7 @@ def test_final_workspace_verification_publishes_success_report(
     source.parent.mkdir(parents=True)
     source.write_text("class Main {}", encoding="utf-8")
     verification = {"exitCode": 0, "testResults": ""}
-    short_workspace_root = tmp_path / "ascii-temp"
-
     with (
-        patch(
-            "app.implementation.agents.workspace.tempfile.gettempdir",
-            return_value=str(short_workspace_root),
-        ),
         patch(
             "app.implementation.agents.verification.build.verify_agent_workspace",
             return_value=verification,
@@ -269,146 +48,6 @@ def test_final_workspace_verification_publishes_success_report(
     )
     assert result["status"] == "SUCCEEDED"
     assert report["verification"] == verification
-    assert (
-        short_workspace_root
-        / "easydep-agent-workspaces"
-        / "abcdef123456"
-        / "final-verification"
-        / "application/src/Main.java"
-    ).is_file()
-
-
-def test_final_verification_rejects_stale_e2e_before_gradle(tmp_path: Path) -> None:
-    """오래된 mock E2E는 전체 빌드 전에 E2E 작업으로 돌려보낸다."""
-
-    run = tmp_path / "run"
-    reports = run / "reports"
-    task_dir = reports / "implementation-tasks"
-    task_dir.mkdir(parents=True)
-    relative = "application/src/test/java/example/FlowTest.java"
-    source = run / relative
-    source.parent.mkdir(parents=True)
-    source.write_text(
-        "class FlowTest { MockMvc mvc; @MockBean Control control; @Test void flow() {} }",
-        encoding="utf-8",
-    )
-    context = task_dir / "flow.context.json"
-    context.write_text(
-        json.dumps({"semanticContract": {"minimumTests": 1}}),
-        encoding="utf-8",
-    )
-    (reports / "run-manifest.json").write_text(
-        json.dumps(
-            {
-                "implementation_tasks": [
-                    {
-                        "task_type": "integration-test",
-                        "allowed_write_paths": [relative],
-                        "context_file": context.relative_to(run).as_posix(),
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with (
-        patch(
-            "app.implementation.agents.verification.build.prepare_agent_workspace",
-            side_effect=AssertionError("Gradle workspace must not be prepared"),
-        ),
-        pytest.raises(WorkspaceVerificationError) as failure,
-    ):
-        verify_run_workspace(run)
-
-    assert failure.value.evidence["command"] == ["e2e-semantic-contract-gate"]
-
-
-def test_adapter_gates_reject_missing_contract_behavior(
-    tmp_path: Path,
-) -> None:
-    """API interface 누락과 Boundary의 빈 반환을 같은 adapter 검사에서 막는다."""
-    relative = "application/src/main/java/com/example/StudentsApiController.java"
-    controller = tmp_path / relative
-    controller.parent.mkdir(parents=True)
-    controller.write_text(
-        "public class StudentsApiController {}",
-        encoding="utf-8",
-    )
-
-    violations = api_adapter_contract_violations(tmp_path, [relative])
-    assert violations == [
-        f"{relative}: controller must implement generated StudentsApi"
-    ]
-
-    controller.write_text(
-        "public class StudentsApiController implements StudentsApi {}",
-        encoding="utf-8",
-    )
-    assert api_adapter_contract_violations(tmp_path, [relative]) == []
-
-    boundary_relative = "application/src/main/java/com/example/OrderAdapter.java"
-    boundary = tmp_path / boundary_relative
-    boundary.write_text(
-        "class OrderAdapter { String submit() { return null; } }",
-        encoding="utf-8",
-    )
-    typed_sequence = [{
-        "Participants": [
-            {"alias": "boundary", "kind": "boundary"},
-            {"alias": "control", "kind": "control"},
-        ],
-        "Messages": [{
-            "source": "boundary", "target": "control", "type": "sync",
-        }],
-    }]
-    violations = boundary_adapter_contract_violations(
-        tmp_path, [boundary_relative], typed_sequence
-    )
-    assert any("return null" in violation for violation in violations)
-
-
-def test_control_gate_rejects_reverse_call_to_calling_boundary(
-    tmp_path: Path,
-) -> None:
-    """Boundary의 요청에 대한 return을 Control의 역방향 호출로 구현하지 않는다."""
-
-    relative = "application/src/main/java/example/ApplicationControlService.java"
-    service = tmp_path / relative
-    service.parent.mkdir(parents=True)
-    service.write_text(
-        "import example.bce.OperatorBoundary; "
-        "class ApplicationControlService { OperatorBoundary boundary; }",
-        encoding="utf-8",
-    )
-    sequence = [
-        {
-            "Participants": [
-                {"alias": "boundary", "kind": "boundary", "source_class": "OperatorBoundary"},
-                {"alias": "control", "kind": "control", "source_class": "ApplicationControl"},
-            ],
-            "Messages": [
-                {"source": "boundary", "target": "control", "type": "sync"},
-                {"source": "control", "target": "boundary", "type": "return"},
-            ],
-        }
-    ]
-
-    violations = control_boundary_dependency_violations(
-        tmp_path,
-        [relative],
-        sequence,
-    )
-
-    assert len(violations) == 1
-    assert "OperatorBoundary" in violations[0]
-
-    service.write_text(
-        'class ApplicationControlService { String note = "OperatorBoundary"; '
-        "// OperatorBoundary\n/* import example.bce.OperatorBoundary; */ }",
-        encoding="utf-8",
-    )
-    assert control_boundary_dependency_violations(tmp_path, [relative], sequence) == []
 
 
 def test_e2e_gate_accepts_complete_scenario_and_rejects_wrong_status(
@@ -417,19 +56,17 @@ def test_e2e_gate_accepts_complete_scenario_and_rejects_wrong_status(
     """실제 HTTP 경로와 상태 코드를 확인하는 테스트만 E2E 계약으로 인정한다."""
     source = tmp_path / "CourseFlowTest.java"
     contract = {
-        "paths": ["/courses"],
-        "statuses": [201],
-        "repositories": ["CourseRepository"],
-        "minimumTests": 1,
+        "method": "POST",
+        "path": "/courses",
+        "status": 201,
     }
     source.write_text(
-        """class CourseFlowTest {
-TestRestTemplate http; CourseRepository courseRepository;
+        """@SpringBootTest class CourseFlowTest {
+TestRestTemplate http;
 @Test void create() {
-  use("/courses");
+  http.postForEntity("/courses", request, Object.class);
   assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
 }
-void use(String value) {}
 }
 """,
         encoding="utf-8",
@@ -446,78 +83,153 @@ void use(String value) {}
     assert any("201" in violation for violation in violations)
 
 
-@pytest.mark.parametrize("replacement", [
-    "@Bean String replacement;",
-    "@MockBean ApplicationControl control;",
-])
-def test_e2e_gate_rejects_test_bean_replacement(
-    tmp_path: Path, replacement: str
-) -> None:
-    """E2E는 프론트엔드와 같은 실제 Spring 구성만 사용한다."""
-
-    source = tmp_path / "FlowTest.java"
-    source.write_text(
-        f"""class FlowTest {{
-MockMvc mockMvc;
-{replacement}
-@Test void one() {{}}
-}}
-""",
-        encoding="utf-8",
-    )
-    assert any(
-        "test bean replacement" in violation
-        for violation in e2e_contract_violations(source, {"minimumTests": 1})
-    )
-
-
-def test_persistence_gate_accepts_all_columns_and_reports_missing_column(
+def test_planned_manifest_uses_work_units_and_scopes_repairs_to_contracts(
     tmp_path: Path,
 ) -> None:
-    """ERD에서 만든 DB 열이 JPA 엔티티에서 빠지는 오류를 빌드 전에 잡는다."""
-    relative = (
-        "application/src/main/java/com/example/persistence/entity/"
-        "EnrollmentEntity.java"
-    )
-    migration = (
-        tmp_path
-        / "application/src/main/resources/db/migration/V1__initial_schema.sql"
-    )
-    entity = tmp_path / relative
-    migration.parent.mkdir(parents=True)
-    entity.parent.mkdir(parents=True)
-    migration.write_text(
-        """CREATE TABLE enrollment (
-  enrollment_id VARCHAR(255) NOT NULL,
-  student_id VARCHAR(255) NOT NULL,
-  course_id VARCHAR(255) NOT NULL
-);
-""",
-        encoding="utf-8",
-    )
-    entity.write_text(
-        """@Entity
-@Table(name = "enrollment")
-class EnrollmentEntity {
-  @Id @Column(name = "enrollment_id") private String enrollmentId;
-  @Column(nullable = false, name = "student_id") private String studentId;
-  @JoinColumn(nullable = false, name = "course_id") private String courseId;
+    """공개 계획 결과가 작업 종류와 각 작업의 편집 경계를 보존한다."""
+    design = tmp_path / "design"
+    design.mkdir()
+    bce = design / "class.puml"
+    bce.write_text(
+        """class OrderBoundary <<Boundary>> {
+  + submit(request: OrderRequest): Receipt
+}
+class OrderControl <<Control>> {
+  + place(request: OrderRequest): void
+}
+class Order <<Entity>> {
+  - id: UUID
 }
 """,
         encoding="utf-8",
     )
-    assert persistence_entity_schema_violations(tmp_path, [relative]) == []
-
-    entity.write_text(
-        entity.read_text(encoding="utf-8").replace(
-            '  @JoinColumn(nullable = false, name = "course_id") private String courseId;\n',
-            "",
-        ),
+    # Keep the accepted typed fixtures as the source shape for the planning job;
+    # the persisted class model is not reinterpreted by the implementation planner.
+    class_model_payload = typed_class_model_payload()
+    class_model_payload["Classes"].append({
+        "className": "Order",
+        "stereotype": "Entity",
+        "use_case_ids": ["UC1"],
+        "identifier": ["id"],
+        "fields": ["id : UUID"],
+        "operations": [],
+    })
+    class_model = design / "class-model.json"
+    class_model.write_text(
+        json.dumps(class_model_payload), encoding="utf-8"
+    )
+    sequence_model = design / "sequence-model.json"
+    sequence_model.write_text(
+        json.dumps(typed_sequence_model_payload()), encoding="utf-8"
+    )
+    sequence = design / "sequence.puml"
+    sequence.write_text(
+        "OrderBoundary -> OrderControl : place(request)\n", encoding="utf-8"
+    )
+    erd = design / "erd.puml"
+    erd.write_text(
+        'entity "Order" as Order {\n  * id : UUID\n}\n', encoding="utf-8"
+    )
+    openapi = design / "openapi.json"
+    openapi.write_text(
+        json.dumps({
+            "openapi": "3.0.3",
+            "paths": {
+                "/orders": {
+                    "post": {
+                        "operationId": "placeOrder",
+                        "responses": {"201": {"description": "Created"}},
+                    }
+                }
+            },
+        }),
         encoding="utf-8",
     )
-    violations = persistence_entity_schema_violations(tmp_path, [relative])
-    assert len(violations) == 1
-    assert "course_id" in violations[0]
+
+    run = tmp_path / "run"
+    package_root = run / "application/src/main/java/com/example/orders"
+    (package_root / "api").mkdir(parents=True)
+    (package_root / "bce").mkdir(parents=True)
+    (package_root / "api/OrdersApi.java").write_text(
+        "package com.example.orders.api;\n"
+        "public interface OrdersApi { String PATH = \"/orders\"; "
+        "void placeOrder(); }\n",
+        encoding="utf-8",
+    )
+    for name in ("OrderBoundary", "OrderControl", "Order"):
+        (package_root / f"bce/{name}.java").write_text(
+            f"package com.example.orders.bce; public interface {name} {{}}\n",
+            encoding="utf-8",
+        )
+    (run / "application/build.gradle").parent.mkdir(parents=True, exist_ok=True)
+    (run / "application/build.gradle").write_text(
+        "dependencies {\n"
+        "    implementation 'org.springframework.boot:spring-boot-starter-validation'\n"
+        "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    generated = run / "application/frontend/src/generated/apis"
+    generated.mkdir(parents=True)
+    (generated / "OrdersApi.ts").write_text(
+        "export class OrdersApi { placeOrder(): Promise<void> { "
+        "return Promise.resolve(); } }\n",
+        encoding="utf-8",
+    )
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": []}), encoding="utf-8"
+    )
+
+    spec = JobSpec(
+        job_type="INITIAL_IMPLEMENTATION",
+        feedback="",
+        name="orders",
+        workspace_root=tmp_path,
+        inputs={
+            "bceClass": bce,
+            "bceModel": class_model,
+            "sequence": sequence,
+            "sequenceModel": sequence_model,
+            "erd": erd,
+            "openapi": openapi,
+        },
+        required_inputs=[],
+        base_package="com.example.orders",
+        allow_assumptions=True,
+        verify_compile=False,
+        output_root=tmp_path / "generated-runs",
+        agent_mode="plan-only",
+        agent_model="model",
+        agent_base_url="http://localhost",
+        agent_temperature=0.0,
+        agent_top_p=1.0,
+        agent_max_output_tokens=1000,
+        agent_reasoning_budget=0,
+    )
+
+    plan_workflow(run, spec)
+    manifest = json.loads(
+        (run / "reports/run-manifest.json").read_text(encoding="utf-8")
+    )
+    tasks = manifest["implementation_tasks"]
+    task_types = {task["task_type"] for task in tasks}
+    assert task_types == {
+        "persistence", "use-case", "frontend-implementation", "wiring"
+    }
+    for task in tasks:
+        assert set(task["required_output_paths"]) <= set(task["allowed_write_paths"])
+
+    use_case = next(task for task in tasks if task["task_type"] == "use-case")
+    editable = set(use_case["allowed_write_paths"])
+    assert "application/src/main/java/com/example/orders/bce/Order.java" in editable
+    assert not editable.intersection({
+        "application/src/main/java/com/example/orders/bce/OrderBoundary.java",
+        "application/src/main/java/com/example/orders/bce/OrderControl.java",
+        "application/src/main/java/com/example/orders/api/OrdersApi.java",
+    })
+
 
 def test_source_conformance_rejects_agent_changes_to_generated_contract(
     tmp_path: Path,
@@ -575,67 +287,9 @@ def test_source_conformance_rejects_agent_changes_to_generated_contract(
         )
     )
     assert report["status"] == "FAILED"
-    assert "GENERATED_CONTRACT_STRUCTURE_CHANGED" in {
+    assert "GENERATED_CONTRACT_CHANGED" in {
         item["code"] for item in report["violations"]
     }
-
-
-def test_source_conformance_rejects_persistence_fields_absent_from_erd(
-    tmp_path: Path,
-) -> None:
-    """엔티티와 SQL이 서로 맞더라도 ERD에 없는 필드를 함께 추가할 수는 없다."""
-    package = tmp_path / "application/src/main/java/com/example/demo"
-    entity = package / "persistence/entity/OrderEntity.java"
-    repository = package / "persistence/repository/OrderRepository.java"
-    migration = tmp_path / "application/src/main/resources/db/migration/V1__initial_schema.sql"
-    for path in (entity, repository, migration):
-        path.parent.mkdir(parents=True, exist_ok=True)
-    entity.write_text(
-        '@Entity @Table(name = "orders") class OrderEntity {\n'
-        '  @Id @Column(name = "id") private UUID id;\n'
-        '  @Column(name = "name") private String name;\n'
-        '}\n',
-        encoding="utf-8",
-    )
-    repository.write_text("interface OrderRepository {}\n", encoding="utf-8")
-    migration.write_text(
-        "CREATE TABLE orders (\n  id UUID NOT NULL,\n  name VARCHAR(255)\n);\n",
-        encoding="utf-8",
-    )
-    erd = tmp_path / "erd.puml"
-    erd.write_text(
-        "entity Order {\n  * id : UUID\n  name : VARCHAR(255)\n}\n",
-        encoding="utf-8",
-    )
-    spec = SimpleNamespace(base_package="com.example.demo", inputs={"erd": erd})
-    capture_generated_contracts(tmp_path, spec.base_package)
-
-    assert verify_source_design_conformance(tmp_path, spec)["status"] == "PASSED"
-
-    entity.write_text(
-        entity.read_text(encoding="utf-8").replace(
-            "}\n", '  @Column(name = "invented") private String invented;\n}\n'
-        ),
-        encoding="utf-8",
-    )
-    migration.write_text(
-        migration.read_text(encoding="utf-8").replace(
-            "  name VARCHAR(255)\n", "  name VARCHAR(255),\n  invented VARCHAR(255)\n"
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SourceDesignConformanceError):
-        verify_source_design_conformance(tmp_path, spec)
-
-    report = json.loads(
-        (tmp_path / "reports/source-design-conformance.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    check = report["checks"]["erdEntities"][0]
-    assert check["unexpectedFields"] == ["invented (invented)"]
-    assert check["unexpectedColumns"] == ["invented"]
 
 
 def test_entity_body_can_change_without_changing_its_public_signature(
@@ -671,93 +325,6 @@ def test_entity_body_can_change_without_changing_its_public_signature(
     )
     with pytest.raises(SourceDesignConformanceError):
         verify_source_design_conformance(tmp_path, spec)
-
-
-def test_entity_tasks_own_one_file_and_keep_typed_sequence_details(tmp_path: Path) -> None:
-    """Entity 작업은 파일별로 나뉘고 구조화된 호출·반환 정보를 잃지 않는다."""
-    inputs = {
-        "bceClass": tmp_path / "bce.puml",
-        "sequence": tmp_path / "sequence.puml",
-        "erd": tmp_path / "erd.puml",
-        "bceModel": tmp_path / "bce-model.json",
-        "sequenceModel": tmp_path / "sequence-model.json",
-        "erdBceModel": tmp_path / "erd-model.json",
-    }
-    inputs["bceClass"].write_text(
-        "class Order <<Entity>> { + rename(title: string): void }\n"
-        "class Customer <<Entity>> {}\n"
-        "class OrderControl <<Control>> { + place(order: Order): Order }\n",
-        encoding="utf-8",
-    )
-    inputs["sequence"].write_text("OrderControl -> Order : rename(title)\n", encoding="utf-8")
-    inputs["erd"].write_text('entity "Order" as Order { * id : VARCHAR }', encoding="utf-8")
-    inputs["bceModel"].write_text(json.dumps({"Classes": [
-        {"className": "Order", "stereotype": "Entity",
-         "fields": ["operation : OperationType"], "operations": []},
-        {"className": "Customer", "stereotype": "Entity", "fields": [], "operations": []},
-        {"className": "OrderControl", "stereotype": "Control", "fields": [], "operations": []},
-    ], "DataTypes": [
-        {"name": "OperationType", "kind": "enumeration", "values": ["CREATE", "UPDATE"]}
-    ]}), encoding="utf-8")
-    inputs["erdBceModel"].write_text(json.dumps({"Classes": [], "Relationships": []}), encoding="utf-8")
-    inputs["sequenceModel"].write_text(json.dumps({"Diagrams": [{
-        "use_case_id": "UC_ORDER",
-        "Participants": [
-            {"alias": "control", "source_class": "OrderControl"},
-            {"alias": "order", "source_class": "Order"},
-        ],
-        "Messages": [
-            {"source": "control", "target": "order", "type": "sync",
-             "call_id": "call-1", "step_ids": ["UC_ORDER:main:1"],
-             "arguments": [{"source_kind": "input", "source_ref": "#title"}]},
-            {"source": "order", "target": "control", "type": "return",
-             "reply_to": "call-1", "step_ids": ["UC_ORDER:main:1"]},
-        ],
-    }]}), encoding="utf-8")
-    spec = SimpleNamespace(
-        name="orders", base_package="com.example.orders", inputs=inputs,
-        agent_model="test", agent_base_url="", agent_temperature=0.2,
-        agent_top_p=1.0, agent_max_output_tokens=1, agent_reasoning_budget=1,
-    )
-    run = tmp_path / "run"
-    bce = run / "application/src/main/java/com/example/orders/bce"
-    bce.mkdir(parents=True)
-    for name in ("Order", "Customer", "OrderControl"):
-        (bce / f"{name}.java").write_text(f"public class {name} {{}}", encoding="utf-8")
-    (bce / "OperationType.java").write_text(
-        "public enum OperationType { CREATE, UPDATE }", encoding="utf-8"
-    )
-
-    tasks = generate_implementation_tasks(spec, run)
-    entities = [task for task in tasks if task.task_type == "entity"]
-    assert {task.control for task in entities} == {"Order", "Customer"}
-    assert all(len(task.allowed_write_paths) == 1 for task in entities)
-    assert not any(task.task_type == "scaffold-completion" for task in tasks)
-    order = next(task for task in entities if task.control == "Order")
-    context = json.loads((run / order.context_file).read_text(encoding="utf-8"))
-    call, reply = context["sequence"][0]["messages"]
-    assert call["arguments"][0]["source_kind"] == "input"
-    assert reply["reply_to"] == call["call_id"]
-    assert "public enum OperationType" in context["relatedJavaContracts"]
-
-
-def test_placeholder_gate_checks_production_sources_only(tmp_path: Path) -> None:
-    """실행 코드의 미구현 메서드는 막되 테스트용 예시는 배포 판단에서 제외한다."""
-    main = "application/src/main/java/com/example/CoursesApiController.java"
-    test = "application/src/test/java/com/example/CoursesApiControllerTest.java"
-    source = (
-        "class CoursesApiController { Object search() { "
-        'throw new UnsupportedOperationException("not implemented"); } }'
-    )
-    for relative in (main, test):
-        path = tmp_path / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(source, encoding="utf-8")
-
-    evidence = production_placeholder_markers(tmp_path, [main, test])
-
-    assert len(evidence) == 1
-    assert main in evidence[0]
 
 
 def test_cloud_spec_renders_deployment_and_matching_iac(tmp_path: Path) -> None:

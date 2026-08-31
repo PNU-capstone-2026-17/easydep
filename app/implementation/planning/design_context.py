@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import json
@@ -9,10 +9,7 @@ from pathlib import Path
 from app.config import settings
 
 from ..domain.implementation_ir import (
-    ApiPortIR,
-    GatewayIR,
     build_implementation_ir,
-    parse_erd_entities,
 )
 from ..domain.models import JobSpec
 from ..generation.frontend_scaffold import frontend_page_names, operation_ids
@@ -39,6 +36,16 @@ class ImplementationTask:
     prompt_sha256: str
     llm: dict[str, object]
     task_type: str = "control"
+    # ``allowed_write_paths`` is the complete editable scope.  A work unit can
+    # therefore fix a related source file instead of handing the error to a
+    # file owner.  ``required_output_paths`` keeps the smaller deterministic
+    # completion contract used to decide whether the first implementation
+    # request produced every required artifact.
+    required_output_paths: list[str] | None = None
+
+    def __post_init__(self) -> None:
+        if self.required_output_paths is None:
+            object.__setattr__(self, "required_output_paths", list(self.allowed_write_paths))
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -52,259 +59,12 @@ RELATION_PATTERN = re.compile(
     r"(?m)^\s*(?P<left>[A-Za-z_]\w*)\s+[^\n:]+?\s+"
     r"(?P<right>[A-Za-z_]\w*)\s*(?::[^\n]*)?$"
 )
-HTTP_METHODS = {"get", "put", "post", "delete", "patch", "head", "options", "trace"}
 STOP_WORDS = {
     "manager", "controller", "service", "get", "set", "is", "on", "log",
     "string", "boolean", "int", "float", "void", "message", "record",
 }
-def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
-    bce = _read(spec.inputs.get("bceClass"))
-    erd = _read(spec.inputs.get("erd"))
-    openapi = _read(spec.inputs.get("openapi"))
-    classes = parse_design_classes(bce)
-    relations = parse_relations(bce)
-    operations = parse_openapi_operations(openapi)
-    output = run_root / "reports" / "implementation-tasks"
-    output.mkdir(parents=True, exist_ok=True)
-
-    tasks = [
-        *_generate_scaffold_completion_task(spec, run_root, output),
-        *_generate_entity_tasks(spec, run_root, output),
-    ]
-    class_by_name = {item.name: item for item in classes}
-    ir = build_implementation_ir(spec, run_root)
-    repositories = {
-        f"{entity}Repository"
-        for entity in ir.persistent_entities
-    }
-    for control in sorted(item.name for item in classes if item.stereotype.lower() == "control"):
-        neighbors = sorted(
-            right if left == control else left
-            for left, right, _ in relations
-            if left == control or right == control
-        )
-        relevant_names = {control, *neighbors}
-        bce_context = "\n\n".join(
-            class_by_name[name].block for name in sorted(relevant_names) if name in class_by_name
-        )
-        relation_context = "\n".join(
-            line for left, right, line in relations if control in {left, right}
-        )
-        # PlantUML은 표시용 산출물이라 alias/분기 정보를 잃기 쉽다. 구현 작업에는
-        # 호출 인자와 reply 연결을 보존한 typed 모델만 넘긴다.
-        # 관련 클래스까지 선택 기준에 넣으면 actor 표시 흐름까지 딸려 와 같은
-        # 유스케이스를 거의 통째로 보낸다. Control이 직접 주고받은 호출이면 충분하다.
-        sequence_context = _project_sequence(
-            _read_json(spec.inputs.get("sequenceModel")), {control}
-        )
-        entity_names = {
-            name for name in relevant_names
-            if name in class_by_name and class_by_name[name].stereotype.lower() == "entity"
-        }
-        erd_context = slice_erd(erd, entity_names)
-        openapi_context = select_openapi_operations(control, class_by_name[control].body, operations)
-        api_model_names = referenced_openapi_model_names(openapi_context)
-        generated_contracts = read_generated_java_contracts(
-            run_root, spec.base_package, relevant_names, api_model_names
-        )
-        empty_contracts = find_empty_java_contracts(generated_contracts)
-
-        task_slug = camel_to_kebab(control)
-        relative_java = (
-            "application/src/main/java/"
-            + spec.base_package.replace(".", "/")
-            + f"/application/impl/{control}Service.java"
-        )
-        relative_test = (
-            "application/src/test/java/"
-            + spec.base_package.replace(".", "/")
-            + f"/application/impl/{control}ServiceTest.java"
-        )
-        context = {
-            "schemaVersion": "implementation-context/v1alpha1",
-            "taskId": f"implement-{task_slug}",
-            "control": control,
-            "neighbors": neighbors,
-            "bce": bce_context + ("\n\n" + relation_context if relation_context else ""),
-            "sequence": sequence_context,
-            "erd": erd_context,
-            "openapi": openapi_context,
-            "generatedJavaContracts": generated_contracts,
-            "emptyGeneratedContracts": empty_contracts,
-            "repositories": sorted(
-                repository for repository in repositories
-                if repository.removesuffix("Repository") in entity_names
-            ),
-        }
-        deployment_context = _deployment_context(spec, relevant_names)
-        if deployment_context:
-            context["deployment"] = deployment_context
-        context_path = output / f"{task_slug}.context.json"
-        context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
-        prompt = render_prompt(spec, context, [relative_java, relative_test])
-        prompt_path = output / f"{task_slug}.prompt.md"
-        prompt_path.write_text(prompt, encoding="utf-8")
-        task = ImplementationTask(
-            task_id=f"implement-{task_slug}",
-            control=control,
-            prompt_file=_relative(run_root, prompt_path),
-            context_file=_relative(run_root, context_path),
-            allowed_write_paths=[relative_java, relative_test],
-            immutable_paths=[
-                "application/src/main/java/" + spec.base_package.replace(".", "/") + "/bce",
-                "application/src/main/java/" + spec.base_package.replace(".", "/") + "/api",
-            ],
-            source_artifacts={
-                name: str(path) for name, path in spec.inputs.items()
-                if name in {"bceClass", "sequenceModel", "erd", "openapi", "deploymentBundle"}
-                and path.is_file()
-            },
-            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            llm={
-                "provider": "nvidia-nim",
-                "model": spec.agent_model,
-                "baseUrl": spec.agent_base_url,
-                "temperature": spec.agent_temperature,
-                "topP": spec.agent_top_p,
-                "maxOutputTokens": spec.agent_max_output_tokens,
-                "reasoningBudget": spec.agent_reasoning_budget,
-                "reasoningEffort": settings.implementation_reasoning_effort,
-                "repairReasoningEffort": settings.implementation_repair_reasoning_effort,
-                "chatTemplateKwargs": {
-                    "enable_thinking": True,
-                    "force_nonempty_content": True,
-                },
-            },
-            task_type="control",
-        )
-        (output / f"{task_slug}.task.json").write_text(
-            json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        tasks.append(task)
-    return tasks
-
-
-def _generate_scaffold_completion_task(
-    spec: JobSpec, run_root: Path, output: Path
-) -> list[ImplementationTask]:
-    """알 수 없는 타입 표식이 있는 BCE 파일만 먼저 보완하는 작업을 만든다."""
-    package_path = spec.base_package.replace(".", "/")
-    bce_root = run_root / "application/src/main/java" / package_path / "bce"
-    bce_files = sorted(bce_root.glob("*.java"))
-    allowed = [
-        path.relative_to(run_root).as_posix()
-        for path in bce_files
-        if "TODO(EasyDep)" in path.read_text(encoding="utf-8")
-    ]
-    if not allowed:
-        return []
-
-    context = {
-        "schemaVersion": "implementation-context/v1alpha1",
-        "taskId": "scaffold-completion",
-        "taskType": "scaffold-completion",
-        "files": allowed,
-    }
-    prompt = """# Scaffold type completion
-
-Replace only `Object` declarations marked with `TODO(EasyDep)` in the allowed files.
-Use the original type written in each marker, remove every marker you resolve, and preserve
-all other declarations. Do not add accessors, constructors, operations, or new files.
-""" + render_allowed_output_rules(allowed)
-    task = ImplementationTask(
-        task_id="scaffold-completion",
-        control="scaffold completion",
-        prompt_file=_write_task_file(run_root, output / "scaffold-completion.prompt.md", prompt),
-        context_file=_write_task_file(
-            run_root,
-            output / "scaffold-completion.context.json",
-            json.dumps(context, ensure_ascii=False, indent=2),
-        ),
-        allowed_write_paths=allowed,
-        immutable_paths=[
-            *(path.relative_to(run_root).as_posix() for path in bce_files
-              if path.relative_to(run_root).as_posix() not in allowed),
-            f"application/src/main/java/{package_path}/api",
-        ],
-        source_artifacts=_typed_source_artifacts(spec),
-        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        llm=_llm_config(spec),
-        task_type="scaffold-completion",
-    )
-    _write_task_file(
-        run_root,
-        output / "scaffold-completion.task.json",
-        json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
-    )
-    return [task]
-
-
-def _generate_entity_tasks(
-    spec: JobSpec, run_root: Path, output: Path
-) -> list[ImplementationTask]:
-    """구조화된 설계에서 Entity별 Java 구현 작업을 만든다."""
-    model = _read_json(spec.inputs.get("bceModel"))
-    entities = [
-        item for item in model.get("Classes", [])
-        if isinstance(item, dict)
-        and str(item.get("stereotype", "")).casefold() == "entity"
-    ]
-    package_path = spec.base_package.replace(".", "/")
-    bce_root = run_root / "application/src/main/java" / package_path / "bce"
-    all_bce = [path.relative_to(run_root).as_posix() for path in sorted(bce_root.glob("*.java"))]
-    sequence = _read_json(spec.inputs.get("sequenceModel"))
-    erd = _read_json(spec.inputs.get("erdBceModel"))
-    tasks: list[ImplementationTask] = []
-    for entity in sorted(entities, key=lambda item: str(item.get("className", ""))):
-        name = str(entity.get("className", ""))
-        if not name:
-            continue
-        slug = camel_to_kebab(name)
-        allowed = f"application/src/main/java/{package_path}/bce/{name}.java"
-        task_id = f"implement-{slug}-entity"
-        related_types = _referenced_data_types(entity, model)
-        context = {
-            "schemaVersion": "implementation-context/v1alpha1",
-            "taskId": task_id,
-            "taskType": "entity",
-            "entity": {key: entity.get(key, []) for key in ("className", "fields", "operations")},
-            "sequence": _entity_sequence(sequence, name),
-            "erd": _entity_erd(erd, name),
-            "relatedJavaContracts": read_generated_java_contracts(
-                run_root, spec.base_package, related_types
-            ),
-        }
-        prompt = _render_entity_prompt(name, context, allowed)
-        task = ImplementationTask(
-            task_id=task_id,
-            control=name,
-            prompt_file=_write_task_file(run_root, output / f"{slug}-entity.prompt.md", prompt),
-            context_file=_write_task_file(
-                run_root,
-                output / f"{slug}-entity.context.json",
-                json.dumps(context, ensure_ascii=False, indent=2),
-            ),
-            allowed_write_paths=[allowed],
-            immutable_paths=[
-                *(path for path in all_bce if path != allowed),
-                f"application/src/main/java/{package_path}/api",
-            ],
-            source_artifacts=_typed_source_artifacts(spec),
-            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            llm=_llm_config(spec),
-            task_type="entity",
-        )
-        _write_task_file(
-            run_root,
-            output / f"{slug}-entity.task.json",
-            json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
-        )
-        tasks.append(task)
-    return tasks
-
-
 def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
-    """Plan bounded OpenHands tasks for the ERD persistence vertical slice."""
+    """Plan one shared OpenHands work unit for the ERD persistence slice."""
     erd = _read(spec.inputs.get("erd"))
     if not erd:
         raise ValueError("ERD input is required to plan persistence tasks")
@@ -320,419 +80,235 @@ def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         f"application/src/main/java/{package_path}/persistence/repository/{name}Repository.java"
         for name in entity_names
     ]
-    # Keep independent entities separate so a large model turn remains
-    # bounded.  Entities joined by an ERD association, however, must be
-    # generated together: a per-file sandbox cannot safely create the two
-    # sides of a JPA relationship and tends to omit it merely to compile.
-    entity_groups = _persistence_entity_groups(entity_names, erd)
-    groups = [
-        *[
-            (
-                "implement-erd-persistence-entity-"
-                + "-".join(camel_to_kebab(name) for name in names),
-                "persistence-entities",
-                [
-                    f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
-                    for name in names
-                ],
-                render_persistence_entity_prompt(
-                    spec,
-                    erd,
-                    read_generated_java_contracts(
-                        run_root, spec.base_package, set(names)
-                    ),
-                    names,
-                    [
-                        f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
-                        for name in names
-                    ],
-                ),
-            )
-            for names in entity_groups
-        ],
-        *[
-            (
-                f"implement-erd-persistence-repository-{camel_to_kebab(name)}",
-                "persistence-repositories",
-                [path],
-                render_persistence_repository_prompt(spec, [name], [path]),
-            )
-            for name, path in zip(entity_names, repository_files, strict=True)
-        ],
-        (
-            "implement-erd-persistence-mapping",
-            "persistence-mapping",
-            [
-                f"application/src/main/java/{package_path}/persistence/mapper/BcePersistenceMapper.java",
-                f"application/src/test/java/{package_path}/persistence/mapper/BcePersistenceMapperTest.java",
-            ],
-            render_persistence_mapping_prompt(spec, erd, contracts),
-        ),
-        (
-            "implement-erd-persistence-schema",
-            "persistence-schema",
-            [
-                "application/src/main/resources/db/migration/V1__initial_schema.sql",
-                f"application/src/test/java/{package_path}/persistence/PersistenceSchemaTest.java",
-            ],
-            render_persistence_schema_prompt(spec, erd),
-        ),
+    entity_files = [
+        f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
+        for name in entity_names
     ]
+    required = [
+        *entity_files,
+        *repository_files,
+        f"application/src/main/java/{package_path}/persistence/mapper/BcePersistenceMapper.java",
+        "application/src/main/resources/db/migration/V1__initial_schema.sql",
+        f"application/src/test/java/{package_path}/persistence/PersistenceContractTest.java",
+    ]
+    # A persistence error generally spans Entity, repository, mapper, and
+    # migration.  These package scopes let one agent fix that vertical slice;
+    # generated BCE/OpenAPI contracts remain outside the editable scope.
+    editable_directories = [
+        f"application/src/main/java/{package_path}/persistence",
+        "application/src/main/resources/db/migration",
+        f"application/src/test/java/{package_path}/persistence",
+    ]
+    editable = _work_unit_editable_paths(run_root, required, editable_directories)
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
-    tasks: list[ImplementationTask] = []
-    for task_id, task_type, allowed, prompt_body in groups:
-        slug = task_id.removeprefix("implement-")
-        context = {
-            "schemaVersion": "implementation-context/v1alpha1",
-            "taskId": task_id,
-            "taskType": task_type,
-            "erd": erd,
-            "bceEntities": entity_names,
-            "generatedJavaContracts": contracts,
-        }
-        context_path = output / f"{slug}.context.json"
-        context_path.write_text(
-            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        prompt = prompt_body + render_allowed_output_rules(allowed)
-        prompt_path = output / f"{slug}.prompt.md"
-        prompt_path.write_text(prompt, encoding="utf-8")
-        task = ImplementationTask(
-            task_id=task_id,
-            control="ERD persistence",
-            prompt_file=_relative(run_root, prompt_path),
-            context_file=_relative(run_root, context_path),
-            allowed_write_paths=allowed,
-            immutable_paths=[
-                f"application/src/main/java/{package_path}/bce",
-                f"application/src/main/java/{package_path}/api",
-            ],
-            source_artifacts={
-                name: str(path) for name, path in spec.inputs.items()
-                if name in {"bceClass", "erd"} and path.is_file()
-            },
-            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            llm=_llm_config(spec),
-            task_type=task_type,
-        )
-        (output / f"{slug}.task.json").write_text(
-            json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        tasks.append(task)
-    return tasks
+    task_id = "implement-shared-persistence"
+    context = {
+        "schemaVersion": "implementation-context/v1alpha1",
+        "taskId": task_id,
+        "taskType": "persistence",
+        "implementationIR": ir.to_dict(),
+        "erd": erd,
+        "bceEntities": entity_names,
+        "generatedJavaContracts": contracts,
+        "requiredOutputs": required,
+    }
+    context_path = output / "shared-persistence.context.json"
+    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    prompt = (
+        f"# Shared persistence implementation: {spec.name}\n\n"
+        "Implement the ERD-backed persistence slice as one coherent unit. You may update "
+        "related Entity, repository, mapper, migration, and focused test files when that "
+        "resolves the same schema or compile failure. Generated BCE and OpenAPI sources are "
+        "read-only.\n\n"
+        "Rules:\n"
+        "- Derive tables, columns, keys, nullability, and JPA relationships from the ERD.\n"
+        "- Keep the Entity, Spring Data repository, mapper, migration, and tests consistent; "
+        "do not hand a technical error to another file owner.\n"
+        "- Preserve the exact generated contracts below and do not invent public API members.\n"
+        "- Run the focused persistence compile/test command supplied by the runtime.\n"
+        "- Do not leave TODO, FIXME, placeholder implementations, or speculative fallbacks.\n\n"
+        "## ERD\n```plantuml\n"
+        + erd
+        + "\n```\n\n## Generated contracts\n```java\n"
+        + contracts
+        + "\n```\n\n## Editable directories\n"
+        + "\n".join(f"- `{path}`" for path in editable_directories)
+    ) + render_allowed_output_rules(required)
+    prompt_path = output / "shared-persistence.prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    task = ImplementationTask(
+        task_id=task_id,
+        control="shared persistence",
+        prompt_file=_relative(run_root, prompt_path),
+        context_file=_relative(run_root, context_path),
+        allowed_write_paths=editable,
+        required_output_paths=required,
+        immutable_paths=[
+            f"application/src/main/java/{package_path}/bce",
+            f"application/src/main/java/{package_path}/api",
+        ],
+        source_artifacts={
+            name: str(path) for name, path in spec.inputs.items()
+            if name in {"bceClass", "erd", "erdBceModel"} and path.is_file()
+        },
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        llm=_llm_config(spec),
+        task_type="persistence",
+    )
+    (output / "shared-persistence.task.json").write_text(
+        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task]
 
 
 def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
-    """Plan one bounded Spring web adapter task per generated OpenAPI interface."""
+    """Plan the related backend use cases as one editable work unit.
+
+    The public wrapper keeps its established import path while replacing the
+    former one-controller-per-task plan.  Controls, inbound adapters, and
+    outbound adapters now share a repair boundary; persistence remains a
+    separate prior work unit.
+    """
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
-    control_bindings = _openapi_control_bindings(_read(spec.inputs.get("openapi")))
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
-    tasks: list[ImplementationTask] = []
-    for api_port in ir.api_ports:
-        stem = api_port.name
-        api_interface = java_root / "api" / f"{stem}Api.java"
-        api_sources = [api_interface]
-        api_sources.extend(sorted((java_root / "api" / "model").glob("*.java")))
-        bound_controls = {
-            str(binding.get("control"))
-            for operation in api_port.operations
-            if (binding := control_bindings.get(operation.operation_id or ""))
-            and str(binding.get("control") or "")
-        }
-        # API 어댑터는 OpenAPI 타입과 실제로 호출할 Control 계약만 알면 된다.
-        # Control의 매개변수·반환형은 아래 함수가 Java 참조를 따라 함께 가져온다.
-        # 이렇게 해야 같은 이름의 API 모델과 BCE record가 있어도 agent가 두 타입의
-        # 접근 방식을 추측하지 않고 정확한 선언을 비교할 수 있다.
-        api_contracts = render_source_contracts(run_root, api_sources)
-        bce_contracts = read_generated_java_contracts(
-            run_root,
-            spec.base_package,
-            bound_controls or set(ir.controls),
-        )
-        exact_contracts = "\n\n".join(
-            value
-            for value in (api_contracts, bce_contracts)
-            if value and "No Java contracts found" not in value
-        ) or "// No Java contracts found"
-        sequence_context = _project_sequence(
-            _read_json(spec.inputs.get("sequenceModel")),
-            bound_controls or set(ir.controls),
-        )
-        kebab = camel_to_kebab(stem)
-        task_id = f"implement-{kebab}-api-adapter"
-        allowed = [
-            f"application/src/main/java/{package_path}/adapter/in/web/{stem}ApiController.java",
-            f"application/src/test/java/{package_path}/adapter/in/web/{stem}ApiControllerTest.java",
-        ]
-        context = {
-            "schemaVersion": "implementation-context/v1alpha1",
-            "taskId": task_id,
-            "taskType": "api-adapter",
-            "api": stem,
-            "operations": [
-                {
-                    "method": operation.method,
-                    "path": operation.path,
-                    "operationId": operation.operation_id,
-                    "responses": [response.status for response in operation.responses],
-                    "controlBinding": control_bindings.get(operation.operation_id or ""),
-                }
-                for operation in api_port.operations
-            ],
-            "sequence": sequence_context,
-            "generatedJavaContracts": exact_contracts,
-        }
-        deployment_context = _deployment_context(spec, {stem, *bound_controls})
-        if deployment_context:
-            context["deployment"] = deployment_context
-        context_path = output / f"{kebab}-api-adapter.context.json"
-        context_path.write_text(
-            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        prompt = render_api_adapter_prompt(
-            spec,
-            api_port,
-            exact_contracts,
-            sequence_context,
-            {
-                operation.operation_id: control_bindings[operation.operation_id]
-                for operation in api_port.operations
-                if operation.operation_id in control_bindings
-            },
-            deployment_context,
-        ) + render_allowed_output_rules(allowed)
-        prompt_path = output / f"{kebab}-api-adapter.prompt.md"
-        prompt_path.write_text(prompt, encoding="utf-8")
-        task = ImplementationTask(
-            task_id=task_id,
-            control=f"{stem}Api",
-            prompt_file=_relative(run_root, prompt_path),
-            context_file=_relative(run_root, context_path),
-            allowed_write_paths=allowed,
-            immutable_paths=[
-                f"application/src/main/java/{package_path}/bce",
-                f"application/src/main/java/{package_path}/api",
-                f"application/src/main/java/{package_path}/persistence",
-            ],
-            source_artifacts={
-                name: str(path) for name, path in spec.inputs.items()
-                if name in {"openapi", "sequenceModel", "bceClass", "deploymentBundle"}
-                and path.is_file()
-            },
-            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            llm=_llm_config(spec),
-            task_type="api-adapter",
-        )
-        (output / f"{kebab}-api-adapter.task.json").write_text(
-            json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        tasks.append(task)
-    return tasks
-
-
-def generate_boundary_adapter_tasks(
-    spec: JobSpec, run_root: Path
-) -> list[ImplementationTask]:
-    """Plan one bounded headless adapter task per BCE Boundary contract."""
-    bce = _read(spec.inputs.get("bceClass"))
-    classes = parse_design_classes(bce)
-    boundaries = sorted(
-        (item for item in classes if item.stereotype.lower() == "boundary"),
-        key=lambda item: item.name,
+    required = [
+        *[
+            f"application/src/main/java/{package_path}/application/impl/{name}Service.java"
+            for name in ir.controls
+        ],
+        *[
+            f"application/src/main/java/{package_path}/adapter/in/web/{port.name}ApiController.java"
+            for port in ir.api_ports
+        ],
+        *[
+            f"application/src/main/java/{package_path}/adapter/in/boundary/{name}Adapter.java"
+            for name in ir.boundaries
+        ],
+        *[
+            (
+                f"application/src/main/java/{package_path}/adapter/out/"
+                f"{'persistence' if gateway.kind == 'persistence' else 'gateway'}/"
+                f"{gateway.name if gateway.kind == 'persistence' else 'InMemory' + gateway.name}Adapter.java"
+            )
+            for gateway in ir.gateways
+        ],
+        f"application/src/test/java/{package_path}/application/impl/ApplicationUseCasesTest.java",
+    ]
+    editable_directories = [
+        f"application/src/main/java/{package_path}/application/impl",
+        f"application/src/main/java/{package_path}/adapter/in",
+        f"application/src/main/java/{package_path}/adapter/out",
+        f"application/src/test/java/{package_path}/application/impl",
+        f"application/src/test/java/{package_path}/adapter",
+    ]
+    entity_sources = [
+        f"application/src/main/java/{package_path}/bce/{name}.java"
+        for name in ir.entities
+    ]
+    # Entity scaffolds preserve fields and operation signatures but deliberately
+    # emit empty/default method bodies.  The former per-Entity task completed
+    # those bodies; keep that implementation path inside this related backend
+    # work unit without turning the generated public contract into a required
+    # output again.
+    editable = _work_unit_editable_paths(
+        run_root, required, [*editable_directories, *entity_sources]
     )
-    if not boundaries:
-        raise ValueError("BCE input contains no <<Boundary>> contracts")
-
-    package_path = spec.base_package.replace(".", "/")
-    class_names = {item.name for item in classes}
-    output = run_root / "reports" / "implementation-tasks"
-    output.mkdir(parents=True, exist_ok=True)
-    tasks: list[ImplementationTask] = []
-    for boundary in boundaries:
-        sequence_context = _project_sequence(
-            _read_json(spec.inputs.get("sequenceModel")), {boundary.name}
-        )
-        # Typed 참가자의 source_class는 alias 역파싱보다 안전하게 협력 BCE 계약을 가리킨다.
-        peers = {
-            str(participant.get("source_class") or participant.get("name") or "")
-            for diagram in sequence_context
-            for participant in diagram["Participants"]
-            if str(participant.get("source_class") or participant.get("name") or "")
-            in class_names - {boundary.name}
-        }
-        contracts = read_generated_java_contracts(
-            run_root, spec.base_package, {boundary.name, *peers}
-        )
-        slug = camel_to_kebab(boundary.name)
-        task_id = f"implement-{slug}-boundary-adapter"
-        allowed = [
-            f"application/src/main/java/{package_path}/adapter/in/boundary/{boundary.name}Adapter.java",
-            f"application/src/test/java/{package_path}/adapter/in/boundary/{boundary.name}AdapterTest.java",
-        ]
-        context = {
-            "schemaVersion": "implementation-context/v1alpha1",
-            "taskId": task_id,
-            "taskType": "boundary-adapter",
-            "boundary": boundary.name,
-            "sequence": sequence_context,
-            "generatedJavaContracts": contracts,
-        }
-        deployment_context = _deployment_context(spec, {boundary.name, *peers})
-        if deployment_context:
-            context["deployment"] = deployment_context
-        context_path = output / f"{slug}-boundary-adapter.context.json"
-        context_path.write_text(
-            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        prompt = render_boundary_adapter_prompt(
-            spec, boundary.name, contracts, sequence_context, deployment_context
-        ) + render_allowed_output_rules(allowed)
-        prompt_path = output / f"{slug}-boundary-adapter.prompt.md"
-        prompt_path.write_text(prompt, encoding="utf-8")
-        task = ImplementationTask(
-            task_id=task_id,
-            control=boundary.name,
-            prompt_file=_relative(run_root, prompt_path),
-            context_file=_relative(run_root, context_path),
-            allowed_write_paths=allowed,
-            immutable_paths=[
-                f"application/src/main/java/{package_path}/bce",
-                f"application/src/main/java/{package_path}/api",
-                f"application/src/main/java/{package_path}/application",
-                f"application/src/main/java/{package_path}/persistence",
-                f"application/src/main/java/{package_path}/adapter/in/web",
-            ],
-            source_artifacts={
-                name: str(path) for name, path in spec.inputs.items()
-                if name in {"bceClass", "sequenceModel", "deploymentBundle"}
-                and path.is_file()
-            },
-            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            llm=_llm_config(spec),
-            task_type="boundary-adapter",
-        )
-        (output / f"{slug}-boundary-adapter.task.json").write_text(
-            json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        tasks.append(task)
-    return tasks
-
-
-def generate_gateway_adapter_tasks(
-    spec: JobSpec, run_root: Path
-) -> list[ImplementationTask]:
-    """Plan outbound adapters for generated BCE Gateway ports."""
-    package_path = spec.base_package.replace(".", "/")
-    package_root = run_root / "application" / "src" / "main" / "java" / package_path
-    ir = build_implementation_ir(spec, run_root)
-    specifications: list[tuple[str, GatewayIR, list[str], list[Path], str]] = []
-    for gateway in ir.gateways:
-        existing = next(
-            (
-                path for path in (package_root / "adapter" / "out").rglob("*.java")
-                if path.stem in {f"{gateway.name}Adapter", f"InMemory{gateway.name}Adapter"}
-            ),
-            None,
-        )
-        adapter_name = (
-            existing.stem
-            if existing
-            else (
-                f"{gateway.name}Adapter"
-                if gateway.kind == "persistence"
-                else f"InMemory{gateway.name}Adapter"
-            )
-        )
-        adapter_dir = (
-            existing.parent.relative_to(package_root).as_posix()
-            if existing
-            else f"adapter/out/{'persistence' if gateway.kind == 'persistence' else 'gateway'}"
-        )
-        test_dir = adapter_dir
-        allowed = [
-            f"application/src/main/java/{package_path}/{adapter_dir}/{adapter_name}.java",
-            f"application/src/test/java/{package_path}/{test_dir}/{adapter_name}Test.java",
-        ]
-        sources = [package_root / "bce" / f"{gateway.name}.java"]
-        if gateway.kind == "persistence":
-            for relative in ("bce", "persistence/entity", "persistence/repository", "persistence/mapper"):
-                sources.extend(sorted((package_root / relative).glob("*.java")))
-        else:
-            sources.extend(sorted((package_root / "bce").glob("*.java")))
-        task_id = f"implement-{camel_to_kebab(gateway.name)}-adapter"
-        specifications.append(
-            (
-                task_id,
-                gateway,
-                allowed,
-                list(dict.fromkeys(sources)),
-                render_gateway_prompt(spec, gateway, adapter_name, adapter_dir),
-            )
-        )
-
-    output = run_root / "reports" / "implementation-tasks"
-    output.mkdir(parents=True, exist_ok=True)
-    tasks: list[ImplementationTask] = []
-    for task_id, gateway, allowed, source_paths, prompt_header in specifications:
-        contracts = render_source_contracts(run_root, source_paths)
-        deployment_context = _deployment_context(spec, {gateway.name})
-        context = {
-            "schemaVersion": "implementation-context/v1alpha1",
-            "taskId": task_id,
-            "taskType": "gateway-adapter",
-            "gateway": gateway.name,
-            "gatewayKind": gateway.kind,
-            "generatedJavaContracts": contracts,
-            "erd": _read(spec.inputs.get("erd")),
-            "sequence": _read(spec.inputs.get("sequence")),
-        }
-        if deployment_context:
-            context["deployment"] = deployment_context
-        slug = task_id.removeprefix("implement-")
-        context_path = output / f"{slug}.context.json"
-        context_path.write_text(
-            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        prompt = (
-            prompt_header
-            + f"\n\n## Exact generated contracts\n\n```java\n{contracts}\n```\n"
-            + _render_deployment_context(deployment_context)
-        )
-        prompt += render_allowed_output_rules(allowed)
-        prompt_path = output / f"{slug}.prompt.md"
-        prompt_path.write_text(prompt, encoding="utf-8")
-        task = ImplementationTask(
-            task_id=task_id,
-            control=gateway.name,
-            prompt_file=_relative(run_root, prompt_path),
-            context_file=_relative(run_root, context_path),
-            allowed_write_paths=allowed,
-            immutable_paths=[
-                f"application/src/main/java/{package_path}/bce",
-                f"application/src/main/java/{package_path}/application",
-                f"application/src/main/java/{package_path}/persistence",
-            ],
-            source_artifacts={
-                name: str(path) for name, path in spec.inputs.items()
-                if name in {
-                    "bceClass", "sequence", "erd", "deployment", "deploymentBundle", "cloud",
-                }
-                and path.is_file()
-            },
-            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            llm=_llm_config(spec),
-            task_type="gateway-adapter",
-        )
-        (output / f"{slug}.task.json").write_text(
-            json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        tasks.append(task)
-    return tasks
+    immutable_bce_paths = [
+        path.relative_to(run_root).as_posix()
+        for path in sorted((java_root / "bce").rglob("*.java"))
+        if path.relative_to(run_root).as_posix() not in entity_sources
+    ]
+    generated_sources = [
+        *sorted((java_root / "bce").rglob("*.java")),
+        *sorted((java_root / "api").rglob("*.java")),
+    ]
+    contracts = render_source_contracts(run_root, generated_sources)
+    task_id = "implement-application-use-cases"
+    context = {
+        "schemaVersion": "implementation-context/v1alpha1",
+        "taskId": task_id,
+        "taskType": "use-case",
+        "implementationIR": ir.to_dict(),
+        "sequence": _read_json(spec.inputs.get("sequenceModel")),
+        "erd": _read(spec.inputs.get("erd")),
+        "openapi": _read(spec.inputs.get("openapi")),
+        "generatedJavaContracts": contracts,
+        "entityBodySources": entity_sources,
+        "requiredOutputs": required,
+    }
+    deployment_context = _deployment_context(
+        spec, {*(item.name for item in ir.components), *ir.controls}
+    )
+    if deployment_context:
+        context["deployment"] = deployment_context
+    context_path = output / "application-use-cases.context.json"
+    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    prompt = (
+        f"# Application use-case implementation: {spec.name}\n\n"
+        "Implement the related Controls, web/boundary adapters, outbound adapters, and "
+        "focused tests as one backend work unit. When an observed compile or HTTP failure "
+        "crosses these directories, repair the related source in this same task rather than "
+        "creating a file-owner handoff. Persistence entities, repositories, and generated "
+        "OpenAPI contracts are read-only. BCE Entity sources below may have only their "
+        "method bodies completed; preserve their generated public class, field, and method "
+        "signatures exactly.\n\n"
+        "Rules:\n"
+        "- Implement only behavior established by the BCE, typed sequence, and OpenAPI contracts.\n"
+        "- Use the ERD-derived repositories exposed by the completed persistence unit; do not "
+        "invent alternative ports or in-memory domain state for persistent behavior.\n"
+        "- Keep adapter request/response mapping and Control invocation consistent with the "
+        "exact generated contracts.\n"
+        "- Use the single ApplicationUseCasesTest as a small representative behavior suite; "
+        "do not create one mechanical test file per class. Assert observable results rather "
+        "than prompt wording or private helper calls.\n"
+        "- Do not leave TODO, FIXME, placeholder implementations, or speculative fallbacks.\n\n"
+        "## BCE Entity body sources (signatures are immutable)\n"
+        + "\n".join(f"- `{path}`" for path in entity_sources)
+        + "\n\n"
+        "## Implementation IR\n```json\n"
+        + _prompt_json(ir.to_dict())
+        + "\n```\n\n## Typed sequence\n```json\n"
+        + _prompt_json(context["sequence"])
+        + "\n```\n\n## OpenAPI\n```yaml\n"
+        + str(context["openapi"])
+        + "\n```\n\n## Generated Java contracts\n```java\n"
+        + contracts
+        + "\n```\n"
+        + _render_deployment_context(deployment_context)
+        + "\n## Editable directories\n"
+        + "\n".join(f"- `{path}`" for path in editable_directories)
+    ) + render_allowed_output_rules(required)
+    prompt_path = output / "application-use-cases.prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    task = ImplementationTask(
+        task_id=task_id,
+        control="application use cases",
+        prompt_file=_relative(run_root, prompt_path),
+        context_file=_relative(run_root, context_path),
+        allowed_write_paths=editable,
+        required_output_paths=required,
+        immutable_paths=[
+            *immutable_bce_paths,
+            f"application/src/main/java/{package_path}/api",
+            f"application/src/main/java/{package_path}/persistence",
+        ],
+        source_artifacts={
+            name: str(path) for name, path in spec.inputs.items()
+            if name in {"bceClass", "sequenceModel", "erd", "openapi", "deploymentBundle"}
+            and path.is_file()
+        },
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        llm=_llm_config(spec),
+        task_type="use-case",
+    )
+    (output / "application-use-cases.task.json").write_text(
+        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task]
 
 
 def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
@@ -749,21 +325,48 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     for relative in ("application/impl", "adapter", "bce", "persistence/repository"):
         source_paths.extend(sorted((package_root / relative).rglob("*.java")))
     contracts = render_source_contracts(run_root, source_paths)
-    allowed = [
+    required = [
         f"application/src/main/java/{package_path}/config/ApplicationConfiguration.java",
         "application/src/main/resources/application.yml",
         f"application/src/test/java/{package_path}/config/ApplicationContextTest.java",
+        (
+            "application/src/test/java/"
+            f"{package_path}/integration/{ir.application_class.removesuffix('Application')}FlowTest.java"
+        ),
     ]
+    editable_directories = [
+        f"application/src/main/java/{package_path}/config",
+        f"application/src/test/java/{package_path}/config",
+        f"application/src/test/java/{package_path}/integration",
+    ]
+    allowed = _work_unit_editable_paths(
+        run_root,
+        required,
+        [*editable_directories, "application/src/main/resources/application.yml"],
+    )
     task_id = "implement-application-wiring"
     deployment_context = _deployment_context(
         spec, {spec.name, ir.application_class, *(item.name for item in ir.components)}
     )
+    representative = ir.e2e_scenarios[0] if ir.e2e_scenarios else None
     context = {
         "schemaVersion": "implementation-context/v1alpha1",
         "taskId": task_id,
-        "taskType": "configuration",
+        "taskType": "wiring",
+        "implementationIR": ir.to_dict(),
         "generatedJavaContracts": contracts,
         "applicationClass": ir.application_class,
+        "openapi": _read(spec.inputs.get("openapi")),
+        "semanticContract": (
+            {
+                "method": representative.method,
+                "path": representative.path,
+                "status": representative.status,
+            }
+            if representative is not None
+            else {}
+        ),
+        "requiredOutputs": required,
     }
     if deployment_context:
         context["deployment"] = deployment_context
@@ -774,8 +377,19 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     prompt = render_wiring_prompt(spec, ir.application_class, contracts)
+    prompt += (
+        "\n\nImplement the single real HTTP flow test in the contracted integration path. "
+        "It must start the wired application and exercise a documented successful OpenAPI "
+        "operation; do not modify production source outside this work unit to make the test pass.\n"
+        "The required HTTP path/status contract is:\n```json\n"
+        + _prompt_json(context["semanticContract"])
+        + "\n```"
+    )
     prompt += _render_deployment_context(deployment_context)
-    prompt += render_allowed_output_rules(allowed)
+    prompt += "\n\n## Editable directories\n" + "\n".join(
+        f"- `{path}`" for path in editable_directories
+    )
+    prompt += render_allowed_output_rules(required)
     prompt_path = output / "application-wiring.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
     task = ImplementationTask(
@@ -784,6 +398,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         prompt_file=_relative(run_root, prompt_path),
         context_file=_relative(run_root, context_path),
         allowed_write_paths=allowed,
+        required_output_paths=required,
         immutable_paths=[
             f"application/src/main/java/{package_path}/bce",
             f"application/src/main/java/{package_path}/api",
@@ -801,7 +416,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         },
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         llm=_llm_config(spec),
-        task_type="configuration",
+        task_type="wiring",
     )
     (output / "application-wiring.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -834,12 +449,25 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[Implementatio
     output.mkdir(parents=True, exist_ok=True)
     contracts_path = run_root / "reports" / "frontend-generated-client-contracts.txt"
     contracts_path.write_text(generated_contracts, encoding="utf-8")
-    allowed = [
+    required = [
         "application/frontend/src/App.tsx",
         "application/frontend/src/components/AppShell.tsx",
         *[f"application/frontend/src/pages/{name}.tsx" for name in pages],
         "application/frontend/src/styles.css",
     ]
+    editable_directories = [
+        "application/frontend/src/components",
+        "application/frontend/src/pages",
+    ]
+    allowed = _work_unit_editable_paths(
+        run_root,
+        required,
+        [
+            "application/frontend/src/App.tsx",
+            "application/frontend/src/styles.css",
+            *editable_directories,
+        ],
+    )
     task_id = "implement-frontend-application"
     context = {
         "schemaVersion": "frontend-implementation-context/v1alpha1",
@@ -852,6 +480,7 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[Implementatio
         "operationIds": operations,
         "generatedTypescriptContracts": generated_contracts,
         "generatedImportRoot": client_contracts.import_root,
+        "requiredOutputs": required,
     }
     deployment_context = _deployment_context(spec, {"frontend", *bce_names})
     if deployment_context:
@@ -920,7 +549,14 @@ Rules:
 ```
 {_render_deployment_context(deployment_context)}
 """
-    prompt += render_allowed_output_rules(allowed)
+    prompt += "\n## Editable paths\n" + "\n".join(
+        f"- `{path}`" for path in [
+            "application/frontend/src/App.tsx",
+            "application/frontend/src/styles.css",
+            *editable_directories,
+        ]
+    )
+    prompt += render_allowed_output_rules(required)
     prompt_path = output / "frontend-application.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
     task = ImplementationTask(
@@ -929,6 +565,7 @@ Rules:
         prompt_file=_relative(run_root, prompt_path),
         context_file=_relative(run_root, context_path),
         allowed_write_paths=allowed,
+        required_output_paths=required,
         immutable_paths=[
             "application/frontend/src/generated",
             "application/frontend/package.json",
@@ -956,253 +593,6 @@ Rules:
     return [task]
 
 
-def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
-    """Plan a domain-neutral real HTTP flow test or report executable gaps."""
-    ir = build_implementation_ir(spec, run_root)
-    gaps = detect_e2e_design_gaps(spec, run_root)
-    blocking_gaps = gaps
-    gap_report = {
-        "schemaVersion": "implementation-design-gaps/v1alpha1",
-        "phase": "end-to-end",
-        "status": "NEEDS_INPUT" if blocking_gaps else "READY",
-        "gaps": gaps,
-    }
-    gap_path = run_root / "reports" / "design-gaps" / "end-to-end-flow.json"
-    gap_path.parent.mkdir(parents=True, exist_ok=True)
-    gap_path.write_text(
-        json.dumps(gap_report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    # An integration test is immutable with respect to production sources.  It
-    # cannot repair an unresolved API/controller implementation, so scheduling
-    # it would only waste repair attempts and obscure the production defect.
-    if blocking_gaps:
-        return []
-    package_path = spec.base_package.replace(".", "/")
-    package_root = run_root / "application" / "src" / "main" / "java" / package_path
-    sources: list[Path] = []
-    for relative in (
-        "adapter/in/web",
-        "adapter/in/boundary",
-        "adapter/out",
-        "persistence/repository",
-        "persistence/entity",
-        "api/model",
-        "bce",
-    ):
-        sources.extend(sorted((package_root / relative).rglob("*.java")))
-    sources = list(dict.fromkeys(sources))
-    contracts = render_source_contracts(run_root, sources)
-    sequence = _read(spec.inputs.get("sequence"))
-    erd = _read(spec.inputs.get("erd"))
-    openapi = _read(spec.inputs.get("openapi"))
-    repositories = [
-        path.stem for path in sorted((package_root / "persistence" / "repository").glob("*Repository.java"))
-    ]
-    gateway_adapters = []
-    adapter_root = package_root / "adapter" / "out"
-    for source in sorted(adapter_root.rglob("*.java")) if adapter_root.is_dir() else []:
-        text = source.read_text(encoding="utf-8")
-        if any(re.search(rf"\bimplements\s+{re.escape(item.name)}\b", text) for item in ir.gateways):
-            gateway_adapters.append(source.stem)
-    scenarios = [
-        {"method": item.method, "path": item.path, "status": item.status, "label": item.label}
-        for item in ir.e2e_scenarios
-    ]
-    persistence_paths = _e2e_persistence_paths(
-        sequence, scenarios, bce=_read(spec.inputs.get("bceClass")),
-        erd=erd, openapi=openapi,
-    )
-    semantic_contract = {
-        "paths": sorted({item.path for item in ir.e2e_scenarios}),
-        "statuses": sorted({item.status for item in ir.e2e_scenarios}),
-        "repositories": repositories,
-        "gatewayAdapters": gateway_adapters,
-        # 하나의 사용자 흐름에서 여러 API를 순서대로 호출할 수 있다. API 응답별로
-        # 테스트 메서드를 복제하지 않고 실제 애플리케이션 연결을 확인하는 것이 목적이다.
-        "minimumTests": 1,
-        "scenarios": scenarios,
-        "persistencePaths": persistence_paths,
-    }
-    flow_name = ir.application_class.removesuffix("Application") + "FlowTest"
-    allowed = [
-        f"application/src/test/java/{package_path}/integration/{flow_name}.java"
-    ]
-    context = {
-        "schemaVersion": "implementation-context/v1alpha1",
-        "taskId": "implement-end-to-end-flow",
-        "taskType": "integration-test",
-        "sequence": sequence,
-        "erd": erd,
-        "openapi": openapi,
-        "generatedJavaContracts": contracts,
-        "semanticContract": semantic_contract,
-        "designGaps": gaps,
-    }
-    output = run_root / "reports" / "implementation-tasks"
-    output.mkdir(parents=True, exist_ok=True)
-    context_path = output / "end-to-end-flow.context.json"
-    context_path.write_text(
-        json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    prompt = render_e2e_prompt(
-        spec, ir.application_name, semantic_contract, contracts, sequence, erd, openapi
-    )
-    prompt += render_allowed_output_rules(allowed)
-    prompt_path = output / "end-to-end-flow.prompt.md"
-    prompt_path.write_text(prompt, encoding="utf-8")
-    task = ImplementationTask(
-        task_id="implement-end-to-end-flow",
-        control=f"{ir.application_name} end-to-end flow",
-        prompt_file=_relative(run_root, prompt_path),
-        context_file=_relative(run_root, context_path),
-        allowed_write_paths=allowed,
-        immutable_paths=[f"application/src/main/java/{package_path}"],
-        source_artifacts={
-            name: str(path) for name, path in spec.inputs.items()
-            if name in {"bceClass", "sequence", "erd", "openapi"} and path.is_file()
-        },
-        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        llm=_llm_config(spec),
-        task_type="integration-test",
-    )
-    (output / "end-to-end-flow.task.json").write_text(
-        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task]
-
-
-def _e2e_persistence_paths(
-    sequence: str,
-    scenarios: list[dict[str, object]],
-    *,
-    bce: str = "",
-    erd: str = "",
-    openapi: str = "",
-) -> list[str]:
-    """Infer persistence flows from BCE↔ERD relationships, not UML participants.
-
-    BCE sequence diagrams intentionally contain only actor/Boundary/Control/
-    Entity participants. A Control related to an ERD-backed Entity therefore
-    implies the generated ``<Entity>Repository`` implementation contract even
-    when a Repository is not drawable in the BCE sequence.
-    """
-    if re.search(
-        r"(?im)^\s*(?:database|participant\s+\S*(?:repository|persistence)\S*)",
-        str(sequence or ""),
-    ):
-        return sorted({str(item.get("path") or "") for item in scenarios if item.get("path")})
-    classes = parse_design_classes(bce)
-    persistent_entities = parse_erd_entities(erd)
-    entity_names = {
-        item.name for item in classes
-        if item.stereotype.lower() == "entity" and item.name in persistent_entities
-    }
-    if not entity_names:
-        return []
-    related_controls = {
-        left if right in entity_names else right
-        for left, right, _ in parse_relations(bce)
-        if (left in entity_names) ^ (right in entity_names)
-        and any(
-            item.name == (left if right in entity_names else right)
-            and item.stereotype.lower() == "control"
-            for item in classes
-        )
-    }
-    if not related_controls:
-        return []
-    try:
-        model = json.loads(openapi) if str(openapi).lstrip().startswith("{") else {}
-    except json.JSONDecodeError:
-        model = {}
-    paths_by_control: dict[str, set[str]] = {}
-    for endpoint in model.get("Endpoints", []) if isinstance(model, dict) else []:
-        if not isinstance(endpoint, dict):
-            continue
-        binding = endpoint.get("control_binding") or {}
-        control = str(binding.get("control") or "").strip()
-        path = str(endpoint.get("path") or "").strip()
-        if control in related_controls and path:
-            paths_by_control.setdefault(control, set()).add(path)
-    if paths_by_control:
-        return sorted({path for paths in paths_by_control.values() for path in paths})
-    return sorted({str(item.get("path") or "") for item in scenarios if item.get("path")})
-
-
-def detect_e2e_design_gaps(spec: JobSpec, run_root: Path) -> list[dict[str, str]]:
-    """Find domain-neutral executable-contract gaps before E2E generation."""
-    package_path = spec.base_package.replace(".", "/")
-    package_root = run_root / "application" / "src" / "main" / "java" / package_path
-    test_root = run_root / "application" / "src" / "test" / "java" / package_path
-    ir = build_implementation_ir(spec, run_root)
-    gaps: list[dict[str, str]] = []
-
-    for root in (package_root / "application" / "impl", package_root / "adapter"):
-        for path in sorted(root.rglob("*.java")) if root.is_dir() else []:
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                code_line = re.sub(r"//.*$", "", line).strip()
-                if re.search(r"\b(?:TODO|FIXME|UnsupportedOperationException)\b", code_line):
-                    gaps.append({
-                        "code": "UNRESOLVED_PRODUCTION_PATH",
-                        "source": path.relative_to(run_root).as_posix(),
-                        "evidence": f"line {number}: {line.strip()}",
-                        "requiredAction": "Resolve the executable design contract before generating E2E evidence.",
-                    })
-
-    for control in ir.controls:
-        service = package_root / "application" / "impl" / f"{control}Service.java"
-        test = test_root / "application" / "impl" / f"{control}ServiceTest.java"
-        if not service.is_file() or not test.is_file():
-            gaps.append({
-                "code": "CONTROL_IMPLEMENTATION_MISSING",
-                "source": (package_root / "bce" / f"{control}.java").relative_to(run_root).as_posix(),
-                "evidence": f"{control} has no verified service/test pair.",
-                "requiredAction": "Run and verify the Control phase.",
-            })
-
-    for api in ir.api_ports:
-        controller = package_root / "adapter" / "in" / "web" / f"{api.name}ApiController.java"
-        test = test_root / "adapter" / "in" / "web" / f"{api.name}ApiControllerTest.java"
-        if not controller.is_file() or not test.is_file():
-            gaps.append({
-                "code": "API_ADAPTER_MISSING",
-                "source": api.interface_file,
-                "evidence": f"{api.name}Api has no verified controller/test pair.",
-                "requiredAction": "Run and verify the API adapter phase.",
-            })
-
-    adapter_root = package_root / "adapter" / "out"
-    adapter_sources = list(adapter_root.rglob("*.java")) if adapter_root.is_dir() else []
-    for gateway in ir.gateways:
-        implementation = next(
-            (
-                path for path in adapter_sources
-                if re.search(
-                    rf"\bimplements\s+{re.escape(gateway.name)}\b",
-                    path.read_text(encoding="utf-8"),
-                )
-            ),
-            None,
-        )
-        if implementation is None:
-            gaps.append({
-                "code": "GATEWAY_ADAPTER_MISSING",
-                "source": (package_root / "bce" / f"{gateway.name}.java").relative_to(run_root).as_posix(),
-                "evidence": f"{gateway.name} has no concrete outbound adapter.",
-                "requiredAction": "Run and verify the outbound Gateway adapter phase.",
-            })
-
-    repository_root = package_root / "persistence" / "repository"
-    if ir.entities and not any(repository_root.glob("*Repository.java")):
-        gaps.append({
-            "code": "PERSISTENCE_OUTPUT_MISSING",
-            "source": "ERD",
-            "evidence": "The design contains entities but no generated repositories.",
-            "requiredAction": "Run and verify the ERD persistence phase.",
-        })
-    return gaps
-
-
 def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
     sections: list[str] = []
     for path in paths:
@@ -1212,26 +602,6 @@ def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
                 + path.read_text(encoding="utf-8").strip()
             )
     return "\n\n".join(sections) or "// No Java contracts found"
-
-
-def _openapi_control_bindings(source: str) -> dict[str, dict[str, object]]:
-    """Read reviewed API-to-Control mappings carried by the OpenAPI extension."""
-    try:
-        document = json.loads(source)
-    except json.JSONDecodeError:
-        return {}
-    bindings: dict[str, dict[str, object]] = {}
-    for path_item in document.get("paths", {}).values():
-        if not isinstance(path_item, dict):
-            continue
-        for operation in path_item.values():
-            if not isinstance(operation, dict):
-                continue
-            operation_id = operation.get("operationId")
-            binding = operation.get("x-easydep-control")
-            if isinstance(operation_id, str) and isinstance(binding, dict):
-                bindings[operation_id] = binding
-    return bindings
 
 
 def _render_deployment_context(deployment: object) -> str:
@@ -1247,158 +617,6 @@ def _render_deployment_context(deployment: object) -> str:
 def _prompt_json(value: object) -> str:
     """구조는 그대로 두고 LLM 입력에 불필요한 화면용 들여쓰기만 없앤다."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-
-def render_api_adapter_prompt(
-    spec: JobSpec,
-    api_port: ApiPortIR,
-    contracts: str,
-    sequence: list[dict[str, object]],
-    control_bindings: dict[str | None, dict[str, object]] | None = None,
-    deployment: dict[str, object] | None = None,
-) -> str:
-    bound_controls = sorted(
-        {
-            str(binding.get("control")).strip()
-            for binding in (control_bindings or {}).values()
-            if isinstance(binding, dict) and str(binding.get("control") or "").strip()
-        }
-    )
-    control_imports = "\n".join(
-        f"- `{spec.base_package}.bce.{name}`" for name in bound_controls
-    ) or "- No reviewed Control binding is available; do not invent one."
-    operations = "\n".join(
-        f"- {operation.method} {operation.path}: "
-        + ", ".join(
-            f"{response.status} {response.description}".strip()
-            for response in operation.responses
-        )
-        for operation in api_port.operations
-    ) or "- No parsed OpenAPI operations; implement only methods present in the exact interface."
-    return f"""# Implementation task: {api_port.name} OpenAPI adapter
-
-Implement the exact generated `{api_port.name}Api` as a `@RestController` plus its focused test.
-
-Rules:
-- Use only `{spec.base_package}.adapter.in.web`, the generated interface/mappings, exact `ResponseEntity` types, and constructor-injected Control ports.
-- The Java contracts and reviewed binding below are authoritative: use only their methods, argument flow, and observable response outcomes. Do not infer a Control from the API name.
-- Convert API DTOs to BCE types explicitly with shown public constructors/accessors; never cast `Object`, access private fields, use reflection, or edit generated code.
-- A documented status needs an exact Control outcome. If it is not representable, report the design gap while keeping both files compilable; do not invent fallback branches, exceptions, or placeholder comments.
-- Test each generated operation's executable status, response mapping, and exact Control arguments. Mock only the injected Control collaborators.
-- Create both contracted files, then finish immediately.
-
-## OpenAPI response contract
-
-{operations}
-
-## Typed sequence messages
-
-```json
-{_prompt_json(sequence)}
-```
-
-## Reviewed API-to-Control bindings
-
-```json
-{_prompt_json(control_bindings or {})}
-```
-
-## Exact permitted Control collaborators
-
-{control_imports}
-
-## Exact generated API and BCE contracts
-
-```java
-{contracts}
-```
-{_render_deployment_context(deployment)}
-"""
-
-
-def render_boundary_adapter_prompt(
-    spec: JobSpec,
-    boundary: str,
-    contracts: str,
-    sequence: list[dict[str, object]],
-    deployment: dict[str, object] | None = None,
-) -> str:
-    no_sequence_delegation = not sequence
-    delegation_rule = (
-        "- No sequence message matches this Boundary. Do not import, inject, infer, "
-        "or call any Control; implement only the Boundary's own state behavior.\n"
-        if no_sequence_delegation
-        else ""
-    )
-    return f"""# Implementation task: {boundary} BCE Boundary adapter
-
-Implement a headless, state-backed prototype adapter for the exact `{boundary}` BCE Boundary
-interface and create a focused unit test.
-
-Rules:
-- Use package `{spec.base_package}.adapter.in.boundary` and implement the exact generated `{boundary}` interface.
-- Do not add REST mappings or edit generated BCE/API contracts. OpenAPI web adapters remain the HTTP boundary.
-- Do not annotate the adapter as a Spring bean yet; production bean ownership and cycle-free wiring are decided by the wiring phase.
-- Follow direction in the typed sequence: `sync`/`async` from Boundary to Control delegates to that exact Control operation; `return` and Control-to-Boundary messages must not call back into the Control.
-- When the sequence contains a Boundary-to-Control request and the Boundary method returns a value, never implement it as `return null`; provide one minimal deterministic configuration/submission seam for the exact return value and delegate the request through the exact Control port.
-- Retain values received by `on*`, `show*`, or equivalent methods. Return the last submitted/configured value from matching `get*`, `ask*`, or `prompt*` methods.
-- When the interface has a return method but no submission method, accept the return value through a constructor or one explicit adapter-only submission method. Do not invent methods on BCE contracts.
-- Reject only clearly invalid null input needed to preserve adapter state; do not invent business validation absent from the contracts.
-- Expose only minimal read-only adapter accessors needed to observe display/error/portfolio state in tests.
-- Do not leave TODO, FIXME, placeholder, or speculative import comments; all exact collaborator types are included below.
-- Use constructor injection only when the sequence requires delegation to a generated Control port. Never instantiate a Control service directly.
-{delegation_rule}- Never derive a collaborator or method name from the Boundary class name; use only exact sequence messages and contracts.
-- Test every Boundary interface method, state transition, returned value, and required Control invocation. Use Mockito only for generated Control collaborators.
-- Create both contracted files, then finish immediately.
-
-## Typed sequence messages
-
-```json
-{_prompt_json(sequence)}
-```
-
-## Exact generated Boundary and collaborating contracts
-
-```java
-{contracts}
-```
-{_render_deployment_context(deployment)}
-"""
-
-
-def render_gateway_prompt(
-    spec: JobSpec, gateway: GatewayIR, adapter_name: str, adapter_dir: str
-) -> str:
-    package = f"{spec.base_package}.{adapter_dir.replace('/', '.')}"
-    if gateway.kind == "persistence":
-        behavior = """
-- Constructor-inject only the generated repositories and mapper required by the exact Gateway methods.
-- Map BCE values to persistence entities, invoke the corresponding repository operation exactly
-  once, and map repository results back to BCE values when the contract returns a value.
-- Preserve every natural identifier and scalar field; never invent derived queries or fields.
-- Tests may mock repositories but must use the real mapper and cover every Gateway operation.
-"""
-    else:
-        behavior = """
-- Implement a deterministic local adapter: keep configurable return values in thread-safe queues
-  or maps keyed by the exact method inputs. Never perform real network access in the prototype.
-- Expose minimal adapter-only enqueue/configure/reject methods for deterministic E2E tests. Name
-  these seams after the exact Gateway operation or returned type rather than a domain guess.
-- Preserve configured return values without fabricating fields. Explicitly model disconnected or
-  rejected calls only when the exact contract exposes connection/failure behavior.
-- Tests must cover every Gateway method, configured success values, rejection/failure, and state reset.
-"""
-    return f"""# Implementation task: {gateway.name} outbound adapter
-
-Implement the exact BCE `{gateway.name}` Gateway as `{adapter_name}` and create a focused test.
-
-Rules:
-- Use package `{package}` and implement `{gateway.name}` exactly.
-- Use only public operations present in the injected contracts; do not edit BCE, persistence, or API files.
-{behavior}
-- Do not leave TODO/FIXME/placeholders or conceal an unrepresentable design contract.
-- Create both contracted files, then finish immediately.
-"""
 
 
 def render_wiring_prompt(
@@ -1432,128 +650,6 @@ Rules:
 
 ## Exact existing Java contracts and constructors
 
-```java
-{contracts}
-```
-"""
-
-
-def render_e2e_prompt(
-    spec: JobSpec,
-    application_name: str,
-    semantic_contract: dict[str, object],
-    contracts: str,
-    sequence: str,
-    erd: str,
-    openapi: str,
-) -> str:
-    scenarios = "\n".join(
-        f"- {item['method']} {item['path']} -> HTTP {item['status']}: {item['label']}"
-        for item in semantic_contract.get("scenarios", [])
-    )
-    repositories = ", ".join(semantic_contract.get("repositories", [])) or "none"
-    gateways = ", ".join(semantic_contract.get("gatewayAdapters", [])) or "none"
-    minimum_tests = semantic_contract.get("minimumTests", 1)
-    persistence_paths = [
-        str(path) for path in semantic_contract.get("persistencePaths", [])
-        if str(path).strip()
-    ]
-    persistence_rule = (
-        "- Assert repository-backed persistence only for these explicitly traced flows: "
-        + ", ".join(persistence_paths)
-        + ".\n"
-        if persistence_paths
-        else "- Do not assert repository side effects for these flows: the sequence has no explicit persistence participant. A global repository inventory is not evidence that this endpoint writes state.\n"
-    )
-    return f"""# Implementation task: {application_name} end-to-end flow
-
-Create one Spring Boot integration test that verifies the real application graph across HTTP/API
-adapters, Control services, and Boundary adapters, including persistence only where the explicit
-sequence contract below proves that the flow reaches it.
-
-Rules:
-- Use package `{spec.base_package}.integration` and `@SpringBootTest` with the real H2/Flyway configuration.
-- The generated build is pinned to Spring Boot 3.3.13 and Java 21. Inspect its
-  `build.gradle` before writing imports or APIs; do not copy framework examples from memory.
-- Prefer `MockMvc` with `@AutoConfigureMockMvc` for the real HTTP contract so the test does not
-  need a random embedded port. If `TestRestTemplate` with `RANDOM_PORT` is required, import
-  `org.springframework.boot.test.web.server.LocalServerPort` (never the removed
-  Spring Boot 2.x package `org.springframework.boot.web.server.LocalServerPort`).
-- Spring Boot 3 uses Jakarta APIs. Use `jakarta.persistence`, `jakarta.validation`,
-  `jakarta.servlet`, `jakarta.annotation`, and `jakarta.transaction`; never import their
-  legacy `javax.*` counterparts in the generated test or test configuration.
-- Do not add an ad-hoc dependency or downgrade the Spring Boot version to make a stale import compile.
-- Use the production application graph exactly as wired. Do not mock Controls, Boundary adapters,
-  repositories, or the Spring context. Never declare `@TestConfiguration`, `@Bean`, `@MockBean`,
-  `@MockitoBean`, `@Primary`, or enable bean-definition overriding.
-- Autowire concrete Gateway adapters and at least one Spring Data repository listed in the semantic
-  contract. Drive external outcomes only through their public deterministic seams; do not replace beans.
-- Declare Gateway fields as their concrete adapter classes. Never use reflection or reduce them
-  to only the Gateway interface when a configuration seam is required.
-- Use `@DirtiesContext(classMode = BEFORE_EACH_TEST_METHOD)` when isolated state is needed.
-  Never create duplicate application, Control, Boundary, Entity, or Gateway beans.
-- Cover every scenario in the generated semantic contract below using the smallest coherent set
-  of user-flow tests, with at least {minimum_tests} `@Test` method. One test may call several API
-  operations in sequence when that is how the user completes the use case. Use real HTTP through
-  `TestRestTemplate` or `MockMvc`; assert each operation's exact response status and relevant fields.
-- Each semantic-contract row is immutable: in that row's test, invoke exactly the listed HTTP
-  method and path, then assert exactly its listed status. Do not infer a conventional status
-  (for example, do not substitute `201 Created` for a documented `200 OK`) and do not append
-  an undeclared path segment. A Java URL assembled from path variables is allowed only when it
-  resolves exactly to the listed path template. A shared helper such as `performLogin()` is
-  allowed when the calling `@Test` invokes that helper and the helper contains the exact HTTP
-  request; do not omit the scenario because the request is factored into a helper.
-{persistence_rule}- If a Boundary adapter exposes only an in-memory configured result, use its
-  public seam to configure a valid response or assert only the documented HTTP contract; never
-  invent identifiers, persistence side effects, or response fields that the implementation cannot
-  produce.
-- Assert observable HTTP responses and Boundary state; assert repository state only for the explicitly traced persistence flows above. Do not call private methods or reproduce service logic inside the test.
-- Before writing each scenario, inspect the generated API controller, Control, and concrete Boundary
-  adapter used by that request.  Seed and call the exact identifiers and inputs that those contracts
-  require; a repository seed is not visible to a Control that delegates to a Boundary adapter.
-- Include every required path, query, header, and body parameter from the generated API signature.
-  Do not omit a required query parameter merely because its value also appears elsewhere in the test.
-- When a concrete stateful Boundary adapter exposes a public deterministic configuration or submission
-  seam, use that existing seam to configure the exact response consumed by the real Control.  Do not
-  assume a non-null return value, fabricate a second bean, or modify production sources.
-- When a request causes persistence with a foreign-key reference, seed the referenced record using the
-  exact identifier that the request passes through the Control.  Do not substitute a display name,
-  username, or unrelated fixture key.
-- Before asserting response JSON, inspect the concrete return object and its accessors. Assert a
-  response field only when the generated contract and implementation can populate it; an empty
-  DTO or configured prototype result must be validated by status/content type rather than a
-  fabricated non-null field.
-- For a generic/Object request body, send JSON compatible with the generated controller's conversion
-  contract.  Do not assume Spring preserves a BCE input type placed inside `HttpEntity<Object>`.
-- Do not weaken or disable Flyway/JPA and do not modify production sources.
-- Do not leave TODO, disabled tests, unconditional success assertions, or tests that merely check context loading.
-- Never accept multiple outcomes, omit a strict assertion, describe the test as simplified,
-  or claim a required compiled adapter/repository is unavailable when it appears below.
-- Create the contracted test file, then finish immediately.
-
-## Machine-derived semantic contract
-
-Required repositories: {repositories}
-Required Gateway adapters: {gateways}
-
-{scenarios}
-
-## Sequence
-```plantuml
-{sequence}
-```
-
-## ERD
-```plantuml
-{erd}
-```
-
-## OpenAPI
-```yaml
-{openapi}
-```
-
-## Exact executable Java contracts
 ```java
 {contracts}
 ```
@@ -1622,188 +718,6 @@ def render_allowed_output_rules(allowed: list[str]) -> str:
     ) + "\n"
 
 
-def render_persistence_entity_prompt(
-    spec: JobSpec, erd: str, contracts: str, names: list[str], allowed: list[str]
-) -> str:
-    subject = ", ".join(f"`{name}Entity`" for name in names)
-    return f"""# Implementation task: ERD persistence entity
-
-Create the JPA persistence entity {subject} listed in the contracted output.
-
-Rules:
-- Use package `{spec.base_package}.persistence.entity` and Jakarta Persistence annotations.
-- Derive every table, column, primary key, foreign key, nullability rule, and relationship from the
-  injected ERD. Do not assume a fixed number of entities or relationships.
-- Map `TIMESTAMP` to `LocalDateTime` and `TIMESTAMP WITH TIME ZONE` to `OffsetDateTime`,
-  `Instant`, or `ZonedDateTime`. Never map `LocalDateTime` directly to a timezone-aware
-  SQL column. If an immutable BCE contract disagrees with the ERD, do not alter either
-  contract or disable validation; let verification evidence report the contradiction.
-- Use a generated `Long id` only when the ERD declares a technical numeric key; preserve explicit
-  natural-key Java types otherwise.
-- Map every ERD scalar column with its exact snake_case column name. Rename a reserved identifier
-  only when required by H2/SQL and use the same normalized name in the migration.
-- `@Column` alone supports JPA basic types and `@Enumerated` enums, not an arbitrary BCE record or
-  value object. A structured value needs an explicit mapping that matches the ERD SQL type: map it to
-  persistence scalar fields, use a compatible `AttributeConverter`, use a JSON mapping only for a JSON
-  column, or use an embeddable persistence value when the ERD supplies its component columns. Preserve
-  null and value round-trips; never hide the field with `@Transient` or rely on a comment as a mapping.
-- Implement relationship ownership from the ERD cardinality and foreign-key direction. Add a
-  bidirectional helper only when both navigation directions are represented in the contracts.
-- Keep the public constructor that accepts the entity's scalar ERD/BCE fields stable. When a
-  relationship, audit flag, or other persistence-only field is added, add an overloaded
-  constructor (or use the no-argument constructor plus setters) instead of replacing the
-  existing scalar constructor. Sibling Control tests, mappers, and schema tests may already
-  instantiate that constructor; never make their source incompatible by changing its arity.
-- A collection annotated with `@OneToMany(mappedBy = "property")` is valid only when the target
-  entity declares that exact Java property as the owning `@ManyToOne` or `@OneToOne` association.
-  Never use a scalar foreign-key column as the `mappedBy` target. If this entity cannot declare or
-  safely coordinate that owning association, omit the inverse collection rather than emitting an
-  invalid one-sided bidirectional mapping.
-- An ERD comment of the form `easydep:erd-origin kind=multivalued` marks a generated 1NF
-  collection table. It has no matching BCE Entity: map it through its annotated parent and field
-  (for example with `@ElementCollection` and `@CollectionTable`) instead of inventing a domain
-  entity for the table.
-- Initialize collection relationships and provide a public no-arg constructor so the sibling persistence mapper can instantiate the entity. Add public constructors or accessors needed by the mapper and relationship helper methods that keep both sides consistent.
-- Do not use Lombok, records, cascading remove, or eager collections. Do not edit BCE domain entities.
-- Create the contracted file, then finish immediately.
-
-## ERD
-
-```plantuml
-{erd}
-```
-
-## Immutable BCE contracts
-
-```java
-{contracts}
-```
-"""
-
-
-def _persistence_entity_groups(entity_names: list[str], erd: str) -> list[list[str]]:
-    """Return ERD-connected BCE entities as one atomic generation task each."""
-    names = list(dict.fromkeys(entity_names))
-    neighbors: dict[str, set[str]] = {name: set() for name in names}
-    for line in erd.splitlines():
-        if "--" not in line and ".." not in line:
-            continue
-        mentioned = [
-            name for name in names
-            if re.search(rf"\b{re.escape(name)}\b", line)
-        ]
-        if len(mentioned) != 2:
-            continue
-        left, right = mentioned
-        neighbors[left].add(right)
-        neighbors[right].add(left)
-
-    groups: list[list[str]] = []
-    remaining = set(names)
-    for root in names:
-        if root not in remaining:
-            continue
-        stack = [root]
-        component: set[str] = set()
-        while stack:
-            current = stack.pop()
-            if current in component:
-                continue
-            component.add(current)
-            remaining.discard(current)
-            stack.extend(neighbors[current] - component)
-        groups.append([name for name in names if name in component])
-    return groups
-
-
-def render_persistence_repository_prompt(
-    spec: JobSpec, names: list[str], allowed: list[str]
-) -> str:
-    declarations = "\n".join(f"- {name}Entity -> {name}Repository" for name in names)
-    return f"""# Implementation task: ERD persistence repositories
-
-Create the Spring Data JPA repository for the listed persistence entity.
-
-Rules:
-- Use package `{spec.base_package}.persistence.repository`.
-- Each public interface extends `JpaRepository<CorrespondingEntity, IdType>`, where
-  `IdType` must exactly match the generated Entity's `@Id` field type. Do not default
-  natural or UUID identifiers to `Long`.
-- Import entities from `{spec.base_package}.persistence.entity`.
-- Add a derived query only for a natural identifier explicitly present in the ERD/BCE contract and
-  needed by a Gateway operation. A repository with no such requirement should contain no custom query.
-- The parameter and return generic types of every derived query must exactly match the
-  Java property type in the injected JPA entity contracts. A technical auto-increment
-  key is `Long` only when the ERD/entity explicitly declares that key as numeric; natural
-  String or UUID identifiers remain String or UUID throughout the repository API.
-- Do not suppress invalid repositories through scanning exclusions; repository creation must succeed when the full Spring application context loads.
-- Create the contracted file, then finish immediately.
-
-{declarations}
-"""
-
-
-def render_persistence_mapping_prompt(spec: JobSpec, erd: str, contracts: str) -> str:
-    return f"""# Implementation task: BCE/JPA persistence mapping
-
-Create a stateless mapper and focused unit tests between immutable BCE domain entities and the JPA persistence entities.
-
-Rules:
-- Mapper package: `{spec.base_package}.persistence.mapper`.
-- Map every scalar property exposed by the exact BCE accessors and persistence entity accessors.
-- Map every BCE entity represented in the ERD, including collections and relationships, without
-  infinite recursion. Relationship ownership must remain consistent with the ERD.
-- Treat an ERD `easydep:erd-origin kind=multivalued` annotation as a collection persistence
-  detail of its parent BCE entity, never as an undeclared BCE domain type.
-- Never use reflection or assume an accessor absent from the contracts.
-- Tests must cover scalar mapping, portfolio/holding mapping, and null handling. Do not mock value objects.
-- Ensure date/time values and constructors match the exact parameter types declared in the generated contracts (e.g. java.time types vs domain models).
-- Instantiate persistence entities only through a public constructor exposed by the injected entity contracts. The generated entities provide a public no-arg constructor for scalar/setter mapping; never assume package-private or protected access.
-- Do not edit BCE or persistence entity files. Create both contracted files, then finish immediately.
-
-## ERD
-
-```plantuml
-{erd}
-```
-
-## Exact BCE contracts
-
-```java
-{contracts}
-```
-"""
-
-
-def render_persistence_schema_prompt(spec: JobSpec, erd: str) -> str:
-    return f"""# Implementation task: ERD schema migration
-
-Create the initial Flyway SQL migration. The runtime derives the accompanying
-Flyway/H2 metadata smoke test deterministically from your declared tables.
-
-Rules:
-- Use lower snake_case table and column names matching the ERD.
-- Keep ordinary table names unquoted so H2 and Hibernate resolve the same
-  identifier; quote only a genuinely reserved identifier and use that exact
-  quoted name consistently in JPA and every migration reference.
-- Use the exact ERD column types. A generated identity primary key is BIGINT only when
-  the ERD declares a numeric surrogate key; preserve VARCHAR/UUID natural primary keys
-  and their foreign-key types. Use INTEGER for quantity, DOUBLE PRECISION for prices,
-  BOOLEAN, and TIMESTAMP WITH TIME ZONE where declared.
-- Declare every ERD foreign key and useful indexes for foreign-key columns and explicit natural identifiers.
-- Match the exact `@Table`, `@Column`, and `@JoinColumn` names derived from the ERD.
-- Avoid unquoted SQL/H2 reserved words as identifiers (such as `year`, `order`, `group`, `user`, `status`, `key`, `value`, `offset`, `limit`, `check`, `date`). When a column or table name is a reserved keyword, quote it (e.g. `"year"` or `\"year\"`) or use safe column names consistent with JPA entity `@Column(name = ...)`.
-- Do not create or edit the schema test; it is generated after your migration so JDBC identifier-case behavior cannot make the task fail spuriously.
-- Create the migration file, then finish immediately.
-
-## ERD
-
-```plantuml
-{erd}
-```
-"""
-
-
 def parse_design_classes(source: str) -> list[DesignClass]:
     return [
         DesignClass(match.group("name"), match.group("stereotype"), match.group(0).strip(), match.group("body").strip())
@@ -1822,57 +736,6 @@ def parse_relations(source: str) -> list[tuple[str, str, str]]:
     return result
 
 
-def parse_openapi_operations(source: str) -> list[str]:
-    lines = source.splitlines()
-    operations: list[str] = []
-    in_paths = False
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if line == "paths:":
-            in_paths = True
-            index += 1
-            continue
-        if in_paths and line and not line.startswith(" "):
-            break
-        path_match = re.match(r"^  (/[^:]+):\s*$", line) if in_paths else None
-        if not path_match:
-            index += 1
-            continue
-        path_name = path_match.group(1)
-        path_start = index
-        index += 1
-        while index < len(lines):
-            if re.match(r"^  /[^:]+:\s*$", lines[index]) or (lines[index] and not lines[index].startswith(" ")):
-                break
-            method_match = re.match(r"^    ([a-z]+):\s*$", lines[index])
-            if method_match and method_match.group(1) in HTTP_METHODS:
-                method = method_match.group(1).upper()
-                start = index
-                index += 1
-                while index < len(lines) and not re.match(r"^    [a-z]+:\s*$", lines[index]) and not re.match(r"^  /[^:]+:\s*$", lines[index]) and (not lines[index] or lines[index].startswith(" ")):
-                    index += 1
-                operations.append(f"# {method} {path_name}\n" + "\n".join(lines[start:index]))
-                continue
-            index += 1
-        if index == path_start:
-            index += 1
-    return operations
-
-
-def select_openapi_operations(control: str, body: str, operations: list[str]) -> str:
-    method_names = re.findall(r"(?m)^\s*\+\s*([A-Za-z_]\w*)\s*\(", body)
-    tokens = set(split_words(control))
-    for method in method_names:
-        tokens.update(split_words(method))
-    tokens -= STOP_WORDS
-    selected = [
-        operation for operation in operations
-        if tokens & set(re.findall(r"[a-z]+", operation.lower()))
-    ]
-    return "\n\n".join(selected) if selected else "# No directly matched OpenAPI operation"
-
-
 def slice_erd(source: str, entity_names: set[str]) -> str:
     if not entity_names:
         return "' No directly related ERD entity"
@@ -1886,19 +749,6 @@ def slice_erd(source: str, entity_names: set[str]) -> str:
         if any(re.search(rf"\b{re.escape(name)}\b", line) for name in entity_names) and re.search(r"(?:\.\.|--)", line):
             blocks.append(line.strip())
     return "\n\n".join(dict.fromkeys(blocks)) if blocks else "' No directly related ERD entity"
-
-
-def _entity_sequence(model: dict[str, object], entity: str) -> list[dict[str, object]]:
-    """Entity가 직접 참여한 유스케이스의 구조화된 메시지만 고른다."""
-    return [
-        {
-            "useCaseId": diagram["use_case_id"],
-            "useCaseName": diagram["use_case_name"],
-            "participants": diagram["Participants"],
-            "messages": diagram["Messages"],
-        }
-        for diagram in _project_sequence(model, {entity})
-    ]
 
 
 def _project_sequence(
@@ -2014,161 +864,9 @@ def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
     }
 
 
-def _entity_erd(model: dict[str, object], entity: str) -> dict[str, object]:
-    """한 Entity와 직접 연결된 ERD 정보만 반환한다."""
-    classes = [item for item in model.get("Classes", []) if isinstance(item, dict)]
-    return {
-        "entity": next((item for item in classes if item.get("className") == entity), {}),
-        "relationships": [
-            item for item in model.get("Relationships", [])
-            if isinstance(item, dict) and entity in {item.get("source"), item.get("target")}
-        ],
-    }
-
-
-def _referenced_data_types(
-    entity: dict[str, object], model: dict[str, object]
-) -> set[str]:
-    """Entity 선언에서 실제로 사용한 enum·record 이름만 고른다."""
-    source = json.dumps(entity, ensure_ascii=False)
-    return {
-        str(item.get("name", ""))
-        for item in model.get("DataTypes", [])
-        if isinstance(item, dict)
-        and item.get("name")
-        and re.search(rf"\b{re.escape(str(item['name']))}\b", source)
-    }
-
-
-def _render_entity_prompt(
-    entity_name: str, context: dict[str, object], allowed: str
-) -> str:
-    """Entity 하나의 설계와 현재 Java 계약을 짧은 작업 지시로 만든다."""
-    return f"""# Entity implementation: {entity_name}
-
-Implement only `{allowed}`. Fill the declared operations with domain behavior. Preserve every
-public Java signature; do not add guessed accessors, constructors, JPA mappings, or new files.
-Use only the typed sequence messages below. The runtime appends the current source before work.
-
-## Entity
-```json
-{json.dumps(context['entity'], ensure_ascii=False, indent=2)}
-```
-
-## Typed sequence involvement
-```json
-{_prompt_json(context['sequence'])}
-```
-
-## Related ERD
-```json
-{json.dumps(context['erd'], ensure_ascii=False, indent=2)}
-```
-
-## Related Java contracts
-```java
-{context['relatedJavaContracts'] or '// None'}
-```
-""" + render_allowed_output_rules([allowed])
-
-
-def render_prompt(spec: JobSpec, context: dict[str, object], allowed: list[str]) -> str:
-    repositories = list(context.get("repositories", []))
-    repository_rule = (
-        "- Use persistence only through these ERD-derived Spring Data repositories: "
-        + ", ".join(f"`{name}`" for name in repositories)
-        + ". Do not invent repository names or custom persistence fields.\n"
-        if repositories
-        else "- This Control has no related persistent Entity in the ERD. Do not import, name, or infer a repository or persistence adapter.\n"
-    )
-    control_rules = (
-        "- Implement all public operations defined in the Control contract.\n"
-        + repository_rule
-        + "- When this Control is related to an ERD-backed Entity, that relationship is an implicit persistence contract: use the corresponding Repository for the Entity-backed operation. Do not delegate the operation to a state-only Boundary adapter or return a fabricated in-memory value.\n"
-        + "- Treat each repository's generic ID type and the corresponding Entity ID "
-        "accessor type as authoritative. Preserve incoming BCE identifier types; "
-        "never parse or coerce a String identifier to Long or another inferred type.\n"
-        + "- Ensure clean domain logic with proper state transitions and no dummy fallbacks."
-    )
-    return f"""# Implementation task: {context['control']}
-
-Implement the application behavior for `{context['control']}` using only the scoped contracts below.
-
-Rules:
-- Write only these files: {', '.join(f'`{path}`' for path in allowed)}.
-- Treat `{spec.base_package}.bce`, `{spec.base_package}.api`, and `{spec.base_package}.api.model` as immutable generated contracts.
-- Generated BCE Controls are application port interfaces. Implement the matching Control interface
-  in the requested service. A Boundary -> Control request means the Boundary calls this service;
-  the return message is not a reverse call. Do not inject or call that Boundary from the Control.
-  Inject only an explicitly outgoing Control or Gateway dependency shown by a non-return sequence message.
-  Do not keep a compatibility `Object` constructor or an ignored Boundary argument. When there is no
-  outgoing dependency, use a no-argument constructor and test the Control's observable contract directly.
-- Produce valid Java syntax only. In particular, use `//` or `/* */` comments, never `#` comments.
-- Use the exact Java signatures below. Do not invent a signature to work around a sequence conflict.
-- Never call a method absent from the contracts or assign the result of a `void` method. Mockito tests must not use `when(...).thenReturn(...)` for `void` methods.
-- Java has no import aliases. For duplicate simple names across API and BCE packages, use a fully qualified name; never invent a `Bce...` alias.
-- Do not access private generated fields or use reflection to bypass a contract.
-- Never assume conventional getters or setters; use only exact public accessors shown below.
-- Some generated contracts may intentionally be empty placeholders because the design omitted
-  their declaration. Those contracts are immutable: never infer fields, getters, setters, or
-  constructors from a similarly named entity/API schema, and never add members to them.
-- If an operation needs data that an empty contract cannot expose, record the limitation in the
-  implementation plan/report and keep the generated code compilable; do not fabricate accessor
-  calls in production code or Mockito tests.
-- The writable parent directories are already created and write-tested. Do not browse directories; create the two requested files directly using the enforced absolute paths appended to this prompt.
-- Do not invent public API operations or persistence fields. Do not leave TODO, FIXME, placeholders, or speculative comments; unresolved design gaps belong in the planner's structured report.
-- Prefer constructor injection and keep orchestration in the application implementation, not generated DTO/entity files.
-{control_rules}
-- Do not attempt shell commands. After you finish editing, the orchestrator will run `gradle compileJava test --no-daemon` and reject changes that fail verification.
-- After creating both files, finish immediately. If a correction is needed, view once and apply a small exact replacement; do not try to recreate an existing file.
-
-## BCE context
-
-```plantuml
-{context['bce']}
-```
-
-## Sequence context
-
-```json
-{_prompt_json(context['sequence'])}
-```
-
-## ERD context
-
-```plantuml
-{context['erd']}
-```
-
-## OpenAPI context
-
-```yaml
-{context['openapi']}
-```
-
-## Exact generated Java contracts
-
-```java
-{context['generatedJavaContracts']}
-```
-
-## Empty generated contracts (authoritative)
-
-{', '.join(context.get('emptyGeneratedContracts', [])) or 'None'}
-
-The list above is derived from the exact Java sources. An empty contract has no callable members.
-Any test that calls a getter on one is invalid and will fail compilation.
-{_render_deployment_context(context.get('deployment'))}
-"""
-
-
 def split_words(value: str) -> list[str]:
     expanded = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
     return re.findall(r"[a-z]+", expanded.lower())
-
-
-def camel_to_kebab(value: str) -> str:
-    return "-".join(split_words(value))
 
 
 def _read(path: Path | None) -> str:
@@ -2184,17 +882,30 @@ def _read_json(path: Path | None) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
-def _write_task_file(run_root: Path, path: Path, content: str) -> str:
-    path.write_text(content, encoding="utf-8")
-    return _relative(run_root, path)
+def _work_unit_editable_paths(
+    run_root: Path,
+    required: list[str],
+    scopes: list[str],
+) -> list[str]:
+    """Expand a package scope into the concrete editable files in this run.
 
-
-def _typed_source_artifacts(spec: JobSpec) -> dict[str, str]:
-    names = {"bceModel", "sequenceModel", "erdBceModel"}
-    return {
-        name: str(path) for name, path in spec.inputs.items()
-        if name in names and path.is_file()
-    }
+    The runtime's restricted editor receives file paths, while planning should
+    express a repair boundary as a package or directory.  Keep both meanings:
+    required outputs are included even before they exist and all existing files
+    below a scope are editable.  Generated contracts are never supplied here.
+    """
+    paths = {path.replace("\\", "/") for path in required}
+    for scope in scopes:
+        root = run_root / scope
+        if root.is_file():
+            paths.add(root.relative_to(run_root).as_posix())
+        elif root.is_dir():
+            paths.update(
+                path.relative_to(run_root).as_posix()
+                for path in root.rglob("*")
+                if path.is_file()
+            )
+    return sorted(paths)
 
 
 def _relative(root: Path, path: Path) -> str:
@@ -2253,23 +964,6 @@ def read_generated_java_contracts(
                 f"{path.read_text(encoding='utf-8').strip()}"
             )
     return "\n\n".join(contracts) or "// No generated Java contracts found"
-
-
-def find_empty_java_contracts(contracts: str) -> list[str]:
-    """Return generated contract names whose class body has no members.
-
-    This deliberately operates on the exact source block passed to the implementation agent,
-    rather than inferring a DTO shape from OpenAPI or a domain entity.  Empty BCE placeholders
-    are valid immutable contracts and must not be given speculative accessors by the agent.
-    """
-    names: list[str] = []
-    pattern = re.compile(
-        r"(?ms)\bpublic\s+(?:final\s+)?class\s+"
-        r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b[^\{]*\{\s*\}"
-    )
-    for match in pattern.finditer(contracts):
-        names.append(match.group("name"))
-    return sorted(dict.fromkeys(names))
 
 
 def referenced_openapi_model_names(openapi_context: str) -> set[str]:

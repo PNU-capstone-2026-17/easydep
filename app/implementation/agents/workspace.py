@@ -3,12 +3,19 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import shutil
 import tempfile
 from pathlib import Path
 
 from ..domain.implementation_ir import remove_readonly
+
+_IGNORED_WORKSPACE_PARTS = {
+    "deployment-bundle",
+    "build",
+    ".gradle",
+    "node_modules",
+    "dist",
+}
 
 
 def missing_required_outputs(sandbox: Path, relative_paths: list[str]) -> list[str]:
@@ -67,40 +74,13 @@ def read_persistence_entity_contracts(run_root: Path, base_package: str) -> str:
     return "\n\n".join(contracts) or "// No persistence entity contracts found"
 
 
-def ensure_mapper_accessible_persistence_constructor(
-    sandbox: Path, relative_paths: list[str]
-) -> list[str]:
-    """Promote generated entity no-arg constructors required by the mapper.
-
-    Persistence entities live in ``persistence.entity`` while the generated
-    mapper lives in the sibling ``persistence.mapper`` package.  A protected
-    JPA constructor is therefore not usable by a mapper that deliberately has
-    no permission to edit the entity.  JPA permits public no-arg constructors,
-    so normalize only the matching entity constructor in its contracted output.
-    """
-    repaired: list[str] = []
-    for relative in relative_paths:
-        normalized = relative.replace("\\", "/")
-        if "/persistence/entity/" not in normalized or not normalized.endswith("Entity.java"):
-            continue
-        path = sandbox / relative
-        if not path.is_file():
-            continue
-        class_name = path.stem
-        source = path.read_text(encoding="utf-8")
-        updated, replacements = re.subn(
-            rf"\b(?:protected|private)\s+{re.escape(class_name)}\s*\(\s*\)",
-            f"public {class_name}()",
-            source,
-            count=1,
-        )
-        if replacements:
-            path.write_text(updated, encoding="utf-8")
-            repaired.append(normalized)
-    return repaired
-
-
 def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
+    """작업별 임시 공간을 만들고 실패 후 재시도에서는 같은 공간을 재사용한다.
+
+    편집 중 실패한 파일은 그대로 남겨 다음 수리 대화가 이어서 사용할 수 있다. 다른 작업이
+    완료한 파일은 기준 application에서 다시 가져오므로 오래된 의존 코드를 보지 않는다.
+    build와 package cache는 복사하지 않는다.
+    """
     run_key = run_root.name.removeprefix("run_")[:12]
     task_key = str(task["task_id"]).removeprefix("implement-")
     # 작업 ID는 보고서에서 읽기 쉬운 전체 이름을 유지한다. 다만 Windows 임시 경로에 같은
@@ -125,28 +105,79 @@ def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
         )
     sandbox_base = sandbox_parent / task_key
     sandbox = sandbox_base
-    suffix = 1
-    while sandbox.exists():
-        try:
-            shutil.rmtree(sandbox, onerror=remove_readonly)
-        except PermissionError:
-            suffix += 1
-            sandbox = sandbox_base.with_name(f"{sandbox_base.name}-{suffix}")
-            continue
-        break
-    shutil.copytree(
-        run_root / "application",
-        sandbox / "application",
-        ignore=shutil.ignore_patterns(
-            "deployment-bundle", "build", ".gradle", "node_modules", "dist"
-        ),
-    )
+    source_application = run_root / "application"
+    sandbox_application = sandbox / "application"
+    editable = {
+        str(path).replace("\\", "/")
+        for path in task.get("allowed_write_paths", [])
+    }
+    if sandbox_application.is_dir():
+        _refresh_agent_workspace(
+            run_root,
+            source_application,
+            sandbox,
+            sandbox_application,
+            editable,
+        )
+    else:
+        sandbox.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(
+            source_application,
+            sandbox_application,
+            ignore=shutil.ignore_patterns(*_IGNORED_WORKSPACE_PARTS),
+        )
     for relative in task["allowed_write_paths"]:
         target = sandbox / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         if os.name == "nt" and len(str(target.resolve())) > 240:
             raise ValueError(f"Agent write path exceeds safe Windows path budget: {target}")
     return sandbox
+
+
+def _refresh_agent_workspace(
+    run_root: Path,
+    source_application: Path,
+    sandbox: Path,
+    sandbox_application: Path,
+    editable: set[str],
+) -> None:
+    """수리 중인 파일은 보존하고 나머지 파일을 현재 run source와 맞춘다."""
+    source_files: set[str] = set()
+    for source in source_application.rglob("*"):
+        if not source.is_file():
+            continue
+        relative_application = source.relative_to(source_application)
+        if any(part in _IGNORED_WORKSPACE_PARTS for part in relative_application.parts):
+            continue
+        relative_run = (Path("application") / relative_application).as_posix()
+        source_files.add(relative_run)
+        target = sandbox / relative_run
+        if relative_run in editable and target.is_file():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+    for target in sandbox_application.rglob("*"):
+        if not target.is_file():
+            continue
+        relative_run = target.relative_to(sandbox).as_posix()
+        if relative_run not in editable and relative_run not in source_files:
+            target.unlink()
+
+
+def cleanup_agent_workspace(sandbox: Path) -> None:
+    """성공한 작업의 임시 공간만 안전하게 삭제한다."""
+    expected_root = (Path(tempfile.gettempdir()) / "easydep-agent-workspaces").resolve()
+    resolved = sandbox.resolve()
+    if expected_root not in resolved.parents:
+        raise ValueError(f"Refusing to remove a non-agent workspace: {resolved}")
+    if resolved.exists():
+        try:
+            shutil.rmtree(resolved, onerror=remove_readonly)
+        except OSError:
+            # OpenHands가 닫힌 직후 Windows가 파일 handle을 잠깐 유지할 수 있다. 이 경우
+            # 구현 성공을 실패로 바꾸지 않고 다음 정리 때 다시 제거한다.
+            return
 
 
 def read_allowed_sources(sandbox: Path, relative_paths: list[str]) -> str:
