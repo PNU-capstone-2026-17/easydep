@@ -383,6 +383,11 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 {_prompt_json({"requirements": requirements, "useCases": use_cases, "scenarios": scenarios})}
 ~~~
 
+## Typed HTTP operation contracts
+~~~json
+{_prompt_json(list(bundle.endpoints))}
+~~~
+
 ## Exact generated Java contracts
 ~~~java
 {contracts}

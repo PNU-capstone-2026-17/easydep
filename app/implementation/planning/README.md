@@ -33,6 +33,7 @@
   않는다.
 - 프롬프트에는 관련 Control·Entity의 BCE 선언과 결정론적으로 만든 JPA Entity·Repository의
   정확한 선언을 넣는다. HTTP 변환은 생성된 Controller가 담당하므로 긴 OpenAPI model 구현
-  전체를 다시 싣지 않으며, 관련 없는 읽기 전용 파일을 탐색 후보로 나열하지 않는다.
+  전체를 다시 싣지 않는다. 대신 메서드·경로·Control 연결·응답 상태의 typed endpoint 정보만
+  전달하며, 관련 없는 읽기 전용 파일을 탐색 후보로 나열하지 않는다.
 - API schema와 Control 연결 준비도는 planner 전에 Workspace가 확인·수리한다. planner는
   통과한 API 계약을 DTO나 Control로 추정해 바꾸지 않는다.
