@@ -39,6 +39,7 @@ from .java_scaffold import (
     JavaScaffoldInput,
     build_java_scaffold_trace,
     render_java_scaffold,
+    render_openapi_controller_scaffold,
 )
 
 OPTIONAL_DESIGN_INPUTS = ("erd", "deployment", "cloud")
@@ -229,6 +230,7 @@ class PrototypeOrchestrator:
                 self._set_status("VERIFYING", "생성된 백엔드를 컴파일하고 있습니다.")
                 self._compile(application)
 
+            self._generate_openapi_controllers(application)
             self._set_status("PLANNING", "구현 작업과 의존 관계를 계획하고 있습니다.")
             self.manifest.implementation_tasks = []
             self.manifest.agent_execution = write_execution_plan(
@@ -690,6 +692,33 @@ class PrototypeOrchestrator:
             )
         self._sink().tools["openapi-generator"] = {
             "image": OPENAPI_GENERATOR_IMAGE,
+        }
+
+    def _generate_openapi_controllers(self, application: Path) -> None:
+        """OpenAPI interface의 확정 선언을 Controller 골격으로 한 번 옮긴다.
+
+        OpenAPI Generator가 interface를 만든 직후 그 확정 선언을 사용한다. 선택적인 초기
+        compile 뒤에 골격을 추가하므로 body sentinel은 OpenHands 작업 compile에서 검사된다.
+        """
+        package_path = Path(self.spec.base_package.replace(".", "/"))
+        api_root = application / "src" / "main" / "java" / package_path / "api"
+        controller_root = (
+            application / "src" / "main" / "java" / package_path / "adapter" / "in" / "web"
+        )
+        generated = 0
+        for interface_path in sorted(api_root.glob("*Api.java")):
+            if interface_path.name == "ApiUtil.java":
+                continue
+            controller_name, source = render_openapi_controller_scaffold(
+                interface_path.read_text(encoding="utf-8"), self.spec.base_package
+            )
+            target = controller_root / f"{controller_name}.java"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source, encoding="utf-8", newline="\n")
+            generated += 1
+        self._sink().tools["openapi-controller-scaffolder"] = {
+            "interfaces": generated,
+            "source": "generated-openapi-interface",
         }
 
     def _generate_frontend(self, application: Path) -> None:

@@ -20,7 +20,6 @@ from app.config import settings
 
 from ..config import ImplementationSettings
 
-
 _OPENAPI_PATH_PARAMETER = re.compile(r"\{([^{}]+)\}")
 _OPENAPI_OPERATIONS = frozenset({"delete", "get", "head", "options", "patch", "post", "put", "trace"})
 
@@ -173,7 +172,10 @@ class PrototypeClient:
             "requiredInputs": required_inputs,
             "outputRoot": (root / "generated" / "runs").relative_to(self.settings.repository_root).as_posix(),
             "generation": {"basePackage": base_package, "allowAssumptions": allow_assumptions},
-            "verification": {"compile": True},
+            # 빈 method body가 많은 scaffold를 구현 전에 빌드하는 것은 실제 구현 품질을
+            # 확인하지 못하면서 Gradle 시간을 한 번 더 쓴다. 생성기 회귀를 조사할 때만
+            # IMPLEMENTATION_VERIFY_INITIAL_COMPILE=true로 명시적으로 켠다.
+            "verification": {"compile": settings.implementation_verify_initial_compile},
             "progressPath": progress_path.relative_to(self.settings.repository_root).as_posix(),
             "agent": {
                 "mode": "openhands",

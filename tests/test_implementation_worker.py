@@ -392,6 +392,7 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     assert sequence_path.read_text(encoding="utf-8").count("@startuml") == 2
     assert "tools" not in job
     assert job["progressPath"].endswith("generation-progress.json")
+    assert job["verification"] == {"compile": False}
 
 
 def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -> None:

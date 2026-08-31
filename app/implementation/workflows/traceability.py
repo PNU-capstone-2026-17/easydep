@@ -17,16 +17,12 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
     ir = build_implementation_ir(spec, run_root)
     package_path = spec.base_package.replace(".", "/")
     package_root = run_root / "application" / "src" / "main" / "java" / package_path
-    test_root = run_root / "application" / "src" / "test" / "java" / package_path
-
     mappings: list[dict[str, Any]] = []
 
     # 1. Control Services & Contracts (BCE)
     for control in ir.controls:
         contract_file = package_root / "bce" / f"{control}.java"
         impl_file = package_root / "application" / "impl" / f"{control}Service.java"
-        test_file = test_root / "application" / "impl" / f"{control}ServiceTest.java"
-
         mappings.append({
             "target_file": _posix(contract_file, run_root),
             "element_name": control,
@@ -45,15 +41,9 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
             "allowed_edits": ["METHOD_BODY_ONLY", "PRIVATE_HELPERS"],
             "description": f"Spring Service implementation of Control {control}",
         })
-        mappings.append({
-            "target_file": _posix(test_file, run_root),
-            "element_name": f"{control}ServiceTest",
-            "origin_artifact": "bceClass",
-            "origin_element": f"component {control} <<control>>",
-            "contract_level": "IMPLEMENTATION_INTERNAL",
-            "allowed_edits": ["TEST_CASES"],
-            "description": f"Unit test suite for Control service {control}",
-        })
+        # Control마다 내용이 거의 같은 테스트 파일을 만들지 않는다. 구현 작업이 만드는
+        # ApplicationUseCasesTest 하나가 대표 사용 흐름을 검사하며, 아래 task manifest
+        # 순회가 그 실제 파일을 추적표에 추가한다.
 
     # 2. API Adapters & Schemas (OpenAPI)
     for api_port in ir.api_ports:

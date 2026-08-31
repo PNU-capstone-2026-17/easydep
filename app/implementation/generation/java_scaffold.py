@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import textwrap
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -18,7 +19,7 @@ from app.design.schemas.class_model import (
     DataType,
 )
 
-JAVA_SCAFFOLDER_VERSION = "1.2.0"
+JAVA_SCAFFOLDER_VERSION = "1.3.0"
 
 _JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 _FIELD = re.compile(
@@ -57,6 +58,14 @@ _IMPORTS = {
     "Optional": "java.util.Optional",
     "UUID": "java.util.UUID",
 }
+_JAVA_INTERFACE = re.compile(
+    r"\bpublic\s+interface\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b[^\{]*\{"
+)
+_JAVA_IMPORT = re.compile(r"(?m)^import\s+[^;]+;$")
+_OPENAPI_METHOD = re.compile(
+    r"(?ms)(?P<mapping>@RequestMapping\s*\(.*?\))\s*"
+    r"(?P<signature>(?:(?:public|abstract|default)\s+)*[A-Za-z_$][^;{}]*?)\s*;"
+)
 
 
 class JavaScaffoldInput(BaseModel):
@@ -215,6 +224,67 @@ def build_java_scaffold_trace(
         "applicationName": scaffold.application_name,
         "mappings": mappings,
     }
+
+
+def render_openapi_controller_scaffold(
+    interface_source: str, base_package: str
+) -> tuple[str, str]:
+    """생성된 OpenAPI interface에서 Controller 선언만 그대로 옮긴다.
+
+    OpenAPI operationId와 DTO 타입을 다시 해석하거나 이름을 추측하지 않는다. 이미
+    생성된 interface의 import, method annotation, parameter, 반환 타입을 재사용하고,
+    구현 작업은 각 method body의 실패 유도 표식만 교체한다.
+    """
+    interface = _JAVA_INTERFACE.search(interface_source)
+    if interface is None:
+        raise ValueError("Generated OpenAPI source does not contain a public interface")
+    interface_name = interface.group("name")
+    methods = [
+        _render_controller_method(
+            match.group("mapping"), match.group("signature")
+        )
+        for match in _OPENAPI_METHOD.finditer(interface_source)
+    ]
+    if not methods:
+        raise ValueError(
+            f"Generated OpenAPI interface {interface_name} has no overridable methods"
+        )
+    controller_name = f"{interface_name}Controller"
+    imports = {
+        item.strip()
+        for item in _JAVA_IMPORT.findall(interface_source)
+    }
+    imports.add(f"import {base_package}.api.{interface_name};")
+    imports.add("import org.springframework.web.bind.annotation.RestController;")
+    return (
+        controller_name,
+        f"package {base_package}.adapter.in.web;\n\n"
+        + "\n".join(sorted(imports))
+        + "\n\n"
+        + "/** OpenAPI interface 선언을 보존하고 업무 본문만 남긴 Controller 골격이다. */\n"
+        + "@RestController\n"
+        + f"public class {controller_name} implements {interface_name} {{\n\n"
+        + "\n\n".join(methods)
+        + "\n}\n",
+    )
+
+
+def _render_controller_method(mapping: str, signature: str) -> str:
+    """생성 interface의 mapping·선언을 보존한 method body 골격을 만든다."""
+    signature = re.sub(
+        r"^(?:(?:public|abstract|default)\s+)+", "", signature.strip()
+    )
+    if "(" not in signature or ")" not in signature:
+        raise ValueError("Generated OpenAPI method declaration is incomplete")
+    rendered = textwrap.indent(mapping.strip(), "    ") + "\n"
+    rendered += "    @Override\n"
+    rendered += "    public " + textwrap.indent(signature, "    ").lstrip()
+    rendered += " {\n"
+    # 이 미해결 symbol은 초기 public 계약 compile 뒤에 생성된다. 따라서 agent가
+    # 본문을 채우지 않으면 작업 단위의 실제 compile gate를 통과할 수 없다.
+    rendered += "        EasyDepControllerBody.required();\n"
+    rendered += "    }"
+    return rendered
 
 
 def _render_data_type(

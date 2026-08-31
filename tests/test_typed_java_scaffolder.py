@@ -18,6 +18,7 @@ from app.implementation.generation.java_scaffold import (
     JavaScaffoldInput,
     java_type,
     render_java_scaffold,
+    render_openapi_controller_scaffold,
 )
 
 
@@ -183,6 +184,51 @@ def test_uses_small_type_map_and_marks_unknown_types() -> None:
 def test_same_input_produces_identical_files() -> None:
     request = JavaScaffoldInput.model_validate(_payload())
     assert render_java_scaffold(request) == render_java_scaffold(request)
+
+
+def test_controller_scaffold_preserves_generated_openapi_declarations() -> None:
+    """OpenAPI Generator interface 선언을 보존하고 구현 본문만 골격으로 채운다."""
+    interface = """package com.example.orders.api;
+
+import com.example.orders.api.model.CreateOrderRequest;
+import com.example.orders.api.model.CreateOrderResponse;
+import io.swagger.v3.oas.annotations.Parameter;
+import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+public interface OrdersApi {
+    @RequestMapping(
+        method = RequestMethod.POST,
+        value = "/orders/{orderId}",
+        produces = { "application/json" }
+    )
+    ResponseEntity<CreateOrderResponse> submitOrderWithLongOperationIdentifier(
+        @Parameter(name = "orderId", required = true)
+        @PathVariable("orderId") String orderId,
+        @Valid @RequestBody CreateOrderRequest request);
+}
+"""
+
+    controller_name, source = render_openapi_controller_scaffold(
+        interface, "com.example.orders"
+    )
+
+    assert controller_name == "OrdersApiController"
+    assert "public class OrdersApiController implements OrdersApi" in source
+    assert "@RequestMapping(" in source
+    assert "method = RequestMethod.POST" in source
+    assert 'value = "/orders/{orderId}"' in source
+    assert (
+        "public ResponseEntity<CreateOrderResponse> "
+        "submitOrderWithLongOperationIdentifier(" in source
+    )
+    assert '@PathVariable("orderId") String orderId' in source
+    assert "@Valid @RequestBody CreateOrderRequest request" in source
+    assert source.count("EasyDepControllerBody.required();") == 1
 
 
 @pytest.mark.parametrize("bad_name", ["9Order", "Bad-Type", "class"])

@@ -103,17 +103,18 @@ def verify_agent_workspace(
     sandbox: Path,
     task_type: str = "",
     allowed_write_paths: list[str] | None = None,
-    *,
-    force_rerun: bool = False,
 ) -> dict[str, object]:
-    """기능 작업에는 관련 검사만, 최종 단계에는 전체 검사를 실행한다."""
+    """기능 작업에는 관련 검사만, 최종 단계에는 전체 검사를 실행한다.
+
+    같은 sandbox에서 수리할 때도 Gradle의 증분 결과와 build cache를 재사용한다. 바뀐
+    source는 Gradle이 다시 compile하므로 ``--rerun-tasks``로 모든 task를 강제할 필요가 없다.
+    """
     if task_type in {"frontend", "frontend-implementation"}:
         return verify_frontend_workspace(sandbox)
     command = task_verification_command(
         gradle_command(),
         task_type,
         allowed_write_paths,
-        force_rerun=force_rerun,
     )
     started = time.monotonic()
     environment = os.environ.copy()
@@ -149,8 +150,6 @@ def task_verification_command(
     executable: list[str],
     task_type: str = "",
     allowed_write_paths: list[str] | None = None,
-    *,
-    force_rerun: bool = False,
 ) -> list[str]:
     """작업 중에는 관련 test만, 최종 단계에는 전체 build와 test를 고른다."""
     if not task_type and allowed_write_paths is None:
@@ -170,8 +169,6 @@ def task_verification_command(
             for test_name in test_names:
                 command.extend(["--tests", f"*{test_name}"])
         command.append("--build-cache")
-    if force_rerun:
-        command.append("--rerun-tasks")
     return command
 
 

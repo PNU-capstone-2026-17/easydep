@@ -227,6 +227,12 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         *sorted((java_root / "api").rglob("*.java")),
     ]
     contracts = render_source_contracts(run_root, generated_sources)
+    controller_paths = [
+        run_root / path
+        for path in required
+        if "/adapter/in/web/" in path and path.endswith("ApiController.java")
+    ]
+    controller_scaffolds = render_source_contracts(run_root, controller_paths)
     task_id = "implement-application-use-cases"
     context = {
         "schemaVersion": "implementation-context/v1alpha1",
@@ -237,6 +243,12 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         "erd": _read(spec.inputs.get("erd")),
         "openapi": _read(spec.inputs.get("openapi")),
         "generatedJavaContracts": contracts,
+        "controllerScaffolds": controller_scaffolds,
+        "controllerBodyPaths": [
+            path.relative_to(run_root).as_posix()
+            for path in controller_paths
+            if path.is_file()
+        ],
         "entityBodySources": entity_sources,
         "requiredOutputs": required,
     }
@@ -262,6 +274,11 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         "invent alternative ports or in-memory domain state for persistent behavior.\n"
         "- Keep adapter request/response mapping and Control invocation consistent with the "
         "exact generated contracts.\n"
+        "- Do not recreate or rename a generated API Controller. Its class declaration, "
+        "request mapping annotations, method name, parameter types, and return type are "
+        "already fixed from the generated OpenAPI interface. Replace only each method body's "
+        "`EasyDepControllerBody.required()` sentinel; add minimal private collaborators or a "
+        "constructor only when needed to implement that body.\n"
         "- Use the single ApplicationUseCasesTest as a small representative behavior suite; "
         "do not create one mechanical test file per class. Assert observable results rather "
         "than prompt wording or private helper calls.\n"
@@ -277,6 +294,8 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         + str(context["openapi"])
         + "\n```\n\n## Generated Java contracts\n```java\n"
         + contracts
+        + "\n```\n\n## Deterministic OpenAPI Controller scaffolds (declarations are immutable)\n```java\n"
+        + controller_scaffolds
         + "\n```\n"
         + _render_deployment_context(deployment_context)
         + "\n## Editable directories\n"

@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     implementation_repair_reasoning_effort: str = "high"
     implementation_command_timeout_seconds: int = 3600
     implementation_startup_warmup: bool = True
+    # 기본 scaffold는 곧바로 OpenHands가 채우므로 구현 전 Gradle compile은 생략한다.
+    # 생성기 자체를 점검할 때만 환경변수로 켜며, 작업별·최종 compile/test는 항상 별개로 실행한다.
+    implementation_verify_initial_compile: bool = False
     implementation_default_container_port: int = 8000
     implementation_docker_gradle_image: str = "gradle:8.14.2-jdk21"
     implementation_docker_jre_image: str = "eclipse-temurin:21-jre-alpine"

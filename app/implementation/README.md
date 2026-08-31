@@ -104,6 +104,15 @@ tool turn에는 안전 한도를 둘 수 있지만, 한 run의 전체 repair 횟
 시점의 입력 snapshot이고 `generated/runs/<run_id>/`가 실제 결과다. 실패를 조사할 때 서로
 다른 job이나 run의 보고서를 섞지 않는다.
 
+기본 scaffold는 구현 작업이 시작되기 전에는 Gradle compile을 하지 않는다. 아직 비어 있는
+method를 곧바로 OpenHands가 구현하므로 이 시점의 compile은 같은 준비 비용만 한 번 더 쓰기
+때문이다. 생성기 자체를 확인해야 할 때는 `IMPLEMENTATION_VERIFY_INITIAL_COMPILE=true`로 켤 수
+있다. 이 설정은 OpenHands 작업별 compile·test와 마지막 통합 검증에는 영향을 주지 않는다.
+
+수리 대화 뒤의 Gradle 검증은 같은 sandbox의 증분 compile과 build cache를 재사용한다. 변경된
+Java source는 Gradle이 자동으로 다시 compile하므로 `--rerun-tasks`로 관계없는 task까지 매번
+강제 실행하지 않는다. 모든 기능 작업이 끝나면 전체 backend build와 test를 한 번 실행한다.
+
 ## 상태를 읽는 법
 
 | 상태 | 의미 |

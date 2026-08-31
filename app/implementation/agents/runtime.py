@@ -531,7 +531,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     sandbox,
                     task_type,
                     editable_paths,
-                    force_rerun=attempt > 1 or repair_attempt > 0,
                 )
                 changed = changed_files(before, snapshot_files(sandbox))
                 break
