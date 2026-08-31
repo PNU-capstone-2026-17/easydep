@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from app.db.models import Base
 from app.design import progress as design_progress
 from app.design.services.common.structured import record_llm_timing
@@ -138,20 +140,28 @@ def test_reconcile_implementation_command_restores_progress_after_restart(monkey
     assert events[0]["metadata"]["progress_status"] == "running"
 
 
-def test_reconcile_failed_implementation_exposes_checkpoint_retry(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("command_status", "job_status"),
+    [("FAILED", "FAILED"), ("INTERRUPTED", "NEEDS_PLANNER")],
+)
+def test_reconcile_stopped_implementation_exposes_checkpoint_retry(
+    monkeypatch,
+    command_status: str,
+    job_status: str,
+) -> None:
     command = {
         "command_id": "command-1",
         "app_id": "app-1",
         "action": "approve_implementation",
         "stage": "implementation",
-        "status": "FAILED",
+        "status": command_status,
         "payload": {"job_id": "job-1"},
         "result": None,
     }
     failed_job = {
         "job_id": "job-1",
         "app_id": "app-1",
-        "status": "FAILED",
+        "status": job_status,
         "checkpoint_retryable": True,
     }
     monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
@@ -178,6 +188,7 @@ def test_reconcile_failed_implementation_exposes_checkpoint_retry(monkeypatch) -
         service.shutdown()
 
     assert reconciled is not None
+    assert reconciled["status"] == "FAILED"
     assert reconciled["result"]["job_id"] == "job-1"
     assert reconciled["result"]["checkpoint_retryable"] is True
 

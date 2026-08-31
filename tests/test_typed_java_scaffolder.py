@@ -91,7 +91,12 @@ def _payload() -> dict[str, object]:
                 {
                     "name": "OrderReceipt",
                     "kind": "valueObject",
-                    "fields": ["accepted : boolean"],
+                    "fields": [
+                        "accepted : boolean",
+                        "id : uuid",
+                        "createdAt : LocalDateTime",
+                        "tags : array<string>",
+                    ],
                 },
                 {
                     "name": "OrderStatus",
@@ -144,6 +149,7 @@ def test_renders_only_explicit_bce_contracts() -> None:
 def test_uses_small_type_map_and_marks_unknown_types() -> None:
     files = _render()
     request = _source(files, "OrderRequest")
+    receipt = _source(files, "OrderReceipt")
     entity = _source(files, "Order")
 
     assert "byte[] payload" in request
@@ -151,14 +157,22 @@ def test_uses_small_type_map_and_marks_unknown_types() -> None:
     assert "설계 타입 `ExternalPayload`" in request
     assert "Object id" in entity
     assert "설계 타입 `ExternalOrderId`" in entity
+    assert "TODO(EasyDep)" not in receipt
 
     expected = {
         "string": "String",
         "integer": "Integer",
+        "int": "Integer",
         "boolean": "Boolean",
+        "bool": "Boolean",
         "decimal": "BigDecimal",
+        "uuid": "UUID",
+        "LocalDate": "LocalDate",
+        "LocalDateTime": "LocalDateTime",
+        "LocalTime": "LocalTime",
         "bytes[]": "byte[]",
         "list<string>": "List<String>",
+        "array<string>": "List<String>",
         "optional<integer>": "Optional<Integer>",
         "UnclearType": "Object",
     }

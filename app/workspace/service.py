@@ -333,7 +333,7 @@ class WorkspaceService:
         # COMPLETED로 바꾼다. Workspace가 그 내부 규칙을 다시 구현하지 않는다.
         if job_status != "COMPLETED":
             self._sync_implementation_progress(app_id, str(command["command_id"]), job)
-            if job_status == "FAILED":
+            if job_status in {"FAILED", "NEEDS_PLANNER"}:
                 result = {
                     **dict(command.get("result") or {}),
                     "job_id": job_id,
@@ -342,7 +342,9 @@ class WorkspaceService:
                 }
                 return repository.update_command(
                     command["command_id"],
+                    status="FAILED",
                     result=result,
+                    error=str(job.get("error") or "Implementation needs checkpoint repair."),
                 )
             return command
         result = {
@@ -589,9 +591,13 @@ class WorkspaceService:
                 )
             return
         if action == "retry_implementation":
-            if prior["status"] != "FAILED" or prior["stage"] != "implementation":
+            if (
+                prior["status"] not in {"FAILED", "INTERRUPTED"}
+                or prior["stage"] != "implementation"
+            ):
                 raise ValueError(
-                    "Only a failed implementation command can be retried from its checkpoint."
+                    "Only a failed or interrupted implementation command can be retried "
+                    "from its checkpoint."
                 )
             return
         if prior["status"] != "AWAITING_INPUT":

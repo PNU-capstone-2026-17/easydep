@@ -130,6 +130,33 @@ def test_e2e_missing_repository_bean_targets_upstream_owners(tmp_path: Path) -> 
     ]
 
 
+def test_completion_audit_retries_the_named_existing_task(tmp_path: Path) -> None:
+    """마지막 감사의 task_id는 로그 문구를 다시 추측하지 않고 그대로 사용한다."""
+
+    tasks = _tasks() + [
+        {
+            "task_id": "implement-e2e",
+            "task_type": "integration-test",
+            "allowed_write_paths": [
+                "application/src/test/java/example/ApplicationFlowTest.java"
+            ],
+        },
+    ]
+    _write_run(tmp_path, tasks)
+
+    repair = schedule_cross_phase_repair(
+        tmp_path,
+        "implement-e2e",
+        {
+            "command": ["completion-audit"],
+            "stderr": "The E2E test replaced production beans.",
+        },
+    )
+
+    assert repair is not None
+    assert repair["ownerTaskIds"] == ["implement-e2e"]
+
+
 def test_phase_e2e_failure_targets_named_owner_and_records_history(
     tmp_path: Path,
 ) -> None:
@@ -166,6 +193,47 @@ def test_phase_e2e_failure_targets_named_owner_and_records_history(
         (tmp_path / "reports/repair-plan.json").read_text(encoding="utf-8")
     )
     assert plan["entries"] == [repair]
+
+
+def test_exception_message_finds_owner_when_stack_frame_is_omitted(
+    tmp_path: Path,
+) -> None:
+    """Spring이 호출 프레임을 줄여도 실제 예외 문자열의 소유 파일을 찾는다."""
+
+    tasks = _tasks() + [
+        {
+            "task_id": "implement-calculator-control",
+            "task_type": "control",
+            "allowed_write_paths": [
+                "application/src/main/java/example/CalculatorControlService.java"
+            ],
+        },
+    ]
+    _write_run(tmp_path, tasks)
+    source = tmp_path / "application/src/main/java/example/CalculatorControlService.java"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        'throw new IllegalStateException("No active calculation session");',
+        encoding="utf-8",
+    )
+
+    repair = schedule_cross_phase_repair(
+        tmp_path,
+        "verify-final-workspace",
+        {
+            "testResults": (
+                "FlowTest.fullFlow(): ServletException: Request failed\n"
+                "Caused by: java.lang.IllegalStateException: "
+                "No active calculation session\n"
+                "\tat org.springframework.web.DispatcherServlet.doDispatch(...)\n"
+                "\t... 105 more"
+            )
+        },
+        failed_task_type="integration-test",
+    )
+
+    assert repair is not None
+    assert repair["ownerTaskIds"] == ["implement-calculator-control"]
 
 
 def test_changed_failure_evidence_can_continue_without_a_numeric_budget(tmp_path: Path) -> None:
@@ -270,7 +338,11 @@ def test_warning_path_does_not_override_causal_owner(tmp_path: Path) -> None:
 
 
 def test_schema_type_failure_in_wiring_targets_persistence_owners(tmp_path: Path) -> None:
-    tasks = _tasks() + [
+    tasks = _tasks()
+    tasks[-1]["allowed_write_paths"].append(
+        "application/src/test/java/example/ApplicationContextTest.java"
+    )
+    tasks += [
         {
             "task_id": "implement-entities",
             "task_type": "persistence-entities",
@@ -302,11 +374,41 @@ def test_schema_type_failure_in_wiring_targets_persistence_owners(tmp_path: Path
 
     assert repair is not None
     assert repair["ownerTaskIds"] == [
-        "implement-entities", "implement-mapping", "implement-schema"
+        "implement-entities", "implement-schema"
     ]
 
+    jdbc_type_repair = schedule_cross_phase_repair(
+        tmp_path,
+        "verify-final-workspace",
+        {
+            "testResults": (
+                "JdbcTypeRecommendationException: Could not determine recommended "
+                "JdbcType for Java type 'example.CompositeValue'"
+            )
+        },
+        failed_task_type="integration-test",
+    )
+    assert jdbc_type_repair is not None
+    assert jdbc_type_repair["ownerTaskIds"] == ["implement-entities"]
 
-def test_repair_prompt_is_idempotent_and_uses_real_bounded_evidence(
+    mapped_by_repair = schedule_cross_phase_repair(
+        tmp_path,
+        "verify-end-to-end",
+        {
+            "testResults": (
+                "ApplicationContextTest.contextLoads(): BeanCreationException; "
+                "AnnotationException: Collection 'AcademicTermEntity.courseOfferings' "
+                "is 'mappedBy' a property named 'academicTerm' which does not exist "
+                "in the target entity 'CourseOfferingEntity'"
+            )
+        },
+        failed_task_type="integration-test",
+    )
+    assert mapped_by_repair is not None
+    assert mapped_by_repair["ownerTaskIds"] == ["implement-entities"]
+
+
+def test_repair_directives_are_idempotent_and_stay_within_planned_tasks(
     tmp_path: Path,
 ) -> None:
     tasks = _tasks()
@@ -333,9 +435,7 @@ def test_repair_prompt_is_idempotent_and_uses_real_bounded_evidence(
     second = prompt_path.read_text(encoding="utf-8")
 
     assert first == second
-    assert first.count("## Orchestrated repair and revalidation directives") == 1
     assert "OrderRepository.java:12" in first
-    assert "{entry['evidence']}" not in first
     downstream_prompt = (
         tmp_path
         / "reports/implementation-tasks/implement-portfolio-api-adapter.prompt.md"
@@ -354,19 +454,37 @@ def test_e2e_semantic_gap_stays_in_the_integration_test_task(tmp_path: Path) -> 
     ]
     _write_run(tmp_path, tasks)
 
-    assert schedule_cross_phase_repair(
+    repair = schedule_cross_phase_repair(
         tmp_path,
         "implement-e2e",
         {
             "command": ["e2e-semantic-contract-gate"],
             "stderr": "Missing HTTP path evidence",
         },
-    ) is None
-    assert not (tmp_path / "reports/repair-plan.json").exists()
+    )
+
+    assert repair is not None
+    assert repair["ownerTaskIds"] == ["implement-e2e"]
 
 
 def test_erd_conformance_failure_targets_persistence_repair(tmp_path: Path) -> None:
-    _write_run(tmp_path, _tasks())
+    tasks = _tasks() + [
+        {
+            "task_id": "implement-entities",
+            "task_type": "persistence-entities",
+            "allowed_write_paths": [
+                "application/src/main/java/example/OrderEntity.java"
+            ],
+        },
+        {
+            "task_id": "implement-schema",
+            "task_type": "persistence-schema",
+            "allowed_write_paths": [
+                "application/src/main/resources/db/migration/V1__initial_schema.sql"
+            ],
+        },
+    ]
+    _write_run(tmp_path, tasks)
 
     repair = schedule_source_conformance_repair(
         tmp_path,
@@ -374,11 +492,12 @@ def test_erd_conformance_failure_targets_persistence_repair(tmp_path: Path) -> N
             "violations": [
                 {
                     "code": "ERD_ENTITY_NOT_IMPLEMENTED",
-                    "message": "Order.name is missing",
+                    "path": "application/src/main/java/example/OrderEntity.java",
+                    "message": "Order has unexpected columns",
                 }
             ]
         },
     )
 
     assert repair is not None
-    assert repair["ownerTaskIds"] == ["implement-repositories"]
+    assert repair["ownerTaskIds"] == ["implement-entities", "implement-schema"]

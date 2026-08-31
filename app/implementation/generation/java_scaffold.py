@@ -18,7 +18,7 @@ from app.design.schemas.class_model import (
     DataType,
 )
 
-JAVA_SCAFFOLDER_VERSION = "1.1.0"
+JAVA_SCAFFOLDER_VERSION = "1.2.0"
 
 _JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 _FIELD = re.compile(
@@ -36,16 +36,26 @@ _JAVA_KEYWORDS = frozenset({
 _TYPE_ALIASES = {
     "string": "String",
     "integer": "Integer",
+    "int": "Integer",
     "boolean": "Boolean",
+    "bool": "Boolean",
     "bigdecimal": "BigDecimal",
     "decimal": "BigDecimal",
+    "uuid": "UUID",
+    "localdate": "LocalDate",
+    "localdatetime": "LocalDateTime",
+    "localtime": "LocalTime",
 }
 _BINARY_TYPE_NAMES = frozenset({"bytes", "byte[]", "bytes[]"})
-_GENERIC_TYPES = {"list": "List", "optional": "Optional"}
+_GENERIC_TYPES = {"list": "List", "array": "List", "optional": "Optional"}
 _IMPORTS = {
     "BigDecimal": "java.math.BigDecimal",
+    "LocalDate": "java.time.LocalDate",
+    "LocalDateTime": "java.time.LocalDateTime",
+    "LocalTime": "java.time.LocalTime",
     "List": "java.util.List",
     "Optional": "java.util.Optional",
+    "UUID": "java.util.UUID",
 }
 
 
@@ -337,7 +347,7 @@ def _java_type(
         return alias, None
 
     generic = re.fullmatch(
-        r"(?P<outer>List|Optional)<(?P<argument>.+)>", source, re.IGNORECASE
+        r"(?P<outer>List|Array|Optional)<(?P<argument>.+)>", source, re.IGNORECASE
     )
     if generic is not None:
         argument, todo_type = _java_type(

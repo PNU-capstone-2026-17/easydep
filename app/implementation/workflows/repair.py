@@ -72,13 +72,8 @@ def schedule_cross_phase_repair(
             "allowed_write_paths": [],
         }
 
-    # E2E 테스트 파일 자체의 의미 검사 실패는 그 테스트 작업 안에서 고쳐야 한다.
-    # API나 Control 문제로 잘못 분류하면 이미 성공한 구현 작업을 불필요하게 다시 생성한다.
-    if (
-        str(failed.get("task_type")) == "integration-test"
-        and evidence.get("command") == ["e2e-semantic-contract-gate"]
-    ):
-        return None
+    completion_audit = evidence.get("command") == ["completion-audit"]
+    e2e_semantic_gate = evidence.get("command") == ["e2e-semantic-contract-gate"]
 
     evidence_text = _evidence_text(evidence)
     causal_evidence = _causal_evidence_text(evidence)
@@ -89,17 +84,90 @@ def schedule_cross_phase_repair(
             and "mappedby" in causal_evidence.lower()
         )
     )
-    # A compiler path normally identifies one owner. Hibernate's mappedBy
-    # error is different: it describes an inconsistent pair, so prefer the
-    # pair-aware inference even when its stack trace happens to include only
-    # one entity source path.
-    owner_ids = (
-        _infer_upstream_owners(tasks, failed, causal_evidence)
-        if mapped_by_failure
-        else _owners_named_in_evidence(tasks, failed_task_id, causal_evidence)
-    )
+    # 마지막 감사는 이미 어느 task의 산출물이 부족한지 task_id로 알려 준다. 이때는
+    # 로그 문구를 다시 추측해 다른 작업으로 보내지 않고 그 task를 그대로 수리한다.
+    if completion_audit:
+        owner_ids = {failed_task_id}
+    elif e2e_semantic_gate:
+        owner_ids = {
+            str(task["task_id"])
+            for task in tasks
+            if task.get("task_type") == "integration-test"
+        }
+    else:
+        direct_owners = (
+            _owners_named_in_evidence(tasks, failed_task_id, causal_evidence)
+            | _owners_for_application_stack_frames(
+                tasks, failed_task_id, causal_evidence
+            )
+            | _owners_for_matching_exception_messages(
+                run_root, tasks, failed_task_id, causal_evidence
+            )
+            | _owners_for_known_test_failures(tasks, causal_evidence)
+            | _owners_for_failed_test_classes(
+                tasks, failed_task_id, causal_evidence
+            )
+        )
+        inferred_owners = _infer_upstream_owners(tasks, failed, causal_evidence)
+        # ``mappedBy`` 오류는 검사를 실행한 wiring 파일이 아니라 연관관계를 선언한
+        # 영속성 엔티티가 고쳐야 한다. 검사를 소유했다는 이유만으로 wiring 작업까지
+        # 다시 생성하면 LLM 호출만 늘어나므로, 이 오류는 추론한 원인 작업만 선택한다.
+        upstream_persistence_failure = mapped_by_failure or any(
+            marker in causal_evidence.lower()
+            for marker in (
+                "jdbctyperecommendationexception",
+                "schemamanagementexception",
+                "jdbcsqlsyntaxerror",
+            )
+        )
+        # 같은 Gradle 결과에 별개의 API·Control·테스트 오류가 함께 있으면 그 담당도
+        # 잃지 않는다. 아래 표식이 없고 영속성 시작 오류만 있을 때에만 관찰자 작업을 뺀다.
+        has_independent_failure = any(
+            marker in causal_evidence.lower()
+            for marker in (
+                "notamockexception",
+                "invaliddefinitionexception",
+                "no serializer found",
+                "dataintegrityviolationexception",
+                "assertionfailederror",
+                "cannot find symbol",
+                "no suitable constructor",
+                "nosuchbeandefinitionexception",
+            )
+        )
+        if upstream_persistence_failure and not has_independent_failure and inferred_owners:
+            owner_ids = inferred_owners
+        else:
+            # 그 밖의 복합 실행 오류는 실패한 테스트 파일과 실제 원인 파일을 함께
+            # 고쳐야 할 수 있다. 예를 들어 Bean 등록 오류는 wiring 자체가 원인이다.
+            multi_owner_runtime_failure = any(
+                marker in causal_evidence.lower()
+                for marker in (
+                    "jdbctyperecommendationexception",
+                    "schemamanagementexception",
+                    "dataintegrityviolationexception",
+                    "jdbcsqlintegrityconstraintviolationexception",
+                    "jdbcsqlsyntaxerror",
+                    "nosuchbeandefinitionexception",
+                )
+            )
+            owner_ids = (
+                direct_owners | inferred_owners
+                if multi_owner_runtime_failure
+                else direct_owners or inferred_owners
+            )
     if not owner_ids:
-        owner_ids = _infer_upstream_owners(tasks, failed, causal_evidence)
+        # 구조화된 검증 로그에 파일 경로나 알려진 오류 이름이 없어도 기술 오류를 사용자
+        # 클릭으로 넘기지 않는다. 실제 작업이면 그 작업을, 통합 검증이면 같은 종류의
+        # 가장 좁은 작업을 다시 실행해 새 대화에서 전체 진단을 살펴보게 한다.
+        if failed_task_id in task_by_id:
+            owner_ids = {failed_task_id}
+        else:
+            owner_ids = {
+                str(task["task_id"])
+                for task in tasks
+                if task.get("task_type") == failed_task_type
+            }
     if not owner_ids:
         return None
 
@@ -163,41 +231,62 @@ def schedule_cross_phase_repair(
 def schedule_source_conformance_repair(
     run_root: Path, report: dict[str, object]
 ) -> dict[str, object] | None:
-    """Re-plan source repairs while rejecting an identical failure strategy."""
+    """설계와 맞지 않는 구현을 담당 작업에 다시 맡긴다.
+
+    같은 결과가 반복되어도 숫자나 후보 hash만으로 중단하지 않는다. 이전 실패와 현재
+    파일을 다음 prompt에 함께 전달하므로 에이전트가 다른 수정 방법을 선택할 수 있다.
+    """
     violations = report.get("violations", [])
     codes = {
         str(item.get("code"))
         for item in violations
         if isinstance(item, dict)
     }
-    sequence_codes = {
-        "SEQUENCE_CALL_NOT_IMPLEMENTED",
-        "SEQUENCE_BRANCH_NOT_IMPLEMENTED",
-        "SEQUENCE_CALL_ORDER_NOT_IMPLEMENTED",
-        "UNMAPPABLE_SEQUENCE_TARGET",
-    }
     erd_codes = {"ERD_ENTITY_NOT_IMPLEMENTED", "ERD_RELATION_NOT_IMPLEMENTED"}
-    if not (codes & (sequence_codes | erd_codes)):
+    if not (codes & erd_codes):
         return None
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
     tasks = list(manifest.get("implementation_tasks", []))
+    owners: set[str] = set()
+    for violation in violations:
+        if not isinstance(violation, dict):
+            continue
+        path = str(violation.get("path", "")).replace("\\", "/")
+        if path:
+            owners.update(
+                str(task["task_id"])
+                for task in tasks
+                if path in {
+                    str(candidate).replace("\\", "/")
+                    for candidate in task.get("allowed_write_paths", [])
+                }
+            )
+        code = str(violation.get("code", ""))
+        message = str(violation.get("message", "")).lower()
+        if code == "ERD_RELATION_NOT_IMPLEMENTED":
+            owners.update(
+                str(task["task_id"])
+                for task in tasks
+                if task.get("task_type") == "persistence-entities"
+            )
+        if "column" in message:
+            owners.update(
+                str(task["task_id"])
+                for task in tasks
+                if task.get("task_type") == "persistence-schema"
+            )
     owner_types: set[str] = set()
-    if codes & sequence_codes:
-        owner_types.update({
-            "control", "api-adapter", "boundary-adapter", "gateway-adapter",
-            "configuration",
-        })
-    if codes & erd_codes:
+    if not owners and codes & erd_codes:
         owner_types.update({
             "persistence-entities", "persistence-repositories",
             "persistence-mapping", "persistence-schema", "gateway-adapter",
         })
-    owners = [
-        str(task["task_id"])
-        for task in tasks
-        if task.get("task_type") in owner_types
-    ]
+        owners.update(
+            str(task["task_id"])
+            for task in tasks
+            if task.get("task_type") in owner_types
+        )
     if not owners:
         return None
     evidence = json.dumps(violations, ensure_ascii=False, indent=2)
@@ -207,18 +296,13 @@ def schedule_source_conformance_repair(
     matching_entries = _entries_for_failure(plan, "source-design-conformance")
     strategy_key = f"source-conformance:{','.join(sorted(codes))}:{','.join(sorted(owners))}"
     task_by_id = {str(task["task_id"]): task for task in tasks}
-    candidate_digest = _owner_candidate_digest(run_root, task_by_id, set(owners))
-    if any(
+    candidate_digest = _owner_candidate_digest(run_root, task_by_id, owners)
+    repeated_candidate = any(
         entry.get("evidenceSha256") == evidence_sha
         and entry.get("strategyKey") == strategy_key
         and entry.get("candidateDigest") == candidate_digest
         for entry in matching_entries
-    ):
-        plan["status"] = "STALLED"
-        plan["stallReason"] = "No untried source-conformance repair strategy remains."
-        plan["updatedAt"] = datetime.now(UTC).isoformat()
-        _write_json(plan_path, plan)
-        return None
+    )
     revision = len(matching_entries) + 1
     entry = {
         "failedTaskId": "source-design-conformance",
@@ -230,7 +314,7 @@ def schedule_source_conformance_repair(
         "strategyKey": strategy_key,
         "candidateDigest": candidate_digest,
         "inputDigest": evidence_sha,
-        "outcome": "scheduled",
+        "outcome": "scheduled_after_no_change" if repeated_candidate else "scheduled",
         "evidence": evidence,
         "revision": revision,
         "createdAt": min(
@@ -252,7 +336,7 @@ def schedule_source_conformance_repair(
 
 
 def apply_repair_directives(run_root: Path) -> None:
-    """Make repair evidence part of task prompts and therefore HITL request hashes."""
+    """현재 수리 지시와 과거 실패 이력을 담당 작업의 prompt에 반영한다."""
     plan_path = run_root / REPAIR_PLAN
     if not plan_path.is_file():
         return
@@ -260,6 +344,17 @@ def apply_repair_directives(run_root: Path) -> None:
     entries = [item for item in plan.get("entries", []) if isinstance(item, dict)]
     if not entries:
         return
+    active_entry = entries[-1]
+    active_owner_ids = {
+        str(task_id) for task_id in active_entry.get("ownerTaskIds", [])
+    }
+    state_path = run_root / "reports" / "workflow-state.json"
+    previous_state = _read_json(state_path) if state_path.is_file() else {}
+    unfinished_task_ids = {
+        str(task.get("taskId"))
+        for task in previous_state.get("tasks", [])
+        if isinstance(task, dict) and task.get("status") != "SUCCEEDED"
+    }
 
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
@@ -282,34 +377,61 @@ def apply_repair_directives(run_root: Path) -> None:
         prompt_path = run_root / str(task["prompt_file"])
         original_prompt = prompt_path.read_text(encoding="utf-8")
         prompt = _without_repair_directives(original_prompt)
-        additions = [
-            f"\n\n{REPAIR_PROMPT_START}\n{REPAIR_PROMPT_HEADING}\n"
-        ]
-        older = relevant[:-5]
-        if older:
+        additions: list[str] = []
+        has_active_repair = bool(relevant) and (
+            task_id in active_owner_ids or task_id in unfinished_task_ids
+        )
+        if has_active_repair:
+            task_active_entry = relevant[-1]
             additions.append(
-                "\n### Earlier repair history (deterministically compacted)\n"
-                + "\n".join(
-                    "- "
-                    f"revision={entry.get('revision')} "
-                    f"failure={entry.get('failedTaskId')} "
-                    f"strategy={entry.get('strategyKey')} "
-                    f"fingerprint={entry.get('failureFingerprint')} "
-                    f"outcome={entry.get('outcome')}"
-                    for entry in older
+                f"\n\n{REPAIR_PROMPT_START}\n{REPAIR_PROMPT_HEADING}\n"
+            )
+            previous = relevant[:-1]
+            compacted = previous[:-4]
+            recent_history = previous[-4:]
+            if compacted:
+                additions.append(
+                    "\n### Earlier repair history (context only, compacted)\n"
+                    + "\n".join(
+                        "- "
+                        f"revision={entry.get('revision')} "
+                        f"failure={entry.get('failedTaskId')} "
+                        f"strategy={entry.get('strategyKey')} "
+                        f"fingerprint={entry.get('failureFingerprint')} "
+                        f"outcome={entry.get('outcome')}"
+                        for entry in compacted
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
-        for entry in relevant[-5:]:
-            role = "repair the failure in your owned files"
-            evidence = str(entry.get("evidence", ""))
+            if recent_history:
+                additions.append(
+                    "\n### Recent repair history (context only)\n"
+                    "These are previous failures, not current instructions. Use them only "
+                    "to avoid repeating an unsuccessful change.\n"
+                )
+            for entry in recent_history:
+                evidence = str(entry.get("evidence", ""))
+                if len(evidence) > 1200:
+                    evidence = (
+                        evidence[:600]
+                        + "\n... [history shortened] ...\n"
+                        + evidence[-600:]
+                    )
+                additions.append(
+                    f"\n### Previous revision {entry['revision']} from "
+                    f"`{entry['failedTaskId']}`\n"
+                    f"outcome={entry.get('outcome')} "
+                    f"fingerprint={entry.get('failureFingerprint')}\n"
+                    f"```text\n{evidence}\n```\n"
+                )
+            current_evidence = str(task_active_entry.get("evidence", ""))
             additions.append(
-                f"\n### Revision {entry['revision']} from `{entry['failedTaskId']}`\n"
-                f"Your role is to {role}. Use the verification evidence below, preserve "
-                "the exact generated contracts, and keep all changes inside this task's "
-                f"existing allowlist.\n\n```text\n{evidence}\n```\n"
+                f"\n### Current revision {task_active_entry['revision']} from "
+                f"`{task_active_entry['failedTaskId']}`\n"
+                "Repair this current failure in your owned files. Preserve the exact "
+                "generated contracts and keep every change inside this task's existing "
+                f"allowlist.\n\n```text\n{current_evidence}\n```\n"
             )
-        if relevant:
             additions.append(f"\n{REPAIR_PROMPT_END}\n")
             prompt += "".join(additions)
         if prompt == original_prompt:
@@ -318,7 +440,10 @@ def apply_repair_directives(run_root: Path) -> None:
         prompt_sha = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         task["prompt_sha256"] = prompt_sha
         sources = dict(task.get("source_artifacts", {}))
-        sources["repairEvidence"] = str(plan_path)
+        if has_active_repair:
+            sources["repairEvidence"] = str(plan_path)
+        else:
+            sources.pop("repairEvidence", None)
         task["source_artifacts"] = sources
         task_file = task_files.get(task_id)
         if task_file:
@@ -358,6 +483,48 @@ def referenced_source_paths(evidence: dict[str, object]) -> list[str]:
     return sorted({match.strip().lstrip("/") for match in matches})
 
 
+def repair_requires_owner_handoff(
+    evidence: dict[str, object],
+    allowed_paths: list[str],
+    changed_paths: set[str],
+) -> bool:
+    """오류가 현재 작업의 수정 범위 밖 파일에만 있는지 판단한다.
+
+    각 구현 작업은 자신에게 배정된 파일만 고칠 수 있다. 예를 들어 Control에서
+    잘못된 Boundary 의존성을 제거한 뒤 wiring의 생성자 호출이 깨졌다면, Control에
+    호환용 생성자를 억지로 추가하게 하지 않고 wiring 작업으로 넘겨야 한다. 다만 현재
+    작업이 바꾼 Java 타입의 생성자나 메서드가 호출 파일에서 깨졌다면, 오류 줄이 호출
+    파일에 있어도 현재 타입이 호환성을 복구해야 한다.
+    """
+
+    referenced = {
+        path.replace("\\", "/").lower()
+        for path in referenced_source_paths(evidence)
+    }
+    if not referenced:
+        return False
+    allowed = {path.replace("\\", "/").lower() for path in allowed_paths}
+    if referenced & allowed:
+        return False
+    output = _evidence_text(evidence)
+    if changed_paths and re.search(
+        r"cannot find symbol|no suitable constructor|constructor .* cannot be applied",
+        output,
+        re.IGNORECASE,
+    ):
+        changed_types = {
+            Path(path).stem
+            for path in changed_paths
+            if path.replace("\\", "/").endswith(".java")
+        }
+        if any(
+            re.search(rf"\b{re.escape(type_name)}\b", output)
+            for type_name in changed_types
+        ):
+            return False
+    return True
+
+
 def _owners_named_in_evidence(
     tasks: list[dict[str, object]], failed_task_id: str, evidence: str
 ) -> set[str]:
@@ -377,11 +544,199 @@ def _owners_named_in_evidence(
     return owners
 
 
+def _owners_for_matching_exception_messages(
+    run_root: Path,
+    tasks: list[dict[str, object]],
+    failed_task_id: str,
+    evidence: str,
+) -> set[str]:
+    """생략된 stack frame 대신 실제 예외 문자열로 오류 파일을 찾는다.
+
+    MockMvc가 감싼 예외는 때때로 Spring 프레임만 남기고, 예외를 던진 애플리케이션
+    프레임을 ``... more``로 줄인다. 예외 메시지가 생성 소스의 문자열과 정확히 같다면
+    그 파일의 담당 작업을 수리 대상으로 삼을 수 있다. 특정 도메인 문구를 규칙에
+    넣지 않고 현재 실행의 실제 소스만 대조한다.
+    """
+
+    messages = {
+        match.strip()
+        for match in re.findall(
+            r"(?:[A-Za-z_$][\w.$]*(?:Exception|Error)):\s*([^\r\n]+)",
+            evidence,
+        )
+        if len(match.strip()) >= 8
+    }
+    if not messages:
+        return set()
+
+    owners: set[str] = set()
+    for task in tasks:
+        task_id = str(task.get("task_id"))
+        if task_id == failed_task_id:
+            continue
+        for output in task.get("allowed_write_paths", []):
+            relative = str(output).replace("\\", "/")
+            if not relative.endswith(".java"):
+                continue
+            path = run_root / relative.removeprefix("application/")
+            if not path.is_file():
+                path = run_root / relative
+            if not path.is_file():
+                continue
+            source = path.read_text(encoding="utf-8")
+            if any(message in source for message in messages):
+                owners.add(task_id)
+                break
+    return owners
+
+
+def _owners_for_application_stack_frames(
+    tasks: list[dict[str, object]],
+    failed_task_id: str,
+    evidence: str,
+) -> set[str]:
+    """Java stack frame의 전체 클래스 이름을 구현 파일 담당 작업과 연결한다."""
+
+    source_suffixes = {
+        qualified.rsplit(".", 1)[0].replace(".", "/") + ".java"
+        for qualified in re.findall(
+            r"\bat (?:app//)?((?!org\.|java\.|jdk\.|worker\.)"
+            r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)",
+            evidence,
+        )
+    }
+    if not source_suffixes:
+        return set()
+
+    owners: set[str] = set()
+    for task in tasks:
+        task_id = str(task.get("task_id"))
+        if task_id == failed_task_id:
+            continue
+        outputs = {
+            str(path).replace("\\", "/")
+            for path in task.get("allowed_write_paths", [])
+        }
+        if any(
+            output.endswith(suffix)
+            for output in outputs
+            for suffix in source_suffixes
+        ):
+            owners.add(task_id)
+    return owners
+
+
+def _owners_for_known_test_failures(
+    tasks: list[dict[str, object]], evidence: str
+) -> set[str]:
+    """여러 E2E 실패가 한 번에 나온 경우 각각의 담당 작업을 찾는다.
+
+    Gradle은 한 번의 실행에서 DB 오류와 잘못 작성된 테스트를 함께 보고할 수 있다.
+    첫 번째 파일 경로 하나만 따르면 나머지 오류가 다음 실행까지 그대로 남으므로,
+    원인이 분명한 두 종류는 같은 수리 계획에 함께 넣는다.
+    """
+
+    lowered = evidence.lower()
+    owners: set[str] = set()
+    if "notamockexception" in lowered or "argument passed to when() is not a mock" in lowered:
+        integration_tasks = [
+            task for task in tasks if task.get("task_type") == "integration-test"
+        ]
+        named = {
+            str(task["task_id"])
+            for task in integration_tasks
+            if any(
+                Path(str(path)).stem.lower() in lowered
+                for path in task.get("allowed_write_paths", [])
+            )
+        }
+        owners.update(named or {str(task["task_id"]) for task in integration_tasks})
+
+    if any(
+        marker in lowered
+        for marker in (
+            "dataintegrityviolationexception",
+            "jdbcsqlintegrityconstraintviolationexception",
+            "null not allowed for column",
+        )
+    ):
+        production_types = {
+            "control",
+            "persistence-entities",
+            "persistence-mapping",
+            "persistence-schema",
+        }
+        candidates = [
+            task for task in tasks if task.get("task_type") in production_types
+        ]
+        named = {
+            str(task["task_id"])
+            for task in candidates
+            if any(
+                Path(str(path)).stem.lower() in lowered
+                for path in task.get("allowed_write_paths", [])
+            )
+        }
+        owners.update(named or {str(task["task_id"]) for task in candidates})
+    return owners
+
+
+def _owners_for_failed_test_classes(
+    tasks: list[dict[str, object]], failed_task_id: str, evidence: str
+) -> set[str]:
+    """실패 보고서의 테스트 클래스 이름을 그 테스트를 만든 작업과 연결한다.
+
+    Gradle XML 요약에는 전체 파일 경로가 빠지고 ``SomeControllerTest.method()``만 남을
+    수 있다. API·Control·영속성 작업은 자신이 만든 단위 테스트와 생산 코드를 함께
+    고칠 수 있으므로, 도메인 이름이나 예외 문구 대신 테스트 파일 이름으로 찾는다.
+    통합 테스트 전용 작업은 상위 생산 코드 오류를 직접 고칠 수 없으므로 제외한다.
+    """
+    test_classes = {
+        name.rsplit(".", 1)[-1]
+        for name in re.findall(
+            r"(?m)^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*Test)\.[A-Za-z_$][\w$]*\(",
+            evidence,
+        )
+    }
+    if not test_classes:
+        return set()
+    return {
+        str(task["task_id"])
+        for task in tasks
+        if str(task.get("task_id")) != failed_task_id
+        and task.get("task_type") != "integration-test"
+        and any(
+            Path(str(path)).stem in test_classes
+            for path in task.get("allowed_write_paths", [])
+        )
+    }
+
+
 def _infer_upstream_owners(
     tasks: list[dict[str, object]], failed: dict[str, object], evidence: str
 ) -> set[str]:
     failed_type = str(failed.get("task_type", ""))
     lowered = evidence.lower()
+    if failed_type != "persistence-entities" and (
+        "jdbctyperecommendationexception" in lowered
+        or "could not determine recommended jdbctype" in lowered
+    ):
+        # 테스트나 wiring은 Hibernate를 시작했을 뿐이다. 지원하지 않는 값 객체 필드는
+        # 실제 JPA 엔티티가 소유하므로, 오류를 발견한 뒤 단계가 아니라 엔티티로 보낸다.
+        return {
+            str(task["task_id"])
+            for task in tasks
+            if task.get("task_type") == "persistence-entities"
+        }
+    if failed_type not in {"persistence-entities", "persistence-schema"} and (
+        "schemamanagementexception" in lowered
+        and "schema-validation:" in lowered
+    ):
+        return {
+            str(task["task_id"])
+            for task in tasks
+            if task.get("task_type") in {"persistence-entities", "persistence-schema"}
+        }
     if (
         failed_type != "persistence-entities"
         and (
@@ -389,11 +744,9 @@ def _infer_upstream_owners(
             or ("annotationexception" in lowered and "mappedby" in lowered)
         )
     ):
-        # Hibernate's mappedBy error names the entity that owns the missing
-        # property, but the inverse entity can also need correction. Re-plan
-        # every named persistence entity task; if an older Hibernate message
-        # does not expose a name, repair the small persistence-entity phase as
-        # a unit rather than retrying configuration or an integration test.
+        # Hibernate의 mappedBy 오류에는 빠진 속성을 가진 엔티티 이름이 나온다. 양쪽
+        # 엔티티 선언을 함께 맞춰야 할 수 있으므로, 로그에 나온 영속성 엔티티 작업을
+        # 고른다. 이름이 없는 구형 메시지는 작은 엔티티 단계 전체에 맡긴다.
         mentioned = {
             name.lower()
             for name in re.findall(r"\b([A-Za-z_]\w*)Entity\b", evidence)
@@ -473,7 +826,11 @@ def _infer_upstream_owners(
                 for task in tasks
                 if task.get("task_type") in runtime_types
                 and any(
-                    Path(str(path)).stem.lower() in lowered
+                    re.search(
+                        rf"\b{re.escape(Path(str(path)).stem)}\b",
+                        evidence,
+                        re.IGNORECASE,
+                    )
                     for path in task.get("allowed_write_paths", [])
                 )
             }
@@ -498,11 +855,10 @@ def _infer_upstream_owners(
 
 
 def _is_e2e_runtime_contract_failure(evidence: str) -> bool:
-    """Return whether an E2E test exercised, but observed a broken, app contract.
+    """E2E가 실행 중 애플리케이션 계약 오류를 발견했는지 판단한다.
 
-    Compile errors and static-contract violations stay local to the test.  This
-    narrow set instead identifies JUnit/HTTP execution evidence, for which the
-    test source cannot repair the responsible production collaboration.
+    compile 오류와 정적 계약 누락은 테스트 작업 안에서 고친다. 반면 실제 JUnit·HTTP 실행에서
+    드러난 오류는 테스트 소스가 생산 코드의 연결을 고칠 수 없으므로 해당 생산 작업으로 보낸다.
     """
     return any(
         marker in evidence
@@ -513,6 +869,10 @@ def _is_e2e_runtime_contract_failure(evidence: str) -> bool:
             "expected http ",
             "data integrity violation",
             "dataintegrityviolationexception",
+            "stackoverflowerror",
+            "requested bean is currently in creation",
+            "circular reference",
+            "circular dependency",
         )
     )
 

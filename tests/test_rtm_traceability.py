@@ -3,14 +3,11 @@ from __future__ import annotations
 
 import json
 import tempfile
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
-from app.implementation.workflows.traceability import (
-    build_rtm_traceability_map,
-    evaluate_feedback_rtm_traceability,
-)
 from app.implementation.application.feedback import assess_feedback_eligibility
+from app.implementation.workflows.traceability import build_rtm_traceability_map
 
 
 def test_rtm_traceability_map_building() -> None:
@@ -41,11 +38,13 @@ def test_rtm_traceability_map_building() -> None:
         )
         erd = root / "erd.puml"
         erd.write_text("@startuml\nentity OrderEntity {\n}\n@enduml", encoding="utf-8")
+        cloud = root / "resource-spec.json"
+        cloud.write_text('{"provider": "aws"}', encoding="utf-8")
 
         spec = SimpleNamespace(
             name="orders",
             base_package="com.example.demo",
-            inputs={"bceClass": bce, "openapi": openapi, "erd": erd},
+            inputs={"bceClass": bce, "openapi": openapi, "erd": erd, "cloud": cloud},
         )
 
         rtm_map = build_rtm_traceability_map(spec, root / "run")
@@ -58,6 +57,7 @@ def test_rtm_traceability_map_building() -> None:
         assert mappings["OrderController"]["origin_artifact"] == "bceClass"
         assert mappings["OrderController"]["verificationStatus"] == "MISSING"
         assert rtm_map["summary"]["missing"] == rtm_map["summary"]["expected"]
+        # 리소스 입력만 있고 배포 설계가 미완료라면 Terraform은 선택 산출물이다.
         assert "TerraformMain" not in mappings
         assert "Dockerfile" not in mappings
 

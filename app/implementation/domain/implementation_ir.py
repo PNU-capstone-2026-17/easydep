@@ -10,12 +10,7 @@ from typing import Any
 
 from .models import JobSpec
 
-
 HTTP_METHODS = {"get", "put", "post", "delete", "patch", "head", "options"}
-SEMANTIC_STOP_WORDS = {
-    "a", "an", "and", "api", "by", "for", "from", "in", "is", "of", "on",
-    "or", "record", "request", "response", "the", "to", "with",
-}
 
 
 @dataclass(frozen=True)
@@ -92,7 +87,6 @@ def build_implementation_ir(
     spec: JobSpec, run_root: Path, *, persist: bool = True
 ) -> ImplementationIR:
     bce = _read(spec.inputs.get("bceClass"))
-    sequence = _read(spec.inputs.get("sequence"))
     openapi = _read(spec.inputs.get("openapi"))
     erd = _read(spec.inputs.get("erd"))
     components = tuple(parse_components(bce))
@@ -119,7 +113,7 @@ def build_implementation_ir(
         ),
         gateways=gateways,
         api_ports=api_ports,
-        e2e_scenarios=tuple(derive_e2e_scenarios(api_operations, sequence)),
+        e2e_scenarios=tuple(derive_e2e_scenarios(api_operations)),
     )
     if persist:
         target = run_root / "reports" / "implementation-ir.json"
@@ -389,13 +383,23 @@ def _is_multivalued_child_shape(
 
 
 def derive_e2e_scenarios(
-    operations: tuple[ApiOperationIR, ...], sequence: str
+    operations: tuple[ApiOperationIR, ...],
 ) -> list[E2EScenarioIR]:
-    sequence_tokens = semantic_tokens(sequence)
+    """각 API 동작에서 대표 성공 응답 하나만 실제 HTTP 검증 대상으로 고른다.
+
+    오류 응답의 세부 분기는 API adapter 단위 테스트가 맡는다. E2E에서는 같은 경로를
+    상태 코드마다 복제하지 않고, 여러 API 호출을 실제 Spring 구성으로 연결하는 사용자
+    흐름에 집중한다. 한 동작이 여러 성공 상태를 선언했다면 OpenAPI에 먼저 적힌 응답을
+    사용한다.
+    """
+
     scenarios: list[E2EScenarioIR] = []
     for operation in operations:
-        successes = [item for item in operation.responses if 200 <= item.status < 300]
-        for response in successes:
+        response = next(
+            (item for item in operation.responses if 200 <= item.status < 300),
+            None,
+        )
+        if response is not None:
             scenarios.append(
                 E2EScenarioIR(
                     operation.method,
@@ -404,27 +408,7 @@ def derive_e2e_scenarios(
                     f"{operation.method} {operation.path} success",
                 )
             )
-        for response in operation.responses:
-            if response.status < 400:
-                continue
-            response_tokens = semantic_tokens(response.description)
-            if len(response_tokens & sequence_tokens) >= 2:
-                scenarios.append(
-                    E2EScenarioIR(
-                        operation.method,
-                        operation.path,
-                        response.status,
-                        response.description or f"HTTP {response.status}",
-                    )
-                )
     return list(dict.fromkeys(scenarios))
-
-
-def semantic_tokens(value: str) -> set[str]:
-    return {
-        token for token in re.findall(r"[a-z][a-z0-9_-]+", value.lower())
-        if token not in SEMANTIC_STOP_WORDS and len(token) > 2
-    }
 
 
 def pascal_case(value: str) -> str:

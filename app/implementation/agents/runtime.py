@@ -20,7 +20,10 @@ from ..planning.design_context import (
     referenced_openapi_model_names,
 )
 from ..workflows.conformance import entity_public_signature_violations
-from ..workflows.repair import referenced_source_paths
+from ..workflows.repair import (
+    referenced_source_paths,
+    repair_requires_owner_handoff,
+)
 from .prompts import (
     FRONTEND_SYSTEM_PROMPT,
     IMPLEMENTATION_SYSTEM_PROMPT,
@@ -40,6 +43,7 @@ from .verification.build import (
     WorkspaceVerificationError,
     api_adapter_contract_violations,
     boundary_adapter_contract_violations,
+    control_boundary_dependency_violations,
     ensure_persistence_schema_test,
     persistence_entity_schema_violations,
     persistence_reserved_identifier_markers,
@@ -554,7 +558,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     started = time.monotonic()
     agent = None
     conversation_warning: str | None = None
-    repair_ledger = RepairLedger()
+    # 같은 작업이 다른 담당 오류 때문에 다시 실행되더라도 이전 수리 실패를 잊지 않는다.
+    # 별도 저장 형식을 만들지 않고 이미 남긴 최신 실행 결과의 repairHistory를 재사용한다.
+    repair_ledger = load_repair_ledger(execution_dir, task_id)
+    handoff_required = False
     try:
         round_prompt = prompt
         round_allowed = allowed_absolute
@@ -766,6 +773,22 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     ensure_control_service_component(
                         sandbox, list(task["allowed_write_paths"])
                     )
+                    control_violations = control_boundary_dependency_violations(
+                        sandbox,
+                        list(task["allowed_write_paths"]),
+                        context.get("sequence", []),
+                    )
+                    if control_violations:
+                        raise WorkspaceVerificationError(
+                            {
+                                "command": ["control-dependency-contract-gate"],
+                                "exitCode": 1,
+                                "durationMs": 0,
+                                "stdout": "",
+                                "stderr": "\n".join(control_violations),
+                                "testResults": "",
+                            }
+                        )
                 _repair_missing_generated_model_imports(
                     sandbox, list(task["allowed_write_paths"])
                 )
@@ -925,7 +948,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             }
                         )
                 verification = verify_agent_workspace(
-                    sandbox, task_type, list(task["allowed_write_paths"])
+                    sandbox,
+                    task_type,
+                    list(task["allowed_write_paths"]),
+                    force_rerun=attempt > 1 or repair_attempt > 0,
                 )
                 # Include deterministic contract repairs in the promotion set.
                 changed = changed_files(before, snapshot_files(sandbox))
@@ -949,23 +975,35 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             changed = {path for path in changed if path in allowed}
                         verification = dict(error.evidence)
                         verification["upstreamFailureDeferred"] = True
+                        handoff_required = True
                         break
                     # 현재 작업의 허용 파일에 원인이 없으면 같은 작업을 되풀이하지 않고
                     # phase 수리 계획으로 넘긴다.
                     raise
                 referenced = referenced_source_paths(error.evidence)
-                normalized_allowed = {
-                    str(path).replace("\\", "/").lower()
-                    for path in task["allowed_write_paths"]
-                }
-                if referenced and not any(
-                    path.replace("\\", "/").lower() in normalized_allowed
-                    for path in referenced
+                candidate_changes = changed_files(before, snapshot_files(sandbox))
+                if repair_requires_owner_handoff(
+                    error.evidence,
+                    list(task["allowed_write_paths"]),
+                    candidate_changes,
                 ):
-                    # This task cannot safely fix a file owned by another phase.
-                    # Return the evidence to the workflow repair planner instead
-                    # of spending every local repair round on the wrong allowlist.
-                    raise
+                    # 오류가 다른 담당 파일에만 있다면 현재 작업자에게 호환용 우회
+                    # 코드를 만들게 하지 않는다. 현재 작업 결과는 보존하고 phase 검증이
+                    # 실제 오류 파일의 소유 작업을 다시 계획하도록 진단을 넘긴다.
+                    allowed = set(task["allowed_write_paths"])
+                    unauthorized = sorted(
+                        path for path in candidate_changes if path not in allowed
+                    )
+                    if unauthorized:
+                        _restore_unauthorized_files(sandbox, run_root, unauthorized)
+                        candidate_changes = {
+                            path for path in candidate_changes if path in allowed
+                        }
+                    changed = candidate_changes
+                    verification = dict(error.evidence)
+                    verification["upstreamFailureDeferred"] = True
+                    handoff_required = True
+                    break
                 evidence_digest = stable_digest(error.evidence)
                 finding_keys = (f"verification:{evidence_digest}",)
                 candidate_digest = stable_digest(
@@ -1040,6 +1078,19 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     repair_paths,
                     **feedback_kwargs,
                 )
+                read_only_references = [
+                    path
+                    for path in referenced
+                    if path not in task["allowed_write_paths"]
+                    and (sandbox / path).is_file()
+                ]
+                if read_only_references:
+                    # 호출하는 쪽에서만 오류가 표시되는 생성자·메서드 불일치도 모델이
+                    # 추측하지 않도록 실제 사용 코드를 읽기 전용 참고 자료로 제공한다.
+                    round_prompt += (
+                        "\n\n## Referenced collaborator sources (read-only)\n\n"
+                        + read_allowed_sources(sandbox, read_only_references)
+                    )
                 if repeated:
                     round_prompt = (
                         "The previous repair turn made no file change. The complete current "
@@ -1091,6 +1142,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "rawResponse": journal.latest_agent_message,
         "status": "SUCCEEDED",
     }
+    if handoff_required:
+        # 현재 작업의 파일은 검증을 통과했지만 다른 담당 파일에 오류가 남았다는 뜻이다.
+        # coordinator가 이 표시를 보고 즉시 실제 담당 작업을 다시 계획한다.
+        result["handoffRequired"] = True
     if repair_ledger.attempts:
         repair_ledger.status = "COMPLETED"
         result["repairHistory"] = repair_ledger.model_dump(mode="json")
@@ -1102,7 +1157,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
 
 
 def _conversation_token_usage(conversation) -> tuple[int, int] | None:
-    """Read exact aggregate OpenHands usage without affecting task execution."""
+    """작업 흐름에는 영향을 주지 않고 OpenHands의 누적 token 사용량을 읽는다."""
 
     try:
         metrics = conversation.conversation_stats.get_combined_metrics()
@@ -1118,7 +1173,7 @@ def _conversation_token_usage(conversation) -> tuple[int, int] | None:
 
 
 def _run_app_id(run_root: Path) -> str | None:
-    """Read the immutable app identity saved with an implementation run."""
+    """구현 실행에 저장된 변경되지 않는 앱 ID를 읽는다."""
 
     try:
         manifest = json.loads(
@@ -1150,6 +1205,16 @@ def _requires_cross_phase_repair(
     # A configuration task owns neither the entity nor Flyway migration.  A
     # schema type mismatch must therefore be repaired by persistence owners,
     # not by asking the wiring agent to repeatedly rewrite application.yml.
+    if task_type != "persistence-entities" and (
+        "jdbctyperecommendationexception" in output
+        or "could not determine recommended jdbctype" in output
+    ):
+        return True
+    if task_type not in {"persistence-entities", "persistence-schema"} and (
+        "schemamanagementexception" in output
+        and "schema-validation:" in output
+    ):
+        return True
     if task_type == "configuration" and (
         "schema-validation: wrong column type" in output
         or ("schemamanagementexception" in output and "wrong column type" in output)
@@ -1182,6 +1247,10 @@ def _requires_cross_phase_repair(
             "expected http ",
             "data integrity violation",
             "dataintegrityviolationexception",
+            "stackoverflowerror",
+            "requested bean is currently in creation",
+            "circular reference",
+            "circular dependency",
         )
     )
 
@@ -1205,6 +1274,34 @@ def execution_attempt(run_root: Path, task_id: str) -> int:
             1,
         ),
     )
+
+
+def load_repair_ledger(execution_dir: Path, task_id: str) -> RepairLedger:
+    """이전 실행 결과에 저장된 같은 작업의 수리 이력을 이어서 사용한다."""
+
+    candidates = [execution_dir / f"{task_id}.result.json"]
+    candidates.extend(
+        sorted(
+            execution_dir.glob(f"{task_id}.attempt-*.result.json"),
+            reverse=True,
+        )
+    )
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            result = json.loads(path.read_text(encoding="utf-8"))
+            history = result.get("repairHistory")
+            if not isinstance(history, dict):
+                continue
+            ledger = RepairLedger.model_validate(history)
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        ledger.status = "ACTIVE"
+        ledger.stall_reason = ""
+        ledger.next_retry_at = None
+        return ledger
+    return RepairLedger()
 
 
 def write_execution_result(

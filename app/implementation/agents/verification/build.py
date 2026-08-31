@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ..workspace import prepare_agent_workspace
+from .e2e import e2e_contract_violations, java_code_without_comments_and_strings
 from .frontend import run_frontend_command, run_frontend_verification
 
 SQL_RESERVED_IDENTIFIERS = (
@@ -26,18 +27,28 @@ SQL_RESERVED_IDENTIFIERS = (
 )
 
 
+def _jpa_column_names(source: str) -> set[str]:
+    """속성 순서와 무관하게 JPA 열 어노테이션의 ``name`` 값을 모은다."""
+
+    names: set[str] = set()
+    for annotation in re.finditer(
+        r"@(?:Column|JoinColumn)\s*\((?P<arguments>[^)]*)\)", source
+    ):
+        name = re.search(r'\bname\s*=\s*"([^"]+)"', annotation.group("arguments"))
+        if name:
+            names.add(name.group(1).lower())
+    return names
+
+
 def persistence_entity_schema_violations(
     sandbox: Path, relative_paths: list[str]
 ) -> list[str]:
-    """Detect persistence entities that omit columns required by the migration.
+    """JPA 엔티티와 마이그레이션의 열 매핑이 실제로 맞는지 확인한다.
 
-    Compilation does not prove that a JPA entity can persist an ERD row.  A
-    generated entity can expose only its id/status fields while the migration
-    correctly declares non-null foreign keys; the first E2E insert then fails
-    with a misleading database ``NULL not allowed`` error.  Compare the
-    already-generated migration with the entity's explicit ``@Column`` names
-    while the entity task still owns the files, so repair is directed to the
-    source contract rather than an unrelated E2E fixture.
+    Java compile만 통과해도 엔티티가 DB 행을 저장할 수 있다는 뜻은 아니다. 예를 들어
+    마이그레이션에는 필수 외래 키가 있는데 엔티티에 해당 열이 없으면, 나중의 E2E insert에서
+    원인과 동떨어진 ``NULL not allowed`` 오류가 난다. 엔티티 작업이 아직 파일을 담당할 때
+    ``@Column``·``@JoinColumn``과 SQL 열을 비교해 영속성 작업 안에서 바로 수리하게 한다.
     """
     normalized = [path.replace("\\", "/") for path in relative_paths]
     entity_paths = [
@@ -75,6 +86,39 @@ def persistence_entity_schema_violations(
         if not path.is_file():
             continue
         source = path.read_text(encoding="utf-8")
+        bce_types = set(
+            re.findall(
+                r"(?m)^import\s+[\w.]+\.bce\.([A-Za-z_]\w*);\s*$",
+                source,
+            )
+        )
+        for field in re.finditer(
+            r"(?P<annotations>(?:\s*@[A-Za-z_]\w*(?:\([^;]*?\))?\s*)+)"
+            r"(?:private|protected|public)\s+(?P<type>[A-Za-z_]\w*)\s+"
+            r"(?P<name>[A-Za-z_]\w*)\s*;",
+            source,
+        ):
+            annotations = field.group("annotations")
+            field_type = field.group("type")
+            has_converter = re.search(
+                rf"AttributeConverter\s*<\s*{re.escape(field_type)}\s*,",
+                source,
+            )
+            if (
+                "@Column" in annotations
+                and field_type in bce_types
+                and "@Enumerated" not in annotations
+                and "@Convert" not in annotations
+                and "@JdbcTypeCode" not in annotations
+                and "@Embedded" not in annotations
+                and "@Type" not in annotations
+                and has_converter is None
+            ):
+                violations.append(
+                    f"{relative}: {field.group('name')} uses BCE value type "
+                    f"{field_type} with @Column alone; declare an explicit JPA "
+                    "mapping that matches the ERD SQL type"
+                )
         table_match = re.search(r'@Table\s*\(\s*name\s*=\s*"([^"]+)"', source)
         if not table_match:
             continue
@@ -82,20 +126,17 @@ def persistence_entity_schema_violations(
         expected = table_columns.get(table)
         if not expected:
             continue
-        mapped = {
-            match.group(1).lower()
-            for match in re.finditer(r'@Column\s*\(\s*name\s*=\s*"([^"]+)"', source)
-        }
-        mapped.update(
-            match.group(1).lower()
-            for match in re.finditer(
-                r'@JoinColumn\s*\(\s*name\s*=\s*"([^"]+)"', source
-            )
-        )
+        mapped = _jpa_column_names(source)
         missing = sorted(expected - mapped)
         if missing:
             violations.append(
                 f"{relative}: @Table({table}) is missing migration column(s): {', '.join(missing)}"
+            )
+        extra = sorted(mapped - expected)
+        if extra:
+            violations.append(
+                f"{relative}: @Table({table}) maps column(s) absent from the migration: "
+                + ", ".join(extra)
             )
     return violations
 
@@ -304,6 +345,7 @@ def verify_run_workspace(
     report_name: str = "final-verification.json",
     *,
     verify_frontend: bool = True,
+    verify_end_to_end: bool = True,
 ) -> dict[str, object]:
     """Verify promoted sources from a short ASCII-safe workspace.
 
@@ -312,10 +354,28 @@ def verify_run_workspace(
     phase creates an unrelated network-dependent bottleneck and can mask a
     successful backend build.
     """
+    _verify_control_boundary_contract(run_root)
+    if verify_end_to_end:
+        _verify_e2e_semantic_contract(run_root)
     sandbox = prepare_agent_workspace(
         run_root,
         {"task_id": "final-verification", "allowed_write_paths": []},
     )
+    if not verify_end_to_end:
+        # 상위 phase를 다시 수리할 때 이전 E2E 파일이 이미 남아 있을 수 있다.
+        # 아직 재검증 순서가 오지 않은 그 테스트 때문에 wiring 수리가 막히지 않도록,
+        # 복사된 임시 검증 공간에서만 manifest에 등록된 E2E 파일을 제외한다.
+        manifest_path = run_root / "reports" / "run-manifest.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            test_root = (sandbox / "application" / "src" / "test").resolve()
+            for task in manifest.get("implementation_tasks", []):
+                if task.get("task_type") != "integration-test":
+                    continue
+                for relative in task.get("allowed_write_paths", []):
+                    target = (sandbox / str(relative)).resolve()
+                    if target.is_relative_to(test_root) and target.is_file():
+                        target.unlink()
     verification = verify_agent_workspace(sandbox)
     frontend_verification = None
     if (
@@ -337,16 +397,110 @@ def verify_run_workspace(
     return result
 
 
+def _verify_control_boundary_contract(run_root: Path) -> None:
+    """승격된 모든 Control이 호출 Boundary를 다시 참조하지 않는지 확인한다.
+
+    작업별 검사 뒤 다른 수리가 이어져도 최종 소스 조합은 다시 확인해야 한다. 각
+    Control 작업이 이미 저장한 typed sequence와 파일 목록을 그대로 사용하므로 별도
+    추측 규칙이나 새 계약은 필요하지 않다.
+    """
+
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    if not manifest_path.is_file():
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    violations: list[str] = []
+    for task in manifest.get("implementation_tasks", []):
+        if not isinstance(task, dict) or task.get("task_type") != "control":
+            continue
+        context_path = run_root / str(task.get("context_file") or "")
+        context = (
+            json.loads(context_path.read_text(encoding="utf-8"))
+            if context_path.is_file()
+            else {}
+        )
+        violations.extend(
+            control_boundary_dependency_violations(
+                run_root,
+                [str(path) for path in task.get("allowed_write_paths", [])],
+                context.get("sequence", []),
+            )
+        )
+    if violations:
+        raise WorkspaceVerificationError(
+            {
+                "command": ["control-dependency-contract-gate"],
+                "exitCode": 1,
+                "stderr": "\n".join(violations),
+                "testResults": "",
+            }
+        )
+
+
+def _verify_e2e_semantic_contract(run_root: Path) -> None:
+    """Gradle보다 먼저 E2E 파일이 현재 계약과 실제 Spring 구성을 따르는지 확인한다.
+
+    이전 checkpoint의 E2E 파일이 남은 채 상위 코드가 수리되면 Gradle 오류가 엉뚱한
+    production task를 가리킬 수 있다. 먼저 E2E 자체를 검사하면 코딩 에이전트가 그 파일만
+    고치고, 비싼 전체 빌드는 의미 검사를 통과한 뒤 한 번만 실행된다.
+    """
+
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    if not manifest_path.is_file():
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    task = next(
+        (
+            item
+            for item in manifest.get("implementation_tasks", [])
+            if isinstance(item, dict) and item.get("task_type") == "integration-test"
+        ),
+        None,
+    )
+    if task is None:
+        return
+    output = next(
+        (
+            run_root / str(path)
+            for path in task.get("allowed_write_paths", [])
+            if str(path).endswith(".java")
+        ),
+        None,
+    )
+    context_path = run_root / str(task.get("context_file") or "")
+    context = (
+        json.loads(context_path.read_text(encoding="utf-8"))
+        if context_path.is_file()
+        else {}
+    )
+    contract = context.get("semanticContract")
+    violations = e2e_contract_violations(
+        output or run_root / "missing-e2e-test.java",
+        contract if isinstance(contract, dict) else None,
+    )
+    if violations:
+        raise WorkspaceVerificationError(
+            {
+                "command": ["e2e-semantic-contract-gate"],
+                "exitCode": 1,
+                "stderr": "\n".join(violations),
+                "testResults": "",
+            }
+        )
+
+
 def verify_agent_workspace(
     sandbox: Path,
     task_type: str = "",
     allowed_write_paths: list[str] | None = None,
+    *,
+    force_rerun: bool = False,
 ) -> dict[str, object]:
     if task_type == "frontend-implementation":
         return verify_frontend_workspace(sandbox)
     executable = gradle_command()
     command = task_verification_command(
-        executable, task_type, allowed_write_paths
+        executable, task_type, allowed_write_paths, force_rerun=force_rerun
     )
     started = time.monotonic()
     # Windows workers occasionally fail before Gradle reaches the project when
@@ -387,16 +541,21 @@ def task_verification_command(
     executable: list[str],
     task_type: str = "",
     allowed_write_paths: list[str] | None = None,
+    *,
+    force_rerun: bool = False,
 ) -> list[str]:
-    """Use a narrow task gate; phase/final verification keeps the full gate."""
+    """작업별로 필요한 Gradle 검사만 고르고 재검증이면 캐시를 우회한다."""
     if not task_type or allowed_write_paths is None:
-        return [
+        command = [
             *executable,
             "compileJava",
             "bootJar",
             "test",
             "--build-cache",
         ]
+        if force_rerun:
+            command.append("--rerun-tasks")
+        return command
 
     test_names = sorted(
         {
@@ -414,6 +573,11 @@ def task_verification_command(
     # These workspaces share Gradle's user home, so allowing the daemon to
     # remain alive avoids starting a one-shot JVM for every agent task.
     command.append("--build-cache")
+    # 같은 임시 경로를 지우고 다시 만드는 재시도에서는 Windows의 짧은 파일 시간 간격과
+    # Gradle daemon의 이전 snapshot 때문에 바뀐 소스를 UP-TO-DATE로 오판할 수 있다.
+    # 첫 시도는 캐시를 쓰되, 재시도와 내부 수리는 실제 compiler를 반드시 다시 실행한다.
+    if force_rerun:
+        command.append("--rerun-tasks")
     return command
 
 
@@ -590,6 +754,81 @@ def boundary_adapter_contract_violations(
             violations.append(
                 f"{normalized}: Boundary adapter discards a required sequence flow with `return null`; "
                 "delegate/configure the exact contract result instead"
+            )
+    return violations
+
+
+def control_boundary_dependency_violations(
+    sandbox: Path,
+    allowed_write_paths: list[str],
+    sequence: object = None,
+) -> list[str]:
+    """Control이 자신을 호출한 Boundary를 다시 호출하는 순환 구조를 막는다.
+
+    typed sequence의 ``return`` 메시지는 Java 메서드 호출이 아니다. Control에서 Boundary로
+    향하는 별도의 ``sync`` 또는 ``async`` 메시지가 있을 때만 그 Boundary 의존성을 허용한다.
+    이 검사는 도메인 이름을 가정하지 않고 참여자 종류와 메시지 방향만 사용한다.
+    """
+
+    diagrams = sequence if isinstance(sequence, list) else [sequence]
+    boundary_names: set[str] = set()
+    allowed_outgoing: set[str] = set()
+    for diagram in diagrams:
+        if not isinstance(diagram, dict):
+            continue
+        participants = [
+            item
+            for item in diagram.get("participants", diagram.get("Participants", []))
+            if isinstance(item, dict)
+        ]
+        by_alias = {
+            str(item.get("alias") or item.get("name") or ""): item
+            for item in participants
+        }
+        for item in participants:
+            if str(item.get("kind", "")).casefold() == "boundary":
+                boundary_names.add(
+                    str(item.get("source_class") or item.get("name") or "")
+                )
+        for message in diagram.get("messages", diagram.get("Messages", [])):
+            if not isinstance(message, dict):
+                continue
+            source = by_alias.get(str(message.get("source", "")), {})
+            target = by_alias.get(str(message.get("target", "")), {})
+            if (
+                str(message.get("type", "")).casefold() in {"sync", "async"}
+                and str(source.get("kind", "")).casefold() == "control"
+                and str(target.get("kind", "")).casefold() == "boundary"
+            ):
+                allowed_outgoing.add(
+                    str(target.get("source_class") or target.get("name") or "")
+                )
+
+    violations: list[str] = []
+    for relative in allowed_write_paths:
+        normalized = relative.replace("\\", "/")
+        if "/src/main/" not in f"/{normalized}" or not normalized.endswith("Service.java"):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        source = java_code_without_comments_and_strings(
+            path.read_text(encoding="utf-8")
+        )
+        used = {
+            name
+            for name in boundary_names
+            if name and re.search(rf"\b{re.escape(name)}\b", source, re.IGNORECASE)
+        }
+        used.update(
+            re.findall(r"(?m)^\s*import\s+[\w.]+\.bce\.([A-Za-z_$]\w*Boundary)\s*;", source)
+        )
+        unexpected = sorted(used - allowed_outgoing)
+        if unexpected:
+            violations.append(
+                f"{normalized}: Control must not depend on its calling Boundary: "
+                + ", ".join(unexpected)
+                + "; a return message is not a reverse method call"
             )
     return violations
 
@@ -790,11 +1029,16 @@ def read_gradle_test_failures(sandbox: Path) -> str:
 
 
 def _truncate_log_snippet(text: str, max_chars: int = 8000) -> str:
-    return text[-max_chars:] if len(text) > max_chars else text
+    if len(text) <= max_chars:
+        return text
+    marker = "\n... [verification output truncated] ...\n"
+    remaining = max_chars - len(marker)
+    head = remaining // 2
+    return text[:head] + marker + text[-(remaining - head):]
 
 
 def summarize_test_failure(detail: str) -> str:
-    """Keep causal exception lines, rather than only the end of a long trace."""
+    """긴 stack trace에서 실제 원인과 애플리케이션 호출 위치를 함께 남긴다."""
     lines = [line.rstrip() for line in detail.splitlines() if line.strip()]
     causal = [
         line
@@ -803,10 +1047,20 @@ def summarize_test_failure(detail: str) -> str:
             r"(?:Caused by:|Suppressed:|Error creating bean|Requested bean is currently in creation|"
             r"NoSuchBeanDefinitionException|NoUniqueBeanDefinitionException|UnsatisfiedDependencyException|"
             r"BeanCurrentlyInCreationException|AnnotationException|mappedBy|"
+            r"JdbcTypeRecommendationException|Could not determine recommended JdbcType|"
             r"does not exist in (?:the )?target entity|HibernateException)",
             line,
         )
     ]
+    # 예외 종류만 남기면 실제로 실패한 EasyDep 클래스가 사라져 수리 작업을 잘못
+    # 선택하게 된다. 프레임워크 내부 호출은 제외하고 애플리케이션 stack frame을
+    # 함께 보존한다.
+    application_frames = [
+        line
+        for line in lines
+        if re.search(r"\bat (?:app//)?(?!org\.|java\.|jdk\.|worker\.)[A-Za-z_]", line)
+    ]
+    causal.extend(application_frames[:12])
     selected = causal or lines[:30]
     selected.extend(lines[-8:])
     return _truncate_log_snippet("\n".join(dict.fromkeys(selected)), max_chars=8000)

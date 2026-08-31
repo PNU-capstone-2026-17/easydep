@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 _SPRING_BOOT3_LEGACY_IMPORTS = {
     "org.springframework.boot.web.server.": "org.springframework.boot.test.web.server.",
     "javax.persistence.": "jakarta.persistence.",
@@ -12,6 +11,19 @@ _SPRING_BOOT3_LEGACY_IMPORTS = {
     "javax.annotation.": "jakarta.annotation.",
     "javax.transaction.": "jakarta.transaction.",
 }
+
+_JAVA_COMMENT_OR_STRING = re.compile(
+    r'//[^\r\n]*|/\*.*?\*/|"""[\s\S]*?"""|"(?:\\.|[^"\\\r\n])*"|\'(?:\\.|[^\'\\\r\n])*\'',
+    re.DOTALL,
+)
+
+
+def java_code_without_comments_and_strings(source: str) -> str:
+    """주석과 문자열을 공백으로 가려 실제 Java 코드 위치만 남긴다."""
+
+    return _JAVA_COMMENT_OR_STRING.sub(
+        lambda match: re.sub(r"[^\r\n]", " ", match.group()), source
+    )
 
 
 def repair_spring_boot3_test_compatibility(path: Path) -> bool:
@@ -414,8 +426,31 @@ def e2e_contract_violations(
             f"Expected at least {minimum_tests} independent E2E scenarios, found {test_count}"
         )
 
+    annotation_forbidden = {
+        "test bean replacement": (
+            "@TestConfiguration",
+            "@Configuration",
+            "@Bean",
+            "@Primary",
+            "@MockBean",
+            "@MockitoBean",
+        ),
+    }
+    code = java_code_without_comments_and_strings(source)
+    for label, tokens in annotation_forbidden.items():
+        found = [
+            token
+            for token in tokens
+            if re.search(
+                rf"(?m)^\s*(?:@[\w.]+(?:\([^\r\n)]*\))?\s+)*"
+                rf"@(?:[\w.]+\.)?{re.escape(token[1:])}\b",
+                code,
+            )
+        ]
+        if found:
+            violations.append(f"Forbidden {label}: {', '.join(found)}")
+
     forbidden = {
-        "test bean configuration": ("@TestConfiguration", "@MockBean", "@MockitoBean"),
         "reflection-based gateway access": ("java.lang.reflect", ".getMethod("),
         "weak dual-outcome assertion": (
             "accept both",

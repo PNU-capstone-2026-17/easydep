@@ -451,6 +451,9 @@ def _run_workflow(
                 run_root, spec, state, audit, verification, conformance
             )
         elif state.get("status") != "NEEDS_INPUT":
+            repaired = _continue_after_incomplete_audit(run_root, spec, audit)
+            if repaired is not None:
+                return repaired
             state["status"] = "NEEDS_PLANNER"
         state["verification"] = verification.get("status")
         state["audit"] = "reports/implementation-completion-audit.json"
@@ -500,7 +503,11 @@ def _run_workflow(
             continue
         state["currentPhase"] = phase_id
         worker_limit = max(1, int(settings.implementation_task_parallelism))
-        for task_batch in _phase_task_batches(phase_id, phase_tasks):
+        for task_batch in _phase_task_batches(
+            phase_id,
+            phase_tasks,
+            schema_first=_source_conformance_repair_active(run_root),
+        ):
             failures = _execute_task_batch(
                 run_root,
                 state,
@@ -628,6 +635,10 @@ def _run_workflow(
             run_root, spec, final_state, audit, verification, conformance
         )
     elif final_state.get("status") != "NEEDS_INPUT":
+        if not final_state.get("nextRunnableTasks"):
+            repaired = _continue_after_incomplete_audit(run_root, spec, audit)
+            if repaired is not None:
+                return repaired
         final_state["status"] = (
             "READY" if final_state.get("nextRunnableTasks") else "NEEDS_PLANNER"
         )
@@ -652,9 +663,12 @@ def _run_workflow(
 
 
 def _phase_task_batches(
-    phase_id: str, tasks: list[dict[str, object]]
+    phase_id: str,
+    tasks: list[dict[str, object]],
+    *,
+    schema_first: bool = False,
 ) -> list[list[dict[str, object]]]:
-    """Return dependency-safe batches while preserving manifest task order."""
+    """의존 순서를 지키면서 manifest 순서대로 실행 묶음을 만든다."""
     if len(tasks) < 2:
         return [tasks]
     if not _write_paths_are_disjoint(tasks):
@@ -665,14 +679,38 @@ def _phase_task_batches(
         entities = [
             task for task in tasks if task.get("taskType") == "persistence-entities"
         ]
-        dependents = [task for task in tasks if task not in entities]
-        # Entity tasks are file-disjoint and intentionally run concurrently;
-        # repositories/mapping/schema remain behind the entity barrier.
-        batches = [entities] if entities else []
+        schemas = [
+            task for task in tasks if task.get("taskType") == "persistence-schema"
+        ]
+        dependents = [
+            task
+            for task in tasks
+            if task not in entities and (not schema_first or task not in schemas)
+        ]
+        # Entity 작업은 파일이 겹치지 않아 함께 실행할 수 있다. 최초 생성에서는
+        # repository·mapping·schema를 Entity가 끝난 뒤 실행한다.
+        # ERD 최종 검사에서 Entity와 migration을 함께 고칠 때는 schema를 먼저 바꾼다.
+        # 그래야 Entity 검증기가 제거해야 할 옛 migration 열을 다시 추가하지 않는다.
+        batches: list[list[dict[str, object]]] = []
+        if schema_first and schemas:
+            batches.append(schemas)
+        if entities:
+            batches.append(entities)
         if dependents:
             batches.append(dependents)
         return batches
     return [[task] for task in tasks]
+
+
+def _source_conformance_repair_active(run_root: Path) -> bool:
+    """현재 수리가 ERD와 구현 소스를 함께 맞추는 작업인지 확인한다."""
+
+    path = run_root / "reports" / "repair-plan.json"
+    if not path.is_file():
+        return False
+    plan = _read_json(path)
+    entries = [entry for entry in plan.get("entries", []) if isinstance(entry, dict)]
+    return bool(entries and entries[-1].get("failedTaskId") == "source-design-conformance")
 
 
 def _write_paths_are_disjoint(tasks: list[dict[str, object]]) -> bool:
@@ -730,7 +768,7 @@ def _execute_task_batch(
         task: dict[str, object], future: Future[dict[str, object]]
     ) -> None:
         try:
-            future.result()
+            result = future.result()
         except Exception as error:
             task["status"] = "FAILED"
             task["lastError"] = str(error)
@@ -744,6 +782,11 @@ def _execute_task_batch(
                 run_root, str(task["taskId"])
             )
             task["lastError"] = None
+            verification = result.get("verification")
+            if result.get("handoffRequired") and isinstance(verification, dict):
+                # 현재 작업 산출물은 checkpoint로 보존한다. 다만 다른 담당 파일의 오류는
+                # 다음 통합 검증까지 미루지 않고 즉시 기존 수리 계획기로 넘긴다.
+                failures.append((task, WorkspaceVerificationError(verification)))
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
 
@@ -798,13 +841,23 @@ def _execute_task_batch(
                 for _ in done_tasks:
                     submit_next(pool)
 
-    if failures:
-        failed_task, _ = failures[0]
+    blocking_failures = [
+        item
+        for item in failures
+        if not (
+            isinstance(item[1], WorkspaceVerificationError)
+            and item[1].evidence.get("upstreamFailureDeferred")
+        )
+    ]
+    if blocking_failures:
+        failed_task, _ = blocking_failures[0]
         state["status"] = "FAILED"
         state["blockingReason"] = f"Task failed: {failed_task['taskId']}"
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
-    return failures
+    # 실제 task 실패를 먼저 처리한다. 담당 이관은 현재 산출물을 성공 checkpoint로
+    # 보존한 채 이어서 처리하는 비차단 진단이다.
+    return blocking_failures + [item for item in failures if item not in blocking_failures]
 
 
 def _verify_phase(
@@ -830,6 +883,7 @@ def _verify_phase(
             run_root,
             report_name=f"phase-{phase_id}-verification.json",
             verify_frontend=phase_id == "frontend",
+            verify_end_to_end=phase_id == "end-to-end",
         )
     return verifier(run_root)
 
@@ -895,6 +949,46 @@ def _continue_after_verification_failure(
     state["blockingReason"] = None
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
     return state
+
+
+def _continue_after_incomplete_audit(
+    run_root: Path,
+    spec: JobSpec,
+    audit: dict[str, object],
+) -> dict[str, object] | None:
+    """마지막 감사가 기존 task의 부족한 산출물을 찾으면 그 task부터 다시 실행한다.
+
+    감사 결과에는 이미 담당 ``task_id``가 들어 있다. 새 planner나 사용자 선택을
+    요구하지 않고, 해당 task에 감사 근거를 붙인 뒤 기존 승인 범위에서 자동 수리한다.
+    아직 구현 task가 없는 새 종류의 작업만 기존 ``NEEDS_PLANNER`` 상태로 남는다.
+    """
+
+    backlog = audit.get("backlog")
+    if not isinstance(backlog, list):
+        return None
+    for item in backlog:
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("task_id") or "")
+        if not task_id:
+            continue
+        repair = schedule_cross_phase_repair(
+            run_root,
+            task_id,
+            {
+                "command": ["completion-audit"],
+                "exitCode": 1,
+                "stderr": json.dumps(item, ensure_ascii=False, indent=2),
+            },
+        )
+        if repair is None:
+            continue
+        state = plan_workflow(run_root, spec)
+        state["repairPlan"] = "reports/repair-plan.json"
+        state["blockingReason"] = None
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+        return state
+    return None
 
 
 def workflow_status(run_root: Path) -> dict[str, object]:

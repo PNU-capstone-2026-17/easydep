@@ -69,12 +69,20 @@ def _observed_port(application: Path, settings: dict[str, Any]) -> int | None:
             _read(application / "Dockerfile"),
         )
     }
-    if configured_port is not None and exposed and configured_port not in exposed:
+    docker_source = _read(application / "Dockerfile")
+    env_match = re.search(
+        r"(?im)^\s*ENV\s+SERVER_PORT\s*=\s*(\d+)\s*$",
+        docker_source,
+    )
+    env_port = int(env_match.group(1)) if env_match else None
+    observed_port = configured_port if configured_port is not None else env_port
+    if observed_port is not None and exposed and observed_port not in exposed:
         raise ValueError(
-            "Dockerfile EXPOSE and application.yml server.port describe different ports"
+            "Dockerfile EXPOSE and the Spring Boot server port describe different ports"
         )
     # EXPOSE만으로 애플리케이션의 실제 listen port를 안다고 간주하지 않는다.
-    return configured_port
+    # SERVER_PORT는 Spring Boot가 직접 읽는 실행 설정이므로 관찰 근거로 사용할 수 있다.
+    return observed_port
 
 
 def _joined_path(base: str, leaf: str) -> str:

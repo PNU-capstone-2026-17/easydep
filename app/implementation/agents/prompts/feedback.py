@@ -29,9 +29,9 @@ E2E semantic contract (immutable):
 ```json
 {json.dumps(semantic_contract, ensure_ascii=False, indent=2)}
 ```
-For an E2E repair, preserve every existing passing test and append or correct the
-missing scenario tests. Do not replace the file with a smaller sample and do not
-remove scenarios that are not named in the current diagnostic.
+For an E2E repair, preserve every scenario in this contract, but remove obsolete
+error-only cases and test bean replacements that are not in it. Consolidate the
+required operations into the smallest coherent set of real user-flow tests.
         """
     api_contract_text = ""
     if api_contracts:
@@ -298,8 +298,32 @@ def verification_failure_hints(output: str) -> str:
         )
     if "NotAMockException" in output or "Argument passed to verify() is of type" in output:
         hints.append(
-            "- Mockito verify requires a mock collaborator. Never verify the real service "
-            "under test; call it normally and assert state or verify its mocked dependencies."
+            "- Mockito calls require an actual mock. In an E2E test, remove that stubbing or "
+            "verification and drive the real application through public HTTP input. In an owned "
+            "unit test, initialize only the collaborator that the test intentionally replaces."
+        )
+    if "expected a single matching bean to replace but found" in output:
+        hints.append(
+            "- Spring found multiple candidates for a test replacement. Remove the replacement "
+            "from the E2E test and use the production graph through HTTP; do not add another bean."
+        )
+    if "bean missing" in output and "expected: <true> but was: <false>" in output:
+        hints.append(
+            "- A component-scanned @Service may use its class-based default bean name. Do "
+            "not add a duplicate @Bean only to satisfy containsBean(\"name\"). Update the "
+            "owned context smoke test to resolve the required interface by type instead."
+        )
+    if "Control must not depend on its calling Boundary" in output:
+        hints.append(
+            "- A Boundary -> Control request is one-way delegation. Remove the Boundary "
+            "field and constructor argument from the Control service, and implement the "
+            "Control operation directly or through an explicitly outgoing Entity/Gateway call. "
+            "Do not replace the Boundary type with Object or keep a test that verifies the reverse call."
+        )
+    if "Forbidden test bean replacement" in output:
+        hints.append(
+            "- Remove every test-only bean and mock replacement. The E2E test must use the "
+            "same Spring application graph that production starts."
         )
     if "InvalidUseOfMatchersException" in output or "matchers expected" in output:
         hints.append(
@@ -307,15 +331,14 @@ def verification_failure_hints(output: str) -> str:
             "argument in that invocation with a matcher. For example, use "
             "verify(timer).startTimer(eq(30), anyString()), not startTimer(30, anyString())."
         )
-    if "Forbidden test bean configuration" in output or any(
-        marker in output for marker in ("@mockbean", "@mockitobean", "@testconfiguration")
+    if "Forbidden test bean replacement" in output or any(
+        marker in output.lower()
+        for marker in ("@mockbean", "@mockitobean", "@testconfiguration")
     ):
         hints.append(
-            "- Forbidden test bean configuration: this is a real E2E test, so remove "
-            "@MockBean, @MockitoBean, @TestConfiguration, @Bean, and @Primary from the "
-            "test. Do not replace application beans or enable bean overriding. Use the real "
-            "Spring application graph and autowire only concrete production adapters or "
-            "repositories already present in the generated source."
+            "- Forbidden test bean replacement: remove @MockBean, @MockitoBean, "
+            "@TestConfiguration, custom @Bean, and @Primary declarations. Use the real "
+            "application graph and public HTTP input."
         )
     if "ConnectionFails_HandlesFailure" in output and "Wanted but not invoked" in output:
         hints.append(

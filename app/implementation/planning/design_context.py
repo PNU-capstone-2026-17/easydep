@@ -57,21 +57,6 @@ STOP_WORDS = {
     "manager", "controller", "service", "get", "set", "is", "on", "log",
     "string", "boolean", "int", "float", "void", "message", "record",
 }
-HTTP_STATUS_ENUMS = {
-    "BAD_REQUEST": 400,
-    "UNAUTHORIZED": 401,
-    "FORBIDDEN": 403,
-    "NOT_FOUND": 404,
-    "CONFLICT": 409,
-    "UNPROCESSABLE_ENTITY": 422,
-    "TOO_MANY_REQUESTS": 429,
-    "INTERNAL_SERVER_ERROR": 500,
-    "BAD_GATEWAY": 502,
-    "SERVICE_UNAVAILABLE": 503,
-    "GATEWAY_TIMEOUT": 504,
-}
-
-
 def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
     bce = _read(spec.inputs.get("bceClass"))
     erd = _read(spec.inputs.get("erd"))
@@ -975,19 +960,11 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
     """Plan a domain-neutral real HTTP flow test or report executable gaps."""
     ir = build_implementation_ir(spec, run_root)
     gaps = detect_e2e_design_gaps(spec, run_root)
-    blocking_gaps = [
-        gap for gap in gaps
-        if str(gap.get("code") or "") != "OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED"
-    ]
+    blocking_gaps = gaps
     gap_report = {
         "schemaVersion": "implementation-design-gaps/v1alpha1",
         "phase": "end-to-end",
-        # A missing executable error branch is retained as an audit warning.
-        # It must not prevent generation of the real HTTP test for the
-        # successful and already implemented paths. Structural gaps (missing
-        # production outputs or adapters) remain blocking because no test can
-        # be generated safely without those files.
-        "status": "NEEDS_INPUT" if blocking_gaps else ("WARNING" if gaps else "READY"),
+        "status": "NEEDS_INPUT" if blocking_gaps else "READY",
         "gaps": gaps,
     }
     gap_path = run_root / "reports" / "design-gaps" / "end-to-end-flow.json"
@@ -1040,7 +1017,9 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
         "statuses": sorted({item.status for item in ir.e2e_scenarios}),
         "repositories": repositories,
         "gatewayAdapters": gateway_adapters,
-        "minimumTests": max(1, len(ir.e2e_scenarios)),
+        # 하나의 사용자 흐름에서 여러 API를 순서대로 호출할 수 있다. API 응답별로
+        # 테스트 메서드를 복제하지 않고 실제 애플리케이션 연결을 확인하는 것이 목적이다.
+        "minimumTests": 1,
         "scenarios": scenarios,
         "persistencePaths": persistence_paths,
     }
@@ -1192,33 +1171,6 @@ def detect_e2e_design_gaps(spec: JobSpec, run_root: Path) -> list[dict[str, str]
                 "requiredAction": "Run and verify the API adapter phase.",
             })
 
-    expected_error_statuses = {
-        scenario.status for scenario in ir.e2e_scenarios if scenario.status >= 400
-    }
-    web_adapter_root = package_root / "adapter" / "in" / "web"
-    web_adapter_sources = (
-        sorted(web_adapter_root.rglob("*.java")) if web_adapter_root.is_dir() else []
-    )
-    implemented_error_statuses = _implemented_http_statuses(web_adapter_sources)
-    missing_error_statuses = sorted(expected_error_statuses - implemented_error_statuses)
-    if missing_error_statuses:
-        expected_text = ", ".join(str(status) for status in missing_error_statuses)
-        implemented_text = ", ".join(
-            str(status) for status in sorted(implemented_error_statuses) if status >= 400
-        ) or "none"
-        gaps.append({
-            "code": "OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED",
-            "source": "OpenAPI/BCE",
-            "evidence": (
-                f"The sequence-selected OpenAPI error outcome(s) {expected_text} have no "
-                f"executable web-adapter branch (implemented error statuses: {implemented_text})."
-            ),
-            "requiredAction": (
-                "Model each error outcome in the BCE Control return/error contract and "
-                "sequence alternative, then implement its explicit HTTP response mapping."
-            ),
-        })
-
     adapter_root = package_root / "adapter" / "out"
     adapter_sources = list(adapter_root.rglob("*.java")) if adapter_root.is_dir() else []
     for gateway in ir.gateways:
@@ -1249,33 +1201,6 @@ def detect_e2e_design_gaps(spec: JobSpec, run_root: Path) -> list[dict[str, str]
             "requiredAction": "Run and verify the ERD persistence phase.",
         })
     return gaps
-
-
-def _implemented_http_statuses(sources: list[Path]) -> set[int]:
-    """Return HTTP statuses with an executable Spring web-adapter mapping."""
-    statuses: set[int] = set()
-    for source in sources:
-        text = source.read_text(encoding="utf-8")
-        if re.search(r"\bResponseEntity\s*\.\s*ok\s*\(", text):
-            statuses.add(200)
-        if re.search(r"\bResponseEntity\s*\.\s*created\s*\(", text):
-            statuses.add(201)
-        if re.search(r"\bResponseEntity\s*\.\s*noContent\s*\(", text):
-            statuses.add(204)
-        if re.search(r"\bResponseEntity\s*\.\s*notFound\s*\(", text):
-            statuses.add(404)
-        statuses.update(
-            int(value)
-            for value in re.findall(
-                r"\bResponseEntity\s*\.\s*status\s*\(\s*(\d{3})\s*\)",
-                text,
-            )
-        )
-        statuses.update(
-            status for name, status in HTTP_STATUS_ENUMS.items()
-            if re.search(rf"\bHttpStatus\s*\.\s*{name}\b", text)
-        )
-    return statuses
 
 
 def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
@@ -1558,18 +1483,19 @@ Rules:
   `jakarta.servlet`, `jakarta.annotation`, and `jakarta.transaction`; never import their
   legacy `javax.*` counterparts in the generated test or test configuration.
 - Do not add an ad-hoc dependency or downgrade the Spring Boot version to make a stale import compile.
-- Do not mock application Controls, Boundary adapters, repositories, or the Spring context.
-- Use the production application graph exactly as wired. Never declare `@TestConfiguration`,
-  `@Bean`, `@MockBean`, `@MockitoBean`, `@Primary`, or enable bean-definition overriding.
+- Use the production application graph exactly as wired. Do not mock Controls, Boundary adapters,
+  repositories, or the Spring context. Never declare `@TestConfiguration`, `@Bean`, `@MockBean`,
+  `@MockitoBean`, `@Primary`, or enable bean-definition overriding.
 - Autowire concrete Gateway adapters and at least one Spring Data repository listed in the semantic
   contract. Drive external outcomes only through their public deterministic seams; do not replace beans.
 - Declare Gateway fields as their concrete adapter classes. Never use reflection or reduce them
   to only the Gateway interface when a configuration seam is required.
 - Use `@DirtiesContext(classMode = BEFORE_EACH_TEST_METHOD)` when isolated state is needed.
   Never create duplicate application, Control, Boundary, Entity, or Gateway beans.
-- Implement every scenario in the generated semantic contract below with at least
-  {minimum_tests} independent `@Test` methods. Use real HTTP through `TestRestTemplate` or
-  `MockMvc`; assert the exact response status and relevant response fields for each scenario.
+- Cover every scenario in the generated semantic contract below using the smallest coherent set
+  of user-flow tests, with at least {minimum_tests} `@Test` method. One test may call several API
+  operations in sequence when that is how the user completes the use case. Use real HTTP through
+  `TestRestTemplate` or `MockMvc`; assert each operation's exact response status and relevant fields.
 - Each semantic-contract row is immutable: in that row's test, invoke exactly the listed HTTP
   method and path, then assert exactly its listed status. Do not infer a conventional status
   (for example, do not substitute `201 Created` for a documented `200 OK`) and do not append
@@ -1716,6 +1642,11 @@ Rules:
   natural-key Java types otherwise.
 - Map every ERD scalar column with its exact snake_case column name. Rename a reserved identifier
   only when required by H2/SQL and use the same normalized name in the migration.
+- `@Column` alone supports JPA basic types and `@Enumerated` enums, not an arbitrary BCE record or
+  value object. A structured value needs an explicit mapping that matches the ERD SQL type: map it to
+  persistence scalar fields, use a compatible `AttributeConverter`, use a JSON mapping only for a JSON
+  column, or use an embeddable persistence value when the ERD supplies its component columns. Preserve
+  null and value round-trips; never hide the field with `@Transient` or rely on a comment as a mapping.
 - Implement relationship ownership from the ERD cardinality and foreign-key direction. Add a
   bidirectional helper only when both navigation directions are represented in the contracts.
 - Keep the public constructor that accepts the entity's scalar ERD/BCE fields stable. When a
@@ -1942,59 +1873,6 @@ def select_openapi_operations(control: str, body: str, operations: list[str]) ->
     return "\n\n".join(selected) if selected else "# No directly matched OpenAPI operation"
 
 
-def slice_sequence(source: str, names: set[str]) -> str:
-    """Return messages involving the requested participants.
-
-    PlantUML sequence messages use aliases (``SignInB``), while the BCE
-    contract uses the participant's display name (``SignInBoundary``).  The
-    previous implementation only searched the raw message for the display
-    name, so a perfectly valid Boundary -> Control flow was reduced to
-    ``No directly matched sequence messages``.  That made the adapter prompt
-    explicitly forbid delegation and the generated adapter returned ``null``
-    at runtime.  Resolve participant aliases before selecting messages.
-    """
-    lines = source.splitlines()
-    aliases: dict[str, set[str]] = {name: {name} for name in names}
-    participant_pattern = re.compile(
-        r"^\s*(?:actor|boundary|control|entity|participant|database)\s+"
-        r"(?:\"(?P<quoted>[^\"]+)\"\s+as\s+(?P<quoted_alias>[A-Za-z_]\w*)|"
-        r"(?P<plain>[A-Za-z_]\w*)(?:\s+as\s+(?P<plain_alias>[A-Za-z_]\w*))?)"
-    )
-    for raw in lines:
-        match = participant_pattern.match(raw)
-        if not match:
-            continue
-        display = match.group("quoted") or match.group("plain")
-        alias = match.group("quoted_alias") or match.group("plain_alias") or display
-        if display in aliases:
-            aliases[display].add(alias)
-    message_tokens = {alias for values in aliases.values() for alias in values}
-    selected: list[str] = []
-    active_blocks: list[str] = []
-    emitted_blocks: set[str] = set()
-    for raw in lines:
-        stripped = raw.strip()
-        if stripped.startswith("alt "):
-            active_blocks.append(stripped)
-            continue
-        if stripped.startswith("else ") and active_blocks:
-            active_blocks[-1] = stripped
-            continue
-        if stripped == "end" and active_blocks:
-            active_blocks.pop()
-            continue
-        if any(
-            re.search(rf"\b{re.escape(token)}\b", raw)
-            for token in message_tokens
-        ) and re.search(r"(?:->|-->)", raw):
-            for block in active_blocks:
-                if block not in emitted_blocks:
-                    selected.append(f"' enclosing branch: {block}")
-                    emitted_blocks.add(block)
-            selected.append(stripped)
-    return "\n".join(selected) if selected else "' No directly matched sequence messages"
-
-
 def slice_erd(source: str, entity_names: set[str]) -> str:
     if not entity_names:
         return "' No directly related ERD entity"
@@ -2219,7 +2097,12 @@ Implement the application behavior for `{context['control']}` using only the sco
 Rules:
 - Write only these files: {', '.join(f'`{path}`' for path in allowed)}.
 - Treat `{spec.base_package}.bce`, `{spec.base_package}.api`, and `{spec.base_package}.api.model` as immutable generated contracts.
-- Generated BCE Controls are application port interfaces. Implement the matching Control interface in the requested service and inject other Control/Boundary ports through its constructor.
+- Generated BCE Controls are application port interfaces. Implement the matching Control interface
+  in the requested service. A Boundary -> Control request means the Boundary calls this service;
+  the return message is not a reverse call. Do not inject or call that Boundary from the Control.
+  Inject only an explicitly outgoing Control or Gateway dependency shown by a non-return sequence message.
+  Do not keep a compatibility `Object` constructor or an ignored Boundary argument. When there is no
+  outgoing dependency, use a no-argument constructor and test the Control's observable contract directly.
 - Produce valid Java syntax only. In particular, use `//` or `/* */` comments, never `#` comments.
 - Use the exact Java signatures below. Do not invent a signature to work around a sequence conflict.
 - Never call a method absent from the contracts or assign the result of a `void` method. Mockito tests must not use `when(...).thenReturn(...)` for `void` methods.

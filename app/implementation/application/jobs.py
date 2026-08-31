@@ -48,20 +48,10 @@ _IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
     # API 추적, 타입, 응답 finding은 보고서에 남긴 채 구현을 진행할 수 있다. 다만 HTTP
     # operation이 하나도 없으면 구현할 endpoint가 없으므로 작업 자체를 시작할 수 없다.
     "erd.surrogate-key-collides",
-    "class.contract-types-exist",
 })
 _OPENAPI_HTTP_METHODS = frozenset({
     "delete", "get", "head", "options", "patch", "post", "put", "trace",
 })
-_JAVA_CONTRACT_TYPES = frozenset({
-    "String", "Object", "boolean", "Boolean", "byte", "Byte", "char", "Character",
-    "short", "Short", "int", "Integer", "long", "Long", "float", "Float", "double",
-    "Double", "void", "Void", "List", "Set", "Map", "Collection", "Iterable",
-    "Optional", "Page", "UUID", "Date", "LocalDate", "LocalDateTime", "OffsetDateTime",
-    "LocalTime", "Instant", "BigDecimal",
-})
-
-
 def _now() -> str:
     """작업 기록에 사용할 현재 UTC 시각을 ISO 8601 문자열로 반환한다."""
     return datetime.now(UTC).isoformat()
@@ -80,70 +70,6 @@ def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bo
         if isinstance(finding, dict)
         for rule_id in _IMPLEMENTATION_BLOCKING_DESIGN_RULES
     )
-
-
-def _missing_bce_contract_types(class_diagram: object) -> list[str]:
-    """BCE method signature에서 사용했지만 다이어그램에 선언하지 않은 타입을 찾는다.
-
-    요청 DTO가 빠진 상태로 OpenAPI를 만들면 구체적인 타입 대신 ``Object``가 될 수 있다.
-    그러면 API adapter가 HTTP 요청을 Control 입력으로 변환하는 방법을 알 수 없으므로,
-    LLM 구현 작업을 시작하기 전에 누락된 이름을 알려 준다.
-    """
-    source = str(class_diagram or "")
-    declarations = set(re.findall(
-        r"(?im)^\s*(?:class|interface|entity|enum)\s+"
-        r"(?:\"[^\"]+\"\s+as\s+)?([A-Za-z_]\w*)",
-        source,
-    ))
-    if not declarations:
-        return []
-    missing: set[str] = set()
-    in_class = False
-    for raw_line in source.splitlines():
-        line = raw_line.strip()
-        if line.startswith(("class ", "interface ", "entity ")):
-            in_class = True
-            continue
-        if in_class and line == "}":
-            in_class = False
-            continue
-        if not in_class or not line.startswith(("+", "-", "#", "~")) or ":" not in line:
-            continue
-        # 필드, parameter, return type이 적힌 콜론 오른쪽만 검사한다. 메서드 이름이나
-        # 설명에 우연히 들어간 대문자 단어를 타입으로 잘못 판단하지 않기 위해서다.
-        type_text = line.split(":", 1)[1]
-        for token in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", type_text):
-            if token not in declarations and token not in _JAVA_CONTRACT_TYPES:
-                missing.add(token)
-    return sorted(missing)
-
-
-def _append_bce_contract_type_report(
-    readiness: dict[str, Any], class_diagram: object
-) -> dict[str, Any]:
-    """누락된 BCE 타입을 구현 준비도 보고서에 추가한다."""
-    missing = _missing_bce_contract_types(class_diagram)
-    if not missing:
-        return readiness
-    finding = (
-        "BCE method signatures reference undeclared type(s): "
-        + ", ".join(missing)
-        + " — declare the type in the class diagram before implementation "
-        "[class.contract-types-exist]"
-    )
-    result = {**readiness, "status": "NEEDS_INPUT"}
-    result["findings"] = [*list(readiness.get("findings") or []), {
-        "stage": "class_diagram", "finding": finding,
-    }]
-    stages = [dict(item) for item in readiness.get("stages") or [] if isinstance(item, dict)]
-    stage = next((item for item in stages if item.get("stage") == "class_diagram"), None)
-    if stage is None:
-        stages.append({"stage": "class_diagram", "status": "NEEDS_INPUT", "findings": [finding]})
-    else:
-        stage["status"] = "NEEDS_INPUT"
-        stage["findings"] = [*list(stage.get("findings") or []), finding]
-    result["stages"] = stages
-    return result
 
 
 def _has_rendered_openapi_operation(api_spec: object) -> bool:
@@ -188,55 +114,6 @@ def _missing_openapi_operation_report(readiness: dict[str, Any]) -> dict[str, An
         api_stage["findings"] = [*list(api_stage.get("findings") or []), finding]
     result["stages"] = stages
     result["status"] = "NEEDS_INPUT"
-    return result
-
-
-def _unrepresentable_openapi_error_outcomes(
-    class_diagram: object, api_spec: object
-) -> list[str]:
-    """이전 호출 경로와의 호환을 위해 남겨 둔 API 오류 응답 검사 hook이다.
-
-    BCE method의 return type은 성공했을 때 돌려주는 값을 설명한다. HTTP 실패 응답은 입력
-    검사, 권한 확인, domain exception 또는 저장 오류를 Web 계층에서 변환해 만들 수도 있다.
-    따라서 모든 409/422 응답에 인위적인 ``*Result`` 타입을 요구하면 정상적인 Entity 반환
-    method까지 잘못 거부하게 된다. API 설계 검사가 binding과 응답 구성을 이미 확인하므로,
-    이 구현 사전 검사는 별도의 finding을 추가하지 않는다.
-    """
-    del class_diagram, api_spec
-    return []
-
-
-def _append_api_error_outcome_report(
-    readiness: dict[str, Any], class_diagram: object, api_spec: object
-) -> dict[str, Any]:
-    findings = _unrepresentable_openapi_error_outcomes(class_diagram, api_spec)
-    if not findings:
-        return readiness
-    rule = "api.error-outcomes-representable"
-    if any(
-        rule in str(item.get("finding") or "")
-        for item in readiness.get("findings") or []
-        if isinstance(item, dict)
-    ):
-        return readiness
-    finding = (
-        "OpenAPI error outcome cannot be represented by its BCE Control: "
-        + "; ".join(findings)
-        + " — model an explicit BCE result/error outcome or remove the unsupported API response "
-        f"[{rule}]"
-    )
-    result = {**readiness, "status": "NEEDS_INPUT"}
-    result["findings"] = [*list(readiness.get("findings") or []), {
-        "stage": "api_spec", "finding": finding,
-    }]
-    stages = [dict(item) for item in readiness.get("stages") or [] if isinstance(item, dict)]
-    stage = next((item for item in stages if item.get("stage") == "api_spec"), None)
-    if stage is None:
-        stages.append({"stage": "api_spec", "status": "NEEDS_INPUT", "findings": [finding]})
-    else:
-        stage["status"] = "NEEDS_INPUT"
-        stage["findings"] = [*list(stage.get("findings") or []), finding]
-    result["stages"] = stages
     return result
 
 
@@ -287,14 +164,7 @@ class ImplementationWorker:
             or not design["erd_bce_classes"]
         ):
             missing_models.append("erd_bce_classes")
-        readiness = _append_bce_contract_type_report(
-            design_readiness_report(design), design.get("class_diagram_puml")
-        )
-        readiness = _append_api_error_outcome_report(
-            readiness,
-            design.get("class_diagram_puml"),
-            design.get("api_spec"),
-        )
+        readiness = design_readiness_report(design)
         # 중간 모델 누락보다 최종 OpenAPI의 operation 누락을 먼저 알린다. 사용자가 실제
         # 산출물에서 확인할 수 있고, 두 OpenAPI 생성 경로가 모두 거부하는 직접적인 이유다.
         if not _has_rendered_openapi_operation(design.get("api_spec")):
@@ -621,11 +491,12 @@ class ImplementationWorker:
         }
 
     def retry_failed(self, job_id: str) -> dict[str, Any]:
-        """실패한 실행의 durable checkpoint에서 실패 단계만 다시 시작한다."""
+        """승인된 checkpoint에서 실패했거나 감사에 멈춘 단계만 다시 시작한다."""
         record = self._read(job_id)
-        if record.get("status") != "FAILED":
+        if record.get("status") not in {"FAILED", "NEEDS_PLANNER"}:
             raise InvalidJobState(
-                f"Only a failed implementation job can be retried: {record.get('status')}"
+                "Only a failed or audit-blocked implementation job can be retried: "
+                f"{record.get('status')}"
             )
         if not self._checkpoint_retryable(record):
             raise InvalidJobState(
@@ -654,7 +525,7 @@ class ImplementationWorker:
     @staticmethod
     def _checkpoint_retryable(record: dict[str, Any]) -> bool:
         """승인된 실행 checkpoint를 같은 Job에서 안전하게 재사용할 수 있는지 확인한다."""
-        if record.get("status") != "FAILED":
+        if record.get("status") not in {"FAILED", "NEEDS_PLANNER"}:
             return False
         job_path_value = record.get("job_path")
         run_root_value = record.get("run_root")

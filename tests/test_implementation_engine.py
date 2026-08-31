@@ -8,8 +8,10 @@ from unittest.mock import patch
 import pytest
 
 from app.implementation.agents.verification.build import (
+    WorkspaceVerificationError,
     api_adapter_contract_violations,
     boundary_adapter_contract_violations,
+    control_boundary_dependency_violations,
     persistence_entity_schema_violations,
     production_placeholder_markers,
     verify_run_workspace,
@@ -203,7 +205,7 @@ paths:
         "OrderStoreGateway": "persistence",
         "PaymentGateway": "external",
     }
-    assert {scenario.status for scenario in ir.e2e_scenarios} == {201, 422}
+    assert {scenario.status for scenario in ir.e2e_scenarios} == {201}
     assert [task.task_id for task in generate_api_adapter_tasks(spec, run)] == [
         "implement-orders-api-adapter"
     ]
@@ -276,6 +278,52 @@ def test_final_workspace_verification_publishes_success_report(
     ).is_file()
 
 
+def test_final_verification_rejects_stale_e2e_before_gradle(tmp_path: Path) -> None:
+    """오래된 mock E2E는 전체 빌드 전에 E2E 작업으로 돌려보낸다."""
+
+    run = tmp_path / "run"
+    reports = run / "reports"
+    task_dir = reports / "implementation-tasks"
+    task_dir.mkdir(parents=True)
+    relative = "application/src/test/java/example/FlowTest.java"
+    source = run / relative
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "class FlowTest { MockMvc mvc; @MockBean Control control; @Test void flow() {} }",
+        encoding="utf-8",
+    )
+    context = task_dir / "flow.context.json"
+    context.write_text(
+        json.dumps({"semanticContract": {"minimumTests": 1}}),
+        encoding="utf-8",
+    )
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_type": "integration-test",
+                        "allowed_write_paths": [relative],
+                        "context_file": context.relative_to(run).as_posix(),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with (
+        patch(
+            "app.implementation.agents.verification.build.prepare_agent_workspace",
+            side_effect=AssertionError("Gradle workspace must not be prepared"),
+        ),
+        pytest.raises(WorkspaceVerificationError) as failure,
+    ):
+        verify_run_workspace(run)
+
+    assert failure.value.evidence["command"] == ["e2e-semantic-contract-gate"]
+
+
 def test_adapter_gates_reject_missing_contract_behavior(
     tmp_path: Path,
 ) -> None:
@@ -320,6 +368,49 @@ def test_adapter_gates_reject_missing_contract_behavior(
     assert any("return null" in violation for violation in violations)
 
 
+def test_control_gate_rejects_reverse_call_to_calling_boundary(
+    tmp_path: Path,
+) -> None:
+    """Boundary의 요청에 대한 return을 Control의 역방향 호출로 구현하지 않는다."""
+
+    relative = "application/src/main/java/example/ApplicationControlService.java"
+    service = tmp_path / relative
+    service.parent.mkdir(parents=True)
+    service.write_text(
+        "import example.bce.OperatorBoundary; "
+        "class ApplicationControlService { OperatorBoundary boundary; }",
+        encoding="utf-8",
+    )
+    sequence = [
+        {
+            "Participants": [
+                {"alias": "boundary", "kind": "boundary", "source_class": "OperatorBoundary"},
+                {"alias": "control", "kind": "control", "source_class": "ApplicationControl"},
+            ],
+            "Messages": [
+                {"source": "boundary", "target": "control", "type": "sync"},
+                {"source": "control", "target": "boundary", "type": "return"},
+            ],
+        }
+    ]
+
+    violations = control_boundary_dependency_violations(
+        tmp_path,
+        [relative],
+        sequence,
+    )
+
+    assert len(violations) == 1
+    assert "OperatorBoundary" in violations[0]
+
+    service.write_text(
+        'class ApplicationControlService { String note = "OperatorBoundary"; '
+        "// OperatorBoundary\n/* import example.bce.OperatorBoundary; */ }",
+        encoding="utf-8",
+    )
+    assert control_boundary_dependency_violations(tmp_path, [relative], sequence) == []
+
+
 def test_e2e_gate_accepts_complete_scenario_and_rejects_wrong_status(
     tmp_path: Path,
 ) -> None:
@@ -355,6 +446,31 @@ void use(String value) {}
     assert any("201" in violation for violation in violations)
 
 
+@pytest.mark.parametrize("replacement", [
+    "@Bean String replacement;",
+    "@MockBean ApplicationControl control;",
+])
+def test_e2e_gate_rejects_test_bean_replacement(
+    tmp_path: Path, replacement: str
+) -> None:
+    """E2E는 프론트엔드와 같은 실제 Spring 구성만 사용한다."""
+
+    source = tmp_path / "FlowTest.java"
+    source.write_text(
+        f"""class FlowTest {{
+MockMvc mockMvc;
+{replacement}
+@Test void one() {{}}
+}}
+""",
+        encoding="utf-8",
+    )
+    assert any(
+        "test bean replacement" in violation
+        for violation in e2e_contract_violations(source, {"minimumTests": 1})
+    )
+
+
 def test_persistence_gate_accepts_all_columns_and_reports_missing_column(
     tmp_path: Path,
 ) -> None:
@@ -384,8 +500,8 @@ def test_persistence_gate_accepts_all_columns_and_reports_missing_column(
 @Table(name = "enrollment")
 class EnrollmentEntity {
   @Id @Column(name = "enrollment_id") private String enrollmentId;
-  @Column(name = "student_id") private String studentId;
-  @Column(name = "course_id") private String courseId;
+  @Column(nullable = false, name = "student_id") private String studentId;
+  @JoinColumn(nullable = false, name = "course_id") private String courseId;
 }
 """,
         encoding="utf-8",
@@ -394,14 +510,14 @@ class EnrollmentEntity {
 
     entity.write_text(
         entity.read_text(encoding="utf-8").replace(
-            '  @Column(name = "course_id") private String courseId;\n', ""
+            '  @JoinColumn(nullable = false, name = "course_id") private String courseId;\n',
+            "",
         ),
         encoding="utf-8",
     )
     violations = persistence_entity_schema_violations(tmp_path, [relative])
     assert len(violations) == 1
     assert "course_id" in violations[0]
-
 
 def test_source_conformance_rejects_agent_changes_to_generated_contract(
     tmp_path: Path,
@@ -462,6 +578,64 @@ def test_source_conformance_rejects_agent_changes_to_generated_contract(
     assert "GENERATED_CONTRACT_STRUCTURE_CHANGED" in {
         item["code"] for item in report["violations"]
     }
+
+
+def test_source_conformance_rejects_persistence_fields_absent_from_erd(
+    tmp_path: Path,
+) -> None:
+    """엔티티와 SQL이 서로 맞더라도 ERD에 없는 필드를 함께 추가할 수는 없다."""
+    package = tmp_path / "application/src/main/java/com/example/demo"
+    entity = package / "persistence/entity/OrderEntity.java"
+    repository = package / "persistence/repository/OrderRepository.java"
+    migration = tmp_path / "application/src/main/resources/db/migration/V1__initial_schema.sql"
+    for path in (entity, repository, migration):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    entity.write_text(
+        '@Entity @Table(name = "orders") class OrderEntity {\n'
+        '  @Id @Column(name = "id") private UUID id;\n'
+        '  @Column(name = "name") private String name;\n'
+        '}\n',
+        encoding="utf-8",
+    )
+    repository.write_text("interface OrderRepository {}\n", encoding="utf-8")
+    migration.write_text(
+        "CREATE TABLE orders (\n  id UUID NOT NULL,\n  name VARCHAR(255)\n);\n",
+        encoding="utf-8",
+    )
+    erd = tmp_path / "erd.puml"
+    erd.write_text(
+        "entity Order {\n  * id : UUID\n  name : VARCHAR(255)\n}\n",
+        encoding="utf-8",
+    )
+    spec = SimpleNamespace(base_package="com.example.demo", inputs={"erd": erd})
+    capture_generated_contracts(tmp_path, spec.base_package)
+
+    assert verify_source_design_conformance(tmp_path, spec)["status"] == "PASSED"
+
+    entity.write_text(
+        entity.read_text(encoding="utf-8").replace(
+            "}\n", '  @Column(name = "invented") private String invented;\n}\n'
+        ),
+        encoding="utf-8",
+    )
+    migration.write_text(
+        migration.read_text(encoding="utf-8").replace(
+            "  name VARCHAR(255)\n", "  name VARCHAR(255),\n  invented VARCHAR(255)\n"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceDesignConformanceError):
+        verify_source_design_conformance(tmp_path, spec)
+
+    report = json.loads(
+        (tmp_path / "reports/source-design-conformance.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    check = report["checks"]["erdEntities"][0]
+    assert check["unexpectedFields"] == ["invented (invented)"]
+    assert check["unexpectedColumns"] == ["invented"]
 
 
 def test_entity_body_can_change_without_changing_its_public_signature(

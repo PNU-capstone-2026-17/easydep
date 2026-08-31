@@ -1,16 +1,16 @@
-"""생성된 Java 코드가 설계 계약을 지켰는지 결정론적으로 확인한다.
+"""생성된 Java 공개 계약과 ERD 기반 영속화 구조가 보존됐는지 확인한다.
 
 Boundary, Control, API와 DataType 파일은 그대로 보존하고, Entity는 공개 Java
-signature가 같을 때 메서드 본문 변경만 허용한다. 이 검사는 LLM을 호출하지 않는다.
+signature가 같을 때 메서드 본문 변경만 허용한다. 실제 호출 흐름은 정규식으로 Java
+본문을 추측하지 않고 Gradle 단위 테스트와 실제 HTTP E2E에서 확인한다.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import re
 from pathlib import Path
-
-from ..domain.implementation_ir import parse_components
 
 SCHEMA_VERSION = "source-design-conformance/v1alpha1"
 SNAPSHOT_FILE = "reports/generated-source-contracts.json"
@@ -19,8 +19,8 @@ REPORT_FILE = "reports/source-design-conformance.json"
 
 def capture_generated_contracts(run_root: Path, base_package: str) -> dict[str, object]:
     """Persist the immutable Java contract baseline before an agent can edit it."""
-    package_root = run_root / "application" / "src" / "main" / "java" / Path(
-        base_package.replace(".", "/")
+    package_root = (
+        run_root / "application" / "src" / "main" / "java" / Path(base_package.replace(".", "/"))
     )
     files: list[dict[str, object]] = []
     for area in ("bce", "api"):
@@ -29,12 +29,14 @@ def capture_generated_contracts(run_root: Path, base_package: str) -> dict[str, 
             continue
         for path in sorted(root.rglob("*.java")):
             content = path.read_text(encoding="utf-8")
-            files.append({
-                "path": path.relative_to(run_root).as_posix(),
-                "sha256": _sha256(content),
-                "content": content,
-                "structure": _java_structure(content),
-            })
+            files.append(
+                {
+                    "path": path.relative_to(run_root).as_posix(),
+                    "sha256": _sha256(content),
+                    "content": content,
+                    "structure": _java_structure(content),
+                }
+            )
     payload: dict[str, object] = {
         "schemaVersion": SCHEMA_VERSION,
         "basePackage": base_package,
@@ -47,20 +49,23 @@ def capture_generated_contracts(run_root: Path, base_package: str) -> dict[str, 
 
 
 def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
-    """Verify immutable contracts and statically observable sequence calls.
+    """공개 Java 계약과 ERD 구현을 최종 빌드가 통과한 뒤 검사한다.
 
-    Call this only after Gradle's compile, unit, and E2E verification has
-    succeeded.  The report is always written before a failure is raised.
+    시퀀스 흐름은 여러 HTTP 요청과 여러 구현 class에 걸칠 수 있어 Java 문자열 검색으로
+    판정하지 않는다. 구조화된 시퀀스는 구현 prompt의 입력으로 사용하고, 결과는 실제
+    단위 테스트와 E2E가 검증한다. 실패해도 보고서를 먼저 저장한다.
     """
     snapshot_path = run_root / SNAPSHOT_FILE
     violations: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
-    checks: dict[str, object] = {"generatedContracts": [], "sequenceCalls": []}
+    checks: dict[str, object] = {"generatedContracts": []}
     if not snapshot_path.is_file():
-        warnings.append({
-            "code": "MISSING_CONTRACT_BASELINE",
-            "message": "This run predates generated source contract snapshots; immutable contract verification was skipped.",
-        })
+        warnings.append(
+            {
+                "code": "MISSING_CONTRACT_BASELINE",
+                "message": "This run predates generated source contract snapshots; immutable contract verification was skipped.",
+            }
+        )
     else:
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         for item in snapshot.get("files", []):
@@ -76,8 +81,13 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
                 check["status"] = "FAILED"
                 check["integrity"] = "FAILED"
                 check["contract"] = "FAILED"
-                violations.append({"code": "GENERATED_CONTRACT_REMOVED", "path": relative,
-                                   "message": "Generated BCE/OpenAPI contract file is missing."})
+                violations.append(
+                    {
+                        "code": "GENERATED_CONTRACT_REMOVED",
+                        "path": relative,
+                        "message": "Generated BCE/OpenAPI contract file is missing.",
+                    }
+                )
             else:
                 current = path.read_text(encoding="utf-8")
                 if _sha256(current) != item.get("sha256"):
@@ -93,105 +103,37 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
                     else:
                         check["status"] = "FAILED"
                         check["integrity"] = "FAILED"
-                        violations.append({"code": "GENERATED_CONTRACT_MODIFIED", "path": relative,
-                                       "message": "Generated BCE/OpenAPI contract differs from its pre-agent snapshot."})
+                        violations.append(
+                            {
+                                "code": "GENERATED_CONTRACT_MODIFIED",
+                                "path": relative,
+                                "message": "Generated BCE/OpenAPI contract differs from its pre-agent snapshot.",
+                            }
+                        )
                     if check["status"] == "FAILED" and _has_structural_changes(changes):
                         check["contract"] = "FAILED"
-                        violations.append({
-                            "code": "GENERATED_CONTRACT_STRUCTURE_CHANGED",
-                            "path": relative,
-                            "message": (
-                                "Generated skeleton class, field, or method signature "
-                                "was added, modified, or deleted."
-                            ),
-                        })
+                        violations.append(
+                            {
+                                "code": "GENERATED_CONTRACT_STRUCTURE_CHANGED",
+                                "path": relative,
+                                "message": (
+                                    "Generated skeleton class, field, or method signature "
+                                    "was added, modified, or deleted."
+                                ),
+                            }
+                        )
             checks["generatedContracts"].append(check)
-
-    sequence_path = spec.inputs.get("sequence")
-    bce_path = spec.inputs.get("bceClass")
-    if sequence_path and sequence_path.is_file() and bce_path and bce_path.is_file():
-        components = {component.name for component in parse_components(bce_path.read_text(encoding="utf-8"))}
-        invocations = _implementation_invocations(run_root, spec.base_package)
-        sequence_source = sequence_path.read_text(encoding="utf-8")
-        for diagram_id, document in _sequence_documents(sequence_source):
-            aliases = _participant_aliases(document, components)
-            expected_by_source: dict[str, list[dict[str, str]]] = {}
-            for sequence_call in _sequence_calls(document):
-                source, target, method = (
-                    sequence_call["source"], sequence_call["target"], sequence_call["method"]
-                )
-                resolved_source = aliases.get(source, source)
-                resolved_target = aliases.get(target, target)
-                if resolved_source not in components or resolved_target not in components:
-                    finding = {
-                        "code": "UNMAPPABLE_SEQUENCE_CALL",
-                        "diagram": diagram_id,
-                        "message": f"Cannot map sequence call {source} -> {target}: {method} to BCE components.",
-                    }
-                    if resolved_source in components and resolved_target not in components:
-                        violations.append({
-                            **finding,
-                            "code": "UNMAPPABLE_SEQUENCE_TARGET",
-                            "path": "application/src/main/java",
-                        })
-                    else:
-                        warnings.append(finding)
-                    continue
-                matched = any(
-                    item["method"] == method and resolved_target in item["dependencies"]
-                    for item in invocations.get(resolved_source, [])
-                )
-                check = {"diagram": diagram_id, "from": resolved_source,
-                         "to": resolved_target, "method": method,
-                         "status": "PASSED" if matched else "FAILED"}
-                checks["sequenceCalls"].append(check)
-                if not matched:
-                    violations.append({"code": "SEQUENCE_CALL_NOT_IMPLEMENTED",
-                                       "path": "application/src/main/java",
-                                       "message": f"Sequence call {resolved_source} -> {resolved_target}: {method}(...) has no matching source-to-target invocation."})
-                    continue
-                expected_by_source.setdefault(resolved_source, []).append({
-                    "method": method,
-                    "branch": sequence_call["branch"],
-                })
-                branch_tokens = _branch_tokens(sequence_call["branch"])
-                if branch_tokens and not any(
-                    any(token in item["source"].lower() for token in branch_tokens)
-                    for item in invocations.get(resolved_source, [])
-                ):
-                    violations.append({"code": "SEQUENCE_BRANCH_NOT_IMPLEMENTED",
-                                       "path": "application/src/main/java",
-                                       "message": f"Sequence branch '{sequence_call['branch']}' for {method}(...) is not observable in {resolved_source}."})
-            for source, expected in expected_by_source.items():
-                ordered = any(
-                    _calls_in_order(
-                        item["calls"], [call["method"] for call in expected]
-                    )
-                    for item in invocations.get(source, [])
-                )
-                checks.setdefault("sequenceOrder", []).append({
-                    "diagram": diagram_id,
-                    "source": source,
-                    "methods": [call["method"] for call in expected],
-                    "status": "PASSED" if ordered else "FAILED",
-                })
-                if not ordered:
-                    violations.append({"code": "SEQUENCE_CALL_ORDER_NOT_IMPLEMENTED",
-                                       "path": "application/src/main/java",
-                                       "message": f"Sequence call order for {source} in {diagram_id} is not preserved in one implementation class."})
-    else:
-        violations.append({
-            "code": "MISSING_SEQUENCE_INPUT",
-            "path": "design-context/sequence-diagrams.puml",
-            "message": "Sequence input is required for implementation conformance.",
-        })
 
     _verify_erd_conformance(run_root, spec, checks, violations, warnings)
 
     report: dict[str, object] = {
         "schemaVersion": SCHEMA_VERSION,
         "status": "FAILED" if violations else "PASSED",
-        "verificationOrder": ["Gradle compileJava", "Gradle unit/E2E tests", "source design conformance"],
+        "verificationOrder": [
+            "Gradle compileJava",
+            "Gradle unit/E2E tests",
+            "source design conformance",
+        ],
         "checks": checks,
         "violations": violations,
         "warnings": warnings,
@@ -218,8 +160,10 @@ def restore_generated_contracts(run_root: Path) -> list[str]:
             continue
         path = run_root / relative
         current = path.read_text(encoding="utf-8") if path.is_file() else None
-        if current is not None and _is_entity_contract(item) and _same_public_java_signature(
-            content, current
+        if (
+            current is not None
+            and _is_entity_contract(item)
+            and _same_public_java_signature(content, current)
         ):
             continue
         if current != content:
@@ -279,6 +223,7 @@ def _is_entity_contract(item: object) -> bool:
 
 def _same_public_java_signature(before: str, after: str) -> bool:
     """본문과 공백을 제외하고 외부 호출자가 보는 공개 선언만 비교한다."""
+
     def signatures(source: str) -> tuple[str, ...]:
         clean = re.sub(r"/\*.*?\*/|//[^\n]*", "", source, flags=re.DOTALL)
         normalized = re.sub(r"\s*\n\s*", " ", clean)
@@ -293,6 +238,7 @@ def _same_public_java_signature(before: str, after: str) -> bool:
         )
         # 선언 순서는 무시하지만 같은 method가 두 번 생긴 경우는 놓치지 않는다.
         return tuple(sorted(re.sub(r"\s+", "", match) for match in matches))
+
     return signatures(before) == signatures(after)
 
 
@@ -308,29 +254,23 @@ def _verify_erd_conformance(
         return
     entities, relations = _erd_contract(erd_path.read_text(encoding="utf-8"))
     if not entities:
-        warnings.append({
-            "code": "UNPARSEABLE_ERD",
-            "message": "ERD input exists but no entity contracts could be parsed.",
-        })
+        warnings.append(
+            {
+                "code": "UNPARSEABLE_ERD",
+                "message": "ERD input exists but no entity contracts could be parsed.",
+            }
+        )
         return
     package_root = (
-        run_root
-        / "application/src/main/java"
-        / Path(spec.base_package.replace(".", "/"))
+        run_root / "application/src/main/java" / Path(spec.base_package.replace(".", "/"))
     )
-    migration_path = (
-        run_root / "application/src/main/resources/db/migration/V1__initial_schema.sql"
-    )
-    migration = (
-        migration_path.read_text(encoding="utf-8") if migration_path.is_file() else ""
-    )
+    migration_path = run_root / "application/src/main/resources/db/migration/V1__initial_schema.sql"
+    migration = migration_path.read_text(encoding="utf-8") if migration_path.is_file() else ""
     erd_checks: list[dict[str, object]] = []
     entity_sources: dict[str, str] = {}
     for entity, fields in entities.items():
         entity_path = package_root / "persistence/entity" / f"{entity}Entity.java"
-        repository_path = (
-            package_root / "persistence/repository" / f"{entity}Repository.java"
-        )
+        repository_path = package_root / "persistence/repository" / f"{entity}Repository.java"
         source = entity_path.read_text(encoding="utf-8") if entity_path.is_file() else ""
         entity_sources[entity] = source
         entity_migration = _migration_entity_body(migration, entity)
@@ -339,6 +279,26 @@ def _verify_erd_conformance(
         missing_columns: list[str] = []
         type_mismatches: list[str] = []
         source_tokens = _normalized_identifiers(source)
+        expected_names = {_normalize_identifier(name) for name in fields}
+        mapped_fields = _persistence_mapped_fields(source)
+        unexpected_fields = sorted(
+            f"{field_name} ({column_name})"
+            for column_name, field_name in mapped_fields
+            if _normalize_identifier(field_name) not in expected_names
+            and _normalize_identifier(column_name) not in expected_names
+        )
+        mapped_erd_columns = {
+            _normalize_identifier(column_name)
+            for column_name, field_name in mapped_fields
+            if _normalize_identifier(field_name) in expected_names
+            or _normalize_identifier(column_name) in expected_names
+        }
+        unexpected_columns = sorted(
+            column
+            for column in _migration_columns(entity_migration)
+            if _normalize_identifier(column) not in expected_names
+            and _normalize_identifier(column) not in mapped_erd_columns
+        )
         for field_name, field_type in fields.items():
             normalized = _normalize_identifier(field_name)
             if normalized not in source_tokens:
@@ -358,7 +318,13 @@ def _verify_erd_conformance(
         status = "PASSED"
         if not entity_path.is_file() or not repository_path.is_file() or not migration:
             status = "FAILED"
-        if missing_fields or missing_columns or type_mismatches:
+        if (
+            missing_fields
+            or missing_columns
+            or type_mismatches
+            or unexpected_fields
+            or unexpected_columns
+        ):
             status = "FAILED"
         check = {
             "entity": entity,
@@ -368,18 +334,23 @@ def _verify_erd_conformance(
             "missingFields": missing_fields,
             "missingColumns": missing_columns,
             "typeMismatches": type_mismatches,
+            "unexpectedFields": unexpected_fields,
+            "unexpectedColumns": unexpected_columns,
         }
         erd_checks.append(check)
         if status == "FAILED":
-            violations.append({
-                "code": "ERD_ENTITY_NOT_IMPLEMENTED",
-                "path": entity_path.relative_to(run_root).as_posix(),
-                "message": (
-                    f"ERD entity {entity} is not structurally represented; "
-                    f"missing fields={missing_fields}, missing columns={missing_columns}, "
-                    f"type mismatches={type_mismatches}."
-                ),
-            })
+            violations.append(
+                {
+                    "code": "ERD_ENTITY_NOT_IMPLEMENTED",
+                    "path": entity_path.relative_to(run_root).as_posix(),
+                    "message": (
+                        f"ERD entity {entity} is not structurally represented; "
+                        f"missing fields={missing_fields}, missing columns={missing_columns}, "
+                        f"type mismatches={type_mismatches}, unexpected fields={unexpected_fields}, "
+                        f"unexpected columns={unexpected_columns}."
+                    ),
+                }
+            )
     for left, right in relations:
         related = (
             right in entity_sources.get(left, "")
@@ -392,19 +363,19 @@ def _verify_erd_conformance(
             and re.search(r"@(OneToOne|OneToMany|ManyToOne|ManyToMany)", entity_sources[right])
         )
         if not related:
-            violations.append({
-                "code": "ERD_RELATION_NOT_IMPLEMENTED",
-                "path": "application/src/main/java",
-                "message": f"ERD relation {left} <-> {right} has no JPA association.",
-            })
+            violations.append(
+                {
+                    "code": "ERD_RELATION_NOT_IMPLEMENTED",
+                    "path": "application/src/main/java",
+                    "message": f"ERD relation {left} <-> {right} has no JPA association.",
+                }
+            )
     checks["erdEntities"] = erd_checks
 
 
 def _erd_contract(source: str) -> tuple[dict[str, dict[str, str]], list[tuple[str, str]]]:
     entities: dict[str, dict[str, str]] = {}
-    pattern = re.compile(
-        r'(?ms)^\s*entity\s+(?:"[^"]+"\s+as\s+)?([A-Za-z_]\w*)\s*\{(.*?)^\s*\}'
-    )
+    pattern = re.compile(r'(?ms)^\s*entity\s+(?:"[^"]+"\s+as\s+)?([A-Za-z_]\w*)\s*\{(.*?)^\s*\}')
     for match in pattern.finditer(source):
         fields: dict[str, str] = {}
         for raw_line in match.group(2).splitlines():
@@ -422,9 +393,7 @@ def _erd_contract(source: str) -> tuple[dict[str, dict[str, str]], list[tuple[st
     relations: list[tuple[str, str]] = []
     for line in source.splitlines():
         mentioned = [name for name in names if re.search(rf"\b{re.escape(name)}\b", line)]
-        if len(mentioned) == 2 and re.search(
-            r"[|}{o*]+(?:--|\.\.)[|}{o*]+", line
-        ):
+        if len(mentioned) == 2 and re.search(r"[|}{o*]+(?:--|\.\.)[|}{o*]+", line):
             relations.append((mentioned[0], mentioned[1]))
     return entities, relations
 
@@ -435,6 +404,37 @@ def _normalize_identifier(value: str) -> str:
 
 def _normalized_identifiers(source: str) -> set[str]:
     return {_normalize_identifier(token) for token in re.findall(r"[A-Za-z_]\w*", source)}
+
+
+def _persistence_mapped_fields(source: str) -> list[tuple[str, str]]:
+    """JPA 열 이름과 그 열을 담당하는 Java 필드 이름을 함께 읽는다.
+
+    실제 DB 열 이름은 예약어 회피 때문에 ERD 이름과 다를 수 있다. 따라서 열 이름만
+    비교하지 않고 Java 필드 이름도 함께 비교해야 정상적인 이름 변경을 오탐하지 않는다.
+    """
+    return [
+        (match.group("column"), match.group("field"))
+        for match in re.finditer(
+            r'@(?:Column|JoinColumn)\s*\([^)]*?name\s*=\s*"(?P<column>[^"]+)"[^)]*\)'
+            r'(?:(?!;).)*?\b(?:private|protected|public)\s+'
+            r'[A-Za-z_$][\w$<>,.?\[\] ]*\s+(?P<field>[A-Za-z_$]\w*)\s*;',
+            source,
+            flags=re.DOTALL,
+        )
+    ]
+
+
+def _migration_columns(table_body: str) -> set[str]:
+    """CREATE TABLE 본문에서 실제 열 선언의 이름만 추린다."""
+    columns: set[str] = set()
+    for line in table_body.splitlines():
+        match = re.match(r'\s*["`]?([A-Za-z_]\w*)["`]?\s+', line)
+        if not match:
+            continue
+        name = match.group(1)
+        if name.lower() not in {"primary", "foreign", "unique", "check"}:
+            columns.add(name)
+    return columns
 
 
 def _migration_entity_body(source: str, entity: str) -> str:
@@ -463,7 +463,10 @@ def _erd_type_families(field_type: str) -> tuple[tuple[str, ...], tuple[str, ...
     if lowered in {"bool", "boolean"}:
         return (("Boolean", "boolean"), ("BOOLEAN",))
     if "date" in lowered or "time" in lowered:
-        return (("Instant", "LocalDateTime", "OffsetDateTime", "ZonedDateTime"), ("TIMESTAMP", "DATE"))
+        return (
+            ("Instant", "LocalDateTime", "OffsetDateTime", "ZonedDateTime"),
+            ("TIMESTAMP", "DATE"),
+        )
     return ((), ())
 
 
@@ -473,7 +476,8 @@ def _java_structure(source: str) -> dict[str, object]:
         match.group("name"): match.group("kind")
         for match in re.finditer(
             r"(?m)^\s*(?:public\s+)?(?:abstract\s+|final\s+)?"
-            r"(?P<kind>class|interface|enum|record)\s+(?P<name>\w+)", clean
+            r"(?P<kind>class|interface|enum|record)\s+(?P<name>\w+)",
+            clean,
         )
     }
     fields = {
@@ -498,7 +502,9 @@ def _java_structure(source: str) -> dict[str, object]:
         parameters = _normalize_parameters(match.group("params"))
         throws = _normalize_java_type(match.group("throws") or "")
         key = f"{match.group('name')}({parameters})"
-        methods[key] = _normalize_java_type(match.group("return")) + (f" throws {throws}" if throws else "")
+        methods[key] = _normalize_java_type(match.group("return")) + (
+            f" throws {throws}" if throws else ""
+        )
     return {"types": types, "fields": fields, "methods": methods}
 
 
@@ -511,7 +517,9 @@ def _normalize_parameters(value: str) -> str:
     return _normalize_java_type(value)
 
 
-def _structural_changes(before: object, after: dict[str, object]) -> dict[str, dict[str, list[str]]]:
+def _structural_changes(
+    before: object, after: dict[str, object]
+) -> dict[str, dict[str, list[str]]]:
     original = before if isinstance(before, dict) else {}
     changes: dict[str, dict[str, list[str]]] = {}
     for key in ("types", "fields", "methods"):
@@ -535,149 +543,4 @@ def _structural_changes(before: object, after: dict[str, object]) -> dict[str, d
 
 
 def _has_structural_changes(changes: dict[str, dict[str, list[str]]]) -> bool:
-    return any(
-        items
-        for group in changes.values()
-        for items in group.values()
-    )
-
-
-def _participant_aliases(sequence: str, components: set[str]) -> dict[str, str]:
-    aliases = {name: name for name in components}
-    pattern = re.compile(r"(?im)^\s*(?:participant|boundary|control|entity|database|collections?|actor)\s+(?:\"([^\"]+)\"|([A-Za-z_]\w*))\s+as\s+([A-Za-z_]\w*)")
-    for match in pattern.finditer(sequence):
-        display = match.group(1) or match.group(2) or ""
-        alias = match.group(3)
-        if display in components:
-            aliases[alias] = display
-        elif alias in components:
-            aliases[display] = alias
-    return aliases
-
-
-def _sequence_documents(sequence: str) -> list[tuple[str, str]]:
-    """여러 PlantUML 문서를 유스케이스별 독립 검증 단위로 분리한다."""
-    matches = list(
-        re.finditer(
-            r"(?ims)^\s*@startuml(?:\s+([^\r\n]+))?.*?^\s*@enduml\s*$",
-            sequence,
-        )
-    )
-    if not matches:
-        return [("sequence", sequence)]
-    return [
-        ((match.group(1) or f"sequence-{index}").strip(), match.group(0))
-        for index, match in enumerate(matches, start=1)
-    ]
-
-
-def _sequence_calls(sequence: str) -> list[dict[str, str]]:
-    calls: list[dict[str, str]] = []
-    branches: list[str] = []
-    pattern = re.compile(r"(?m)^\s*([A-Za-z_]\w*)\s*(?:-|--)+>\s*([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*)\s*\(")
-    for line in sequence.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("alt "):
-            branches.append(stripped[4:].strip())
-            continue
-        if stripped.startswith("else ") and branches:
-            branches[-1] = stripped[5:].strip()
-            continue
-        if stripped == "end" and branches:
-            branches.pop()
-            continue
-        match = pattern.match(line)
-        if match:
-            calls.append({"source": match.group(1), "target": match.group(2),
-                          "method": match.group(3), "branch": branches[-1] if branches else ""})
-    return calls
-
-
-def _branch_tokens(value: str) -> set[str]:
-    return {token.lower() for token in re.findall(r"[A-Za-z_][A-Za-z_0-9]{3,}", value)}
-
-
-def _calls_in_order(actual: list[str], expected: list[str]) -> bool:
-    cursor = 0
-    for method in expected:
-        try:
-            cursor = actual.index(method, cursor) + 1
-        except ValueError:
-            return False
-    return True
-
-
-def _implementation_invocations(run_root: Path, base_package: str) -> dict[str, list[dict[str, object]]]:
-    root = run_root / "application" / "src" / "main" / "java" / Path(base_package.replace(".", "/"))
-    values: dict[str, list[dict[str, object]]] = {}
-    for path in root.rglob("*.java") if root.is_dir() else []:
-        relative = path.relative_to(root).as_posix()
-        if relative.startswith("bce/") or relative.startswith("api/"):
-            continue
-        source = re.sub(r"/\*.*?\*/|//[^\n]*", "", path.read_text(encoding="utf-8"), flags=re.DOTALL)
-        implemented = _implemented_interfaces(source)
-        dependencies = set(re.findall(r"\b([A-Za-z_$]\w*)\s+[A-Za-z_$]\w*\s*[;,=)]", source))
-        dependencies.update(_generic_dependency_types(source))
-        method_calls = _method_call_sequences(source)
-        for component in implemented:
-            for calls in method_calls:
-                values.setdefault(component, []).extend(
-                    {
-                        "method": method,
-                        "dependencies": dependencies,
-                        "calls": calls,
-                        "source": source,
-                    }
-                    for method in set(calls)
-                )
-    return values
-
-
-def _implemented_interfaces(source: str) -> set[str]:
-    interfaces: set[str] = set()
-    for match in re.finditer(r"\bimplements\s+([^\{]+)", source):
-        for candidate in match.group(1).split(","):
-            names = re.findall(r"[A-Za-z_$]\w*", re.sub(r"<.*>", "", candidate))
-            if names:
-                interfaces.add(names[-1])
-    return interfaces
-
-
-def _generic_dependency_types(source: str) -> set[str]:
-    dependencies: set[str] = set()
-    for match in re.finditer(
-        r"\b[A-Za-z_$]\w*\s*<([^;=(){}]+)>\s+[A-Za-z_$]\w*\s*[;,=)]",
-        source,
-    ):
-        dependencies.update(re.findall(r"\b[A-Z][A-Za-z_$0-9]*\b", match.group(1)))
-    return dependencies
-
-
-def _method_call_sequences(source: str) -> list[list[str]]:
-    """Return qualified calls scoped to individual Java method bodies."""
-    declaration = re.compile(
-        r"(?:^|[;}])\s*(?:@[A-Za-z_$][\w.$]*(?:\([^)]*\))?\s*)*"
-        r"(?:public|protected|private|static|final|synchronized|abstract|native|default|\s)+"
-        r"[A-Za-z_$][\w.$<>?,\[\] ]*\s+[A-Za-z_$]\w*\s*\([^;{}]*\)\s*\{",
-        re.MULTILINE,
-    )
-    sequences: list[list[str]] = []
-    for match in declaration.finditer(source):
-        opening = match.end() - 1
-        depth = 0
-        closing = None
-        for index in range(opening, len(source)):
-            if source[index] == "{":
-                depth += 1
-            elif source[index] == "}":
-                depth -= 1
-                if depth == 0:
-                    closing = index
-                    break
-        if closing is None:
-            continue
-        body = source[opening + 1:closing]
-        calls = re.findall(r"\.\s*([A-Za-z_$]\w*)\s*\(", body)
-        if calls:
-            sequences.append(calls)
-    return sequences
+    return any(items for group in changes.values() for items in group.values())

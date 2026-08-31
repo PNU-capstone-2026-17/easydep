@@ -103,7 +103,27 @@ def ensure_mapper_accessible_persistence_constructor(
 def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
     run_key = run_root.name.removeprefix("run_")[:12]
     task_key = str(task["task_id"]).removeprefix("implement-")
-    sandbox_base = Path(tempfile.gettempdir()) / "easydep-agent-workspaces" / run_key / task_key
+    # 작업 ID는 보고서에서 읽기 쉬운 전체 이름을 유지한다. 다만 Windows 임시 경로에 같은
+    # 이름을 그대로 붙이면 persistence처럼 여러 Entity를 묶은 작업이 260자 제한에 닿는다.
+    # 임시 폴더만 앞부분과 해시로 줄이면 충돌을 피하면서 어떤 작업인지도 알아볼 수 있다.
+    sandbox_parent = Path(tempfile.gettempdir()) / "easydep-agent-workspaces" / run_key
+    longest_output = max(
+        (len(str(Path(str(path)))) for path in task["allowed_write_paths"]),
+        default=0,
+    )
+    # ``-2`` 같은 충돌 회피 suffix까지 붙을 수 있도록 네 글자를 남긴다.
+    available_task_length = 240 - len(str(sandbox_parent.resolve())) - longest_output - 6
+    if available_task_length < 8:
+        raise ValueError("Agent workspace root leaves no safe Windows path budget")
+    if len(task_key) > available_task_length:
+        digest = hashlib.sha256(task_key.encode("utf-8")).hexdigest()[:10]
+        prefix_length = available_task_length - len(digest) - 1
+        task_key = (
+            f"{task_key[:prefix_length]}-{digest}"
+            if prefix_length > 0
+            else digest[:available_task_length]
+        )
+    sandbox_base = sandbox_parent / task_key
     sandbox = sandbox_base
     suffix = 1
     while sandbox.exists():

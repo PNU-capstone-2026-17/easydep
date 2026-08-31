@@ -50,6 +50,9 @@ WORKDIR /app
 RUN addgroup -S -g 10001 app && adduser -S -D -H -u 10001 -G app app
 COPY --chown=10001:10001 --from=build /tmp/app.jar app.jar
 USER 10001:10001
+# Spring Boot의 relaxed binding이 읽는 표준 환경 변수다. Docker가 공개하는 포트와
+# 애플리케이션의 실제 listen 포트가 달라지지 않도록 같은 기본값을 사용한다.
+ENV SERVER_PORT={DEFAULT_CONTAINER_PORT}
 EXPOSE {DEFAULT_CONTAINER_PORT}
 ENTRYPOINT ["java", "-jar", "app.jar"]"""
 
