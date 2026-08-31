@@ -8,7 +8,6 @@ import threading
 import time
 import warnings
 from pathlib import Path
-from typing import Literal
 
 from app.config import settings
 from app.metrics import langsmith as langsmith_metrics
@@ -349,7 +348,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     callbacks=[journal],
                     max_iterations=round_iteration_limit,
                     reasoning_effort=reasoning_effort,
-                    write_only=repair_attempt > 0,
                     system_prompt=(
                         FRONTEND_SYSTEM_PROMPT
                         if task_type == "frontend-implementation"
@@ -909,7 +907,6 @@ def create_openhands_conversation(
     max_iterations: int = MAX_AGENT_TURN_ITERATIONS,
     reasoning_effort: str = "medium",
     system_prompt: str = IMPLEMENTATION_SYSTEM_PROMPT,
-    write_only: bool = False,
 ):
     global _RESTRICTED_EDITOR_REGISTERED
 
@@ -928,16 +925,6 @@ def create_openhands_conversation(
             description="Absolute path to the allowlisted file. Use the argument name path.",
             validation_alias=AliasChoices("path", "file_path"),
             serialization_alias="path",
-        )
-
-    class WriteOnlyFileEditorAction(CompatibleFileEditorAction):
-        """수리 prompt에 이미 실린 파일을 다시 조회하지 않고 바로 고치게 한다."""
-
-        command: Literal["create", "str_replace"] = Field(
-            description=(
-                "Repair the allowlisted file with create or str_replace. "
-                "The complete current source is already in the prompt."
-            )
         )
 
     class ReplaceableFileEditorExecutor(FileEditorExecutor):
@@ -977,7 +964,7 @@ def create_openhands_conversation(
 
     class RestrictedFileEditorTool(FileEditorTool):
         @classmethod
-        def create(cls, conv_state, allowed_edits_files, write_only=False):
+        def create(cls, conv_state, allowed_edits_files):
             instances = super().create(conv_state)
             return [
                 instance.model_copy(
@@ -986,21 +973,9 @@ def create_openhands_conversation(
                             workspace_root=conv_state.workspace.working_dir,
                             allowed_edits_files=allowed_edits_files,
                         ),
-                        "action_type": (
-                            WriteOnlyFileEditorAction
-                            if write_only
-                            else CompatibleFileEditorAction
-                        ),
+                        "action_type": CompatibleFileEditorAction,
                         "description": (
-                            (
-                                "Repair the explicitly allowlisted text files now. "
-                                "Their complete current contents are in the user prompt; "
-                                "use create or str_replace without viewing them again. "
-                            )
-                            if write_only
-                            else
                             "Create or edit only the explicitly allowlisted text files. "
-                        ) + (
                             "Their parent directories already exist and were write-tested. "
                             "Use the absolute paths from the user prompt and create every "
                             "requested file directly; do not browse directories. "
@@ -1057,7 +1032,6 @@ def create_openhands_conversation(
         llm=LLM(**llm_options),
         tools=[Tool(name=registry_name, params={
             "allowed_edits_files": allowed_files,
-            "write_only": write_only,
         })],
         include_default_tools=["FinishTool"],
         system_prompt=system_prompt,
