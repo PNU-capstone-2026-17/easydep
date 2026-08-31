@@ -209,11 +209,12 @@ def test_erd_entities_generate_persistence_without_an_llm_mapper() -> None:
     migration = files["src/main/resources/db/migration/V1__initial_schema.sql"]
     assert "@Entity" in entity
     assert "@Id" in entity
-    assert "private Object id;" in entity
+    assert "private String id;" in entity
+    assert "DB 기본 키로 쓸 수 있는 문자열 표현" in entity
     assert "private OrderStatus status;" in entity
-    assert "extends JpaRepository<OrderEntity, Object>" in repository
+    assert "extends JpaRepository<OrderEntity, String>" in repository
     assert "CREATE TABLE easydep_order (" in migration
-    assert "id JSON PRIMARY KEY" in migration
+    assert "id VARCHAR(255) PRIMARY KEY" in migration
     assert all("BcePersistenceMapper" not in path for path in files)
     assert files == render_persistence_scaffold(model, "com.example.orders")
 

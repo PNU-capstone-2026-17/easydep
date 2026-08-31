@@ -55,8 +55,9 @@ def render_persistence_scaffold(
     package_path = base_package.replace(".", "/")
     files: dict[str, str] = {}
     for entity in entities:
-        fields = _entity_fields(entity, declared_types)
-        identifiers = _identifier_fields(entity, fields)
+        fields, identifiers, text_identifier_names = _persistence_fields(
+            entity, declared_types, value_types
+        )
         entity_package = f"{base_package}.persistence.entity"
         entity_path = (
             f"src/main/java/{package_path}/persistence/entity/"
@@ -75,6 +76,7 @@ def render_persistence_scaffold(
             base_package,
             enum_types,
             value_types,
+            text_identifier_names,
         )
         files[
             f"src/main/java/{package_path}/persistence/repository/"
@@ -126,6 +128,36 @@ def _identifier_fields(
     return identifiers
 
 
+def _persistence_fields(
+    entity: AcceptedBCEClass,
+    declared_types: set[str],
+    value_types: set[str],
+) -> tuple[
+    list[tuple[str, str, str]],
+    list[tuple[str, str, str]],
+    set[str],
+]:
+    """관계형 DB가 기본 키로 저장할 수 있는 필드 계약을 만든다.
+
+    일반 값 객체와 알 수 없는 설계 타입은 본문 필드라면 JSON으로 보존할 수 있다. 하지만
+    MySQL은 JSON/BLOB 열을 기본 키로 허용하지 않는다. 그런 식별자만 인덱싱 가능한 문자열
+    저장 표현으로 바꾸고, 원래 설계 타입은 주석에 남겨 업무 코드가 변환 책임을 알 수 있게
+    한다. 임의 UUID나 ``null`` 값을 만들어 의미를 추측하지는 않는다.
+    """
+    original = _entity_fields(entity, declared_types)
+    original_identifiers = _identifier_fields(entity, original)
+    text_identifier_names = {
+        name
+        for name, field_type, _source in original_identifiers
+        if _is_json_type(field_type, value_types) or field_type == "byte[]"
+    }
+    fields = [
+        (name, "String" if name in text_identifier_names else field_type, source)
+        for name, field_type, source in original
+    ]
+    return fields, _identifier_fields(entity, fields), text_identifier_names
+
+
 def _render_entity(
     entity: AcceptedBCEClass,
     fields: list[tuple[str, str, str]],
@@ -133,6 +165,7 @@ def _render_entity(
     base_package: str,
     enum_types: set[str],
     value_types: set[str],
+    text_identifier_names: set[str],
 ) -> str:
     """한 ERD Entity를 독립적으로 사용할 수 있는 JPA class로 만든다."""
 
@@ -174,6 +207,10 @@ def _render_entity(
         lines.append("")
         if name in identifier_names:
             lines.append("    @Id")
+        if name in text_identifier_names:
+            lines.append(
+                f"    // 설계 식별자 `{source}`은 DB 기본 키로 쓸 수 있는 문자열 표현으로 저장한다."
+            )
         if _is_enum(field_type, enum_types):
             lines.append("    @Enumerated(EnumType.STRING)")
         elif _is_json_type(field_type, value_types):
@@ -304,8 +341,9 @@ def _render_migration(
 ) -> str:
     statements = ["-- ERD typed 모델에서 생성한 최초 schema다."]
     for entity in entities:
-        fields = _entity_fields(entity, declared_types)
-        identifiers = _identifier_fields(entity, fields)
+        fields, identifiers, _text_identifier_names = _persistence_fields(
+            entity, declared_types, value_types
+        )
         identifier_names = {name for name, _field_type, _source in identifiers}
         columns: list[str] = []
         for name, field_type, _source in fields:
