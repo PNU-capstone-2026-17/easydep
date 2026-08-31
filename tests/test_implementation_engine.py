@@ -64,10 +64,14 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
     ) == ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"]
 
 
-def test_resume_keeps_successful_task_after_later_task_updates_shared_file(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("old_status", "result_prompt"),
+    [("SUCCEEDED", "prompt-v1"), ("RUNNING", "prompt-before-replay")],
+)
+def test_resume_keeps_previous_success_after_shared_file_changes(
+    tmp_path: Path, old_status: str, result_prompt: str
 ) -> None:
-    """뒤 작업이 공유 adapter를 보완해도 끝난 앞 작업을 다시 실행하지 않는다."""
+    """공유 파일 변경이나 중단된 재실행이 있어도 이전 성공 결과를 재사용한다."""
     reports = tmp_path / "reports"
     executions = reports / "agent-executions"
     executions.mkdir(parents=True)
@@ -98,7 +102,7 @@ def test_resume_keeps_successful_task_after_later_task_updates_shared_file(
                 "tasks": [
                     {
                         "taskId": task_id,
-                        "status": "SUCCEEDED",
+                        "status": old_status,
                         "attempts": 1,
                         "outputHashes": {relative: "hash-before-later-task"},
                     }
@@ -108,7 +112,7 @@ def test_resume_keeps_successful_task_after_later_task_updates_shared_file(
         encoding="utf-8",
     )
     (executions / f"{task_id}.result.json").write_text(
-        json.dumps({"status": "SUCCEEDED", "promptSha256": "prompt-v1"}),
+        json.dumps({"status": "SUCCEEDED", "promptSha256": result_prompt}),
         encoding="utf-8",
     )
 

@@ -172,7 +172,9 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         if old.get("status") == "RUNNING":
             status = (
                 "SUCCEEDED"
-                if result_matches and result.get("promptSha256") == prompt_sha
+                if result.get("status") == "SUCCEEDED"
+                and complete_outputs
+                and not repair_replay_required
                 else "INTERRUPTED"
             )
         elif (
