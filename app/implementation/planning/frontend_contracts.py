@@ -74,7 +74,10 @@ class GeneratedClientContracts:
         for path in self.files:
             source = path.read_text(encoding="utf-8").strip()
             if compact:
-                source = _compact_typescript(source)
+                source = _agent_contract_surface(
+                    _compact_typescript(source),
+                    path.relative_to(self.generated_root),
+                )
             chunks.append(
                 f"// {path.relative_to(self.generated_root).as_posix()}\n"
                 f"{source}\n"
@@ -154,6 +157,57 @@ def _compact_typescript(source: str) -> str:
     if "".join(line).strip():
         output.append("".join(line).rstrip())
     return "\n".join(output)
+
+
+def _agent_contract_surface(source: str, relative: Path) -> str:
+    """프론트엔드가 호출할 공개 선언만 남긴다.
+
+    OpenAPI Generator 파일에는 HTTP 요청을 만드는 내부 코드와 JSON 변환 함수가
+    크게 반복된다. 프론트엔드 구현 에이전트가 알아야 하는 것은 API 메서드의 이름과
+    인자, 모델 필드, ``Configuration`` 생성 방법이다. 원본 파일은 수정하지 않고 이
+    공개 부분만 입력에 실어 큰 API도 한 작업으로 처리할 수 있게 한다.
+    """
+    normalized = relative.as_posix()
+    if normalized.endswith("/runtime.ts") or normalized == "runtime.ts":
+        return _through_braced_declaration(source, "export class Configuration")
+
+    if "/models/" in f"/{normalized}":
+        function_at = source.find("\nexport function ")
+        return source[:function_at].rstrip() if function_at >= 0 else source
+
+    if "/apis/" in f"/{normalized}" and relative.name != "index.ts":
+        class_at = source.find("\nexport class ")
+        if class_at < 0:
+            return source
+        declaration_start = class_at + 1
+        brace_at = source.find("{", declaration_start)
+        if brace_at < 0:
+            return source[:class_at].rstrip()
+        # 바로 위의 Interface가 실제 호출 시그니처를 모두 담는다. 구현 클래스는
+        # 존재와 이름만 알려 주고 수십 KB의 요청 조립 본문은 보내지 않는다.
+        declaration = source[declaration_start:brace_at].rstrip()
+        return f"{source[:class_at].rstrip()}\n{declaration} {{}}"
+
+    return source
+
+
+def _through_braced_declaration(source: str, marker: str) -> str:
+    """marker로 시작하는 선언의 닫는 중괄호까지 안전하게 잘라 낸다."""
+    start = source.find(marker)
+    if start < 0:
+        return source
+    brace_at = source.find("{", start)
+    if brace_at < 0:
+        return source
+    depth = 0
+    for index in range(brace_at, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[: index + 1]
+    return source
 
 
 def _is_test_contract(relative: Path) -> bool:

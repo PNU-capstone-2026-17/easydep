@@ -210,6 +210,48 @@ def test_compacts_generated_contracts_before_rejecting_budget(tmp_path: Path) ->
     assert "getOrder(): string" in rendered
 
 
+def test_compact_contract_keeps_public_api_and_omits_generated_bodies(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "src/generated"
+    api = generated / "src/apis/OrdersApi.ts"
+    model = generated / "src/models/Order.ts"
+    runtime = generated / "src/runtime.ts"
+    api.parent.mkdir(parents=True)
+    model.parent.mkdir(parents=True)
+    api.write_text(
+        "export interface OrdersApiInterface { getOrder(): Promise<Order>; }\n"
+        "export class OrdersApi implements OrdersApiInterface {\n"
+        "  async getOrder(): Promise<Order> { "
+        + ("const internal = 'request';\n" * 100)
+        + "return {} as Order; }\n}\n",
+        encoding="utf-8",
+    )
+    model.write_text(
+        "export interface Order { id: string; }\n"
+        "export function OrderFromJSON(value: unknown): Order { "
+        + ("const internal = value;\n" * 100)
+        + "return internal as Order; }\n",
+        encoding="utf-8",
+    )
+    runtime.write_text(
+        "export interface ConfigurationParameters { basePath?: string; }\n"
+        "export class Configuration { constructor(value: ConfigurationParameters = {}) {} }\n"
+        "export class BaseAPI { "
+        + ("request() {}\n" * 100)
+        + "}\n",
+        encoding="utf-8",
+    )
+
+    rendered = GeneratedClientContracts.discover(generated).render(max_chars=700)
+
+    assert "getOrder(): Promise<Order>" in rendered
+    assert "export interface Order { id: string; }" in rendered
+    assert "export class Configuration" in rendered
+    assert "const internal" not in rendered
+    assert "export class BaseAPI" not in rendered
+
+
 def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path) -> None:
     from app.implementation.domain.models import JobSpec
     from app.implementation.generation.orchestrator import PrototypeOrchestrator
