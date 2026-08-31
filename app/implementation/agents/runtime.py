@@ -34,6 +34,7 @@ from .provider import (
     provider_retry_delay,
     transient_provider_error,
 )
+from .task_check import TASK_CHECK_TOOL_NAME, register_task_check_tool
 from .verification.build import (
     WorkspaceVerificationError,
     verify_agent_workspace,
@@ -346,6 +347,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     round_allowed,
                     api_key,
                     task["llm"],
+                    task_type=task_type,
+                    verification_paths=editable_paths,
                     callbacks=[journal],
                     max_iterations=round_iteration_limit,
                     reasoning_effort=reasoning_effort,
@@ -831,6 +834,10 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         allowed,
         "validation-only-key",
         task["llm"],
+        task_type=str(task.get("task_type", "")),
+        verification_paths=[
+            str(path) for path in task.get("allowed_write_paths", [])
+        ],
         callbacks=[validation_journal],
         system_prompt=(
             FRONTEND_SYSTEM_PROMPT
@@ -888,7 +895,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
     finally:
         conversation.close()
     if (
-        set(tools) != {"restricted_file_editor", "finish"}
+        set(tools) != {"restricted_file_editor", TASK_CHECK_TOOL_NAME, "finish"}
         or not enforced
         or not unauthorized_blocked
         or not allowed_write_succeeded
@@ -938,6 +945,9 @@ def create_openhands_conversation(
     allowed_files: list[str],
     api_key: str,
     llm_config: dict[str, object],
+    *,
+    task_type: str = "",
+    verification_paths: list[str] | None = None,
     callbacks: list[object] | None = None,
     max_iterations: int = MAX_AGENT_TURN_ITERATIONS,
     reasoning_effort: str = "medium",
@@ -1028,6 +1038,7 @@ def create_openhands_conversation(
             if not _RESTRICTED_EDITOR_REGISTERED:
                 register_tool(registry_name, RestrictedFileEditorTool)
                 _RESTRICTED_EDITOR_REGISTERED = True
+    task_check_tool_name = register_task_check_tool()
     model = configured_model(str(llm_config["model"]))
     is_qwen_coder = "qwen3-coder" in model.lower()
     is_gpt_oss = "gpt-oss" in model.lower()
@@ -1065,9 +1076,19 @@ def create_openhands_conversation(
     )
     agent = Agent(
         llm=LLM(**llm_options),
-        tools=[Tool(name=registry_name, params={
-            "allowed_edits_files": allowed_files,
-        })],
+        tools=[
+            Tool(
+                name=registry_name,
+                params={"allowed_edits_files": allowed_files},
+            ),
+            Tool(
+                name=task_check_tool_name,
+                params={
+                    "task_type": task_type,
+                    "allowed_write_paths": verification_paths or [],
+                },
+            ),
+        ],
         include_default_tools=["FinishTool"],
         system_prompt=system_prompt,
     )

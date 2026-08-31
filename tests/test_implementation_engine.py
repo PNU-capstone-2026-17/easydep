@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.implementation.agents.task_check import run_task_check
 from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
     task_verification_command,
@@ -62,6 +63,38 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
         "use-case",
         ["application/src/test/java/com/example/OrderScenarioTest.java"],
     ) == ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"]
+
+
+def test_agent_task_check_returns_real_focused_verification_result(
+    tmp_path: Path,
+) -> None:
+    """코딩 에이전트의 검사 도구가 별도 명령 없이 기존 검증 결과를 돌려준다."""
+    evidence = {
+        "command": ["gradlew", "test", "--tests", "*OrderScenarioTest"],
+        "exitCode": 1,
+        "durationMs": 321,
+        "stderr": "OrderService.java:42: incompatible types",
+        "testResults": "OrderScenarioTest.placesOrder: assertion failed",
+    }
+    with patch(
+        "app.implementation.agents.task_check.verify_agent_workspace",
+        side_effect=WorkspaceVerificationError(evidence),
+    ) as verify:
+        passed, output = run_task_check(
+            tmp_path,
+            "use-case",
+            ["application/src/test/java/com/example/OrderScenarioTest.java"],
+        )
+
+    assert passed is False
+    assert "TASK CHECK FAILED" in output
+    assert "OrderService.java:42: incompatible types" in output
+    assert "OrderScenarioTest.placesOrder: assertion failed" in output
+    verify.assert_called_once_with(
+        tmp_path,
+        "use-case",
+        ["application/src/test/java/com/example/OrderScenarioTest.java"],
+    )
 
 
 @pytest.mark.parametrize(
