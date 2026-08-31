@@ -82,6 +82,20 @@ TestRestTemplate http;
     violations = e2e_contract_violations(source, contract)
     assert any("201" in violation for violation in violations)
 
+    source.write_text(
+        """@SpringBootTest class CourseFlowTest {
+MockMvc mvc;
+@Test void search() throws Exception {
+  mvc.perform(get("/courses")).andExpect(status().isOk());
+}
+}
+""",
+        encoding="utf-8",
+    )
+    assert e2e_contract_violations(
+        source, {"method": "GET", "path": "/courses", "status": 200}
+    ) == []
+
 
 def test_planned_manifest_uses_work_units_and_scopes_repairs_to_contracts(
     tmp_path: Path,

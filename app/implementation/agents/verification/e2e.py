@@ -24,6 +24,13 @@ _STATUS_NAMES = {
     204: "NO_CONTENT",
 }
 
+_MOCKMVC_STATUS_ASSERTIONS = {
+    200: "isOk(",
+    201: "isCreated(",
+    202: "isAccepted(",
+    204: "isNoContent(",
+}
+
 
 def e2e_contract_violations(
     path: Path, contract: dict[str, object] | None = None
@@ -54,6 +61,8 @@ def e2e_contract_violations(
         status_tokens = {str(status)}
         if name := _STATUS_NAMES.get(status):
             status_tokens.update({name, f"HttpStatus.{name}"})
+        if mockmvc_assertion := _MOCKMVC_STATUS_ASSERTIONS.get(status):
+            status_tokens.add(mockmvc_assertion)
         assertion_lines = [
             line
             for line in source.splitlines()
