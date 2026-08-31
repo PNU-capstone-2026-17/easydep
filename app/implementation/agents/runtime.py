@@ -70,10 +70,7 @@ def _configure_openhands_profile_store() -> None:
     """
     from openhands.sdk.llm import llm_profile_store
 
-    profile_dir = (
-        Path(tempfile.gettempdir())
-        / f"easydep-openhands-profiles-{os.getpid()}"
-    )
+    profile_dir = Path(tempfile.gettempdir()) / f"easydep-openhands-profiles-{os.getpid()}"
     profile_dir.mkdir(parents=True, exist_ok=True)
     llm_profile_store._DEFAULT_PROFILE_DIR = profile_dir
 
@@ -174,7 +171,9 @@ def _render_missing_output_repair_prompt(
             "contracts. Assert observable behavior; do not copy a prompt or private helper."
         )
     else:
-        task_hint = "Use the existing generated application contract; do not inspect or list directories."
+        task_hint = (
+            "Use the existing generated application contract; do not inspect or list directories."
+        )
     files = "\n".join(f"- `{path}`" for path in missing_outputs)
     return (
         "The previous agent round did not create the required output files. "
@@ -190,9 +189,7 @@ def _render_missing_output_repair_prompt(
     )
 
 
-def _promote_changed_files(
-    sandbox: Path, run_root: Path, changed: set[str]
-) -> None:
+def _promote_changed_files(sandbox: Path, run_root: Path, changed: set[str]) -> None:
     for relative in sorted(changed):
         source = sandbox / relative
         if not source.is_file():
@@ -206,9 +203,7 @@ def _promote_changed_files(
         shutil.copy2(source, target)
 
 
-def _restore_unauthorized_files(
-    sandbox: Path, run_root: Path, unauthorized: list[str]
-) -> None:
+def _restore_unauthorized_files(sandbox: Path, run_root: Path, unauthorized: list[str]) -> None:
     """Restore files written outside a task's ownership boundary."""
     for relative in unauthorized:
         sandbox_path = sandbox / relative
@@ -227,8 +222,7 @@ def _repeated_failure(
 ) -> bool:
     """같은 source와 같은 검사 오류를 이미 수리하려 했는지 확인한다."""
     return any(
-        attempt.candidate_digest == candidate_digest
-        and attempt.finding_keys_before == finding_keys
+        attempt.candidate_digest == candidate_digest and attempt.finding_keys_before == finding_keys
         for attempt in ledger.attempts
         if attempt.candidate_digest
     )
@@ -270,14 +264,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     app_id = _run_app_id(run_root)
     active_repair = active_repair_for_task(run_root, task_id)
     editable_paths = [str(path) for path in task.get("allowed_write_paths", [])]
-    required_paths = [
-        str(path)
-        for path in task.get("required_output_paths", editable_paths)
-    ]
-    immutable_paths = {
-        str(path).replace("\\", "/")
-        for path in task.get("immutable_paths", [])
-    }
+    required_paths = [str(path) for path in task.get("required_output_paths", editable_paths)]
+    immutable_paths = {str(path).replace("\\", "/") for path in task.get("immutable_paths", [])}
     if active_repair is not None:
         # 서로 다른 기능의 파일이 함께 실패한 통합 수리도 전체 source 권한을 얻지 않는다.
         # repair plan이 근거에서 고른 정확한 파일만 기존 기능 작업 범위에 더한다.
@@ -295,10 +283,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 ]
             )
         )
-    editable_roots = [
-        str(path).replace("\\", "/")
-        for path in task.get("allowed_write_roots", [])
-    ]
+    editable_roots = [str(path).replace("\\", "/") for path in task.get("allowed_write_roots", [])]
     if task_type == "use-case":
         # 기능 구현 작업은 서로 강하게 연결된 Controller, Service와 Entity 동작을 한 대화에서
         # 완성한다. 한 작업만 사용하는 package에는 새 파일도 만들 수 있지만 다른 기능과
@@ -325,7 +310,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         }
 
     compatibility = openhands_compatibility()
-    missing = [key for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured") if not compatibility[key]]
+    missing = [
+        key
+        for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured")
+        if not compatibility[key]
+    ]
     if missing:
         raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
 
@@ -338,21 +327,29 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     )
     before = snapshot_files(sandbox)
     prompt_file = (
-        task.get("repair_prompt_file")
-        if active_repair is not None
-        else task.get("prompt_file")
+        task.get("repair_prompt_file") if active_repair is not None else task.get("prompt_file")
     )
     if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
         prompt_file = str(task["prompt_file"])
     prompt = (run_root / prompt_file).read_text(encoding="utf-8")
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
+    read_source_paths = context.get("readSourcePaths", [])
+    readable_absolute: list[str] = []
+    if isinstance(read_source_paths, list):
+        sandbox_root = sandbox.resolve()
+        for value in read_source_paths:
+            if not isinstance(value, str):
+                continue
+            candidate = (sandbox / value).resolve()
+            try:
+                candidate.relative_to(sandbox_root)
+            except ValueError:
+                continue
+            if candidate.exists():
+                readable_absolute.append(str(candidate))
     allowed_absolute = [str((sandbox / path).resolve()) for path in editable_paths]
-    editable_root_absolute = [
-        str((sandbox / path).resolve()) for path in editable_roots
-    ]
-    immutable_absolute = [
-        str((sandbox / path).resolve()) for path in sorted(immutable_paths)
-    ]
+    editable_root_absolute = [str((sandbox / path).resolve()) for path in editable_roots]
+    immutable_absolute = [str((sandbox / path).resolve()) for path in sorted(immutable_paths)]
     prompt += "\n\n## Enforced absolute write paths\n\n" + "\n".join(
         f"- `{path}`" for path in allowed_absolute
     )
@@ -364,14 +361,18 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         prompt += "\n\n## Read-only generated contract paths\n\n" + "\n".join(
             f"- `{path}`" for path in immutable_absolute
         )
+    if readable_absolute:
+        # 선행 작업이 만든 실제 source는 프롬프트에 오래된 사본으로 넣지 않는다. 실행
+        # workspace의 위치만 알려 주면 OpenHands가 view로 최신 선언을 읽고 구현을 정한다.
+        prompt += "\n\n## Inspect these current sources before editing\n\n" + "\n".join(
+            f"- `{path}`" for path in readable_absolute
+        )
 
     api_key = configured_api_key()
     assert api_key is not None
     execution_dir = run_root / "reports" / "agent-executions"
     attempt = execution_attempt(run_root, task_id)
-    journal = EventJournal(
-        execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl"
-    )
+    journal = EventJournal(execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl")
     started = time.monotonic()
     agent = None
     conversation_warning: str | None = None
@@ -445,9 +446,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         # for the successful result, but retry transient failures
                         # before consulting output or build verification.
                         conversation_error = error
-                        conversation_warning = (
-                            f"{error.__class__.__name__}: {error}"
-                        )
+                        conversation_warning = f"{error.__class__.__name__}: {error}"
                     finally:
                         usage = _conversation_token_usage(conversation)
                         if usage is not None:
@@ -455,17 +454,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                                 input_tokens=max(0, usage[0] - usage_before[0]),
                                 output_tokens=max(0, usage[1] - usage_before[1]),
                             )
-                if conversation_error is None or not transient_provider_error(
-                    conversation_error
-                ):
+                if conversation_error is None or not transient_provider_error(conversation_error):
                     break
                 # A provider may fail while emitting its final response after
                 # the agent has already written every contracted file. In that
                 # case do not repeat the generation and risk overwriting valid
                 # work; continue to deterministic verification instead.
-                if not missing_required_outputs(
-                    sandbox, required_paths
-                ):
+                if not missing_required_outputs(sandbox, required_paths):
                     break
                 provider_retries += 1
                 if provider_retries > MAX_PROVIDER_RETRIES:
@@ -475,9 +470,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     ) from conversation_error
                 time.sleep(provider_retry_delay(provider_retries))
 
-            missing_outputs = missing_required_outputs(
-                sandbox, required_paths
-            )
+            missing_outputs = missing_required_outputs(sandbox, required_paths)
             if missing_outputs:
                 finding_keys = tuple(f"missing:{path}" for path in missing_outputs)
                 candidate_digest = stable_digest(snapshot_files(sandbox))
@@ -515,15 +508,12 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             {
                                 "command": ["required-task-outputs"],
                                 "exitCode": 1,
-                                "stderr": "Missing required outputs: "
-                                + ", ".join(missing_outputs),
+                                "stderr": "Missing required outputs: " + ", ".join(missing_outputs),
                             },
                             candidate_digest,
                         )
                     )
-                round_allowed = [
-                    str((sandbox / path).resolve()) for path in missing_outputs
-                ]
+                round_allowed = [str((sandbox / path).resolve()) for path in missing_outputs]
                 round_prompt = _render_missing_output_repair_prompt(
                     round_allowed,
                 )
@@ -587,12 +577,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 editable_entities = [
                     path
                     for path in changed
-                    if "/bce/" in "/" + path.replace("\\", "/")
-                    and path.endswith(".java")
+                    if "/bce/" in "/" + path.replace("\\", "/") and path.endswith(".java")
                 ]
-                signature_violations = entity_public_signature_violations(
-                    run_root, sandbox, editable_entities
-                ) if editable_entities else []
+                signature_violations = (
+                    entity_public_signature_violations(run_root, sandbox, editable_entities)
+                    if editable_entities
+                    else []
+                )
                 if signature_violations:
                     raise WorkspaceVerificationError(
                         {
@@ -714,9 +705,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     # 실패 뒤 재사용한 임시 작업 공간에는 필수 결과가 이미 존재할 수 있다. 그런 파일은
     # 이번 대화 시작 시점과 비교하면 changed가 아니지만, 실제 run에는 아직 없을 수 있다.
     # 성공한 작업의 계약 결과는 항상 run으로 복사해 체크포인트와 source를 일치시킨다.
-    promoted_files = changed | {
-        path for path in required_paths if (sandbox / path).is_file()
-    }
+    promoted_files = changed | {path for path in required_paths if (sandbox / path).is_file()}
     _promote_changed_files(sandbox, run_root, promoted_files)
     result = {
         "taskId": task_id,
@@ -866,23 +855,23 @@ def write_execution_result(
         content, encoding="utf-8"
     )
     # Keep the stable path as a latest-result compatibility pointer/copy.
-    (execution_dir / f"{task_id}.result.json").write_text(
-        content, encoding="utf-8"
-    )
+    (execution_dir / f"{task_id}.result.json").write_text(content, encoding="utf-8")
 
 
 def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object]:
     """Initialize the real SDK and restricted tool without making an LLM request."""
     task = load_task(run_root, task_id)
     compatibility = openhands_compatibility()
-    missing = [key for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled") if not compatibility[key]]
+    missing = [
+        key
+        for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled")
+        if not compatibility[key]
+    ]
     if missing:
         raise RuntimeError("OpenHands SDK prerequisites are missing: " + ", ".join(missing))
     task_type = str(task.get("task_type", ""))
     active_repair = active_repair_for_task(run_root, task_id)
-    validation_allowed = [
-        str(path) for path in task.get("allowed_write_paths", [])
-    ]
+    validation_allowed = [str(path) for path in task.get("allowed_write_paths", [])]
     if active_repair is not None:
         validation_allowed = list(
             dict.fromkeys(
@@ -906,8 +895,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         else []
     )
     validation_immutable = {
-        str(path).replace("\\", "/")
-        for path in task.get("immutable_paths", [])
+        str(path).replace("\\", "/") for path in task.get("immutable_paths", [])
     }
     if broad_backend_scope:
         validation_immutable = {
@@ -924,12 +912,8 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         task = {**task, "allowed_write_roots": validation_roots}
     sandbox = prepare_agent_workspace(run_root, task)
     allowed = [str((sandbox / path).resolve()) for path in validation_allowed]
-    allowed_roots = [
-        str((sandbox / path).resolve()) for path in validation_roots
-    ]
-    immutable = [
-        str((sandbox / path).resolve()) for path in sorted(validation_immutable)
-    ]
+    allowed_roots = [str((sandbox / path).resolve()) for path in validation_roots]
+    immutable = [str((sandbox / path).resolve()) for path in sorted(validation_immutable)]
     validation_journal = EventJournal(
         run_root / "reports" / f"agent-validation-{task_id}.events.jsonl"
     )
@@ -939,9 +923,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "validation-only-key",
         task["llm"],
         task_type=task_type,
-        verification_paths=[
-            str(path) for path in task.get("allowed_write_paths", [])
-        ],
+        verification_paths=[str(path) for path in task.get("allowed_write_paths", [])],
         editable_roots=allowed_roots,
         immutable_paths=immutable,
         callbacks=[validation_journal],
@@ -1088,25 +1070,15 @@ def create_openhands_conversation(
             # SDK의 기본 executor는 파일 목록만 지원한다. 실제 편집 호출은 아래에서
             # 검사하므로 부모에는 제한을 넘기지 않고, 검증 보고서용 속성은 유지한다.
             super().__init__(workspace_root=workspace_root)
-            self.allowed_edits_files = {
-                Path(path).resolve() for path in allowed_edits_files
-            }
-            self.allowed_edit_roots = {
-                Path(path).resolve() for path in allowed_edit_roots
-            }
-            self.immutable_edit_paths = {
-                Path(path).resolve() for path in immutable_edit_paths
-            }
+            self.allowed_edits_files = {Path(path).resolve() for path in allowed_edits_files}
+            self.allowed_edit_roots = {Path(path).resolve() for path in allowed_edit_roots}
+            self.immutable_edit_paths = {Path(path).resolve() for path in immutable_edit_paths}
 
         def _can_edit(self, target: Path) -> bool:
-            if any(
-                target == path or path in target.parents
-                for path in self.immutable_edit_paths
-            ):
+            if any(target == path or path in target.parents for path in self.immutable_edit_paths):
                 return False
             return target in (self.allowed_edits_files or set()) or any(
-                target == root or root in target.parents
-                for root in self.allowed_edit_roots
+                target == root or root in target.parents for root in self.allowed_edit_roots
             )
 
         def __call__(self, action, conversation=None):
@@ -1190,8 +1162,10 @@ def create_openhands_conversation(
                         "description": (
                             "Create or edit text files inside the assigned file list or "
                             "implementation roots. Read-only generated contract paths are "
-                            "always rejected. Use absolute paths from the user prompt. "
-                            "Create may replace an existing editable file."
+                            "always rejected. The view command may inspect the current files "
+                            "and directories listed in the prompt; descend into a listed "
+                            "directory when you need a declaration. Use absolute paths from "
+                            "the user prompt. Create may replace an existing editable file."
                         ),
                     }
                 )
@@ -1277,7 +1251,6 @@ def _path_is_immutable(path: str, immutable_paths: set[str]) -> bool:
     """파일 경로가 생성 계약 파일 또는 그 하위에 있는지 확인한다."""
     normalized = path.replace("\\", "/").rstrip("/")
     return any(
-        normalized == root.rstrip("/")
-        or normalized.startswith(root.rstrip("/") + "/")
+        normalized == root.rstrip("/") or normalized.startswith(root.rstrip("/") + "/")
         for root in immutable_paths
     )

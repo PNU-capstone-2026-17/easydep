@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field, replace
+from itertools import pairwise
 from pathlib import Path
 
 from app.config import settings
@@ -18,6 +19,11 @@ from ..domain.implementation_ir import (
 from ..domain.models import JobSpec
 from ..generation.frontend_scaffold import frontend_page_names, operation_ids
 from .frontend_contracts import GeneratedClientContracts
+
+# 한 작업의 관련 요구사항·시퀀스·API 정보가 이 크기를 넘으면 같은 화면이나 Boundary를
+# 공유하더라도 나눈다. 유스케이스 개수를 고정하지 않고 실제로 LLM이 읽을 정보량을 기준으로
+# 삼아, 작은 기능은 함께 처리하고 수강신청처럼 큰 기능은 Control 단위로 유지한다.
+USE_CASE_BUNDLE_CONTEXT_LIMIT_BYTES = 48 * 1024
 
 
 @dataclass(frozen=True)
@@ -178,7 +184,7 @@ class _UseCaseBundle:
 
 
 def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
-    """같은 구현 source를 공유하는 유스케이스를 한 작업으로 묶는다."""
+    """같은 Control의 유스케이스를 중심으로, 읽을 수 있는 크기의 작업을 만든다."""
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
@@ -186,7 +192,7 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     output.mkdir(parents=True, exist_ok=True)
     endpoints = _api_model_endpoints(spec)
     component_ids = _component_use_case_ids(spec)
-    bundles = _use_case_bundles(ir, component_ids, endpoints)
+    bundles = _use_case_bundles(spec, ir, component_ids, endpoints)
     bce_paths = [
         path.relative_to(run_root).as_posix()
         for path in sorted((java_root / "bce").rglob("*.java"))
@@ -209,11 +215,19 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
 
 
 def _use_case_bundles(
+    spec: JobSpec,
     ir: ImplementationIR,
     component_ids: dict[str, set[str]],
     endpoints: list[dict[str, object]],
 ) -> list[_UseCaseBundle]:
-    """같은 Control, Boundary, Entity, Gateway 또는 Controller를 한 작업에 둔다."""
+    """같은 Control의 작업을 묶고, 작은 인접 작업만 추가로 합친다.
+
+    Entity나 Boundary 하나가 여러 기능에 쓰인다는 이유만으로 모든 유스케이스를 한 대화에
+    넣으면 에이전트가 업무 규칙보다 파일 수습에 시간을 쓰게 된다. Control은 한 기능의
+    처리 흐름을 소유하므로 우선 함께 두고, 같은 Boundary나 API 파일을 쓰는 작업은 합친
+    입력이 충분히 작을 때만 합친다. 공유 파일은 뒤의 ``depends_on`` 계산이 실행 순서를
+    정하므로, 여기서 거대한 작업으로 만들 필요가 없다.
+    """
     for endpoint in endpoints:
         binding = endpoint.get("control_binding")
         control = binding.get("control") if isinstance(binding, dict) else None
@@ -232,18 +246,8 @@ def _use_case_bundles(
             links.setdefault(use_case_id, {use_case_id}).update(related)
 
     for component in ir.components:
-        if _is_work_component(component):
+        if component.stereotype.casefold() == "control":
             connect(component_ids.get(component.name, set()))
-    for port in ir.api_ports:
-        related = {
-            use_case_id
-            for endpoint in endpoints
-            if any(
-                _operation_matches_endpoint(operation, endpoint) for operation in port.operations
-            )
-            for use_case_id in _use_case_ids(endpoint)
-        }
-        connect(related)
 
     groups: list[tuple[str, ...]] = []
     pending = set(all_ids)
@@ -259,6 +263,34 @@ def _use_case_bundles(
             frontier.extend(links.get(use_case_id, {use_case_id}) - group)
         pending.difference_update(group)
         groups.append(tuple(sorted(group, key=_use_case_sort_key)))
+
+    # 같은 Boundary 또는 생성 Controller를 쓰는 작은 Control 작업은 한 번의 대화로 처리하면
+    # 중복 수정을 줄일 수 있다. 다만 합친 설계 문맥이 한도를 넘으면 별도 작업으로 남긴다.
+    related_sources = [
+        component_ids.get(component.name, set())
+        for component in ir.components
+        if component.stereotype.casefold() == "boundary"
+    ]
+    related_sources.extend(
+        {
+            use_case_id
+            for endpoint in endpoints
+            if any(
+                _operation_matches_endpoint(operation, endpoint) for operation in port.operations
+            )
+            for use_case_id in _use_case_ids(endpoint)
+        }
+        for port in ir.api_ports
+    )
+    for related in related_sources:
+        groups = _merge_small_related_groups(
+            spec,
+            ir,
+            component_ids,
+            endpoints,
+            groups,
+            related,
+        )
 
     bundles = [_bundle_for_ids(ir, component_ids, endpoints, group) for group in groups]
     assigned_components = {item.name for bundle in bundles for item in bundle.components}
@@ -282,6 +314,56 @@ def _use_case_bundles(
             _use_case_sort_key(bundle.use_case_ids[0]) if bundle.use_case_ids else (10**9, "common")
         ),
     )
+
+
+def _merge_small_related_groups(
+    spec: JobSpec,
+    ir: ImplementationIR,
+    component_ids: dict[str, set[str]],
+    endpoints: list[dict[str, object]],
+    groups: list[tuple[str, ...]],
+    related: set[str],
+) -> list[tuple[str, ...]]:
+    """같은 adapter를 쓰는 인접 그룹을 LLM 입력 크기가 허용할 때만 합친다."""
+    if len(related) < 2:
+        return groups
+    result = list(groups)
+    while True:
+        indexes = [index for index, group in enumerate(result) if set(group) & related]
+        merged = False
+        for left, right in pairwise(indexes):
+            combined = tuple(sorted({*result[left], *result[right]}, key=_use_case_sort_key))
+            if (
+                _bundle_context_size(spec, ir, component_ids, endpoints, combined)
+                > USE_CASE_BUNDLE_CONTEXT_LIMIT_BYTES
+            ):
+                continue
+            result[left] = combined
+            result.pop(right)
+            merged = True
+            break
+        if not merged:
+            return result
+
+
+def _bundle_context_size(
+    spec: JobSpec,
+    ir: ImplementationIR,
+    component_ids: dict[str, set[str]],
+    endpoints: list[dict[str, object]],
+    use_case_ids: tuple[str, ...],
+) -> int:
+    """프롬프트에 들어갈 핵심 설계 정보를 UTF-8 byte 수로 가늠한다."""
+    bundle = _bundle_for_ids(ir, component_ids, endpoints, use_case_ids)
+    requirements, use_cases, _sources = _related_requirement_artifacts(spec, use_case_ids)
+    value = {
+        "requirements": requirements,
+        "useCases": use_cases,
+        "scenarios": _scenarios_for_use_cases(spec, use_case_ids),
+        "apiEndpoints": bundle.endpoints,
+        "components": [asdict(component) for component in bundle.components],
+    }
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 def _grant_exclusive_write_roots(
@@ -392,6 +474,14 @@ def _build_use_case_task(
     entity_sources = [
         f"application/src/main/java/{package_path}/bce/{name}.java" for name in entities
     ]
+    # persistence 작업은 이 작업을 계획한 뒤에 실행된다. 따라서 source 본문을 프롬프트에
+    # 미리 복사할 수는 없지만, 실행 시점에 OpenHands가 확인할 정확한 위치는 알려 줄 수 있다.
+    dependency_source_paths = [
+        f"application/src/main/java/{package_path}/persistence/entity",
+        f"application/src/main/java/{package_path}/persistence/repository",
+        f"application/src/main/java/{package_path}/persistence/mapper",
+        *entity_sources,
+    ]
     editable = _work_unit_editable_paths(run_root, required, entity_sources)
     depends_on = sorted({writers[path] for path in editable if path in writers})
     requirements, use_cases, sources = _related_requirement_artifacts(spec, bundle.use_case_ids)
@@ -422,6 +512,7 @@ def _build_use_case_task(
         "controllerBodyPaths": [
             path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
         ],
+        "readSourcePaths": dependency_source_paths,
         "entityBodySources": entity_sources,
         "requiredOutputs": required,
         "requiredTestPaths": [test_path],
@@ -463,6 +554,12 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 ~~~java
 {scaffolds}
 ~~~
+
+## Source to inspect before editing
+The persistence task completes these locations before this task starts. Use the read-only
+`view` operation to inspect their current declarations instead of guessing repository methods
+or previously implemented Entity bodies.
+{chr(10).join(f"- `{path}`" for path in dependency_source_paths)}
 """
         + _render_deployment_context(deployment_context)
         + render_allowed_output_rules(required)
