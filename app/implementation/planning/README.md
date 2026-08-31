@@ -1,4 +1,4 @@
-# Implementation planning
+# 구현 작업 계획
 
 `app.implementation.planning`은 설계 산출물을 구현 작업과 프런트엔드 계약으로
 정리한다. 코드를 생성하거나 배포를 실행하는 계층은 아니다.
@@ -18,12 +18,14 @@
 
 ## 유스케이스 작업
 
-- planner는 `bceModel`과 `apiModel`의 `use_case_ids`를 읽는다. 같은 Control을 공유하는
-  유스케이스를 먼저 연결하고, 남은 단일 작업만 Entity 관계로 합친다. 한 작업에는 최대
-  세 개만 넣는다.
-- 같은 Controller나 Entity source를 여러 작업이 고치면 뒤 작업의
-  `depends_on`에 앞 작업을 기록한다. 각 task JSON에는 `requirement_ids`,
-  `use_case_ids`, `required_test_paths`도 함께 남긴다.
+- planner는 `bceModel`과 `apiModel`의 `use_case_ids`를 읽는다. 같은 Control, Boundary,
+  Entity, Gateway 또는 Controller source를 수정하는 유스케이스는 한 기능 작업으로 묶는다.
+  유스케이스 개수를 세 개처럼 임의의 숫자로 자르지 않는다.
+- 서로 다른 기능 작업은 수정 파일과 package가 겹치지 않을 때만 병렬 실행할 수 있다. 한
+  기능만 사용하는 package에서는 OpenHands가 helper 파일을 추가할 수 있고, 여러 기능이
+  공유하는 package에서는 계획에 기록된 파일만 수정한다.
+- 각 task JSON에는 `requirement_ids`, `use_case_ids`, `required_test_paths`, 편집 파일과
+  새 파일을 만들 수 있는 전용 package를 함께 남긴다.
 - 각 작업 context에는 관련 요구사항, use-case artifact, typed sequence scenario를
   넣는다. 해당 선택 입력이 없으면 빈 목록으로 명시하며, 설계에 없는 작업은 만들지
   않는다.

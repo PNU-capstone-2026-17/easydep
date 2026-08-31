@@ -8,7 +8,11 @@ from unittest.mock import patch
 import pytest
 
 from app.implementation.agents import execute_openhands_task
-from app.implementation.agents.task_check import TaskCheckSession, run_task_check
+from app.implementation.agents.task_check import (
+    TaskCheckSession,
+    consume_successful_task_check,
+    run_task_check,
+)
 from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
     task_verification_command,
@@ -121,6 +125,9 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
         "use-case",
         ["application/src/test/java/com/example/OrderScenarioTest.java"],
     ) == ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"]
+    assert task_verification_command(["gradlew"]) == [
+        "gradlew", "test", "--build-cache",
+    ]
 
 
 def test_agent_task_check_returns_real_focused_verification_result(
@@ -181,9 +188,28 @@ def test_agent_task_check_requires_a_source_change_before_retry(
     verify.assert_called_once()
 
 
-def test_use_case_scope_allows_implementation_but_protects_generated_api() -> None:
-    """순차 유스케이스는 구현 source를 함께 고치되 생성 계약은 바꾸지 못한다."""
-    roots = ["application/src/main/java"]
+def test_successful_agent_check_is_reused_only_for_the_same_source(tmp_path: Path) -> None:
+    """에이전트가 통과시킨 동일 검사를 대화 종료 직후 다시 실행하지 않는다."""
+    source = tmp_path / "application/src/main/java/com/example/OrderService.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class OrderService {}", encoding="utf-8")
+    evidence = {"command": ["gradlew", "test"], "exitCode": 0}
+    paths = ["application/src/main/java/com/example/OrderService.java"]
+    with patch(
+        "app.implementation.agents.task_check.verify_agent_workspace",
+        return_value=evidence,
+    ) as verify:
+        passed, _ = run_task_check(tmp_path, "use-case", paths)
+        reused = consume_successful_task_check(tmp_path, "use-case", paths)
+
+    assert passed is True
+    assert reused == {**evidence, "reusedFromTaskCheck": True}
+    verify.assert_called_once()
+
+
+def test_use_case_scope_allows_owned_package_but_protects_other_features() -> None:
+    """기능 전용 package 안의 새 파일은 허용하고 다른 기능과 생성 계약은 보호한다."""
+    roots = ["application/src/main/java/com/example/application"]
     immutable = [
         "application/src/main/java/com/example/api",
         "application/src/main/java/com/example/bce/OrderControl.java",
@@ -195,7 +221,7 @@ def test_use_case_scope_allows_implementation_but_protects_generated_api() -> No
         roots,
         immutable,
     )
-    assert path_is_editable(
+    assert not path_is_editable(
         "application/src/main/java/com/example/persistence/OrderRepository.java",
         [],
         roots,
@@ -524,7 +550,7 @@ class Order <<Entity>> { - id: UUID }
 
     use_cases = [task for task in tasks if task["task_type"] == "use-case"]
     wiring = next(task for task in tasks if task["task_type"] == "wiring")
-    assert len(use_cases) >= 2
+    assert len(use_cases) == 1
     assert set(wiring["use_case_ids"]) == {"UC1", "UC2"}
     assert wiring["repair_only"] is True
     assert wiring["required_output_paths"] == []
@@ -535,7 +561,7 @@ class Order <<Entity>> { - id: UUID }
     expected_requirements = {"UC1": {"FR-ORDER"}, "UC2": {"FR-CANCEL"}}
     partitions = [set(context["useCaseIds"]) for context in contexts]
     assert set().union(*partitions) == set(expected_requirements)
-    assert all(len(group) <= 3 for group in partitions)
+    assert partitions == [{"UC1", "UC2"}]
     assert all(left.isdisjoint(right) for index, left in enumerate(partitions) for right in partitions[index + 1 :])
     for context in contexts:
         assert set(context["requirementIds"]) == set().union(
@@ -563,6 +589,7 @@ class Order <<Entity>> { - id: UUID }
         not set(task["allowed_write_paths"]).intersection(immutable_bce)
         for task in use_cases
     )
+    assert use_cases[0]["allowed_write_roots"]
 
 
 def test_scenario_failure_returns_to_automatic_repair_without_user_input(

@@ -18,6 +18,18 @@ from .workspace import snapshot_files
 TASK_CHECK_TOOL_NAME = "run_task_check"
 _REGISTERED = False
 _REGISTRATION_LOCK = threading.Lock()
+_SUCCESSFUL_CHECKS_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True)
+class _SuccessfulCheck:
+    source_snapshot: dict[str, str]
+    task_type: str
+    allowed_paths: tuple[str, ...]
+    evidence: dict[str, object]
+
+
+_SUCCESSFUL_CHECKS: dict[str, _SuccessfulCheck] = {}
 
 
 @dataclass
@@ -47,12 +59,21 @@ class TaskCheckSession:
                 "running this check again."
             )
 
-        passed, output = _execute_task_check(
+        passed, output, evidence = _execute_task_check(
             self.sandbox,
             self.task_type,
             self.allowed_write_paths,
         )
         self._failed_source_snapshot = None if passed else current_snapshot
+        if passed and evidence is not None:
+            key = str(self.sandbox.resolve())
+            with _SUCCESSFUL_CHECKS_LOCK:
+                _SUCCESSFUL_CHECKS[key] = _SuccessfulCheck(
+                    source_snapshot=current_snapshot,
+                    task_type=self.task_type,
+                    allowed_paths=_normalized_paths(self.allowed_write_paths),
+                    evidence=evidence,
+                )
         return passed, output
 
 
@@ -73,7 +94,7 @@ def _execute_task_check(
     sandbox: Path,
     task_type: str,
     allowed_write_paths: list[str],
-) -> tuple[bool, str]:
+) -> tuple[bool, str, dict[str, object] | None]:
     try:
         evidence = verify_agent_workspace(
             sandbox,
@@ -81,13 +102,37 @@ def _execute_task_check(
             allowed_write_paths,
         )
     except WorkspaceVerificationError as error:
-        return False, _render_check_result("FAILED", error.evidence)
+        return False, _render_check_result("FAILED", error.evidence), error.evidence
     except Exception as error:  # 도구 실행 자체의 문제도 대화 안에서 확인할 수 있게 한다.
         return False, (
             "TASK CHECK COULD NOT RUN\n"
             f"{error.__class__.__name__}: {error}"
-        )
-    return True, _render_check_result("PASSED", evidence)
+        ), None
+    return True, _render_check_result("PASSED", evidence), evidence
+
+
+def consume_successful_task_check(
+    sandbox: Path,
+    task_type: str,
+    allowed_write_paths: list[str],
+) -> dict[str, object] | None:
+    """같은 source에서 방금 성공한 에이전트 내부 검사 결과를 한 번 재사용한다."""
+    key = str(sandbox.resolve())
+    with _SUCCESSFUL_CHECKS_LOCK:
+        cached = _SUCCESSFUL_CHECKS.pop(key, None)
+    if cached is None:
+        return None
+    if (
+        cached.task_type != task_type
+        or cached.allowed_paths != _normalized_paths(allowed_write_paths)
+        or cached.source_snapshot != snapshot_files(sandbox)
+    ):
+        return None
+    return {**cached.evidence, "reusedFromTaskCheck": True}
+
+
+def _normalized_paths(paths: list[str]) -> tuple[str, ...]:
+    return tuple(sorted(str(path).replace("\\", "/") for path in paths))
 
 
 def register_task_check_tool() -> str:

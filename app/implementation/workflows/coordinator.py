@@ -210,6 +210,9 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                 "allowedWritePaths": [
                     str(item) for item in task.get("allowed_write_paths", [])
                 ],
+                "allowedWriteRoots": [
+                    str(item) for item in task.get("allowed_write_roots", [])
+                ],
                 "status": status,
                 "promptSha256": prompt_sha,
                 "outputHashes": output_hashes,
@@ -354,15 +357,10 @@ def _run_workflow(
         if not _dependencies_succeeded(state, phase_id):
             continue
         state["currentPhase"] = phase_id
-        # 유스케이스 묶음은 Controller와 Service를 직접 공유하지 않더라도 서로가 만든
-        # Java 타입을 컴파일 중 참조한다. 순차 실행하면 수리 범위를 안전하게 넓힐 수 있고,
-        # 병렬 merge 뒤 같은 오류를 다시 고치는 비용도 없어진다. persistence와 frontend
-        # 등 독립 phase는 기존 병렬 설정을 그대로 사용한다.
-        worker_limit = (
-            1
-            if phase_id == "use-cases"
-            else max(1, int(settings.implementation_task_parallelism))
-        )
+        # planner가 같은 source와 package를 공유하는 작업을 한 묶음으로 만들고, 아래 batch
+        # 검사도 편집 범위가 겹치는 작업을 분리한다. 따라서 독립 기능은 설정된 범위 안에서
+        # 병렬 실행해도 같은 파일을 덮어쓰지 않는다.
+        worker_limit = max(1, int(settings.implementation_task_parallelism))
         for task_batch in _phase_task_batches(
             phase_id,
             phase_tasks,
@@ -546,7 +544,10 @@ def _phase_task_batches(
         for task in ready:
             paths = {
                 str(path).replace("\\", "/")
-                for path in task.get("allowedWritePaths", [])
+                for path in [
+                    *task.get("allowedWritePaths", []),
+                    *task.get("allowedWriteRoots", []),
+                ]
             }
             if batch and _write_scopes_overlap(occupied, paths):
                 continue

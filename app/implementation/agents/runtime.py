@@ -34,7 +34,11 @@ from .provider import (
     provider_retry_delay,
     transient_provider_error,
 )
-from .task_check import TASK_CHECK_TOOL_NAME, register_task_check_tool
+from .task_check import (
+    TASK_CHECK_TOOL_NAME,
+    consume_successful_task_check,
+    register_task_check_tool,
+)
 from .verification.build import (
     WorkspaceVerificationError,
     verify_agent_workspace,
@@ -296,11 +300,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 ]
             )
         )
-    editable_roots: list[str] = []
+    editable_roots = [
+        str(path).replace("\\", "/")
+        for path in task.get("allowed_write_roots", [])
+    ]
     if task_type == "use-case":
         # 기능 구현 작업은 서로 강하게 연결된 Controller, Service와 Entity 동작을 한 대화에서
-        # 완성한다. 이 자율 범위는 유지하되 wiring 수리에는 더 이상 같은 예외를 적용하지 않는다.
-        editable_roots = ["application/src/main/java"]
+        # 완성한다. 한 작업만 사용하는 package에는 새 파일도 만들 수 있지만 다른 기능과
+        # 공유하는 package에서는 계획된 파일만 고쳐 병렬 승격 충돌을 막는다.
         immutable_paths = {
             path
             for path in immutable_paths
@@ -619,11 +626,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             "testResults": "",
                         }
                     )
-                verification = verify_agent_workspace(
+                # OpenHands가 방금 같은 source에서 run_task_check를 통과했다면 Gradle을
+                # 즉시 한 번 더 실행하지 않는다. 검사 뒤 source가 바뀐 경우에는 cache가
+                # 일치하지 않아 아래 실제 검사가 실행된다.
+                verification = consume_successful_task_check(
                     sandbox,
                     task_type,
                     editable_paths,
-                )
+                ) or verify_agent_workspace(sandbox, task_type, editable_paths)
                 changed = changed_files(before, snapshot_files(sandbox))
                 break
             except WorkspaceVerificationError as error:

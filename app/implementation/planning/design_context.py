@@ -3,7 +3,7 @@
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from app.config import settings
@@ -55,6 +55,9 @@ class ImplementationTask:
     # Spring 설정은 정상 경로에서 코드가 만든다. 이 작업은 최종 build나 HTTP 검사에서
     # 실제 연결 문제가 발견됐을 때만 OpenHands에게 넘기는 수리용 작업이다.
     repair_only: bool = False
+    # 다른 기능 작업과 겹치지 않는 package만 새 파일 생성을 허용한다. 기존 계약 파일은
+    # immutable_paths가 계속 보호한다.
+    allowed_write_roots: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.required_output_paths is None:
@@ -197,7 +200,7 @@ class _UseCaseBundle:
 
 
 def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
-    """Control/Entity를 공유하는 유스케이스를 최대 세 개씩 구현 단위로 묶는다."""
+    """같은 구현 source를 공유하는 유스케이스를 한 작업으로 묶는다."""
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
@@ -218,6 +221,12 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         )
         tasks.append(task)
         writers.update(dict.fromkeys(task.allowed_write_paths, task.task_id))
+    tasks = _grant_exclusive_write_roots(tasks)
+    for task in tasks:
+        (output / f"{task.task_id}.task.json").write_text(
+            json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     return tasks
 
 
@@ -226,7 +235,7 @@ def _use_case_bundles(
     component_ids: dict[str, set[str]],
     endpoints: list[dict[str, object]],
 ) -> list[_UseCaseBundle]:
-    """Control 연결을 우선하고, 작은 singleton만 Entity로 합친다."""
+    """같은 Control, Boundary, Entity, Gateway 또는 Controller를 한 작업에 둔다."""
     for endpoint in endpoints:
         binding = endpoint.get("control_binding")
         control = binding.get("control") if isinstance(binding, dict) else None
@@ -239,12 +248,25 @@ def _use_case_bundles(
     for endpoint in endpoints:
         all_ids.update(_use_case_ids(endpoint))
     links = {use_case_id: {use_case_id} for use_case_id in all_ids}
-    for component in ir.components:
-        if component.stereotype.casefold() != "control":
-            continue
-        related = component_ids.get(component.name, set())
+
+    def connect(related: set[str]) -> None:
         for use_case_id in related:
             links.setdefault(use_case_id, {use_case_id}).update(related)
+
+    for component in ir.components:
+        if _is_work_component(component):
+            connect(component_ids.get(component.name, set()))
+    for port in ir.api_ports:
+        related = {
+            use_case_id
+            for endpoint in endpoints
+            if any(
+                _operation_matches_endpoint(operation, endpoint)
+                for operation in port.operations
+            )
+            for use_case_id in _use_case_ids(endpoint)
+        }
+        connect(related)
 
     groups: list[tuple[str, ...]] = []
     pending = set(all_ids)
@@ -259,13 +281,7 @@ def _use_case_bundles(
             group.add(use_case_id)
             frontier.extend(links.get(use_case_id, {use_case_id}) - group)
         pending.difference_update(group)
-        ordered = sorted(group, key=_use_case_sort_key)
-        groups.extend(
-            tuple(ordered[offset:offset + 3])
-            for offset in range(0, len(ordered), 3)
-        )
-
-    groups = _merge_entity_singletons(groups, ir, component_ids)
+        groups.append(tuple(sorted(group, key=_use_case_sort_key)))
 
     bundles = [_bundle_for_ids(ir, component_ids, endpoints, group) for group in groups]
     assigned_components = {item.name for bundle in bundles for item in bundle.components}
@@ -290,30 +306,30 @@ def _use_case_bundles(
     )
 
 
-def _merge_entity_singletons(
-    groups: list[tuple[str, ...]],
-    ir: ImplementationIR,
-    component_ids: dict[str, set[str]],
-) -> list[tuple[str, ...]]:
-    """Control이 없는 작은 흐름만 같은 Entity 기준으로 최대 세 개까지 합친다."""
-    merged_groups = list(groups)
-    for entity in ir.components:
-        if entity.stereotype.casefold() != "entity":
-            continue
-        related = component_ids.get(entity.name, set())
-        indices = [
-            index for index, group in enumerate(merged_groups)
-            if len(group) == 1 and group[0] in related
-        ]
-        values = {item for index in indices for item in merged_groups[index]}
-        if not 1 < len(values) <= 3:
-            continue
-        first = indices[0]
-        merged_groups = [
-            group for index, group in enumerate(merged_groups) if index not in indices
-        ]
-        merged_groups.insert(first, tuple(sorted(values, key=_use_case_sort_key)))
-    return merged_groups
+def _grant_exclusive_write_roots(
+    tasks: list[ImplementationTask],
+) -> list[ImplementationTask]:
+    """한 기능만 사용하는 package에는 OpenHands가 새 파일을 만들 수 있게 한다.
+
+    여러 작업이 같은 Java package를 사용하면 각자 약속된 파일만 편집한다. 한 작업만 쓰는
+    package라면 그 안의 helper나 설정 파일 구성은 코딩 에이전트가 스스로 정할 수 있다.
+    """
+    owners: dict[str, set[str]] = {}
+    for task in tasks:
+        for path in task.allowed_write_paths:
+            parent = Path(path.replace("\\", "/")).parent.as_posix()
+            if parent.startswith("application/"):
+                owners.setdefault(parent, set()).add(task.task_id)
+    return [
+        replace(
+            task,
+            allowed_write_roots=sorted(
+                root for root, task_ids in owners.items()
+                if task_ids == {task.task_id}
+            ),
+        )
+        for task in tasks
+    ]
 
 
 def _bundle_for_ids(

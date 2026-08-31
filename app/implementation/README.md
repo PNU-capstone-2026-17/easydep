@@ -119,7 +119,12 @@ OpenHands의 `run_task_check`와 마지막 확인은 같은 sandbox의 증분 co
 재사용한다. 변경된 Java source는 Gradle이 자동으로 다시 compile하므로 `--rerun-tasks`로
 관계없는 task까지 매번 강제 실행하지 않는다. 실패한 뒤 source가 전혀 바뀌지 않았다면 같은
 검사를 다시 실행하지 않고 먼저 코드를 수정하도록 안내한다. 모든 기능 작업이 끝나면 전체
-backend build와 test를 한 번 실행한다.
+backend test를 한 번 실행한다. OpenHands 안에서 같은 source로 이미 성공한 `run_task_check`는
+대화 종료 직후 다시 실행하지 않으며, 배포용 `bootJar`는 마지막 Docker build가 한 번 만든다.
+
+유스케이스 개수로 작업을 억지로 자르지 않는다. 같은 Control, Boundary, Entity, Gateway 또는
+Controller를 수정하는 흐름은 한 코딩 작업이 맡는다. 실제 수정 파일과 전용 package가 겹치지
+않는 작업만 기본 병렬도 2 안에서 함께 실행한다.
 
 Spring Boot entrypoint, 운영 datasource 환경 변수, test용 H2 설정과 health endpoint는
 생성기가 작성한다. 인증·인가 요구가 명시된 앱에만 Spring Security를 추가하고, 인증 근거가

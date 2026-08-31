@@ -182,7 +182,9 @@ def task_verification_command(
     직접 실행한다.
     """
     if not task_type and allowed_write_paths is None:
-        command = [*executable, "test", "bootJar", "--build-cache"]
+        # 이어지는 Docker build가 배포할 bootJar를 실제로 만든다. 여기서는 전체 test만
+        # 실행해 같은 jar packaging을 연속으로 두 번 하지 않는다.
+        command = [*executable, "test", "--build-cache"]
     else:
         test_names = sorted(
             {
