@@ -349,10 +349,10 @@ def test_source_conformance_rejects_agent_changes_to_generated_contract(
     }
 
 
-def test_entity_body_can_change_without_changing_its_public_signature(
+def test_entity_can_add_helpers_while_preserving_generated_public_signatures(
     tmp_path: Path,
 ) -> None:
-    """Entity의 동작은 작성할 수 있지만 설계가 정한 호출 계약은 유지한다."""
+    """Entity 구현용 메서드는 추가해도 설계가 정한 기존 호출 계약은 유지한다."""
     bce = tmp_path / "application/src/main/java/com/example/demo/bce"
     bce.mkdir(parents=True)
     entity = bce / "Order.java"
@@ -371,7 +371,10 @@ def test_entity_body_can_change_without_changing_its_public_signature(
     capture_generated_contracts(tmp_path, spec.base_package)
 
     entity.write_text(
-        entity.read_text(encoding="utf-8").replace("return value", "return value.trim()"),
+        entity.read_text(encoding="utf-8").replace(
+            "return value",
+            'return value.trim(); } public String normalized() { return "ok"',
+        ),
         encoding="utf-8",
     )
     assert verify_source_design_conformance(tmp_path, spec)["status"] == "PASSED"
