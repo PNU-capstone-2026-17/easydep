@@ -807,6 +807,39 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
         failed_task_type="wiring",
     )
     assert entry is not None
+    execution_dir = reports / "agent-executions"
+    execution_dir.mkdir()
+    (execution_dir / "implement-application-wiring.result.json").write_text(
+        json.dumps(
+            {
+                "repairHistory": {
+                    "attempts": [
+                        {
+                            "strategy_key": "verification_correction",
+                            "outcome": "no_improvement",
+                            "candidate_digest": "candidate-401",
+                            "detail": "SecurityConfiguration.java를 수정했지만 401이 계속됨",
+                        }
+                    ]
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    repeated_entries = [entry]
+    for _ in range(5):
+        repeated = schedule_cross_phase_repair(
+            run,
+            "verify-container-runtime",
+            {
+                "command": ["docker", "runtime-smoke"],
+                "stderr": "frontend HTTP probe failed: HTTP 401 Unauthorized",
+            },
+            failed_task_type="wiring",
+        )
+        assert repeated is not None
+        repeated_entries.append(repeated)
     apply_repair_directives(run)
 
     stored_task = json.loads((task_dir / "wiring.task.json").read_text(encoding="utf-8"))
@@ -814,6 +847,9 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     assert prompt_path.read_text(encoding="utf-8") == initial_prompt
     assert "INITIAL IMPLEMENTATION CONTEXT" not in repair_prompt
     assert "401 Unauthorized" in repair_prompt
+    assert "SecurityConfiguration.java를 수정했지만 401이 계속됨" in repair_prompt
+    assert "새 진단 가설 2" in repair_prompt
+    assert len({item["strategy"] for item in repeated_entries}) == 6
     assert source_path in repair_prompt
     assert entry["acceptedSourceRoot"] == "application"
     assert entry["acceptedSourceDigest"]

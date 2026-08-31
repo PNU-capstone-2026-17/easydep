@@ -196,11 +196,15 @@ def apply_repair_directives(run_root: Path) -> None:
         if task_id in active_ids and relevant:
             current = relevant[-1]
             previous = relevant[-4:-1]
-            history = "\n".join(
+            plan_history = "\n".join(
                 f"- {entry.get('strategy', '기존 방식')}: "
                 + _first_evidence_line(str(entry.get("evidence", "")))
                 for entry in previous
             ) or "- 이전 실패 없음"
+            execution_history = _recent_execution_history(run_root, task_id)
+            history = plan_history
+            if execution_history:
+                history += "\n\n### 실제 변경과 검사 결과\n\n" + execution_history
             editable = "\n".join(
                 f"- `{path}`" for path in current.get("repairPaths", [])
             ) or "- 작업 정의에 있는 기존 편집 파일"
@@ -365,9 +369,51 @@ def _repair_strategy(repeated_count: int) -> str:
         "공개 계약을 유지하는 가장 작은 변경으로 다시 구현",
         "담당 기능 내부 구현을 다시 읽고 실패한 부분만 일관되게 재구성",
     )
-    strategy = strategies[repeated_count % len(strategies)]
-    cycle = repeated_count // len(strategies) + 1
-    return f"{strategy} (새 대화 {repeated_count + 1}, 순환 {cycle})"
+    if repeated_count < len(strategies):
+        strategy = strategies[repeated_count]
+    else:
+        # 네 문구를 다시 순환하면 요청만 달라 보일 뿐 실제 전략은 반복된다. 이전 실행의
+        # 변경 파일과 검사 결과가 prompt에 함께 들어가므로, 이후에는 아직 시험하지 않은
+        # 가설을 먼저 세우고 그 가설을 확인하는 새 접근을 선택하게 한다.
+        strategy = (
+            f"새 진단 가설 {repeated_count - len(strategies) + 1}을 먼저 제시하고, "
+            "기록된 이전 변경과 겹치지 않는 근거를 확인한 뒤 수정"
+        )
+    return f"{strategy} (새 대화 {repeated_count + 1})"
+
+
+def _recent_execution_history(run_root: Path, task_id: str) -> str:
+    """최근 OpenHands 수리 결과를 다음 대화에 짧게 전달한다.
+
+    repair plan만 보면 전략 이름은 알 수 있지만 실제로 어느 파일을 바꿨고 어떤 검사가 다시
+    실패했는지는 알 수 없다. 최신 실행 결과의 기존 ``repairHistory``에서 마지막 다섯
+    시도만 재사용하므로 별도 저장 형식이나 무한히 커지는 prompt는 만들지 않는다.
+    """
+    result_path = (
+        run_root / "reports" / "agent-executions" / f"{task_id}.result.json"
+    )
+    if not result_path.is_file():
+        return ""
+    try:
+        result = _read_json(result_path)
+    except (OSError, json.JSONDecodeError):
+        return ""
+    repair_history = result.get("repairHistory")
+    if not isinstance(repair_history, dict):
+        return ""
+    attempts = [
+        item for item in repair_history.get("attempts", []) if isinstance(item, dict)
+    ][-5:]
+    lines: list[str] = []
+    for index, attempt in enumerate(attempts, 1):
+        detail = " ".join(str(attempt.get("detail", "")).split())[:1200]
+        lines.append(
+            f"- 실행 {index}: 전략={attempt.get('strategy_key', '알 수 없음')}, "
+            f"결과={attempt.get('outcome', '알 수 없음')}, "
+            f"후보={str(attempt.get('candidate_digest', ''))[:12] or '없음'}, "
+            f"근거={detail or '기록 없음'}"
+        )
+    return "\n".join(lines)
 
 
 def _covering_task(
