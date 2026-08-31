@@ -153,13 +153,15 @@ def test_ready_workflow_with_pending_tasks_remains_ready(tmp_path: Path) -> None
     assert record["status"] == "READY"
 
 
-def test_completed_job_is_not_published_before_artifacts_are_persisted() -> None:
+def test_completed_job_is_not_published_before_artifacts_are_persisted(
+    tmp_path: Path,
+) -> None:
     events: list[tuple[str, str]] = []
     record = {
         "job_id": "job-completed",
         "status": "READY",
-        "run_root": "run-root",
-        "job_path": "job.json",
+        "run_root": str(tmp_path / "run-root"),
+        "job_path": str(tmp_path / "job.json"),
     }
 
     class Client:
@@ -176,7 +178,11 @@ def test_completed_job_is_not_published_before_artifacts_are_persisted() -> None
         def transmission_request(_run_root: Path) -> None:
             return None
 
-    worker = object.__new__(ImplementationWorker)
+        @staticmethod
+        def cancel_all() -> None:
+            return None
+
+    worker = ImplementationWorker(settings(tmp_path))
     worker.client = Client()
     worker._read = lambda _job_id: record
     worker._write = lambda current: events.append(("write", current["status"]))
@@ -185,9 +191,29 @@ def test_completed_job_is_not_published_before_artifacts_are_persisted() -> None
     )
     worker._fail = lambda _record, error: pytest.fail(str(error))
 
-    worker._run("job-completed", "approval.json", False)
+    try:
+        worker._run("job-completed", "approval.json", False)
+    finally:
+        worker.shutdown()
 
     assert events == [("write", "RUNNING"), ("persist", "COMPLETED")]
+
+
+def test_job_execution_lease_rejects_a_second_process(
+    tmp_path: Path,
+) -> None:
+    """같은 Job은 첫 실행권을 반납하기 전까지 다시 시작하지 않는다."""
+    worker = ImplementationWorker(settings(tmp_path))
+    try:
+        first = worker._claim_job_execution("job-one")
+        assert first is not None
+        assert worker._claim_job_execution("job-one") is None
+        worker._release_job_execution("job-one", first)
+        second = worker._claim_job_execution("job-one")
+        assert second is not None
+        worker._release_job_execution("job-one", second)
+    finally:
+        worker.shutdown()
 
 
 def test_feedback_eligibility_rejects_design_contract_changes() -> None:

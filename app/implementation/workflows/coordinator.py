@@ -231,7 +231,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
     pending = [task for task in tasks if task["status"] != "SUCCEEDED"]
     status = (
         "FAILED" if any(task["status"] == "FAILED" for task in pending)
-        else ("READY" if pending else "NEEDS_PLANNER")
+        else ("READY" if pending else "READY_TO_FINALIZE")
     )
     state: dict[str, object] = {
         "schemaVersion": WORKFLOW_SCHEMA,
@@ -242,9 +242,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         "phases": phases,
         "tasks": tasks,
         "nextRunnableTasks": _next_runnable_tasks(tasks, phases),
-        "blockingReason": (
-            None if pending else "Implemented work units are complete; the final audit is next."
-        ),
+        "blockingReason": None,
         "blockingDetails": [],
         "approval": previous.get("approval"),
     }
@@ -313,89 +311,13 @@ def _run_workflow(
             + ", ".join(failed_runnable)
         )
     if not runnable:
-        state["currentActivity"] = {
-            "id": "completion-audit",
-            "label": "최종 구현 결과 확인",
-            "status": "RUNNING",
-            "detail": "생성된 소스를 빌드하고 테스트하고 있습니다.",
-        }
-        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-        try:
-            verification = verifier(run_root)
-        except Exception as error:
-            repaired = _continue_after_verification_failure(
-                run_root,
-                spec,
-                failure_id="verify-final-workspace",
-                failed_task_type="wiring",
-                error=error,
-            )
-            if repaired is not None:
-                return repaired
-            _record_workflow_failure(run_root, state, error)
-            raise
-        try:
-            audit = auditor(run_root)
-        except Exception as error:
-            _record_workflow_failure(run_root, state, error)
-            raise
-        state = reconcile_workflow_state(run_root)
-        if audit.get("status") == "COMPLETE":
-            state["currentActivity"] = {
-                "id": "release-verification",
-                "label": "최종 릴리스 검증",
-                "status": "RUNNING",
-                "detail": "설계 정합성과 실행 가능 여부를 확인하고 있습니다.",
-            }
-            _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-            try:
-                conformance = verify_source_design_conformance(run_root, spec)
-            except SourceDesignConformanceError as error:
-                repaired = _continue_after_conformance_failure(run_root, spec, error)
-                if repaired is not None:
-                    return repaired
-                _record_workflow_failure(run_root, state, error)
-                raise
-            try:
-                _complete_release(
-                    run_root, spec, state, audit, verification, conformance
-                )
-            except WorkspaceVerificationError as error:
-                # 이미 모든 작업이 끝난 뒤 재시도한 경우에도 최초 실행과 똑같이
-                # 컨테이너 실행 실패를 wiring 작업으로 돌려보낸다. 이 분기가 없으면
-                # 같은 401 오류라도 재시도 경로에서는 Job이 곧바로 종료된다.
-                repaired = _continue_after_verification_failure(
-                    run_root,
-                    spec,
-                    failure_id="verify-container-runtime",
-                    failed_task_type="wiring",
-                    error=error,
-                )
-                if repaired is not None:
-                    return repaired
-                _record_workflow_failure(run_root, state, error)
-                raise
-        elif state.get("status") != "NEEDS_INPUT":
-            repaired = _continue_after_incomplete_audit(run_root, spec, audit)
-            if repaired is not None:
-                return repaired
-            state["status"] = "NEEDS_PLANNER"
-        state["verification"] = verification.get("status")
-        state["audit"] = "reports/implementation-completion-audit.json"
-        if state["status"] == "COMPLETE":
-            state["blockingReason"] = None
-            state["currentActivity"] = {
-                "id": "release-verification",
-                "label": "최종 릴리스 검증",
-                "status": "SUCCEEDED",
-            }
-        elif state["status"] != "NEEDS_INPUT":
-            state["blockingReason"] = (
-                "No runnable planned task; implement the first unplanned audit backlog phase."
-            )
-            state.pop("currentActivity", None)
-        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-        return state
+        return _finalize_workflow(
+            run_root,
+            spec,
+            state,
+            verifier=verifier,
+            auditor=auditor,
+        )
 
     request = _read_json(
         run_root / "reports" / "external-transmission-request.json"
@@ -483,90 +405,107 @@ def _run_workflow(
         final_state.pop("currentActivity", None)
         _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
         return final_state
-    final_state["currentActivity"] = {
+    return _finalize_workflow(
+        run_root,
+        spec,
+        final_state,
+        verifier=verifier,
+        auditor=auditor,
+    )
+
+
+def _finalize_workflow(
+    run_root: Path,
+    spec: JobSpec,
+    state: dict[str, object],
+    *,
+    verifier: Callable[[Path], dict[str, object]],
+    auditor: Callable[[Path], dict[str, object]],
+) -> dict[str, object]:
+    """모든 작업이 끝난 실행을 한 경로에서 검사하고 release한다."""
+    state["status"] = "VERIFYING"
+    state["blockingReason"] = None
+    state["currentActivity"] = {
         "id": "completion-audit",
         "label": "최종 구현 결과 확인",
         "status": "RUNNING",
-        "detail": "전체 구현 결과를 빌드하고 테스트하고 있습니다.",
+        "detail": "전체 구현 결과를 확인하고 빌드·테스트하고 있습니다.",
     }
-    _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+
     try:
         audit = auditor(run_root)
     except Exception as error:
-        _record_workflow_failure(run_root, final_state, error)
+        _record_workflow_failure(run_root, state, error)
         raise
-    if audit.get("status") == "COMPLETE":
-        final_state["currentActivity"] = {
-            "id": "release-verification",
-            "label": "최종 릴리스 검증",
-            "status": "RUNNING",
-            "detail": "설계 정합성과 실행 가능 여부를 확인하고 있습니다.",
-        }
-        _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
-        try:
-            verification = verifier(run_root)
-        except Exception as error:
-            repaired = _continue_after_verification_failure(
-                run_root,
-                spec,
-                failure_id="verify-final-workspace",
-                failed_task_type="wiring",
-                error=error,
-            )
-            if repaired is not None:
-                return repaired
-            _record_workflow_failure(run_root, final_state, error)
-            raise
-        try:
-            conformance = verify_source_design_conformance(run_root, spec)
-        except SourceDesignConformanceError as error:
-            repaired = _continue_after_conformance_failure(run_root, spec, error)
-            if repaired is not None:
-                return repaired
-            _record_workflow_failure(run_root, final_state, error)
-            raise
-        try:
-            _complete_release(
-                run_root, spec, final_state, audit, verification, conformance
-            )
-        except WorkspaceVerificationError as error:
-            repaired = _continue_after_verification_failure(
-                run_root,
-                spec,
-                failure_id="verify-container-runtime",
-                failed_task_type="wiring",
-                error=error,
-            )
-            if repaired is not None:
-                return repaired
-            _record_workflow_failure(run_root, final_state, error)
-            raise
-    elif final_state.get("status") != "NEEDS_INPUT":
-        if not final_state.get("nextRunnableTasks"):
-            repaired = _continue_after_incomplete_audit(run_root, spec, audit)
-            if repaired is not None:
-                return repaired
-        final_state["status"] = (
-            "READY" if final_state.get("nextRunnableTasks") else "NEEDS_PLANNER"
+    state["audit"] = "reports/implementation-completion-audit.json"
+    if audit.get("status") != "COMPLETE":
+        repaired = _continue_after_incomplete_audit(run_root, spec, audit)
+        if repaired is not None:
+            return repaired
+        state["status"] = "NEEDS_PLANNER"
+        state["blockingReason"] = (
+            "The audit contains work for which no implementation task exists."
         )
-    final_state["audit"] = "reports/implementation-completion-audit.json"
-    if final_state["status"] == "COMPLETE":
-        final_state["blockingReason"] = None
-        final_state["currentActivity"] = {
-            "id": "release-verification",
-            "label": "최종 릴리스 검증",
-            "status": "SUCCEEDED",
-        }
-    elif final_state["status"] == "READY":
-        final_state["blockingReason"] = None
-        final_state.pop("currentActivity", None)
-    elif final_state["status"] != "NEEDS_INPUT":
-        final_state["blockingReason"] = (
-            "The audit contains backlog work without an implemented planner."
+        state.pop("currentActivity", None)
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+        return state
+
+    state["currentActivity"] = {
+        "id": "release-verification",
+        "label": "최종 릴리스 검증",
+        "status": "RUNNING",
+        "detail": "설계 계약, 전체 test와 실제 container 응답을 확인하고 있습니다.",
+    }
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+    try:
+        verification = verifier(run_root)
+    except Exception as error:
+        repaired = _continue_after_verification_failure(
+            run_root,
+            spec,
+            failure_id="verify-final-workspace",
+            failed_task_type="wiring",
+            error=error,
         )
-        final_state.pop("currentActivity", None)
-    _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
-    return final_state
+        if repaired is not None:
+            return repaired
+        _record_workflow_failure(run_root, state, error)
+        raise
+    try:
+        conformance = verify_source_design_conformance(run_root, spec)
+    except SourceDesignConformanceError as error:
+        repaired = _continue_after_conformance_failure(run_root, spec, error)
+        if repaired is not None:
+            return repaired
+        _record_workflow_failure(run_root, state, error)
+        raise
+    try:
+        _complete_release(
+            run_root, spec, state, audit, verification, conformance
+        )
+    except WorkspaceVerificationError as error:
+        repaired = _continue_after_verification_failure(
+            run_root,
+            spec,
+            failure_id="verify-container-runtime",
+            failed_task_type="wiring",
+            error=error,
+        )
+        if repaired is not None:
+            return repaired
+        _record_workflow_failure(run_root, state, error)
+        raise
+
+    state["verification"] = verification.get("status")
+    state["blockingReason"] = None
+    state["currentActivity"] = {
+        "id": "release-verification",
+        "label": "최종 릴리스 검증",
+        "status": "SUCCEEDED",
+    }
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+    return state
 
 
 def _phase_task_batches(
@@ -867,44 +806,51 @@ def run_workflow_to_completion(
     ``max_cycles``는 테스트와 멤버 프로세스가 승인 한 주기만 실행할 때 쓰는 선택 사항이다.
     """
     run_root = run_root.resolve()
-    state = plan_workflow(run_root, spec)
     request_path = run_root / "reports" / "external-transmission-request.json"
-    if not request_path.is_file():
-        if state.get("status") == "COMPLETE":
-            return state
-        raise PermissionError("No external transmission request is available to approve")
-    request = _read_json(request_path)
-    manifest = _read_json(run_root / "reports" / "run-manifest.json")
     approval_path = run_root / "reports" / "one-time-run-approval.json"
-    approval = {
-        "requestId": request["requestId"],
-        "approved": True,
-        "approvedAt": _now(),
-        "approvedBy": approved_by,
-        "delegatedRepairApprovals": True,
-        "delegationScope": {
-            "runId": run_root.name,
-            "inputHash": manifest.get("input_hash"),
-            "initialTaskIds": sorted(
-                str(task["task_id"])
-                for task in manifest.get("implementation_tasks", [])
-            ),
-        },
-    }
-    _write_json_atomic(approval_path, approval)
-
     cycle = 0
     while True:
         cycle += 1
+        state = plan_workflow(run_root, spec)
+        if state.get("status") == "COMPLETE":
+            return state
+        request = _read_json(request_path) if request_path.is_file() else {}
+        execution_approval: Path | None = None
+        if request.get("status") == "AWAITING_APPROVAL":
+            manifest = _read_json(run_root / "reports" / "run-manifest.json")
+            approval = {
+                "requestId": request["requestId"],
+                "approved": True,
+                "approvedAt": _now(),
+                "approvedBy": approved_by,
+                "delegatedRepairApprovals": True,
+                "delegationScope": {
+                    "runId": run_root.name,
+                    "inputHash": manifest.get("input_hash"),
+                    "initialTaskIds": sorted(
+                        str(task["task_id"])
+                        for task in manifest.get("implementation_tasks", [])
+                    ),
+                },
+            }
+            _write_json_atomic(approval_path, approval)
+            execution_approval = approval_path
+        elif state.get("status") != "READY_TO_FINALIZE":
+            raise PermissionError(
+                "No external transmission request is available to approve"
+            )
         state = run_workflow(
             run_root,
             spec,
-            approval_path,
+            execution_approval,
             retry_failed=retry_failed,
         )
         status = str(state.get("status", ""))
         if status == "COMPLETE":
-            state["oneTimeApproval"] = approval_path.relative_to(run_root).as_posix()
+            if approval_path.is_file():
+                state["oneTimeApproval"] = approval_path.relative_to(
+                    run_root
+                ).as_posix()
             _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
             return state
         if status in {"FAILED", "NEEDS_INPUT", "NEEDS_PLANNER"}:

@@ -65,6 +65,17 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """추가 dependency 없이 lease 소유 서버가 실행 중인지 확인한다."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bool:
     """구현 계약을 안전하게 만들 수 없는 설계 finding이 있는지 확인한다.
 
@@ -230,6 +241,7 @@ class ImplementationWorker:
         self.executor = ThreadPoolExecutor(max_workers=self.settings.max_workers, thread_name_prefix="easydep-implementation")
         self.warmup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="easydep-warmup")
         self.lock = threading.RLock()
+        self._active_jobs: set[str] = set()
         self._warmup_lock = threading.Lock()
         self._warmup_started = False
         self._recover_pending_jobs()
@@ -713,6 +725,9 @@ class ImplementationWorker:
 
     def _plan(self, job_id: str) -> None:
         """하위 프로세스에서 코드를 생성한 뒤 실행할 task와 phase를 계획한다."""
+        lease_token = self._claim_job_execution(job_id)
+        if lease_token is None:
+            return
         record = self._read(job_id)
         try:
             self._set_status(record, "GENERATING")
@@ -754,10 +769,16 @@ class ImplementationWorker:
             self._apply_workflow(record, workflow)
         except Exception as error:
             self._fail(record, error)
+        finally:
+            self._release_job_execution(job_id, lease_token)
 
     def _run(self, job_id: str, approval_path: str, retry_failed: bool) -> None:
         """승인된 workflow를 실행하고 완료된 파일을 산출물 저장소에 보관한다."""
+        lease_token = self._claim_job_execution(job_id)
+        if lease_token is None:
+            return
         record = self._read(job_id)
+        requeue = False
         try:
             self._set_status(record, "RUNNING")
             workflow = self.client.run_phase(Path(record["run_root"]), Path(record["job_path"]), Path(approval_path), retry_failed)
@@ -773,15 +794,21 @@ class ImplementationWorker:
                     record["status"] = "QUEUED"
                     record["updated_at"] = _now()
                     self._write(record)
-                    self.executor.submit(self._run, job_id, approval_path, True)
-                    return
-            self._apply_workflow(record, workflow, write=False)
-            if record["status"] == "COMPLETED":
-                self._persist_outputs(record)
-            else:
-                self._write(record)
+                    requeue = True
+            if not requeue:
+                self._apply_workflow(record, workflow, write=False)
+                if record["status"] == "COMPLETED":
+                    self._persist_outputs(record)
+                else:
+                    self._write(record)
         except Exception as error:
             self._fail(record, error)
+        finally:
+            self._release_job_execution(job_id, lease_token)
+        # 같은 Job의 다음 수리 cycle은 현재 실행권을 반납한 뒤 시작한다. 먼저 submit하면
+        # thread pool이 즉시 새 함수를 실행해 자기 자신의 lease와 충돌할 수 있다.
+        if requeue:
+            self.executor.submit(self._run, job_id, approval_path, True)
 
     def _apply_workflow(
         self,
@@ -944,6 +971,66 @@ class ImplementationWorker:
 
     def _record_path(self, job_id: str) -> Path:
         return self.settings.work_root / job_id / "easydep-job-state.json"
+
+    def _lease_path(self, job_id: str) -> Path:
+        return self.settings.work_root / job_id / "execution-lease.json"
+
+    def _claim_job_execution(self, job_id: str) -> str | None:
+        """서버와 thread가 달라도 한 Job 실행권은 하나만 발급한다."""
+        token = uuid.uuid4().hex
+        path = self._lease_path(job_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock:
+            if job_id in self._active_jobs:
+                return None
+            for _attempt in range(2):
+                try:
+                    descriptor = os.open(
+                        path,
+                        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                    )
+                except FileExistsError:
+                    try:
+                        lease = json.loads(path.read_text(encoding="utf-8"))
+                        owner_pid = int(lease.get("ownerPid", -1))
+                    except (OSError, ValueError, json.JSONDecodeError):
+                        owner_pid = -1
+                    if _pid_is_alive(owner_pid):
+                        return None
+                    # 이전 서버가 죽은 뒤에도 CLI가 남아 있으면 정확한 Job marker의
+                    # process tree만 종료하고 마지막 checkpoint에서 다시 시작한다.
+                    self.client.terminate_orphaned_process(job_id)
+                    path.unlink(missing_ok=True)
+                    continue
+                try:
+                    payload = json.dumps(
+                        {
+                            "jobId": job_id,
+                            "token": token,
+                            "ownerPid": os.getpid(),
+                            "claimedAt": _now(),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ).encode("utf-8")
+                    os.write(descriptor, payload)
+                finally:
+                    os.close(descriptor)
+                self._active_jobs.add(job_id)
+                return token
+        return None
+
+    def _release_job_execution(self, job_id: str, token: str) -> None:
+        """자신이 발급받은 실행권만 제거한다."""
+        path = self._lease_path(job_id)
+        with self.lock:
+            self._active_jobs.discard(job_id)
+            try:
+                lease = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return
+            if lease.get("token") == token:
+                path.unlink(missing_ok=True)
 
     def start_warmup(self) -> bool:
         """사용자 작업용 worker를 차지하지 않는 별도 thread에서 warm-up을 시작한다."""

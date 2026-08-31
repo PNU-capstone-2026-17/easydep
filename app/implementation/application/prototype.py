@@ -13,6 +13,7 @@ import re
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -297,6 +298,68 @@ class PrototypeClient:
         for process in processes:
             self._terminate_process_tree(process)
 
+    def terminate_orphaned_process(self, job_id: str) -> bool:
+        """이전 서버가 남긴 해당 Job의 하위 프로세스 tree만 종료한다.
+
+        서버가 강제로 끝나면 메모리 registry는 사라지지만 작은 process marker는 남는다.
+        새 서버는 같은 Job을 재개하기 전에 이 PID만 정리하므로 다른 구현 Job이나 사용자가
+        직접 실행한 Python 프로세스에는 손대지 않는다.
+        """
+        marker = self._process_marker_path(job_id)
+        try:
+            value = json.loads(marker.read_text(encoding="utf-8"))
+            pid = int(value["pid"])
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            marker.unlink(missing_ok=True)
+            return False
+        if not _process_is_alive(pid):
+            marker.unlink(missing_ok=True)
+            return False
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        else:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        marker.unlink(missing_ok=True)
+        return True
+
+    def _process_marker_path(self, job_id: str) -> Path:
+        return self.settings.work_root / job_id / "implementation-process.json"
+
+    def _write_process_marker(self, job_id: str, pid: int) -> None:
+        marker = self._process_marker_path(job_id)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {
+                    "jobId": job_id,
+                    "pid": pid,
+                    "ownerPid": os.getpid(),
+                    "startedAt": time.time(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    def _remove_process_marker(self, job_id: str, pid: int) -> None:
+        marker = self._process_marker_path(job_id)
+        try:
+            current = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if int(current.get("pid", -1)) == pid:
+            marker.unlink(missing_ok=True)
+
     def _call(
         self, args: list[str], operation_id: str | None = None
     ) -> dict[str, Any]:
@@ -328,6 +391,7 @@ class PrototypeClient:
             if operation_id:
                 with self._process_lock:
                     self._processes[operation_id] = process
+                self._write_process_marker(operation_id, process.pid)
             stdout, stderr = process.communicate(
                 timeout=self.settings.command_timeout_seconds
             )
@@ -342,6 +406,7 @@ class PrototypeClient:
                 with self._process_lock:
                     if self._processes.get(operation_id) is process:
                         self._processes.pop(operation_id, None)
+                self._remove_process_marker(operation_id, process.pid)
         if process.returncode != 0:
             # 일반 stderr보다 run manifest의 ERROR 진단이 사용자에게 더 구체적이다. CLI가
             # 출력 디렉터리를 JSON으로 남겼다면 manifest를 찾아 마지막 오류를 우선 사용한다.
@@ -401,3 +466,14 @@ class PrototypeClient:
                 process.wait(timeout=5)
             except (OSError, subprocess.TimeoutExpired):
                 process.kill()
+
+
+def _process_is_alive(pid: int) -> bool:
+    """추가 패키지 없이 PID가 현재 실행 중인지 확인한다."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
