@@ -119,7 +119,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
     state_path = run_root / "reports" / "workflow-state.json"
     previous = _read_json(state_path) if state_path.is_file() else {}
     previous_tasks = {
-        item.get("taskId"): item for item in previous.get("tasks", [])
+        item.get("task_id"): item for item in previous.get("tasks", [])
         if isinstance(item, dict)
     }
     repaired_tasks = repair_task_ids(run_root)
@@ -177,7 +177,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             status = "PENDING"
         tasks.append(
             {
-                "taskId": task_id,
+                "task_id": task_id,
                 "taskType": str(task.get("task_type", "control")),
                 "phase": phase,
                 # 같은 phase 안에서도 여러 유스케이스가 같은 Control이나 adapter 파일을
@@ -291,7 +291,7 @@ def _run_workflow(
     runnable = list(state.get("nextRunnableTasks", []))
     failed_runnable = [
         task_id for task_id in runnable
-        if next(task for task in state["tasks"] if task["taskId"] == task_id)["status"] == "FAILED"
+        if next(task for task in state["tasks"] if task["task_id"] == task_id)["status"] == "FAILED"
     ]
     if failed_runnable and not retry_failed:
         raise RuntimeError(
@@ -328,7 +328,7 @@ def _run_workflow(
             phase_tasks = [
                 task for task in state["tasks"]
                 if task["phase"] == phase_id
-                and task["taskId"] in authorized_task_ids
+                and task["task_id"] in authorized_task_ids
                 and (
                     task["status"] in {"PENDING", "INTERRUPTED"}
                     or (retry_failed and task["status"] == "FAILED")
@@ -359,7 +359,7 @@ def _run_workflow(
                 task, error = failures[0]
                 if isinstance(error, WorkspaceVerificationError):
                     repair = schedule_cross_phase_repair(
-                        run_root, str(task["taskId"]), error.evidence
+                        run_root, str(task["task_id"]), error.evidence
                     )
                     if repair is not None:
                         repaired_state = plan_workflow(run_root, spec)
@@ -507,7 +507,7 @@ def _phase_task_batches(
     검사만 사용하므로 실행 규칙이 manifest에서 바로 보인다.
     """
     del phase_id
-    remaining = {str(task["taskId"]): task for task in tasks}
+    remaining = {str(task["task_id"]): task for task in tasks}
     batches: list[list[dict[str, object]]] = []
     completed_in_phase: set[str] = set()
     while remaining:
@@ -540,7 +540,7 @@ def _phase_task_batches(
             occupied.update(paths)
         batches.append(batch)
         for task in batch:
-            task_id = str(task["taskId"])
+            task_id = str(task["task_id"])
             completed_in_phase.add(task_id)
             remaining.pop(task_id, None)
     return batches
@@ -575,10 +575,10 @@ def _execute_task_batch(
     _write_json_atomic(state_path, state)
 
     def run(task: dict[str, object]) -> dict[str, object]:
-        result = executor(run_root, str(task["taskId"]))
+        result = executor(run_root, str(task["task_id"]))
         if result.get("status") != "SUCCEEDED":
             raise RuntimeError(
-                f"Task returned non-success status: {task['taskId']}"
+                f"Task returned non-success status: {task['task_id']}"
             )
         return result
 
@@ -602,10 +602,10 @@ def _execute_task_batch(
         else:
             task["status"] = "SUCCEEDED"
             task["resultFile"] = (
-                f"reports/agent-executions/{task['taskId']}.result.json"
+                f"reports/agent-executions/{task['task_id']}.result.json"
             )
             task["outputHashes"] = _task_output_hashes(
-                run_root, str(task["taskId"])
+                run_root, str(task["task_id"])
             )
             task["lastError"] = None
         state["updatedAt"] = _now()
@@ -666,7 +666,7 @@ def _execute_task_batch(
     if blocking_failures:
         failed_task, _ = blocking_failures[0]
         state["status"] = "FAILED"
-        state["blockingReason"] = f"Task failed: {failed_task['taskId']}"
+        state["blockingReason"] = f"Task failed: {failed_task['task_id']}"
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
     return blocking_failures
@@ -1071,7 +1071,7 @@ def write_transmission_request(
         pending_ids = sorted(str(task_id) for task_id in next_runnable)
     else:
         pending_ids = sorted(
-            str(task["taskId"]) for task in state["tasks"]
+            str(task["task_id"]) for task in state["tasks"]
             if task["status"] in {"PENDING", "INTERRUPTED", "FAILED"}
         )
     if not pending_ids:
@@ -1160,7 +1160,7 @@ def validate_workflow_approval(
         current_phases = {
             task.get("phase")
             for task in state.get("tasks", [])
-            if str(task.get("taskId")) in current_ids
+            if str(task.get("task_id")) in current_ids
         }
         for task in state.get("tasks", []):
             # An approval covers the originally requested phase, not every task
@@ -1176,7 +1176,7 @@ def validate_workflow_approval(
                 continue
             result = _read_json(run_root / str(result_file))
             if result.get("promptSha256") == task.get("promptSha256"):
-                candidate_ids.add(str(task["taskId"]))
+                candidate_ids.add(str(task["task_id"]))
         manifest = _read_json(run_root / "reports" / "run-manifest.json")
         task_by_id = {
             item["task_id"]: item for item in manifest.get("implementation_tasks", [])
@@ -1293,7 +1293,7 @@ def _phase_states(tasks: list[dict[str, object]]) -> list[dict[str, object]]:
                 "phaseId": phase_id,
                 "dependsOn": list(dependencies),
                 "status": status,
-                "taskIds": [task["taskId"] for task in phase_tasks],
+                "taskIds": [task["task_id"] for task in phase_tasks],
             }
         )
     return phases
@@ -1306,7 +1306,7 @@ def _next_runnable_tasks(
     runnable: list[str] = []
     for phase_id, dependencies, _ in PHASES:
         candidates = [
-            str(task["taskId"]) for task in tasks
+            str(task["task_id"]) for task in tasks
             if task["phase"] == phase_id
             and task["status"] in {"PENDING", "INTERRUPTED", "FAILED"}
         ]

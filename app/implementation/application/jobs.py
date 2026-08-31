@@ -593,7 +593,7 @@ class ImplementationWorker:
         except (OSError, json.JSONDecodeError):
             return set()
         running_ids = {
-            str(task.get("taskId"))
+            str(task.get("task_id"))
             for task in state.get("tasks", [])
             if isinstance(task, dict) and task.get("status") == "RUNNING"
         }
@@ -1158,6 +1158,21 @@ class ImplementationWorker:
     def public_record(record: dict[str, Any]) -> dict[str, Any]:
         """내부 경로와 전체 source 내용을 제거한 HTTP 응답용 작업 정보를 만든다."""
         result = {key: value for key, value in record.items() if key not in {"job_path", "run_root"}}
+        workflow = result.get("workflow")
+        if isinstance(workflow, dict):
+            # 실행 checkpoint는 Python 이름인 ``task_id``를 그대로 저장한다. HTTP 응답은
+            # 기존 frontend 계약인 ``taskId``만 이 경계에서 만든다. 내부에서 두 이름을
+            # 번갈아 쓰지 않으므로 재개와 병렬 실행 코드가 단순해진다.
+            public_tasks: list[dict[str, Any]] = []
+            for task in workflow.get("tasks", []):
+                if not isinstance(task, dict):
+                    continue
+                public_task = dict(task)
+                task_id = public_task.pop("task_id", None)
+                if task_id is not None:
+                    public_task["taskId"] = task_id
+                public_tasks.append(public_task)
+            result["workflow"] = {**workflow, "tasks": public_tasks}
         request = result.get("transmission_request")
         if isinstance(request, dict):
             result["transmission_request"] = {

@@ -879,6 +879,9 @@ def test_public_job_record_hides_host_source_paths() -> None:
         "job_path": "C:/secret/job.json",
         "run_root": "C:/secret/run",
         "status": "AWAITING_APPROVAL",
+        "workflow": {
+            "tasks": [{"task_id": "control", "status": "RUNNING"}],
+        },
         "transmission_request": {
             "requestId": "a" * 64,
             "tasks": [
@@ -892,6 +895,9 @@ def test_public_job_record_hides_host_source_paths() -> None:
     }
     public = ImplementationWorker.public_record(record)
     assert "job_path" not in public and "run_root" not in public
+    assert public["workflow"]["tasks"] == [
+        {"taskId": "control", "status": "RUNNING"}
+    ]
     assert public["transmission_request"]["tasks"][0]["sourceArtifacts"] == ["class"]
 
 
@@ -950,7 +956,7 @@ def test_live_source_api_reads_only_safe_files_for_the_matching_job(
     reports = run_root / "reports"
     reports.mkdir()
     (reports / "workflow-state.json").write_text(
-        json.dumps({"tasks": [{"taskId": "control", "status": "RUNNING"}]}),
+        json.dumps({"tasks": [{"task_id": "control", "status": "RUNNING"}]}),
         encoding="utf-8",
     )
     (reports / "run-manifest.json").write_text(

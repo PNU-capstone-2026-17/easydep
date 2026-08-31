@@ -1038,7 +1038,7 @@ public class SecurityConfiguration {{
                 time.sleep(delay)
 
 
-def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> None:
     """결정론적으로 생성된 persistence 파일을 확인하고 LLM 작업은 만들지 않는다."""
     run_root = run_root.resolve()
     erd_path = spec.inputs.get("erdBceModel")
@@ -1050,8 +1050,6 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, obje
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8", newline="\n")
 
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     persistence_task_types = {
         "persistence",
         "persistence-entities",
@@ -1059,65 +1057,46 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, obje
         "persistence-mapping",
         "persistence-schema",
     }
-    manifest["implementation_tasks"] = [
-        item
-        for item in manifest.get("implementation_tasks", [])
-        if item.get("task_type") not in persistence_task_types
-    ]
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return []
+    _merge_implementation_tasks(run_root, [], replace_types=persistence_task_types)
 
 
-def plan_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+def plan_api_adapter_tasks(spec: JobSpec, run_root: Path) -> None:
     """Add generated OpenAPI adapter tasks to an existing run manifest."""
     run_root = run_root.resolve()
-    tasks = generate_api_adapter_tasks(spec, run_root)
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task.to_dict() for task in tasks]
+    _merge_implementation_tasks(run_root, generate_api_adapter_tasks(spec, run_root))
 
 
-def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> None:
     """Add the Spring application wiring task to an existing run manifest."""
     run_root = run_root.resolve()
-    tasks = generate_wiring_tasks(spec, run_root)
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task.to_dict() for task in tasks]
+    _merge_implementation_tasks(run_root, generate_wiring_tasks(spec, run_root))
 
 
-def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
     """Add the design-driven React implementation task to the run manifest."""
     run_root = run_root.resolve()
-    tasks = generate_frontend_tasks(spec, run_root)
+    _merge_implementation_tasks(
+        run_root,
+        generate_frontend_tasks(spec, run_root),
+        replace_types={"frontend-implementation"},
+    )
+
+
+def _merge_implementation_tasks(
+    run_root: Path,
+    tasks: list[TaskSpec],
+    *,
+    replace_types: set[str] | None = None,
+) -> None:
+    """새 작업을 manifest에 합치고, 같은 종류의 이전 계획은 한 번에 교체한다."""
+
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    removed_types = replace_types or set()
     existing = {
         item.get("task_id"): item
         for item in manifest.get("implementation_tasks", [])
-        if item.get("task_type") != "frontend-implementation"
+        if item.get("task_type") not in removed_types
     }
     for task in tasks:
         existing[task.task_id] = task.to_dict()
@@ -1125,7 +1104,6 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    return [task.to_dict() for task in tasks]
 
 
 def _requires_application_security(spec: JobSpec) -> bool:

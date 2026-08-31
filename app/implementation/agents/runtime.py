@@ -861,7 +861,7 @@ def execution_attempt(run_root: Path, task_id: str) -> int:
             (
                 int(task.get("attempts", 1))
                 for task in state.get("tasks", [])
-                if isinstance(task, dict) and task.get("taskId") == task_id
+                if isinstance(task, dict) and task.get("task_id") == task_id
             ),
             1,
         ),

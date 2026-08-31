@@ -1390,12 +1390,12 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
                 ],
                 "tasks": [
                     {
-                        "taskId": "repository-1",
+                        "task_id": "repository-1",
                         "phase": "persistence",
                         "status": "SUCCEEDED",
                     },
                     {
-                        "taskId": "use-cases-1",
+                        "task_id": "use-cases-1",
                         "phase": "use-cases",
                         "status": "RUNNING",
                     },

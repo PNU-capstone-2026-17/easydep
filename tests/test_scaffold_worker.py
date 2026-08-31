@@ -74,8 +74,8 @@ def test_scaffold_retry_quarantines_failed_generation_but_keeps_task_checkpoint(
             {
                 "status": "RUNNING",
                 "tasks": [
-                    {"taskId": "done", "status": "SUCCEEDED"},
-                    {"taskId": "next", "status": "RUNNING"},
+                    {"task_id": "done", "status": "SUCCEEDED"},
+                    {"task_id": "next", "status": "RUNNING"},
                 ],
             }
         ),

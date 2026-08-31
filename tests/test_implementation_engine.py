@@ -430,7 +430,7 @@ def test_resume_keeps_previous_success_after_shared_file_changes(
             {
                 "tasks": [
                     {
-                        "taskId": task_id,
+                        "task_id": task_id,
                         "status": old_status,
                         "attempts": 1,
                         "outputHashes": {relative: "hash-before-later-task"},
@@ -742,7 +742,7 @@ def test_scenario_failure_returns_to_automatic_repair_without_user_input(
         lambda *_args: {
             "status": "COMPLETE",
             "tasks": [
-                {"taskId": "implement-order-use-cases", "status": "SUCCEEDED", "phase": "use-cases"}
+                {"task_id": "implement-order-use-cases", "status": "SUCCEEDED", "phase": "use-cases"}
             ],
             "phases": [{"phaseId": "use-cases", "status": "SUCCEEDED"}],
             "nextRunnableTasks": [],
@@ -892,7 +892,7 @@ def test_retried_release_failure_returns_to_wiring_repair(
         "status": "COMPLETE",
         "tasks": [
             {
-                "taskId": "implement-application-wiring",
+                "task_id": "implement-application-wiring",
                 "status": "SUCCEEDED",
                 "phase": "wiring",
             }
