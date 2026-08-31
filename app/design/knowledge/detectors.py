@@ -579,10 +579,23 @@ def _control_method_contracts(state: dict) -> dict[str, dict[str, dict[str, obje
 
 
 def _normalise_contract_type(value: str) -> str:
-    """Normalise the small type vocabulary shared by API and BCE models."""
+    """API wire 타입과 BCE 타입의 같은 의미를 한 표기로 맞춘다.
+
+    JSON에서 UUID는 문자열로 전달되고, ``T[]``와 ``array<T>``는 같은 배열이다. 이
+    차이는 HTTP 표현 차이일 뿐이므로 LLM에게 API 전체를 다시 쓰게 하지 않는다.
+    """
     token = re.sub(r"\s+", "", value or "").removesuffix("?").lower()
+    collection = re.fullmatch(
+        r"(?:java\.util\.)?(?:list|set|collection|iterable|array)<(.+)>",
+        token,
+    )
+    if collection:
+        return f"{_normalise_contract_type(collection.group(1))}[]"
+    if token.endswith("[]"):
+        return f"{_normalise_contract_type(token[:-2])}[]"
     aliases = {
         "string": "string", "str": "string",
+        "uuid": "string",
         "integer": "integer", "int": "integer", "long": "integer", "short": "integer",
         "float": "number", "double": "number", "bigdecimal": "number", "number": "number",
         "bool": "boolean", "boolean": "boolean",
@@ -595,11 +608,6 @@ def _contract_types_compatible(actual: str, expected: str) -> bool:
     actual_normalized = _normalise_contract_type(actual)
     expected_normalized = _normalise_contract_type(expected)
     if actual_normalized == expected_normalized:
-        return True
-    if actual_normalized == "array" and re.match(
-        r"(?:java\.util\.)?(?:list|set|collection|iterable|array)<.+>",
-        expected_normalized,
-    ):
         return True
     # Java date/time values are serialized as ISO strings on the HTTP wire.
     # Treating them as incompatible would reject a valid JSON representation.
@@ -835,10 +843,7 @@ def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
             }:
                 continue
             is_array = bool(response.get("is_array"))
-            is_collection = bool(re.match(
-                r"(?:java\.util\.)?(?:list|set|collection|iterable|array)<.+>",
-                return_type,
-            ))
+            is_collection = return_type.endswith("[]")
             if is_array != is_collection:
                 found.append(Finding(
                     "api.control-outcomes-cover-responses",
@@ -858,15 +863,11 @@ def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
                         location,
                     ))
             elif is_array:
-                element = re.search(r"<([^>]+)>", return_type)
-                if (
-                    element
-                    and element.group(1).split(".")[-1].lower()
-                    != schema_name.lower()
-                ):
+                element = return_type[:-2].split(".")[-1]
+                if element and element != _normalise_contract_type(schema_name):
                     found.append(Finding(
                         "api.control-outcomes-cover-responses",
-                        f"{control}.{method} 요소 타입 '{element.group(1)}'이 성공 응답 schema '{schema_name}'과 일치하지 않음",
+                        f"{control}.{method} 요소 타입 '{element}'이 성공 응답 schema '{schema_name}'과 일치하지 않음",
                         location,
                     ))
             break

@@ -54,3 +54,10 @@ def test_unrelated_api_types_are_not_compatible() -> None:
 def test_java_date_time_is_compatible_with_json_string() -> None:
     assert _argument_findings("string", "java.time.LocalDate") == []
     assert _argument_findings("string", "java.time.LocalDateTime") == []
+
+
+def test_http_uuid_and_collection_notation_match_control_types() -> None:
+    """HTTP 표현 차이만 있는 UUID와 배열은 API 재생성 사유가 아니다."""
+    assert _argument_findings("string", "uuid") == []
+    assert _argument_findings("MeetingSchedule[]", "array<MeetingSchedule>") == []
+    assert _argument_findings("array", "array<MeetingSchedule>")
