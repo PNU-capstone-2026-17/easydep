@@ -44,6 +44,7 @@ from .workspace import (
     cleanup_agent_workspace,
     load_task,
     missing_required_outputs,
+    path_is_editable,
     prepare_agent_workspace,
     read_allowed_sources,
     snapshot_files,
@@ -273,6 +274,23 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         str(path).replace("\\", "/")
         for path in task.get("immutable_paths", [])
     }
+    editable_roots: list[str] = []
+    if task_type == "use-case":
+        # 유스케이스 작업은 coordinator가 순차 실행한다. 첫 컴파일 실패가 난 뒤에야
+        # 관련 파일을 하나씩 허용하지 말고 application 구현 source를 처음부터 맡긴다.
+        # API와 BCE 공개 계약은 계속 읽기 전용이며 persistence 구현은 실제 오류가 있으면
+        # 같은 코딩 에이전트가 함께 고칠 수 있다.
+        editable_roots = ["application/src/main/java"]
+        immutable_paths = {
+            path
+            for path in immutable_paths
+            if "api" in Path(path).parts or "bce" in Path(path).parts
+        }
+        task = {
+            **task,
+            "allowed_write_roots": editable_roots,
+            "immutable_paths": sorted(immutable_paths),
+        }
 
     compatibility = openhands_compatibility()
     missing = [key for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured") if not compatibility[key]]
@@ -301,9 +319,23 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         )
         prompt += "\n```\n"
     allowed_absolute = [str((sandbox / path).resolve()) for path in editable_paths]
+    editable_root_absolute = [
+        str((sandbox / path).resolve()) for path in editable_roots
+    ]
+    immutable_absolute = [
+        str((sandbox / path).resolve()) for path in sorted(immutable_paths)
+    ]
     prompt += "\n\n## Enforced absolute write paths\n\n" + "\n".join(
         f"- `{path}`" for path in allowed_absolute
     )
+    if editable_root_absolute:
+        prompt += "\n\n## Enforced writable implementation roots\n\n" + "\n".join(
+            f"- `{path}`" for path in editable_root_absolute
+        )
+    if immutable_absolute:
+        prompt += "\n\n## Read-only generated contract paths\n\n" + "\n".join(
+            f"- `{path}`" for path in immutable_absolute
+        )
 
     api_key = configured_api_key()
     assert api_key is not None
@@ -318,47 +350,48 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     # 같은 작업이 다른 담당 오류 때문에 다시 실행되더라도 이전 수리 실패를 잊지 않는다.
     # 별도 저장 형식을 만들지 않고 이미 남긴 최신 실행 결과의 repairHistory를 재사용한다.
     repair_ledger = load_repair_ledger(execution_dir, task_id)
+    conversation = None
     try:
         round_prompt = prompt
         round_allowed = allowed_absolute
-        round_iteration_limit = MAX_AGENT_TURN_ITERATIONS
         provider_retries = 0
         repair_attempt = 0
-        while True:
-            reasoning_effort = os.environ.get(
-                "OPENHANDS_REPAIR_REASONING_EFFORT" if repair_attempt else "OPENHANDS_REASONING_EFFORT",
-                str(
-                    task["llm"].get(
-                        "repairReasoningEffort" if repair_attempt else "reasoningEffort",
-                        settings.implementation_repair_reasoning_effort
-                        if repair_attempt
-                        else settings.implementation_reasoning_effort,
-                    )
-                ),
-            )
-            # A transient provider failure is a transport concern, not a source
-            # verification failure. Retry the same conversation round without
-            # recording a semantic repair attempt; otherwise a NIM
-            # outage is reported misleadingly as missing files and the agent is
-            # sent an unnecessary (and expensive) repair prompt.
-            while True:
-                conversation, agent = create_openhands_conversation(
-                    sandbox,
-                    round_allowed,
-                    api_key,
-                    task["llm"],
-                    task_type=task_type,
-                    verification_paths=editable_paths,
-                    callbacks=[journal],
-                    max_iterations=round_iteration_limit,
-                    reasoning_effort=reasoning_effort,
-                    system_prompt=(
-                        FRONTEND_SYSTEM_PROMPT
-                        if task_type == "frontend-implementation"
-                        else IMPLEMENTATION_SYSTEM_PROMPT
-                    ),
+        reasoning_effort = os.environ.get(
+            "OPENHANDS_REASONING_EFFORT",
+            str(
+                task["llm"].get(
+                    "reasoningEffort",
+                    settings.implementation_reasoning_effort,
                 )
+            ),
+        )
+        conversation, agent = create_openhands_conversation(
+            sandbox,
+            allowed_absolute,
+            api_key,
+            task["llm"],
+            task_type=task_type,
+            verification_paths=editable_paths,
+            editable_roots=editable_root_absolute,
+            immutable_paths=immutable_absolute,
+            callbacks=[journal],
+            max_iterations=MAX_AGENT_TURN_ITERATIONS,
+            reasoning_effort=reasoning_effort,
+            system_prompt=(
+                FRONTEND_SYSTEM_PROMPT
+                if task_type == "frontend-implementation"
+                else IMPLEMENTATION_SYSTEM_PROMPT
+            ),
+        )
+        while True:
+            _extend_conversation_write_files(agent, round_allowed)
+            # A transient provider failure is a transport concern, not a source
+            # verification failure. 같은 Conversation의 현재 메시지부터 재개해 이미 읽은
+            # source와 판단을 버리지 않는다.
+            message_sent = False
+            while True:
                 conversation_error: Exception | None = None
+                usage_before = _conversation_token_usage(conversation) or (0, 0)
                 with langsmith_metrics.trace_scope(
                     "easydep.implementation.openhands_conversation",
                     run_type="llm",
@@ -374,7 +407,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     },
                 ) as trace:
                     try:
-                        conversation.send_message(round_prompt)
+                        if not message_sent:
+                            conversation.send_message(round_prompt)
+                            message_sent = True
                         conversation.run()
                     except Exception as error:
                         # A provider can reject the final turn after the agent has
@@ -389,9 +424,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         usage = _conversation_token_usage(conversation)
                         if usage is not None:
                             trace.set_usage(
-                                input_tokens=usage[0], output_tokens=usage[1]
+                                input_tokens=max(0, usage[0] - usage_before[0]),
+                                output_tokens=max(0, usage[1] - usage_before[1]),
                             )
-                        conversation.close()
                 if conversation_error is None or not transient_provider_error(
                     conversation_error
                 ):
@@ -450,7 +485,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 round_allowed = [
                     str((sandbox / path).resolve()) for path in missing_outputs
                 ]
-                round_iteration_limit = MAX_REPAIR_TURN_ITERATIONS
                 round_prompt = _render_missing_output_repair_prompt(
                     round_allowed,
                     _repair_contract_context(context),
@@ -478,11 +512,28 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 continue
 
             changed = changed_files(before, snapshot_files(sandbox))
-            allowed = set(editable_paths)
-            unauthorized = sorted(path for path in changed if path not in allowed)
+            unauthorized = sorted(
+                path
+                for path in changed
+                if not path_is_editable(
+                    path,
+                    editable_paths,
+                    editable_roots,
+                    immutable_paths,
+                )
+            )
             if unauthorized:
                 _restore_unauthorized_files(sandbox, run_root, unauthorized)
-                changed = {path for path in changed if path in allowed}
+                changed = {
+                    path
+                    for path in changed
+                    if path_is_editable(
+                        path,
+                        editable_paths,
+                        editable_roots,
+                        immutable_paths,
+                    )
+                }
             try:
                 # EasyDep은 source를 정규식으로 고치지 않는다. OpenHands가 현재 파일과
                 # compiler/test 결과를 보고 수정하며, 공개 계약은 최종 conformance 검사에서
@@ -512,7 +563,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     )
                 editable_entities = [
                     path
-                    for path in editable_paths
+                    for path in changed
                     if "/bce/" in "/" + path.replace("\\", "/")
                     and path.endswith(".java")
                 ]
@@ -546,25 +597,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 for path in referenced:
                     normalized = path.replace("\\", "/")
                     if (
+                        task_type != "use-case"
+                        and
                         normalized.startswith("application/")
                         and not _path_is_immutable(normalized, immutable_paths)
                         and (sandbox / normalized).is_file()
                         and normalized not in editable_paths
                     ):
                         editable_paths.append(normalized)
-                if task_type == "use-case":
-                    # backend 묶음은 순차 실행하므로 다른 agent와 충돌하지 않는다. javac이
-                    # 중복 클래스의 한쪽 파일만 보여 주거나 planner가 간접 의존 source를
-                    # 빠뜨려도 현재 application 구현 안에서 실제 원인을 찾아 고칠 수 있다.
-                    # 생성된 API 계약은 immutable_paths 검사로 계속 보호한다.
-                    java_root = sandbox / "application/src/main/java"
-                    for source in sorted(java_root.rglob("*.java")):
-                        normalized = source.relative_to(sandbox).as_posix()
-                        if (
-                            not _path_is_immutable(normalized, immutable_paths)
-                            and normalized not in editable_paths
-                        ):
-                            editable_paths.append(normalized)
                 evidence_digest = stable_digest(error.evidence)
                 finding_keys = (f"verification:{evidence_digest}",)
                 candidate_digest = stable_digest(
@@ -602,11 +642,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 # 실제로 빠진 Adapter나 Service 경로는 나오지 않는다. 이때 test 하나만
                 # 편집하게 하면 가짜 구현을 test 안에 넣도록 유도한다. 유스케이스 작업은
                 # planner가 이미 기능 단위로 좁힌 소유 파일 전체에서 원인을 고치게 한다.
-                repair_paths = (
-                    list(editable_paths)
-                    if task_type == "use-case"
-                    else select_repair_paths(error.evidence, editable_paths)
-                )
+                repair_paths = select_repair_paths(error.evidence, editable_paths)
                 # 편집 권한은 넓혀도 모든 Java 본문을 prompt에 복제하지 않는다. 오류에
                 # 직접 나온 source와 원래 유스케이스 묶음만 먼저 보여 주고, agent가
                 # 필요할 때 파일 도구로 나머지를 읽게 한다.
@@ -619,7 +655,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     else repair_paths
                 )
                 round_allowed = [str((sandbox / path).resolve()) for path in repair_paths]
-                round_iteration_limit = MAX_REPAIR_TURN_ITERATIONS
                 feedback_renderer = (
                     render_frontend_verification_feedback
                     if task_type == "frontend-implementation"
@@ -667,7 +702,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     + repair_ledger.prompt_context()
                 )
                 repair_attempt += 1
+        conversation.close()
+        conversation = None
     except Exception as error:
+        if conversation is not None:
+            conversation.close()
         failure = {
             "taskId": task_id,
             "taskType": task.get("task_type", "control"),
@@ -737,6 +776,16 @@ def _conversation_token_usage(conversation) -> tuple[int, int] | None:
         )
     except Exception:  # noqa: BLE001 - observability is optional
         return None
+
+
+def _extend_conversation_write_files(agent, absolute_paths: list[str]) -> None:
+    """같은 대화의 편집기에 새로 확인된 작업 파일을 추가한다."""
+    tools = getattr(agent, "_tools", {})
+    editor = tools.get("restricted_file_editor") if isinstance(tools, dict) else None
+    executor = getattr(editor, "executor", None)
+    allowed = getattr(executor, "allowed_edits_files", None)
+    if isinstance(allowed, set):
+        allowed.update(Path(path).resolve() for path in absolute_paths)
 
 
 def _run_app_id(run_root: Path) -> str | None:
@@ -824,8 +873,33 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
     missing = [key for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled") if not compatibility[key]]
     if missing:
         raise RuntimeError("OpenHands SDK prerequisites are missing: " + ", ".join(missing))
+    task_type = str(task.get("task_type", ""))
+    validation_roots = (
+        ["application/src/main/java"] if task_type == "use-case" else []
+    )
+    validation_immutable = {
+        str(path).replace("\\", "/")
+        for path in task.get("immutable_paths", [])
+    }
+    if task_type == "use-case":
+        validation_immutable = {
+            path
+            for path in validation_immutable
+            if "api" in Path(path).parts or "bce" in Path(path).parts
+        }
+        task = {
+            **task,
+            "allowed_write_roots": validation_roots,
+            "immutable_paths": sorted(validation_immutable),
+        }
     sandbox = prepare_agent_workspace(run_root, task)
     allowed = [str((sandbox / path).resolve()) for path in task["allowed_write_paths"]]
+    allowed_roots = [
+        str((sandbox / path).resolve()) for path in validation_roots
+    ]
+    immutable = [
+        str((sandbox / path).resolve()) for path in sorted(validation_immutable)
+    ]
     validation_journal = EventJournal(
         run_root / "reports" / f"agent-validation-{task_id}.events.jsonl"
     )
@@ -834,10 +908,12 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         allowed,
         "validation-only-key",
         task["llm"],
-        task_type=str(task.get("task_type", "")),
+        task_type=task_type,
         verification_paths=[
             str(path) for path in task.get("allowed_write_paths", [])
         ],
+        editable_roots=allowed_roots,
+        immutable_paths=immutable,
         callbacks=[validation_journal],
         system_prompt=(
             FRONTEND_SYSTEM_PROMPT
@@ -948,6 +1024,8 @@ def create_openhands_conversation(
     *,
     task_type: str = "",
     verification_paths: list[str] | None = None,
+    editable_roots: list[str] | None = None,
+    immutable_paths: list[str] | None = None,
     callbacks: list[object] | None = None,
     max_iterations: int = MAX_AGENT_TURN_ITERATIONS,
     reasoning_effort: str = "medium",
@@ -958,6 +1036,7 @@ def create_openhands_conversation(
     from openhands.sdk import LLM, Agent, Conversation, Tool, register_tool
     from openhands.tools.file_editor import FileEditorAction, FileEditorTool
     from openhands.tools.file_editor.definition import FileEditorObservation
+    from openhands.tools.file_editor.exceptions import ToolError
     from openhands.tools.file_editor.impl import FileEditorExecutor
     from pydantic import AliasChoices, Field, SecretStr
 
@@ -973,43 +1052,104 @@ def create_openhands_conversation(
         )
 
     class ReplaceableFileEditorExecutor(FileEditorExecutor):
+        def __init__(
+            self,
+            workspace_root,
+            allowed_edits_files,
+            allowed_edit_roots,
+            immutable_edit_paths,
+        ):
+            # SDK의 기본 executor는 파일 목록만 지원한다. 실제 편집 호출은 아래에서
+            # 검사하므로 부모에는 제한을 넘기지 않고, 검증 보고서용 속성은 유지한다.
+            super().__init__(workspace_root=workspace_root)
+            self.allowed_edits_files = {
+                Path(path).resolve() for path in allowed_edits_files
+            }
+            self.allowed_edit_roots = {
+                Path(path).resolve() for path in allowed_edit_roots
+            }
+            self.immutable_edit_paths = {
+                Path(path).resolve() for path in immutable_edit_paths
+            }
+
+        def _can_edit(self, target: Path) -> bool:
+            if any(
+                target == path or path in target.parents
+                for path in self.immutable_edit_paths
+            ):
+                return False
+            return target in (self.allowed_edits_files or set()) or any(
+                target == root or root in target.parents
+                for root in self.allowed_edit_roots
+            )
+
         def __call__(self, action, conversation=None):
             target = Path(action.path).resolve()
+            if action.command != "view" and not self._can_edit(target):
+                return FileEditorObservation.from_text(
+                    text=(
+                        f"Operation '{action.command}' is not allowed on '{target}'. "
+                        "Edit only the assigned files or implementation roots and do "
+                        "not change generated contract paths."
+                    ),
+                    command=action.command,
+                    is_error=True,
+                )
             can_replace = bool(
                 action.command == "create"
                 and action.file_text is not None
                 and target.is_file()
-                and self.allowed_edits_files is not None
-                and target in self.allowed_edits_files
+                and self._can_edit(target)
             )
-            if not can_replace:
-                return super().__call__(action, conversation)
+            if can_replace:
+                try:
+                    old_content = target.read_text(encoding="utf-8")
+                    target.write_text(action.file_text, encoding="utf-8")
+                except OSError as error:
+                    return FileEditorObservation.from_text(
+                        text=f"Could not replace editable file: {error}",
+                        command="create",
+                        is_error=True,
+                    )
+                return FileEditorObservation.from_text(
+                    text=f"Editable file replaced successfully at: {target}",
+                    command="create",
+                    is_error=False,
+                ).model_copy(
+                    update={
+                        "path": str(target),
+                        "prev_exist": True,
+                        "old_content": old_content,
+                        "new_content": action.file_text,
+                    }
+                )
 
             try:
-                old_content = target.read_text(encoding="utf-8")
-                target.write_text(action.file_text, encoding="utf-8")
-            except OSError as error:
+                return self.editor(
+                    command=action.command,
+                    path=action.path,
+                    file_text=action.file_text,
+                    view_range=action.view_range,
+                    old_str=action.old_str,
+                    new_str=action.new_str,
+                    insert_line=action.insert_line,
+                )
+            except ToolError as error:
                 return FileEditorObservation.from_text(
-                    text=f"Could not replace allowlisted file: {error}",
-                    command="create",
+                    text=error.message,
+                    command=action.command,
                     is_error=True,
                 )
-            return FileEditorObservation.from_text(
-                text=f"Allowlisted file replaced successfully at: {target}",
-                command="create",
-                is_error=False,
-            ).model_copy(
-                update={
-                    "path": str(target),
-                    "prev_exist": True,
-                    "old_content": old_content,
-                    "new_content": action.file_text,
-                }
-            )
 
     class RestrictedFileEditorTool(FileEditorTool):
         @classmethod
-        def create(cls, conv_state, allowed_edits_files):
+        def create(
+            cls,
+            conv_state,
+            allowed_edits_files,
+            allowed_edit_roots,
+            immutable_edit_paths,
+        ):
             instances = super().create(conv_state)
             return [
                 instance.model_copy(
@@ -1017,15 +1157,15 @@ def create_openhands_conversation(
                         "executor": ReplaceableFileEditorExecutor(
                             workspace_root=conv_state.workspace.working_dir,
                             allowed_edits_files=allowed_edits_files,
+                            allowed_edit_roots=allowed_edit_roots,
+                            immutable_edit_paths=immutable_edit_paths,
                         ),
                         "action_type": CompatibleFileEditorAction,
                         "description": (
-                            "Create or edit only the explicitly allowlisted text files. "
-                            "Their parent directories already exist and were write-tested. "
-                            "Use the absolute paths from the user prompt and create every "
-                            "requested file directly; do not browse directories. "
-                            "For these allowlisted files only, create may replace an "
-                            "existing file when a broad repair is required."
+                            "Create or edit text files inside the assigned file list or "
+                            "implementation roots. Read-only generated contract paths are "
+                            "always rejected. Use absolute paths from the user prompt. "
+                            "Create may replace an existing editable file."
                         ),
                     }
                 )
@@ -1079,7 +1219,11 @@ def create_openhands_conversation(
         tools=[
             Tool(
                 name=registry_name,
-                params={"allowed_edits_files": allowed_files},
+                params={
+                    "allowed_edits_files": allowed_files,
+                    "allowed_edit_roots": editable_roots or [],
+                    "immutable_edit_paths": immutable_paths or [],
+                },
             ),
             Tool(
                 name=task_check_tool_name,

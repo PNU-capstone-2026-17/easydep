@@ -111,6 +111,14 @@ def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
         str(path).replace("\\", "/")
         for path in task.get("allowed_write_paths", [])
     }
+    editable_roots = {
+        str(path).replace("\\", "/").rstrip("/")
+        for path in task.get("allowed_write_roots", [])
+    }
+    immutable = {
+        str(path).replace("\\", "/").rstrip("/")
+        for path in task.get("immutable_paths", [])
+    }
     if sandbox_application.is_dir():
         _refresh_agent_workspace(
             run_root,
@@ -118,6 +126,8 @@ def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
             sandbox,
             sandbox_application,
             editable,
+            editable_roots,
+            immutable,
         )
     else:
         sandbox.mkdir(parents=True, exist_ok=True)
@@ -140,6 +150,8 @@ def _refresh_agent_workspace(
     sandbox: Path,
     sandbox_application: Path,
     editable: set[str],
+    editable_roots: set[str],
+    immutable: set[str],
 ) -> None:
     """수리 중인 파일은 보존하고 나머지 파일을 현재 run source와 맞춘다."""
     source_files: set[str] = set()
@@ -152,7 +164,12 @@ def _refresh_agent_workspace(
         relative_run = (Path("application") / relative_application).as_posix()
         source_files.add(relative_run)
         target = sandbox / relative_run
-        if relative_run in editable and target.is_file():
+        if path_is_editable(
+            relative_run,
+            editable,
+            editable_roots,
+            immutable,
+        ) and target.is_file():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
@@ -161,8 +178,40 @@ def _refresh_agent_workspace(
         if not target.is_file():
             continue
         relative_run = target.relative_to(sandbox).as_posix()
-        if relative_run not in editable and relative_run not in source_files:
+        if (
+            not path_is_editable(
+                relative_run,
+                editable,
+                editable_roots,
+                immutable,
+            )
+            and relative_run not in source_files
+        ):
             target.unlink()
+
+
+def path_is_editable(
+    relative_path: str,
+    allowed_files: set[str] | list[str],
+    allowed_roots: set[str] | list[str],
+    immutable_paths: set[str] | list[str],
+) -> bool:
+    """상대 경로가 쓰기 범위 안이고 읽기 전용 계약 밖인지 확인한다."""
+    path = relative_path.replace("\\", "/").strip("/")
+    immutable = {
+        str(item).replace("\\", "/").strip("/") for item in immutable_paths
+    }
+    if any(path == root or path.startswith(root + "/") for root in immutable):
+        return False
+    files = {
+        str(item).replace("\\", "/").strip("/") for item in allowed_files
+    }
+    if path in files:
+        return True
+    roots = {
+        str(item).replace("\\", "/").strip("/") for item in allowed_roots
+    }
+    return any(path == root or path.startswith(root + "/") for root in roots)
 
 
 def cleanup_agent_workspace(sandbox: Path) -> None:

@@ -9,13 +9,51 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .verification.build import WorkspaceVerificationError, verify_agent_workspace
+from .workspace import snapshot_files
 
 TASK_CHECK_TOOL_NAME = "run_task_check"
 _REGISTERED = False
 _REGISTRATION_LOCK = threading.Lock()
+
+
+@dataclass
+class TaskCheckSession:
+    """한 OpenHands 대화에서 검사 실패와 source 변경 여부를 기억한다."""
+
+    sandbox: Path
+    task_type: str
+    allowed_write_paths: list[str]
+    _failed_source_snapshot: dict[str, str] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+
+    def run(self) -> tuple[bool, str]:
+        """source가 바뀐 경우에만 실제 focused 검사를 실행한다."""
+        current_snapshot = snapshot_files(self.sandbox)
+        if (
+            self._failed_source_snapshot is not None
+            and current_snapshot == self._failed_source_snapshot
+        ):
+            return False, (
+                "TASK CHECK NOT RUN\n"
+                "The source has not changed since the previous failed check. "
+                "Read the previous diagnostic and edit the implementation before "
+                "running this check again."
+            )
+
+        passed, output = _execute_task_check(
+            self.sandbox,
+            self.task_type,
+            self.allowed_write_paths,
+        )
+        self._failed_source_snapshot = None if passed else current_snapshot
+        return passed, output
 
 
 def run_task_check(
@@ -28,6 +66,14 @@ def run_task_check(
     ``allowed_write_paths``는 명령 인자가 아니라 EasyDep이 작업 계획에서 만든 값이다.
     LLM은 이 함수를 호출할 수만 있고 검사 종류나 Gradle 옵션을 바꿀 수 없다.
     """
+    return TaskCheckSession(sandbox, task_type, allowed_write_paths).run()
+
+
+def _execute_task_check(
+    sandbox: Path,
+    task_type: str,
+    allowed_write_paths: list[str],
+) -> tuple[bool, str]:
     try:
         evidence = verify_agent_workspace(
             sandbox,
@@ -85,16 +131,14 @@ def register_task_check_tool() -> str:
                 task_type: str,
                 allowed_write_paths: list[str],
             ) -> None:
-                self.sandbox = sandbox
-                self.task_type = task_type
-                self.allowed_write_paths = list(allowed_write_paths)
+                self.session = TaskCheckSession(
+                    sandbox,
+                    task_type,
+                    list(allowed_write_paths),
+                )
 
             def __call__(self, _action, conversation=None):  # noqa: ANN001, ARG002
-                passed, output = run_task_check(
-                    self.sandbox,
-                    self.task_type,
-                    self.allowed_write_paths,
-                )
+                passed, output = self.session.run()
                 return TaskCheckObservation.from_text(
                     text=output,
                     is_error=not passed,

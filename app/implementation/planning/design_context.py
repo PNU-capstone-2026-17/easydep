@@ -480,7 +480,6 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
         immutable_paths=[
             *(path for path in bce_paths if path not in entity_sources),
             f"application/src/main/java/{package_path}/api",
-            f"application/src/main/java/{package_path}/persistence",
         ],
         source_artifacts=sources,
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),

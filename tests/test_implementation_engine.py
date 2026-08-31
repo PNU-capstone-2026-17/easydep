@@ -7,12 +7,14 @@ from unittest.mock import patch
 
 import pytest
 
-from app.implementation.agents.task_check import run_task_check
+from app.implementation.agents import execute_openhands_task
+from app.implementation.agents.task_check import TaskCheckSession, run_task_check
 from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
     task_verification_command,
     verify_run_workspace,
 )
+from app.implementation.agents.workspace import path_is_editable
 from app.implementation.delivery.container import render_deployment
 from app.implementation.delivery.terraform import render_iac
 from app.implementation.domain.models import JobSpec
@@ -95,6 +97,173 @@ def test_agent_task_check_returns_real_focused_verification_result(
         "use-case",
         ["application/src/test/java/com/example/OrderScenarioTest.java"],
     )
+
+
+def test_agent_task_check_requires_a_source_change_before_retry(
+    tmp_path: Path,
+) -> None:
+    """같은 실패 상태에서는 Gradle을 다시 돌리지 않고 먼저 수정을 요구한다."""
+    source = tmp_path / "application/src/main/java/com/example/OrderService.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class OrderService {}", encoding="utf-8")
+    evidence = {
+        "command": ["gradlew", "compileJava"],
+        "exitCode": 1,
+        "stderr": "cannot find symbol",
+    }
+    session = TaskCheckSession(tmp_path, "use-case", [])
+    with patch(
+        "app.implementation.agents.task_check.verify_agent_workspace",
+        side_effect=WorkspaceVerificationError(evidence),
+    ) as verify:
+        first_passed, _ = session.run()
+        second_passed, second_output = session.run()
+
+    assert first_passed is False
+    assert second_passed is False
+    assert "source has not changed" in second_output
+    verify.assert_called_once()
+
+
+def test_use_case_scope_allows_implementation_but_protects_generated_api() -> None:
+    """순차 유스케이스는 구현 source를 함께 고치되 생성 계약은 바꾸지 못한다."""
+    roots = ["application/src/main/java"]
+    immutable = [
+        "application/src/main/java/com/example/api",
+        "application/src/main/java/com/example/bce/OrderControl.java",
+    ]
+
+    assert path_is_editable(
+        "application/src/main/java/com/example/application/OrderService.java",
+        [],
+        roots,
+        immutable,
+    )
+    assert path_is_editable(
+        "application/src/main/java/com/example/persistence/OrderRepository.java",
+        [],
+        roots,
+        immutable,
+    )
+    assert not path_is_editable(
+        "application/src/main/java/com/example/api/OrdersApi.java",
+        [],
+        roots,
+        immutable,
+    )
+    assert not path_is_editable(
+        "application/src/main/java/com/example/bce/OrderControl.java",
+        [],
+        roots,
+        immutable,
+    )
+
+
+def test_verification_failure_continues_the_same_openhands_conversation(
+    tmp_path: Path,
+) -> None:
+    """focused 검사 실패는 새 에이전트를 만들지 않고 현재 대화로 돌아간다."""
+    run = tmp_path / "run_abcdef123456"
+    task_id = "implement-order"
+    source_path = "application/src/main/java/com/example/application/OrderService.java"
+    source = run / source_path
+    source.parent.mkdir(parents=True)
+    source.write_text("class OrderService {}", encoding="utf-8")
+    reports = run / "reports"
+    tasks = reports / "implementation-tasks"
+    tasks.mkdir(parents=True)
+    prompt = tasks / "order.prompt.md"
+    context = tasks / "order.context.json"
+    prompt.write_text("Implement the order use case.", encoding="utf-8")
+    context.write_text("{}", encoding="utf-8")
+    task = {
+        "task_id": task_id,
+        "task_type": "use-case",
+        "prompt_file": prompt.relative_to(run).as_posix(),
+        "context_file": context.relative_to(run).as_posix(),
+        "prompt_sha256": "prompt-hash",
+        "allowed_write_paths": [source_path],
+        "required_output_paths": [source_path],
+        "immutable_paths": [],
+        "llm": {
+            "model": "openai/gpt-oss-120b",
+            "baseUrl": "http://localhost",
+            "temperature": 0.2,
+            "topP": 1.0,
+            "maxOutputTokens": 1024,
+            "reasoningBudget": 0,
+            "reasoningEffort": "medium",
+            "chatTemplateKwargs": {},
+        },
+    }
+    (tasks / "order.task.json").write_text(json.dumps(task), encoding="utf-8")
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+            self.messages: list[str] = []
+            self.run_count = 0
+            self.close_count = 0
+
+        def send_message(self, message: str) -> None:
+            self.messages.append(message)
+
+        def run(self) -> None:
+            self.run_count += 1
+            if self.run_count == 2:
+                (self.sandbox / source_path).write_text(
+                    "class OrderService { int repaired; }",
+                    encoding="utf-8",
+                )
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    created: list[FakeConversation] = []
+
+    def create_conversation(sandbox: Path, *_args, **_kwargs):
+        conversation = FakeConversation(sandbox)
+        created.append(conversation)
+        return conversation, SimpleNamespace(_tools={})
+
+    failure = WorkspaceVerificationError(
+        {
+            "command": ["gradlew", "compileJava"],
+            "exitCode": 1,
+            "stderr": f"{source_path}: cannot find symbol",
+        }
+    )
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.configured_api_key",
+            return_value="approved-key",
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=create_conversation,
+        ) as create,
+        patch(
+            "app.implementation.agents.runtime.verify_agent_workspace",
+            side_effect=[failure, {"command": ["gradlew", "compileJava"], "exitCode": 0}],
+        ),
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    assert result["status"] == "SUCCEEDED"
+    assert create.call_count == 1
+    assert len(created[0].messages) == 2
+    assert created[0].run_count == 2
+    assert created[0].close_count == 1
+    assert "int repaired" in source.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
