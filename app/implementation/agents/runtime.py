@@ -260,6 +260,46 @@ def _owned_directory_roots(paths: list[str]) -> list[str]:
     )
 
 
+def _active_repair_scope(
+    task: dict[str, object], active_repair: dict[str, object]
+) -> tuple[list[str], list[str], list[str]]:
+    """통합 수리에 필요한 정확한 파일만 일시적으로 편집 가능하게 만든다.
+
+    wiring 작업은 평소 업무 코드를 건드리지 못한다. 다만 최종 검사에서 서로 다른 기능의
+    파일이 함께 실패하면 수리 계획이 그 파일들을 wiring에 배정할 수 있다. 이때 기존
+    ``immutable_paths``를 그대로 적용하면 계획에는 파일이 보이지만 편집 도구가 다시 막는
+    모순이 생긴다.
+
+    공개 BCE/API 계약과 결정론적으로 만든 persistence 파일은 계속 보호한다. 그 밖의
+    ``repairPaths``는 파일 단위로만 허용하고, 새 파일을 만들 수 있는 디렉터리 권한은 wiring이
+    원래 소유한 설정 디렉터리에만 유지한다.
+    """
+    base_paths = [str(path).replace("\\", "/") for path in task.get("allowed_write_paths", [])]
+    immutable = {
+        str(path).replace("\\", "/") for path in task.get("immutable_paths", [])
+    }
+    protected_parts = ("/bce/", "/api/", "/persistence/")
+    protected_prefixes = ("application/src/main/resources/db/migration/",)
+    repair_paths = [
+        str(path).replace("\\", "/")
+        for path in active_repair.get("repairPaths", [])
+        if isinstance(path, str)
+        and path.startswith("application/")
+        and not any(part in "/" + path.replace("\\", "/") for part in protected_parts)
+        and not path.replace("\\", "/").startswith(protected_prefixes)
+    ]
+    editable = list(dict.fromkeys([*base_paths, *repair_paths]))
+    # exact repair 파일 위에 놓인 넓은 ownership 경로만 해제한다. 편집기 자체는 editable
+    # 파일 목록을 다시 검사하므로 같은 package의 관련 없는 기존 파일까지 열리지 않는다.
+    immutable = {
+        path
+        for path in immutable
+        if not any(_path_is_immutable(repair_path, {path}) for repair_path in repair_paths)
+    }
+    roots = _owned_directory_roots(base_paths)
+    return editable, roots, sorted(immutable)
+
+
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
@@ -268,23 +308,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     editable_paths = [str(path) for path in task.get("allowed_write_paths", [])]
     required_paths = [str(path) for path in task.get("required_output_paths", editable_paths)]
     immutable_paths = {str(path).replace("\\", "/") for path in task.get("immutable_paths", [])}
-    if active_repair is not None:
-        # 서로 다른 기능의 파일이 함께 실패한 통합 수리도 전체 source 권한을 얻지 않는다.
-        # repair plan이 근거에서 고른 정확한 파일만 기존 기능 작업 범위에 더한다.
-        editable_paths = list(
-            dict.fromkeys(
-                [
-                    *editable_paths,
-                    *(
-                        str(path)
-                        for path in active_repair.get("repairPaths", [])
-                        if isinstance(path, str)
-                        and path.startswith("application/")
-                        and not _path_is_immutable(path, immutable_paths)
-                    ),
-                ]
-            )
-        )
     editable_roots = [str(path).replace("\\", "/") for path in task.get("allowed_write_roots", [])]
     if task_type == "use-case":
         # 기능 구현 작업은 서로 강하게 연결된 Controller, Service와 Entity 동작을 한 대화에서
@@ -302,13 +325,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "immutable_paths": sorted(immutable_paths),
         }
     elif active_repair is not None:
-        # 수리 파일 목록과 같은 패키지는 그 작업의 책임 범위다. 새 설정 클래스를 만드는
-        # 정상적인 설계 선택까지 막지 않으면서 다른 기능 패키지는 계속 보호한다.
-        editable_roots = _owned_directory_roots(editable_paths)
+        editable_paths, editable_roots, immutable = _active_repair_scope(
+            task, active_repair
+        )
+        immutable_paths = set(immutable)
         task = {
             **task,
             "allowed_write_paths": editable_paths,
             "allowed_write_roots": editable_roots,
+            "immutable_paths": immutable,
         }
 
     compatibility = openhands_compatibility()
