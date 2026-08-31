@@ -775,13 +775,21 @@ class ImplementationWorker:
                     self._write(record)
                     self.executor.submit(self._run, job_id, approval_path, True)
                     return
-            self._apply_workflow(record, workflow)
+            self._apply_workflow(record, workflow, write=False)
             if record["status"] == "COMPLETED":
                 self._persist_outputs(record)
+            else:
+                self._write(record)
         except Exception as error:
             self._fail(record, error)
 
-    def _apply_workflow(self, record: dict[str, Any], workflow: dict[str, Any]) -> None:
+    def _apply_workflow(
+        self,
+        record: dict[str, Any],
+        workflow: dict[str, Any],
+        *,
+        write: bool = True,
+    ) -> None:
         """외부 실행기의 workflow 상태를 EasyDep 구현 작업 상태로 변환한다."""
         record["workflow"] = workflow
         request = self.client.transmission_request(Path(record["run_root"]))
@@ -808,7 +816,8 @@ class ImplementationWorker:
             record.pop("error", None)
             record.pop("blocking_details", None)
         record["updated_at"] = _now()
-        self._write(record)
+        if write:
+            self._write(record)
 
     @staticmethod
     def _workflow_is_complete(workflow: dict[str, Any]) -> bool:
