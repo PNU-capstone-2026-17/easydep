@@ -736,27 +736,32 @@ class PrototypeOrchestrator:
         self._sink().tools["easydep-frontend-generator"] = generation.tool_metadata()
 
     def _write_gradle_project(self, application: Path) -> None:
-        build = """plugins {
+        security_dependencies = ""
+        if _requires_application_security(self.spec):
+            security_dependencies = (
+                "    implementation 'org.springframework.boot:spring-boot-starter-security'\n"
+                "    testImplementation 'org.springframework.security:spring-security-test'\n"
+            )
+        build = f"""plugins {{
     id 'org.springframework.boot' version '3.3.13'
     id 'io.spring.dependency-management' version '1.1.6'
     id 'java'
-}
+}}
 
 group = 'com.example'
 version = '0.1.0-SNAPSHOT'
 
-java {
-    toolchain { languageVersion = JavaLanguageVersion.of(21) }
-}
+java {{
+    toolchain {{ languageVersion = JavaLanguageVersion.of(21) }}
+}}
 
-repositories { mavenCentral() }
+repositories {{ mavenCentral() }}
 
-dependencies {
+dependencies {{
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.flywaydb:flyway-core'
     runtimeOnly 'org.flywaydb:flyway-mysql'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0'
@@ -765,10 +770,11 @@ dependencies {
     implementation 'org.openapitools:jackson-databind-nullable:0.2.10'
     runtimeOnly 'com.mysql:mysql-connector-j'
     runtimeOnly 'com.h2database:h2'
+{security_dependencies.rstrip()}
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
+}}
 
-tasks.withType(Test).configureEach { useJUnitPlatform() }
+tasks.withType(Test).configureEach {{ useJUnitPlatform() }}
 """
         (application / "build.gradle").write_text(build, encoding="utf-8")
         (application / "settings.gradle").write_text(
@@ -799,12 +805,31 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
         )
 
     def _write_runtime_configuration(self, application: Path) -> None:
+        """운영 DB와 test DB처럼 선택 여지가 없는 Spring 설정을 미리 만든다."""
+        security_required = _requires_application_security(self.spec)
+        production_security = (
+            "  security:\n"
+            "    user:\n"
+            "      name: ${SPRING_SECURITY_USER_NAME}\n"
+            "      password: ${SPRING_SECURITY_USER_PASSWORD}\n"
+            "      roles: ${SPRING_SECURITY_USER_ROLES:USER}\n"
+            if security_required
+            else ""
+        )
         resources = application / "src" / "main" / "resources"
         resources.mkdir(parents=True, exist_ok=True)
-        (resources / "application.yml").write_text(
+        application_config = (
             "server:\n"
             "  port: 8000\n"
-            "management:\n"
+            "spring:\n"
+            "  datasource:\n"
+            "    url: ${SPRING_DATASOURCE_URL}\n"
+            "    username: ${SPRING_DATASOURCE_USERNAME}\n"
+            "    password: ${SPRING_DATASOURCE_PASSWORD}\n"
+            "  jpa:\n"
+            "    open-in-view: false\n"
+            + production_security
+            + "management:\n"
             "  endpoints:\n"
             "    web:\n"
             "      base-path: /\n"
@@ -815,7 +840,83 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             "  endpoint:\n"
             "    health:\n"
             "      probes:\n"
-            "        enabled: true\n",
+            "        enabled: true\n"
+        )
+        (resources / "application.yml").write_text(
+            application_config,
+            encoding="utf-8",
+        )
+        test_resources = application / "src" / "test" / "resources"
+        test_resources.mkdir(parents=True, exist_ok=True)
+        test_security = (
+            "  security:\n"
+            "    user:\n"
+            "      name: easydep-test\n"
+            "      password: easydep-test\n"
+            "      roles: USER\n"
+            if security_required
+            else ""
+        )
+        (test_resources / "application-test.yml").write_text(
+            "spring:\n"
+            "  datasource:\n"
+            "    url: jdbc:h2:mem:easydep_test;MODE=MySQL;DB_CLOSE_DELAY=-1\n"
+            "    username: sa\n"
+            "    password: ''\n"
+            "    driver-class-name: org.h2.Driver\n"
+            "  jpa:\n"
+            "    hibernate:\n"
+            "      ddl-auto: none\n"
+            "  flyway:\n"
+            "    enabled: true\n"
+            + test_security,
+            encoding="utf-8",
+        )
+        if security_required:
+            self._write_security_configuration(application)
+
+    def _write_security_configuration(self, application: Path) -> None:
+        """명시적인 인증 요구가 있을 때 Spring의 임의 기본 동작을 대신한다."""
+        package = self.spec.base_package
+        target = (
+            application
+            / "src"
+            / "main"
+            / "java"
+            / Path(package.replace(".", "/"))
+            / "config"
+            / "SecurityConfiguration.java"
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"""package {package}.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+
+/**
+ * 설계에 인증 요구가 있을 때 사용하는 최소 HTTP 보안 설정이다.
+ * 운영 계정은 SPRING_SECURITY_USER_NAME/PASSWORD/ROLES 환경 변수로 전달한다.
+ */
+@Configuration
+public class SecurityConfiguration {{
+    @Bean
+    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {{
+        return http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/", "/index.html", "/assets/**", "/healthz", "/error").permitAll()
+                .anyRequest().authenticated())
+            .httpBasic(Customizer.withDefaults())
+            .build();
+    }}
+}}
+""",
             encoding="utf-8",
         )
 
@@ -971,13 +1072,6 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, obje
             "    implementation 'org.flywaydb:flyway-core'\n"
             "    runtimeOnly 'org.flywaydb:flyway-mysql'\n",
         )
-    if "spring-boot-starter-security" not in source:
-        marker = "    implementation 'org.springframework.boot:spring-boot-starter-validation'\n"
-        source = source.replace(
-            marker,
-            marker
-            + "    implementation 'org.springframework.boot:spring-boot-starter-security'\n",
-        )
     if "runtimeOnly 'com.mysql:mysql-connector-j'" not in source:
         source = source.replace(
             "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n",
@@ -1072,6 +1166,53 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return [task.to_dict() for task in tasks]
+
+
+def _requires_application_security(spec: JobSpec) -> bool:
+    """명시적인 API 또는 요구사항 근거가 있을 때만 Security를 켠다.
+
+    현재 API 저장 모델에는 보안 항목이 없으므로 OpenAPI의 표준 ``security``와 승인된
+    요구사항 문장을 함께 본다. 단순히 actor 역할이 존재한다는 이유로 인증을 추측하지 않고,
+    인증·인가를 직접 요구한 문장만 사용한다.
+    """
+    openapi_path = spec.inputs.get("openapi")
+    if openapi_path and openapi_path.is_file():
+        try:
+            document = json.loads(openapi_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            document = {}
+        if isinstance(document, dict):
+            components = document.get("components", {})
+            schemes = components.get("securitySchemes", {}) if isinstance(components, dict) else {}
+            if document.get("security") or schemes:
+                return True
+            paths = document.get("paths", {})
+            if isinstance(paths, dict) and any(
+                operation.get("security")
+                for path_item in paths.values()
+                if isinstance(path_item, dict)
+                for operation in path_item.values()
+                if isinstance(operation, dict)
+            ):
+                return True
+
+    requirements_path = spec.inputs.get("refinedRequirements")
+    if not requirements_path or not requirements_path.is_file():
+        return False
+    try:
+        requirements = json.loads(requirements_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    items = requirements if isinstance(requirements, list) else []
+    security_words = re.compile(
+        r"\b(?:authenticat(?:e|ed|ion)|authoriz(?:e|ed|ation))\b|인증|인가|접근\s*권한",
+        re.IGNORECASE,
+    )
+    return any(
+        security_words.search(str(item.get("text", "")))
+        for item in items
+        if isinstance(item, dict)
+    )
 
 
 def sha256_file(path: Path) -> str:

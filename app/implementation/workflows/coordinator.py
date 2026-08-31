@@ -169,7 +169,12 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             task_id in repaired_tasks
             and result.get("promptSha256") != prompt_sha
         )
-        if old.get("status") == "RUNNING":
+        repair_only = bool(task.get("repair_only", False))
+        if repair_only and task_id not in repaired_tasks:
+            # 정상 실행에서는 정형적인 Spring 설정을 generator와 각 기능 작업이 만든다.
+            # 최종 검사가 실제 연결 오류를 찾았을 때만 repair plan이 이 작업을 깨운다.
+            status = "SUCCEEDED"
+        elif old.get("status") == "RUNNING":
             status = (
                 "SUCCEEDED"
                 if result.get("status") == "SUCCEEDED"

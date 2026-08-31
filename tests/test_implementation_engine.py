@@ -111,7 +111,7 @@ def test_one_scenario_method_can_cover_multiple_use_cases(tmp_path: Path) -> Non
 
     assert result["status"] == "PASSED"
     assert result["coveredUseCaseIds"] == ["UC1", "UC2", "UC3"]
-    assert [task["requiredPassedCases"] for task in result["tasks"]] == [1, 1]
+    assert [task["requiredPassedCases"] for task in result["tasks"]] == [1]
 
 
 def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None:
@@ -510,7 +510,7 @@ class Order <<Entity>> { - id: UUID }
         agent_reasoning_budget=0,
     )
 
-    plan_workflow(run, spec)
+    state = plan_workflow(run, spec)
     manifest = json.loads(
         (run / "reports/run-manifest.json").read_text(encoding="utf-8")
     )
@@ -526,6 +526,9 @@ class Order <<Entity>> { - id: UUID }
     wiring = next(task for task in tasks if task["task_type"] == "wiring")
     assert len(use_cases) >= 2
     assert set(wiring["use_case_ids"]) == {"UC1", "UC2"}
+    assert wiring["repair_only"] is True
+    assert wiring["required_output_paths"] == []
+    assert "implement-application-wiring" not in state["nextRunnableTasks"]
     contexts = [
         json.loads((run / task["context_file"]).read_text(encoding="utf-8"))
         for task in use_cases]

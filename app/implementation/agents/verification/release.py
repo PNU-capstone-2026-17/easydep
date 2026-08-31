@@ -138,6 +138,8 @@ def verify_container_runtime(
                         }
                     except (OSError, RuntimeError) as probe_error:
                         last_probe_error = f"health probe failed: {probe_error}"
+                        if _is_final_http_failure(probe_error):
+                            raise RuntimeError(last_probe_error) from probe_error
                         time.sleep(1)
                         continue
                     if frontend_required and not separate_frontend:
@@ -149,6 +151,8 @@ def verify_container_runtime(
                             last_probe_error = (
                                 f"frontend HTTP probe failed: {probe_error}"
                             )
+                            if _is_final_http_failure(probe_error):
+                                raise RuntimeError(last_probe_error) from probe_error
                             time.sleep(1)
                             continue
                     status = "SUCCEEDED"
@@ -331,8 +335,11 @@ def _verify_separate_frontend_container(
                     runtime = _verify_frontend_http(port, http_get)
                     runtime["mode"] = "separate"
                     return runtime
-                except (OSError, RuntimeError):
-                    pass
+                except (OSError, RuntimeError) as error:
+                    if _is_final_http_failure(error):
+                        raise RuntimeError(
+                            f"frontend HTTP probe failed: {error}"
+                        ) from error
         time.sleep(1)
     raise RuntimeError("Separate frontend container did not become HTTP-ready")
 
@@ -353,7 +360,9 @@ def _verify_frontend_http(
     if status < 200 or status >= 300 or not re.search(
         r'<div[^>]+id=["\']root["\']', body, re.IGNORECASE
     ):
-        raise RuntimeError("Container root did not serve the generated frontend index")
+        raise RuntimeError(
+            f"Container root returned HTTP {status} instead of the generated frontend index"
+        )
     asset_match = re.search(
         r'<script[^>]+src=["\']([^"\']+\.js(?:\?[^"\']*)?)["\']',
         body,
@@ -365,7 +374,9 @@ def _verify_frontend_http(
     asset_url = asset_path if asset_path.startswith("http") else origin + "/" + asset_path.lstrip("/")
     asset_status, asset_type, asset_body = http_get(asset_url, 3.0)
     if asset_status < 200 or asset_status >= 300 or not asset_body.strip():
-        raise RuntimeError("Frontend JavaScript bundle was not served")
+        raise RuntimeError(
+            f"Frontend JavaScript bundle returned HTTP {asset_status}"
+        )
     if "javascript" not in asset_type.lower():
         raise RuntimeError(f"Frontend bundle has unexpected content type: {asset_type}")
     return {
@@ -375,6 +386,11 @@ def _verify_frontend_http(
         "assetUrl": asset_url,
         "assetContentType": asset_type,
     }
+
+
+def _is_final_http_failure(error: Exception) -> bool:
+    """재시도해도 바뀌지 않는 접근·경로 오류는 바로 자동 수리로 넘긴다."""
+    return bool(re.search(r"(?:HTTP(?: Error)?\s+)(401|403|404)\b", str(error)))
 
 
 def _write_report(path: Path, report: dict[str, object]) -> None:

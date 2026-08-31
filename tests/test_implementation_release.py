@@ -121,7 +121,9 @@ def test_container_runtime_failure_keeps_the_last_http_probe_error(
             startup_timeout_seconds=0.01,
         )
 
-    assert calls >= 2
+    # health 한 번과 frontend 한 번 뒤 바로 수리로 넘어간다. 같은 401을 90초 동안
+    # 반복해서 묻지 않는다.
+    assert calls == 2
     assert "frontend HTTP probe failed: HTTP 401 Unauthorized" in str(
         raised.value.evidence["stderr"]
     )

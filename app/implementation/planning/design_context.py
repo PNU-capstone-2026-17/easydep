@@ -52,6 +52,9 @@ class ImplementationTask:
     requirement_ids: list[str] = field(default_factory=list)
     use_case_ids: list[str] = field(default_factory=list)
     required_test_paths: list[str] = field(default_factory=list)
+    # Spring 설정은 정상 경로에서 코드가 만든다. 이 작업은 최종 build나 HTTP 검사에서
+    # 실제 연결 문제가 발견됐을 때만 OpenHands에게 넘기는 수리용 작업이다.
+    repair_only: bool = False
 
     def __post_init__(self) -> None:
         if self.required_output_paths is None:
@@ -143,6 +146,8 @@ def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         "- Keep the Entity, Spring Data repository, mapper, migration, and tests consistent; "
         "do not hand a technical error to another file owner.\n"
         "- Preserve the exact generated contracts below and do not invent public API members.\n"
+        "- Mark the concrete persistence mapper as a Spring `@Component`; Spring Data "
+        "discovers repository interfaces without a handwritten configuration bean.\n"
         "- Run the focused persistence compile/test command supplied by the runtime.\n"
         "- Do not leave TODO, FIXME, placeholder implementations, or speculative fallbacks.\n\n"
         "## Related persistence requirements and scenarios\n```json\n"
@@ -451,6 +456,9 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
   an in-memory collection or invent another persistence port.
 - Write the focused JUnit scenario first, then implement until it passes. Assert returned
   values and persisted state changes, including that rejected requests leave state unchanged.
+- Mark concrete Control services and Boundary/Gateway adapters with the matching Spring
+  stereotype and use constructor injection. The generated web Controller already has its
+  framework annotation; do not create a second bean for it.
 - Leave no TODO, FIXME, or placeholder.
 
 ## Relevant requirements and scenarios
@@ -692,7 +700,11 @@ def _all_scenarios(spec: JobSpec) -> list[dict[str, object]]:
 
 
 def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
-    """Plan the Spring bootstrap, bean graph, runtime properties, and context gate."""
+    """통합 실패가 있을 때만 실행할 Spring 설정 수리 작업을 준비한다.
+
+    정상 경로의 entrypoint, datasource와 health 설정은 generator가 이미 만든다. 여기서는
+    OpenHands가 실제 Bean 연결 오류를 고칠 수 있도록 편집 범위와 설계 문맥만 보존한다.
+    """
     package_path = spec.base_package.replace(".", "/")
     ir = build_implementation_ir(spec, run_root)
     package_root = (
@@ -710,7 +722,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         f"{package_path}/integration/"
         f"{ir.application_class.removesuffix('Application')}FlowTest.java"
     )
-    required = [
+    repair_paths = [
         f"application/src/main/java/{package_path}/config/ApplicationConfiguration.java",
         "application/src/main/resources/application.yml",
         "application/src/test/resources/application-test.yml",
@@ -724,7 +736,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     ]
     allowed = _work_unit_editable_paths(
         run_root,
-        required,
+        repair_paths,
         [*editable_directories, "application/src/main/resources/application.yml"],
     )
     task_id = "implement-application-wiring"
@@ -744,7 +756,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         "scenarios": _all_scenarios(spec),
         "e2eScenarios": [asdict(item) for item in ir.e2e_scenarios],
         "openapi": _read(spec.inputs.get("openapi")),
-        "requiredOutputs": required,
+        "requiredOutputs": [],
     }
     if deployment_context:
         context["deployment"] = deployment_context
@@ -756,21 +768,15 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
     )
     prompt = render_wiring_prompt(spec, ir.application_class, contracts)
     prompt += (
-        "\n\nIn the single real HTTP FlowTest class, cover every planned use-case bundle. "
-        "For each applicable scenario, assert the documented response and the required "
-        "persisted result; also exercise the authorization and concurrency conditions stated "
-        "in the supplied requirements. A single status-only endpoint check is insufficient."
+        "\n\nThis task is invoked only after a real compile, context, or HTTP failure. "
+        "Use the supplied failure evidence as the primary target. Do not reimplement "
+        "business use cases or duplicate their focused tests."
     )
-    prompt += "\n\n## All refined requirements and use-case scenarios\n```json\n" + _prompt_json({
-        "requirements": requirements,
-        "useCases": use_cases,
-        "scenarios": context["scenarios"],
-    }) + "\n```"
     prompt += _render_deployment_context(deployment_context)
     prompt += "\n\n## Editable directories\n" + "\n".join(
         f"- `{path}`" for path in editable_directories
     )
-    prompt += render_allowed_output_rules(required)
+    prompt += render_allowed_output_rules(repair_paths)
     prompt_path = output / "application-wiring.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
     task = ImplementationTask(
@@ -779,7 +785,9 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         prompt_file=_relative(run_root, prompt_path),
         context_file=_relative(run_root, context_path),
         allowed_write_paths=allowed,
-        required_output_paths=required,
+        # 정상 경로에서는 어떤 파일도 OpenHands가 새로 만들 필요가 없다. 실제 오류가
+        # 생기면 위 repair_paths가 수리 범위의 기준점으로 사용된다.
+        required_output_paths=[],
         immutable_paths=[
             f"application/src/main/java/{package_path}/bce",
             f"application/src/main/java/{package_path}/api",
@@ -802,7 +810,8 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         # 최종 검증은 이 목록과 유스케이스 작업이 실제로 덮은 목록을 비교한다. 추적이
         # 빠진 유스케이스가 있어도 일부 테스트만 통과해 릴리스되는 일을 막는다.
         use_case_ids=_artifact_ids(use_cases),
-        required_test_paths=[flow_test_path],
+        required_test_paths=[],
+        repair_only=True,
     )
     (output / "application-wiring.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"

@@ -324,10 +324,11 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
                 + (", ".join(test_paths) or "required scenario test file is missing")
             )
 
+    # 유스케이스 coverage의 기준은 그 기능을 구현한 작업 자체다. 수리용 wiring 작업에
+    # 같은 ID 목록을 복사해 두고 다시 비교하지 않는다.
     expected_use_cases = {
         str(use_case_id)
-        for task in manifest.get("implementation_tasks", [])
-        if isinstance(task, dict) and task.get("task_type") == "wiring"
+        for task in planned
         for use_case_id in task.get("use_case_ids", task.get("useCaseIds", []))
         if str(use_case_id)
     }
@@ -338,45 +339,6 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
             "use-case planning coverage mismatch: "
             f"missing={missing or 'none'}, unexpected={unexpected or 'none'}"
         )
-
-    # 묶음별 빠른 테스트와 별개로 wiring 작업의 통합 테스트 클래스도 실행됐는지 확인한다.
-    # 전체 유스케이스 ID가 작업 계획에 들어 있는지는 바로 위의 집합 비교가 담당한다.
-    for task in manifest.get("implementation_tasks", []):
-        if not isinstance(task, dict) or task.get("task_type") != "wiring":
-            continue
-        test_paths = [
-            str(path)
-            for path in task.get("required_test_paths", [])
-            if str(path).endswith("FlowTest.java")
-        ]
-        classes = [Path(path).stem for path in test_paths]
-        passed = sum(executed.get(name, {}).get("passed", 0) for name in classes)
-        failed = sum(executed.get(name, {}).get("failed", 0) for name in classes)
-        skipped = sum(executed.get(name, {}).get("skipped", 0) for name in classes)
-        required_passes = 1
-        status = (
-            "PASSED"
-            if classes and passed >= required_passes and failed == 0 and skipped == 0
-            else "FAILED"
-        )
-        task_results.append(
-            {
-                "taskId": str(task.get("task_id") or ""),
-                "useCaseIds": sorted(expected_use_cases),
-                "testPaths": test_paths,
-                "requiredPassedCases": required_passes,
-                "passedCases": passed,
-                "failedCases": failed,
-                "skippedCases": skipped,
-                "status": status,
-            }
-        )
-        if status == "FAILED":
-            findings.append(
-                "final HTTP FlowTest did not pass: "
-                f"passed={passed}, failed={failed}, "
-                f"skipped={skipped}"
-            )
 
     return {
         "status": "FAILED" if findings else "PASSED",

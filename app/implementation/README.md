@@ -121,6 +121,13 @@ OpenHands의 `run_task_check`와 마지막 확인은 같은 sandbox의 증분 co
 검사를 다시 실행하지 않고 먼저 코드를 수정하도록 안내한다. 모든 기능 작업이 끝나면 전체
 backend build와 test를 한 번 실행한다.
 
+Spring Boot entrypoint, 운영 datasource 환경 변수, test용 H2 설정과 health endpoint는
+생성기가 작성한다. 인증·인가 요구가 명시된 앱에만 Spring Security를 추가하고, 인증 근거가
+없는 앱에는 기본 비밀번호와 401 응답을 만드는 Security 의존성을 넣지 않는다. Control과
+adapter는 각 기능 작업이 Spring component로 완성한다. 모든 기능 작업 뒤 실제 compile·test와
+HTTP 검사가 통과하면 별도의 wiring LLM 호출은 없다. Bean 충돌이나 HTTP 연결 오류가 실제로
+확인된 경우에만 수리 전용 wiring 작업이 설정 package 안에서 자율적으로 수정한다.
+
 ## 상태를 읽는 법
 
 | 상태 | 의미 |
@@ -136,7 +143,8 @@ backend build와 test를 한 번 실행한다.
 ## 계약과 안전 규칙
 
 - 실행 시작 때 고정한 설계 snapshot을 실행 도중 최신 버전으로 교체하지 않는다.
-- agent는 할당된 package·디렉터리만 수정한다. shell이나 저장소 전체 탐색 권한을 주지 않는다.
+- agent는 맡은 기능의 package·디렉터리 안에서 구현 방법, 새 파일과 테스트를 스스로 정한다.
+  다른 기능의 source와 생성된 공개 계약만 수정하지 않는다.
 - agent의 `run_task_check`는 현재 작업의 명령만 실행하며 `clean`이나 임의 옵션을 받지 않는다.
 - `TODO`, `FIXME`, `UnsupportedOperationException` 같은 미완성 표식을 성공 산출물에 남기지 않는다.
 - compile → test → 설계 정합성 검사 순서를 바꾸지 않는다.

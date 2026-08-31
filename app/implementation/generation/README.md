@@ -63,3 +63,16 @@ Java에서 사용할 수 없는 패키지나 타입 이름은 파일을 일부 �
 
 파일 저장과 빌드는 구현 실행 흐름이 담당한다. 프론트엔드의 고정 초기 파일은
 `frontend_scaffold.py`, 이후 프론트엔드 생성 작업은 `frontend.py`에서 다룬다.
+
+## Spring 실행 설정
+
+`orchestrator.py`는 코딩 에이전트에게 맡길 이유가 없는 실행 설정도 함께 만든다.
+
+- 운영 DB 주소·계정·비밀번호는 `SPRING_DATASOURCE_*` 환경 변수에서 읽는다.
+- test profile은 MySQL 호환 모드의 메모리 H2를 사용한다.
+- health endpoint는 `/healthz`로 노출한다.
+- OpenAPI 또는 승인된 요구사항에 인증·인가가 명시된 경우에만 Spring Security 의존성과
+  기본 HTTP 보안 설정을 만든다. 운영 계정 값은 `SPRING_SECURITY_USER_*` 환경 변수로 받는다.
+
+이 설정으로 정상 기동하면 wiring 코딩 에이전트는 호출하지 않는다. 실제 build나 HTTP 검사에서
+Bean 연결 오류가 확인된 경우에만 수리 작업이 활성화된다.
