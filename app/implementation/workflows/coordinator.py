@@ -197,6 +197,16 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                 "taskId": task_id,
                 "taskType": str(task.get("task_type", "control")),
                 "phase": phase,
+                # 같은 phase 안에서도 여러 유스케이스가 같은 Control이나 adapter 파일을
+                # 고칠 수 있다. planner가 남긴 순서와 편집 범위를 실행 상태에도 보존해야
+                # coordinator가 충돌하는 작업을 동시에 실행하지 않는다.
+                "dependsOn": [
+                    str(item)
+                    for item in task.get("depends_on", task.get("dependsOn", []))
+                ],
+                "allowedWritePaths": [
+                    str(item) for item in task.get("allowed_write_paths", [])
+                ],
                 "status": status,
                 "promptSha256": prompt_sha,
                 "outputHashes": output_hashes,
@@ -526,9 +536,56 @@ def _phase_task_batches(
     phase_id: str,
     tasks: list[dict[str, object]],
 ) -> list[list[dict[str, object]]]:
-    """A work-unit phase normally has one task; no file-owner batches remain."""
+    """같은 phase의 독립 작업만 한 batch로 묶는다.
+
+    요구사항 묶음은 가능한 한 병렬 실행하지만, planner가 명시한 선행 작업이나 편집 파일이
+    겹치면 순서대로 실행한다. 별도의 스케줄러를 만들지 않고 작은 위상 정렬과 경로 충돌
+    검사만 사용하므로 실행 규칙이 manifest에서 바로 보인다.
+    """
     del phase_id
-    return [tasks]
+    remaining = {str(task["taskId"]): task for task in tasks}
+    batches: list[list[dict[str, object]]] = []
+    completed_in_phase: set[str] = set()
+    while remaining:
+        ready = [
+            task
+            for task_id, task in remaining.items()
+            if all(
+                str(dependency) not in remaining
+                or str(dependency) in completed_in_phase
+                for dependency in task.get("dependsOn", [])
+            )
+        ]
+        if not ready:
+            cycle = ", ".join(sorted(remaining))
+            raise ValueError(f"Implementation task dependency cycle: {cycle}")
+
+        batch: list[dict[str, object]] = []
+        occupied: set[str] = set()
+        for task in ready:
+            paths = {
+                str(path).replace("\\", "/")
+                for path in task.get("allowedWritePaths", [])
+            }
+            if batch and _write_scopes_overlap(occupied, paths):
+                continue
+            batch.append(task)
+            occupied.update(paths)
+        batches.append(batch)
+        for task in batch:
+            task_id = str(task["taskId"])
+            completed_in_phase.add(task_id)
+            remaining.pop(task_id, None)
+    return batches
+
+
+def _write_scopes_overlap(left: set[str], right: set[str]) -> bool:
+    """파일 경로나 디렉터리 범위가 같은 source를 가리키는지 확인한다."""
+    return any(
+        a == b or a.startswith(b.rstrip("/") + "/") or b.startswith(a.rstrip("/") + "/")
+        for a in left
+        for b in right
+    )
 
 
 def _execute_task_batch(
@@ -570,7 +627,7 @@ def _execute_task_batch(
         task: dict[str, object], future: Future[dict[str, object]]
     ) -> None:
         try:
-            result = future.result()
+            future.result()
         except Exception as error:
             task["status"] = "FAILED"
             task["lastError"] = str(error)

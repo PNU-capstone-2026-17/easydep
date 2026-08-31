@@ -756,11 +756,14 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.flywaydb:flyway-core'
+    runtimeOnly 'org.flywaydb:flyway-mysql'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0'
     implementation 'com.google.code.findbugs:jsr305:3.0.2'
     implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
     implementation 'org.openapitools:jackson-databind-nullable:0.2.10'
+    runtimeOnly 'com.mysql:mysql-connector-j'
     runtimeOnly 'com.h2database:h2'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
@@ -959,11 +962,26 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, obje
             marker,
             marker
             + "    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n"
-            + "    implementation 'org.flywaydb:flyway-core'\n",
+            + "    implementation 'org.flywaydb:flyway-core'\n"
+            + "    runtimeOnly 'org.flywaydb:flyway-mysql'\n",
         )
-    if "runtimeOnly 'com.h2database:h2'" not in source:
+    if "flyway-mysql" not in source:
+        source = source.replace(
+            "    implementation 'org.flywaydb:flyway-core'\n",
+            "    implementation 'org.flywaydb:flyway-core'\n"
+            "    runtimeOnly 'org.flywaydb:flyway-mysql'\n",
+        )
+    if "spring-boot-starter-security" not in source:
+        marker = "    implementation 'org.springframework.boot:spring-boot-starter-validation'\n"
+        source = source.replace(
+            marker,
+            marker
+            + "    implementation 'org.springframework.boot:spring-boot-starter-security'\n",
+        )
+    if "runtimeOnly 'com.mysql:mysql-connector-j'" not in source:
         source = source.replace(
             "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n",
+            "    runtimeOnly 'com.mysql:mysql-connector-j'\n"
             "    runtimeOnly 'com.h2database:h2'\n"
             "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n",
         )
