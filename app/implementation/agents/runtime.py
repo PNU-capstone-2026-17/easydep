@@ -18,7 +18,7 @@ from ..planning.design_context import (
     referenced_openapi_model_names,
 )
 from ..workflows.conformance import entity_public_signature_violations
-from ..workflows.repair import referenced_source_paths
+from ..workflows.repair import referenced_source_paths, repair_task_ids
 from .prompts import (
     FRONTEND_SYSTEM_PROMPT,
     IMPLEMENTATION_SYSTEM_PROMPT,
@@ -46,7 +46,6 @@ from .workspace import (
     missing_required_outputs,
     path_is_editable,
     prepare_agent_workspace,
-    read_allowed_sources,
     snapshot_files,
     task_base_package,
 )
@@ -55,31 +54,9 @@ from .workspace import (
 # tool turn을 준다. 두 값 모두 전체 생성·수리 횟수 상한이 아니다. 대화 하나가 멈추는
 # 것을 막는 안전 한도이며, 바깥 loop는 build가 통과할 때까지 새 대화로 계속된다.
 MAX_AGENT_TURN_ITERATIONS = 32
-MAX_REPAIR_TURN_ITERATIONS = 16
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
-
-
-def _repair_contract_context(context: dict[str, object]) -> str:
-    """수리에 필요한 코드 계약과 해당 유스케이스 근거만 짧게 반환한다."""
-    contracts = context.get("generatedJavaContracts")
-    if not isinstance(contracts, str) or not contracts.strip():
-        contracts = context.get("generatedTypescriptContracts")
-    sections: list[str] = []
-    if isinstance(contracts, str) and contracts.strip():
-        sections.append("Generated contracts:\n" + contracts[:16000])
-    evidence = {
-        key: context[key]
-        for key in ("requirements", "useCaseArtifacts", "scenarios")
-        if context.get(key)
-    }
-    if evidence:
-        sections.append(
-            "Relevant requirements and scenarios:\n"
-            + json.dumps(evidence, ensure_ascii=False, indent=2)[:16000]
-        )
-    return "\n\n".join(sections)[:28000]
 
 
 def _configure_openhands_profile_store() -> None:
@@ -163,7 +140,7 @@ def write_execution_plan(
         "compatibility": compatibility,
         "llm": {"provider": "nvidia-nim", "model": model, "baseUrl": base_url},
         "taskOrder": [task["task_id"] for task in tasks],
-        "isolation": "copy source-only application to an ASCII temp workspace, restricted file editor, validate source diff, verify Gradle with repair feedback, promote allowed files only",
+        "isolation": "copy source-only application to an ASCII temp workspace, edit only assigned implementation paths, run focused checks inside OpenHands, protect generated contracts, promote verified files only",
     }
     target = run_root / "reports" / "agent-execution-plan.json"
     target.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -189,8 +166,6 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
 
 def _render_missing_output_repair_prompt(
     missing_outputs: list[str],
-    contract_context: str = "",
-    existing_outputs: str = "",
 ) -> str:
     """Keep missing-output retries small enough for agents that stopped silently."""
     missing_test = any("/src/test/" in path.replace("\\", "/") for path in missing_outputs)
@@ -202,31 +177,17 @@ def _render_missing_output_repair_prompt(
     else:
         task_hint = "Use the existing generated application contract; do not inspect or list directories."
     files = "\n".join(f"- `{path}`" for path in missing_outputs)
-    contracts = (
-        "\n\nExact generated contracts (immutable):\n```text\n"
-        + contract_context
-        + "\n```"
-        if contract_context
-        else ""
-    )
-    existing = (
-        "\n\nExisting contracted source (read-only for this repair):\n"
-        + existing_outputs[:12000]
-        if existing_outputs
-        else ""
-    )
     return (
         "The previous agent round did not create the required output files. "
         "Use the file editor's create operation now with the exact absolute paths below; "
         "do not reply with an explanation. "
-        "Create only the missing files, preserve all existing files, and finish "
-        "immediately after writing them. Parent directories already exist. "
+        "Create only the missing files, preserve all existing files, then run "
+        "run_task_check and repair any reported error before finishing. "
+        "Parent directories already exist. "
         "Do not use /workspace, /application, relative paths, view, or directory-listing tools.\n\n"
         + task_hint
         + "\n\nRequired missing outputs (absolute paths):\n"
         + files
-        + contracts
-        + existing
     )
 
 
@@ -265,7 +226,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task_type = str(task.get("task_type", ""))
     app_id = _run_app_id(run_root)
     editable_paths = [str(path) for path in task.get("allowed_write_paths", [])]
-    task_owned_paths = list(editable_paths)
     required_paths = [
         str(path)
         for path in task.get("required_output_paths", editable_paths)
@@ -275,11 +235,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         for path in task.get("immutable_paths", [])
     }
     editable_roots: list[str] = []
-    if task_type == "use-case":
-        # 유스케이스 작업은 coordinator가 순차 실행한다. 첫 컴파일 실패가 난 뒤에야
-        # 관련 파일을 하나씩 허용하지 말고 application 구현 source를 처음부터 맡긴다.
-        # API와 BCE 공개 계약은 계속 읽기 전용이며 persistence 구현은 실제 오류가 있으면
-        # 같은 코딩 에이전트가 함께 고칠 수 있다.
+    integration_repair = (
+        task_type == "wiring" and task_id in repair_task_ids(run_root)
+    )
+    if task_type == "use-case" or integration_repair:
+        # 유스케이스와 마지막 통합 수리는 application 구현 source를 함께 맡는다. API와
+        # BCE 공개 계약은 계속 읽기 전용이며 persistence 구현은 실제 오류가 있으면 같은
+        # 코딩 에이전트가 함께 고칠 수 있다.
         editable_roots = ["application/src/main/java"]
         immutable_paths = {
             path
@@ -452,9 +414,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             )
             if missing_outputs:
                 finding_keys = tuple(f"missing:{path}" for path in missing_outputs)
-                candidate_digest = stable_digest(
-                    read_allowed_sources(sandbox, editable_paths)
-                )
+                candidate_digest = stable_digest(snapshot_files(sandbox))
                 repeated = repair_attempt > 0 and any(
                     item.candidate_digest == candidate_digest
                     for item in repair_ledger.attempts
@@ -480,6 +440,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         finding_keys_before=finding_keys,
                         finding_keys_after=finding_keys,
                         outcome="repeated_candidate" if repeated else "no_improvement",
+                        detail="Missing required outputs: " + ", ".join(missing_outputs),
                     )
                 )
                 round_allowed = [
@@ -487,26 +448,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 ]
                 round_prompt = _render_missing_output_repair_prompt(
                     round_allowed,
-                    _repair_contract_context(context),
-                    read_allowed_sources(
-                        sandbox,
-                        [
-                            path
-                            for path in editable_paths
-                            if path not in missing_outputs
-                        ],
-                    ),
                 )
                 if repeated:
                     round_prompt = (
-                        "The previous repair turn made no file change. The complete current "
-                        "source and repair history are included below. Use create or "
-                        "str_replace now; do not finish without changing a repair target.\n\n"
+                        "The previous repair turn made no file change. Inspect the current "
+                        "source with the editor, make a different correction, and do not "
+                        "finish without changing a repair target.\n\n"
                         + round_prompt
                     )
                 round_prompt += (
                     "\n\n## Accumulated repair history\n\n"
-                    + repair_ledger.prompt_context()
+                    + _implementation_repair_history(repair_ledger)
                 )
                 repair_attempt += 1
                 continue
@@ -597,7 +549,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 for path in referenced:
                     normalized = path.replace("\\", "/")
                     if (
-                        task_type != "use-case"
+                        not editable_roots
                         and
                         normalized.startswith("application/")
                         and not _path_is_immutable(normalized, immutable_paths)
@@ -607,9 +559,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         editable_paths.append(normalized)
                 evidence_digest = stable_digest(error.evidence)
                 finding_keys = (f"verification:{evidence_digest}",)
-                candidate_digest = stable_digest(
-                    read_allowed_sources(sandbox, editable_paths)
-                )
+                candidate_digest = stable_digest(snapshot_files(sandbox))
                 repeated = repair_attempt > 0 and any(
                     item.candidate_digest == candidate_digest
                     for item in repair_ledger.attempts
@@ -635,71 +585,46 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         finding_keys_before=finding_keys,
                         finding_keys_after=finding_keys,
                         outcome="repeated_candidate" if repeated else "no_improvement",
-                        detail=str(error.evidence)[-4000:],
+                        detail=json.dumps(
+                            {
+                                "command": error.evidence.get("command"),
+                                "error": next(
+                                    (
+                                        str(error.evidence.get(key))
+                                        for key in ("testResults", "stderr", "stdout")
+                                        if error.evidence.get(key)
+                                    ),
+                                    "verification failed",
+                                ),
+                                "changedFiles": sorted(changed),
+                            },
+                            ensure_ascii=False,
+                        )[-4000:],
                     )
                 )
-                # 유스케이스 test의 컴파일 오류에는 보통 호출한 test 경로만 나오고,
-                # 실제로 빠진 Adapter나 Service 경로는 나오지 않는다. 이때 test 하나만
-                # 편집하게 하면 가짜 구현을 test 안에 넣도록 유도한다. 유스케이스 작업은
-                # planner가 이미 기능 단위로 좁힌 소유 파일 전체에서 원인을 고치게 한다.
-                repair_paths = select_repair_paths(error.evidence, editable_paths)
-                # 편집 권한은 넓혀도 모든 Java 본문을 prompt에 복제하지 않는다. 오류에
-                # 직접 나온 source와 원래 유스케이스 묶음만 먼저 보여 주고, agent가
-                # 필요할 때 파일 도구로 나머지를 읽게 한다.
-                repair_context_paths = (
-                    select_repair_paths(
-                        error.evidence,
-                        list(dict.fromkeys(task_owned_paths + referenced)),
-                    )
-                    if task_type == "use-case"
-                    else repair_paths
-                )
+                # 같은 대화는 이미 현재 작업의 편집 범위를 가지고 있다. 오류 문자열로
+                # 파일을 다시 좁히지 않고 그 범위 안에서 실제 원인을 찾게 한다.
+                repair_paths = list(editable_paths)
                 round_allowed = [str((sandbox / path).resolve()) for path in repair_paths]
                 feedback_renderer = (
                     render_frontend_verification_feedback
                     if task_type == "frontend-implementation"
                     else render_verification_feedback
                 )
-                # Do not retransmit the original design prompt on every repair
-                # conversation.  The diagnostic plus the files selected by the
-                # verifier and accumulated history are sufficient for a local correction.
-                feedback_kwargs = {}
-                repair_contract = _repair_contract_context(context)
-                if repair_contract:
-                    feedback_kwargs["generated_contracts"] = repair_contract
-                if task_type == "wiring":
-                    semantic_contract = context.get("semanticContract")
-                    if isinstance(semantic_contract, dict):
-                        feedback_kwargs["semantic_contract"] = semantic_contract
                 round_prompt = feedback_renderer(
                     error.evidence,
-                    read_allowed_sources(sandbox, repair_context_paths),
                     repair_paths,
-                    **feedback_kwargs,
                 )
-                read_only_references = [
-                    path
-                    for path in referenced
-                    if path not in repair_paths
-                    and (sandbox / path).is_file()
-                ]
-                if read_only_references:
-                    # 호출하는 쪽에서만 오류가 표시되는 생성자·메서드 불일치도 모델이
-                    # 추측하지 않도록 실제 사용 코드를 읽기 전용 참고 자료로 제공한다.
-                    round_prompt += (
-                        "\n\n## Referenced collaborator sources (read-only)\n\n"
-                        + read_allowed_sources(sandbox, read_only_references)
-                    )
                 if repeated:
                     round_prompt = (
-                        "The previous repair turn made no file change. The complete current "
-                        "source and repair history are included below. Use create or "
-                        "str_replace now; do not finish without changing a repair target.\n\n"
+                        "The previous repair turn made no file change. Inspect the current "
+                        "source with the editor, make a different correction, and do not "
+                        "finish without changing a repair target.\n\n"
                         + round_prompt
                     )
                 round_prompt += (
                     "\n\n## Accumulated repair history\n\n"
-                    + repair_ledger.prompt_context()
+                    + _implementation_repair_history(repair_ledger)
                 )
                 repair_attempt += 1
         conversation.close()
@@ -776,6 +701,28 @@ def _conversation_token_usage(conversation) -> tuple[int, int] | None:
         )
     except Exception:  # noqa: BLE001 - observability is optional
         return None
+
+
+def _implementation_repair_history(ledger: RepairLedger) -> str:
+    """최근 구현 검사와 결과만 사람이 읽기 쉬운 형태로 보여 준다."""
+    if not ledger.attempts:
+        return "No previous repair attempt."
+    lines: list[str] = []
+    first = max(0, len(ledger.attempts) - 5)
+    for index, attempt in enumerate(ledger.attempts[-5:], start=first + 1):
+        targets = ", ".join(attempt.target_ids[:5]) or "current task"
+        if len(attempt.target_ids) > 5:
+            targets += f" and {len(attempt.target_ids) - 5} more"
+        detail = attempt.detail.strip() or ", ".join(attempt.finding_keys_before)
+        lines.append(
+            f"Attempt {index}\n"
+            f"- result: {attempt.outcome}\n"
+            f"- targets: {targets}\n"
+            f"- diagnostic: {detail[:2000]}"
+        )
+    if first:
+        lines.insert(0, f"{first} older attempt(s) omitted.")
+    return "\n\n".join(lines)
 
 
 def _extend_conversation_write_files(agent, absolute_paths: list[str]) -> None:
@@ -874,14 +821,16 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
     if missing:
         raise RuntimeError("OpenHands SDK prerequisites are missing: " + ", ".join(missing))
     task_type = str(task.get("task_type", ""))
-    validation_roots = (
-        ["application/src/main/java"] if task_type == "use-case" else []
+    integration_repair = (
+        task_type == "wiring" and task_id in repair_task_ids(run_root)
     )
+    broad_backend_scope = task_type == "use-case" or integration_repair
+    validation_roots = ["application/src/main/java"] if broad_backend_scope else []
     validation_immutable = {
         str(path).replace("\\", "/")
         for path in task.get("immutable_paths", [])
     }
-    if task_type == "use-case":
+    if broad_backend_scope:
         validation_immutable = {
             path
             for path in validation_immutable
@@ -990,15 +939,11 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "allowedOverwriteSucceeded": allowed_overwrite_succeeded,
         "filePathAliasAccepted": file_path_alias_accepted,
         "maxConversationToolTurns": MAX_AGENT_TURN_ITERATIONS,
-        "maxRepairConversationToolTurns": MAX_REPAIR_TURN_ITERATIONS,
         "stuckDetection": False,
         "verificationRepairPolicy": "history-and-progress/v1",
         "reasoningBudgetCap": MAX_REASONING_BUDGET,
         "reasoningEffort": task["llm"].get(
             "reasoningEffort", settings.implementation_reasoning_effort
-        ),
-        "repairReasoningEffort": task["llm"].get(
-            "repairReasoningEffort", settings.implementation_repair_reasoning_effort
         ),
         "systemPrompt": (
             "focused-frontend-implementation"
@@ -1245,30 +1190,6 @@ def create_openhands_conversation(
         visualizer=None,
     )
     return conversation, agent
-
-
-def select_repair_paths(
-    evidence: dict[str, object], allowed_paths: list[str]
-) -> list[str]:
-    """Limit compiler repairs to the allowlisted files named in diagnostics.
-
-    Runtime test failures generally have no source path, so they retain the full
-    allowlist because either the implementation or its test may need correction.
-    """
-    if str(evidence.get("testResults", "")).strip():
-        # A runtime assertion may expose either an implementation defect or a
-        # faulty generated test. Stack traces normally name only the test file,
-        # which is not sufficient evidence to lock the implementation out.
-        return list(allowed_paths)
-
-    output = "\n".join(str(value) for value in evidence.values())
-    selected = [
-        relative
-        for relative in allowed_paths
-        if relative.replace("/", "\\") in output
-        or relative.replace("\\", "/") in output
-    ]
-    return selected or list(allowed_paths)
 
 
 def _path_is_immutable(path: str, immutable_paths: set[str]) -> bool:

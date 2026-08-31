@@ -750,11 +750,11 @@ def _continue_after_verification_failure(
     failed_task_type: str,
     error: Exception,
 ) -> dict[str, object] | None:
-    """통합 compile/test 실패를 소유 작업의 다음 대화로 되돌린다.
+    """통합 compile/test 실패를 wiring 통합 수리 작업으로 되돌린다.
 
     작업 안에서 난 오류는 OpenHands가 바로 수리하지만, phase 또는 최종 검증은 여러 작업을
     함께 빌드하므로 예전에는 Job 전체가 즉시 실패했다. 검증기가 남긴 구조화된 근거가 있을
-    때만 기존 repair planner에 넘기고, 원인을 찾지 못한 예외는 원래대로 호출자에게 전달한다.
+    때만 wiring 작업에 넘기고, 원인을 찾지 못한 예외는 원래대로 호출자에게 전달한다.
     """
 
     if not isinstance(error, WorkspaceVerificationError):

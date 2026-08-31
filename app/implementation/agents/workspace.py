@@ -229,15 +229,6 @@ def cleanup_agent_workspace(sandbox: Path) -> None:
             return
 
 
-def read_allowed_sources(sandbox: Path, relative_paths: list[str]) -> str:
-    sections: list[str] = []
-    for relative in relative_paths:
-        path = sandbox / relative
-        content = path.read_text(encoding="utf-8") if path.is_file() else "// File missing"
-        sections.append(f"### {relative}\n```java\n{content}\n```")
-    return "\n\n".join(sections)
-
-
 def snapshot_files(root: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     for path in root.rglob("*"):

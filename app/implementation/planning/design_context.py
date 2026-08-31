@@ -1054,7 +1054,6 @@ def _llm_config(spec: JobSpec) -> dict[str, object]:
         "maxOutputTokens": spec.agent_max_output_tokens,
         "reasoningBudget": spec.agent_reasoning_budget,
         "reasoningEffort": settings.implementation_reasoning_effort,
-        "repairReasoningEffort": settings.implementation_repair_reasoning_effort,
         "chatTemplateKwargs": {
             "enable_thinking": True,
             "force_nonempty_content": True,

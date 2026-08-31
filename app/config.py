@@ -92,7 +92,6 @@ class Settings(BaseSettings):
     implementation_agent_temperature: float = 0.2
     implementation_agent_max_output_tokens: int = 16384
     implementation_reasoning_effort: str = "medium"
-    implementation_repair_reasoning_effort: str = "high"
     implementation_command_timeout_seconds: int = 3600
     implementation_startup_warmup: bool = True
     # 기본 scaffold는 곧바로 OpenHands가 채우므로 구현 전 Gradle compile은 생략한다.

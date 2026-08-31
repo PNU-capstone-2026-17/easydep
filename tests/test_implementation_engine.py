@@ -509,7 +509,7 @@ class Order <<Entity>> { - id: UUID }
 def test_scenario_failure_returns_to_automatic_repair_without_user_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """실패한 사용자 흐름은 입력 대기 대신 같은 작업의 repair checkpoint가 된다."""
+    """실패한 최종 사용자 흐름은 입력 대기 대신 wiring 통합 수리가 된다."""
     run = tmp_path / "run"
     flow_path = "application/src/test/java/com/example/OrderScenarioTest.java"
     flow = run / flow_path
@@ -518,11 +518,22 @@ def test_scenario_failure_returns_to_automatic_repair_without_user_input(
     reports = run / "reports"
     reports.mkdir(parents=True)
     (reports / "run-manifest.json").write_text(
-        json.dumps({"implementation_tasks": [{
-            "task_id": "implement-order-use-cases",
-            "task_type": "use-case",
-            "allowed_write_paths": [flow_path],
-        }]}),
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": "implement-order-use-cases",
+                        "task_type": "use-case",
+                        "allowed_write_paths": [flow_path],
+                    },
+                    {
+                        "task_id": "implement-application-wiring",
+                        "task_type": "wiring",
+                        "allowed_write_paths": [flow_path],
+                    },
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -549,7 +560,7 @@ def test_scenario_failure_returns_to_automatic_repair_without_user_input(
     assert result["repairPlan"] == "reports/repair-plan.json"
     repair = json.loads((reports / "repair-plan.json").read_text(encoding="utf-8"))
     assert repair["status"] == "ACTIVE"
-    assert repair["entries"][-1]["ownerTaskIds"] == ["implement-order-use-cases"]
+    assert repair["entries"][-1]["ownerTaskIds"] == ["implement-application-wiring"]
 
 
 def test_source_conformance_rejects_agent_changes_to_generated_contract(

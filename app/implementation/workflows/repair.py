@@ -13,7 +13,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-REPAIR_SCHEMA = "implementation-repair-plan/v3"
+REPAIR_SCHEMA = "implementation-repair-plan/v4"
 REPAIR_PLAN = Path("reports/repair-plan.json")
 REPAIR_PROMPT_HEADING = "## 자동 수리 작업"
 REPAIR_PROMPT_START = "<!-- easydep:repair-directives:start -->"
@@ -56,19 +56,24 @@ def schedule_cross_phase_repair(
         None,
     )
 
-    # 하나의 기능 작업이 모든 실패 파일을 편집할 수 있다면 그 작업 하나에서 수리한다.
-    # 여러 file owner를 왕복하는 것보다 현재 source를 함께 보고 고치는 편이 빠르다.
-    covering = _covering_task(tasks, paths)
-    if covering is not None:
-        owner_ids = {str(covering["task_id"])}
-    elif failed is not None and not owner_ids:
-        owner_ids = {failed_task_id}
-    elif not owner_ids and failed_task_type:
-        owner_ids = {
-            str(task["task_id"])
-            for task in tasks
-            if str(task.get("task_type")) == failed_task_type
-        }
+    # 마지막 build, HTTP 흐름 또는 설계 일치 검사는 여러 기능을 한꺼번에 본다. 이 실패를
+    # 개별 유스케이스 사이로 되돌리지 않고 wiring 작업 하나가 통합 수리한다.
+    integration = _integration_task(tasks) if failed_task_type == "wiring" else None
+    if integration is not None:
+        owner_ids = {str(integration["task_id"])}
+    else:
+        # 일반 작업 실패는 모든 실패 파일을 다룰 수 있는 가장 작은 작업에서 수리한다.
+        covering = _covering_task(tasks, paths)
+        if covering is not None:
+            owner_ids = {str(covering["task_id"])}
+        elif failed is not None and not owner_ids:
+            owner_ids = {failed_task_id}
+        elif not owner_ids and failed_task_type:
+            owner_ids = {
+                str(task["task_id"])
+                for task in tasks
+                if str(task.get("task_type")) == failed_task_type
+            }
     if not owner_ids:
         fallback = _integration_task(tasks)
         if fallback is not None:
@@ -76,9 +81,7 @@ def schedule_cross_phase_repair(
     if not owner_ids:
         return None
 
-    task_by_id = {str(task["task_id"]): task for task in tasks}
     current_text = _evidence_text(evidence)
-    fingerprint = _failure_fingerprint(current_text)
     plan_path = run_root / REPAIR_PLAN
     plan = (
         _read_json(plan_path)
@@ -90,21 +93,12 @@ def schedule_cross_phase_repair(
         for entry in plan.get("entries", [])
         if isinstance(entry, dict) and entry.get("failedTaskId") == failed_task_id
     ]
-    candidate_digest = _owner_candidate_digest(run_root, task_by_id, owner_ids)
-    repeated = any(
-        entry.get("failureFingerprint") == fingerprint
-        and entry.get("candidateDigest") == candidate_digest
-        for entry in entries
-    )
     now = datetime.now(UTC).isoformat()
     entry = {
         "failedTaskId": failed_task_id,
-        "repairChainId": hashlib.sha256(failed_task_id.encode("utf-8")).hexdigest()[:16],
         "ownerTaskIds": sorted(owner_ids),
         "revalidationTaskIds": _later_task_ids(tasks, owner_ids),
-        "failureFingerprint": fingerprint,
-        "candidateDigest": candidate_digest,
-        "outcome": "scheduled_after_no_change" if repeated else "scheduled",
+        "outcome": "scheduled",
         "evidence": _bounded_evidence(current_text),
         "revision": len(entries) + 1,
         "createdAt": str(entries[0].get("createdAt")) if entries else now,
@@ -177,9 +171,8 @@ def apply_repair_directives(run_root: Path) -> None:
             current = relevant[-1]
             previous = relevant[:-1]
             history = "\n".join(
-                "- revision="
-                f"{entry.get('revision')} outcome={entry.get('outcome')} "
-                f"failure={entry.get('failedTaskId')}"
+                f"- {entry.get('revision')}차: "
+                + _first_evidence_line(str(entry.get("evidence", "")))
                 for entry in previous
             ) or "- 이전 실패 없음"
             prompt += (
@@ -307,45 +300,16 @@ def _later_task_ids(
     ]
 
 
-def _owner_candidate_digest(
-    run_root: Path,
-    task_by_id: dict[str, dict[str, object]],
-    owner_ids: set[str],
-) -> str:
-    files: list[dict[str, str]] = []
-    for task_id in sorted(owner_ids):
-        task = task_by_id.get(task_id, {})
-        for relative in sorted(str(path) for path in task.get("allowed_write_paths", [])):
-            path = run_root / relative
-            files.append(
-                {
-                    "taskId": task_id,
-                    "path": relative,
-                    "sha256": (
-                        hashlib.sha256(path.read_bytes()).hexdigest()
-                        if path.is_file()
-                        else "missing"
-                    ),
-                }
-            )
-    return hashlib.sha256(
-        json.dumps(files, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
-
-
-def _failure_fingerprint(evidence: str) -> str:
-    normalized = evidence.lower().replace("\\", "/")
-    normalized = re.sub(r":\d+(?::\d+)?", ":<line>", normalized)
-    normalized = re.sub(r"\b[0-9a-f]{12,}\b", "<id>", normalized)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
 def _bounded_evidence(value: str, limit: int = 16000) -> str:
     if len(value) <= limit:
         return value
     half = limit // 2
     return value[:half] + "\n... 중간 로그 생략 ...\n" + value[-half:]
+
+
+def _first_evidence_line(value: str) -> str:
+    """이전 실패 목록에는 첫 번째 읽을 수 있는 한 줄만 사용한다."""
+    return next((line.strip() for line in value.splitlines() if line.strip()), "실패 기록")
 
 
 def _evidence_text(evidence: dict[str, object]) -> str:
