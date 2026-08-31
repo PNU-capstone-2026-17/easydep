@@ -809,22 +809,32 @@ def run_workflow_to_completion(
         execution_approval: Path | None = None
         if request.get("status") == "AWAITING_APPROVAL":
             manifest = _read_json(run_root / "reports" / "run-manifest.json")
-            approval = {
-                "requestId": request["requestId"],
-                "approved": True,
-                "approvedAt": _now(),
-                "approvedBy": approved_by,
-                "delegatedRepairApprovals": True,
-                "delegationScope": {
-                    "runId": run_root.name,
-                    "inputHash": manifest.get("input_hash"),
-                    "initialTaskIds": sorted(
-                        str(task["task_id"])
-                        for task in manifest.get("implementation_tasks", [])
-                    ),
-                },
-            }
-            _write_json_atomic(approval_path, approval)
+            existing = _read_json(approval_path) if approval_path.is_file() else {}
+            scope = existing.get("delegationScope")
+            reusable = (
+                existing.get("approved") is True
+                and existing.get("delegatedRepairApprovals") is True
+                and isinstance(scope, dict)
+                and scope.get("runId") == run_root.name
+                and scope.get("inputHash") == manifest.get("input_hash")
+            )
+            if not reusable:
+                approval = {
+                    "requestId": request["requestId"],
+                    "approved": True,
+                    "approvedAt": _now(),
+                    "approvedBy": approved_by,
+                    "delegatedRepairApprovals": True,
+                    "delegationScope": {
+                        "runId": run_root.name,
+                        "inputHash": manifest.get("input_hash"),
+                        "initialTaskIds": sorted(
+                            str(task["task_id"])
+                            for task in manifest.get("implementation_tasks", [])
+                        ),
+                    },
+                }
+                _write_json_atomic(approval_path, approval)
             execution_approval = approval_path
         elif state.get("status") != "READY_TO_FINALIZE":
             raise PermissionError(

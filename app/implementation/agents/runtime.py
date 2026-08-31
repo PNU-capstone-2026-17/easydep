@@ -39,6 +39,7 @@ from .verification.build import (
     WorkspaceVerificationError,
     verify_agent_workspace,
 )
+from .verification.frontend import store_frontend_build
 from .workspace import (
     changed_files,
     cleanup_agent_workspace,
@@ -754,6 +755,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     # 성공한 작업의 계약 결과는 항상 run으로 복사해 체크포인트와 source를 일치시킨다.
     promoted_files = changed | {path for path in required_paths if (sandbox / path).is_file()}
     _promote_changed_files(sandbox, run_root, promoted_files)
+    if task_type == "frontend-implementation":
+        # task 검사가 만든 production bundle은 현재 source와 함께 검증됐다. run에 한 번만
+        # 보존하면 최종 검사와 통합 Docker image가 같은 npm build를 반복하지 않는다.
+        store_frontend_build(run_root, sandbox, verification)
     result = {
         "taskId": task_id,
         "taskType": task.get("task_type", "control"),

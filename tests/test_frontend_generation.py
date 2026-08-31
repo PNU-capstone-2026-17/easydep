@@ -12,7 +12,9 @@ from app.implementation.agents.verification.frontend import (
     frontend_contract_violations,
     repair_frontend_accessibility_contract,
     repair_responsive_table_styles,
+    reuse_frontend_build,
     run_frontend_verification,
+    store_frontend_build,
 )
 from app.implementation.agents.workspace import snapshot_files
 from app.implementation.application.jobs import ImplementationWorker
@@ -367,10 +369,28 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
 
     openapi = tmp_path / "openapi.json"
     bce = tmp_path / "class.puml"
+    bce_model = tmp_path / "class-model.json"
     sequence = tmp_path / "sequence.puml"
     sequence_model = tmp_path / "sequence-model.json"
     openapi.write_text(json.dumps(OPENAPI), encoding="utf-8")
     bce.write_text("class OrderScreen <<Boundary>> {}", encoding="utf-8")
+    bce_model.write_text(
+        json.dumps(
+            {
+                "Classes": [
+                    {
+                        "className": "OrderScreen",
+                        "stereotype": "Boundary",
+                        "fields": [],
+                        "operations": [],
+                    }
+                ],
+                "DataTypes": [],
+                "Relationships": [],
+            }
+        ),
+        encoding="utf-8",
+    )
     sequence.write_text("OrderScreen -> OrderController : getOrder()", encoding="utf-8")
     sequence_model.write_text(json.dumps({"Diagrams": [{
         "use_case_id": "UC_ORDER", "use_case_name": "Get order",
@@ -401,6 +421,7 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
         workspace_root=tmp_path,
         inputs={
             "bceClass": bce,
+            "bceModel": bce_model,
             "sequence": sequence,
             "sequenceModel": sequence_model,
             "openapi": openapi,
@@ -426,7 +447,7 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     assert task.task_type == "frontend-implementation"
     assert phase_for_task(task.task_type) == "frontend"
     assert set(task.source_artifacts) == {
-        "bceClass",
+        "bceModel",
         "sequenceModel",
         "openapi",
         "generatedClientContracts",
@@ -609,6 +630,36 @@ def test_frontend_repair_reuses_installed_dependencies(tmp_path: Path) -> None:
     assert [command[1:] for command in commands] == [["run", "build"]]
 
 
+def test_verified_frontend_bundle_is_reused_only_for_the_same_source(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    sandbox = tmp_path / "sandbox"
+    for root in (run, sandbox):
+        frontend = root / "application/frontend"
+        (frontend / "src").mkdir(parents=True)
+        (frontend / "package.json").write_text("{}", encoding="utf-8")
+        (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+        (frontend / "src/App.tsx").write_text("export const App = 1;", encoding="utf-8")
+    dist = sandbox / "application/frontend/dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<main>ready</main>", encoding="utf-8")
+
+    stored = store_frontend_build(run, sandbox, {"exitCode": 0, "command": ["npm"]})
+
+    assert stored is not None
+    assert (run / "application/frontend/dist/index.html").is_file()
+    assert reuse_frontend_build(run) == {
+        "exitCode": 0,
+        "command": ["npm"],
+        "reusedFromFrontendTask": True,
+    }
+    (run / "application/frontend/src/App.tsx").write_text(
+        "export const App = 2;", encoding="utf-8"
+    )
+    assert reuse_frontend_build(run) is None
+
+
 def test_frontend_verification_keeps_timeout_diagnostics(tmp_path: Path) -> None:
     frontend = tmp_path / "application/frontend"
     frontend.mkdir(parents=True)
@@ -757,7 +808,8 @@ def test_cli_run_to_completion_reuses_one_scoped_approval(
         encoding="utf-8",
     )
     (reports / "external-transmission-request.json").write_text(
-        json.dumps({"requestId": "a" * 64}), encoding="utf-8"
+        json.dumps({"requestId": "a" * 64, "status": "AWAITING_APPROVAL"}),
+        encoding="utf-8",
     )
     spec = JobSpec(
         job_type="INITIAL_IMPLEMENTATION",

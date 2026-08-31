@@ -15,7 +15,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ..workspace import cleanup_agent_workspace, prepare_agent_workspace
-from .frontend import run_frontend_command, run_frontend_verification
+from .frontend import (
+    reuse_frontend_build,
+    run_frontend_command,
+    run_frontend_verification,
+    store_frontend_build,
+)
 
 
 def gradle_command() -> list[str]:
@@ -61,6 +66,7 @@ def verify_run_workspace(
     verify_end_to_end: bool = True,
 ) -> dict[str, object]:
     """현재 run의 backend와 필요한 경우 frontend를 한 번에 검증한다."""
+    cached_frontend = reuse_frontend_build(run_root) if verify_frontend else None
     sandbox = prepare_agent_workspace(
         run_root,
         {
@@ -85,7 +91,9 @@ def verify_run_workspace(
             verify_frontend
             and (sandbox / "application" / "frontend" / "package.json").is_file()
         ):
-            frontend_verification = verify_frontend_workspace(sandbox)
+            frontend_verification = cached_frontend or verify_frontend_workspace(sandbox)
+            if cached_frontend is None:
+                store_frontend_build(run_root, sandbox, frontend_verification)
         result = {
             "status": (
                 "SUCCEEDED"

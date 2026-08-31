@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -9,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 MUTATING_HTTP_METHODS = {"post", "put", "patch", "delete"}
+FRONTEND_BUILD_REPORT = Path("reports/frontend-build.json")
 
 RESPONSIVE_TABLE_STYLES = """
 
@@ -269,6 +273,84 @@ def _frontend_command_environment() -> dict[str, str]:
         str(Path(tempfile.gettempdir()) / "easydep-npm-cache"),
     )
     return environment
+
+
+def frontend_source_digest(workspace_root: Path) -> str:
+    """production bundle을 결정하는 frontend 입력만 안정적으로 식별한다."""
+    frontend = workspace_root / "application" / "frontend"
+    digest = hashlib.sha256()
+    root_inputs = {
+        "index.html",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+        "vite.config.ts",
+    }
+    candidates = [
+        path
+        for path in frontend.rglob("*")
+        if path.is_file()
+        and not any(part in {"dist", "node_modules"} for part in path.relative_to(frontend).parts)
+        and (
+            (path.parent == frontend and path.name in root_inputs)
+            or "src" in path.relative_to(frontend).parts
+        )
+    ]
+    for path in sorted(candidates):
+        relative = path.relative_to(frontend).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def store_frontend_build(
+    run_root: Path,
+    build_workspace: Path,
+    evidence: dict[str, object],
+) -> dict[str, object] | None:
+    """검증된 dist와 source 지문을 run에 보존해 같은 build를 다시 하지 않는다."""
+    source_dist = build_workspace / "application" / "frontend" / "dist"
+    if evidence.get("exitCode") != 0 or not (source_dist / "index.html").is_file():
+        return None
+    target_dist = run_root / "application" / "frontend" / "dist"
+    target_dist.resolve().relative_to((run_root / "application" / "frontend").resolve())
+    if target_dist.is_dir():
+        shutil.rmtree(target_dist)
+    shutil.copytree(source_dist, target_dist)
+    report = {
+        "schemaVersion": "easydep-frontend-build/v1alpha1",
+        "sourceDigest": frontend_source_digest(run_root),
+        "distPath": "application/frontend/dist",
+        "verification": evidence,
+    }
+    report_path = run_root / FRONTEND_BUILD_REPORT
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return report
+
+
+def reuse_frontend_build(run_root: Path) -> dict[str, object] | None:
+    """현재 source와 정확히 맞는 성공 build 증거가 있으면 반환한다."""
+    report_path = run_root / FRONTEND_BUILD_REPORT
+    dist = run_root / "application" / "frontend" / "dist" / "index.html"
+    if not report_path.is_file() or not dist.is_file():
+        return None
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    evidence = report.get("verification")
+    if (
+        report.get("sourceDigest") != frontend_source_digest(run_root)
+        or not isinstance(evidence, dict)
+        or evidence.get("exitCode") != 0
+    ):
+        return None
+    return {**evidence, "reusedFromFrontendTask": True}
 
 
 def run_frontend_verification(
