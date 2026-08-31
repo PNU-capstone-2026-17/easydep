@@ -263,6 +263,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task_type = str(task.get("task_type", ""))
     app_id = _run_app_id(run_root)
     editable_paths = [str(path) for path in task.get("allowed_write_paths", [])]
+    task_owned_paths = list(editable_paths)
     required_paths = [
         str(path)
         for path in task.get("required_output_paths", editable_paths)
@@ -548,6 +549,19 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         and normalized not in editable_paths
                     ):
                         editable_paths.append(normalized)
+                if task_type == "use-case":
+                    # backend 묶음은 순차 실행하므로 다른 agent와 충돌하지 않는다. javac이
+                    # 중복 클래스의 한쪽 파일만 보여 주거나 planner가 간접 의존 source를
+                    # 빠뜨려도 현재 application 구현 안에서 실제 원인을 찾아 고칠 수 있다.
+                    # 생성된 API 계약은 immutable_paths 검사로 계속 보호한다.
+                    java_root = sandbox / "application/src/main/java"
+                    for source in sorted(java_root.rglob("*.java")):
+                        normalized = source.relative_to(sandbox).as_posix()
+                        if (
+                            not _path_is_immutable(normalized, immutable_paths)
+                            and normalized not in editable_paths
+                        ):
+                            editable_paths.append(normalized)
                 evidence_digest = stable_digest(error.evidence)
                 finding_keys = (f"verification:{evidence_digest}",)
                 candidate_digest = stable_digest(
@@ -590,6 +604,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     if task_type == "use-case"
                     else select_repair_paths(error.evidence, editable_paths)
                 )
+                # 편집 권한은 넓혀도 모든 Java 본문을 prompt에 복제하지 않는다. 오류에
+                # 직접 나온 source와 원래 유스케이스 묶음만 먼저 보여 주고, agent가
+                # 필요할 때 파일 도구로 나머지를 읽게 한다.
+                repair_context_paths = (
+                    select_repair_paths(
+                        error.evidence,
+                        list(dict.fromkeys(task_owned_paths + referenced)),
+                    )
+                    if task_type == "use-case"
+                    else repair_paths
+                )
                 round_allowed = [str((sandbox / path).resolve()) for path in repair_paths]
                 round_iteration_limit = MAX_REPAIR_TURN_ITERATIONS
                 feedback_renderer = (
@@ -610,7 +635,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         feedback_kwargs["semantic_contract"] = semantic_contract
                 round_prompt = feedback_renderer(
                     error.evidence,
-                    read_allowed_sources(sandbox, repair_paths),
+                    read_allowed_sources(sandbox, repair_context_paths),
                     repair_paths,
                     **feedback_kwargs,
                 )
