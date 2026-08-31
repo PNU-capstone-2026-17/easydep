@@ -75,6 +75,11 @@ def verify_run_workspace(
             "" if verify_end_to_end else "compile-only",
             None if verify_end_to_end else [],
         )
+        scenario_verification = (
+            verify_use_case_scenarios(sandbox, run_root)
+            if verify_end_to_end
+            else {"status": "NOT_CHECKED", "tasks": []}
+        )
         frontend_verification = None
         if (
             verify_frontend
@@ -82,8 +87,13 @@ def verify_run_workspace(
         ):
             frontend_verification = verify_frontend_workspace(sandbox)
         result = {
-            "status": "SUCCEEDED",
+            "status": (
+                "SUCCEEDED"
+                if scenario_verification.get("status") in {"PASSED", "NOT_APPLICABLE"}
+                else "FAILED"
+            ),
             "verification": verification,
+            "scenarioVerification": scenario_verification,
             "frontendVerification": frontend_verification,
         }
         if Path(report_name).name != report_name or not report_name.endswith(".json"):
@@ -94,6 +104,19 @@ def verify_run_workspace(
             json.dumps(result, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        if result["status"] != "SUCCEEDED":
+            findings = scenario_verification.get("findings", [])
+            raise WorkspaceVerificationError(
+                {
+                    "command": ["use-case-scenario-verification"],
+                    "exitCode": 1,
+                    "durationMs": 0,
+                    "stdout": "",
+                    "stderr": json.dumps(findings, ensure_ascii=False, indent=2),
+                    "testResults": "",
+                    "scenarioVerification": scenario_verification,
+                }
+            )
         return result
     finally:
         cleanup_agent_workspace(sandbox)
@@ -151,9 +174,15 @@ def task_verification_command(
     task_type: str = "",
     allowed_write_paths: list[str] | None = None,
 ) -> list[str]:
-    """작업 중에는 관련 test만, 최종 단계에는 전체 build와 test를 고른다."""
+    """작업 중에는 관련 test만, 최종 단계에는 전체 build와 test를 고른다.
+
+    Gradle의 ``test`` 작업은 필요한 main/test compile을 스스로 선행한다. 따라서 test가
+    있는 작업에서 ``compileJava``와 ``testClasses``를 따로 호출하면 같은 의존성 그래프를
+    세 번 요청하는 셈이다. 테스트가 없는 작업만 빠른 타입 확인을 위해 ``compileJava``를
+    직접 실행한다.
+    """
     if not task_type and allowed_write_paths is None:
-        command = [*executable, "compileJava", "bootJar", "test", "--build-cache"]
+        command = [*executable, "test", "bootJar", "--build-cache"]
     else:
         test_names = sorted(
             {
@@ -163,11 +192,13 @@ def task_verification_command(
                 and path.endswith(".java")
             }
         )
-        command = [*executable, "compileJava"]
+        command = [*executable]
         if test_names:
-            command.extend(["testClasses", "test"])
+            command.append("test")
             for test_name in test_names:
                 command.extend(["--tests", f"*{test_name}"])
+        else:
+            command.append("compileJava")
         command.append("--build-cache")
     return command
 
@@ -201,6 +232,156 @@ def read_gradle_test_failures(sandbox: Path) -> str:
                 message += "\n" + summarize_test_failure(detail)
             reports.append(f"{case.get('classname')}.{case.get('name')}: {message}")
     return _truncate_log_snippet("\n\n".join(reports), max_chars=8000)
+
+
+def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object]:
+    """각 유스케이스 작업의 시나리오 테스트가 실제로 실행됐는지 확인한다.
+
+    Java 소스에 특정 문자열이 있는지는 보지 않는다. Gradle이 만든 JUnit XML만 읽어 각
+    작업이 약속한 테스트 클래스와 유스케이스 수만큼 성공한 test case가 있는지 확인한다.
+    테스트 본문의 관찰값 검사는 JUnit assertion이 담당하고, 이 함수는 실행되지 않은
+    테스트를 성공으로 오인하는 문제만 막는다.
+    """
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    if not manifest_path.is_file():
+        return {"status": "NOT_APPLICABLE", "tasks": [], "findings": []}
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    planned = [
+        task
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict) and task.get("task_type") == "use-case"
+    ]
+    if not planned:
+        return {"status": "NOT_APPLICABLE", "tasks": [], "findings": []}
+
+    executed: dict[str, dict[str, int]] = {}
+    result_dir = sandbox / "application" / "build" / "test-results" / "test"
+    for report in sorted(result_dir.glob("*.xml")):
+        try:
+            root = ET.parse(report).getroot()
+        except ET.ParseError:
+            continue
+        for case in root.findall("testcase"):
+            class_name = str(case.get("classname") or "").rsplit(".", 1)[-1]
+            if not class_name:
+                continue
+            counts = executed.setdefault(
+                class_name, {"passed": 0, "failed": 0, "skipped": 0}
+            )
+            if case.find("failure") is not None or case.find("error") is not None:
+                counts["failed"] += 1
+            elif case.find("skipped") is not None:
+                counts["skipped"] += 1
+            else:
+                counts["passed"] += 1
+
+    task_results: list[dict[str, object]] = []
+    findings: list[str] = []
+    covered_use_cases: set[str] = set()
+    for task in planned:
+        test_paths = [
+            str(path)
+            for path in task.get(
+                "required_test_paths",
+                task.get("required_output_paths", task.get("allowed_write_paths", [])),
+            )
+            if "/src/test/" in "/" + str(path).replace("\\", "/")
+            and str(path).endswith(".java")
+        ]
+        use_case_ids = [
+            str(item)
+            for item in task.get("use_case_ids", task.get("useCaseIds", []))
+            if str(item)
+        ]
+        covered_use_cases.update(use_case_ids)
+        classes = [Path(path).stem for path in test_paths]
+        passed = sum(executed.get(name, {}).get("passed", 0) for name in classes)
+        failed = sum(executed.get(name, {}).get("failed", 0) for name in classes)
+        skipped = sum(executed.get(name, {}).get("skipped", 0) for name in classes)
+        required_passes = max(1, len(use_case_ids))
+        status = (
+            "PASSED"
+            if classes and passed >= required_passes and failed == 0 and skipped == 0
+            else "FAILED"
+        )
+        result = {
+            "taskId": str(task.get("task_id") or ""),
+            "useCaseIds": use_case_ids,
+            "testPaths": test_paths,
+            "requiredPassedCases": required_passes,
+            "passedCases": passed,
+            "failedCases": failed,
+            "skippedCases": skipped,
+            "status": status,
+        }
+        task_results.append(result)
+        if status == "FAILED":
+            findings.append(
+                f"{result['taskId']}: expected {required_passes} passed scenario test(s), "
+                f"got passed={passed}, failed={failed}, skipped={skipped}; "
+                + (", ".join(test_paths) or "required scenario test file is missing")
+            )
+
+    expected_use_cases = {
+        str(use_case_id)
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict) and task.get("task_type") == "wiring"
+        for use_case_id in task.get("use_case_ids", task.get("useCaseIds", []))
+        if str(use_case_id)
+    }
+    if expected_use_cases and covered_use_cases != expected_use_cases:
+        missing = sorted(expected_use_cases - covered_use_cases)
+        unexpected = sorted(covered_use_cases - expected_use_cases)
+        findings.append(
+            "use-case planning coverage mismatch: "
+            f"missing={missing or 'none'}, unexpected={unexpected or 'none'}"
+        )
+
+    # 묶음별 빠른 테스트와 별개로, wiring 작업의 한 통합 테스트 클래스가 모든
+    # 유스케이스 흐름을 실제 Spring HTTP 경계에서 실행했는지도 JUnit 결과로 확인한다.
+    for task in manifest.get("implementation_tasks", []):
+        if not isinstance(task, dict) or task.get("task_type") != "wiring":
+            continue
+        test_paths = [
+            str(path)
+            for path in task.get("required_test_paths", [])
+            if str(path).endswith("FlowTest.java")
+        ]
+        classes = [Path(path).stem for path in test_paths]
+        passed = sum(executed.get(name, {}).get("passed", 0) for name in classes)
+        failed = sum(executed.get(name, {}).get("failed", 0) for name in classes)
+        skipped = sum(executed.get(name, {}).get("skipped", 0) for name in classes)
+        required_passes = max(1, len(expected_use_cases))
+        status = (
+            "PASSED"
+            if classes and passed >= required_passes and failed == 0 and skipped == 0
+            else "FAILED"
+        )
+        task_results.append(
+            {
+                "taskId": str(task.get("task_id") or ""),
+                "useCaseIds": sorted(expected_use_cases),
+                "testPaths": test_paths,
+                "requiredPassedCases": required_passes,
+                "passedCases": passed,
+                "failedCases": failed,
+                "skippedCases": skipped,
+                "status": status,
+            }
+        )
+        if status == "FAILED":
+            findings.append(
+                "final HTTP FlowTest did not execute every use-case scenario: "
+                f"expected={required_passes}, passed={passed}, failed={failed}, "
+                f"skipped={skipped}"
+            )
+
+    return {
+        "status": "FAILED" if findings else "PASSED",
+        "coveredUseCaseIds": sorted(covered_use_cases),
+        "tasks": task_results,
+        "findings": findings,
+    }
 
 
 def summarize_test_failure(detail: str) -> str:

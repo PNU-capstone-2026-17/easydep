@@ -8,9 +8,10 @@ from unittest.mock import patch
 import pytest
 
 from app.implementation.agents.verification.build import (
+    WorkspaceVerificationError,
+    task_verification_command,
     verify_run_workspace,
 )
-from app.implementation.agents.verification.e2e import e2e_contract_violations
 from app.implementation.delivery.container import render_deployment
 from app.implementation.delivery.terraform import render_iac
 from app.implementation.domain.models import JobSpec
@@ -19,7 +20,7 @@ from app.implementation.workflows.conformance import (
     capture_generated_contracts,
     verify_source_design_conformance,
 )
-from app.implementation.workflows.coordinator import plan_workflow
+from app.implementation.workflows.coordinator import plan_workflow, run_workflow
 from tests.class_design_fixtures import (
     typed_class_model_payload,
     typed_sequence_model_payload,
@@ -50,51 +51,13 @@ def test_final_workspace_verification_publishes_success_report(
     assert report["verification"] == verification
 
 
-def test_e2e_gate_accepts_complete_scenario_and_rejects_wrong_status(
-    tmp_path: Path,
-) -> None:
-    """실제 HTTP 경로와 상태 코드를 확인하는 테스트만 E2E 계약으로 인정한다."""
-    source = tmp_path / "CourseFlowTest.java"
-    contract = {
-        "method": "POST",
-        "path": "/courses",
-        "status": 201,
-    }
-    source.write_text(
-        """@SpringBootTest class CourseFlowTest {
-TestRestTemplate http;
-@Test void create() {
-  http.postForEntity("/courses", request, Object.class);
-  assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-}
-}
-""",
-        encoding="utf-8",
-    )
-    assert e2e_contract_violations(source, contract) == []
-
-    source.write_text(
-        source.read_text(encoding="utf-8").replace(
-            "HttpStatus.CREATED", "HttpStatus.BAD_REQUEST"
-        ),
-        encoding="utf-8",
-    )
-    violations = e2e_contract_violations(source, contract)
-    assert any("201" in violation for violation in violations)
-
-    source.write_text(
-        """@SpringBootTest class CourseFlowTest {
-MockMvc mvc;
-@Test void search() throws Exception {
-  mvc.perform(get("/courses")).andExpect(status().isOk());
-}
-}
-""",
-        encoding="utf-8",
-    )
-    assert e2e_contract_violations(
-        source, {"method": "GET", "path": "/courses", "status": 200}
-    ) == []
+def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None:
+    """작업 검증은 관련 test 하나를 직접 실행해 중복 compile 단계를 줄인다."""
+    assert task_verification_command(
+        ["gradlew"],
+        "use-case",
+        ["application/src/test/java/com/example/OrderScenarioTest.java"],
+    ) == ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"]
 
 
 def test_planned_manifest_uses_work_units_and_scopes_repairs_to_contracts(
@@ -111,54 +74,50 @@ def test_planned_manifest_uses_work_units_and_scopes_repairs_to_contracts(
 class OrderControl <<Control>> {
   + place(request: OrderRequest): void
 }
-class Order <<Entity>> {
-  - id: UUID
-}
+class CancelControl <<Control>> {}
+class Order <<Entity>> { - id: UUID }
 """,
         encoding="utf-8",
     )
-    # Keep the accepted typed fixtures as the source shape for the planning job;
-    # the persisted class model is not reinterpreted by the implementation planner.
     class_model_payload = typed_class_model_payload()
-    class_model_payload["Classes"].append({
-        "className": "Order",
-        "stereotype": "Entity",
-        "use_case_ids": ["UC1"],
-        "identifier": ["id"],
-        "fields": ["id : UUID"],
-        "operations": [],
-    })
+    class_model_payload["Classes"].extend([
+        {"className": "Order", "stereotype": "Entity", "use_case_ids": ["UC1"],
+         "identifier": ["id"], "fields": ["id : UUID"], "operations": []},
+        {"className": "CancelControl", "stereotype": "Control", "use_case_ids": ["UC2"],
+         "operations": []},
+    ])
     class_model = design / "class-model.json"
-    class_model.write_text(
-        json.dumps(class_model_payload), encoding="utf-8"
-    )
+    class_model.write_text(json.dumps(class_model_payload), encoding="utf-8")
     sequence_model = design / "sequence-model.json"
-    sequence_model.write_text(
-        json.dumps(typed_sequence_model_payload()), encoding="utf-8"
-    )
+    sequence_model.write_text(json.dumps(typed_sequence_model_payload()), encoding="utf-8")
     sequence = design / "sequence.puml"
-    sequence.write_text(
-        "OrderBoundary -> OrderControl : place(request)\n", encoding="utf-8"
-    )
+    sequence.write_text("OrderBoundary -> OrderControl : place(request)\n", encoding="utf-8")
+    requirements = design / "requirements.json"
+    requirements.write_text(json.dumps([
+        {"id": "FR-ORDER", "use_case_ids": ["UC1"]},
+        {"id": "FR-CANCEL", "use_case_ids": ["UC2"]},
+    ]), encoding="utf-8")
+    use_case_specs = design / "use-case-specs.json"
+    use_case_specs.write_text(json.dumps([
+        {"id": "UC1", "use_case_id": "UC1", "name": "Place order"},
+        {"id": "UC2", "use_case_id": "UC2", "name": "Cancel order"},
+    ]), encoding="utf-8")
     erd = design / "erd.puml"
-    erd.write_text(
-        'entity "Order" as Order {\n  * id : UUID\n}\n', encoding="utf-8"
-    )
+    erd.write_text('entity "Order" as Order {\n  * id : UUID\n}\n', encoding="utf-8")
     openapi = design / "openapi.json"
-    openapi.write_text(
-        json.dumps({
-            "openapi": "3.0.3",
-            "paths": {
-                "/orders": {
-                    "post": {
-                        "operationId": "placeOrder",
-                        "responses": {"201": {"description": "Created"}},
-                    }
-                }
-            },
-        }),
-        encoding="utf-8",
-    )
+    openapi.write_text(json.dumps({"openapi": "3.0.3", "paths": {
+        "/orders": {"post": {"operationId": "placeOrder",
+                                "responses": {"201": {"description": "Created"}}}},
+        "/orders/{id}": {"delete": {"operationId": "cancelOrder",
+                                       "responses": {"204": {"description": "Cancelled"}}}},
+    }}), encoding="utf-8")
+    api_model = design / "api-model.json"
+    api_model.write_text(json.dumps({"Endpoints": [
+        {"method": "POST", "path": "/orders", "operation_id": "placeOrder",
+         "use_case_ids": ["UC1"], "control_binding": {"control": "OrderControl"}},
+        {"method": "DELETE", "path": "/orders/{id}", "operation_id": "cancelOrder",
+         "use_case_ids": ["UC2"], "control_binding": {"control": "CancelControl"}},
+    ]}), encoding="utf-8")
 
     run = tmp_path / "run"
     package_root = run / "application/src/main/java/com/example/orders"
@@ -170,7 +129,13 @@ class Order <<Entity>> {
         "void placeOrder(); }\n",
         encoding="utf-8",
     )
-    for name in ("OrderBoundary", "OrderControl", "Order"):
+    (package_root / "api/CancelApi.java").write_text(
+        "package com.example.orders.api;\n"
+        "public interface CancelApi { String PATH = \"/orders/{id}\"; "
+        "void cancelOrder(); }\n",
+        encoding="utf-8",
+    )
+    for name in ("OrderBoundary", "OrderControl", "CancelControl", "Order"):
         (package_root / f"bce/{name}.java").write_text(
             f"package com.example.orders.bce; public interface {name} {{}}\n",
             encoding="utf-8",
@@ -185,11 +150,10 @@ class Order <<Entity>> {
     )
     generated = run / "application/frontend/src/generated/apis"
     generated.mkdir(parents=True)
-    (generated / "OrdersApi.ts").write_text(
-        "export class OrdersApi { placeOrder(): Promise<void> { "
-        "return Promise.resolve(); } }\n",
-        encoding="utf-8",
-    )
+    for name in ("OrdersApi", "CancelApi"):
+        (generated / f"{name}.ts").write_text(
+            f"export class {name} {{}}\n", encoding="utf-8"
+        )
     reports = run / "reports"
     reports.mkdir(parents=True)
     (reports / "run-manifest.json").write_text(
@@ -208,6 +172,9 @@ class Order <<Entity>> {
             "sequenceModel": sequence_model,
             "erd": erd,
             "openapi": openapi,
+            "apiModel": api_model,
+            "refinedRequirements": requirements,
+            "useCaseSpec": use_case_specs,
         },
         required_inputs=[],
         base_package="com.example.orders",
@@ -235,14 +202,90 @@ class Order <<Entity>> {
     for task in tasks:
         assert set(task["required_output_paths"]) <= set(task["allowed_write_paths"])
 
-    use_case = next(task for task in tasks if task["task_type"] == "use-case")
-    editable = set(use_case["allowed_write_paths"])
-    assert "application/src/main/java/com/example/orders/bce/Order.java" in editable
-    assert not editable.intersection({
+    use_cases = [task for task in tasks if task["task_type"] == "use-case"]
+    wiring = next(task for task in tasks if task["task_type"] == "wiring")
+    assert len(use_cases) >= 2
+    assert set(wiring["use_case_ids"]) == {"UC1", "UC2"}
+    contexts = [
+        json.loads((run / task["context_file"]).read_text(encoding="utf-8"))
+        for task in use_cases]
+    expected_requirements = {"UC1": {"FR-ORDER"}, "UC2": {"FR-CANCEL"}}
+    partitions = [set(context["useCaseIds"]) for context in contexts]
+    assert set().union(*partitions) == set(expected_requirements)
+    assert all(len(group) <= 3 for group in partitions)
+    assert all(left.isdisjoint(right) for index, left in enumerate(partitions) for right in partitions[index + 1 :])
+    for context in contexts:
+        assert set(context["requirementIds"]) == set().union(
+            *(expected_requirements[use_case_id] for use_case_id in context["useCaseIds"])
+        )
+    assert any(
+        "application/src/main/java/com/example/orders/bce/Order.java"
+        in set(task["allowed_write_paths"])
+        for task in use_cases
+    )
+    generated_api = {
+        "application/src/main/java/com/example/orders/api/OrdersApi.java",
+        "application/src/main/java/com/example/orders/api/CancelApi.java",
+    }
+    assert all(
+        not set(task["allowed_write_paths"]).intersection(generated_api)
+        for task in use_cases
+    )
+    immutable_bce = {
         "application/src/main/java/com/example/orders/bce/OrderBoundary.java",
         "application/src/main/java/com/example/orders/bce/OrderControl.java",
-        "application/src/main/java/com/example/orders/api/OrdersApi.java",
-    })
+        "application/src/main/java/com/example/orders/bce/CancelControl.java",
+    }
+    assert all(
+        not set(task["allowed_write_paths"]).intersection(immutable_bce)
+        for task in use_cases
+    )
+
+
+def test_scenario_failure_returns_to_automatic_repair_without_user_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """실패한 사용자 흐름은 입력 대기 대신 같은 작업의 repair checkpoint가 된다."""
+    run = tmp_path / "run"
+    flow_path = "application/src/test/java/com/example/OrderScenarioTest.java"
+    flow = run / flow_path
+    flow.parent.mkdir(parents=True)
+    flow.write_text("class OrderScenarioTest {}", encoding="utf-8")
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": [{
+            "task_id": "implement-order-use-cases",
+            "task_type": "use-case",
+            "allowed_write_paths": [flow_path],
+        }]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_workflow",
+        lambda *_args: {
+            "status": "COMPLETE",
+            "tasks": [{"taskId": "implement-order-use-cases", "status": "SUCCEEDED", "phase": "use-cases"}],
+            "phases": [{"phaseId": "use-cases", "status": "SUCCEEDED"}],
+            "nextRunnableTasks": [],
+        },
+    )
+
+    def failed_scenario(_run_root: Path) -> dict[str, object]:
+        raise WorkspaceVerificationError({
+            "command": ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"],
+            "exitCode": 1,
+            "stderr": f"{flow_path}: scenario assertion failed",
+        })
+
+    result = run_workflow(run, SimpleNamespace(app_id="app-1"), None, verifier=failed_scenario)
+
+    assert result["status"] == "COMPLETE"
+    assert result.get("blockingReason") is None
+    assert result["repairPlan"] == "reports/repair-plan.json"
+    repair = json.loads((reports / "repair-plan.json").read_text(encoding="utf-8"))
+    assert repair["status"] == "ACTIVE"
+    assert repair["entries"][-1]["ownerTaskIds"] == ["implement-order-use-cases"]
 
 
 def test_source_conformance_rejects_agent_changes_to_generated_contract(

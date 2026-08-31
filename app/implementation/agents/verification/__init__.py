@@ -6,7 +6,6 @@ from .frontend import (
     repair_responsive_table_styles,
     run_frontend_verification,
 )
-from .e2e import e2e_contract_violations
 from .build import (
     WorkspaceVerificationError,
     gradle_command,
@@ -20,7 +19,6 @@ __all__ = [
     "has_mutating_operations",
     "repair_responsive_table_styles",
     "run_frontend_verification",
-    "e2e_contract_violations",
     "WorkspaceVerificationError",
     "gradle_command",
     "verify_agent_workspace",

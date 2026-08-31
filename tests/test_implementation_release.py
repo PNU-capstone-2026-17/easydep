@@ -7,6 +7,14 @@ from app.implementation.agents.verification.release import verify_container_runt
 from app.implementation.workflows.release import write_release_manifest
 
 
+def _passed_scenario() -> dict[str, object]:
+    return {
+        "status": "PASSED",
+        "tasks": [{"taskId": "course-search", "status": "PASSED"}],
+        "coveredUseCaseIds": ["UC1"],
+    }
+
+
 def test_container_runtime_smoke_builds_starts_probes_and_cleans(tmp_path: Path) -> None:
     application = tmp_path / "application"
     application.mkdir()
@@ -35,6 +43,9 @@ def test_container_runtime_smoke_builds_starts_probes_and_cleans(tmp_path: Path)
     assert report["hostPort"] == 49152
     assert health_gets
     assert any(command[1] == "build" for command in commands)
+    start = next(command for command in commands if command[1] == "run")
+    assert "SPRING_PROFILES_ACTIVE=test" in start
+    assert any(value.startswith("SPRING_DATASOURCE_URL=jdbc:h2:mem:") for value in start)
     assert any(command[1:3] == ["image", "rm"] for command in commands)
 
 
@@ -117,7 +128,11 @@ def test_release_manifest_requires_every_verification_gate(tmp_path: Path) -> No
         tmp_path,
         workflow={"status": "COMPLETE"},
         audit={"status": "COMPLETE"},
-        verification={"status": "SUCCEEDED", "frontendVerification": None},
+        verification={
+            "status": "SUCCEEDED",
+            "frontendVerification": None,
+            "scenarioVerification": _passed_scenario(),
+        },
         conformance={"status": "PASSED"},
         traceability={"summary": {"missing": 0}},
         deployment=None,
@@ -132,7 +147,11 @@ def test_release_manifest_requires_every_verification_gate(tmp_path: Path) -> No
         tmp_path,
         workflow={"status": "COMPLETE"},
         audit={"status": "COMPLETE"},
-        verification={"status": "SUCCEEDED", "frontendVerification": None},
+        verification={
+            "status": "SUCCEEDED",
+            "frontendVerification": None,
+            "scenarioVerification": _passed_scenario(),
+        },
         conformance={"status": "PASSED"},
         traceability={"summary": {"missing": 1}},
         deployment=None,
@@ -141,6 +160,28 @@ def test_release_manifest_requires_every_verification_gate(tmp_path: Path) -> No
     )
     assert blocked["status"] == "BLOCKED"
     assert blocked["failedChecks"] == ["traceability"]
+
+    scenario_blocked = write_release_manifest(
+        tmp_path,
+        workflow={"status": "COMPLETE"},
+        audit={"status": "COMPLETE"},
+        verification={
+            "status": "SUCCEEDED",
+            "frontendVerification": None,
+            "scenarioVerification": {
+                "status": "PASSED",
+                "tasks": [],
+                "coveredUseCaseIds": [],
+            },
+        },
+        conformance={"status": "PASSED"},
+        traceability={"summary": {"missing": 0}},
+        deployment=None,
+        iac=None,
+        container_smoke={"status": "NOT_APPLICABLE"},
+    )
+    assert scenario_blocked["status"] == "BUILDABLE"
+    assert "useCaseScenarios" in scenario_blocked["failedChecks"]
 
 
 def test_release_manifest_requires_frontend_build_and_http_runtime(
@@ -154,7 +195,11 @@ def test_release_manifest_requires_frontend_build_and_http_runtime(
         tmp_path,
         workflow={"status": "COMPLETE"},
         audit={"status": "COMPLETE"},
-        verification={"status": "SUCCEEDED", "frontendVerification": None},
+        verification={
+            "status": "SUCCEEDED",
+            "frontendVerification": None,
+            "scenarioVerification": _passed_scenario(),
+        },
         conformance={"status": "PASSED"},
         traceability={"summary": {"missing": 0}},
         deployment=None,

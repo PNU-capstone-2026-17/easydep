@@ -17,10 +17,21 @@ def write_release_manifest(
     iac: dict[str, object] | None,
     container_smoke: dict[str, object],
 ) -> dict[str, object]:
+    scenario = verification.get("scenarioVerification")
+    scenario_status = scenario.get("status") if isinstance(scenario, dict) else None
+    scenario_passed = scenario_status == "NOT_APPLICABLE" or (
+        scenario_status == "PASSED"
+        and bool(scenario.get("tasks"))
+        and bool(scenario.get("coveredUseCaseIds"))
+    )
     checks = {
         "workflow": workflow.get("status") == "COMPLETE",
         "completionAudit": audit.get("status") == "COMPLETE",
         "backendVerification": verification.get("status") == "SUCCEEDED",
+        # build와 health만 통과한 애플리케이션은 실행 가능할 뿐, 요구사항을 만족한다고
+        # 볼 수 없다. 계획된 유스케이스 테스트가 실제 JUnit 결과에 나타난 경우에만
+        # 릴리스 가능한 상태로 승격한다.
+        "useCaseScenarios": scenario_passed,
         "sourceDesignConformance": conformance.get("status") == "PASSED",
         "traceability": traceability.get("summary", {}).get("missing") == 0,
         "deployment": deployment is None
@@ -52,10 +63,11 @@ def write_release_manifest(
         and frontend_runtime.get("status") == "SUCCEEDED"
     )
     failed = sorted(name for name, passed in checks.items() if not passed)
+    scenario_only = bool(failed) and set(failed).issubset({"useCaseScenarios"})
     manifest = {
         "schemaVersion": "easydep-release-manifest/v1alpha1",
         "runId": run_root.name,
-        "status": "RELEASABLE" if not failed else "BLOCKED",
+        "status": "RELEASABLE" if not failed else ("BUILDABLE" if scenario_only else "BLOCKED"),
         "deploymentStatus": (
             "READY_FOR_DEPLOYMENT" if deployment is not None else "NOT_CONFIGURED"
         ),

@@ -39,7 +39,6 @@ from .verification.build import (
     WorkspaceVerificationError,
     verify_agent_workspace,
 )
-from .verification.e2e import e2e_contract_violations
 from .workspace import (
     changed_files,
     cleanup_agent_workspace,
@@ -62,13 +61,24 @@ _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
 
 
 def _repair_contract_context(context: dict[str, object]) -> str:
-    """수리에 필요한 생성 계약만 짧게 반환한다."""
+    """수리에 필요한 코드 계약과 해당 유스케이스 근거만 짧게 반환한다."""
     contracts = context.get("generatedJavaContracts")
     if not isinstance(contracts, str) or not contracts.strip():
         contracts = context.get("generatedTypescriptContracts")
-    if not isinstance(contracts, str):
-        return ""
-    return contracts[:16000]
+    sections: list[str] = []
+    if isinstance(contracts, str) and contracts.strip():
+        sections.append("Generated contracts:\n" + contracts[:16000])
+    evidence = {
+        key: context[key]
+        for key in ("requirements", "useCaseArtifacts", "scenarios")
+        if context.get(key)
+    }
+    if evidence:
+        sections.append(
+            "Relevant requirements and scenarios:\n"
+            + json.dumps(evidence, ensure_ascii=False, indent=2)[:16000]
+        )
+    return "\n\n".join(sections)[:28000]
 
 
 def _configure_openhands_profile_store() -> None:
@@ -518,38 +528,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             "testResults": "",
                         }
                     )
-                flow_tests = [
-                    path
-                    for path in required_paths
-                    if "/integration/" in path.replace("\\", "/")
-                    and path.endswith("FlowTest.java")
-                ]
-                if task_type == "wiring" and flow_tests:
-                    context_path = run_root / str(task.get("context_file", ""))
-                    semantic_contract = None
-                    if context_path.is_file():
-                        context = json.loads(context_path.read_text(encoding="utf-8"))
-                        candidate = context.get("semanticContract")
-                        if isinstance(candidate, dict):
-                            semantic_contract = candidate
-                    e2e_violations = [
-                        violation
-                        for relative in flow_tests
-                        for violation in e2e_contract_violations(
-                            sandbox / relative, semantic_contract
-                        )
-                    ]
-                    if e2e_violations:
-                        raise WorkspaceVerificationError(
-                            {
-                                "command": ["e2e-semantic-contract-gate"],
-                                "exitCode": 1,
-                                "durationMs": 0,
-                                "stdout": "",
-                                "stderr": "\n".join(e2e_violations),
-                                "testResults": "",
-                            }
-                        )
                 verification = verify_agent_workspace(
                     sandbox,
                     task_type,
@@ -559,18 +537,21 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 break
             except WorkspaceVerificationError as error:
                 referenced = referenced_source_paths(error.evidence)
-                # compiler나 test가 같은 애플리케이션의 관련 source를 가리키면 별도 owner
-                # task로 왕복하지 않고 현재 수리 대화의 편집 범위에 포함한다. 생성된 공개
-                # 계약은 immutable_paths로 계속 보호한다.
-                for path in referenced:
-                    normalized = path.replace("\\", "/")
-                    if (
-                        normalized.startswith("application/")
-                        and not _path_is_immutable(normalized, immutable_paths)
-                        and (sandbox / normalized).is_file()
-                        and normalized not in editable_paths
-                    ):
-                        editable_paths.append(normalized)
+                # 서로 독립인 유스케이스 작업은 병렬로 실행될 수 있다. 이때 수리 로그에
+                # 우연히 나온 다른 작업 파일까지 편집 범위에 넣으면 두 sandbox가 같은
+                # 파일을 덮어쓸 수 있으므로, 유스케이스 작업은 planner가 준 범위를 지킨다.
+                # 단독으로 실행되는 wiring 등은 관련 source를 같은 수리 대화에서 고칠 수
+                # 있도록 기존 동작을 유지한다.
+                if task_type != "use-case":
+                    for path in referenced:
+                        normalized = path.replace("\\", "/")
+                        if (
+                            normalized.startswith("application/")
+                            and not _path_is_immutable(normalized, immutable_paths)
+                            and (sandbox / normalized).is_file()
+                            and normalized not in editable_paths
+                        ):
+                            editable_paths.append(normalized)
                 evidence_digest = stable_digest(error.evidence)
                 finding_keys = (f"verification:{evidence_digest}",)
                 candidate_digest = stable_digest(

@@ -76,6 +76,13 @@ def verify_container_runtime(
 
         start = [
             "docker", "run", "--detach", "--rm", "--name", container,
+            # Container smoke is an integration test, not the production DB binding.
+            # Give it an explicit ephemeral datasource so health verification does not
+            # depend on a cloud database that has not been provisioned yet.
+            "--env", "SPRING_PROFILES_ACTIVE=test",
+            "--env", "SPRING_DATASOURCE_URL=jdbc:h2:mem:easydep_smoke;MODE=MySQL;DB_CLOSE_DELAY=-1",
+            "--env", "SPRING_DATASOURCE_USERNAME=sa",
+            "--env", "SPRING_DATASOURCE_PASSWORD=",
             "--publish", f"127.0.0.1::{DEFAULT_CONTAINER_PORT}", image,
         ]
         commands.append(start)
