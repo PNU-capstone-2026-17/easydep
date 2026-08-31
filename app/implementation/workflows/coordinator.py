@@ -409,7 +409,15 @@ def _run_workflow(
         if not _dependencies_succeeded(state, phase_id):
             continue
         state["currentPhase"] = phase_id
-        worker_limit = max(1, int(settings.implementation_task_parallelism))
+        # 유스케이스 묶음은 Controller와 Service를 직접 공유하지 않더라도 서로가 만든
+        # Java 타입을 컴파일 중 참조한다. 순차 실행하면 수리 범위를 안전하게 넓힐 수 있고,
+        # 병렬 merge 뒤 같은 오류를 다시 고치는 비용도 없어진다. persistence와 frontend
+        # 등 독립 phase는 기존 병렬 설정을 그대로 사용한다.
+        worker_limit = (
+            1
+            if phase_id == "use-cases"
+            else max(1, int(settings.implementation_task_parallelism))
+        )
         for task_batch in _phase_task_batches(
             phase_id,
             phase_tasks,

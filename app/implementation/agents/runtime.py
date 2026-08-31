@@ -535,21 +535,19 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 break
             except WorkspaceVerificationError as error:
                 referenced = referenced_source_paths(error.evidence)
-                # 서로 독립인 유스케이스 작업은 병렬로 실행될 수 있다. 이때 수리 로그에
-                # 우연히 나온 다른 작업 파일까지 편집 범위에 넣으면 두 sandbox가 같은
-                # 파일을 덮어쓸 수 있으므로, 유스케이스 작업은 planner가 준 범위를 지킨다.
-                # 단독으로 실행되는 wiring 등은 관련 source를 같은 수리 대화에서 고칠 수
-                # 있도록 기존 동작을 유지한다.
-                if task_type != "use-case":
-                    for path in referenced:
-                        normalized = path.replace("\\", "/")
-                        if (
-                            normalized.startswith("application/")
-                            and not _path_is_immutable(normalized, immutable_paths)
-                            and (sandbox / normalized).is_file()
-                            and normalized not in editable_paths
-                        ):
-                            editable_paths.append(normalized)
+                # 앞 유스케이스가 만든 Service의 잘못된 import처럼 compiler가 실제 원인
+                # 파일을 알려 주면 현재 수리 대화에서 함께 고친다. 유스케이스 묶음은
+                # coordinator가 순차 실행하므로 다른 agent와 같은 파일을 덮어쓰지 않는다.
+                # OpenAPI 같은 생성 계약은 immutable_paths 검사로 계속 보호한다.
+                for path in referenced:
+                    normalized = path.replace("\\", "/")
+                    if (
+                        normalized.startswith("application/")
+                        and not _path_is_immutable(normalized, immutable_paths)
+                        and (sandbox / normalized).is_file()
+                        and normalized not in editable_paths
+                    ):
+                        editable_paths.append(normalized)
                 evidence_digest = stable_digest(error.evidence)
                 finding_keys = (f"verification:{evidence_digest}",)
                 candidate_digest = stable_digest(
