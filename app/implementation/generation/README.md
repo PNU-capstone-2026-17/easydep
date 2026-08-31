@@ -89,3 +89,22 @@ Bean 연결 오류가 확인된 경우에만 수리 작업이 활성화된다.
 않는다. null 허용 여부와 외래 키 소유자처럼 ERD에 없는 내용은 추측하지 않는다. 값 객체와
 목록은 JSON column에 원래 타입 그대로 저장하고, 여러 식별자가 있으면 JPA 복합 키 파일도 함께
 만든다. BCE Entity와 JPA Entity 사이에 필드 손실이 생기는 범용 mapper는 생성하지 않는다.
+
+## HTTP Controller 골격
+
+OpenAPI Generator가 만든 Java interface의 경로, annotation과 method signature는 그대로
+사용한다. 그 위에 `apiModel.control_binding`에 적힌 Control과 생성자 주입을 연결한다.
+
+API schema와 BCE 값 객체의 필드 이름·타입이 모두 대응하는 경우에만 요청과 성공 응답의 변환
+본문을 함께 만든다. `UUID`나 날짜처럼 표준 변환 방법이 있는 값도 이 범위에 포함한다. 다음
+경우에는 컴파일 가능한 `EASYDEP_CONTROLLER_BODY_REQUIRED` 표식을 남긴다.
+
+- API가 요구하는 필드가 BCE 결과에 없는 경우
+- 설계 타입이 `Object`로 남은 경우
+- BCE Entity처럼 생성·조회 방법이 업무 구현에 따라 달라지는 경우
+- typed 모델만으로는 의미 있는 결과 변환을 정할 수 없는 경우
+
+표식이 있는 method는 해당 기능의 OpenHands 작업이 실제 요구사항과 테스트를 보면서 완성한다.
+생성기는 누락 값을 `UNKNOWN`, `null` 또는 임의 ID로 채우지 않는다. HTTP Controller는 명시된
+Control을 직접 호출하므로 API에만 존재하는 path/query 값도 중간 Boundary 객체에서 잃지 않는다.
+Boundary interface 자체는 BCE 설계 계약으로 계속 생성하지만 별도의 중복 adapter는 만들지 않는다.

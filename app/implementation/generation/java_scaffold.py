@@ -18,6 +18,7 @@ from app.design.schemas.class_model import (
     ClassOperation,
     DataType,
 )
+from app.design.services.api_spec.models import ApiEndpoint, ApiSpecModel
 
 JAVA_SCAFFOLDER_VERSION = "1.3.0"
 
@@ -65,6 +66,9 @@ _JAVA_IMPORT = re.compile(r"(?m)^import\s+[^;]+;$")
 _OPENAPI_METHOD = re.compile(
     r"(?ms)(?P<mapping>@RequestMapping\s*\(.*?\))\s*"
     r"(?P<signature>(?:(?:public|abstract|default)\s+)*[A-Za-z_$][^;{}]*?)\s*;"
+)
+_PATH_CONSTANT = re.compile(
+    r'\bString\s+(?P<name>[A-Z][A-Z0-9_]*)\s*=\s*"(?P<path>[^"]+)"\s*;'
 )
 
 
@@ -227,24 +231,45 @@ def build_java_scaffold_trace(
 
 
 def render_openapi_controller_scaffold(
-    interface_source: str, base_package: str
+    interface_source: str,
+    base_package: str,
+    *,
+    api_model: ApiSpecModel | None = None,
+    bce_model: BCEModel | None = None,
 ) -> tuple[str, str]:
-    """생성된 OpenAPI interface에서 Controller 선언만 그대로 옮긴다.
+    """생성된 OpenAPI interface를 typed BCE 호출과 연결한 Controller를 만든다.
 
     OpenAPI operationId와 DTO 타입을 다시 해석하거나 이름을 추측하지 않는다. 이미
-    생성된 interface의 import, method annotation, parameter, 반환 타입을 재사용하고,
-    구현 작업은 각 method body의 실패 유도 표식만 교체한다.
+    생성된 interface의 import, method annotation, parameter와 반환 타입을 재사용한다.
+    typed API/BCE 모델을 받은 경우에는 명시된 Boundary 호출과 구조 변환도 채운다.
+    모델이 없거나 연결할 수 없는 메서드만 기존 실패 유도 표식으로 남긴다.
     """
     interface = _JAVA_INTERFACE.search(interface_source)
     if interface is None:
         raise ValueError("Generated OpenAPI source does not contain a public interface")
     interface_name = interface.group("name")
-    methods = [
-        _render_controller_method(
-            match.group("mapping"), match.group("signature")
-        )
-        for match in _OPENAPI_METHOD.finditer(interface_source)
-    ]
+    constants = {
+        match.group("name"): match.group("path")
+        for match in _PATH_CONSTANT.finditer(interface_source)
+    }
+    dependencies: dict[str, str] = {}
+    mapper_needed = False
+    methods: list[str] = []
+    for match in _OPENAPI_METHOD.finditer(interface_source):
+        mapping = match.group("mapping")
+        signature = match.group("signature")
+        body: list[str] | None = None
+        if api_model is not None and bce_model is not None:
+            endpoint = _endpoint_for_mapping(mapping, constants, api_model)
+            if endpoint is not None:
+                rendered = _controller_body(
+                    endpoint, signature, api_model, bce_model, base_package
+                )
+                if rendered is not None:
+                    control_name, body = rendered
+                    dependencies[control_name] = _field_name(control_name)
+                    mapper_needed = mapper_needed or body is not None
+        methods.append(_render_controller_method(mapping, signature, body))
     if not methods:
         raise ValueError(
             f"Generated OpenAPI interface {interface_name} has no overridable methods"
@@ -256,6 +281,37 @@ def render_openapi_controller_scaffold(
     }
     imports.add(f"import {base_package}.api.{interface_name};")
     imports.add("import org.springframework.web.bind.annotation.RestController;")
+    imports.update(
+        f"import {base_package}.bce.{name};" for name in dependencies
+    )
+    if mapper_needed:
+        imports.add("import com.fasterxml.jackson.databind.ObjectMapper;")
+
+    fields = [
+        f"    private final {name} {field};"
+        for name, field in sorted(dependencies.items())
+    ]
+    if mapper_needed:
+        fields.append("    private final ObjectMapper objectMapper;")
+    constructor = ""
+    if fields:
+        parameters = [
+            f"{name} {field}" for name, field in sorted(dependencies.items())
+        ]
+        if mapper_needed:
+            parameters.append("ObjectMapper objectMapper")
+        assignments = [
+            f"        this.{field} = {field};"
+            for _name, field in sorted(dependencies.items())
+        ]
+        if mapper_needed:
+            assignments.append("        this.objectMapper = objectMapper;")
+        constructor = (
+            "\n\n"
+            f"    public {controller_name}({', '.join(parameters)}) {{\n"
+            + "\n".join(assignments)
+            + "\n    }"
+        )
     return (
         controller_name,
         f"package {base_package}.adapter.in.web;\n\n"
@@ -264,13 +320,20 @@ def render_openapi_controller_scaffold(
         + "/** OpenAPI interface 선언을 보존하고 업무 본문만 남긴 Controller 골격이다. */\n"
         + "@RestController\n"
         + f"public class {controller_name} implements {interface_name} {{\n\n"
+        + "\n".join(fields)
+        + constructor
+        + ("\n\n" if fields else "")
         + "\n\n".join(methods)
         + "\n}\n",
     )
 
 
-def _render_controller_method(mapping: str, signature: str) -> str:
-    """생성 interface의 mapping·선언을 보존한 method body 골격을 만든다."""
+def _render_controller_method(
+    mapping: str,
+    signature: str,
+    body: list[str] | None = None,
+) -> str:
+    """생성 interface 선언을 보존하고 확인된 호출 본문 또는 표식을 넣는다."""
     signature = re.sub(
         r"^(?:(?:public|abstract|default)\s+)+", "", signature.strip()
     )
@@ -280,14 +343,481 @@ def _render_controller_method(mapping: str, signature: str) -> str:
     rendered += "    @Override\n"
     rendered += "    public " + textwrap.indent(signature, "    ").lstrip()
     rendered += " {\n"
-    # 앞선 persistence 작업도 전체 Java source를 compile한다. 따라서 골격 자체는
-    # compile되어야 하며, use-case 작업의 빠른 완료 검사가 아래 표식을 따로 찾는다.
-    rendered += (
-        '        throw new UnsupportedOperationException('
-        '"EASYDEP_CONTROLLER_BODY_REQUIRED");\n'
-    )
+    if body is None:
+        rendered += (
+            '        throw new UnsupportedOperationException('
+            '"EASYDEP_CONTROLLER_BODY_REQUIRED");\n'
+        )
+    else:
+        rendered += "\n".join(f"        {line}" for line in body) + "\n"
     rendered += "    }"
     return rendered
+
+
+def _endpoint_for_mapping(
+    mapping: str,
+    constants: dict[str, str],
+    api_model: ApiSpecModel,
+) -> ApiEndpoint | None:
+    """RequestMapping의 확정 method/path를 typed endpoint 하나와 연결한다."""
+
+    method_match = re.search(r"method\s*=\s*RequestMethod\.([A-Z]+)", mapping)
+    value_match = re.search(
+        r'value\s*=\s*(?:"(?P<literal>[^"]+)"|(?:[A-Za-z_$]\w*\.)?(?P<constant>[A-Z][A-Z0-9_]*))',
+        mapping,
+    )
+    if method_match is None or value_match is None:
+        return None
+    path = value_match.group("literal") or constants.get(
+        value_match.group("constant") or "", ""
+    )
+    matches = [
+        endpoint
+        for endpoint in api_model.Endpoints
+        if endpoint.method.upper() == method_match.group(1) and endpoint.path == path
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _controller_body(
+    endpoint: ApiEndpoint,
+    signature: str,
+    api_model: ApiSpecModel,
+    bce_model: BCEModel,
+    base_package: str,
+) -> tuple[str, list[str]] | None:
+    """HTTP binding을 Control 호출 인자로 바꾸고 성공 응답을 반환한다."""
+
+    binding = endpoint.control_binding
+    if binding is None:
+        return None
+    control = next(
+        (
+            component
+            for component in bce_model.Classes
+            if component.stereotype == "Control"
+            and component.class_name == binding.control
+        ),
+        None,
+    )
+    if control is None:
+        return None
+    operation = next(
+        (item for item in control.operations if item.name == binding.method),
+        None,
+    )
+    if operation is None:
+        return None
+    sources = _http_parameter_sources(signature)
+    binding_sources = {
+        item.name: item.source for item in binding.arguments
+    }
+    success = next(
+        (response for response in endpoint.responses if 200 <= response.status < 300),
+        None,
+    )
+    if success is None or not _controller_types_are_complete(
+        endpoint,
+        operation,
+        api_model=api_model,
+        bce_model=bce_model,
+    ):
+        return control.class_name, None
+    arguments: list[str] = []
+    declared_types = {
+        *(item.class_name for item in bce_model.Classes),
+        *(item.name for item in bce_model.DataTypes),
+    }
+    for parameter in operation.parameters:
+        source = binding_sources.get(parameter.name)
+        expression = _http_source_expression(source, sources)
+        if expression is None:
+            return None
+        target_type = _qualified_bce_type(
+            parameter.type, base_package, declared_types
+        )
+        arguments.append(_object_mapper_conversion(expression, target_type))
+
+    call = (
+        f"{_field_name(control.class_name)}.{operation.name}"
+        f"({', '.join(arguments)})"
+    )
+    _method_name, return_type, _parameters = _java_method_parts(signature)
+    response_type = _response_body_type(return_type)
+    if response_type in {None, "Void", "void"}:
+        return control.class_name, [
+            f"{call};",
+            f"return ResponseEntity.status({success.status}).build();",
+        ]
+    if operation.return_type == "void":
+        return None
+    body = [f"var result = {call};"]
+    if response_type.startswith("List<") and response_type.endswith(">"):
+        item_type = response_type[5:-1].strip()
+        body.append(
+            "var response = result.stream()"
+            f".map(item -> objectMapper.convertValue(item, {item_type}.class)).toList();"
+        )
+    else:
+        body.append(
+            f"var response = {_object_mapper_conversion('result', response_type)};"
+        )
+    body.append(f"return ResponseEntity.status({success.status}).body(response);")
+    return control.class_name, body
+
+
+def _http_parameter_sources(signature: str) -> dict[str, str]:
+    """생성된 Java 인자의 annotation에서 body/path/query 변수 이름을 읽는다."""
+
+    _method_name, _return_type, parameters = _java_method_parts(signature)
+    result: dict[str, str] = {}
+    for parameter in _split_java_parameters(parameters):
+        variable_match = re.search(r"([A-Za-z_$][A-Za-z0-9_$]*)\s*$", parameter)
+        if variable_match is None:
+            continue
+        variable = variable_match.group(1)
+        if "@RequestBody" in parameter:
+            result["$body"] = variable
+            continue
+        path = re.search(r'@PathVariable\s*\(\s*(?:value\s*=\s*)?"([^"]+)"', parameter)
+        if path:
+            result[f"$path.{path.group(1)}"] = variable
+            continue
+        query = re.search(
+            r'@RequestParam\s*\(\s*(?:(?:value|name)\s*=\s*)?"([^"]+)"',
+            parameter,
+        )
+        if query:
+            result[f"$query.{query.group(1)}"] = variable
+    return result
+
+
+def _http_source_expression(
+    source: str | None,
+    variables: dict[str, str],
+) -> str | None:
+    if not source:
+        return None
+    if source in variables:
+        return variables[source]
+    if source.startswith("$body.") and "$body" in variables:
+        field = source.removeprefix("$body.")
+        getter = field[:1].upper() + field[1:]
+        return f"{variables['$body']}.get{getter}()"
+    return None
+
+
+def _java_method_parts(signature: str) -> tuple[str, str, str]:
+    clean = re.sub(r"^(?:(?:public|abstract|default)\s+)+", "", signature.strip())
+    opening = clean.find("(")
+    closing = clean.rfind(")")
+    head = clean[:opening].strip()
+    method_name = head.rsplit(maxsplit=1)[-1]
+    return_type = head[: -len(method_name)].strip()
+    return method_name, return_type, clean[opening + 1 : closing]
+
+
+def _split_java_parameters(value: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    quoted = False
+    escaped = False
+    for index, character in enumerate(value):
+        if character == '"' and not escaped:
+            quoted = not quoted
+        escaped = character == "\\" and not escaped
+        if quoted:
+            continue
+        if character in "(<[":
+            depth += 1
+        elif character in ")>]":
+            depth -= 1
+        elif character == "," and depth == 0:
+            parts.append(value[start:index].strip())
+            start = index + 1
+    tail = value[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _response_body_type(return_type: str) -> str | None:
+    match = re.fullmatch(r"ResponseEntity\s*<(.+)>", return_type.strip(), re.DOTALL)
+    return match.group(1).strip() if match else None
+
+
+def _qualified_bce_type(
+    design_type: str,
+    base_package: str,
+    declared_types: set[str],
+) -> str:
+    result = java_type(design_type, declared_types=declared_types)
+    for name in sorted(declared_types, key=len, reverse=True):
+        result = re.sub(
+            rf"\b{re.escape(name)}\b", f"{base_package}.bce.{name}", result
+        )
+    standard_types = {
+        "BigDecimal": "java.math.BigDecimal",
+        "LocalDate": "java.time.LocalDate",
+        "LocalDateTime": "java.time.LocalDateTime",
+        "LocalTime": "java.time.LocalTime",
+        "List": "java.util.List",
+        "Optional": "java.util.Optional",
+        "UUID": "java.util.UUID",
+    }
+    for name, qualified in standard_types.items():
+        result = re.sub(rf"\b{name}\b", qualified, result)
+    return result
+
+
+def _object_mapper_conversion(expression: str, target_type: str) -> str:
+    if "<" in target_type:
+        return (
+            f"objectMapper.convertValue({expression}, "
+            f"new com.fasterxml.jackson.core.type.TypeReference<{target_type}>() {{}})"
+        )
+    return f"objectMapper.convertValue({expression}, {target_type}.class)"
+
+
+def _field_name(type_name: str) -> str:
+    return type_name[:1].lower() + type_name[1:]
+
+
+def _controller_types_are_complete(
+    endpoint: ApiEndpoint,
+    operation: ClassOperation,
+    *,
+    api_model: ApiSpecModel,
+    bce_model: BCEModel,
+) -> bool:
+    """입력과 성공 응답의 구조를 typed 모델만으로 변환할 수 있는지 확인한다."""
+
+    binding = endpoint.control_binding
+    if binding is None:
+        return False
+    sources = {item.name: item.source for item in binding.arguments}
+    for parameter in operation.parameters:
+        source = _api_source_contract(endpoint, sources.get(parameter.name), api_model)
+        if source is None:
+            return False
+        source_type, required = source
+        target_type, target_optional = _without_optional(parameter.type)
+        if not required and not target_optional:
+            return False
+        if not _types_are_structurally_compatible(
+            source_type,
+            target_type,
+            direction="api-to-bce",
+            api_model=api_model,
+            bce_model=bce_model,
+            visited=set(),
+        ):
+            return False
+
+    response = next(
+        (item for item in endpoint.responses if 200 <= item.status < 300),
+        None,
+    )
+    if response is None:
+        return False
+    if not response.schema_name:
+        return operation.return_type == "void"
+    api_type = (
+        f"list<{response.schema_name}>" if response.is_array else response.schema_name
+    )
+    source_type, source_optional = _without_optional(operation.return_type)
+    if source_optional:
+        return False
+    return _types_are_structurally_compatible(
+        api_type,
+        source_type,
+        direction="bce-to-api",
+        api_model=api_model,
+        bce_model=bce_model,
+        visited=set(),
+    )
+
+
+def _api_source_contract(
+    endpoint: ApiEndpoint,
+    source: str | None,
+    api_model: ApiSpecModel,
+) -> tuple[str, bool] | None:
+    """control binding source가 가리키는 API 타입과 필수 여부를 반환한다."""
+
+    if not source:
+        return None
+    if source == "$body":
+        return (endpoint.request_schema, True) if endpoint.request_schema else None
+    if source.startswith("$body."):
+        schema = next(
+            (item for item in api_model.Schemas if item.name == endpoint.request_schema),
+            None,
+        )
+        field_name = source.removeprefix("$body.")
+        field = next(
+            (item for item in schema.fields if item.name == field_name),
+            None,
+        ) if schema is not None else None
+        return (field.type, field.required) if field is not None else None
+    for prefix, fields in (
+        ("$path.", endpoint.path_params),
+        ("$query.", endpoint.query_params),
+    ):
+        if source.startswith(prefix):
+            name = source.removeprefix(prefix)
+            field = next((item for item in fields if item.name == name), None)
+            return (field.type, field.required) if field is not None else None
+    return None
+
+
+def _types_are_structurally_compatible(
+    api_type: str,
+    bce_type: str,
+    *,
+    direction: Literal["api-to-bce", "bce-to-api"],
+    api_model: ApiSpecModel,
+    bce_model: BCEModel,
+    visited: set[tuple[str, str, str]],
+) -> bool:
+    """API와 BCE 타입이 값의 누락 없이 구조 변환 가능한지 재귀적으로 비교한다."""
+
+    api_container, api_item = _container_type(api_type)
+    bce_container, bce_item = _container_type(bce_type)
+    if api_container != bce_container:
+        # OpenAPI의 integer[]는 BCE의 byte[]를 손실 없이 표현한다.
+        return api_container == "list" and api_item.casefold() in {
+            "integer", "int",
+        } and bce_container == "binary"
+    if api_container == "list":
+        return _types_are_structurally_compatible(
+            api_item,
+            bce_item,
+            direction=direction,
+            api_model=api_model,
+            bce_model=bce_model,
+            visited=visited,
+        )
+    if api_container == "binary":
+        return bce_container == "binary"
+
+    api_name = api_item.casefold()
+    bce_name = bce_item.casefold()
+    scalar_pairs = (
+        ({"string"}, {"string", "uuid", "localdate", "localdatetime", "localtime"}),
+        ({"integer", "int"}, {"integer", "int"}),
+        ({"number", "decimal", "bigdecimal"}, {"decimal", "bigdecimal"}),
+        ({"boolean", "bool"}, {"boolean", "bool"}),
+    )
+    if any(api_name in api_names and bce_name in bce_names for api_names, bce_names in scalar_pairs):
+        return True
+    if api_name == bce_name and api_name not in {"object", "any"}:
+        # 이름이 같은 값 객체는 아래에서 필드까지 확인하고, 알려진 Java scalar는 여기서 끝난다.
+        if api_name in {
+            "string", "uuid", "localdate", "localdatetime", "localtime",
+            "integer", "int", "number", "decimal", "bigdecimal", "boolean", "bool",
+        }:
+            return True
+
+    bce_enum = next(
+        (
+            item
+            for item in bce_model.DataTypes
+            if item.kind == "enumeration" and item.name == bce_item
+        ),
+        None,
+    )
+    if bce_enum is not None:
+        return api_item == bce_item or api_name == "string"
+
+    # BCE Entity는 private 상태와 업무 메서드를 가진다. 필드 이름이 같더라도 일반 DTO처럼
+    # 자동 변환할 수 있다고 가정하지 않고 해당 기능 작업이 생성·조회 방식을 정하게 한다.
+    if any(item.class_name == bce_item for item in bce_model.Classes):
+        return False
+
+    api_schema = next(
+        (item for item in api_model.Schemas if item.name == api_item),
+        None,
+    )
+    bce_value = next(
+        (
+            item
+            for item in bce_model.DataTypes
+            if item.kind == "valueObject" and item.name == bce_item
+        ),
+        None,
+    )
+    if api_schema is None or bce_value is None:
+        return False
+    key = (api_item, bce_item, direction)
+    if key in visited:
+        return True
+    visited.add(key)
+    api_fields = {item.name: item for item in api_schema.fields}
+    bce_fields = {
+        name: field_type
+        for declaration in bce_value.fields
+        for name, field_type in [_parse_field(declaration, owner=bce_value.name)]
+    }
+    if direction == "api-to-bce":
+        for name, raw_bce_type in bce_fields.items():
+            inner_bce_type, optional = _without_optional(raw_bce_type)
+            api_field = api_fields.get(name)
+            if api_field is None:
+                if optional:
+                    continue
+                return False
+            if not api_field.required and not optional:
+                return False
+            if not _types_are_structurally_compatible(
+                api_field.type,
+                inner_bce_type,
+                direction=direction,
+                api_model=api_model,
+                bce_model=bce_model,
+                visited=visited,
+            ):
+                return False
+        return True
+
+    for name, api_field in api_fields.items():
+        raw_bce_type = bce_fields.get(name)
+        if raw_bce_type is None:
+            if not api_field.required:
+                continue
+            return False
+        inner_bce_type, optional = _without_optional(raw_bce_type)
+        if api_field.required and optional:
+            return False
+        if not _types_are_structurally_compatible(
+            api_field.type,
+            inner_bce_type,
+            direction=direction,
+            api_model=api_model,
+            bce_model=bce_model,
+            visited=visited,
+        ):
+            return False
+    return True
+
+
+def _without_optional(value: str) -> tuple[str, bool]:
+    compact = re.sub(r"\s+", "", value)
+    match = re.fullmatch(r"Optional<(.+)>", compact, re.IGNORECASE)
+    return (match.group(1), True) if match else (compact, False)
+
+
+def _container_type(value: str) -> tuple[str, str]:
+    compact = re.sub(r"\s+", "", value)
+    if compact.casefold() in {"byte[]", "bytes", "bytes[]"}:
+        return "binary", "byte"
+    if compact.endswith("[]"):
+        return "list", compact[:-2]
+    match = re.fullmatch(r"(?:list|array)<(.+)>", compact, re.IGNORECASE)
+    if match:
+        return "list", match.group(1)
+    return "scalar", compact
 
 
 def _render_data_type(

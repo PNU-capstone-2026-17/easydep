@@ -334,9 +334,6 @@ def _build_use_case_task(
         f"application/src/test/java/{package_path}/application/impl/UseCaseBundle{index}Test.java"
     )
     controls = [item.name for item in bundle.components if item.stereotype.casefold() == "control"]
-    boundaries = [
-        item.name for item in bundle.components if item.stereotype.casefold() == "boundary"
-    ]
     entities = [item.name for item in bundle.components if item.stereotype.casefold() == "entity"]
     gateway_kinds = {item.name: item.kind for item in ir.gateways}
     gateways = [item for item in bundle.components if item.name in gateway_kinds]
@@ -349,10 +346,6 @@ def _build_use_case_task(
             *(
                 f"application/src/main/java/{package_path}/adapter/in/web/{port.name}ApiController.java"
                 for port in bundle.ports
-            ),
-            *(
-                f"application/src/main/java/{package_path}/adapter/in/boundary/{name}Adapter.java"
-                for name in boundaries
             ),
             *(
                 _gateway_adapter_path(package_path, item.name, gateway_kinds[item.name])
@@ -418,15 +411,16 @@ Implement only this design-backed bundle using the generated persistence scaffol
 the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 
 - BCE Entity sources may change only method bodies; preserve every public declaration.
-- Generated API interfaces and Controller declarations are immutable; replace only a
-  Controller body sentinel.
+- Generated API interfaces are immutable. Controller routing, Control injection and
+  structural API/BCE conversion are already present; change a Controller body only when the
+  focused scenario proves that a documented outcome needs business-specific handling.
 - Use the completed ERD repositories for persistent behavior; do not keep business state in
   an in-memory collection or invent another persistence port.
 - Write the focused JUnit scenario first, then implement until it passes. Assert returned
   values and persisted state changes, including that rejected requests leave state unchanged.
-- Mark concrete Control services and Boundary/Gateway adapters with the matching Spring
-  stereotype and use constructor injection. The generated web Controller already has its
-  framework annotation; do not create a second bean for it.
+- Mark concrete Control services and Gateway adapters with the matching Spring stereotype
+  and use constructor injection. Generated web Controllers are already Spring beans and call
+  the typed Control binding directly; do not create duplicate HTTP or Boundary adapters.
 - Leave no TODO, FIXME, or placeholder.
 
 ## Relevant requirements and scenarios

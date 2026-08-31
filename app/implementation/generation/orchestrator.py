@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 
 from app.config import settings
 from app.design.schemas.class_model import BCEModel
+from app.design.services.api_spec.models import ApiSpecModel
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
@@ -688,12 +689,21 @@ class PrototypeOrchestrator:
         controller_root = (
             application / "src" / "main" / "java" / package_path / "adapter" / "in" / "web"
         )
+        api_model = ApiSpecModel.model_validate_json(
+            self.spec.inputs["apiModel"].read_text(encoding="utf-8")
+        )
+        bce_model = BCEModel.model_validate_json(
+            self.spec.inputs["bceModel"].read_text(encoding="utf-8")
+        )
         generated = 0
         for interface_path in sorted(api_root.glob("*Api.java")):
             if interface_path.name == "ApiUtil.java":
                 continue
             controller_name, source = render_openapi_controller_scaffold(
-                interface_path.read_text(encoding="utf-8"), self.spec.base_package
+                interface_path.read_text(encoding="utf-8"),
+                self.spec.base_package,
+                api_model=api_model,
+                bce_model=bce_model,
             )
             target = controller_root / f"{controller_name}.java"
             target.parent.mkdir(parents=True, exist_ok=True)
