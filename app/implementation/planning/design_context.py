@@ -277,7 +277,7 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
         "- Do not recreate or rename a generated API Controller. Its class declaration, "
         "request mapping annotations, method name, parameter types, and return type are "
         "already fixed from the generated OpenAPI interface. Replace only each method body's "
-        "`EasyDepControllerBody.required()` sentinel; add minimal private collaborators or a "
+        "`EASYDEP_CONTROLLER_BODY_REQUIRED` sentinel; add minimal private collaborators or a "
         "constructor only when needed to implement that body.\n"
         "- Use the single ApplicationUseCasesTest as a small representative behavior suite; "
         "do not create one mechanical test file per class. Assert observable results rather "

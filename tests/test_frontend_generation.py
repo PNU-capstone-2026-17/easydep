@@ -543,6 +543,30 @@ def test_frontend_verification_runs_install_then_production_build(
     assert commands[1][1:] == ["run", "build"]
 
 
+def test_frontend_repair_reuses_installed_dependencies(tmp_path: Path) -> None:
+    """같은 sandbox에 설치 결과가 있으면 수리 build에서 npm ci를 반복하지 않는다."""
+    frontend = tmp_path / "application/frontend"
+    (frontend / "src").mkdir(parents=True)
+    (frontend / "node_modules").mkdir()
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "node_modules/.package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "src/main.tsx").write_text(
+        "import { HashRouter } from 'react-router-dom'; const app=<HashRouter />;",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def completed(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "ok", "")
+
+    result = run_frontend_verification(tmp_path, completed)
+
+    assert result["exitCode"] == 0
+    assert [command[1:] for command in commands] == [["run", "build"]]
+
+
 def test_frontend_verification_keeps_timeout_diagnostics(tmp_path: Path) -> None:
     frontend = tmp_path / "application/frontend"
     frontend.mkdir(parents=True)

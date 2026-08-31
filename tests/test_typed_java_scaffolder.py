@@ -228,7 +228,7 @@ public interface OrdersApi {
     )
     assert '@PathVariable("orderId") String orderId' in source
     assert "@Valid @RequestBody CreateOrderRequest request" in source
-    assert source.count("EasyDepControllerBody.required();") == 1
+    assert source.count("EASYDEP_CONTROLLER_BODY_REQUIRED") == 1
 
 
 @pytest.mark.parametrize("bad_name", ["9Order", "Bad-Type", "class"])

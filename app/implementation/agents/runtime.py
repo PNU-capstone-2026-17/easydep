@@ -475,6 +475,29 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 # EasyDep은 source를 정규식으로 고치지 않는다. OpenHands가 현재 파일과
                 # compiler/test 결과를 보고 수정하며, 공개 계약은 최종 conformance 검사에서
                 # 별도로 보호한다. 실제 HTTP 흐름 검사는 wiring 작업의 FlowTest에 포함된다.
+                controller_body_paths = context.get("controllerBodyPaths", [])
+                unfinished_controllers: list[str] = []
+                if isinstance(controller_body_paths, list):
+                    for path in controller_body_paths:
+                        if not isinstance(path, str) or not (sandbox / path).is_file():
+                            continue
+                        source = (sandbox / path).read_text(encoding="utf-8")
+                        if "EASYDEP_CONTROLLER_BODY_REQUIRED" in source:
+                            unfinished_controllers.append(path)
+                if unfinished_controllers:
+                    raise WorkspaceVerificationError(
+                        {
+                            "command": ["controller-body-completion"],
+                            "exitCode": 1,
+                            "durationMs": 0,
+                            "stdout": "",
+                            "stderr": "\n".join(
+                                f"Unimplemented Controller body: {path}"
+                                for path in unfinished_controllers
+                            ),
+                            "testResults": "",
+                        }
+                    )
                 editable_entities = [
                     path
                     for path in editable_paths

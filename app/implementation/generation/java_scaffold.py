@@ -280,9 +280,12 @@ def _render_controller_method(mapping: str, signature: str) -> str:
     rendered += "    @Override\n"
     rendered += "    public " + textwrap.indent(signature, "    ").lstrip()
     rendered += " {\n"
-    # 이 미해결 symbol은 초기 public 계약 compile 뒤에 생성된다. 따라서 agent가
-    # 본문을 채우지 않으면 작업 단위의 실제 compile gate를 통과할 수 없다.
-    rendered += "        EasyDepControllerBody.required();\n"
+    # 앞선 persistence 작업도 전체 Java source를 compile한다. 따라서 골격 자체는
+    # compile되어야 하며, use-case 작업의 빠른 완료 검사가 아래 표식을 따로 찾는다.
+    rendered += (
+        '        throw new UnsupportedOperationException('
+        '"EASYDEP_CONTROLLER_BODY_REQUIRED");\n'
+    )
     rendered += "    }"
     return rendered
 

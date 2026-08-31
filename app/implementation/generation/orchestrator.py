@@ -697,8 +697,8 @@ class PrototypeOrchestrator:
     def _generate_openapi_controllers(self, application: Path) -> None:
         """OpenAPI interface의 확정 선언을 Controller 골격으로 한 번 옮긴다.
 
-        OpenAPI Generator가 interface를 만든 직후 그 확정 선언을 사용한다. 선택적인 초기
-        compile 뒤에 골격을 추가하므로 body sentinel은 OpenHands 작업 compile에서 검사된다.
+        OpenAPI Generator가 interface를 만든 직후 그 확정 선언을 사용한다. 골격은 앞선
+        persistence compile을 방해하지 않으며, 미완성 body 표식은 use-case 작업에서 검사한다.
         """
         package_path = Path(self.spec.base_package.replace(".", "/"))
         api_root = application / "src" / "main" / "java" / package_path / "api"

@@ -5,9 +5,8 @@ import re
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-
 
 MUTATING_HTTP_METHODS = {"post", "put", "patch", "delete"}
 
@@ -312,17 +311,21 @@ def run_frontend_verification(
             "testResults": "",
         }
     executable = "npm.cmd" if os.name == "nt" else "npm"
-    commands = [
-        [
-            executable,
-            "ci",
-            "--ignore-scripts",
-            "--no-audit",
-            "--no-fund",
-            "--prefer-offline",
-        ],
-        [executable, "run", "build"],
-    ]
+    commands = []
+    # 같은 task의 repair는 같은 sandbox를 쓴다. 성공한 ``npm ci``가 남긴 lock record가
+    # 있으면 dependency를 다시 지우고 설치하지 않고 TypeScript build만 반복한다.
+    if not (frontend / "node_modules" / ".package-lock.json").is_file():
+        commands.append(
+            [
+                executable,
+                "ci",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+                "--prefer-offline",
+            ]
+        )
+    commands.append([executable, "run", "build"])
     started = time.monotonic()
     outputs: list[str] = []
     errors: list[str] = []
