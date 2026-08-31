@@ -76,3 +76,16 @@ Java에서 사용할 수 없는 패키지나 타입 이름은 파일을 일부 �
 
 이 설정으로 정상 기동하면 wiring 코딩 에이전트는 호출하지 않는다. 실제 build나 HTTP 검사에서
 Bean 연결 오류가 확인된 경우에만 수리 작업이 활성화된다.
+
+## Persistence 골격
+
+`persistence_scaffold.py`는 `erdBceModel`에 확정된 Entity마다 다음 파일을 바로 만든다.
+
+- JPA Entity: ERD 필드, 식별자, 기본 생성자와 필드 접근 메서드
+- Spring Data Repository: Entity와 식별자 타입이 정해진 `JpaRepository`
+- Flyway migration: 같은 필드와 식별자를 사용하는 최초 테이블
+
+이 파일들은 같은 typed 모델에서 언제나 똑같이 만들어지므로 별도의 OpenHands 작업을 사용하지
+않는다. null 허용 여부와 외래 키 소유자처럼 ERD에 없는 내용은 추측하지 않는다. 값 객체와
+목록은 JSON column에 원래 타입 그대로 저장하고, 여러 식별자가 있으면 JPA 복합 키 파일도 함께
+만든다. BCE Entity와 JPA Entity 사이에 필드 손실이 생기는 범용 mapper는 생성하지 않는다.

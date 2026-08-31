@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from app.config import settings
+from app.design.schemas.class_model import BCEModel
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
@@ -29,7 +30,6 @@ from ..planning.design_context import (
     TaskSpec,
     generate_api_adapter_tasks,
     generate_frontend_tasks,
-    generate_persistence_tasks,
     generate_wiring_tasks,
 )
 from ..workflows.conformance import capture_generated_contracts
@@ -40,6 +40,10 @@ from .java_scaffold import (
     build_java_scaffold_trace,
     render_java_scaffold,
     render_openapi_controller_scaffold,
+)
+from .persistence_scaffold import (
+    PERSISTENCE_SCAFFOLDER_VERSION,
+    render_persistence_scaffold,
 )
 
 OPTIONAL_DESIGN_INPUTS = ("erdBceModel", "deploymentBundle", "cloud")
@@ -566,7 +570,7 @@ class PrototypeOrchestrator:
                     pass
 
     def _generate_bce(self, java_root: Path) -> None:
-        """구조화된 BCE JSON을 검증하고 Java source root 아래에 직접 쓴다."""
+        """구조화된 BCE와 ERD JSON에서 Java 계약과 저장 골격을 함께 만든다."""
         def read_json(name: str) -> dict[str, object]:
             return json.loads(self.spec.inputs[name].read_text(encoding="utf-8"))
 
@@ -589,6 +593,16 @@ class PrototypeOrchestrator:
             target = java_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8", newline="\n")
+        persistence_files = (
+            render_persistence_scaffold(scaffold.erd_bce_model, self.spec.base_package)
+            if scaffold.erd_bce_model is not None
+            else {}
+        )
+        application = java_root.parents[2]
+        for relative, content in persistence_files.items():
+            target = application / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8", newline="\n")
         trace_path = java_root.parents[3] / "reports" / "java-scaffold-trace.json"
         trace_path.parent.mkdir(parents=True, exist_ok=True)
         trace_path.write_text(
@@ -604,6 +618,12 @@ class PrototypeOrchestrator:
             "input": "BCEModel",
             "javaVersion": "21",
         }
+        if persistence_files:
+            self._sink().tools["typed-persistence-scaffolder"] = {
+                "version": PERSISTENCE_SCAFFOLDER_VERSION,
+                "input": "erdBceModel",
+                "files": str(len(persistence_files)),
+            }
 
     def _generate_openapi(self, application: Path) -> None:
         command = [
@@ -1009,68 +1029,35 @@ public class SecurityConfiguration {{
 
 
 def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
-    """Add persistence tasks and deterministic dependencies to an existing run."""
+    """결정론적으로 생성된 persistence 파일을 확인하고 LLM 작업은 만들지 않는다."""
     run_root = run_root.resolve()
-    build = run_root / "application" / "build.gradle"
-    if not build.is_file():
-        raise ValueError(f"Run build.gradle was not found: {build}")
-    source = build.read_text(encoding="utf-8")
-    source = source.replace(
-        "    implementation 'org.springframework.data:spring-data-commons'\n",
-        "    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n"
-        "    implementation 'org.flywaydb:flyway-core'\n",
-    )
-    if "spring-boot-starter-data-jpa" not in source:
-        marker = "    implementation 'org.springframework.boot:spring-boot-starter-validation'\n"
-        source = source.replace(
-            marker,
-            marker
-            + "    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n"
-            + "    implementation 'org.flywaydb:flyway-core'\n"
-            + "    runtimeOnly 'org.flywaydb:flyway-mysql'\n",
-        )
-    if "flyway-mysql" not in source:
-        source = source.replace(
-            "    implementation 'org.flywaydb:flyway-core'\n",
-            "    implementation 'org.flywaydb:flyway-core'\n"
-            "    runtimeOnly 'org.flywaydb:flyway-mysql'\n",
-        )
-    if "runtimeOnly 'com.mysql:mysql-connector-j'" not in source:
-        source = source.replace(
-            "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n",
-            "    runtimeOnly 'com.mysql:mysql-connector-j'\n"
-            "    runtimeOnly 'com.h2database:h2'\n"
-            "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n",
-        )
-    build.write_text(source, encoding="utf-8")
+    erd_path = spec.inputs.get("erdBceModel")
+    if erd_path is None or not erd_path.is_file():
+        raise ValueError("erdBceModel is required to generate persistence files")
+    model = BCEModel.model_validate_json(erd_path.read_text(encoding="utf-8"))
+    for relative, content in render_persistence_scaffold(model, spec.base_package).items():
+        target = run_root / "application" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8", newline="\n")
 
-    tasks = generate_persistence_tasks(spec, run_root)
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
-    }
-    # The persistence planner can change task boundaries when the ERD gains
-    # relationships. Replace all of its previous tasks as a unit so an old
-    # per-file entity task never overlaps a new relationship-group task.
     persistence_task_types = {
+        "persistence",
         "persistence-entities",
         "persistence-repositories",
         "persistence-mapping",
         "persistence-schema",
     }
-    existing = {
-        task_id: item for task_id, item in existing.items()
+    manifest["implementation_tasks"] = [
+        item
+        for item in manifest.get("implementation_tasks", [])
         if item.get("task_type") not in persistence_task_types
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
+    ]
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    return [task.to_dict() for task in tasks]
+    return []
 
 
 def plan_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:

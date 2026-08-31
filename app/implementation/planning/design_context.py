@@ -65,116 +65,6 @@ class TaskSpec:
         return asdict(self)
 
 
-def generate_persistence_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
-    """typed Entity 모델을 함께 구현할 persistence 작업 하나로 만든다."""
-    erd_model = _read_json(spec.inputs.get("erdBceModel"))
-    if not erd_model:
-        raise ValueError("erdBceModel is required to plan persistence tasks")
-    ir = build_implementation_ir(spec, run_root)
-    entity_names = list(ir.persistent_entities)
-    if not entity_names:
-        raise ValueError("ERD contains no BCE Entity aliases to persist")
-    contracts = read_generated_java_contracts(run_root, spec.base_package, set(entity_names))
-    package_path = spec.base_package.replace(".", "/")
-    repository_files = [
-        f"application/src/main/java/{package_path}/persistence/repository/{name}Repository.java"
-        for name in entity_names
-    ]
-    entity_files = [
-        f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java"
-        for name in entity_names
-    ]
-    required = [
-        *entity_files,
-        *repository_files,
-        f"application/src/main/java/{package_path}/persistence/mapper/BcePersistenceMapper.java",
-        "application/src/main/resources/db/migration/V1__initial_schema.sql",
-        f"application/src/test/java/{package_path}/persistence/PersistenceContractTest.java",
-    ]
-    # A persistence error generally spans Entity, repository, mapper, and
-    # migration.  These package scopes let one agent fix that vertical slice;
-    # generated BCE/OpenAPI contracts remain outside the editable scope.
-    editable_directories = [
-        f"application/src/main/java/{package_path}/persistence",
-        "application/src/main/resources/db/migration",
-        f"application/src/test/java/{package_path}/persistence",
-    ]
-    editable = _work_unit_editable_paths(run_root, required, editable_directories)
-    output = run_root / "reports" / "implementation-tasks"
-    output.mkdir(parents=True, exist_ok=True)
-    task_id = "implement-shared-persistence"
-    requirement_ids = _ids_for_components(spec, set(entity_names))
-    requirements, use_cases, requirement_sources = _related_requirement_artifacts(
-        spec, requirement_ids
-    )
-    context = {
-        "schemaVersion": "implementation-context/v1alpha1",
-        "taskId": task_id,
-        "taskType": "persistence",
-        "implementationIR": ir.to_dict(),
-        "erdBceModel": erd_model,
-        "bceEntities": entity_names,
-        "generatedJavaContracts": contracts,
-        "requirements": requirements,
-        "useCaseArtifacts": use_cases,
-        "scenarios": _scenarios_for_use_cases(spec, requirement_ids),
-        "requiredOutputs": required,
-    }
-    context_path = output / "shared-persistence.context.json"
-    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
-    prompt = (
-        f"# Shared persistence implementation: {spec.name}\n\n"
-        "Implement the ERD-backed persistence slice as one coherent unit. You may update "
-        "related Entity, repository, mapper, migration, and focused test files when that "
-        "resolves the same schema or compile failure. Generated BCE and OpenAPI sources are "
-        "read-only.\n\n"
-        "Rules:\n"
-        "- Derive tables, columns, keys, nullability, and JPA relationships from the ERD.\n"
-        "- Keep the Entity, Spring Data repository, mapper, migration, and tests consistent; "
-        "do not hand a technical error to another file owner.\n"
-        "- Preserve the exact generated contracts below and do not invent public API members.\n"
-        "- Mark the concrete persistence mapper as a Spring `@Component`; Spring Data "
-        "discovers repository interfaces without a handwritten configuration bean.\n"
-        "- Run the focused persistence compile/test command supplied by the runtime.\n"
-        "- Do not leave TODO, FIXME, placeholder implementations, or speculative fallbacks.\n\n"
-        "## Related persistence requirements and scenarios\n```json\n"
-        + _prompt_json({"requirements": requirements, "useCases": use_cases})
-        + "\n```\n\n"
-        "## Typed persistence model\n```json\n"
-        + _prompt_json(erd_model)
-        + "\n```\n\n## Generated contracts\n```java\n"
-        + contracts
-        + "\n```\n\n## Editable directories\n"
-        + "\n".join(f"- `{path}`" for path in editable_directories)
-    ) + render_allowed_output_rules(required)
-    prompt_path = output / "shared-persistence.prompt.md"
-    prompt_path.write_text(prompt, encoding="utf-8")
-    task = TaskSpec(
-        task_id=task_id,
-        control="shared persistence",
-        prompt_file=_relative(run_root, prompt_path),
-        context_file=_relative(run_root, context_path),
-        allowed_write_paths=editable,
-        required_output_paths=required,
-        immutable_paths=[
-            f"application/src/main/java/{package_path}/bce",
-            f"application/src/main/java/{package_path}/api",
-        ],
-        source_artifacts={
-            name: str(path)
-            for name, path in spec.inputs.items()
-            if name in {"bceModel", "erdBceModel", *requirement_sources} and path.is_file()
-        },
-        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        llm=_llm_config(spec),
-        task_type="persistence",
-    )
-    (output / "shared-persistence.task.json").write_text(
-        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task]
-
-
 @dataclass(frozen=True)
 class _UseCaseBundle:
     use_case_ids: tuple[str, ...]
@@ -474,12 +364,11 @@ def _build_use_case_task(
     entity_sources = [
         f"application/src/main/java/{package_path}/bce/{name}.java" for name in entities
     ]
-    # persistence 작업은 이 작업을 계획한 뒤에 실행된다. 따라서 source 본문을 프롬프트에
-    # 미리 복사할 수는 없지만, 실행 시점에 OpenHands가 확인할 정확한 위치는 알려 줄 수 있다.
+    # persistence 골격은 LLM 작업보다 먼저 생성된다. 프롬프트에 파일 전체를 중복해서
+    # 붙이지 않고, OpenHands가 필요한 선언만 직접 읽을 수 있도록 정확한 위치를 준다.
     dependency_source_paths = [
         f"application/src/main/java/{package_path}/persistence/entity",
         f"application/src/main/java/{package_path}/persistence/repository",
-        f"application/src/main/java/{package_path}/persistence/mapper",
         *entity_sources,
     ]
     editable = _work_unit_editable_paths(run_root, required, entity_sources)
@@ -525,7 +414,7 @@ def _build_use_case_task(
     prompt = (
         f"""# Application use-case bundle: {label}
 
-Implement only this design-backed bundle after persistence. Do not invent behavior outside
+Implement only this design-backed bundle using the generated persistence scaffold. Do not invent behavior outside
 the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 
 - BCE Entity sources may change only method bodies; preserve every public declaration.
@@ -556,7 +445,7 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 ~~~
 
 ## Source to inspect before editing
-The persistence task completes these locations before this task starts. Use the read-only
+EasyDep generates these locations before this task starts. Use the read-only
 `view` operation to inspect their current declarations instead of guessing repository methods
 or previously implemented Entity bodies.
 {chr(10).join(f"- `{path}`" for path in dependency_source_paths)}

@@ -544,8 +544,23 @@ class Order <<Entity>> { - id: UUID }
     tasks = manifest["implementation_tasks"]
     task_types = {task["task_type"] for task in tasks}
     assert task_types == {
-        "persistence", "use-case", "frontend-implementation", "wiring"
+        "use-case", "frontend-implementation", "wiring"
     }
+    assert (
+        run
+        / "application/src/main/java/com/example/orders/persistence/entity/OrderEntity.java"
+    ).is_file()
+    assert (
+        run
+        / "application/src/main/java/com/example/orders/persistence/repository/OrderRepository.java"
+    ).is_file()
+    assert (
+        run / "application/src/main/resources/db/migration/V1__initial_schema.sql"
+    ).is_file()
+    assert not any(
+        "BcePersistenceMapper" in path.as_posix()
+        for path in (run / "application").rglob("*.java")
+    )
     for task in tasks:
         assert set(task["required_output_paths"]) <= set(task["allowed_write_paths"])
 

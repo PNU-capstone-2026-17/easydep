@@ -14,11 +14,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.design.schemas.class_model import BCEModel
 from app.implementation.generation.java_scaffold import (
     JavaScaffoldInput,
     java_type,
     render_java_scaffold,
     render_openapi_controller_scaffold,
+)
+from app.implementation.generation.persistence_scaffold import (
+    render_persistence_scaffold,
 )
 
 
@@ -184,6 +188,30 @@ def test_uses_small_type_map_and_marks_unknown_types() -> None:
 def test_same_input_produces_identical_files() -> None:
     request = JavaScaffoldInput.model_validate(_payload())
     assert render_java_scaffold(request) == render_java_scaffold(request)
+
+
+def test_erd_entities_generate_persistence_without_an_llm_mapper() -> None:
+    """ERD의 확정 필드만으로 JPA·Repository·migration을 바로 만든다."""
+    model = BCEModel.model_validate(_payload()["bceModel"])
+
+    files = render_persistence_scaffold(model, "com.example.orders")
+
+    entity = files[
+        "src/main/java/com/example/orders/persistence/entity/OrderEntity.java"
+    ]
+    repository = files[
+        "src/main/java/com/example/orders/persistence/repository/OrderRepository.java"
+    ]
+    migration = files["src/main/resources/db/migration/V1__initial_schema.sql"]
+    assert "@Entity" in entity
+    assert "@Id" in entity
+    assert "private Object id;" in entity
+    assert "private OrderStatus status;" in entity
+    assert "extends JpaRepository<OrderEntity, Object>" in repository
+    assert "CREATE TABLE easydep_order (" in migration
+    assert "id JSON PRIMARY KEY" in migration
+    assert all("BcePersistenceMapper" not in path for path in files)
+    assert files == render_persistence_scaffold(model, "com.example.orders")
 
 
 def test_controller_scaffold_preserves_generated_openapi_declarations() -> None:
