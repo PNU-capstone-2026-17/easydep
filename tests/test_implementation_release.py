@@ -3,6 +3,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from app.implementation.agents.verification.build import WorkspaceVerificationError
 from app.implementation.agents.verification.release import verify_container_runtime
 from app.implementation.workflows.release import write_release_manifest
 
@@ -79,6 +82,49 @@ def test_container_runtime_smoke_proves_frontend_index_and_bundle(
     )
 
     assert report["frontendRuntime"]["status"] == "SUCCEEDED"
+
+
+def test_container_runtime_failure_keeps_the_last_http_probe_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """프론트엔드 인증 오류를 wiring 수리에 전달할 수 있게 실제 원인을 보존한다."""
+    application = tmp_path / "application"
+    frontend = application / "frontend"
+    frontend.mkdir(parents=True)
+    (application / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+
+    def run(command: list[str], **_kwargs):
+        stdout = "127.0.0.1:49152\n" if command[1] == "port" else ""
+        return subprocess.CompletedProcess(command, 0, stdout, "container log")
+
+    calls = 0
+
+    def http_get(url: str, _timeout: float) -> tuple[int, str, str]:
+        nonlocal calls
+        calls += 1
+        if url.endswith("/actuator/health"):
+            return 200, "application/json", '{"status":"UP"}'
+        raise OSError("HTTP 401 Unauthorized")
+
+    monkeypatch.setattr(
+        "app.implementation.agents.verification.release.time.sleep",
+        lambda _seconds: None,
+    )
+
+    with pytest.raises(WorkspaceVerificationError) as raised:
+        verify_container_runtime(
+            tmp_path,
+            run_command=run,
+            probe=lambda *_args: True,
+            http_get=http_get,
+            startup_timeout_seconds=0.01,
+        )
+
+    assert calls >= 2
+    assert "frontend HTTP probe failed: HTTP 401 Unauthorized" in str(
+        raised.value.evidence["stderr"]
+    )
 
 
 def test_container_runtime_smoke_builds_separate_frontend_image(

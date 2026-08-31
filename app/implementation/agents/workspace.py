@@ -74,12 +74,18 @@ def read_persistence_entity_contracts(run_root: Path, base_package: str) -> str:
     return "\n\n".join(contracts) or "// No persistence entity contracts found"
 
 
-def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
-    """작업별 임시 공간을 만들고 실패 후 재시도에서는 같은 공간을 재사용한다.
+def prepare_agent_workspace(
+    run_root: Path,
+    task: dict[str, object],
+    *,
+    preserve_failed_edits: bool = True,
+) -> Path:
+    """작업별 임시 공간을 만들고 현재 run source와 맞춘다.
 
-    편집 중 실패한 파일은 그대로 남겨 다음 수리 대화가 이어서 사용할 수 있다. 다른 작업이
-    완료한 파일은 기준 application에서 다시 가져오므로 오래된 의존 코드를 보지 않는다.
-    build와 package cache는 복사하지 않는다.
+    한 대화 안에서는 OpenHands가 자유롭게 여러 번 수정한다. 프로세스가 끝난 뒤 시작하는
+    자동 수리는 ``preserve_failed_edits=False``를 사용해 실패한 후보를 버리고, 마지막으로
+    검사를 통과해 run에 반영된 source에서 새로 시작한다. build와 package cache는 복사하지
+    않는다.
     """
     run_key = run_root.name.removeprefix("run_")[:12]
     task_key = str(task["task_id"]).removeprefix("implement-")
@@ -128,6 +134,7 @@ def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
             editable,
             editable_roots,
             immutable,
+            preserve_failed_edits=preserve_failed_edits,
         )
     else:
         sandbox.mkdir(parents=True, exist_ok=True)
@@ -152,8 +159,10 @@ def _refresh_agent_workspace(
     editable: set[str],
     editable_roots: set[str],
     immutable: set[str],
+    *,
+    preserve_failed_edits: bool,
 ) -> None:
-    """수리 중인 파일은 보존하고 나머지 파일을 현재 run source와 맞춘다."""
+    """선택에 따라 미완성 편집을 보존하거나 승인된 run source로 되돌린다."""
     source_files: set[str] = set()
     for source in source_application.rglob("*"):
         if not source.is_file():
@@ -164,12 +173,16 @@ def _refresh_agent_workspace(
         relative_run = (Path("application") / relative_application).as_posix()
         source_files.add(relative_run)
         target = sandbox / relative_run
-        if path_is_editable(
-            relative_run,
-            editable,
-            editable_roots,
-            immutable,
-        ) and target.is_file():
+        if (
+            preserve_failed_edits
+            and path_is_editable(
+                relative_run,
+                editable,
+                editable_roots,
+                immutable,
+            )
+            and target.is_file()
+        ):
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
@@ -178,14 +191,14 @@ def _refresh_agent_workspace(
         if not target.is_file():
             continue
         relative_run = target.relative_to(sandbox).as_posix()
-        if (
-            not path_is_editable(
-                relative_run,
-                editable,
-                editable_roots,
-                immutable,
-            )
-            and relative_run not in source_files
+        editable_extra = path_is_editable(
+            relative_run,
+            editable,
+            editable_roots,
+            immutable,
+        )
+        if relative_run not in source_files and (
+            not preserve_failed_edits or not editable_extra
         ):
             target.unlink()
 

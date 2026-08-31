@@ -18,7 +18,7 @@ from ..planning.design_context import (
     referenced_openapi_model_names,
 )
 from ..workflows.conformance import entity_public_signature_violations
-from ..workflows.repair import referenced_source_paths, repair_task_ids
+from ..workflows.repair import active_repair_for_task
 from .prompts import (
     FRONTEND_SYSTEM_PROMPT,
     IMPLEMENTATION_SYSTEM_PROMPT,
@@ -221,10 +221,55 @@ def _restore_unauthorized_files(
             sandbox_path.unlink()
 
 
+def _repeated_failure(
+    ledger: RepairLedger,
+    candidate_digest: str,
+    finding_keys: tuple[str, ...],
+) -> bool:
+    """같은 source와 같은 검사 오류를 이미 수리하려 했는지 확인한다."""
+    return any(
+        attempt.candidate_digest == candidate_digest
+        and attempt.finding_keys_before == finding_keys
+        for attempt in ledger.attempts
+        if attempt.candidate_digest
+    )
+
+
+def _repair_restart_evidence(
+    evidence: dict[str, object], candidate_digest: str
+) -> dict[str, object]:
+    """coordinator가 성공 source에서 새 대화를 열 수 있는 근거를 덧붙인다."""
+    return {
+        **evidence,
+        "repairControl": {
+            "action": "restart_from_accepted_source",
+            "reason": "same_failure_and_source",
+            "rejectedCandidateDigest": candidate_digest,
+        },
+    }
+
+
+def _owned_directory_roots(paths: list[str]) -> list[str]:
+    """명시된 wiring 파일과 같은 패키지에는 새 구현 파일을 만들 수 있게 한다.
+
+    전체 ``main/java``가 아니라 이미 작업에 배정된 파일의 바로 위 디렉터리만 연다.
+    따라서 OpenHands는 같은 ``config`` 패키지에서 Security 설정을 별도 클래스로 만들지,
+    기존 설정 클래스에 합칠지 스스로 고를 수 있다.
+    """
+    return sorted(
+        {
+            Path(path.replace("\\", "/")).parent.as_posix()
+            for path in paths
+            if path.startswith("application/")
+        }
+    )
+
+
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
     app_id = _run_app_id(run_root)
+    active_repair = active_repair_for_task(run_root, task_id)
     editable_paths = [str(path) for path in task.get("allowed_write_paths", [])]
     required_paths = [
         str(path)
@@ -234,14 +279,27 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         str(path).replace("\\", "/")
         for path in task.get("immutable_paths", [])
     }
+    if active_repair is not None:
+        # 서로 다른 기능의 파일이 함께 실패한 통합 수리도 전체 source 권한을 얻지 않는다.
+        # repair plan이 근거에서 고른 정확한 파일만 기존 기능 작업 범위에 더한다.
+        editable_paths = list(
+            dict.fromkeys(
+                [
+                    *editable_paths,
+                    *(
+                        str(path)
+                        for path in active_repair.get("repairPaths", [])
+                        if isinstance(path, str)
+                        and path.startswith("application/")
+                        and not _path_is_immutable(path, immutable_paths)
+                    ),
+                ]
+            )
+        )
     editable_roots: list[str] = []
-    integration_repair = (
-        task_type == "wiring" and task_id in repair_task_ids(run_root)
-    )
-    if task_type == "use-case" or integration_repair:
-        # 유스케이스와 마지막 통합 수리는 application 구현 source를 함께 맡는다. API와
-        # BCE 공개 계약은 계속 읽기 전용이며 persistence 구현은 실제 오류가 있으면 같은
-        # 코딩 에이전트가 함께 고칠 수 있다.
+    if task_type == "use-case":
+        # 기능 구현 작업은 서로 강하게 연결된 Controller, Service와 Entity 동작을 한 대화에서
+        # 완성한다. 이 자율 범위는 유지하되 wiring 수리에는 더 이상 같은 예외를 적용하지 않는다.
         editable_roots = ["application/src/main/java"]
         immutable_paths = {
             path
@@ -250,8 +308,18 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         }
         task = {
             **task,
+            "allowed_write_paths": editable_paths,
             "allowed_write_roots": editable_roots,
             "immutable_paths": sorted(immutable_paths),
+        }
+    elif active_repair is not None:
+        # 수리 파일 목록과 같은 패키지는 그 작업의 책임 범위다. 새 설정 클래스를 만드는
+        # 정상적인 설계 선택까지 막지 않으면서 다른 기능 패키지는 계속 보호한다.
+        editable_roots = _owned_directory_roots(editable_paths)
+        task = {
+            **task,
+            "allowed_write_paths": editable_paths,
+            "allowed_write_roots": editable_roots,
         }
 
     compatibility = openhands_compatibility()
@@ -259,9 +327,22 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if missing:
         raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
 
-    sandbox = prepare_agent_workspace(run_root, task)
+    sandbox = prepare_agent_workspace(
+        run_root,
+        task,
+        # 실패한 임시 파일은 아직 승인된 source가 아니다. 새 수리 대화는 마지막으로
+        # 검사를 통과해 run에 반영된 source에서 시작한다.
+        preserve_failed_edits=active_repair is None,
+    )
     before = snapshot_files(sandbox)
-    prompt = (run_root / task["prompt_file"]).read_text(encoding="utf-8")
+    prompt_file = (
+        task.get("repair_prompt_file")
+        if active_repair is not None
+        else task.get("prompt_file")
+    )
+    if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
+        prompt_file = str(task["prompt_file"])
+    prompt = (run_root / prompt_file).read_text(encoding="utf-8")
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
     api_model_names = (
         set()
@@ -271,7 +352,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     missing_api_models = {
         name for name in api_model_names if f"// api/model/{name}.java" not in prompt
     }
-    if missing_api_models:
+    if missing_api_models and active_repair is None:
         prompt += "\n\n## Exact generated OpenAPI model contracts\n\n```java\n"
         prompt += read_generated_java_contracts(
             run_root,
@@ -415,10 +496,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             if missing_outputs:
                 finding_keys = tuple(f"missing:{path}" for path in missing_outputs)
                 candidate_digest = stable_digest(snapshot_files(sandbox))
-                repeated = repair_attempt > 0 and any(
-                    item.candidate_digest == candidate_digest
-                    for item in repair_ledger.attempts
-                    if item.candidate_digest
+                repeated = repair_attempt > 0 and _repeated_failure(
+                    repair_ledger,
+                    candidate_digest,
+                    finding_keys,
                 )
                 repair_ledger.record(
                     RepairAttempt(
@@ -443,19 +524,24 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         detail="Missing required outputs: " + ", ".join(missing_outputs),
                     )
                 )
+                if repeated:
+                    raise WorkspaceVerificationError(
+                        _repair_restart_evidence(
+                            {
+                                "command": ["required-task-outputs"],
+                                "exitCode": 1,
+                                "stderr": "Missing required outputs: "
+                                + ", ".join(missing_outputs),
+                            },
+                            candidate_digest,
+                        )
+                    )
                 round_allowed = [
                     str((sandbox / path).resolve()) for path in missing_outputs
                 ]
                 round_prompt = _render_missing_output_repair_prompt(
                     round_allowed,
                 )
-                if repeated:
-                    round_prompt = (
-                        "The previous repair turn made no file change. Inspect the current "
-                        "source with the editor, make a different correction, and do not "
-                        "finish without changing a repair target.\n\n"
-                        + round_prompt
-                    )
                 round_prompt += (
                     "\n\n## Accumulated repair history\n\n"
                     + _implementation_repair_history(repair_ledger)
@@ -541,29 +627,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 changed = changed_files(before, snapshot_files(sandbox))
                 break
             except WorkspaceVerificationError as error:
-                referenced = referenced_source_paths(error.evidence)
-                # 앞 유스케이스가 만든 Service의 잘못된 import처럼 compiler가 실제 원인
-                # 파일을 알려 주면 현재 수리 대화에서 함께 고친다. 유스케이스 묶음은
-                # coordinator가 순차 실행하므로 다른 agent와 같은 파일을 덮어쓰지 않는다.
-                # OpenAPI 같은 생성 계약은 immutable_paths 검사로 계속 보호한다.
-                for path in referenced:
-                    normalized = path.replace("\\", "/")
-                    if (
-                        not editable_roots
-                        and
-                        normalized.startswith("application/")
-                        and not _path_is_immutable(normalized, immutable_paths)
-                        and (sandbox / normalized).is_file()
-                        and normalized not in editable_paths
-                    ):
-                        editable_paths.append(normalized)
                 evidence_digest = stable_digest(error.evidence)
                 finding_keys = (f"verification:{evidence_digest}",)
                 candidate_digest = stable_digest(snapshot_files(sandbox))
-                repeated = repair_attempt > 0 and any(
-                    item.candidate_digest == candidate_digest
-                    for item in repair_ledger.attempts
-                    if item.candidate_digest
+                repeated = repair_attempt > 0 and _repeated_failure(
+                    repair_ledger,
+                    candidate_digest,
+                    finding_keys,
                 )
                 repair_ledger.record(
                     RepairAttempt(
@@ -602,6 +672,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         )[-4000:],
                     )
                 )
+                if repeated:
+                    # 같은 대화에 경고만 추가하면 모델 상태와 source가 그대로라 같은 실패가
+                    # 계속된다. coordinator로 근거를 돌려보내 새 대화와 승인 source 복구를
+                    # 실제로 실행하게 한다.
+                    raise WorkspaceVerificationError(
+                        _repair_restart_evidence(error.evidence, candidate_digest)
+                    ) from error
                 # 같은 대화는 이미 현재 작업의 편집 범위를 가지고 있다. 오류 문자열로
                 # 파일을 다시 좁히지 않고 그 범위 안에서 실제 원인을 찾게 한다.
                 repair_paths = list(editable_paths)
@@ -615,13 +692,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     error.evidence,
                     repair_paths,
                 )
-                if repeated:
-                    round_prompt = (
-                        "The previous repair turn made no file change. Inspect the current "
-                        "source with the editor, make a different correction, and do not "
-                        "finish without changing a repair target.\n\n"
-                        + round_prompt
-                    )
                 round_prompt += (
                     "\n\n## Accumulated repair history\n\n"
                     + _implementation_repair_history(repair_ledger)
@@ -821,11 +891,32 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
     if missing:
         raise RuntimeError("OpenHands SDK prerequisites are missing: " + ", ".join(missing))
     task_type = str(task.get("task_type", ""))
-    integration_repair = (
-        task_type == "wiring" and task_id in repair_task_ids(run_root)
+    active_repair = active_repair_for_task(run_root, task_id)
+    validation_allowed = [
+        str(path) for path in task.get("allowed_write_paths", [])
+    ]
+    if active_repair is not None:
+        validation_allowed = list(
+            dict.fromkeys(
+                [
+                    *validation_allowed,
+                    *(
+                        str(path)
+                        for path in active_repair.get("repairPaths", [])
+                        if isinstance(path, str) and path.startswith("application/")
+                    ),
+                ]
+            )
+        )
+        task = {**task, "allowed_write_paths": validation_allowed}
+    broad_backend_scope = task_type == "use-case"
+    validation_roots = (
+        ["application/src/main/java"]
+        if broad_backend_scope
+        else _owned_directory_roots(validation_allowed)
+        if active_repair is not None
+        else []
     )
-    broad_backend_scope = task_type == "use-case" or integration_repair
-    validation_roots = ["application/src/main/java"] if broad_backend_scope else []
     validation_immutable = {
         str(path).replace("\\", "/")
         for path in task.get("immutable_paths", [])
@@ -841,8 +932,10 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
             "allowed_write_roots": validation_roots,
             "immutable_paths": sorted(validation_immutable),
         }
+    elif active_repair is not None:
+        task = {**task, "allowed_write_roots": validation_roots}
     sandbox = prepare_agent_workspace(run_root, task)
-    allowed = [str((sandbox / path).resolve()) for path in task["allowed_write_paths"]]
+    allowed = [str((sandbox / path).resolve()) for path in validation_allowed]
     allowed_roots = [
         str((sandbox / path).resolve()) for path in validation_roots
     ]

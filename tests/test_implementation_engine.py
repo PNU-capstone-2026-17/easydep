@@ -13,8 +13,13 @@ from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
     task_verification_command,
     verify_run_workspace,
+    verify_use_case_scenarios,
 )
-from app.implementation.agents.workspace import path_is_editable
+from app.implementation.agents.workspace import (
+    cleanup_agent_workspace,
+    path_is_editable,
+    prepare_agent_workspace,
+)
 from app.implementation.delivery.container import render_deployment
 from app.implementation.delivery.terraform import render_iac
 from app.implementation.domain.models import JobSpec
@@ -27,6 +32,10 @@ from app.implementation.workflows.coordinator import (
     plan_workflow,
     reconcile_workflow_state,
     run_workflow,
+)
+from app.implementation.workflows.repair import (
+    apply_repair_directives,
+    schedule_cross_phase_repair,
 )
 from tests.class_design_fixtures import (
     typed_class_model_payload,
@@ -56,6 +65,53 @@ def test_final_workspace_verification_publishes_success_report(
     )
     assert result["status"] == "SUCCEEDED"
     assert report["verification"] == verification
+
+
+def test_one_scenario_method_can_cover_multiple_use_cases(tmp_path: Path) -> None:
+    """한 흐름으로 여러 유스케이스를 검사한 테스트를 개수 부족으로 거절하지 않는다."""
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": "implement-use-cases-uc1-uc2-uc3",
+                        "task_type": "use-case",
+                        "use_case_ids": ["UC1", "UC2", "UC3"],
+                        "required_test_paths": [
+                            "application/src/test/java/com/example/UseCaseBundleTest.java"
+                        ],
+                    },
+                    {
+                        "task_id": "implement-application-wiring",
+                        "task_type": "wiring",
+                        "use_case_ids": ["UC1", "UC2", "UC3"],
+                        "required_test_paths": [
+                            "application/src/test/java/com/example/ApplicationFlowTest.java"
+                        ],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    junit = tmp_path / "sandbox/application/build/test-results/test/TEST-flow.xml"
+    junit.parent.mkdir(parents=True)
+    junit.write_text(
+        """<testsuite tests="2" failures="0" errors="0" skipped="0">
+<testcase classname="com.example.UseCaseBundleTest" name="fullBundleFlow"/>
+<testcase classname="com.example.ApplicationFlowTest" name="fullApplicationFlow"/>
+</testsuite>""",
+        encoding="utf-8",
+    )
+
+    result = verify_use_case_scenarios(tmp_path / "sandbox", run)
+
+    assert result["status"] == "PASSED"
+    assert result["coveredUseCaseIds"] == ["UC1", "UC2", "UC3"]
+    assert [task["requiredPassedCases"] for task in result["tasks"]] == [1, 1]
 
 
 def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None:
@@ -509,7 +565,7 @@ class Order <<Entity>> { - id: UUID }
 def test_scenario_failure_returns_to_automatic_repair_without_user_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """실패한 최종 사용자 흐름은 입력 대기 대신 wiring 통합 수리가 된다."""
+    """최종 검사도 오류 파일을 원래 소유한 기능 작업으로 돌려보낸다."""
     run = tmp_path / "run"
     flow_path = "application/src/test/java/com/example/OrderScenarioTest.java"
     flow = run / flow_path
@@ -560,7 +616,149 @@ def test_scenario_failure_returns_to_automatic_repair_without_user_input(
     assert result["repairPlan"] == "reports/repair-plan.json"
     repair = json.loads((reports / "repair-plan.json").read_text(encoding="utf-8"))
     assert repair["status"] == "ACTIVE"
-    assert repair["entries"][-1]["ownerTaskIds"] == ["implement-application-wiring"]
+    assert repair["entries"][-1]["ownerTaskIds"] == ["implement-order-use-cases"]
+    assert repair["entries"][-1]["repairPaths"] == [flow_path]
+
+
+def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
+    tmp_path: Path,
+) -> None:
+    """자동 수리는 전체 초기 설명과 실패한 임시 코드를 다음 대화로 넘기지 않는다."""
+    run = tmp_path / "run_repair_prompt"
+    reports = run / "reports"
+    task_dir = reports / "implementation-tasks"
+    task_dir.mkdir(parents=True)
+    source_path = "application/src/main/java/com/example/ApplicationConfiguration.java"
+    source = run / source_path
+    source.parent.mkdir(parents=True)
+    source.write_text("class ApplicationConfiguration { /* accepted */ }", encoding="utf-8")
+    prompt_path = task_dir / "wiring.md"
+    initial_prompt = "INITIAL IMPLEMENTATION CONTEXT\n" + ("all requirements\n" * 100)
+    prompt_path.write_text(initial_prompt, encoding="utf-8")
+    task = {
+        "task_id": "implement-application-wiring",
+        "task_type": "wiring",
+        "prompt_file": str(prompt_path.relative_to(run)).replace("\\", "/"),
+        "allowed_write_paths": [source_path],
+        "required_output_paths": [source_path],
+        "immutable_paths": [],
+    }
+    (task_dir / "wiring.task.json").write_text(
+        json.dumps(task), encoding="utf-8"
+    )
+    (reports / "run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
+    )
+
+    entry = schedule_cross_phase_repair(
+        run,
+        "verify-container-runtime",
+        {
+            "command": ["docker", "runtime-smoke"],
+            "stderr": "frontend HTTP probe failed: HTTP 401 Unauthorized",
+        },
+        failed_task_type="wiring",
+    )
+    assert entry is not None
+    apply_repair_directives(run)
+
+    stored_task = json.loads(
+        (task_dir / "wiring.task.json").read_text(encoding="utf-8")
+    )
+    repair_prompt = (run / stored_task["repair_prompt_file"]).read_text(
+        encoding="utf-8"
+    )
+    assert prompt_path.read_text(encoding="utf-8") == initial_prompt
+    assert "INITIAL IMPLEMENTATION CONTEXT" not in repair_prompt
+    assert "401 Unauthorized" in repair_prompt
+    assert source_path in repair_prompt
+    assert entry["acceptedSourceRoot"] == "application"
+    assert entry["acceptedSourceDigest"]
+
+    sandbox = prepare_agent_workspace(run, stored_task)
+    (sandbox / source_path).write_text("class Broken {}", encoding="utf-8")
+    extra = sandbox / "application/src/main/java/com/example/Unrelated.java"
+    extra.write_text("class Unrelated {}", encoding="utf-8")
+    restored = prepare_agent_workspace(
+        run, stored_task, preserve_failed_edits=False
+    )
+    assert (restored / source_path).read_text(encoding="utf-8") == (
+        "class ApplicationConfiguration { /* accepted */ }"
+    )
+    assert not extra.exists()
+    cleanup_agent_workspace(restored)
+
+
+def test_retried_release_failure_returns_to_wiring_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """완료 작업을 재검증하다 난 컨테이너 오류도 wiring 수리로 이어진다."""
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": "implement-application-wiring",
+                        "task_type": "wiring",
+                        "allowed_write_paths": ["application/src/main/java"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    completed = {
+        "status": "COMPLETE",
+        "tasks": [
+            {
+                "taskId": "implement-application-wiring",
+                "status": "SUCCEEDED",
+                "phase": "wiring",
+            }
+        ],
+        "phases": [{"phaseId": "wiring", "status": "SUCCEEDED"}],
+        "nextRunnableTasks": [],
+    }
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_workflow",
+        lambda *_args: dict(completed),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_source_design_conformance",
+        lambda *_args: {"status": "PASSED"},
+    )
+
+    def failed_container(*_args: object) -> None:
+        raise WorkspaceVerificationError(
+            {
+                "command": ["docker", "runtime-smoke"],
+                "exitCode": 1,
+                "stderr": "frontend HTTP probe failed: HTTP 401 Unauthorized",
+            }
+        )
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator._complete_release",
+        failed_container,
+    )
+
+    result = run_workflow(
+        run,
+        SimpleNamespace(app_id="app-1"),
+        None,
+        verifier=lambda _run: {"status": "SUCCEEDED"},
+        auditor=lambda _run: {"status": "COMPLETE"},
+    )
+
+    assert result.get("blockingReason") is None
+    repair = json.loads((reports / "repair-plan.json").read_text(encoding="utf-8"))
+    assert repair["entries"][-1]["ownerTaskIds"] == [
+        "implement-application-wiring"
+    ]
+    assert "401 Unauthorized" in repair["entries"][-1]["evidence"]
 
 
 def test_source_conformance_rejects_agent_changes_to_generated_contract(

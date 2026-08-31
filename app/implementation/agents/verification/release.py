@@ -16,6 +16,8 @@ from app.implementation.runtime.observations import (
     health_path_from_observations,
 )
 
+from .build import WorkspaceVerificationError
+
 
 def verify_container_runtime(
     run_root: Path,
@@ -58,6 +60,7 @@ def verify_container_runtime(
     frontend_runtime: dict[str, object] | None = None
     health_path = _runtime_health_path(run_root)
     health_runtime: dict[str, object] | None = None
+    last_probe_error = ""
     try:
         build = ["docker", "build", "--tag", image, "."]
         commands.append(build)
@@ -133,7 +136,8 @@ def verify_container_runtime(
                             "httpStatus": health_status,
                             "contentType": health_type,
                         }
-                    except (OSError, RuntimeError):
+                    except (OSError, RuntimeError) as probe_error:
+                        last_probe_error = f"health probe failed: {probe_error}"
                         time.sleep(1)
                         continue
                     if frontend_required and not separate_frontend:
@@ -141,7 +145,10 @@ def verify_container_runtime(
                             frontend_runtime = _verify_frontend_http(
                                 port, http_get
                             )
-                        except (OSError, RuntimeError):
+                        except (OSError, RuntimeError) as probe_error:
+                            last_probe_error = (
+                                f"frontend HTTP probe failed: {probe_error}"
+                            )
                             time.sleep(1)
                             continue
                     status = "SUCCEEDED"
@@ -161,6 +168,8 @@ def verify_container_runtime(
             raise RuntimeError(
                 "Container health endpoint did not return a successful HTTP response "
                 "before timeout: "
+                + (last_probe_error or "no successful HTTP response")
+                + "\n"
                 + (logs.stderr[-3000:] or logs.stdout[-3000:])
             )
         if frontend_required and separate_frontend:
@@ -215,7 +224,20 @@ def verify_container_runtime(
     }
     _write_report(report_path, report)
     if status != "SUCCEEDED":
-        raise RuntimeError("Generated container runtime smoke failed: " + error)
+        # 컨테이너는 wiring 작업이 만든 Spring 설정과 정적 파일을 실제로 실행한다.
+        # 이 실패도 compile/test 실패와 같은 구조로 넘겨야 코딩 에이전트가 사용자 입력 없이
+        # 설정을 고치고 다시 검증할 수 있다.
+        raise WorkspaceVerificationError(
+            {
+                "command": ["docker", "runtime-smoke"],
+                "exitCode": 1,
+                "durationMs": report["durationMs"],
+                "stdout": "",
+                "stderr": error,
+                "testResults": "",
+                "containerRuntime": report,
+            }
+        )
     return report
 
 

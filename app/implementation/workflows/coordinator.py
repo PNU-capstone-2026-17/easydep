@@ -356,7 +356,25 @@ def _run_workflow(
                     return repaired
                 _record_workflow_failure(run_root, state, error)
                 raise
-            _complete_release(run_root, spec, state, audit, verification, conformance)
+            try:
+                _complete_release(
+                    run_root, spec, state, audit, verification, conformance
+                )
+            except WorkspaceVerificationError as error:
+                # 이미 모든 작업이 끝난 뒤 재시도한 경우에도 최초 실행과 똑같이
+                # 컨테이너 실행 실패를 wiring 작업으로 돌려보낸다. 이 분기가 없으면
+                # 같은 401 오류라도 재시도 경로에서는 Job이 곧바로 종료된다.
+                repaired = _continue_after_verification_failure(
+                    run_root,
+                    spec,
+                    failure_id="verify-container-runtime",
+                    failed_task_type="wiring",
+                    error=error,
+                )
+                if repaired is not None:
+                    return repaired
+                _record_workflow_failure(run_root, state, error)
+                raise
         elif state.get("status") != "NEEDS_INPUT":
             repaired = _continue_after_incomplete_audit(run_root, spec, audit)
             if repaired is not None:
@@ -507,9 +525,22 @@ def _run_workflow(
                 return repaired
             _record_workflow_failure(run_root, final_state, error)
             raise
-        _complete_release(
-            run_root, spec, final_state, audit, verification, conformance
-        )
+        try:
+            _complete_release(
+                run_root, spec, final_state, audit, verification, conformance
+            )
+        except WorkspaceVerificationError as error:
+            repaired = _continue_after_verification_failure(
+                run_root,
+                spec,
+                failure_id="verify-container-runtime",
+                failed_task_type="wiring",
+                error=error,
+            )
+            if repaired is not None:
+                return repaired
+            _record_workflow_failure(run_root, final_state, error)
+            raise
     elif final_state.get("status") != "NEEDS_INPUT":
         if not final_state.get("nextRunnableTasks"):
             repaired = _continue_after_incomplete_audit(run_root, spec, audit)
