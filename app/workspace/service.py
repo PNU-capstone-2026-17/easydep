@@ -189,8 +189,18 @@ def _merge_delegated_repair_state(
     candidate_digest = stable_digest(after)
     rejected_before = {str(value) for value in old.get("rejected_candidate_digests") or [] if value}
     repeated = bool(after) and (after == before or candidate_digest in rejected_before)
+    before_set = set(before)
+    after_set = set(after)
     outcome: RepairOutcome = (
-        "clean" if not after else "repeated_candidate" if repeated else "improved"
+        "clean"
+        if not after
+        else "repeated_candidate"
+        if repeated
+        else "improved"
+        if after_set < before_set
+        else "regressed"
+        if before_set < after_set
+        else "no_improvement"
     )
     delegated = RepairAttempt(
         stage="workspace.delegate-repair",
@@ -203,6 +213,10 @@ def _merge_delegated_repair_state(
         detail=(
             "The delegated repair returned the same blocker set."
             if repeated
+            else "The delegated repair introduced additional blockers."
+            if outcome == "regressed"
+            else "The delegated repair did not reduce the blocker set."
+            if outcome == "no_improvement"
             else "The normal user-visible delegate action was executed."
         ),
     ).model_dump(mode="json")
@@ -232,10 +246,14 @@ def _merge_delegated_repair_state(
         for value in state.get("rejected_candidate_digests") or []
         if value
     }
-    if repeated:
+    if outcome not in {"improved", "clean"}:
         rejected.add(candidate_digest)
     status = (
-        "COMPLETED" if not after else "STALLED" if repeated else str(new.get("status") or "ACTIVE")
+        "COMPLETED"
+        if not after
+        else "ACTIVE"
+        if outcome == "improved"
+        else "STALLED"
     )
     return {
         "status": status,
@@ -252,6 +270,10 @@ def _merge_delegated_repair_state(
         "stall_reason": (
             "The delegated repair repeated the same unresolved blocker set."
             if repeated
+            else "The delegated repair introduced additional blockers."
+            if outcome == "regressed"
+            else "The delegated repair did not reduce the blocker set."
+            if outcome == "no_improvement"
             else str(new.get("stall_reason") or "")
         ),
     }
@@ -1005,11 +1027,14 @@ class WorkspaceService:
                 result = analyze_requirements(request)
             shaped = self._requirements_result(result)
             if command.get("action") == "delegate_repair":
-                shaped["repair_state"] = _merge_delegated_repair_state(
+                merged_repair_state = _merge_delegated_repair_state(
                     previous_result,
                     shaped,
                     strategy_key=str(payload.get("_repair_strategy_key") or "delegate"),
                 )
+                shaped["repair_state"] = merged_repair_state
+                if merged_repair_state.get("status") == "STALLED":
+                    shaped["can_delegate_repair"] = False
             return shaped
 
         if stage == "design":
@@ -1108,11 +1133,14 @@ class WorkspaceService:
             if command.get("action") == "delegate_repair":
                 action_id = str(payload.get("action_id") or "")
                 previous = repository.get_command(action_id) or {}
-                shaped["repair_state"] = _merge_delegated_repair_state(
+                merged_repair_state = _merge_delegated_repair_state(
                     previous.get("result") or {},
                     shaped,
                     strategy_key=str(payload.get("_repair_strategy_key") or "delegate"),
                 )
+                shaped["repair_state"] = merged_repair_state
+                if merged_repair_state.get("status") == "STALLED":
+                    shaped["can_delegate_repair"] = False
             return shaped
 
         if stage != "implementation":

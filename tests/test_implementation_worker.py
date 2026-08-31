@@ -153,6 +153,43 @@ def test_ready_workflow_with_pending_tasks_remains_ready(tmp_path: Path) -> None
     assert record["status"] == "READY"
 
 
+def test_completed_job_is_not_published_before_artifacts_are_persisted() -> None:
+    events: list[tuple[str, str]] = []
+    record = {
+        "job_id": "job-completed",
+        "status": "READY",
+        "run_root": "run-root",
+        "job_path": "job.json",
+    }
+
+    class Client:
+        @staticmethod
+        def run_phase(*_args: object) -> dict:
+            return {
+                "status": "COMPLETE",
+                "nextRunnableTasks": [],
+                "phases": [{"status": "SUCCEEDED"}],
+                "tasks": [{"status": "SUCCEEDED"}],
+            }
+
+        @staticmethod
+        def transmission_request(_run_root: Path) -> None:
+            return None
+
+    worker = object.__new__(ImplementationWorker)
+    worker.client = Client()
+    worker._read = lambda _job_id: record
+    worker._write = lambda current: events.append(("write", current["status"]))
+    worker._persist_outputs = lambda current: events.append(
+        ("persist", current["status"])
+    )
+    worker._fail = lambda _record, error: pytest.fail(str(error))
+
+    worker._run("job-completed", "approval.json", False)
+
+    assert events == [("write", "RUNNING"), ("persist", "COMPLETED")]
+
+
 def test_feedback_eligibility_rejects_design_contract_changes() -> None:
     result = assess_feedback_eligibility("OpenAPI 엔드포인트와 응답 스키마를 변경해줘")
 

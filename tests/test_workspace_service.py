@@ -1274,6 +1274,33 @@ def test_delegated_repair_keeps_running_after_blockers_make_progress() -> None:
     assert state["recent_attempts"][-1]["outcome"] == "improved"
 
 
+def test_delegated_repair_stalls_when_it_introduces_more_blockers() -> None:
+    previous = {
+        "blocking_findings": [
+            {"code": "one", "stage": "api_spec", "message": "one"},
+        ],
+        "repair_state": {"status": "ACTIVE", "recent_attempts": []},
+    }
+    current = {
+        "blocking_findings": [
+            {"code": "one", "stage": "api_spec", "message": "one"},
+            {"code": "two", "stage": "api_spec", "message": "two"},
+        ],
+        "repair_state": {"status": "ACTIVE", "recent_attempts": []},
+    }
+
+    state = workspace_module._merge_delegated_repair_state(
+        previous,
+        current,
+        strategy_key="delegate:design:api_spec:episode-1",
+    )
+
+    assert state["status"] == "STALLED"
+    assert state["accepted_count"] == 0
+    assert state["recent_attempts"][-1]["outcome"] == "regressed"
+    assert state["rejected_candidate_digests"] == [state["finding_digest"]]
+
+
 def test_failed_testing_is_an_actionable_repair_gate(monkeypatch) -> None:
     monkeypatch.setattr(
         workspace_module,

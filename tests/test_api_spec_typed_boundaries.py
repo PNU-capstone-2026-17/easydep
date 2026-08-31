@@ -12,7 +12,10 @@ from app.design.rtm import build_design_rtm
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec import service
 from app.design.services.api_spec.models import ApiSpecModel, ApiSpecProposal
-from app.design.services.api_spec.normalization import normalize_api_spec_model
+from app.design.services.api_spec.normalization import (
+    normalize_api_spec_model,
+    normalize_stored_api_spec_model,
+)
 from app.design.services.api_spec.projection import build_openapi_from_model
 from app.design.services.sequence_diagram.projection import SequenceCollection
 from app.implementation.generation.frontend_scaffold import validate_openapi
@@ -237,6 +240,72 @@ def test_body_field_keeps_the_custom_control_parameter_type() -> None:
         if schema.name == "CatalogSearchRequest"
     )
     assert request.fields[0].type == "CourseFilter"
+
+
+def test_openapi_component_ref_is_canonicalized_before_body_binding() -> None:
+    """렌더링된 component ref도 BCE DTO body parameter에 연결된다."""
+
+    payload = _proposal().model_dump()
+    endpoint = payload["Endpoints"][0]
+    endpoint["method"] = "post"
+    endpoint["query_params"] = []
+    endpoint["request_schema"] = "#/components/schemas/CourseFilter"
+    payload["Schemas"].append(
+        {
+            "name": "#/components/schemas/CourseFilter",
+            "fields": [{"name": "keyword", "type": "string"}],
+        }
+    )
+
+    normalized = normalize_api_spec_model(
+        ApiSpecProposal.model_validate(payload), _bce_model(),
+    )
+
+    endpoint = normalized.Endpoints[0]
+    assert endpoint.request_schema == "CourseFilter"
+    assert endpoint.control_binding is not None
+    assert [argument.model_dump() for argument in endpoint.control_binding.arguments] == [
+        {"name": "filter", "source": "$body"}
+    ]
+    assert [schema.name for schema in normalized.Schemas].count("CourseFilter") == 1
+    openapi = build_openapi_from_model(normalized)
+    assert openapi["paths"]["/courses"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"] == {"$ref": "#/components/schemas/CourseFilter"}
+
+
+def test_stored_api_model_rebuilds_legacy_body_binding() -> None:
+    """과거 checkpoint의 빈 binding도 현재 BCE 계약으로 복구된다."""
+
+    payload = _proposal().model_dump()
+    endpoint = payload["Endpoints"][0]
+    endpoint["method"] = "post"
+    endpoint["query_params"] = []
+    endpoint["request_schema"] = "#/components/schemas/CourseFilter"
+    endpoint["control_binding"] = {
+        "control": "CatalogControl",
+        "method": "searchCatalog",
+        "arguments": [],
+        "outcomes": [{"status": 200, "outcome": "ok"}],
+    }
+    payload["Schemas"].append(
+        {
+            "name": "#/components/schemas/CourseFilter",
+            "fields": [{"name": "keyword", "type": "string"}],
+        }
+    )
+
+    restored = normalize_stored_api_spec_model(
+        ApiSpecModel.model_validate(payload),
+        _bce_model(),
+    )
+
+    endpoint = restored.Endpoints[0]
+    assert endpoint.request_schema == "CourseFilter"
+    assert endpoint.control_binding is not None
+    assert [argument.model_dump() for argument in endpoint.control_binding.arguments] == [
+        {"name": "filter", "source": "$body"}
+    ]
 
 
 def test_generation_service_accepts_typed_inputs_and_returns_normalized_model(

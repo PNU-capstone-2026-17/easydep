@@ -12,7 +12,13 @@
   import { errorMessage } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
-  import { artifactPresent, fileArtifactTypes, internalArtifactTypes } from '$lib/artifacts';
+  import {
+    artifactPresent,
+    fileArtifactTypes,
+    implementationCompletionArtifactLoadKey,
+    internalArtifactTypes,
+    shouldLoadFileArtifactsInitially
+  } from '$lib/artifacts';
   import { nextAutoAction } from '$lib/auto-mode';
 
   const AUTO_MODE_STORAGE_KEY = 'easydep:auto-mode';
@@ -32,7 +38,8 @@
   let actionBusy = $state(false);
   let error = $state('');
   let source: EventSource | null = null;
-  let artifactRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let stateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  const completedArtifactLoads = new Set<string>();
   let classPreview = $state<LiveDiagramPreview | null>(null);
   let liveSources = $state<LiveSourceSnapshot | null>(null);
   let selectedSourcePath = $state('');
@@ -111,7 +118,7 @@
       .catch(() => undefined);
     return () => {
       source?.close();
-      if (artifactRefreshTimer) clearTimeout(artifactRefreshTimer);
+      if (stateRefreshTimer) clearTimeout(stateRefreshTimer);
       window.removeEventListener('popstate', syncLocation);
     };
   });
@@ -158,10 +165,10 @@
     apps = await listApps();
   }
 
-  function scheduleArtifactRefresh(id: string) {
-    if (artifactRefreshTimer) return;
-    artifactRefreshTimer = setTimeout(() => {
-      artifactRefreshTimer = null;
+  function scheduleStateRefresh(id: string) {
+    if (stateRefreshTimer) return;
+    stateRefreshTimer = setTimeout(() => {
+      stateRefreshTimer = null;
       void refreshState(id).catch(() => undefined);
     }, 800);
   }
@@ -177,7 +184,12 @@
       command = snapshot.command ?? null;
       deploymentPreferences = snapshot.deployment_preferences ?? null;
       currentStage = (command?.stage ?? snapshot.current_stage ?? 'requirements') as Stage;
-      const loadedFileArtifacts = await loadFileArtifacts(id);
+      const loadedFileArtifacts = shouldLoadFileArtifactsInitially(command)
+        ? await loadFileArtifacts(id)
+        : {};
+      if (command?.stage === 'implementation' && command.status === 'COMPLETED') {
+        completedArtifactLoads.add(`${id}:${command.command_id}`);
+      }
       applyArtifactSnapshot(document, loadedFileArtifacts, true);
       const liveJobId = findImplementationJobId(command, events);
       if (
@@ -215,7 +227,7 @@
           void refreshClassPreview(id, event.command_id, true);
         }
         if (event.kind !== 'progress') void refreshState(id);
-        else if (event.stage === 'implementation') scheduleArtifactRefresh(id);
+        else if (event.stage === 'implementation') scheduleStateRefresh(id);
       },
       () => (connected = false)
     );
@@ -243,6 +255,7 @@
 
   async function refreshState(id = appId) {
     if (!id) return;
+    const previousCommand = command;
     const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
     const nextCommand = snapshot.command ?? null;
     events = snapshot.events;
@@ -250,7 +263,10 @@
     deploymentPreferences = snapshot.deployment_preferences ?? null;
     currentStage = (command?.stage ?? snapshot.current_stage ?? currentStage) as Stage;
     let nextFileArtifacts = fileArtifacts;
-    if (['implementation', 'testing'].includes(nextCommand?.stage ?? '') || Object.keys(fileArtifacts).length) {
+    const completionKey = implementationCompletionArtifactLoadKey(previousCommand, nextCommand);
+    const artifactLoadKey = completionKey ? `${id}:${completionKey}` : null;
+    if (artifactLoadKey && !completedArtifactLoads.has(artifactLoadKey)) {
+      completedArtifactLoads.add(artifactLoadKey);
       nextFileArtifacts = await loadFileArtifacts(id);
     }
     applyArtifactSnapshot(document, nextFileArtifacts);

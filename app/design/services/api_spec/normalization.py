@@ -34,6 +34,7 @@ _JSON_TYPES = {
     "localdatetime": "string",
     "instant": "string",
 }
+_COMPONENT_SCHEMA_PREFIX = "#/components/schemas/"
 _COLLECTION = re.compile(
     r"(?:java\.util\.)?(?:List|Set|Collection|Iterable|Array)<(.+)>",
     re.IGNORECASE,
@@ -160,6 +161,22 @@ def api_input_type_for_control(type_name: str) -> str:
     return f"{normalized}[]" if is_array else normalized
 
 
+def _canonical_schema_name(value: str) -> str:
+    """OpenAPI component ref를 compact proposal의 schema 이름으로 바꾼다.
+
+    LLM이 ``CreateCourseRequest`` 대신 렌더링 표현인
+    ``#/components/schemas/CreateCourseRequest``를 반환해도 같은 schema다. 이 접두사를
+    이름으로 보존하면 Control의 ``CreateCourseRequest`` parameter와 ``$body``가 서로
+    다른 타입처럼 보여 argument binding이 사라진다.
+    """
+
+    name = str(value or "").strip()
+    if name.startswith(_COMPONENT_SCHEMA_PREFIX):
+        referenced = name.removeprefix(_COMPONENT_SCHEMA_PREFIX).strip()
+        return referenced or name
+    return name
+
+
 def response_contract_for_control(return_type: str) -> tuple[str, bool]:
     """Control 반환 타입으로 성공 응답 schema와 배열 여부를 정한다."""
 
@@ -176,11 +193,14 @@ def normalize_api_spec_model(
     """LLM의 HTTP 제안과 승인된 Boundary→Control 계약을 결합한다."""
 
     contracts = {item.interaction_id: item for item in interaction_contracts(bce_model)}
-    schemas = {
-        schema.name: schema.model_dump()
-        for schema in proposal.Schemas
-        if schema.name.strip()
-    }
+    schemas: dict[str, dict[str, Any]] = {}
+    for schema in proposal.Schemas:
+        name = _canonical_schema_name(schema.name)
+        if not name:
+            continue
+        payload = schema.model_dump()
+        payload["name"] = name
+        schemas[name] = payload
     domain_schemas = _domain_schemas(bce_model)
     for name, schema in domain_schemas.items():
         current = schemas.setdefault(name, schema)
@@ -190,10 +210,13 @@ def normalize_api_spec_model(
     for name, schema in schemas.items():
         schema["source_class"] = name if name in source_types else ""
 
-    endpoints = [
-        _materialize_endpoint(endpoint.model_dump(), contracts, schemas)
-        for endpoint in proposal.Endpoints
-    ]
+    endpoints = []
+    for endpoint in proposal.Endpoints:
+        payload = endpoint.model_dump()
+        payload["request_schema"] = _canonical_schema_name(
+            str(payload.get("request_schema") or "")
+        )
+        endpoints.append(_materialize_endpoint(payload, contracts, schemas))
     request_schemas = {
         endpoint.request_schema for endpoint in endpoints if endpoint.request_schema
     }
@@ -486,3 +509,26 @@ def api_spec_proposal_from_model(
             if schema.name in request_schema_names and not schema.source_class
         ],
     })
+
+
+def normalize_stored_api_spec_model(
+    value: dict[str, Any] | ApiSpecModel,
+    bce_model: BCEModel,
+) -> ApiSpecModel:
+    """과거 checkpoint의 HTTP 제안을 현재 BCE 계약으로 다시 결합한다.
+
+    저장 모델의 Control binding은 코드가 만든 파생 정보다. schema 이름 표기나 wire 타입
+    규칙이 바뀌었을 때 과거 binding을 그대로 검사하면 이미 수정된 코드에서도 앱이 계속
+    막힌다. 사용자가 정한 HTTP surface만 proposal로 되돌린 뒤 현재 결정론적 규칙으로
+    binding과 trace를 다시 만든다.
+    """
+
+    current = (
+        value
+        if isinstance(value, ApiSpecModel)
+        else ApiSpecModel.model_validate(value)
+    )
+    return normalize_api_spec_model(
+        api_spec_proposal_from_model(current, bce_model),
+        bce_model,
+    )

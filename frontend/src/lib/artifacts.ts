@@ -1,3 +1,5 @@
+import type { WorkspaceCommand } from '$lib/types';
+
 export const artifactLabels: Record<string, string> = {
   refined_requirements: 'Refined requirements',
   usecase_spec: 'Use-case model',
@@ -46,4 +48,29 @@ export const internalArtifactTypes = new Set([
 export function artifactPresent(value: unknown): boolean {
   if (typeof value === 'string') return value.length > 0;
   return value != null && typeof value === 'object' && Object.keys(value).length > 0;
+}
+
+export function shouldLoadFileArtifactsInitially(
+  command: WorkspaceCommand | null | undefined
+): boolean {
+  if (!command) return false;
+  return command.stage === 'testing' || (
+    command.stage === 'implementation' && command.status === 'COMPLETED'
+  );
+}
+
+export function implementationCompletionArtifactLoadKey(
+  previous: WorkspaceCommand | null | undefined,
+  next: WorkspaceCommand | null | undefined
+): string | null {
+  if (
+    !next ||
+    next.stage !== 'implementation' ||
+    next.status !== 'COMPLETED'
+  ) return null;
+  if (
+    previous?.command_id === next.command_id &&
+    previous.status === 'COMPLETED'
+  ) return null;
+  return next.command_id;
 }
