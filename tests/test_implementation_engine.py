@@ -661,6 +661,12 @@ class Order <<Entity>> { - id: UUID }
     assert wiring["repair_only"] is True
     assert wiring["required_output_paths"] == []
     assert "implement-application-wiring" not in state["nextRunnableTasks"]
+    expected_parallel_tasks = {
+        task["task_id"]
+        for task in tasks
+        if task["task_type"] in {"use-case", "frontend-implementation"}
+    }
+    assert set(state["nextRunnableTasks"]) == expected_parallel_tasks
     contexts = [
         json.loads((run / task["context_file"]).read_text(encoding="utf-8")) for task in use_cases
     ]

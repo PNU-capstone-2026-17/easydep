@@ -56,7 +56,9 @@ PHASES = (
     # ``control`` remains only for the existing feedback-revision task; newly
     # planned implementation work always uses the broader ``use-case`` type.
     ("use-cases", ("persistence",), {"use-case", "control"}),
-    ("frontend", ("use-cases",), {"frontend-implementation"}),
+    # generated OpenAPI client는 workflow planning 전에 이미 만들어진다. frontend source는
+    # backend source와 경로도 겹치지 않으므로 두 작업은 persistence 준비 뒤 함께 실행한다.
+    ("frontend", ("persistence",), {"frontend-implementation"}),
     ("wiring", ("use-cases", "frontend"), {"wiring"}),
 )
 
@@ -319,30 +321,33 @@ def _run_workflow(
     state["status"] = "RUNNING"
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
 
-    phase_order = [item[0] for item in PHASES]
-    for phase_id in phase_order:
-        phase_tasks = [
-            task for task in state["tasks"]
-            if task["phase"] == phase_id
-            and task["taskId"] in authorized_task_ids
-            and (
-                task["status"] in {"PENDING", "INTERRUPTED"}
-                or (retry_failed and task["status"] == "FAILED")
-            )
-        ]
-        if not phase_tasks:
-            continue
-        if not _dependencies_succeeded(state, phase_id):
-            continue
-        state["currentPhase"] = phase_id
-        # planner가 같은 source와 package를 공유하는 작업을 한 묶음으로 만들고, 아래 batch
-        # 검사도 편집 범위가 겹치는 작업을 분리한다. 따라서 독립 기능은 설정된 범위 안에서
-        # 병렬 실행해도 같은 파일을 덮어쓰지 않는다.
+    while True:
+        runnable_phases: list[str] = []
+        runnable_tasks: list[dict[str, object]] = []
+        for phase_id, _dependencies, _types in PHASES:
+            phase_tasks = [
+                task for task in state["tasks"]
+                if task["phase"] == phase_id
+                and task["taskId"] in authorized_task_ids
+                and (
+                    task["status"] in {"PENDING", "INTERRUPTED"}
+                    or (retry_failed and task["status"] == "FAILED")
+                )
+            ]
+            if phase_tasks and _dependencies_succeeded(state, phase_id):
+                runnable_phases.append(phase_id)
+                runnable_tasks.extend(phase_tasks)
+        if not runnable_tasks:
+            break
+
+        # backend와 frontend가 함께 실행될 때도 기존 UI가 이해하는 첫 phase를 대표값으로
+        # 둔다. 개별 phase와 task의 RUNNING 상태는 아래 checkpoint에 그대로 기록된다.
+        state["currentPhase"] = runnable_phases[0]
+        state["currentPhases"] = runnable_phases
         worker_limit = max(1, int(settings.implementation_task_parallelism))
-        for task_batch in _phase_task_batches(
-            phase_id,
-            phase_tasks,
-        ):
+        # planner의 task dependency와 편집 경로 충돌을 한 번에 검사한다. frontend와 backend는
+        # 경로가 분리되어 있으므로 같은 batch가 되고, 충돌하는 backend 작업은 계속 직렬화된다.
+        for task_batch in _phase_task_batches("parallel", runnable_tasks):
             failures = _execute_task_batch(
                 run_root,
                 state,
@@ -366,11 +371,13 @@ def _run_workflow(
                         )
                         return repaired_state
                 raise error
-        next(
-            phase for phase in state["phases"] if phase["phaseId"] == phase_id
-        )["status"] = "SUCCEEDED"
+        for phase_id in runnable_phases:
+            next(
+                phase for phase in state["phases"] if phase["phaseId"] == phase_id
+            )["status"] = "SUCCEEDED"
         state["updatedAt"] = _now()
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+    state.pop("currentPhases", None)
 
     # A completed work unit can change source contracts embedded in the
     # downstream wiring prompt.
@@ -1286,6 +1293,7 @@ def _next_runnable_tasks(
     tasks: list[dict[str, object]], phases: list[dict[str, object]]
 ) -> list[str]:
     phase_by_id = {phase["phaseId"]: phase for phase in phases}
+    runnable: list[str] = []
     for phase_id, dependencies, _ in PHASES:
         candidates = [
             str(task["taskId"]) for task in tasks
@@ -1296,8 +1304,8 @@ def _next_runnable_tasks(
             phase_by_id[dependency]["status"] in {"SUCCEEDED", "UNPLANNED"}
             for dependency in dependencies
         ):
-            return candidates
-    return []
+            runnable.extend(candidates)
+    return runnable
 
 
 def _dependencies_succeeded(state: dict[str, object], phase_id: str) -> bool:
