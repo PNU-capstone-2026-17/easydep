@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from app.design.services.class_diagram import operations, service
-from app.design.services.class_diagram.models import AcceptedInventory
+from app.design.services.class_diagram.models import AcceptedFragment, AcceptedInventory
 from app.design.services.class_diagram.proposals import (
     OperationFragment,
 )
@@ -104,6 +104,76 @@ def test_operation_validation_rejects_step_ref_outside_use_case_scope():
         finding.rule_id == "class.operation.references"
         for finding in report.findings
     )
+
+
+def test_state_backed_use_case_requires_an_entity_operation_only_when_scoped():
+    index = build_scenario_index(single_use_case())
+    inventory = {
+        "Classes": [
+            {"className": "RequestBoundary", "stereotype": "Boundary", "useCaseIds": ["UC1"]},
+            {"className": "RequestControl", "stereotype": "Control", "useCaseIds": ["UC1"]},
+            {
+                "className": "Request",
+                "stereotype": "Entity",
+                "fields": ["id : uuid"],
+                "identifier": ["id"],
+                "useCaseIds": ["UC1"],
+            },
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+    }
+
+    report = validate_operations(
+        operation_fragment(),
+        OperationContext(index, inventory, index.use_case("UC1")),
+    )
+
+    assert [
+        finding.rule_id for finding in report.findings
+        if finding.rule_id == "class.operation.state-ownership"
+    ] == ["class.operation.state-ownership"]
+
+
+def test_final_compose_keeps_operationless_class_referenced_by_an_entity_field():
+    inventory = AcceptedInventory.from_payload({
+        "Classes": [
+            {
+                "className": "RegistrationPeriod",
+                "stereotype": "Entity",
+                "fields": ["term : AcademicTerm"],
+                "identifier": [],
+                "useCaseIds": ["UC1"],
+            },
+            {
+                "className": "AcademicTerm",
+                "stereotype": "Entity",
+                "fields": ["id : uuid"],
+                "identifier": ["id"],
+                "useCaseIds": ["UC1"],
+            },
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+    })
+    fragment = AcceptedFragment("UC1", {
+        "Classes": [{
+            "className": "RegistrationPeriod",
+            "operations": [{
+                "name": "save",
+                "parameters": [],
+                "returnType": "void",
+                "stepRefs": ["UC1:main:1"],
+            }],
+        }],
+        "DataTypes": [],
+    })
+
+    model = operations.compose_operation_units(inventory, [fragment], final=True)
+
+    assert {item.class_name for item in model.Classes} == {
+        "AcademicTerm", "RegistrationPeriod",
+    }
 
 
 def test_operation_contract_rejects_duplicate_parameter_names():

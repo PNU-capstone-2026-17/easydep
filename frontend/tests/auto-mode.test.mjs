@@ -15,48 +15,9 @@ function command(result) {
   };
 }
 
-test('auto mode selects the same exposed delegate repair action', () => {
-  assert.deepEqual(
-    nextAutoAction(
-      command({
-        requires_revision: true,
-        can_delegate_repair: true,
-        repair_state: { status: 'ACTIVE' }
-      })
-    ),
-    { action: 'delegate_repair', extra: { action_id: 'command-1' } }
-  );
-});
-
-test('auto mode never waives blockers with a blank advance', () => {
+test('auto mode leaves automatic repair to the running backend task', () => {
   assert.equal(
-    nextAutoAction(command({ requires_revision: true, can_delegate_repair: false })),
-    null
-  );
-});
-
-test('auto mode pauses while an external LLM is unavailable', () => {
-  assert.equal(
-    nextAutoAction(
-      command({
-        requires_revision: true,
-        can_delegate_repair: true,
-        repair_state: { status: 'WAITING_EXTERNAL' }
-      })
-    ),
-    null
-  );
-});
-
-test('auto mode pauses after the history proves a repeated failure', () => {
-  assert.equal(
-    nextAutoAction(
-      command({
-        requires_revision: true,
-        can_delegate_repair: true,
-        repair_state: { status: 'STALLED' }
-      })
-    ),
+    nextAutoAction(command({ requires_revision: true })),
     null
   );
 });

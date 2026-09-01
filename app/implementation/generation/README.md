@@ -79,16 +79,21 @@ Bean 연결 오류가 확인된 경우에만 수리 작업이 활성화된다.
 
 ## Persistence 골격
 
-`persistence_scaffold.py`는 `erdBceModel`에 확정된 Entity마다 다음 파일을 바로 만든다.
+`persistence_scaffold.py`는 ERD 단계가 `erdBceModel`에서 확정한 `erdLogicalModel`의
+테이블마다 다음 파일을 바로 만든다.
 
 - JPA Entity: ERD 필드, 식별자, 기본 생성자와 필드 접근 메서드
 - Spring Data Repository: Entity와 식별자 타입이 정해진 `JpaRepository`
 - Flyway migration: 같은 필드와 식별자를 사용하는 최초 테이블
 
-이 파일들은 같은 typed 모델에서 언제나 똑같이 만들어지므로 별도의 OpenHands 작업을 사용하지
-않는다. null 허용 여부와 외래 키 소유자처럼 ERD에 없는 내용은 추측하지 않는다. 값 객체와
-목록은 JSON column에 원래 타입 그대로 저장하고, 여러 식별자가 있으면 JPA 복합 키 파일도 함께
-만든다. BCE Entity와 JPA Entity 사이에 필드 손실이 생기는 범용 mapper는 생성하지 않는다.
+이 파일들은 같은 논리 모델에서 언제나 똑같이 만들어지므로 별도의 OpenHands 작업을 사용하지
+않는다. 대리키, 외래 키와 연결 테이블도 ERD 투영 결과를 그대로 사용하며 구현 단계에서 다시
+추측하지 않는다. 원래 BCE 필드와 이름이 같은 컬럼은 enum·값 객체 같은 도메인 타입을 보존하고,
+ERD가 추가한 물리 컬럼은 작은 SQL→Java 타입 표로 옮긴다. 여러 기본 키가 있으면 JPA 복합 키
+파일도 함께 만든다. `studentId`와 관계 투영의 `student_id`처럼 Java 이름은 달라도 실제 DB
+열 이름이 같아지는 경우에는 원래 BCE 필드 하나만 남겨 JPA와 migration의 중복 열을 막는다.
+`end`처럼 SQL 예약어인 Java 필드는 유지하되 물리 열에는 `_value`를 붙여 MySQL과 테스트용
+H2가 같은 이름으로 읽게 한다.
 
 ## HTTP Controller 골격
 

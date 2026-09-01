@@ -1621,11 +1621,6 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         WorkspaceService,
-        "_repair_api_contract_before_implementation",
-        lambda _self, _app_id, design: design,
-    )
-    monkeypatch.setattr(
-        WorkspaceService,
         "_monitor_implementation",
         lambda _self, job, command_id=None: {"job": job},
     )

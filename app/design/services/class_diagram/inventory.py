@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import Any
 
 from app.config import settings
@@ -64,7 +65,12 @@ class. Use an empty useCaseIds list for valueObjects and enumerations; their
 availability is derived from Entity fields. Return every array field explicitly,
 using an empty array only when the selected kind requires none. Class ids are proposal scope only and are not
 persisted as a separate design decision.
-Assign an Entity as a candidate for every use case that reads or changes its persistent state.
+For each use case, decide whether its state must still exist after the request ends or
+whether it reads state created by an earlier request. Assign an Entity candidate only
+when that durable state is read or changed. A transient calculation, formatted result,
+or external interaction does not require an Entity. A read-only use case still needs an
+Entity when durable domain information is its source; classify by information ownership
+and lifetime, not by whether the operation is a command or query.
 For Entity items, useCaseIds means that the main or extension flow directly
 reads or changes that Entity. Authentication, actor presence, a precondition,
 or indirect domain context alone does not justify assigning an Entity to a use
@@ -191,6 +197,21 @@ def inventory_payload(index: ScenarioIndex) -> dict[str, Any]:
                 "goal": text(summaries.get(use_case.id, {}).get("goal")),
                 "primaryActor": use_case.primary_actor,
                 "supportingActors": list(summaries.get(use_case.id, {}).get("supporting_actors") or []),
+                # 단계 문장만으로는 "저장 후에도 남아야 하는 상태"와 단순 응답 값을
+                # 구별하기 어렵다. 성공 후 상태와 사전 조건은 그 판단에 직접 필요한
+                # 근거이므로 중복되는 main/extension 본문 없이 작게 전달한다.
+                "context": {
+                    "trigger": deepcopy(use_case.specification.get("trigger")),
+                    "preconditions": deepcopy(
+                        use_case.specification.get("preconditions") or []
+                    ),
+                    "successGuarantee": deepcopy(
+                        use_case.specification.get("success_guarantee") or []
+                    ),
+                    "minimalGuarantee": deepcopy(
+                        use_case.specification.get("minimal_guarantee") or []
+                    ),
+                },
                 "steps": [
                     {"stepRef": step.id, "branch": step.branch, "subject": step.subject,
                      "sentence": step.sentence, "condition": step.condition}

@@ -157,6 +157,17 @@ def test_renders_only_explicit_bce_contracts() -> None:
     assert "setQuantity(" not in entity
 
 
+def test_java_keyword_operation_keeps_its_meaning_with_safe_method_name() -> None:
+    """업무 operation이 Java 예약어여도 설계를 되돌리지 않고 컴파일 가능한 계약을 만든다."""
+
+    payload = _payload()
+    payload["bceModel"]["Classes"][2]["operations"][0]["name"] = "record"
+
+    files = render_java_scaffold(JavaScaffoldInput.model_validate(payload))
+
+    assert "Integer recordAction()" in _source(files, "Order")
+
+
 def test_uses_small_type_map_and_marks_unknown_types() -> None:
     files = _render()
     request = _source(files, "OrderRequest")
@@ -165,9 +176,9 @@ def test_uses_small_type_map_and_marks_unknown_types() -> None:
 
     assert "byte[] payload" in request
     assert "Object source" in request
-    assert "설계 타입 `ExternalPayload`" in request
+    assert "design type `ExternalPayload`" in request
     assert "Object id" in entity
-    assert "설계 타입 `ExternalOrderId`" in entity
+    assert "design type `ExternalOrderId`" in entity
     assert "TODO(EasyDep)" not in receipt
 
     expected = {
@@ -210,13 +221,116 @@ def test_erd_entities_generate_persistence_without_an_llm_mapper() -> None:
     assert "@Entity" in entity
     assert "@Id" in entity
     assert "private String id;" in entity
-    assert "DB 기본 키로 쓸 수 있는 문자열 표현" in entity
+    assert "stored as an indexable string key" in entity
     assert "private OrderStatus status;" in entity
     assert "extends JpaRepository<OrderEntity, String>" in repository
     assert "CREATE TABLE easydep_order (" in migration
     assert "id VARCHAR(255) PRIMARY KEY" in migration
     assert all("BcePersistenceMapper" not in path for path in files)
     assert files == render_persistence_scaffold(model, "com.example.orders")
+
+
+def test_persistence_uses_erd_surrogate_and_foreign_keys() -> None:
+    """구현 골격은 가공 전 BCE가 아니라 ERD가 확정한 실제 키와 컬럼을 사용한다."""
+
+    model = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "MeetingSchedule",
+                    "stereotype": "Entity",
+                    "fields": [],
+                    "use_case_ids": ["UC1"],
+                    "identifier": [],
+                    "operations": [],
+                }
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    logical_model = {
+        "Tables": [
+            {
+                "name": "MeetingSchedule",
+                "primaryKey": ["meetingschedule_id"],
+                "columns": [
+                    {"name": "meetingschedule_id", "type": "BIGINT"},
+                    {"name": "courseoffering_id", "type": "UUID"},
+                    {"name": "end", "type": "DATE"},
+                ],
+                "origin": {"kind": "class", "className": "MeetingSchedule"},
+            }
+        ]
+    }
+
+    files = render_persistence_scaffold(
+        model,
+        "com.example.registration",
+        logical_model=logical_model,
+    )
+
+    entity = files[
+        "src/main/java/com/example/registration/persistence/entity/MeetingScheduleEntity.java"
+    ]
+    migration = files["src/main/resources/db/migration/V1__initial_schema.sql"]
+    assert "private Long meetingschedule_id;" in entity
+    assert "private UUID courseoffering_id;" in entity
+    assert "meetingschedule_id BIGINT PRIMARY KEY" in migration
+    assert '@Column(name = "end_value")' in entity
+    assert "end_value DATE" in migration
+
+
+def test_persistence_collapses_columns_with_the_same_database_name() -> None:
+    """camelCase 업무 필드와 관계용 snake_case 열이 같은 DB 열이면 한 번만 만든다."""
+
+    model = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "WaitlistEntry",
+                    "stereotype": "Entity",
+                    "fields": ["id : uuid", "studentId : uuid"],
+                    "use_case_ids": ["UC1"],
+                    "identifier": ["id"],
+                    "operations": [],
+                }
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    logical_model = {
+        "Tables": [
+            {
+                "name": "WaitlistEntry",
+                "primaryKey": ["id"],
+                "columns": [
+                    {"name": "id", "type": "UUID"},
+                    {"name": "studentId", "type": "UUID"},
+                    {"name": "student_id", "type": "UUID"},
+                ],
+                "origin": {"kind": "class", "className": "WaitlistEntry"},
+            }
+        ]
+    }
+
+    files = render_persistence_scaffold(
+        model,
+        "com.example.registration",
+        logical_model=logical_model,
+    )
+
+    entity = files[
+        "src/main/java/com/example/registration/persistence/entity/WaitlistEntryEntity.java"
+    ]
+    migration = files["src/main/resources/db/migration/V1__initial_schema.sql"]
+    assert entity.count('name = "student_id"') == 1
+    assert "private UUID studentId;" in entity
+    assert "private UUID student_id;" not in entity
+    assert migration.count("student_id BINARY(16)") == 1
 
 
 def test_controller_scaffold_preserves_generated_openapi_declarations() -> None:

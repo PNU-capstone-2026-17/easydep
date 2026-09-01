@@ -833,6 +833,19 @@ RULES: tuple[Rule, ...] = (
         detector="api_schema_references",
     ),
     Rule(
+        id="api.executable-schema-fields",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement=(
+            "Every named request or response schema must define object fields or "
+            "enumeration values, and collection fields must name their item type."
+        ),
+        citation="app/design/services/api_spec/projection.py (OpenAPI schema projection)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_executable_schema_fields",
+    ),
+    Rule(
         id="api.operation-ids-unique",
         stage=API_SPEC,
         severity=DEFECT,

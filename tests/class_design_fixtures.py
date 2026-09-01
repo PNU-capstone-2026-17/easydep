@@ -16,6 +16,13 @@ def scenario() -> dict:
         "use_case_specs": [
             {
                 "use_case_id": "UC1",
+                "trigger": "Customer starts an order request.",
+                "preconditions": ["The catalog is available."],
+                "success_guarantee": [{
+                    "sentence": "The accepted order remains available after this request.",
+                    "covered_req_ids": ["RR1"],
+                }],
+                "minimal_guarantee": [],
                 "main_scenario": [
                     {"step_number": 1, "subject_ref": "Customer", "sentence": "Customer submits an order."},
                     {"step_number": 2, "subject_ref": "System", "sentence": "System validates the order."},

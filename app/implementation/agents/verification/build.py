@@ -142,6 +142,25 @@ def verify_agent_workspace(
     """
     if task_type in {"frontend", "frontend-implementation"}:
         return verify_frontend_workspace(sandbox)
+    if task_type == "use-case":
+        broad_tests = _broad_feature_tests(sandbox, allowed_write_paths or [])
+        if broad_tests:
+            raise WorkspaceVerificationError(
+                {
+                    "command": ["feature-test-isolation"],
+                    "exitCode": 1,
+                    "durationMs": 0,
+                    "stdout": "",
+                    "stderr": (
+                        "A feature task must not start the whole application with "
+                        "@SpringBootTest because other feature beans are implemented in "
+                        "parallel. Replace it with a plain unit test or a narrow test slice: "
+                        + ", ".join(broad_tests)
+                    ),
+                    "testResults": "",
+                    "diagnosticPaths": [],
+                }
+            )
     command = task_verification_command(
         gradle_command(),
         task_type,
@@ -186,17 +205,31 @@ def verify_agent_workspace(
     return evidence
 
 
+def _broad_feature_tests(sandbox: Path, allowed_write_paths: list[str]) -> list[str]:
+    """독립 기능 작업에서 전체 Spring 애플리케이션을 띄우는 test를 찾는다."""
+
+    violations: list[str] = []
+    for relative in allowed_write_paths:
+        normalized = str(relative).replace("\\", "/")
+        if "/src/test/" not in "/" + normalized or not normalized.endswith(".java"):
+            continue
+        path = sandbox / relative
+        if path.is_file() and "@SpringBootTest" in path.read_text(encoding="utf-8"):
+            violations.append(normalized)
+    return violations
+
+
 def _store_failed_verification_output(
     sandbox: Path,
     stdout: str,
     stderr: str,
 ) -> list[str]:
-    """축약하지 않은 명령 출력을 작업 공간에 보존하고 조회 경로를 반환한다.
+    """축약하지 않은 명령 출력을 사용자용 증거로 보존한다.
 
     긴 로그를 매번 LLM 대화에 넣으면 같은 Spring stack trace가 문맥을 대부분 차지한다.
-    대신 첫 진단은 짧게 유지하고, 원인이 충분하지 않을 때 코딩 에이전트가 기존 파일 보기
-    도구로 원문을 직접 열 수 있게 한다. ``build``는 구현 결과 수집 대상이 아니므로 이 파일이
-    생성 애플리케이션에 섞이지 않는다.
+    코딩 에이전트에는 ``compact_verification_evidence``가 만든 핵심 원인만 전달하고, 원문은
+    실행 이력을 조사하는 사람이 확인할 수 있도록 보존한다. ``build``는 구현 결과 수집 대상이
+    아니므로 이 파일이 생성 애플리케이션에 섞이지 않는다.
     """
     output_dir = sandbox / "application" / "build" / "easydep-verification"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -267,9 +300,14 @@ def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
 
 
 def read_gradle_test_failures(sandbox: Path) -> str:
-    """JUnit XML에서 실패한 test와 원인 stack trace를 읽는다."""
+    """JUnit XML에서 대표 실패와 가장 구체적인 원인을 짧게 읽는다.
+
+    Spring은 첫 ApplicationContext 실패 뒤의 모든 test에 거의 같은 예외를 기록한다. 모든
+    testcase를 연결하면 실제 ``Caused by``가 중간에 묻히므로, 원인 사슬이 가장 풍부한 실패를
+    대표로 고르고 나머지는 test 이름만 알려 준다.
+    """
     result_dir = sandbox / "application" / "build" / "test-results" / "test"
-    reports: list[str] = []
+    failures: list[tuple[int, str, str]] = []
     for report in sorted(result_dir.glob("*.xml")):
         try:
             root = ET.parse(report).getroot()
@@ -284,9 +322,26 @@ def read_gradle_test_failures(sandbox: Path) -> str:
             message = problem.get("message") or "test failed"
             detail = (problem.text or "").strip()
             if detail:
-                message += "\n" + summarize_test_failure(detail)
-            reports.append(f"{case.get('classname')}.{case.get('name')}: {message}")
-    return _truncate_log_snippet("\n\n".join(reports), max_chars=8000)
+                message = summarize_test_failure(detail) + "\nReported failure: " + message
+            test_name = f"{case.get('classname')}.{case.get('name')}"
+            # 구체적인 원인 사슬이 많고 Spring의 반복 실패 문구가 아닌 항목을 우선한다.
+            score = detail.count("Caused by:") * 10
+            if "failure threshold" not in detail.lower():
+                score += 5
+            failures.append((score, test_name, message))
+    if not failures:
+        return ""
+
+    failures.sort(key=lambda item: item[0], reverse=True)
+    _score, primary_name, primary_message = failures[0]
+    lines = [f"{primary_name}: {primary_message}"]
+    other_names = list(dict.fromkeys(name for _score, name, _message in failures[1:]))
+    if other_names:
+        shown = ", ".join(other_names[:8])
+        remaining = len(other_names) - 8
+        suffix = f" (+{remaining} more)" if remaining > 0 else ""
+        lines.append(f"Other failing tests: {shown}{suffix}")
+    return _truncate_log_snippet("\n".join(lines), max_chars=6000)
 
 
 def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object]:
@@ -418,12 +473,13 @@ def summarize_test_failure(detail: str) -> str:
     ]
     # 바깥 예외뿐 아니라 stack trace 뒤쪽의 가장 구체적인 원인도 남긴다. Spring은
     # ApplicationContext 예외 아래에 누락된 property나 Bean 이름을 여러 단계 뒤에 기록한다.
+    # 가장 안쪽 원인을 앞에 놓는다. 긴 Spring 설정 문구보다 실제 MappingException이나
+    # assertion 메시지가 먼저 보이므로 작은 출력 제한에서도 수리 근거가 남는다.
     selected = [
-        *lines[:10],
-        *causes[:6],
+        *reversed(causes[-12:]),
+        *lines[:6],
         *application_frames[:8],
-        *causes[-12:],
-        *lines[-8:],
+        *lines[-6:],
     ]
     return _truncate_log_snippet(
         "\n".join(dict.fromkeys(selected)),

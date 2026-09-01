@@ -10,8 +10,10 @@ def render_verification_feedback(
     """같은 대화에 실제 검사 결과와 수정 가능 범위만 추가한다."""
     output = _verification_output(evidence)
     targets = "\n".join(f"- `{path}`" for path in repair_targets or [])
-    return f"""The build or focused test failed. Read the complete diagnostic and current
-source with the file editor, find the actual cause, and repair it without asking the user.
+    return f"""The build or focused test failed. Use the concise diagnostic below and inspect
+only the relevant source files with the file editor. Do not open generated build reports,
+HTML, XML, or Gradle output files; the task-check tool has already extracted the root cause.
+Repair the source without asking the user.
 Keep earlier correct behavior and generated public contracts. Do not hide the failure by
 deleting tests, disabling validation, returning fabricated values, or adding placeholder code.
 
@@ -34,8 +36,9 @@ def render_frontend_verification_feedback(
 ) -> str:
     """frontend build 오류도 같은 대화에 짧게 전달한다."""
     targets = "\n".join(f"- `{path}`" for path in repair_targets or [])
-    return f"""The frontend production build failed. Diagnose the error from the real output
-and inspect current sources with the file editor, then repair it without asking the user. Preserve files under
+    return f"""The frontend production build failed. Use the concise diagnostic below and
+inspect only relevant source files with the file editor. Do not open generated build reports
+or package-manager logs. Repair it without asking the user. Preserve files under
 `src/generated` and use their exported client instead of writing another HTTP client.
 
 You may edit only these repair targets:

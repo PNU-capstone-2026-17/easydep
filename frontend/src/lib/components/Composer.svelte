@@ -178,18 +178,11 @@
           </Button>
         {/if}
       {:else if requiresRevision}
-        {#if canDelegateRepair}
-          <Button size="sm" onclick={() => onAction('delegate_repair', { action_id: command?.command_id })} disabled={busy}>
-            <Bot size={13} /> Let the LLM repair it
-          </Button>
-        {/if}
         <span class="px-1 text-xs text-[#74520c]">
           {#if repairStalled}
-            {canDelegateRepair
-              ? 'Automatic local repair exhausted its strategies. Try one delegated repair or enter a specific revision request.'
-              : 'Automatic repair could not reduce the blockers. Enter a specific revision request to continue.'}
+            Automatic repair could not reduce the blockers. Enter a specific revision request to continue.
           {:else if canDelegateRepair}
-            Review the blocking findings and describe a revision, or delegate the repair to the LLM.
+            Automatic repair is continuing with the previous attempts in context.
           {:else}
             Review the blocking findings and enter a specific revision request to continue.
           {/if}

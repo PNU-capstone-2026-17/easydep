@@ -51,17 +51,6 @@ export function nextAutoAction(
       return null;
     }
 
-    if (result.requires_revision === true && result.can_delegate_repair === true) {
-      if (
-        result.repair_state?.status === 'WAITING_EXTERNAL' ||
-        result.repair_state?.status === 'STALLED'
-      ) return null;
-      return {
-        action: 'delegate_repair',
-        extra: { action_id: command.command_id }
-      };
-    }
-
     if (result.requires_revision === true && !hasPendingMethodProposals) {
       return null;
     }

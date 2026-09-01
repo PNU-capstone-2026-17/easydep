@@ -157,7 +157,16 @@ def _use_case_bundles(
         if item.name not in assigned_components and _is_work_component(item)
     )
     common_ports = tuple(item for item in ir.api_ports if item.name not in assigned_ports)
-    if common_components or common_ports:
+    # 유스케이스와 연결되지 않은 Entity/Boundary는 이미 typed Java와 persistence
+    # 골격으로 만들어져 있다. 구현할 시나리오나 operation도 없는데 코딩 에이전트에게
+    # JUnit 파일을 요구하면, 에이전트는 존재하지 않는 동작을 찾느라 검색만 반복한다.
+    # 연결 정보가 부족해도 실제 구현이 필요한 Control/Gateway 또는 HTTP port가 있을
+    # 때만 common 작업을 남긴다. 이 경우 관련 Entity도 같은 문맥으로 함께 전달한다.
+    needs_common_agent = bool(common_ports) or any(
+        item.stereotype.casefold() in {"control", "gateway"}
+        for item in common_components
+    )
+    if needs_common_agent:
         bundles.append(_UseCaseBundle((), common_components, common_ports, ()))
     planned = [
         bundle
@@ -316,6 +325,11 @@ def _build_use_case_task(
     persistence_contracts = render_source_contracts(
         run_root, [run_root / path for path in persistence_sources]
     )
+    # 한 Entity의 operation이 다른 저장 Entity를 조합할 수 있다. 예를 들어 roster는
+    # CourseOffering에서 시작하지만 Enrollment와 Student를 함께 읽는다. 모든 Java 파일을
+    # prompt에 복사하는 대신 ERD가 이미 만든 table/column/relation 지도를 한 번 제공한다.
+    # 에이전트는 여기서 필요한 Repository 이름을 고르고 정확한 Java 선언만 한 번 조회한다.
+    persistence_data_map = _read_json(spec.inputs.get("erdLogicalModel"))
     controller_markers = sorted(
         {
             marker
@@ -390,6 +404,13 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 ## Deterministic persistence contracts
 ~~~java
 {persistence_contracts}
+~~~
+
+## Available persistence data map
+Use this typed table and relationship map to select related generated Entity and Repository
+sources. Do not scan the whole workspace to discover persistence candidates.
+~~~json
+{_prompt_json(persistence_data_map)}
 ~~~
 
 ## Current source to inspect before editing

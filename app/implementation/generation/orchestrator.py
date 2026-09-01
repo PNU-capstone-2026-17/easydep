@@ -48,7 +48,12 @@ from .persistence_scaffold import (
     render_persistence_scaffold,
 )
 
-OPTIONAL_DESIGN_INPUTS = ("erdBceModel", "deploymentBundle", "cloud")
+OPTIONAL_DESIGN_INPUTS = (
+    "erdBceModel",
+    "erdLogicalModel",
+    "deploymentBundle",
+    "cloud",
+)
 IMPLEMENTATION_PIPELINE_VERSION = "0.6.0-strict-release"
 OPENAPI_GENERATOR_IMAGE = "openapitools/openapi-generator-cli:v7.24.0"
 GRADLE_GENERATOR_IMAGE = "gradle:8.14.2-jdk21"
@@ -596,7 +601,11 @@ class PrototypeOrchestrator:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8", newline="\n")
         persistence_files = (
-            render_persistence_scaffold(scaffold.erd_bce_model, self.spec.base_package)
+            render_persistence_scaffold(
+                scaffold.erd_bce_model,
+                self.spec.base_package,
+                logical_model=read_json("erdLogicalModel"),
+            )
             if scaffold.erd_bce_model is not None
             else {}
         )
@@ -623,7 +632,7 @@ class PrototypeOrchestrator:
         if persistence_files:
             self._sink().tools["typed-persistence-scaffolder"] = {
                 "version": PERSISTENCE_SCAFFOLDER_VERSION,
-                "input": "erdBceModel",
+                "input": "erdLogicalModel",
                 "files": str(len(persistence_files)),
             }
 
@@ -1074,7 +1083,15 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> None:
     if erd_path is None or not erd_path.is_file():
         raise ValueError("erdBceModel is required to generate persistence files")
     model = BCEModel.model_validate_json(erd_path.read_text(encoding="utf-8"))
-    for relative, content in render_persistence_scaffold(model, spec.base_package).items():
+    logical_path = spec.inputs.get("erdLogicalModel")
+    if logical_path is None or not logical_path.is_file():
+        raise ValueError("erdLogicalModel is required to generate persistence files")
+    logical_model = json.loads(logical_path.read_text(encoding="utf-8"))
+    for relative, content in render_persistence_scaffold(
+        model,
+        spec.base_package,
+        logical_model=logical_model,
+    ).items():
         target = run_root / "application" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8", newline="\n")
@@ -1092,7 +1109,13 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> None:
 def plan_api_adapter_tasks(spec: JobSpec, run_root: Path) -> None:
     """Add generated OpenAPI adapter tasks to an existing run manifest."""
     run_root = run_root.resolve()
-    _merge_implementation_tasks(run_root, generate_api_adapter_tasks(spec, run_root))
+    # checkpoint를 다시 계획할 때 새 기준에서 사라진 예전 use-case task도 함께 제거한다.
+    # 같은 ID만 덮어쓰면 더는 필요하지 않은 ``common`` 작업이 manifest에 남아 재실행된다.
+    _merge_implementation_tasks(
+        run_root,
+        generate_api_adapter_tasks(spec, run_root),
+        replace_types={"use-case"},
+    )
 
 
 def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> None:

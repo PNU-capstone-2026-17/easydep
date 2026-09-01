@@ -9,7 +9,10 @@ from pydantic import ValidationError
 
 from app.design.contracts.api_spec import ApiSpecModel, ApiSpecProposal
 from app.design.graphs import subgraphs as design_subgraphs
-from app.design.knowledge.detectors import api_spec_findings
+from app.design.knowledge.detectors import (
+    api_executable_schema_fields,
+    api_spec_findings,
+)
 from app.design.rtm import build_design_rtm
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec import service
@@ -221,6 +224,35 @@ def test_typed_normalization_uses_exact_bce_contract_without_plantuml() -> None:
     assert endpoint.responses[0].is_array is True
     assert endpoint.source_classes == ["CatalogBoundary", "CatalogControl"]
     assert proposal.Endpoints[0].query_params[0].type == "CourseFilter"
+
+
+def test_bce_enumeration_is_an_executable_openapi_schema() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    for class_payload in payload["Classes"][:2]:
+        class_payload["operations"][0]["returnType"] = "ValidationOutcome"
+    payload["DataTypes"].append({
+        "name": "ValidationOutcome",
+        "kind": "enumeration",
+        "fields": [],
+        "values": ["VALID", "REJECTED"],
+    })
+
+    normalized = normalize_api_spec_model(
+        _proposal(), BCEModel.model_validate(payload)
+    )
+    openapi = build_openapi_from_model(normalized)
+    model_payload = normalized.model_dump()
+
+    enum_schema = next(
+        schema for schema in normalized.Schemas
+        if schema.name == "ValidationOutcome"
+    )
+    assert enum_schema.values == ["VALID", "REJECTED"]
+    assert openapi["components"]["schemas"]["ValidationOutcome"] == {
+        "type": "string",
+        "enum": ["VALID", "REJECTED"],
+    }
+    assert api_executable_schema_fields(model_payload, {}) == []
 
 
 def test_void_control_canonicalizes_success_response_to_no_content() -> None:
