@@ -7,9 +7,9 @@
 
 - **입력:** 구조화된 설계 산출물과 `JobSpec`. 선택적으로
   `requirements`/`refinedRequirements`, `useCases`/`useCaseSpecs` 입력을 받는다.
-- **출력:** `TaskSpec`과 프런트엔드 계약.
-- **부수효과:** 계획 계산은 파일, 네트워크, 별도 프로세스, LLM을 호출하지 않는
-  메모리 작업이다.
+- **출력:** `TaskSpec`, 작업별 짧은 prompt·context 파일과 프런트엔드 계약.
+- **부수효과:** `reports/implementation-tasks`에 작업 계약을 저장한다. 네트워크, 별도
+  프로세스와 LLM은 호출하지 않는다.
 - **사용하면 안 되는 import:** `app.core` 레거시 경로와 설계 서비스 내부, 배포 실행기,
   workflow 내부 상태를 import하지 않는다. 설계에 없는 작업이나 계약을 추정하지
   않는다.
@@ -29,11 +29,16 @@
 - 각 task JSON에는 `requirement_ids`, `use_case_ids`, `required_test_paths`, 편집 파일과
   새 파일을 만들 수 있는 전용 package를 함께 남긴다.
 - 각 작업 context에는 관련 요구사항, use-case artifact, typed sequence scenario를
-  넣는다. 해당 선택 입력이 없으면 빈 목록으로 명시하며, 설계에 없는 작업은 만들지
-  않는다.
+  넣는다. 요구사항·유스케이스의 설계 수리 이력과 내부 진행 상태는 제외하고, 구현에 필요한
+  본문·흐름·완료 조건과 시퀀스 호출·인자·반환 연결만 전달한다. 해당 선택 입력이 없으면 빈
+  목록으로 명시하며, 설계에 없는 작업은 만들지 않는다.
 - 프롬프트에는 관련 Control·Entity의 BCE 선언과 결정론적으로 만든 JPA Entity·Repository의
   정확한 선언을 넣는다. HTTP 변환은 생성된 Controller가 담당하므로 긴 OpenAPI model 구현
   전체를 다시 싣지 않는다. 대신 메서드·경로·Control 연결·응답 상태의 typed endpoint 정보만
   전달하며, 관련 없는 읽기 전용 파일을 탐색 후보로 나열하지 않는다.
 - API schema와 Control 연결 준비도는 planner 전에 Workspace가 확인·수리한다. planner는
   통과한 API 계약을 DTO나 Control로 추정해 바꾸지 않는다.
+- 구현과 테스트의 작성 순서는 prompt가 강제하지 않는다. OpenHands가 맡은 범위 안에서 순서를
+  정하고, 끝날 때 기능 검사와 필요한 결과 파일로 완료 여부를 확인한다.
+- wiring은 정상 경로에서 완료 상태로 건너뛰는 수리 전용 작업이다. 계획 시 전체 Java source를
+  prompt에 복사하지 않고, 실제 오류가 생겼을 때 오류 근거와 관련 파일만 별도 지시로 만든다.
