@@ -4,6 +4,7 @@ param(
     [switch]$OpenBrowser,
     [switch]$SkipFrontendBuild,
     [switch]$ForceFrontendBuild,
+    [switch]$ResetDatabaseSchema,
     [ValidateRange(1024, 65535)]
     [int]$Port = 8000,
     [ValidateRange(1024, 65535)]
@@ -326,6 +327,7 @@ $env:DB_PORT = [string]$DatabasePort
 $env:DB_USER = "root"
 $env:DB_PASSWORD = $databasePassword
 $env:DB_NAME = "easydep"
+$env:DB_SCHEMA_RESET_ON_START = if ($ResetDatabaseSchema) { "true" } else { "false" }
 
 Write-Host "[EasyDep] Starting the FastAPI backend. Logs: $runRoot"
 $server = Start-Process `
