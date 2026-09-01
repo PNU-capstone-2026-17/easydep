@@ -11,6 +11,8 @@ from app.config import settings
 CONTAINER_WORKSPACE = PurePosixPath("/easydep-workspace")
 RUNNER_IMAGE_ENV = "EASYDEP_TOOLCHAIN_IMAGE"
 RUNNER_GRADLE_CACHE_VOLUME = "easydep-member-gradle-cache"
+RUNNER_TOFU_CACHE_VOLUME = "easydep-tofu-provider-cache"
+RUNNER_TOFU_CACHE_PATH = "/app/.cache/opentofu"
 TRANSMITTED_ENVIRONMENT = (
     "API_KEY",
     "LLM_API_KEY",
@@ -75,6 +77,10 @@ def runner_command(
         # 130MB가 넘는 배포본을 다시 받거나 Windows bind mount에서 수천 파일을 읽지 않는다.
         "-v",
         f"{RUNNER_GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache",
+        # OpenTofu Provider는 용량이 크므로 작업 컨테이너마다 다시 받지 않는다. 이미지에
+        # 넣는 대신 named volume에 한 번 내려받아 구현과 Testing runner가 함께 사용한다.
+        "-v",
+        f"{RUNNER_TOFU_CACHE_VOLUME}:{RUNNER_TOFU_CACHE_PATH}",
         "-e",
         f"PYTHONPATH={CONTAINER_WORKSPACE}/app/implementation/runtime/runtime_hooks:{CONTAINER_WORKSPACE}",
         "-e",
@@ -83,6 +89,10 @@ def runner_command(
         # bind mount 아래를 cache로 선택하더라도 이 값으로 덮어쓴다.
         "-e",
         "GRADLE_USER_HOME=/tmp/easydep-gradle-cache",
+        "-e",
+        f"EASYDEP_TOFU_PLUGIN_CACHE={RUNNER_TOFU_CACHE_PATH}",
+        "-e",
+        f"TF_PLUGIN_CACHE_DIR={RUNNER_TOFU_CACHE_PATH}",
     ]
     experiment_session = environment.get("EASYDEP_EXPERIMENT_SESSION", "").strip()
     if experiment_session:
