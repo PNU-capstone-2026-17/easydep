@@ -1,4 +1,4 @@
-# Design contracts
+# 설계 공개 계약
 
 이 패키지는 downstream 단계가 사용할 수 있는 설계 산출물의 공개 검증 경계다.
 
@@ -9,3 +9,7 @@
 - **사용하면 안 되는 import:** orchestration, repository, implementation 내부를 import하지 않는다.
 - **실패 조건:** schema version, ID·참조·digest 또는 provider 구조가 설계 계약과 다르면
   즉시 실패한다. downstream을 위해 값을 보정하거나 추정하지 않는다.
+
+`api_spec.py`는 API 제안과 저장 endpoint의 Pydantic 모델을 소유한다. API 설계 서비스와
+구현 단계가 같은 `ApiSpecModel`을 사용하므로, 구현 코드가 설계 서비스 내부 모듈을 import하지
+않는다. `deployment.py`는 배포 bundle과 runtime binding의 공개 함수를 제공한다.

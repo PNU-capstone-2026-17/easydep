@@ -874,7 +874,7 @@ RULES: tuple[Rule, ...] = (
             "An API Control binding must map every Control parameter exactly once "
             "from a declared path, query, or request-body value of a compatible type."
         ),
-        citation="app/design/services/api_spec/models.py (ApiControlArgument)",
+        citation="app/design/contracts/api_spec.py (ApiControlArgument)",
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="api_control_arguments",

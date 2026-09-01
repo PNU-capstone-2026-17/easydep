@@ -27,7 +27,7 @@ from app.db.models import (
     TYPE_SOURCE_CODE,
     TYPE_TEST_CODE,
 )
-from app.design.services.api_spec.models import ApiSpecModel
+from app.design.contracts.api_spec import ApiSpecModel
 from app.design.validation import design_readiness_report
 from app.repositories import artifact_repository
 

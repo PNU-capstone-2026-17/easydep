@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.design.contracts.api_spec import ApiSpecModel
 from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.models import ApiSpecModel
 from app.implementation.generation.java_scaffold import (
     JavaScaffoldInput,
     java_type,

@@ -15,8 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from app.config import settings
+from app.design.contracts.api_spec import ApiSpecModel
 from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.models import ApiSpecModel
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (

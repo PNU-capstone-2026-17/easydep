@@ -13,13 +13,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.design.contracts.api_spec import ApiEndpoint, ApiSpecModel
 from app.design.schemas.class_model import (
     AcceptedBCEClass,
     BCEModel,
     ClassOperation,
     DataType,
 )
-from app.design.services.api_spec.models import ApiEndpoint, ApiSpecModel
 
 JAVA_SCAFFOLDER_VERSION = "1.3.0"
 CONTROLLER_BODY_REQUIRED = "EASYDEP_CONTROLLER_BODY_REQUIRED"

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.design.services.api_spec.models import ApiSpecModel
+from app.design.contracts.api_spec import ApiSpecModel
 from app.design.services.api_spec.projection import (
     OPENAPI_VERSION,
     build_openapi_from_payload,

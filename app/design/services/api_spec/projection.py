@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.design.services.api_spec.models import ApiSpecModel
+from app.design.contracts.api_spec import ApiSpecModel
 
 OPENAPI_VERSION = "3.1.0"
 _PRIMITIVES = {"string", "integer", "number", "boolean", "array", "object"}

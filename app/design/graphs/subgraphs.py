@@ -27,6 +27,7 @@ from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
 
+from app.design.contracts.api_spec import ApiSpecModel
 from app.design.knowledge.detectors import (
     Finding as ArtifactFinding,
 )
@@ -43,7 +44,6 @@ from app.design.nodes.artifact import (
 )
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.models import ApiSpecModel
 from app.design.services.api_spec.projection import build_openapi_from_model
 from app.design.services.api_spec.service import (
     generate_api_spec_model as extract_api_spec_model,
