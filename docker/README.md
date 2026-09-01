@@ -5,11 +5,14 @@
 Trivy와 OpenTofu 버전이 한 이미지에 고정된다. 따라서 각 작업이 도구 이미지를 따로 받지
 않고 로컬 실행 파일을 사용한다.
 
-이미지는 한 번 빌드한다.
+개발 환경에서는 통합 실행 스크립트가 이미지 존재 여부와 빌드 입력의 SHA-256을 확인하여
+필요할 때만 자동으로 빌드한다.
 
 ```powershell
-docker build -t easydep-toolchain:local .
+powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1
 ```
+
+이미지만 직접 만들고 싶을 때에는 `docker build -t easydep-toolchain:local .`을 실행한다.
 
 같은 이미지를 API 서버로 실행할 수 있고, 구현·Testing 작업은 코드가 Python 진입점을
 바꿔 별도 컨테이너로 실행한다. `.env`의

@@ -4,6 +4,9 @@ param(
     [switch]$OpenBrowser,
     [switch]$SkipFrontendBuild,
     [switch]$ForceFrontendBuild,
+    [switch]$SkipBootstrap,
+    [switch]$ForceToolchainBuild,
+    [switch]$ResetDatabase,
     [ValidateRange(1024, 65535)]
     [int]$Port = 8000,
     [ValidateRange(1024, 65535)]
@@ -18,8 +21,12 @@ $runRoot = Join-Path $repoRoot ".easydep\dev"
 $pidPath = Join-Path $runRoot "server.json"
 $stdoutPath = Join-Path $runRoot "server.stdout.log"
 $stderrPath = Join-Path $runRoot "server.stderr.log"
-$frontendHashPath = Join-Path $runRoot "frontend-lock.sha256"
 $frontendBuildHashPath = Join-Path $runRoot "frontend-build.sha256"
+$requirementsHashPath = Join-Path $runRoot "requirements.sha256"
+$toolchainHashPath = Join-Path $runRoot "toolchain-build.sha256"
+$environmentPath = Join-Path $repoRoot ".env"
+$environmentExamplePath = Join-Path $repoRoot ".env.example"
+$toolchainImage = "easydep-toolchain:local"
 $databaseContainer = "easydep-mysql-dev"
 $databaseVolume = "easydep-mysql-dev-data"
 $databasePassword = "easydep-local"
@@ -37,6 +44,27 @@ function Read-HashRecord {
         return ""
     }
     return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8).Trim()
+}
+
+function Get-CombinedFileHash {
+    param(
+        [Parameter(Mandatory = $true)][System.IO.FileInfo[]]$Files,
+        [string[]]$ExtraRecords = @()
+    )
+    $manifest = foreach ($file in @($Files | Sort-Object FullName -Unique)) {
+        $relativePath = $file.FullName.Substring($repoRoot.Length).TrimStart("\", "/").Replace("\", "/")
+        $fileHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        "$relativePath=$fileHash"
+    }
+    $manifest += $ExtraRecords
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes(($manifest -join "`n"))
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace("-", "")
+    }
+    finally {
+        $sha256.Dispose()
+    }
 }
 
 function Get-FrontendBuildHash {
@@ -158,6 +186,97 @@ function Invoke-Docker {
     }
 }
 
+function Test-DockerImage {
+    param([Parameter(Mandatory = $true)][string]$Image)
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & docker image inspect $Image *> $null
+    $available = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = $previousPreference
+    return $available
+}
+
+function Initialize-PythonEnvironment {
+    $python = Join-Path $repoRoot ".venv\Scripts\python.exe"
+    $createdEnvironment = $false
+    if (-not (Test-Path -LiteralPath $python)) {
+        Write-Host "[EasyDep] Creating the Python virtual environment."
+        if (Test-CommandAvailable "py") {
+            & py -3 -m venv (Join-Path $repoRoot ".venv")
+        }
+        elseif (Test-CommandAvailable "python") {
+            & python -m venv (Join-Path $repoRoot ".venv")
+        }
+        else {
+            throw "Python 3.11 or newer is required."
+        }
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $python)) {
+            throw "Python virtual environment creation failed."
+        }
+        $createdEnvironment = $true
+    }
+
+    & $python -c "import sys; raise SystemExit(sys.version_info < (3, 11))"
+    if ($LASTEXITCODE -ne 0) {
+        throw "EasyDep requires Python 3.11 or newer."
+    }
+
+    $requirementsPath = Join-Path $repoRoot "requirements.txt"
+    $requirementsHash = (Get-FileHash -LiteralPath $requirementsPath -Algorithm SHA256).Hash
+    if ($createdEnvironment -or $requirementsHash -ne (Read-HashRecord -Path $requirementsHashPath)) {
+        Write-Host "[EasyDep] Installing Python packages from requirements.txt."
+        & $python -X utf8 -m pip install -r $requirementsPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Python package installation failed."
+        }
+        Set-Content -LiteralPath $requirementsHashPath -Value $requirementsHash -Encoding UTF8
+    }
+    else {
+        Write-Host "[EasyDep] Python dependencies are unchanged."
+    }
+}
+
+function Initialize-Toolchain {
+    $toolchainHash = Get-ToolchainBuildHash
+    $imageExists = Test-DockerImage -Image $toolchainImage
+    $recordedHash = Read-HashRecord -Path $toolchainHashPath
+    if ($ForceToolchainBuild -or -not $imageExists -or $toolchainHash -ne $recordedHash) {
+        Write-Host "[EasyDep] Building the shared implementation and testing toolchain."
+        Invoke-Docker -Arguments @("build", "-t", $toolchainImage, $repoRoot)
+        Invoke-Docker -Arguments @(
+            "run", "--rm", "--entrypoint", "sh", $toolchainImage,
+            "./scripts/bootstrap-implementation-tools.sh"
+        )
+        Set-Content -LiteralPath $toolchainHashPath -Value $toolchainHash -Encoding UTF8
+    }
+    else {
+        Write-Host "[EasyDep] Toolchain inputs are unchanged; reusing $toolchainImage."
+    }
+}
+
+function Export-FrontendBuild {
+    # 프론트엔드는 공용 이미지의 고정 Node/npm으로 이미 빌드됐다. 임시 컨테이너에서 결과만
+    # 복사하므로 팀원 PC에 Node.js나 node_modules를 따로 만들 필요가 없다.
+    $containerId = (& docker create $toolchainImage).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($containerId)) {
+        throw "Could not create a temporary container for the frontend build."
+    }
+    $buildRoot = Join-Path $frontendRoot "build"
+    try {
+        if (Test-Path -LiteralPath $buildRoot) {
+            Remove-Item -LiteralPath $buildRoot -Recurse -Force
+        }
+        New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
+        & docker cp "$containerId`:/app/frontend/build/." $buildRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not copy the frontend build from $toolchainImage."
+        }
+    }
+    finally {
+        & docker rm -f $containerId *> $null
+    }
+}
+
 function Wait-ForDatabase {
     $deadline = [datetime]::UtcNow.AddSeconds(180)
     do {
@@ -171,6 +290,55 @@ function Wait-ForDatabase {
         Start-Sleep -Seconds 2
     } while ([datetime]::UtcNow -lt $deadline)
     throw "MySQL was not ready within 180 seconds. Run: docker logs $databaseContainer"
+}
+
+function Get-ToolchainBuildHash {
+    # Dockerfile이 실제로 복사하는 입력만 추적한다. 거대한 BERT 조각은 manifest가 각 조각의
+    # SHA-256을 이미 기록하므로 시작할 때마다 400MB를 다시 읽지 않는다. 새 이미지 빌드에서는
+    # model_assets.py가 조각 자체를 검증하므로 손상된 파일이 이미지에 들어갈 수 없다.
+    $files = @()
+    foreach ($relativePath in @(
+        ".dockerignore",
+        "Dockerfile",
+        "requirements.txt",
+        "server.py",
+        "scripts/bootstrap-implementation-tools.sh",
+        "materials/BERT_FR_NFR_Classifier/bert_model/config.json",
+        "materials/BERT_FR_NFR_Classifier/bert_model/tokenizer.json",
+        "materials/BERT_FR_NFR_Classifier/bert_model/tokenizer_config.json",
+        "materials/BERT_FR_NFR_Classifier/bert_model/training_args.bin",
+        "materials/BERT_FR_NFR_Classifier/bert_model/weights/manifest.json"
+    )) {
+        $path = Join-Path $repoRoot $relativePath
+        if (Test-Path -LiteralPath $path) {
+            $files += Get-Item -LiteralPath $path
+        }
+    }
+    $appRoot = Join-Path $repoRoot "app"
+    $files += Get-ChildItem -LiteralPath $appRoot -Recurse -File | Where-Object {
+        $relativePath = $_.FullName.Substring($appRoot.Length).Replace("\", "/")
+        $relativePath -notmatch "/(__pycache__|\.cache|output|tests)/" -and
+            $_.Extension -notin @(".pyc", ".pyo")
+    }
+    return Get-CombinedFileHash -Files $files -ExtraRecords @(
+        "frontend=$(Get-FrontendBuildHash)"
+    )
+}
+
+function Read-DotEnvValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return ""
+    }
+    foreach ($line in Get-Content -LiteralPath $Path -Encoding UTF8) {
+        if ($line -match "^\s*$([regex]::Escape($Name))\s*=\s*(.*)\s*$") {
+            return $Matches[1].Trim().Trim('"').Trim("'")
+        }
+    }
+    return ""
 }
 
 function Get-DatabaseHostPort {
@@ -228,6 +396,44 @@ if ($LASTEXITCODE -ne 0) {
     throw "Docker Desktop is not running."
 }
 
+if ($ResetDatabase) {
+    # 개발 DB 구조가 현재 코드와 맞지 않을 때만 사용한다. 컨테이너와 그 전용 volume을
+    # 함께 지우므로, 기존 앱과 checkpoint도 모두 삭제된다는 사실을 출력해 둔다.
+    Stop-OwnedServer
+    $existingDatabase = & docker ps -a --filter "name=^/$databaseContainer$" --format "{{.Names}}"
+    if ($existingDatabase -eq $databaseContainer) {
+        Write-Host "[EasyDep] Removing the development MySQL container and all saved app data." -ForegroundColor Yellow
+        Invoke-Docker -Arguments @("rm", "-f", $databaseContainer)
+    }
+    $existingVolume = & docker volume ls --filter "name=^$databaseVolume$" --format "{{.Name}}"
+    if ($existingVolume -eq $databaseVolume) {
+        Invoke-Docker -Arguments @("volume", "rm", $databaseVolume)
+    }
+}
+
+if (-not (Test-Path -LiteralPath $environmentPath)) {
+    Copy-Item -LiteralPath $environmentExamplePath -Destination $environmentPath
+    Write-Host (
+        "[EasyDep] Created .env from .env.example. " +
+        "Set API_KEY, BASE_URL and MODEL before running an LLM stage."
+    ) -ForegroundColor Yellow
+}
+$configuredToolchainImage = Read-DotEnvValue -Path $environmentPath -Name "EASYDEP_TOOLCHAIN_IMAGE"
+if (-not [string]::IsNullOrWhiteSpace($configuredToolchainImage)) {
+    $toolchainImage = $configuredToolchainImage
+}
+
+if ($SkipBootstrap) {
+    Write-Host "[EasyDep] Skipping Python and toolchain bootstrap by explicit request."
+    if (-not (Test-DockerImage -Image $toolchainImage)) {
+        throw "-SkipBootstrap requires the existing Docker image: $toolchainImage"
+    }
+}
+else {
+    Initialize-PythonEnvironment
+    Initialize-Toolchain
+}
+
 if ($SkipFrontendBuild) {
     if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot "build\index.html"))) {
         throw "-SkipFrontendBuild requires an existing frontend/build/index.html."
@@ -235,40 +441,19 @@ if ($SkipFrontendBuild) {
     Write-Host "[EasyDep] Reusing the frontend build by explicit request."
 }
 else {
-    if (-not (Test-CommandAvailable "npm")) {
-        throw "Node.js and npm are required to build the frontend."
+    $buildHash = Get-FrontendBuildHash
+    $builtHash = Read-HashRecord -Path $frontendBuildHashPath
+    $buildIndex = Join-Path $frontendRoot "build\index.html"
+    if (-not $ForceFrontendBuild -and (Test-Path -LiteralPath $buildIndex) -and $buildHash -eq $builtHash) {
+        Write-Host "[EasyDep] Frontend inputs are unchanged; reusing the existing build."
     }
-    $npmCommand = (Get-Command npm.cmd -ErrorAction Stop).Source
-    $lockPath = Join-Path $frontendRoot "package-lock.json"
-    $lockHash = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash
-    $installedHash = Read-HashRecord -Path $frontendHashPath
-    Push-Location $frontendRoot
-    try {
-        if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot "node_modules")) -or $lockHash -ne $installedHash) {
-            Write-Host "[EasyDep] Installing pinned frontend packages."
-            & $npmCommand ci
-            if ($LASTEXITCODE -ne 0) {
-                throw "npm ci failed."
-            }
-            Set-Content -LiteralPath $frontendHashPath -Value $lockHash -Encoding UTF8
+    else {
+        Write-Host "[EasyDep] Exporting the SvelteKit build from $toolchainImage."
+        Export-FrontendBuild
+        if (-not (Test-Path -LiteralPath $buildIndex)) {
+            throw "The toolchain image did not contain frontend/build/index.html."
         }
-        $buildHash = Get-FrontendBuildHash
-        $builtHash = Read-HashRecord -Path $frontendBuildHashPath
-        $buildIndex = Join-Path $frontendRoot "build\index.html"
-        if (-not $ForceFrontendBuild -and (Test-Path -LiteralPath $buildIndex) -and $buildHash -eq $builtHash) {
-            Write-Host "[EasyDep] Frontend inputs are unchanged; reusing the existing build."
-        }
-        else {
-            Write-Host "[EasyDep] Building the SvelteKit frontend."
-            & $npmCommand run build
-            if ($LASTEXITCODE -ne 0) {
-                throw "The frontend build failed."
-            }
-            Set-Content -LiteralPath $frontendBuildHashPath -Value $buildHash -Encoding UTF8
-        }
-    }
-    finally {
-        Pop-Location
+        Set-Content -LiteralPath $frontendBuildHashPath -Value $buildHash -Encoding UTF8
     }
 }
 
@@ -288,6 +473,7 @@ if ($existingDatabase -eq $databaseContainer) {
         )
     }
 }
+
 if ($existingDatabase -eq $databaseContainer) {
     $runningDatabase = & docker ps --filter "name=^/$databaseContainer$" --format "{{.Names}}"
     if ($runningDatabase -ne $databaseContainer) {
