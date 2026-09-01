@@ -4,13 +4,10 @@ param(
     [switch]$OpenBrowser,
     [switch]$SkipFrontendBuild,
     [switch]$ForceFrontendBuild,
-<<<<<<< HEAD
     [switch]$ResetDatabaseSchema,
-=======
     [switch]$SkipBootstrap,
     [switch]$ForceToolchainBuild,
     [switch]$ResetDatabase,
->>>>>>> 234f03ed5810170eed70aaab64a8aef70f5b2437
     [ValidateRange(1024, 65535)]
     [int]$Port = 8000,
     [ValidateRange(1024, 65535)]
