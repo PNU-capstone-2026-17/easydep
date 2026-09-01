@@ -839,15 +839,16 @@ LLM prompt에는 모든 고유 실패, 사용한 전략, 거부한 후보 digest
 
 ### 8.1 MySQL의 업무 데이터
 
-실제 테이블 정의의 기준은 `app/db/models.py`와 애플리케이션 시작 시 `create_all()`이다.
-`app/db/schema.sql`은 현재 Workspace와 체크포인트 테이블을 모두 담지 않은 참고 파일이므로
-현재 스키마의 기준으로 사용하면 안 된다.
+새 데이터베이스의 ORM 기준은 `app/db/models.py`와 각 checkpoint 모델이다. 애플리케이션 시작 시
+`create_all()`로 없는 표를 만들고 `app/db/migrations.py`가 기존 표의 증분 변경을 적용한다.
+`app/db/schema.sql`은 Workspace와 checkpoint를 포함한 전체 수동 설치용 기준 DDL이다. 관계와
+설계 이유는 [MySQL 구조 문서](mysql-architecture.md)에 정리한다.
 
 | 테이블 | 저장 내용 | 중요한 키 |
 |---|---|---|
 | `apps` | 앱 ID, 원문 요구사항, 추가 리소스 제약, 최근 단계 | `app_id` |
 | `deployment_preferences` | 선택한 CSP 대안·리전·예산 JSON | `app_id` |
-| `artifacts` | 앱별 산출물 종류와 현재 버전, 생성 lease | `(app_id, artifact_type)` |
+| `artifacts` | 앱별 산출물 종류와 현재 버전 번호 | `(app_id, artifact_type)` |
 | `artifact_versions` | 모든 산출물 버전의 내용·문법 결과·생성 원인 | `(artifact_id, version_no)` |
 | `artifact_files` | 구현 산출물 버전 안의 파일·내용·SHA-256 | `(artifact_version_id, file_path)` |
 | `workspace_commands` | 화면 명령, 상태, 입력 JSON, 결과 JSON, 오류 | `command_id` |

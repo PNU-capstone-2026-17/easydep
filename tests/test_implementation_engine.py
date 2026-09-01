@@ -116,6 +116,66 @@ def test_one_scenario_method_can_cover_multiple_use_cases(tmp_path: Path) -> Non
     assert result["status"] == "PASSED"
     assert result["coveredUseCaseIds"] == ["UC1", "UC2", "UC3"]
     assert [task["requiredPassedCases"] for task in result["tasks"]] == [1]
+    
+def test_agent_workspace_refresh_preserves_ignored_build_outputs(
+    tmp_path: Path,
+) -> None:
+    """재시도 준비는 Windows가 잠글 수 있는 Gradle 산출물을 건드리지 않는다."""
+    run = tmp_path / "generated" / "runs" / "run_abcdef1234567890"
+    source = run / "application" / "src" / "Main.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Main {}", encoding="utf-8")
+    task = {"task_id": "locked-build", "allowed_write_paths": []}
+
+    with patch(
+        "app.implementation.agents.workspace.tempfile.gettempdir",
+        return_value=str(tmp_path / "temp"),
+    ):
+        sandbox = prepare_agent_workspace(run, task)
+        build_output = (
+            sandbox
+            / "application/build/test-results/test/binary/output.bin"
+        )
+        build_output.parent.mkdir(parents=True)
+        build_output.write_bytes(b"test output")
+        stale_source = sandbox / "application/src/Stale.java"
+        stale_source.write_text("class Stale {}", encoding="utf-8")
+
+        refreshed = prepare_agent_workspace(run, task)
+
+    assert refreshed == sandbox
+    assert build_output.read_bytes() == b"test output"
+    assert not stale_source.exists()
+
+def test_agent_workspace_refresh_preserves_ignored_build_outputs(
+    tmp_path: Path,
+) -> None:
+    """재시도 준비는 Windows가 잠글 수 있는 Gradle 산출물을 건드리지 않는다."""
+    run = tmp_path / "generated" / "runs" / "run_abcdef1234567890"
+    source = run / "application" / "src" / "Main.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Main {}", encoding="utf-8")
+    task = {"task_id": "locked-build", "allowed_write_paths": []}
+
+    with patch(
+        "app.implementation.agents.workspace.tempfile.gettempdir",
+        return_value=str(tmp_path / "temp"),
+    ):
+        sandbox = prepare_agent_workspace(run, task)
+        build_output = (
+            sandbox
+            / "application/build/test-results/test/binary/output.bin"
+        )
+        build_output.parent.mkdir(parents=True)
+        build_output.write_bytes(b"test output")
+        stale_source = sandbox / "application/src/Stale.java"
+        stale_source.write_text("class Stale {}", encoding="utf-8")
+
+        refreshed = prepare_agent_workspace(run, task)
+
+    assert refreshed == sandbox
+    assert build_output.read_bytes() == b"test output"
+    assert not stale_source.exists()
 
 
 def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None:

@@ -106,11 +106,18 @@ def create_command(
     섞일 수 있다. 따라서 QUEUED 또는 RUNNING command가 있으면 새 command를 거절한다.
     """
     with session_scope() as session:
+        # SELECT 후 INSERT만 하면 두 요청이 동시에 "활성 command 없음"을 보고 둘 다
+        # 저장할 수 있다. 항상 존재하는 부모 app 행을 잠가 앱별 생성 절차를 직렬화한다.
+        app = session.scalar(
+            select(App).where(App.app_id == app_id).with_for_update()
+        )
+        if app is None:
+            raise KeyError(app_id)
         active = session.scalar(
             select(WorkspaceCommand).where(
                 WorkspaceCommand.app_id == app_id,
                 WorkspaceCommand.status.in_(ACTIVE_STATUSES),
-            )
+            ).limit(1)
         )
         if active is not None:
             raise RuntimeError(f"An active workspace command already exists: {active.command_id}")
@@ -142,7 +149,9 @@ def latest_command(
         query = select(WorkspaceCommand).where(WorkspaceCommand.app_id == app_id)
         if exclude_command_id:
             query = query.where(WorkspaceCommand.command_id != exclude_command_id)
-        row = session.scalar(query.order_by(WorkspaceCommand.created_at.desc()))
+        row = session.scalar(
+            query.order_by(WorkspaceCommand.created_at.desc()).limit(1)
+        )
         return command_dict(row) if row is not None else None
 
 
@@ -249,30 +258,46 @@ def get_deployment_preferences(app_id: str) -> dict[str, Any] | None:
 def list_workspace_apps(limit: int = 50) -> list[dict[str, Any]]:
     """사이드바에 표시할 최근 앱과 각 앱의 최신 command를 조회한다."""
     with session_scope() as session:
-        rows = session.scalars(
-            select(App).order_by(App.created_at.desc()).limit(limit)
+        latest_command_id = (
+            select(WorkspaceCommand.command_id)
+            .where(WorkspaceCommand.app_id == App.app_id)
+            .order_by(
+                WorkspaceCommand.created_at.desc(),
+                WorkspaceCommand.command_id.desc(),
+            )
+            .limit(1)
+            .correlate(App)
+            .scalar_subquery()
+        )
+        rows = session.execute(
+            select(App, WorkspaceCommand)
+            .outerjoin(
+                WorkspaceCommand,
+                WorkspaceCommand.command_id == latest_command_id,
+            )
+            .order_by(App.created_at.desc())
+            .limit(limit)
         ).all()
         result: list[dict[str, Any]] = []
-        for row in rows:
-            command = session.scalar(
-                select(WorkspaceCommand)
-                .where(WorkspaceCommand.app_id == row.app_id)
-                .order_by(WorkspaceCommand.created_at.desc())
-            )
+        for app, command in rows:
             first_line = next(
-                (line.strip() for line in (row.requirements_text or "").splitlines() if line.strip()),
+                (
+                    line.strip()
+                    for line in (app.requirements_text or "").splitlines()
+                    if line.strip()
+                ),
                 "",
             )
             result.append(
                 {
-                    "app_id": row.app_id,
-                    "title": first_line[:72] or f"EasyDep app {row.app_id[:8]}",
+                    "app_id": app.app_id,
+                    "title": first_line[:72] or f"EasyDep app {app.app_id[:8]}",
                     "current_stage": (
                         command.stage
                         if command is not None
-                        else workflow_stage(row.current_stage)
+                        else workflow_stage(app.current_stage)
                     ),
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "created_at": app.created_at.isoformat() if app.created_at else None,
                     "command": command_dict(command) if command is not None else None,
                 }
             )

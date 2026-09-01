@@ -7,19 +7,25 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CHAR,
+    CheckConstraint,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.mysql import DATETIME, LONGTEXT, MEDIUMTEXT
+from sqlalchemy.dialects.mysql import DATETIME, LONGBLOB, LONGTEXT, MEDIUMTEXT
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
+
+
+_Blob = LargeBinary().with_variant(LONGBLOB(), "mysql")
 
 
 # Artifact types. Kept as plain strings so later phases (source code, IaC,
@@ -70,74 +76,49 @@ class App(Base):
     )
     # 개발 진행 상태: the stage whose artifact was written most recently.
     current_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 앱당 하나뿐이고 독립 검색·이력이 없는 요구사항 단계의 최신 배포 선택이다.
+    deployment_preferences: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    # 요구사항 그래프의 topology도 앱 수명주기에 속하므로 별도 session 표를 두지 않는다.
+    requirements_gated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=6), nullable=False, server_default=func.now(6)
     )
 
-    artifacts: Mapped[list[Artifact]] = relationship(
+    artifact_versions: Mapped[list[ArtifactVersion]] = relationship(
         back_populates="app",
         cascade="all, delete-orphan",
     )
 
-
-class Artifact(Base):
-    """The current artifact of one type for one app."""
-
-    __tablename__ = "artifacts"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    app_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("apps.app_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    artifact_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    # The generation lock: NULL when free, otherwise when the lock was taken. A
-    # generation that dies without releasing would lock the artifact forever, so
-    # the claim is a lease that expires (see artifact_repository.claim_stage).
-    generation_started_at: Mapped[datetime | None] = mapped_column(
-        DATETIME(fsp=6), nullable=True
-    )
-    # Deliberately not a ForeignKey: artifacts and artifact_versions would
-    # otherwise reference each other and neither could be inserted first.
-    current_version_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    latest_version_no: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    app: Mapped[App] = relationship(back_populates="artifacts")
-    versions: Mapped[list[ArtifactVersion]] = relationship(
-        back_populates="artifact",
-        cascade="all, delete-orphan",
-        order_by="ArtifactVersion.version_no",
-    )
-
-    __table_args__ = (
-        UniqueConstraint("app_id", "artifact_type", name="uq_artifacts_app_type"),
-    )
+    __table_args__ = (Index("ix_apps_created_at", "created_at"),)
 
 
 class ArtifactVersion(Base):
-    """Every revision ever produced for an artifact."""
+    """One immutable revision, identified directly by app, type, and version."""
 
     __tablename__ = "artifact_versions"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    artifact_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey("artifacts.id", ondelete="CASCADE"),
+    app_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("apps.app_id", name="fk_artifact_versions_app", ondelete="CASCADE"),
         nullable=False,
     )
+    artifact_type: Mapped[str] = mapped_column(String(32), nullable=False)
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(LONGTEXT, nullable=False)
     syntax_valid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     syntax_errors: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     origin: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=ORIGIN_GENERATED
+        String(20),
+        nullable=False,
+        default=ORIGIN_GENERATED,
+        server_default=ORIGIN_GENERATED,
     )
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=6), nullable=False, server_default=func.now(6)
     )
 
-    artifact: Mapped[Artifact] = relationship(back_populates="versions")
+    app: Mapped[App] = relationship(back_populates="artifact_versions")
     files: Mapped[list[ArtifactFile]] = relationship(
         back_populates="artifact_version",
         cascade="all, delete-orphan",
@@ -145,7 +126,13 @@ class ArtifactVersion(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("artifact_id", "version_no", name="uq_versions_artifact_no"),
+        UniqueConstraint(
+            "app_id",
+            "artifact_type",
+            "version_no",
+            name="uq_artifact_versions_app_type_no",
+        ),
+        CheckConstraint("version_no > 0", name="ck_versions_version_positive"),
     )
 
 
@@ -154,46 +141,36 @@ class ArtifactFile(Base):
 
     __tablename__ = "artifact_files"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     artifact_version_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("artifact_versions.id", ondelete="CASCADE"),
+        ForeignKey(
+            "artifact_versions.id",
+            name="fk_artifact_files_version",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
         nullable=False,
     )
-    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Generated files run on Linux, where paths are case-sensitive. The database
+    # must not collapse README.md and readme.md under its default ai_ci collation.
+    file_path: Mapped[str] = mapped_column(
+        String(512, collation="utf8mb4_0900_as_cs"),
+        primary_key=True,
+        nullable=False,
+    )
     content: Mapped[str] = mapped_column(LONGTEXT, nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    sha256: Mapped[str] = mapped_column(
+        CHAR(64, collation="ascii_bin"), nullable=False
+    )
 
     artifact_version: Mapped[ArtifactVersion] = relationship(back_populates="files")
 
     __table_args__ = (
-        UniqueConstraint(
-            "artifact_version_id",
-            "file_path",
-            name="uq_artifact_files_version_path",
+        CheckConstraint("CHAR_LENGTH(file_path) > 0", name="ck_artifact_files_path"),
+        CheckConstraint(
+            "sha256 REGEXP '^[0-9a-f]{64}$'",
+            name="ck_artifact_files_sha256",
         ),
-    )
-
-
-class DeploymentPreference(Base):
-    """User-selected cloud alternatives collected while requirements are analyzed."""
-
-    __tablename__ = "deployment_preferences"
-
-    app_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("apps.app_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    selection: Mapped[Any] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DATETIME(fsp=6), nullable=False, server_default=func.now(6)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DATETIME(fsp=6),
-        nullable=False,
-        server_default=func.now(6),
-        onupdate=func.now(6),
     )
 
 
@@ -204,7 +181,9 @@ class WorkspaceCommand(Base):
 
     command_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     app_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("apps.app_id", ondelete="CASCADE"), nullable=False
+        String(36),
+        ForeignKey("apps.app_id", name="fk_workspace_commands_app", ondelete="CASCADE"),
+        nullable=False,
     )
     action: Mapped[str] = mapped_column(String(48), nullable=False)
     stage: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -221,28 +200,64 @@ class WorkspaceCommand(Base):
     __table_args__ = (
         Index("ix_workspace_commands_app_created", "app_id", "created_at"),
         Index("ix_workspace_commands_app_status", "app_id", "status"),
+        Index("ix_workspace_commands_status", "status"),
     )
 
 
-class WorkspaceEvent(Base):
-    """An append-only, display-safe event in an application's workspace timeline."""
+class AgentCheckpoint(Base):
+    """Requirements and design checkpoints share one graph-scoped table."""
 
-    __tablename__ = "workspace_events"
+    __tablename__ = "agent_checkpoints"
 
-    event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    app_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("apps.app_id", ondelete="CASCADE"), nullable=False
+    graph_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    checkpoint_ns: Mapped[str] = mapped_column(
+        String(128), primary_key=True, default="", server_default=""
     )
-    command_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    stage: Mapped[str] = mapped_column(String(32), nullable=False)
-    kind: Mapped[str] = mapped_column(String(32), nullable=False)
-    actor: Mapped[str] = mapped_column(String(16), nullable=False)
-    text: Mapped[str] = mapped_column(MEDIUMTEXT, nullable=False)
-    event_data: Mapped[Any] = mapped_column("metadata", JSON, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DATETIME(fsp=6), nullable=False, server_default=func.now(6)
-    )
+    checkpoint_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    parent_checkpoint_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    checkpoint_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    checkpoint: Mapped[bytes] = mapped_column(_Blob, nullable=False)
+    metadata_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    checkpoint_metadata: Mapped[bytes] = mapped_column(_Blob, nullable=False)
 
     __table_args__ = (
-        Index("ix_workspace_events_app_event", "app_id", "event_id"),
+        Index("ix_agent_checkpoints_graph_checkpoint", "graph_type", "checkpoint_id"),
+    )
+
+
+class AgentCheckpointBlob(Base):
+    """One graph-scoped channel value version."""
+
+    __tablename__ = "agent_checkpoint_blobs"
+
+    graph_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    checkpoint_ns: Mapped[str] = mapped_column(
+        String(128), primary_key=True, default="", server_default=""
+    )
+    channel: Mapped[str] = mapped_column(String(255), primary_key=True)
+    version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    blob_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    blob: Mapped[bytes | None] = mapped_column(_Blob, nullable=True)
+
+
+class AgentCheckpointWrite(Base):
+    """One graph-scoped write awaiting checkpoint application."""
+
+    __tablename__ = "agent_checkpoint_writes"
+
+    graph_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    checkpoint_ns: Mapped[str] = mapped_column(
+        String(128), primary_key=True, default="", server_default=""
+    )
+    checkpoint_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    idx: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel: Mapped[str] = mapped_column(String(255), nullable=False)
+    write_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    blob: Mapped[bytes] = mapped_column(_Blob, nullable=False)
+    task_path: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="", server_default=""
     )

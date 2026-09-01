@@ -1,7 +1,7 @@
 """앱 입력과 단계별 산출물을 MySQL에 저장하고 다시 읽는다.
 
-요구사항부터 테스트까지 각 단계의 결과는 ``Artifact``와 ``ArtifactVersion``으로
-버전을 나누어 보관한다. 설계 단계는 편집 가능한 JSON 모델을 저장하고, 조회할 때 그
+요구사항부터 테스트까지 각 단계의 결과는 ``ArtifactVersion``의 불변 버전으로
+보관한다. 설계 단계는 편집 가능한 JSON 모델을 저장하고, 조회할 때 그
 모델로 PlantUML 또는 OpenAPI를 다시 만든다. 따라서 그림과 JSON을 따로 수정해서 서로
 내용이 달라지는 일을 막을 수 있다.
 
@@ -17,7 +17,7 @@ import logging
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.artifact_images import warm_artifact_images
@@ -37,7 +37,6 @@ from app.db.models import (
     TYPE_USECASE_DIAGRAM,
     TYPE_USECASE_SPEC,
     App,
-    Artifact,
     ArtifactFile,
     ArtifactVersion,
 )
@@ -266,20 +265,31 @@ def load_state(app_id: str) -> ArchitectureState:
         }
         artifact_status: dict[str, str] = {}
 
-        artifacts = session.scalars(
-            select(Artifact).where(Artifact.app_id == app_id)
+        latest_by_type = (
+            select(
+                ArtifactVersion.artifact_type.label("artifact_type"),
+                func.max(ArtifactVersion.version_no).label("version_no"),
+            )
+            .where(ArtifactVersion.app_id == app_id)
+            .group_by(ArtifactVersion.artifact_type)
+            .subquery()
+        )
+        artifact_rows = session.scalars(
+            select(ArtifactVersion)
+            .join(
+                latest_by_type,
+                (ArtifactVersion.artifact_type == latest_by_type.c.artifact_type)
+                & (ArtifactVersion.version_no == latest_by_type.c.version_no),
+            )
+            .where(ArtifactVersion.app_id == app_id)
         ).all()
 
-        for artifact in artifacts:
-            stage = STAGE_BY_ARTIFACT_TYPE.get(artifact.artifact_type)
-            if stage is None or artifact.current_version_id is None:
+        for version in artifact_rows:
+            stage = STAGE_BY_ARTIFACT_TYPE.get(version.artifact_type)
+            if stage is None:
                 continue
 
             config = STAGE_ARTIFACTS[stage]
-            version = session.get(ArtifactVersion, artifact.current_version_id)
-            if version is None:
-                continue
-
             source_key = config.get("source_key")
             if source_key:
                 # 설계 산출물은 JSON 모델을 먼저 복원한 다음 사람이 보는 문서를 만든다.
@@ -389,7 +399,7 @@ def list_versions(app_id: str, stage: str) -> list[dict[str, Any]]:
                 "origin": version.origin,
                 "syntax_valid": version.syntax_valid,
                 "syntax_errors": version.syntax_errors or [],
-                "is_current": version.id == artifact.current_version_id,
+                "is_current": version.version_no == artifact.latest_version_no,
                 "created_at": version.created_at.isoformat(),
             }
             for version in versions
@@ -436,7 +446,7 @@ def save_file_snapshot(
         raise ValueError("A file artifact snapshot cannot be empty")
     normalized = {_normalize_file_path(path): content for path, content in files.items()}
     with session_scope() as session:
-        _require_app(session, app_id)
+        _lock_app(session, app_id)
         artifact = session.scalars(
             select(Artifact)
             .where(Artifact.app_id == app_id, Artifact.artifact_type == artifact_type)
@@ -466,7 +476,6 @@ def save_file_snapshot(
                 )
             )
         artifact.latest_version_no = version.version_no
-        artifact.current_version_id = version.id
         return version.id
 
 
@@ -489,14 +498,14 @@ def load_file_snapshot(
     with session_scope() as session:
         _require_app(session, app_id)
         artifact = _find_artifact(session, app_id, artifact_type)
-        if artifact is None or artifact.current_version_id is None:
+        if artifact is None or artifact.latest_version_no == 0:
             return None
         if version_id is not None:
             version = session.get(ArtifactVersion, version_id)
             if version is not None and version.artifact_id != artifact.id:
                 version = None
         elif version_no is None:
-            version = session.get(ArtifactVersion, artifact.current_version_id)
+            version = _current_version(session, artifact)
         else:
             version = session.scalars(
                 select(ArtifactVersion).where(
@@ -535,20 +544,26 @@ def list_file_artifact_versions(app_id: str, artifact_type: str) -> list[dict[st
         artifact = _find_artifact(session, app_id, artifact_type)
         if artifact is None:
             return []
-        versions = session.scalars(
-            select(ArtifactVersion)
+        file_count = (
+            select(func.count(ArtifactFile.file_path))
+            .where(ArtifactFile.artifact_version_id == ArtifactVersion.id)
+            .correlate(ArtifactVersion)
+            .scalar_subquery()
+        )
+        versions = session.execute(
+            select(ArtifactVersion, file_count)
             .where(ArtifactVersion.artifact_id == artifact.id)
             .order_by(ArtifactVersion.version_no)
         ).all()
         return [
             {
                 "version_no": version.version_no,
-                "file_count": len(version.files),
-                "is_current": version.id == artifact.current_version_id,
+                "file_count": count,
+                "is_current": version.version_no == artifact.latest_version_no,
                 "metadata": _safe_json_object(version.content),
                 "created_at": version.created_at.isoformat(),
             }
-            for version in versions
+            for version, count in versions
         ]
 
 
@@ -569,6 +584,9 @@ def _write_version(
     if not content.strip():
         return None
 
+    # 기존 artifact가 아직 없는 첫 저장도 포함해 앱 단위로 직렬화한다. artifact 행만
+    # 잠그면 "행이 없음"은 잠글 수 없어 두 writer가 같은 version_no=1을 만들 수 있다.
+    _lock_app(session, app_id)
     artifact = _find_artifact(session, app_id, config["artifact_type"])
     if artifact is None:
         artifact = Artifact(app_id=app_id, artifact_type=config["artifact_type"])
@@ -593,7 +611,6 @@ def _write_version(
     session.flush()
 
     artifact.latest_version_no = version.version_no
-    artifact.current_version_id = version.id
     return version.id
 
 
@@ -615,6 +632,31 @@ def _require_app(session: Session, app_id: str) -> App:
     if app is None:
         raise AppNotFound(app_id)
     return app
+
+
+def _lock_app(session: Session, app_id: str) -> App:
+    """Return an app while holding its row lock until the current transaction ends."""
+    app = session.scalar(select(App).where(App.app_id == app_id).with_for_update())
+    if app is None:
+        raise AppNotFound(app_id)
+    return app
+
+
+def _current_version(session: Session, artifact: Artifact) -> ArtifactVersion:
+    """Load the latest row through the artifact-scoped unique version key."""
+    version = session.scalar(
+        select(ArtifactVersion).where(
+            ArtifactVersion.artifact_id == artifact.id,
+            ArtifactVersion.version_no == artifact.latest_version_no,
+        )
+    )
+    if version is None:
+        raise ArtifactIntegrityError(
+            "Artifact latest version is missing: "
+            f"artifact_id={artifact.id}, "
+            f"latest_version_no={artifact.latest_version_no}"
+        )
+    return version
 
 
 def _encode_content(value: Any, content_format: str) -> str:

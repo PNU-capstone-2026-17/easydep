@@ -190,6 +190,16 @@ def _refresh_agent_workspace(
     for target in sandbox_application.rglob("*"):
         if not target.is_file():
             continue
+        relative_application = target.relative_to(sandbox_application)
+        # Gradle/npm 산출물과 package cache는 source 동기화 대상이 아니다. 이전 검증이
+        # 만든 파일을 여기서 지우면 증분 build 이점을 잃을 뿐 아니라, Windows에서는
+        # 종료 중인 test worker가 output.bin을 잠시 잡고 있어 WinError 32가 발생한다.
+        # 성공 뒤 cleanup_agent_workspace가 sandbox 전체를 별도로 정리한다.
+        if any(
+            part in _IGNORED_WORKSPACE_PARTS
+            for part in relative_application.parts
+        ):
+            continue
         relative_run = target.relative_to(sandbox).as_posix()
         editable_extra = path_is_editable(
             relative_run,

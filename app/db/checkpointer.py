@@ -1,17 +1,7 @@
-"""에이전트가 공유하는 SQL 체크포인터 — 테이블은 각 에이전트가 자기 것을 가진다.
+"""Requirements와 design 그래프가 공유하는 graph-scoped SQL 체크포인터.
 
-**왜 여기 있나.** 원래 이 구현은 `app/requirements/session_store.py` 안에 있었고 모델
-클래스 세 개를 하드코딩했다. 그런데 로직 자체는 에이전트와 무관하다 — 어느 그래프의
-체크포인트든 넣고 꺼내는 방식은 같다. 설계 에이전트도 대화형 게이트를 갖게 되면서 같은
-것이 두 벌 필요해졌으므로, 로직은 여기 한 벌만 두고 **테이블만 에이전트별로** 붙인다.
-
-테이블을 공유하지 않고 접두사로 나누는 이유는 `session_store.py`가 원래 적어둔 그대로다:
-이 저장소를 여러 에이전트가 공유하므로 누구 것인지 이름으로 보여야 한다. 그래서 이
-모듈은 컬럼 정의를 **믹스인**으로 주고, 테이블 이름은 상속하는 쪽이 정한다.
-
-**스키마는 LangGraph 공식 저장소(SQLite/Postgres)와 같은 모양이다.** 체크포인트 본문,
-채널별 값(blob), 보류 중 쓰기(writes)를 나눠 담는다. 이 분리는 취향이 아니라 규약이라
-— `InMemorySaver`가 하는 것과 같은 순서로 넣고 꺼내야 재개가 맞는다.
+LangGraph 규약에 따라 checkpoint 본문, 채널 blob, pending write는 세 표로 나누되,
+단계마다 표를 복제하지 않고 ``graph_type``을 모든 기본키의 첫 열로 사용한다.
 """
 from __future__ import annotations
 
@@ -30,15 +20,10 @@ from langgraph.checkpoint.base import (
     get_checkpoint_metadata,
 )
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-from sqlalchemy import Integer, LargeBinary, String, delete, select
-from sqlalchemy.dialects.mysql import LONGBLOB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import delete, select, tuple_
 
+from app.db.models import AgentCheckpoint, AgentCheckpointBlob, AgentCheckpointWrite
 from app.db.session import session_scope
-
-# 체크포인트 하나가 MySQL BLOB(64KiB)을 넘기 쉽다 — 명세가 UC 수만큼 들어간다.
-# SQLite에서는 그냥 BLOB이라 테스트는 같은 코드로 돈다.
-_Blob = LargeBinary().with_variant(LONGBLOB(), "mysql")
 
 _serde = JsonPlusSerializer()
 
@@ -57,50 +42,6 @@ def _dump(value: Any) -> tuple[str, bytes]:
     return type_, bytes(payload)
 
 
-# ---------------------------------------------------------------------------
-# 컬럼 정의 믹스인 — 테이블 이름과 Base 상속은 에이전트별 모듈이 정한다.
-# ---------------------------------------------------------------------------
-class CheckpointMixin:
-    """체크포인트 본문(채널 값은 뺀 뼈대) + 메타데이터."""
-
-    thread_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    checkpoint_ns: Mapped[str] = mapped_column(String(128), primary_key=True, default="")
-    checkpoint_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    parent_checkpoint_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    checkpoint_type: Mapped[str] = mapped_column(String(32))
-    checkpoint: Mapped[bytes] = mapped_column(_Blob)
-    metadata_type: Mapped[str] = mapped_column(String(32))
-    checkpoint_metadata: Mapped[bytes] = mapped_column(_Blob)
-
-
-class CheckpointBlobMixin:
-    """채널 하나의 값 하나. 버전이 올라갈 때만 새 행이 생긴다."""
-
-    thread_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    checkpoint_ns: Mapped[str] = mapped_column(String(128), primary_key=True, default="")
-    channel: Mapped[str] = mapped_column(String(255), primary_key=True)
-    version: Mapped[str] = mapped_column(String(64), primary_key=True)
-    blob_type: Mapped[str] = mapped_column(String(32))
-    blob: Mapped[bytes | None] = mapped_column(_Blob, nullable=True)
-
-
-class CheckpointWriteMixin:
-    """아직 체크포인트에 반영되지 않은 쓰기(보류 중 쓰기).
-
-    interrupt로 멈춘 세션을 재개할 때 이게 있어야 멈춘 지점이 복원된다.
-    """
-
-    thread_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    checkpoint_ns: Mapped[str] = mapped_column(String(128), primary_key=True, default="")
-    checkpoint_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    task_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    idx: Mapped[int] = mapped_column(Integer, primary_key=True)
-    channel: Mapped[str] = mapped_column(String(255))
-    write_type: Mapped[str] = mapped_column(String(32))
-    blob: Mapped[bytes] = mapped_column(_Blob)
-    task_path: Mapped[str] = mapped_column(String(255), default="")
-
-
 class SqlCheckpointSaver(BaseCheckpointSaver):
     """산출물 저장소와 같은 MySQL에 체크포인트를 쓰는 LangGraph 체크포인터.
 
@@ -108,23 +49,20 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
     체크포인트 뼈대는 `channel_versions`만 들고 있다가 읽을 때 blob에서 되살린다.
     이 규약이 어긋나면 재개가 조용히 어긋난다(예외가 아니라 잘못된 상태로 이어진다).
 
-    테이블 세 벌은 생성자로 받는다 — 에이전트마다 자기 접두사 테이블을 쓰기 때문이다.
-    `extra_thread_models`는 스레드 단위로 같이 지워야 할 부수 테이블(예: 세션 모드 기록)
-    이다. `thread_id` 컬럼만 있으면 된다.
+    ``graph_type``은 같은 테이블 안에서 requirements와 design의 키 공간을 분리한다.
     """
 
     def __init__(
         self,
-        checkpoint_model: type,
-        blob_model: type,
-        write_model: type,
-        extra_thread_models: Sequence[type] = (),
+        graph_type: str,
     ) -> None:
         super().__init__(serde=_serde)
-        self._checkpoint = checkpoint_model
-        self._blob = blob_model
-        self._write = write_model
-        self._extra = tuple(extra_thread_models)
+        if not graph_type or len(graph_type) > 16:
+            raise ValueError("graph_type must be between 1 and 16 characters")
+        self.graph_type = graph_type
+        self._checkpoint = AgentCheckpoint
+        self._blob = AgentCheckpointBlob
+        self._write = AgentCheckpointWrite
 
     # -- 쓰기 ---------------------------------------------------------------
     def put(
@@ -151,6 +89,7 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
                 )
                 db.merge(
                     self._blob(
+                        graph_type=self.graph_type,
                         thread_id=thread_id,
                         checkpoint_ns=checkpoint_ns,
                         channel=channel,
@@ -161,6 +100,7 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
                 )
             db.merge(
                 self._checkpoint(
+                    graph_type=self.graph_type,
                     thread_id=thread_id,
                     checkpoint_ns=checkpoint_ns,
                     checkpoint_id=checkpoint["id"],
@@ -195,6 +135,7 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
                 idx = WRITES_IDX_MAP.get(channel, position)
                 write_type, blob = _dump(value)
                 row = self._write(
+                    graph_type=self.graph_type,
                     thread_id=thread_id,
                     checkpoint_ns=checkpoint_ns,
                     checkpoint_id=checkpoint_id,
@@ -210,7 +151,14 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
                     # 음수 idx(에러·인터럽트 등 특수 채널)는 최신이 이긴다.
                     existing = db.get(
                         self._write,
-                        (thread_id, checkpoint_ns, checkpoint_id, task_id, idx),
+                        (
+                            self.graph_type,
+                            thread_id,
+                            checkpoint_ns,
+                            checkpoint_id,
+                            task_id,
+                            idx,
+                        ),
                     )
                     if existing is not None:
                         continue
@@ -226,9 +174,12 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
             return {}
         rows = db.scalars(
             select(self._blob).where(
+                self._blob.graph_type == self.graph_type,
                 self._blob.thread_id == thread_id,
                 self._blob.checkpoint_ns == checkpoint_ns,
-                self._blob.version.in_([str(v) for v in versions.values()]),
+                tuple_(self._blob.channel, self._blob.version).in_(
+                    [(channel, str(version)) for channel, version in versions.items()]
+                ),
             )
         ).all()
         by_key = {(r.channel, r.version): r for r in rows}
@@ -246,6 +197,7 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         rows = db.scalars(
             select(self._write)
             .where(
+                self._write.graph_type == self.graph_type,
                 self._write.thread_id == thread_id,
                 self._write.checkpoint_ns == checkpoint_ns,
                 self._write.checkpoint_id == checkpoint_id,
@@ -301,6 +253,7 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
 
         with session_scope() as db:
             query = select(self._checkpoint).where(
+                self._checkpoint.graph_type == self.graph_type,
                 self._checkpoint.thread_id == thread_id,
                 self._checkpoint.checkpoint_ns == checkpoint_ns,
             )
@@ -325,7 +278,9 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         # 다음 put이 "transaction within a transaction"으로 깨진다. 세션 안에서 다 만들고
         # 밖에서 넘긴다 — limit은 SQL에서 걸리므로 메모리는 여전히 유계다.
         with session_scope() as db:
-            query = select(self._checkpoint)
+            query = select(self._checkpoint).where(
+                self._checkpoint.graph_type == self.graph_type
+            )
             if config is not None:
                 query = query.where(
                     self._checkpoint.thread_id == config["configurable"]["thread_id"]
@@ -352,5 +307,10 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
     # -- 정리 ---------------------------------------------------------------
     def delete_thread(self, thread_id: str) -> None:
         with session_scope() as db:
-            for model in (self._write, self._blob, self._checkpoint, *self._extra):
-                db.execute(delete(model).where(model.thread_id == thread_id))
+            for model in (self._write, self._blob, self._checkpoint):
+                db.execute(
+                    delete(model).where(
+                        model.graph_type == self.graph_type,
+                        model.thread_id == thread_id,
+                    )
+                )
