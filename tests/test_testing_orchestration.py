@@ -67,8 +67,10 @@ def test_testing_stage_runs_application_tests_without_benchmark_evaluation(tmp_p
         "passed",
         "repository",
         "unitTests",
+        "frontendBuild",
         "diagnostics",
     }
+    assert result["frontendBuild"]["status"] == "not_applicable"
     assert result["diagnostics"] == []
 
 

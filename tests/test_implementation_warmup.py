@@ -19,6 +19,10 @@ def test_startup_warmup_uses_isolated_gradle_home(
     monkeypatch.setattr(
         "app.implementation.generation.warmup.subprocess.run", completed
     )
+    monkeypatch.setattr(
+        "app.implementation.generation.warmup.configured_runner_image",
+        lambda: "easydep-toolchain:test",
+    )
 
     report = warmup_implementation_runtime(tmp_path, 60)
 
@@ -43,6 +47,8 @@ def test_startup_warmup_uses_isolated_gradle_home(
     assert warmup_source.is_file()
     assert gradle[gradle.index("-e") + 1] == "GRADLE_USER_HOME=/tmp/easydep-gradle-home"
     assert f"{RUNNER_GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-home" in gradle
+    assert gradle[gradle.index("--entrypoint") + 1] == "gradle"
+    assert "easydep-toolchain:test" in gradle
     assert "-Dorg.gradle.vfs.watch=false" in gradle
     assert any("install" in command and "--package-lock-only" in command for command in commands)
     assert not any("puml2code" in argument for command in commands for argument in command)

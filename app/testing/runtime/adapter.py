@@ -22,7 +22,6 @@ from app.testing.runtime.container_runner import (
 from app.testing.runtime.process import run_process_tree
 from app.testing.runtime.runtime_contract import test_environment
 
-
 _COMPILED_SOURCE = re.compile(
     r"(?P<path>(?:[A-Za-z]:)?[^\r\n:]*?\.(?:java|kt))(?::\d+)?(?:\s|:|$)",
     re.IGNORECASE,
@@ -269,8 +268,45 @@ class TestingAdapter:
         with tempfile.TemporaryDirectory(prefix=".easydep-test-", dir=repository) as temporary:
             environment = test_environment(runtime_contract, Path(temporary)) or None
             result = _run(command, repository, self.timeout_seconds, environment)
+        # Docker build는 별도 격리 환경에서 다시 package한다. 호스트의 Gradle 결과를
+        # 남겨 두면 다음 Trivy 검사가 build 산출물까지 훑고 임시 디스크도 커진다.
+        shutil.rmtree(repository / "build", ignore_errors=True)
         result["testFiles"] = [str(path.relative_to(repository)) for path in test_files]
         return result
+
+    def _frontend_build(self, repository: Path) -> dict[str, Any]:
+        """프런트엔드가 있으면 고정 lock 파일로 설치하고 production build를 확인한다."""
+        frontend = repository / "frontend"
+        if not (frontend / "package.json").is_file():
+            return {"status": "not_applicable", "reason": "No frontend package was generated."}
+        if not (frontend / "package-lock.json").is_file():
+            return {
+                "status": "failed",
+                "reason": "frontend/package-lock.json is required for a repeatable build.",
+            }
+        npm = shutil.which("npm")
+        if not npm:
+            return {"status": "unavailable", "reason": "npm is not installed."}
+
+        install = _run(
+            [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+            frontend,
+            self.timeout_seconds,
+        )
+        if install.get("status") != "passed":
+            shutil.rmtree(frontend / "node_modules", ignore_errors=True)
+            return {"status": install.get("status", "failed"), "install": install}
+        try:
+            build = _run([npm, "run", "build"], frontend, self.timeout_seconds)
+        finally:
+            # production build 결과인 dist만 Docker 단계가 사용한다. 수만 개의 dependency
+            # 파일은 정적 검사와 이미지 context에 필요 없으므로 즉시 제거한다.
+            shutil.rmtree(frontend / "node_modules", ignore_errors=True)
+        return {
+            "status": build.get("status", "failed"),
+            "install": install,
+            "build": build,
+        }
 
     def run(
         self,
@@ -309,12 +345,22 @@ class TestingAdapter:
             if runtime_contract
             else self._unit_tests(repository)
         )
+        frontend_build = self._frontend_build(repository)
         diagnostics = self._diagnostics(unit_tests, implementation_result, repository)
+        if frontend_build.get("status") not in {"passed", "not_applicable"}:
+            diagnostics.append(
+                {
+                    "code": "FRONTEND_BUILD_FAILED",
+                    "message": "Generated frontend production build failed.",
+                }
+            )
         return {
             "status": "completed",
-            "passed": unit_tests.get("status") == "passed",
+            "passed": unit_tests.get("status") == "passed"
+            and frontend_build.get("status") in {"passed", "not_applicable"},
             "repository": str(repository),
             "unitTests": unit_tests,
+            "frontendBuild": frontend_build,
             "diagnostics": diagnostics,
         }
 

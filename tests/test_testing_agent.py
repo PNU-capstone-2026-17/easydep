@@ -64,6 +64,22 @@ def stored_artifacts():
         yield loader
 
 
+@pytest.fixture(autouse=True)
+def _opentofu_succeeds_without_starting_a_real_provider_download():
+    """이 파일의 graph 테스트는 OpenTofu 자체가 아니라 단계 연결만 확인한다."""
+    with patch(
+        "app.testing.nodes.iac_verification.run_opentofu_checks",
+        return_value={
+            "status": "PASSED",
+            "issues": [],
+            "commands": [],
+            "planEnabled": False,
+            "message": "OpenTofu 검사를 통과했습니다.",
+        },
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Requirements
 # ---------------------------------------------------------------------------
@@ -108,7 +124,6 @@ def _initial_state(**overrides) -> dict:
         "errors": [],
         "static_report": None,
         "dynamic_functional_report": None,
-        "dynamic_nfr_report": None,
         "iac_report": None,
     }
     state.update(overrides)
@@ -164,7 +179,6 @@ def test_static_stages_scan_the_same_application_folder(tmp_path):
 
     # No functional requirements were stored, so nothing is asserted about the app.
     assert result["dynamic_functional_report"]["status"] == "SKIPPED"
-    assert result["dynamic_nfr_report"]["status"] == "SKIPPED"
 
 
 def test_static_stages_overlap_and_merge_results_in_stage_order():
@@ -227,6 +241,37 @@ def test_static_stage_reports_a_missing_iac_folder(tmp_path):
     assert result["iac_report"]["status"] == "UNAVAILABLE"
     assert result["iac_report"]["issues"] == []
     assert result["iac_report"]["source"]["source"] == "none"
+
+
+def test_opentofu_plan_is_dry_run_and_never_apply(tmp_path, monkeypatch):
+    """plan을 켜도 원본을 바꾸거나 apply를 실행하지 않는다."""
+    from app.testing.utils import opentofu
+
+    terraform = tmp_path / "terraform"
+    terraform.mkdir()
+    source = terraform / "main.tf"
+    source.write_text('terraform { required_version = ">= 1.6.0" }\n', encoding="utf-8")
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(opentofu, "_tofu_executable", lambda: "tofu")
+    monkeypatch.setattr(
+        opentofu,
+        "_configured_values",
+        lambda: {"PATH": "tools", "TESTING_IAC_PLAN": "true"},
+    )
+
+    def completed(command, **_kwargs):
+        commands.append(list(command))
+        return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(opentofu, "run_process_tree", completed)
+
+    report = opentofu.run_opentofu_checks(terraform)
+
+    assert report["status"] == "PASSED"
+    assert [command[1] for command in commands] == ["fmt", "init", "validate", "plan"]
+    assert all("apply" not in command for command in commands)
+    assert source.read_text(encoding="utf-8").endswith("\n")
 
 
 def test_dynamic_functional_generates_from_stored_requirements(stored_artifacts):
@@ -352,6 +397,46 @@ def test_parallel_testing_jobs_use_different_docker_names():
     assert first != second
     assert first == runtime_identity("app-1", "testing-job-1")
     assert all("app-1" not in value for value in first)
+
+
+def test_running_application_uses_test_database_and_keeps_container_for_logs(
+    tmp_path, monkeypatch
+):
+    """실패 로그를 읽기 전에 Docker가 컨테이너를 자동 삭제하지 않는다."""
+    from app.testing.runtime import app_container
+
+    (tmp_path / "Dockerfile").write_text("FROM scratch\nEXPOSE 8000\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def docker(arguments, **_kwargs):
+        commands.append(arguments)
+        return type("Completed", (), {"returncode": 0, "stdout": "id\n", "stderr": ""})()
+
+    monkeypatch.setattr(app_container, "_docker", docker)
+    monkeypatch.setattr(app_container, "_wait_until_ready", lambda *_args: None)
+
+    with app_container.running_application("app-1", tmp_path, launch_id="run-1") as (_, info):
+        assert info["healthPath"] == "/actuator/health"
+
+    start = next(command for command in commands if command[:2] == ["run", "-d"])
+    assert "--rm" not in start
+    assert "SPRING_PROFILES_ACTIVE=test" in start
+    assert any(value.startswith("SPRING_DATASOURCE_URL=jdbc:h2:mem:") for value in start)
+    assert any(command[:2] == ["rm", "-f"] for command in commands)
+
+
+def test_static_failure_blocks_the_testing_result():
+    from app.testing.runtime.verification import blocking_reason
+
+    reason = blocking_reason(
+        {
+            "static": {"status": "FAILED", "issues": ["Dockerfile runs as root"]},
+            "iac": {"status": "PASSED"},
+            "dynamicFunctional": {"status": "passed"},
+        }
+    )
+
+    assert reason == "배포 설정 정적 검사에 실패했습니다: Dockerfile runs as root"
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from app.implementation.runtime.linux_runner_transport import (
 
 
 def test_configured_runner_image_uses_explicit_environment_only():
-    assert configured_runner_image({"EASYDEP_MEMBER_RUNNER_IMAGE": "runner:test"}) == "runner:test"
+    assert configured_runner_image({"EASYDEP_TOOLCHAIN_IMAGE": "runner:test"}) == "runner:test"
     assert configured_runner_image({}) is None
 
 

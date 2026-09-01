@@ -4,7 +4,6 @@ from langgraph.graph import END, START, StateGraph
 
 from app.testing.nodes.dynamic_functional import dynamic_functional_node
 from app.testing.nodes.iac_verification import iac_verification_node
-from app.testing.nodes.placeholders import dynamic_nfr_node
 from app.testing.nodes.static_verification import static_verification_node
 from app.testing.schemas.testing_state import TestingState
 
@@ -40,14 +39,12 @@ def create_testing_graph():
     # 정적 분석 두 종류를 한 node 안에서 병렬 실행한 뒤 동적 검사를 이어서 수행한다.
     workflow.add_node("static_verification", parallel_static_verification_node)
     workflow.add_node("dynamic_functional", dynamic_functional_node)
-    workflow.add_node("dynamic_nfr", dynamic_nfr_node)
 
     # 동적 검사는 실행 중인 애플리케이션을 사용하므로 Trivy 병렬 구간 밖에 둔다.
     workflow.add_edge(START, "static_verification")
 
     workflow.add_edge("static_verification", "dynamic_functional")
-    workflow.add_edge("dynamic_functional", "dynamic_nfr")
-    workflow.add_edge("dynamic_nfr", END)
+    workflow.add_edge("dynamic_functional", END)
 
     return workflow.compile()
 
@@ -71,6 +68,5 @@ def initial_state(
         "errors": [],
         "static_report": None,
         "dynamic_functional_report": None,
-        "dynamic_nfr_report": None,
         "iac_report": None,
     }

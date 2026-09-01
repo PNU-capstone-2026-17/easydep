@@ -536,49 +536,6 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     assert result == {"status": "RUNNING"}
 
 
-def test_linux_runner_hands_final_verification_back_to_host(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """격리 runner가 task를 끝내면 Docker 검증은 호스트 CLI가 이어서 실행한다."""
-    client = PrototypeClient(settings(tmp_path))
-    run_root = tmp_path / ".easydep" / "run_123"
-    job_path = tmp_path / ".easydep" / "job" / "job.json"
-    approval_path = job_path.with_name("approval.json")
-    run_root.mkdir(parents=True)
-    job_path.parent.mkdir(parents=True)
-    job_path.write_text("{}", encoding="utf-8")
-    approval_path.write_text("{}", encoding="utf-8")
-
-    monkeypatch.setattr(
-        "app.implementation.application.prototype.configured_runner_image",
-        lambda: "runner:test",
-    )
-    monkeypatch.setattr(
-        client,
-        "_call_command",
-        lambda *_args: {"status": "HOST_FINALIZATION_PENDING"},
-    )
-    host_calls: list[list[str]] = []
-
-    def host_call(args: list[str], _operation_id: str | None = None):
-        host_calls.append(args)
-        return {"status": "COMPLETE"}
-
-    monkeypatch.setattr(client, "_call", host_call)
-
-    result = client.run_phase(run_root, job_path, approval_path, retry_failed=True)
-
-    assert result == {"status": "COMPLETE"}
-    assert host_calls == [[
-        "run-workflow",
-        str(run_root),
-        str(job_path),
-        "--approval",
-        str(approval_path),
-        "--retry-failed",
-    ]]
-
-
 def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) -> None:
     client = PrototypeClient(settings(tmp_path))
     path = client.prepare_job(

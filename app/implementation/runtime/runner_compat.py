@@ -18,13 +18,10 @@ GRADLE_SYSTEM_PROPERTIES = (
 
 
 def gradle_command() -> list[str]:
-    wrapper = RUNNER_WORKSPACE / "app/implementation/tools/gradle/gradle/wrapper/gradle-wrapper.jar"
+    """공용 툴체인에 고정 설치된 Gradle 명령을 반환한다."""
     return [
-        "java",
+        "gradle",
         *GRADLE_SYSTEM_PROPERTIES,
-        "-classpath",
-        str(wrapper),
-        "org.gradle.wrapper.GradleWrapperMain",
     ]
 
 

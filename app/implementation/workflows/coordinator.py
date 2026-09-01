@@ -16,11 +16,7 @@ from app.design.contracts import bind_runtime_contract, build_provider_resource_
 from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import execute_openhands_task
-from ..agents.verification.build import (
-    WorkspaceVerificationError,
-    verify_run_workspace,
-)
-from ..agents.verification.release import verify_container_runtime
+from ..agents.verification.build import WorkspaceVerificationError
 from ..delivery.container import render_deployment, render_local_container
 from ..delivery.terraform import render_iac
 from ..domain.implementation_ir import (
@@ -34,14 +30,12 @@ from ..generation.orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
-from ..runtime.linux_runner_transport import HOST_FINALIZATION_PENDING
 from ..runtime.observations import observe_runtime_contract
 from .completion import audit_run_completion
 from .conformance import (
     SourceDesignConformanceError,
     verify_source_design_conformance,
 )
-from .release import write_release_manifest
 from .repair import (
     apply_repair_directives,
     repair_task_ids,
@@ -251,7 +245,6 @@ def run_workflow(
     *,
     retry_failed: bool = False,
     executor: Callable[[Path, str], dict[str, object]] = execute_openhands_task,
-    verifier: Callable[[Path], dict[str, object]] = verify_run_workspace,
     auditor: Callable[[Path], dict[str, object]] = audit_run_completion,
 ) -> dict[str, object]:
     """Trace the implementation workflow independently of its caller process."""
@@ -271,7 +264,6 @@ def run_workflow(
             approval_path,
             retry_failed=retry_failed,
             executor=executor,
-            verifier=verifier,
             auditor=auditor,
         )
 
@@ -283,7 +275,6 @@ def _run_workflow(
     *,
     retry_failed: bool = False,
     executor: Callable[[Path, str], dict[str, object]] = execute_openhands_task,
-    verifier: Callable[[Path], dict[str, object]] = verify_run_workspace,
     auditor: Callable[[Path], dict[str, object]] = audit_run_completion,
 ) -> dict[str, object]:
     """Resume planned phases, checkpointing before and after every external task."""
@@ -298,16 +289,12 @@ def _run_workflow(
         raise RuntimeError(
             "Workflow has failed tasks; inspect evidence and use --retry-failed: "
             + ", ".join(failed_runnable)
-        )
+    )
     if not runnable:
-        deferred = _defer_finalization_to_host(run_root, state)
-        if deferred is not None:
-            return deferred
         return _finalize_workflow(
             run_root,
             spec,
             state,
-            verifier=verifier,
             auditor=auditor,
         )
 
@@ -396,40 +383,12 @@ def _run_workflow(
         final_state.pop("currentActivity", None)
         _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
         return final_state
-    deferred = _defer_finalization_to_host(run_root, final_state)
-    if deferred is not None:
-        return deferred
     return _finalize_workflow(
         run_root,
         spec,
         final_state,
-        verifier=verifier,
         auditor=auditor,
     )
-
-
-def _defer_finalization_to_host(
-    run_root: Path,
-    state: dict[str, object],
-) -> dict[str, object] | None:
-    """격리 runner가 끝낸 source를 Docker 권한이 있는 호스트에 넘긴다.
-
-    멤버 runner는 OpenHands와 Linux build 도구만 실행하며 Docker 소켓을 공유하지 않는다.
-    따라서 모든 구현 task가 끝난 시점에만 상태를 반환하고, 전체 test와 실제 container
-    health 검사는 호스트 CLI가 같은 체크포인트에서 한 번 수행한다.
-    """
-    if os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") != "1":
-        return None
-    state["status"] = HOST_FINALIZATION_PENDING
-    state["blockingReason"] = None
-    state["currentActivity"] = {
-        "id": "host-release-verification",
-        "label": "최종 실행 검증 준비",
-        "status": "RUNNING",
-        "detail": "구현 작업을 마치고 호스트의 Docker 검증으로 전환하고 있습니다.",
-    }
-    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-    return state
 
 
 def _finalize_workflow(
@@ -437,17 +396,21 @@ def _finalize_workflow(
     spec: JobSpec,
     state: dict[str, object],
     *,
-    verifier: Callable[[Path], dict[str, object]],
     auditor: Callable[[Path], dict[str, object]],
 ) -> dict[str, object]:
-    """모든 작업이 끝난 실행을 한 경로에서 검사하고 release한다."""
-    state["status"] = "VERIFYING"
+    """작업 완결성과 설계 계약을 확인하고 Testing에 넘길 파일을 만든다.
+
+    작업별 compile·관련 테스트는 각 코딩 에이전트가 이미 통과했다. 전체 Gradle 테스트,
+    frontend build와 실제 container 실행은 저장된 동일 산출물을 사용하는 Testing 단계가
+    담당한다. 구현 단계에서 이를 반복하지 않아 사용자가 구현 결과를 더 빨리 확인할 수 있다.
+    """
+    state["status"] = "FINALIZING"
     state["blockingReason"] = None
     state["currentActivity"] = {
         "id": "completion-audit",
         "label": "최종 구현 결과 확인",
         "status": "RUNNING",
-        "detail": "전체 구현 결과를 확인하고 빌드·테스트하고 있습니다.",
+        "detail": "완료된 작업과 Testing에 전달할 산출물을 확인하고 있습니다.",
     }
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
 
@@ -469,27 +432,6 @@ def _finalize_workflow(
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         return state
 
-    state["currentActivity"] = {
-        "id": "release-verification",
-        "label": "최종 릴리스 검증",
-        "status": "RUNNING",
-        "detail": "설계 계약, 전체 test와 실제 container 응답을 확인하고 있습니다.",
-    }
-    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-    try:
-        verification = verifier(run_root)
-    except Exception as error:
-        repaired = _continue_after_verification_failure(
-            run_root,
-            spec,
-            failure_id="verify-final-workspace",
-            failed_task_type="wiring",
-            error=error,
-        )
-        if repaired is not None:
-            return repaired
-        _record_workflow_failure(run_root, state, error)
-        raise
     try:
         conformance = verify_source_design_conformance(run_root, spec)
     except SourceDesignConformanceError as error:
@@ -498,29 +440,13 @@ def _finalize_workflow(
             return repaired
         _record_workflow_failure(run_root, state, error)
         raise
-    try:
-        _complete_release(
-            run_root, spec, state, audit, verification, conformance
-        )
-    except WorkspaceVerificationError as error:
-        repaired = _continue_after_verification_failure(
-            run_root,
-            spec,
-            failure_id="verify-container-runtime",
-            failed_task_type="wiring",
-            error=error,
-        )
-        if repaired is not None:
-            return repaired
-        _record_workflow_failure(run_root, state, error)
-        raise
-
-    state["verification"] = verification.get("status")
+    _complete_implementation(run_root, spec, state, conformance)
     state["blockingReason"] = None
     state["currentActivity"] = {
-        "id": "release-verification",
-        "label": "최종 릴리스 검증",
+        "id": "implementation-artifacts",
+        "label": "구현 산출물 준비",
         "status": "SUCCEEDED",
+        "detail": "정적·동적 검사는 다음 Testing 단계에서 실행합니다.",
     }
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
     return state
@@ -705,7 +631,7 @@ def _execute_task_batch(
 def _record_workflow_failure(
     run_root: Path, state: dict[str, object], error: Exception
 ) -> None:
-    """Persist a verifier/auditor failure before propagating it to the job."""
+    """완료 감사나 산출물 생성 실패를 workflow checkpoint에 기록한다."""
     activity = state.get("currentActivity")
     failed_activity = dict(activity) if isinstance(activity, dict) else {}
     activity_id = str(failed_activity.get("id") or "")
@@ -731,39 +657,6 @@ def _record_workflow_failure(
     state["blockingReason"] = failed_activity["detail"]
     state["updatedAt"] = _now()
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-
-
-def _continue_after_verification_failure(
-    run_root: Path,
-    spec: JobSpec,
-    *,
-    failure_id: str,
-    failed_task_type: str,
-    error: Exception,
-) -> dict[str, object] | None:
-    """통합 compile/test 실패를 wiring 통합 수리 작업으로 되돌린다.
-
-    작업 안에서 난 오류는 OpenHands가 바로 수리하지만, phase 또는 최종 검증은 여러 작업을
-    함께 빌드하므로 예전에는 Job 전체가 즉시 실패했다. 검증기가 남긴 구조화된 근거가 있을
-    때만 wiring 작업에 넘기고, 원인을 찾지 못한 예외는 원래대로 호출자에게 전달한다.
-    """
-
-    if not isinstance(error, WorkspaceVerificationError):
-        return None
-    repair = schedule_cross_phase_repair(
-        run_root,
-        failure_id,
-        error.evidence,
-        failed_task_type=failed_task_type,
-    )
-    if repair is None:
-        return None
-    state = plan_workflow(run_root, spec)
-    state["repairPlan"] = "reports/repair-plan.json"
-    state["blockingReason"] = None
-    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-    return state
-
 
 def _continue_after_incomplete_audit(
     run_root: Path,
@@ -1035,45 +928,26 @@ def _render_deployment_if_configured(
     return deployment_report, iac_report
 
 
-def _complete_release(
+def _complete_implementation(
     run_root: Path,
     spec: JobSpec,
     state: dict[str, object],
-    audit: dict[str, object],
-    verification: dict[str, object],
     conformance: dict[str, object],
 ) -> None:
+    """배포 입력을 코드로 만든 뒤 구현 산출물을 완료 상태로 바꾼다."""
     state["status"] = "COMPLETE"
-    state["verification"] = verification.get("status")
     state["sourceDesignConformance"] = conformance.get("status")
     try:
-        deployment, iac = _render_deployment_if_configured(run_root, spec)
+        deployment, _iac = _render_deployment_if_configured(run_root, spec)
         if deployment is None:
             render_local_container(run_root)
-        traceability = build_rtm_traceability_map(spec, run_root)
-        container_smoke = verify_container_runtime(run_root)
-        release = write_release_manifest(
-            run_root,
-            workflow=state,
-            audit=audit,
-            verification=verification,
-            conformance=conformance,
-            traceability=traceability,
-            deployment=deployment,
-            iac=iac,
-            container_smoke=container_smoke,
-        )
-        if release["status"] != "RELEASABLE":
-            raise RuntimeError(
-                "Release verification failed: "
-                + ", ".join(str(item) for item in release["failedChecks"])
-            )
+        build_rtm_traceability_map(spec, run_root)
     except Exception as error:
         state["status"] = "FAILED"
         state["blockingReason"] = str(error)
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         raise
-    state["releaseManifest"] = "reports/release-manifest.json"
+    state["testingRequired"] = True
 
 
 def _continue_after_conformance_failure(

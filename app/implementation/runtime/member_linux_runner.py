@@ -116,6 +116,8 @@ def _preflight(arguments: list[str]) -> int:
             "--version",
             "--no-daemon",
         ],
+        "opentofu": ["tofu", "version"],
+        "trivy": ["trivy", "--version"],
     }
     observed: dict[str, dict[str, object]] = {}
     for name, command in commands.items():
@@ -133,6 +135,8 @@ def _preflight(arguments: list[str]) -> int:
     jars = {
         "openapiGenerator7.24.0": Path("/opt/easydep/openapi-generator-7.24.0.jar").is_file(),
         "openapiGenerator7.14.0": Path("/opt/easydep/openapi-generator-7.14.0.jar").is_file(),
+        "plantUml": Path("/opt/plantuml/plantuml.jar").is_file(),
+        "frNfrModel": Path("/app/.easydep/models/bert_fr_nfr/config.json").is_file(),
     }
     preflight_result = {
         "schemaVersion": "easydep-member-runner-preflight/v1",

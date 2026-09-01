@@ -64,6 +64,9 @@ def _finding_keys(report: dict[str, Any]) -> tuple[str, ...]:
         unit_passed = (report.get("unitTests") or {}).get("passed", report.get("passed"))
     if not bool(unit_passed):
         findings.append("testing.unit-tests")
+    frontend = report.get("frontendBuild") or {}
+    if frontend and frontend.get("status") not in {"passed", "not_applicable"}:
+        findings.append("testing.frontend-build")
     verification = report.get("verification") or {}
     if verification.get("blockingReason"):
         findings.append(f"testing.dynamic:{verification['blockingReason']}")
@@ -126,8 +129,14 @@ def _run_test(job_id: str, testing_input: TestingInput) -> None:
             ),
         ):
             report = TestingAdapter().run(implementation_result={"run_root": str(run_root)})
-            unit_passed = bool(report.get("passed"))
+            unit_status = (report.get("unitTests") or {}).get("status")
+            unit_passed = (
+                bool(report.get("passed"))
+                if unit_status is None
+                else unit_status == "passed"
+            )
             report["unitPassed"] = unit_passed
+            static_passed = bool(report.get("passed"))
 
             verification = run_verification_graph(
                 run_id=job_id,
@@ -135,9 +144,10 @@ def _run_test(job_id: str, testing_input: TestingInput) -> None:
                 application_dir=str(run_root / "application"),
                 repair_history=ledger.model_dump(mode="json"),
                 implementation_job_id=testing_input.implementation_job_id,
+                run_dynamic=static_passed,
             )
             report["verification"] = verification
-            report["passed"] = unit_passed and verification["passed"]
+            report["passed"] = static_passed and verification["passed"]
             report["diagnostics"] = [
                 *(report.get("diagnostics") or []),
                 *verification["diagnostics"],
