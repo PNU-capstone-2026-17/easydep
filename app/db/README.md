@@ -9,9 +9,11 @@
 | 파일 | 역할 |
 |---|---|
 | `session.py` | 환경 설정으로 SQLAlchemy Engine과 transaction 단위인 Session을 만든다. |
-| `models.py` | 앱, 산출물, 버전, 워크스페이스 명령·이벤트의 ORM 테이블을 선언한다. |
-| `checkpointer.py` | LangGraph checkpoint를 MySQL에 저장하여 중단된 작업을 이어갈 수 있게 한다. |
+| `models.py` | 앱, 산출물 버전·파일, 워크스페이스 명령과 공용 checkpoint ORM을 선언한다. |
+| `checkpointer.py` | 요구사항·설계 LangGraph checkpoint를 공용 3개 표에 저장한다. |
 | `schema.sql` | 운영자가 현재 데이터베이스 schema를 빠르게 확인할 수 있는 SQL 기준본이다. |
+
+테이블 관계와 각 선택의 이유는 [MySQL 구조 문서](../../docs/mysql-architecture.md)에 정리한다.
 
 ## 연결 흐름
 
@@ -32,6 +34,11 @@
 직접 닫거나 중간 commit을 섞지 않는다. 긴 LLM 호출 동안 연결이 끊길 수 있으므로 Engine은
 사용 전에 연결 상태를 확인하고 오래된 연결을 교체하도록 설정되어 있다.
 
+`init_db()`는 ORM을 기준으로 없는 표만 만든다. 이 프로젝트는 개발 DB를 항상 비우고 다시
+생성하므로 migration 표와 증분 migration을 사용하지 않는다. `create_all()`은 기존 표의 열을
+바꾸지 않기 때문에 schema 변경 때에는 반드시 DB를 삭제·재생성한다. 운영 데이터 보존이
+필요해지는 시점에는 별도 migration·backup·rollback 절차를 도입해야 한다.
+
 ## 계약
 
 - **입력:** 환경 변수, ORM 객체, checkpoint가 속한 thread/run 식별자.
@@ -51,5 +58,9 @@
 ## 검증
 
 ```powershell
-python -X utf8 -m pytest -q tests/test_session_store.py tests/test_mysql_checkpointer.py
+python -X utf8 -m pytest -q tests/test_db_schema.py tests/test_session_store.py
+python -X utf8 verify_db.py
 ```
+
+두 번째 명령은 실제 MySQL에 임시 앱과 checkpoint를 저장해 읽기, 파일 버전, 경로 대소문자,
+주요 쿼리의 인덱스 후보, cascade 삭제를 검증한 뒤 생성한 행을 모두 정리한다.

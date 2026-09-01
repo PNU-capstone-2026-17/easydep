@@ -1,4 +1,4 @@
-"""workspace command와 event를 MySQL에 저장하고 API용 dict로 변환한다.
+"""workspace command는 MySQL에, 실시간 event는 bounded process memory에 둔다.
 
 이 모듈은 action이 무엇을 실행할지 판단하지 않는다. command의 동시 실행 방지, 상태 저장과
 시간 직렬화처럼 데이터베이스에 가까운 규칙만 담당하며 HTTP status code도 결정하지 않는다.
@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta, timezone
+from itertools import count
+from threading import RLock
 from typing import Any
 
 from sqlalchemy import select
 
-from app.db.models import App, DeploymentPreference, WorkspaceCommand, WorkspaceEvent
+from app.db.models import App, WorkspaceCommand
 from app.db.session import session_scope
 
 ACTIVE_STATUSES = {"QUEUED", "RUNNING"}
@@ -32,6 +35,14 @@ DESIGN_ARTIFACT_STAGES = {
 }
 
 KST = timezone(timedelta(hours=9), name="KST")
+_EVENT_LIMIT_PER_APP = 1_000
+# Use an epoch-based start so a browser's Last-Event-ID from before a process
+# restart cannot hide newly emitted in-memory events behind a reset-to-one cursor.
+_event_ids = count(int(datetime.now(UTC).timestamp() * 1_000_000))
+_event_lock = RLock()
+_events: dict[str, deque[dict[str, Any]]] = defaultdict(
+    lambda: deque(maxlen=_EVENT_LIMIT_PER_APP)
+)
 
 
 def now() -> datetime:
@@ -79,17 +90,17 @@ def command_dict(row: WorkspaceCommand) -> dict[str, Any]:
 
 
 def event_dict(
-    row: WorkspaceEvent, *, include_llm_timings: bool = True
+    row: Any, *, include_llm_timings: bool = True
 ) -> dict[str, Any]:
-    """ORM event 행을 DB Session 밖에서도 안전하게 쓸 수 있는 dict로 복사한다.
+    """이전 ORM 형식의 event 객체를 현재 API 형식으로 바꾼다.
 
-    설계 LLM 원문은 한 이벤트에 수 MB가 될 수 있다. Workspace 첫 snapshot과 SSE에는
-    개수만 보내고, 원문은 전용 pagination endpoint에서 요청할 때만 반환한다.
+    원격 DB 정리 이후 새 event는 메모리에 저장하지만, 기존 호출부와 단위 테스트가 넘기는
+    event 모양도 간단히 변환할 수 있도록 이 작은 호환 함수는 유지한다.
     """
-    metadata = dict(row.event_data or {})
-    if not include_llm_timings and metadata.get("progress_event") == "designLlmMetrics":
-        timings = metadata.pop("llm_timing_events", [])
-        metadata["llm_timing_count"] = len(timings) if isinstance(timings, list) else 0
+    metadata = _event_metadata(
+        getattr(row, "event_data", None) or {},
+        include_llm_timings=include_llm_timings,
+    )
     return {
         "event_id": row.event_id,
         "app_id": row.app_id,
@@ -101,6 +112,17 @@ def event_dict(
         "metadata": metadata,
         "created_at": _timestamp_in_kst(row.created_at),
     }
+
+
+def _event_metadata(
+    metadata: dict[str, Any], *, include_llm_timings: bool
+) -> dict[str, Any]:
+    """목록 응답에서는 큰 LLM 원문 대신 개수만 남긴다."""
+    result = dict(metadata)
+    if not include_llm_timings and result.get("progress_event") == "designLlmMetrics":
+        timings = result.pop("llm_timing_events", [])
+        result["llm_timing_count"] = len(timings) if isinstance(timings, list) else 0
+    return result
 
 
 def create_command(
@@ -116,11 +138,18 @@ def create_command(
     섞일 수 있다. 따라서 QUEUED 또는 RUNNING command가 있으면 새 command를 거절한다.
     """
     with session_scope() as session:
+        # SELECT 후 INSERT만 하면 두 요청이 동시에 "활성 command 없음"을 보고 둘 다
+        # 저장할 수 있다. 항상 존재하는 부모 app 행을 잠가 앱별 생성 절차를 직렬화한다.
+        app = session.scalar(
+            select(App).where(App.app_id == app_id).with_for_update()
+        )
+        if app is None:
+            raise KeyError(app_id)
         active = session.scalar(
             select(WorkspaceCommand).where(
                 WorkspaceCommand.app_id == app_id,
                 WorkspaceCommand.status.in_(ACTIVE_STATUSES),
-            )
+            ).limit(1)
         )
         if active is not None:
             raise RuntimeError(f"An active workspace command already exists: {active.command_id}")
@@ -152,7 +181,9 @@ def latest_command(
         query = select(WorkspaceCommand).where(WorkspaceCommand.app_id == app_id)
         if exclude_command_id:
             query = query.where(WorkspaceCommand.command_id != exclude_command_id)
-        row = session.scalar(query.order_by(WorkspaceCommand.created_at.desc()))
+        row = session.scalar(
+            query.order_by(WorkspaceCommand.created_at.desc()).limit(1)
+        )
         return command_dict(row) if row is not None else None
 
 
@@ -178,24 +209,28 @@ def append_event(
     command_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """workspace timeline 끝에 event 한 건을 추가한다.
-
-    event는 append-only 기록이므로 과거 행을 수정하는 함수는 제공하지 않는다. 화면에 보낼
-    추가 정보는 `metadata` JSON에 넣되, 검색에 필요한 stage·kind·actor는 별도 열로 유지한다.
-    """
+    """프로세스 메모리의 bounded workspace timeline에 event를 추가한다."""
     with session_scope() as session:
-        row = WorkspaceEvent(
-            app_id=app_id,
-            command_id=command_id,
-            stage=stage,
-            kind=kind,
-            actor=actor,
-            text=text,
-            event_data=metadata or {},
-        )
-        session.add(row)
-        session.flush()
-        return event_dict(row)
+        if session.get(App, app_id) is None:
+            raise KeyError(app_id)
+        if command_id is not None:
+            command = session.get(WorkspaceCommand, command_id)
+            if command is None or command.app_id != app_id:
+                raise KeyError(command_id)
+    with _event_lock:
+        event = {
+            "event_id": next(_event_ids),
+            "app_id": app_id,
+            "command_id": command_id,
+            "stage": stage,
+            "kind": kind,
+            "actor": actor,
+            "text": text,
+            "metadata": metadata or {},
+            "created_at": _timestamp_in_kst(now()),
+        }
+        _events[app_id].append(event)
+        return dict(event)
 
 
 def list_events(
@@ -205,51 +240,54 @@ def list_events(
     limit: int = 500,
     include_llm_timings: bool = True,
 ) -> list[dict[str, Any]]:
-    """지정한 event ID 뒤의 기록을 오래된 순서로 반환한다.
+    """현재 process가 보유한 ``after`` 이후 event를 반환한다.
 
-    SSE client는 마지막으로 받은 ID를 `after`에 넣어 중복 전송을 줄인다. `limit`은 오랫동안
-    접속하지 않은 client가 한 번에 지나치게 많은 행을 읽지 않도록 한다.
+    서버 재시작 전 event는 의도적으로 복원하지 않는다. 최종 상태는 MySQL의 command에서
+    복원하고, event history는 앱당 최근 1,000건으로 제한한다.
     """
-    with session_scope() as session:
-        rows = session.scalars(
-            select(WorkspaceEvent)
-            .where(
-                WorkspaceEvent.app_id == app_id,
-                WorkspaceEvent.event_id > after,
-            )
-            .order_by(WorkspaceEvent.event_id)
-            .limit(limit)
-        ).all()
-        return [
-            event_dict(row, include_llm_timings=include_llm_timings) for row in rows
-        ]
+    with _event_lock:
+        events = [
+            dict(event)
+            for event in _events.get(app_id, ())
+            if int(event["event_id"]) > after
+        ][:limit]
+    for event in events:
+        event["metadata"] = _event_metadata(
+            event.get("metadata", {}),
+            include_llm_timings=include_llm_timings,
+        )
+    return events
 
 
 def get_event_llm_timings(
     app_id: str, event_id: int, *, offset: int = 0, limit: int = 20
 ) -> dict[str, Any]:
-    """설계 metrics 이벤트의 LLM 원문을 작은 page 단위로 반환한다."""
-    with session_scope() as session:
-        row = session.scalar(
-            select(WorkspaceEvent).where(
-                WorkspaceEvent.app_id == app_id,
-                WorkspaceEvent.event_id == event_id,
-            )
+    """메모리에 남아 있는 설계 LLM 원문을 작은 page 단위로 반환한다."""
+    with _event_lock:
+        event = next(
+            (
+                item
+                for item in _events.get(app_id, ())
+                if int(item["event_id"]) == event_id
+            ),
+            None,
         )
-        if row is None:
+        if event is None:
             raise KeyError(event_id)
-        metadata = row.event_data or {}
+        metadata = event.get("metadata", {})
         timings = metadata.get("llm_timing_events")
         if metadata.get("progress_event") != "designLlmMetrics" or not isinstance(
             timings, list
         ):
             raise ValueError("The event does not contain design LLM timings.")
-        return {
-            "event_id": event_id,
-            "total": len(timings),
-            "offset": offset,
-            "timings": timings[offset : offset + limit],
-        }
+        page = list(timings[offset : offset + limit])
+        total = len(timings)
+    return {
+        "event_id": event_id,
+        "total": total,
+        "offset": offset,
+        "timings": page,
+    }
 
 
 def get_app_summary(app_id: str) -> dict[str, Any]:
@@ -272,63 +310,67 @@ def save_deployment_preferences(app_id: str, selection: dict[str, Any]) -> dict[
     draft다. 다음 requirements command가 시작될 때 읽어 정식 resource 입력에 반영한다.
     """
     with session_scope() as session:
-        if session.get(App, app_id) is None:
+        app = session.get(App, app_id)
+        if app is None:
             raise KeyError(app_id)
-        row = session.get(DeploymentPreference, app_id)
-        if row is None:
-            row = DeploymentPreference(app_id=app_id, selection=selection)
-            session.add(row)
-        else:
-            row.selection = selection
+        app.deployment_preferences = selection
         session.flush()
-        return dict(row.selection or {})
+        return dict(app.deployment_preferences or {})
 
 
 def get_deployment_preferences(app_id: str) -> dict[str, Any] | None:
     """저장된 최신 배포 선택 초안을 반환한다."""
     with session_scope() as session:
-        row = session.get(DeploymentPreference, app_id)
-        return dict(row.selection or {}) if row is not None else None
+        app = session.get(App, app_id)
+        if app is None or app.deployment_preferences is None:
+            return None
+        return dict(app.deployment_preferences)
 
 
 def list_workspace_apps(limit: int = 50) -> list[dict[str, Any]]:
     """사이드바에 표시할 최근 앱과 각 앱의 최신 command를 조회한다."""
     with session_scope() as session:
-        rows = session.scalars(
-            select(App).order_by(App.created_at.desc()).limit(limit)
+        latest_command_id = (
+            select(WorkspaceCommand.command_id)
+            .where(WorkspaceCommand.app_id == App.app_id)
+            .order_by(
+                WorkspaceCommand.created_at.desc(),
+                WorkspaceCommand.command_id.desc(),
+            )
+            .limit(1)
+            .correlate(App)
+            .scalar_subquery()
+        )
+        rows = session.execute(
+            select(App, WorkspaceCommand)
+            .outerjoin(
+                WorkspaceCommand,
+                WorkspaceCommand.command_id == latest_command_id,
+            )
+            .order_by(App.created_at.desc())
+            .limit(limit)
         ).all()
         result: list[dict[str, Any]] = []
-        for row in rows:
-            command = session.scalar(
-                select(WorkspaceCommand)
-                .where(WorkspaceCommand.app_id == row.app_id)
-                .order_by(WorkspaceCommand.created_at.desc())
-            )
+        for app, command in rows:
             first_line = next(
-                (line.strip() for line in (row.requirements_text or "").splitlines() if line.strip()),
+                (
+                    line.strip()
+                    for line in (app.requirements_text or "").splitlines()
+                    if line.strip()
+                ),
                 "",
             )
             result.append(
                 {
-                    "app_id": row.app_id,
-                    "title": first_line[:72] or f"EasyDep app {row.app_id[:8]}",
+                    "app_id": app.app_id,
+                    "title": first_line[:72] or f"EasyDep app {app.app_id[:8]}",
                     "current_stage": (
                         command.stage
                         if command is not None
-                        else workflow_stage(row.current_stage)
+                        else workflow_stage(app.current_stage)
                     ),
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "command": (
-                        {
-                            "command_id": command.command_id,
-                            "action": command.action,
-                            "stage": command.stage,
-                            "status": command.status,
-                            "created_at": _timestamp_in_kst(command.created_at),
-                        }
-                        if command is not None
-                        else None
-                    ),
+                    "created_at": app.created_at.isoformat() if app.created_at else None,
+                    "command": command_dict(command) if command is not None else None,
                 }
             )
         return result

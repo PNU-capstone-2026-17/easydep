@@ -12,16 +12,16 @@ from sqlalchemy.orm import sessionmaker
 from typing_extensions import TypedDict
 
 from app.db import session as db_session
-from app.db.models import Base
+from app.db.models import App, Base
 from app.requirements.orchestration import persistence as store
 
 #: 이 저장소가 만드는 테이블만. 다른 에이전트 테이블은 MySQL 전용 타입(MEDIUMTEXT)을
 #: 써서 SQLite에 못 만들고, 어차피 여기서 볼 대상도 아니다.
 _OUR_TABLES = [
+    App.__table__,
     store.RequirementsCheckpoint.__table__,
     store.RequirementsCheckpointBlob.__table__,
     store.RequirementsCheckpointWrite.__table__,
-    store.RequirementsSession.__table__,
 ]
 
 
@@ -61,16 +61,17 @@ def test_tables_are_registered_on_the_shared_metadata():
     올라가지 않으면 서버는 뜨는데 세션 저장만 조용히 안 된다.
     """
     assert {
-        "requirements_checkpoints",
-        "requirements_checkpoint_blobs",
-        "requirements_checkpoint_writes",
-        "requirements_sessions",
+        "agent_checkpoints",
+        "agent_checkpoint_blobs",
+        "agent_checkpoint_writes",
     } <= set(Base.metadata.tables)
 
 
 def test_session_mode_survives_a_restart(sqlite_db):
     """게이트 on/off는 서로 다른 그래프다 — 재개할 때 시작한 쪽을 골라야 한다."""
     assert store.session_mode("t-none") is None       # 모르면 모른다고 한다
+    with db_session.session_scope() as db:
+        db.add(App(app_id="t-1"))
     store.remember_session_mode("t-1", gated=True)
     assert store.session_mode("t-1") is True
     store.remember_session_mode("t-1", gated=False)   # 갱신도 된다
@@ -195,6 +196,8 @@ def test_threads_do_not_see_each_other(sqlite_db):
 
 def test_delete_thread_removes_everything_for_that_thread(sqlite_db):
     saver = store.SqlCheckpointSaver()
+    with db_session.session_scope() as db:
+        db.add_all([App(app_id="a"), App(app_id="b")])
     saver.put(_config("a"), _checkpoint("c1", {"n": 1}, {"n": 1}), {}, {"n": 1})
     saver.put_writes(_config("a", "c1"), [("out", 1)], task_id="t1")
     store.remember_session_mode("a", gated=True)
@@ -268,9 +271,11 @@ def test_serving_import_chain_pulls_in_the_store():
     """
     import app.requirements.orchestration.service  # noqa: F401 - Workspace 서비스 진입점
 
-    assert "requirements_checkpoints" in Base.metadata.tables
+    assert "agent_checkpoints" in Base.metadata.tables
 
 
 def test_session_mode_goes_to_the_database_when_persisting(sqlite_db):
+    with db_session.session_scope() as db:
+        db.add(App(app_id="api-thread"))
     store.remember_session_mode("api-thread", gated=True)
     assert store.session_mode("api-thread") is True

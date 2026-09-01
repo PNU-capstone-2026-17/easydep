@@ -1,22 +1,5 @@
--- EasyDep artifact store schema (MySQL 8.0+)
---
--- Reference DDL. The application creates the same structure through
--- app/db/models.py + init_db(), so this file is for DBA review, code review,
--- and manual provisioning of a deployment database.
---
--- Design notes
---   * Every row is scoped by app_id (UUID) so multiple users can work at once.
---   * artifact_type is VARCHAR, not SQL ENUM: the roadmap keeps adding artifact
---     kinds (source code, IaC, test results) and ALTER TABLE on a hot ENUM
---     column is not worth it. Allowed values live in app/db/models.py.
---   * artifacts holds one row per (app_id, artifact_type) = "the current one".
---     artifact_versions holds the full revision history, so a feedback loop
---     never destroys the previous output.
---   * An artifact counts as produced once current_version_id is set, so there
---     is no separate status column to keep in step with it.
---   * Columns are limited to what the application actually reads. Anything
---     speculative was left out; it can be added with ALTER TABLE when a feature
---     needs it.
+-- EasyDep reset-and-recreate schema (MySQL 8.4)
+-- The project intentionally rebuilds an empty database for incompatible changes.
 
 CREATE DATABASE IF NOT EXISTS easydep
   DEFAULT CHARACTER SET utf8mb4
@@ -24,69 +7,104 @@ CREATE DATABASE IF NOT EXISTS easydep
 
 USE easydep;
 
--- One cloud-native application development session.
 CREATE TABLE IF NOT EXISTS apps (
-  app_id                    VARCHAR(36) NOT NULL COMMENT 'UUID issued at session start',
-  requirements_text         MEDIUMTEXT  NULL COMMENT 'natural language requirements as the user wrote them',
-  resource_constraints_text MEDIUMTEXT  NULL COMMENT 'cloud resource constraints as the user wrote them',
-  current_stage             VARCHAR(32) NULL COMMENT 'stage whose artifact was written last',
-  created_at                DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (app_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Deployment alternatives selected while application requirements are analyzed.
-CREATE TABLE IF NOT EXISTS deployment_preferences (
-  app_id       VARCHAR(36) NOT NULL,
-  selection    JSON        NOT NULL,
-  created_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  updated_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-                              ON UPDATE CURRENT_TIMESTAMP(6),
+  app_id                     VARCHAR(36) NOT NULL,
+  requirements_text          MEDIUMTEXT NULL,
+  resource_constraints_text  MEDIUMTEXT NULL,
+  current_stage              VARCHAR(32) NULL,
+  deployment_preferences     JSON NULL,
+  requirements_gated         TINYINT(1) NULL,
+  created_at                 DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (app_id),
-  CONSTRAINT fk_deployment_preferences_app FOREIGN KEY (app_id)
-    REFERENCES apps (app_id) ON DELETE CASCADE
+  KEY ix_apps_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Current artifact of each type for an app.
-CREATE TABLE IF NOT EXISTS artifacts (
-  id                    BIGINT      NOT NULL AUTO_INCREMENT,
-  app_id                VARCHAR(36) NOT NULL,
-  artifact_type         VARCHAR(32) NOT NULL COMMENT 'REFINE_REQ/USECASE_SPEC/CLASS/SEQUENCE/...',
-  generation_started_at DATETIME(6) NULL
-                          COMMENT 'generation lock: NULL is free, otherwise a lease that expires',
-  current_version_id    BIGINT      NULL COMMENT 'no FK: circular with artifact_versions',
-  latest_version_no     INT         NOT NULL DEFAULT 0,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_artifacts_app_type (app_id, artifact_type),
-  CONSTRAINT fk_artifacts_app FOREIGN KEY (app_id)
-    REFERENCES apps (app_id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Every revision ever produced for an artifact.
 CREATE TABLE IF NOT EXISTS artifact_versions (
-  id            BIGINT      NOT NULL AUTO_INCREMENT,
-  artifact_id   BIGINT      NOT NULL,
-  version_no    INT         NOT NULL COMMENT '1-based, monotonic per artifact',
-  content       LONGTEXT    NOT NULL COMMENT 'puml source, or JSON text for API spec',
-  syntax_valid  TINYINT(1)  NULL,
-  syntax_errors JSON        NULL COMMENT 'list of validation/compile error strings',
-  origin        VARCHAR(20) NOT NULL DEFAULT 'GENERATED'
-                  COMMENT 'GENERATED/AUTO_FIXED/FEEDBACK_REVISED/IMPORTED',
-  created_at    DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  id             BIGINT      NOT NULL AUTO_INCREMENT,
+  app_id         VARCHAR(36) NOT NULL,
+  artifact_type  VARCHAR(32) NOT NULL,
+  version_no     INT         NOT NULL,
+  content        LONGTEXT    NOT NULL,
+  syntax_valid   TINYINT(1)  NULL,
+  syntax_errors  JSON        NULL,
+  origin         VARCHAR(20) NOT NULL DEFAULT 'GENERATED',
+  created_at     DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
-  UNIQUE KEY uq_versions_artifact_no (artifact_id, version_no),
-  CONSTRAINT fk_versions_artifact FOREIGN KEY (artifact_id)
-    REFERENCES artifacts (id) ON DELETE CASCADE
+  UNIQUE KEY uq_artifact_versions_app_type_no
+    (app_id, artifact_type, version_no),
+  CONSTRAINT ck_versions_version_positive CHECK (version_no > 0),
+  CONSTRAINT fk_artifact_versions_app FOREIGN KEY (app_id)
+    REFERENCES apps (app_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Immutable file tree belonging to one implementation artifact version.
 CREATE TABLE IF NOT EXISTS artifact_files (
-  id                  BIGINT        NOT NULL AUTO_INCREMENT,
-  artifact_version_id BIGINT        NOT NULL,
-  file_path           VARCHAR(512)  NOT NULL,
-  content             LONGTEXT      NOT NULL,
-  sha256              CHAR(64)      NOT NULL,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_artifact_files_version_path (artifact_version_id, file_path),
+  artifact_version_id BIGINT NOT NULL,
+  file_path VARCHAR(512) CHARACTER SET utf8mb4
+    COLLATE utf8mb4_0900_as_cs NOT NULL,
+  content LONGTEXT NOT NULL,
+  sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  PRIMARY KEY (artifact_version_id, file_path),
+  CONSTRAINT ck_artifact_files_path CHECK (CHAR_LENGTH(file_path) > 0),
+  CONSTRAINT ck_artifact_files_sha256 CHECK (sha256 REGEXP '^[0-9a-f]{64}$'),
   CONSTRAINT fk_artifact_files_version FOREIGN KEY (artifact_version_id)
     REFERENCES artifact_versions (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS workspace_commands (
+  command_id   VARCHAR(36) NOT NULL,
+  app_id       VARCHAR(36) NOT NULL,
+  action       VARCHAR(48) NOT NULL,
+  stage        VARCHAR(32) NOT NULL,
+  status       VARCHAR(24) NOT NULL,
+  payload      JSON        NOT NULL,
+  result       JSON        NULL,
+  error        LONGTEXT    NULL,
+  created_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  started_at   DATETIME(6) NULL,
+  completed_at DATETIME(6) NULL,
+  PRIMARY KEY (command_id),
+  KEY ix_workspace_commands_app_created (app_id, created_at),
+  KEY ix_workspace_commands_app_status (app_id, status),
+  KEY ix_workspace_commands_status (status),
+  CONSTRAINT fk_workspace_commands_app FOREIGN KEY (app_id)
+    REFERENCES apps (app_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS agent_checkpoints (
+  graph_type            VARCHAR(16)  NOT NULL,
+  thread_id             VARCHAR(128) NOT NULL,
+  checkpoint_ns         VARCHAR(128) NOT NULL DEFAULT '',
+  checkpoint_id         VARCHAR(128) NOT NULL,
+  parent_checkpoint_id  VARCHAR(128) NULL,
+  checkpoint_type       VARCHAR(32)  NOT NULL,
+  checkpoint            LONGBLOB     NOT NULL,
+  metadata_type         VARCHAR(32)  NOT NULL,
+  checkpoint_metadata   LONGBLOB     NOT NULL,
+  PRIMARY KEY (graph_type, thread_id, checkpoint_ns, checkpoint_id),
+  KEY ix_agent_checkpoints_graph_checkpoint (graph_type, checkpoint_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS agent_checkpoint_blobs (
+  graph_type    VARCHAR(16)  NOT NULL,
+  thread_id     VARCHAR(128) NOT NULL,
+  checkpoint_ns VARCHAR(128) NOT NULL DEFAULT '',
+  channel       VARCHAR(255) NOT NULL,
+  version       VARCHAR(64)  NOT NULL,
+  blob_type     VARCHAR(32)  NOT NULL,
+  blob          LONGBLOB     NULL,
+  PRIMARY KEY (graph_type, thread_id, checkpoint_ns, channel, version)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS agent_checkpoint_writes (
+  graph_type    VARCHAR(16)  NOT NULL,
+  thread_id     VARCHAR(128) NOT NULL,
+  checkpoint_ns VARCHAR(128) NOT NULL DEFAULT '',
+  checkpoint_id VARCHAR(128) NOT NULL,
+  task_id       VARCHAR(128) NOT NULL,
+  idx           INT          NOT NULL,
+  channel       VARCHAR(255) NOT NULL,
+  write_type    VARCHAR(32)  NOT NULL,
+  blob          LONGBLOB     NOT NULL,
+  task_path     VARCHAR(255) NOT NULL DEFAULT '',
+  PRIMARY KEY (graph_type, thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

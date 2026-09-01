@@ -120,4 +120,5 @@ def init_db() -> None:
         connection.commit()
     bootstrap.dispose()
 
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)

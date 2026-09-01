@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.db.models import Base, WorkspaceEvent
+from app.db.models import Base
 from app.design import progress as design_progress
 from app.design.services.common.structured import record_llm_timing
 from app.repositories import artifact_repository
@@ -27,15 +27,15 @@ class RejectingExecutor:
 
 
 def test_workspace_tables_are_part_of_the_shared_database_schema() -> None:
-    assert {
-        "workspace_commands",
-        "workspace_events",
-        "deployment_preferences",
-    } <= set(Base.metadata.tables)
+    assert "workspace_commands" in Base.metadata.tables
+    assert "workspace_events" not in Base.metadata.tables
+    assert "deployment_preferences" not in Base.metadata.tables
+    assert "deployment_preferences" in Base.metadata.tables["apps"].columns
 
 
 def test_workspace_event_summary_omits_large_llm_contents() -> None:
-    row = WorkspaceEvent(
+    row = SimpleNamespace(
+        event_id=7,
         app_id="app-1",
         command_id="command-1",
         stage="design",
@@ -50,9 +50,8 @@ def test_workspace_event_summary_omits_large_llm_contents() -> None:
                 {"operation": "ClassRepair", "reasoningContent": "y" * 1_000_000},
             ],
         },
+        created_at=datetime.now(UTC).replace(tzinfo=None),
     )
-    row.event_id = 7
-    row.created_at = datetime.now(UTC).replace(tzinfo=None)
 
     summary = repository.event_dict(row, include_llm_timings=False)
 

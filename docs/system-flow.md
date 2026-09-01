@@ -839,19 +839,17 @@ LLM prompt에는 모든 고유 실패, 사용한 전략, 거부한 후보 digest
 
 ### 8.1 MySQL의 업무 데이터
 
-실제 테이블 정의의 기준은 `app/db/models.py`와 애플리케이션 시작 시 `create_all()`이다.
-`app/db/schema.sql`은 현재 Workspace와 체크포인트 테이블을 모두 담지 않은 참고 파일이므로
-현재 스키마의 기준으로 사용하면 안 된다.
+새 데이터베이스의 기준은 `app/db/models.py`의 7개 ORM 테이블이다. 애플리케이션 시작 시
+`create_all()`로 없는 표를 만들며 기존 개발 DB의 증분 migration은 지원하지 않는다. schema가
+바뀌면 DB를 삭제·재생성한다. `app/db/schema.sql`은 같은 구조의 수동 확인용 DDL이다. 관계와
+필드별 설계 이유는 [MySQL 구조 문서](mysql-architecture.md)에 정리한다.
 
 | 테이블 | 저장 내용 | 중요한 키 |
 |---|---|---|
-| `apps` | 앱 ID, 원문 요구사항, 추가 리소스 제약, 최근 단계 | `app_id` |
-| `deployment_preferences` | 선택한 CSP 대안·리전·예산 JSON | `app_id` |
-| `artifacts` | 앱별 산출물 종류와 현재 버전, 생성 lease | `(app_id, artifact_type)` |
-| `artifact_versions` | 모든 산출물 버전의 내용·문법 결과·생성 원인 | `(artifact_id, version_no)` |
+| `apps` | 앱 ID, 원문 요구사항, 배포 선택, 요구사항 실행 모드, 최근 단계 | `app_id` |
+| `artifact_versions` | 모든 산출물 버전의 내용·문법 결과·생성 원인 | `(app_id, artifact_type, version_no)` |
 | `artifact_files` | 구현 산출물 버전 안의 파일·내용·SHA-256 | `(artifact_version_id, file_path)` |
 | `workspace_commands` | 화면 명령, 상태, 입력 JSON, 결과 JSON, 오류 | `command_id` |
-| `workspace_events` | 화면 진행 기록 | 증가하는 `event_id` |
 
 `ArtifactVersion.origin`은 `GENERATED`, `AUTO_FIXED`, `FEEDBACK_REVISED`, `IMPORTED` 중 하나이다.
 파일 산출물은 한 버전 안에서 경로와 내용이 바뀌지 않는 snapshot으로 취급한다.
@@ -860,12 +858,12 @@ LLM prompt에는 모든 고유 실패, 사용한 전략, 거부한 후보 digest
 
 | 단계 | 테이블 | 식별 방법 | 재시작 후 재개 |
 |---|---|---|---:|
-| 요구사항 | `requirements_checkpoints`, `_blobs`, `_writes`, `requirements_sessions` | `thread_id=app_id` | 가능 |
-| 설계 | `design_checkpoints`, `_blobs`, `_writes` | `thread_id=app_id` | 가능 |
+| 요구사항 | `agent_checkpoints`, `_blobs`, `_writes` | `graph_type=requirements`, `thread_id=app_id` | 가능 |
+| 설계 | `agent_checkpoints`, `_blobs`, `_writes` | `graph_type=design`, `thread_id=app_id` | 가능 |
 
-checkpoint 본문, 각 상태 채널의 값, 아직 반영되지 않은 쓰기를 분리해 저장한다. 요구사항은
-대화형 그래프와 비대화형 그래프가 다르므로 `requirements_sessions.gated`도 저장한다.
-설계 그래프는 하나이므로 별도 session mode 테이블이 없다.
+checkpoint 본문, 각 상태 채널의 값, 아직 반영되지 않은 쓰기를 분리해 저장한다. 두 그래프는
+동일한 저장 규약을 공유하고 `graph_type`으로 키 공간을 격리한다. 요구사항의 gated 실행 여부는
+앱과 수명주기가 같아 `apps.requirements_gated`에 둔다.
 
 재개할 때에는 앱 ID와 thread ID가 같고, 저장된 단계와 산출물이 맞는지 확인해야 한다.
 과거 코드의 state 필드까지 모두 읽는 migration은 현재 목표가 아니다.
@@ -875,6 +873,7 @@ checkpoint 본문, 각 상태 채널의 값, 아직 반영되지 않은 쓰기�
 | 상태 | 저장 위치 | 서버 재시작 뒤 동작 |
 |---|---|---|
 | Workspace의 실행 중 명령 | MySQL | 서버 시작 때 `INTERRUPTED`로 변경, 자동 재실행 안 함 |
+| Workspace 진행 이벤트 | 프로세스 메모리(앱당 최대 1,000개) | 사라짐, SSE 재연결 시 이후 새 이벤트만 수신 |
 | 요구사항·설계 진행 위치 | MySQL 체크포인트 | 동일 앱 ID로 재개 가능 |
 | 클래스 중간 preview | 프로세스 메모리 | 사라짐 |
 | 클래스 accepted-unit cache | 프로세스 메모리 | 사라짐 |
