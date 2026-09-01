@@ -21,7 +21,6 @@ from app.config import settings
 
 from ..config import ImplementationSettings
 from ..runtime.linux_runner_transport import (
-    HOST_FINALIZATION_PENDING,
     configured_runner_image,
     runner_command,
     to_container_path,
@@ -310,13 +309,7 @@ class PrototypeClient:
                 arguments=container_args,
                 environment=environment,
             )
-            workflow = self._call_command(command, job_path.parent.name, environment)
-            if workflow.get("status") == HOST_FINALIZATION_PENDING:
-                # Linux runner에는 Docker 소켓을 주지 않는다. 구현 task 결과를 같은 run에
-                # 보존한 뒤, Docker를 소유한 호스트 CLI가 전체 test와 container health를
-                # 이어서 확인한다. 실패하면 기존 workflow 수리 계획도 그대로 동작한다.
-                return self._call(args, job_path.parent.name)
-            return workflow
+            return self._call_command(command, job_path.parent.name, environment)
         return self._call(args, job_path.parent.name)
 
     def transmission_request(self, run_root: Path) -> dict[str, Any] | None:

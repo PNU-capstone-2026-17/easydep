@@ -358,7 +358,10 @@ def test_backend_openapi_generation_uses_a_pinned_docker_image(tmp_path: Path) -
     assert commands[0][commands[0].index("-w") + 1] == "/workspace"
     assert commands[0][commands[0].index("-i") + 1] == "/workspace/openapi.json"
     assert commands[0][commands[0].index("-o") + 1] == "/workspace/application"
-    assert orchestrator.manifest.tools["openapi-generator"]["image"] == OPENAPI_GENERATOR_IMAGE
+    assert orchestrator.manifest.tools["openapi-generator"] == {
+        "kind": "docker-image",
+        "version": "7.24.0",
+    }
 
 
 def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(

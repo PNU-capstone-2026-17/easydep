@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,19 @@ OPENAPI_GENERATOR_NAME = "typescript-fetch"
 OPENAPI_GENERATOR_IMAGE = (
     f"openapitools/openapi-generator-cli:v{OPENAPI_GENERATOR_VERSION}"
 )
+
+
+def installed_openapi_generator() -> Path | None:
+    """공용 툴체인에 설치된 OpenAPI Generator JAR를 찾는다."""
+    configured = os.getenv("EASYDEP_OPENAPI_GENERATOR_JAR", "").strip()
+    candidates = [
+        Path(configured) if configured else None,
+        Path(f"/opt/easydep/openapi-generator-{OPENAPI_GENERATOR_VERSION}.jar"),
+    ]
+    return next(
+        (candidate for candidate in candidates if candidate and candidate.is_file()),
+        None,
+    )
 # The React scaffold pins every dependency to an exact version and the only
 # per-application value in package.json is `name`, so the resolved lock is
 # identical for every job.  Resolving it through the registry cost 7-46s per
@@ -85,9 +99,27 @@ def openapi_typescript_fetch_command(
         raise FrontendScaffoldError(
             "OpenAPI input and frontend output must stay in workspaceRoot"
         )
+    jar = installed_openapi_generator()
+    arguments = [
+        "generate",
+        "-g",
+        OPENAPI_GENERATOR_NAME,
+        "-i",
+        str(source) if jar else "",
+        "-o",
+        str(target) if jar else "",
+        "--additional-properties="
+        "supportsES6=true,typescriptThreePlus=true,withInterfaces=true,"
+        "npmName=@easydep/generated-api,npmVersion=0.1.0",
+    ]
+    if jar:
+        return ["java", "-jar", str(jar), *arguments]
+
     container_root = Path("/workspace")
     container_source = container_root / source.relative_to(root)
     container_target = container_root / target.relative_to(root)
+    arguments[arguments.index("-i") + 1] = container_source.as_posix()
+    arguments[arguments.index("-o") + 1] = container_target.as_posix()
     return [
         "docker",
         "run",
@@ -95,16 +127,7 @@ def openapi_typescript_fetch_command(
         "-v",
         f"{root}:/workspace",
         OPENAPI_GENERATOR_IMAGE,
-        "generate",
-        "-g",
-        OPENAPI_GENERATOR_NAME,
-        "-i",
-        container_source.as_posix(),
-        "-o",
-        container_target.as_posix(),
-        "--additional-properties="
-        "supportsES6=true,typescriptThreePlus=true,withInterfaces=true,"
-        "npmName=@easydep/generated-api,npmVersion=0.1.0",
+        *arguments,
     ]
 
 

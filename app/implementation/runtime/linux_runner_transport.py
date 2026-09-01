@@ -9,9 +9,8 @@ from pathlib import Path, PurePosixPath
 from app.config import settings
 
 CONTAINER_WORKSPACE = PurePosixPath("/easydep-workspace")
-RUNNER_IMAGE_ENV = "EASYDEP_MEMBER_RUNNER_IMAGE"
+RUNNER_IMAGE_ENV = "EASYDEP_TOOLCHAIN_IMAGE"
 RUNNER_GRADLE_CACHE_VOLUME = "easydep-member-gradle-cache"
-HOST_FINALIZATION_PENDING = "HOST_FINALIZATION_PENDING"
 TRANSMITTED_ENVIRONMENT = (
     "API_KEY",
     "LLM_API_KEY",
@@ -35,7 +34,7 @@ def configured_runner_image(environment: dict[str, str] | None = None) -> str | 
     source = os.environ if environment is None else environment
     value = source.get(RUNNER_IMAGE_ENV, "").strip()
     if not value and environment is None:
-        value = (settings.easydep_member_runner_image or "").strip()
+        value = (settings.easydep_toolchain_image or "").strip()
     return value or None
 
 

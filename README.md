@@ -51,8 +51,9 @@ Docker-on-VM 애플리케이션이다.
 
 ## 실행
 
-필수 환경은 Python 3.11 이상, JDK 21, Node.js/npm, Docker Desktop이다. PlantUML 다이어그램은
-고정 버전의 Docker 이미지로 검사하고 렌더링한다. 개발용 MySQL은 통합 실행 스크립트가 Docker
+필수 환경은 Python 3.11 이상과 Docker Desktop이다. 원격 배포와 고정 Linux 실행에는
+PlantUML, FR/NFR 분류 모델, JDK, Gradle, Node/npm, OpenAPI Generator, Trivy, OpenTofu를
+담은 공용 `easydep-toolchain` 이미지를 사용한다. 개발용 MySQL은 통합 실행 스크립트가 Docker
 컨테이너로 준비한다.
 
 ### 통합 실행 스크립트
@@ -69,6 +70,9 @@ powershell -ExecutionPolicy Bypass -File scripts\bootstrap-implementation-tools.
 
 Copy-Item .env.example .env
 # .env의 API_KEY, BASE_URL, MODEL 값을 사용할 엔드포인트에 맞게 수정한다.
+
+# 고정 툴체인과 Linux 구현·Testing runner를 사용할 때 한 번 빌드한다.
+docker build -t easydep-toolchain:local .
 ```
 
 Docker Desktop을 실행한 다음 저장소 루트에서 아래 명령을 사용한다.

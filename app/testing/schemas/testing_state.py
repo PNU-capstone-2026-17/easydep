@@ -1,6 +1,7 @@
 import operator
 from typing import Annotated, Any, TypedDict
 
+
 class TestingState(TypedDict):
     """
     LangGraph state for the Testing Agent.
@@ -26,7 +27,6 @@ class TestingState(TypedDict):
     # Reports from each verification node
     static_report: dict[str, Any] | None
     dynamic_functional_report: dict[str, Any] | None
-    dynamic_nfr_report: dict[str, Any] | None
     iac_report: dict[str, Any] | None
 
 

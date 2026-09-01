@@ -110,9 +110,9 @@ class Settings(BaseSettings):
     easydep_docker_host_workspace: str | None = None
     easydep_docker_windows_workspace: str | None = None
     easydep_fixed_linux_runner: str | None = None
-    easydep_terraform_path: str | None = None
+    easydep_opentofu_path: str | None = None
     easydep_tofu_plugin_cache: str | None = None
-    easydep_member_runner_image: str | None = None
+    easydep_toolchain_image: str | None = None
 
     # Cloud KB
     cloudkb_cache_dir: str | None = None

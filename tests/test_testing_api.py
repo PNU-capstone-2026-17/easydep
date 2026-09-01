@@ -159,7 +159,6 @@ def test_testing_job_reports_static_and_dynamic_verification(monkeypatch, tmp_pa
                 "static": {"status": "FAILED", "issues": ["no limits"]},
                 "iac": {"status": "PASSED", "issues": []},
                 "dynamicFunctional": {"status": "failed", "reason": "FR1 assertion failed"},
-                "dynamicNfr": {"status": "SKIPPED"},
             },
             "application": {"hostPort": 54321},
             "applicationLaunchError": None,
