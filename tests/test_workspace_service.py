@@ -27,11 +27,10 @@ class RejectingExecutor:
 
 
 def test_workspace_tables_are_part_of_the_shared_database_schema() -> None:
-    assert {
-        "workspace_commands",
-        "workspace_events",
-        "deployment_preferences",
-    } <= set(Base.metadata.tables)
+    assert "workspace_commands" in Base.metadata.tables
+    assert "workspace_events" not in Base.metadata.tables
+    assert "deployment_preferences" not in Base.metadata.tables
+    assert "deployment_preferences" in Base.metadata.tables["apps"].columns
 
 
 def test_reconcile_implementation_command_closes_stale_running_command(monkeypatch) -> None:

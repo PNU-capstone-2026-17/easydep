@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -26,6 +27,8 @@ class Base(DeclarativeBase):
 
 
 _Blob = LargeBinary().with_variant(LONGBLOB(), "mysql")
+_MediumText = Text().with_variant(MEDIUMTEXT(), "mysql")
+_LongText = Text().with_variant(LONGTEXT(), "mysql")
 
 
 # Artifact types. Kept as plain strings so later phases (source code, IaC,
@@ -70,9 +73,9 @@ class App(Base):
     # What the user typed. Kept because the refined requirements interpret it
     # and cannot be turned back into it, and because regenerating REFINE_REQ
     # after feedback needs the original wording.
-    requirements_text: Mapped[str | None] = mapped_column(MEDIUMTEXT, nullable=True)
+    requirements_text: Mapped[str | None] = mapped_column(_MediumText, nullable=True)
     resource_constraints_text: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT, nullable=True
+        _MediumText, nullable=True
     )
     # 개발 진행 상태: the stage whose artifact was written most recently.
     current_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -105,7 +108,7 @@ class ArtifactVersion(Base):
     )
     artifact_type: Mapped[str] = mapped_column(String(32), nullable=False)
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    content: Mapped[str] = mapped_column(LONGTEXT, nullable=False)
+    content: Mapped[str] = mapped_column(_LongText, nullable=False)
     syntax_valid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     syntax_errors: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     origin: Mapped[str] = mapped_column(
@@ -158,7 +161,7 @@ class ArtifactFile(Base):
         primary_key=True,
         nullable=False,
     )
-    content: Mapped[str] = mapped_column(LONGTEXT, nullable=False)
+    content: Mapped[str] = mapped_column(_LongText, nullable=False)
     sha256: Mapped[str] = mapped_column(
         CHAR(64, collation="ascii_bin"), nullable=False
     )
@@ -190,7 +193,7 @@ class WorkspaceCommand(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     payload: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
     result: Mapped[Any | None] = mapped_column(JSON, nullable=True)
-    error: Mapped[str | None] = mapped_column(LONGTEXT, nullable=True)
+    error: Mapped[str | None] = mapped_column(_LongText, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=6), nullable=False, server_default=func.now(6)
     )

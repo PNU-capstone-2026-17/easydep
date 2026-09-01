@@ -1,4 +1,4 @@
-"""workspace command와 event를 MySQL에 저장하고 API용 dict로 변환한다.
+"""workspace command는 MySQL에, 실시간 event는 bounded process memory에 둔다.
 
 이 모듈은 action이 무엇을 실행할지 판단하지 않는다. command의 동시 실행 방지, 상태 저장과
 시간 직렬화처럼 데이터베이스에 가까운 규칙만 담당하며 HTTP status code도 결정하지 않는다.
@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta, timezone
+from itertools import count
+from threading import RLock
 from typing import Any
 
 from sqlalchemy import select
 
-from app.db.models import App, DeploymentPreference, WorkspaceCommand, WorkspaceEvent
+from app.db.models import App, WorkspaceCommand
 from app.db.session import session_scope
 
 ACTIVE_STATUSES = {"QUEUED", "RUNNING"}
@@ -32,6 +35,14 @@ DESIGN_ARTIFACT_STAGES = {
 }
 
 KST = timezone(timedelta(hours=9), name="KST")
+_EVENT_LIMIT_PER_APP = 1_000
+# Use an epoch-based start so a browser's Last-Event-ID from before a process
+# restart cannot hide newly emitted in-memory events behind a reset-to-one cursor.
+_event_ids = count(int(datetime.now(UTC).timestamp() * 1_000_000))
+_event_lock = RLock()
+_events: dict[str, deque[dict[str, Any]]] = defaultdict(
+    lambda: deque(maxlen=_EVENT_LIMIT_PER_APP)
+)
 
 
 def now() -> datetime:
@@ -78,8 +89,8 @@ def command_dict(row: WorkspaceCommand) -> dict[str, Any]:
     }
 
 
-def event_dict(row: WorkspaceEvent) -> dict[str, Any]:
-    """ORM event 행을 API와 SSE가 공유하는 dict 형태로 복사한다."""
+def event_dict(row: Any) -> dict[str, Any]:
+    """Convert an event-like object to the API shape (legacy test compatibility)."""
     return {
         "event_id": row.event_id,
         "app_id": row.app_id,
@@ -88,7 +99,7 @@ def event_dict(row: WorkspaceEvent) -> dict[str, Any]:
         "kind": row.kind,
         "actor": row.actor,
         "text": row.text,
-        "metadata": row.event_data or {},
+        "metadata": getattr(row, "event_data", None) or {},
         "created_at": _timestamp_in_kst(row.created_at),
     }
 
@@ -177,43 +188,42 @@ def append_event(
     command_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """workspace timeline 끝에 event 한 건을 추가한다.
-
-    event는 append-only 기록이므로 과거 행을 수정하는 함수는 제공하지 않는다. 화면에 보낼
-    추가 정보는 `metadata` JSON에 넣되, 검색에 필요한 stage·kind·actor는 별도 열로 유지한다.
-    """
+    """프로세스 메모리의 bounded workspace timeline에 event를 추가한다."""
     with session_scope() as session:
-        row = WorkspaceEvent(
-            app_id=app_id,
-            command_id=command_id,
-            stage=stage,
-            kind=kind,
-            actor=actor,
-            text=text,
-            event_data=metadata or {},
-        )
-        session.add(row)
-        session.flush()
-        return event_dict(row)
+        if session.get(App, app_id) is None:
+            raise KeyError(app_id)
+        if command_id is not None:
+            command = session.get(WorkspaceCommand, command_id)
+            if command is None or command.app_id != app_id:
+                raise KeyError(command_id)
+    with _event_lock:
+        event = {
+            "event_id": next(_event_ids),
+            "app_id": app_id,
+            "command_id": command_id,
+            "stage": stage,
+            "kind": kind,
+            "actor": actor,
+            "text": text,
+            "metadata": metadata or {},
+            "created_at": _timestamp_in_kst(now()),
+        }
+        _events[app_id].append(event)
+        return dict(event)
 
 
 def list_events(app_id: str, *, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
-    """지정한 event ID 뒤의 기록을 오래된 순서로 반환한다.
+    """현재 process가 보유한 ``after`` 이후 event를 반환한다.
 
-    SSE client는 마지막으로 받은 ID를 `after`에 넣어 중복 전송을 줄인다. `limit`은 오랫동안
-    접속하지 않은 client가 한 번에 지나치게 많은 행을 읽지 않도록 한다.
+    서버 재시작 전 event는 의도적으로 복원하지 않는다. 최종 상태는 MySQL의 command에서
+    복원하고, event history는 앱당 최근 1,000건으로 제한한다.
     """
-    with session_scope() as session:
-        rows = session.scalars(
-            select(WorkspaceEvent)
-            .where(
-                WorkspaceEvent.app_id == app_id,
-                WorkspaceEvent.event_id > after,
-            )
-            .order_by(WorkspaceEvent.event_id)
-            .limit(limit)
-        ).all()
-        return [event_dict(row) for row in rows]
+    with _event_lock:
+        return [
+            dict(event)
+            for event in _events.get(app_id, ())
+            if int(event["event_id"]) > after
+        ][:limit]
 
 
 def get_app_summary(app_id: str) -> dict[str, Any]:
@@ -236,23 +246,21 @@ def save_deployment_preferences(app_id: str, selection: dict[str, Any]) -> dict[
     draft다. 다음 requirements command가 시작될 때 읽어 정식 resource 입력에 반영한다.
     """
     with session_scope() as session:
-        if session.get(App, app_id) is None:
+        app = session.get(App, app_id)
+        if app is None:
             raise KeyError(app_id)
-        row = session.get(DeploymentPreference, app_id)
-        if row is None:
-            row = DeploymentPreference(app_id=app_id, selection=selection)
-            session.add(row)
-        else:
-            row.selection = selection
+        app.deployment_preferences = selection
         session.flush()
-        return dict(row.selection or {})
+        return dict(app.deployment_preferences or {})
 
 
 def get_deployment_preferences(app_id: str) -> dict[str, Any] | None:
     """저장된 최신 배포 선택 초안을 반환한다."""
     with session_scope() as session:
-        row = session.get(DeploymentPreference, app_id)
-        return dict(row.selection or {}) if row is not None else None
+        app = session.get(App, app_id)
+        if app is None or app.deployment_preferences is None:
+            return None
+        return dict(app.deployment_preferences)
 
 
 def list_workspace_apps(limit: int = 50) -> list[dict[str, Any]]:

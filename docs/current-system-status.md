@@ -87,9 +87,9 @@ flowchart TD
     IAC --> RESULT
 ```
 
-프론트엔드에서 시작한 실행은 MySQL의 `apps`, `workspace_commands`, `workspace_events`와
-산출물·체크포인트 테이블에 저장한다. 구현 단계는 동시에 하나만 실행하며 timeout 시 하위
-프로세스 트리도 종료한다.
+프론트엔드에서 시작한 실행은 MySQL의 `apps`, `workspace_commands`, 산출물·공용 checkpoint
+테이블에 저장한다. 화면용 진행 이벤트는 bounded 메모리 버퍼를 통해 SSE로 보내며 재시작 뒤
+복구하지 않는다. 구현 단계는 동시에 하나만 실행하며 timeout 시 하위 프로세스 트리도 종료한다.
 
 ## 요구사항 입력 경계
 

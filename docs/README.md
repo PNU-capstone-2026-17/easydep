@@ -16,7 +16,7 @@
 
 - [처음 읽는 사람을 위한 코드 탐색 순서](code-reading-guide.md): 서버·워크스페이스·단계·저장 경계를 따라가는 순서
 - [HTTP API 길잡이](api.md): workspace 중심 호출 순서와 router 책임
-- [MySQL 구조와 설계 이유](mysql-architecture.md): 업무·버전·체크포인트 테이블, 인덱스, 무결성과 migration
+- [MySQL 구조와 설계 이유](mysql-architecture.md): 7개 테이블의 필드·제약, 단순화 근거와 인덱스
 - `app/README.md`: 백엔드 bounded context 지도와 의존성 방향
 - `frontend/README.md`: 워크벤치 상태 흐름과 자동 모드 원칙
 - `scripts/README.md`: 개발·운영 스크립트 용도와 안전 규칙

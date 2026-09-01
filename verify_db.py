@@ -12,12 +12,13 @@ from sqlalchemy import delete, func, select, text
 
 from app.db.models import (
     TYPE_SOURCE_CODE,
+    AgentCheckpoint,
+    AgentCheckpointBlob,
+    AgentCheckpointWrite,
     App,
-    Artifact,
     ArtifactFile,
     ArtifactVersion,
     WorkspaceCommand,
-    WorkspaceEvent,
 )
 from app.db.session import database_settings, init_db, session_scope
 from app.repositories import artifact_repository
@@ -39,11 +40,12 @@ def _checkpoint(checkpoint_id: str) -> dict:
 def _row_counts() -> dict[str, int]:
     models = (
         App,
-        Artifact,
         ArtifactVersion,
         ArtifactFile,
         WorkspaceCommand,
-        WorkspaceEvent,
+        AgentCheckpoint,
+        AgentCheckpointBlob,
+        AgentCheckpointWrite,
     )
     with session_scope() as session:
         return {
@@ -55,7 +57,7 @@ def _row_counts() -> dict[str, int]:
 
 
 def _verify_query_plans(
-    *, app_id: str, artifact_id: int, version_id: int, thread_id: str
+    *, app_id: str, version_id: int, thread_id: str
 ) -> dict[str, dict[str, str | None]]:
     """Confirm that each hot-path query exposes the intended composite index."""
 
@@ -66,18 +68,12 @@ def _verify_query_plans(
             {"app_id": app_id},
             "ix_workspace_commands_app_created",
         ),
-        "event_stream": (
-            "EXPLAIN SELECT * FROM workspace_events "
-            "WHERE app_id = :app_id AND event_id > 0 "
-            "ORDER BY event_id LIMIT 500",
-            {"app_id": app_id},
-            "ix_workspace_events_app_event",
-        ),
         "artifact_version": (
             "EXPLAIN SELECT * FROM artifact_versions "
-            "WHERE artifact_id = :artifact_id AND version_no = 2",
-            {"artifact_id": artifact_id},
-            "uq_versions_artifact_no",
+            "WHERE app_id = :app_id AND artifact_type = :artifact_type "
+            "ORDER BY version_no DESC LIMIT 1",
+            {"app_id": app_id, "artifact_type": TYPE_SOURCE_CODE},
+            "uq_artifact_versions_app_type_no",
         ),
         "artifact_files": (
             "EXPLAIN SELECT * FROM artifact_files "
@@ -86,8 +82,9 @@ def _verify_query_plans(
             "PRIMARY",
         ),
         "checkpoint_blob": (
-            "EXPLAIN SELECT * FROM requirements_checkpoint_blobs "
-            "WHERE thread_id = :thread_id AND checkpoint_ns = '' "
+            "EXPLAIN SELECT * FROM agent_checkpoint_blobs "
+            "WHERE graph_type = 'requirements' AND thread_id = :thread_id "
+            "AND checkpoint_ns = '' "
             "AND (channel, version) IN (('verification', '1'))",
             {"thread_id": thread_id},
             "PRIMARY",
@@ -175,17 +172,8 @@ def main() -> None:
         assert restored is not None
         assert restored.checkpoint["channel_values"]["verification"] == {"ok": True}
 
-        with session_scope() as session:
-            artifact_id = session.scalar(
-                select(Artifact.id).where(
-                    Artifact.app_id == app_id,
-                    Artifact.artifact_type == TYPE_SOURCE_CODE,
-                )
-            )
-        assert artifact_id is not None
         plans = _verify_query_plans(
             app_id=app_id,
-            artifact_id=artifact_id,
             version_id=int(snapshot["version_id"]),
             thread_id=app_id,
         )
@@ -193,11 +181,12 @@ def main() -> None:
         counts = _row_counts()
         assert counts == {
             "apps": 1,
-            "artifacts": 1,
             "artifact_versions": 2,
             "artifact_files": 4,
             "workspace_commands": 1,
-            "workspace_events": 1,
+            "agent_checkpoints": 1,
+            "agent_checkpoint_blobs": 1,
+            "agent_checkpoint_writes": 0,
         }
         print("round_trip_counts=", counts)
         print("query_plans=", plans)

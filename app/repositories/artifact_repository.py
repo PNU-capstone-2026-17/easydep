@@ -384,22 +384,24 @@ def list_versions(app_id: str, stage: str) -> list[dict[str, Any]]:
     config = STAGE_ARTIFACTS[stage]
     with session_scope() as session:
         _require_app(session, app_id)
-        artifact = _find_artifact(session, app_id, config["artifact_type"])
-        if artifact is None:
-            return []
-
         versions = session.scalars(
             select(ArtifactVersion)
-            .where(ArtifactVersion.artifact_id == artifact.id)
+            .where(
+                ArtifactVersion.app_id == app_id,
+                ArtifactVersion.artifact_type == config["artifact_type"],
+            )
             .order_by(ArtifactVersion.version_no)
         ).all()
+        if not versions:
+            return []
+        current_version_no = versions[-1].version_no
         return [
             {
                 "version_no": version.version_no,
                 "origin": version.origin,
                 "syntax_valid": version.syntax_valid,
                 "syntax_errors": version.syntax_errors or [],
-                "is_current": version.version_no == artifact.latest_version_no,
+                "is_current": version.version_no == current_version_no,
                 "created_at": version.created_at.isoformat(),
             }
             for version in versions
@@ -411,13 +413,10 @@ def get_version_content(app_id: str, stage: str, version_no: int) -> Any:
     config = STAGE_ARTIFACTS[stage]
     with session_scope() as session:
         _require_app(session, app_id)
-        artifact = _find_artifact(session, app_id, config["artifact_type"])
-        if artifact is None:
-            return None
-
         version = session.scalars(
             select(ArtifactVersion).where(
-                ArtifactVersion.artifact_id == artifact.id,
+                ArtifactVersion.app_id == app_id,
+                ArtifactVersion.artifact_type == config["artifact_type"],
                 ArtifactVersion.version_no == version_no,
             )
         ).first()
@@ -447,19 +446,12 @@ def save_file_snapshot(
     normalized = {_normalize_file_path(path): content for path, content in files.items()}
     with session_scope() as session:
         _lock_app(session, app_id)
-        artifact = session.scalars(
-            select(Artifact)
-            .where(Artifact.app_id == app_id, Artifact.artifact_type == artifact_type)
-            .with_for_update()
-        ).first()
-        if artifact is None:
-            artifact = Artifact(app_id=app_id, artifact_type=artifact_type)
-            session.add(artifact)
-            session.flush()
+        latest_version_no = _latest_version_no(session, app_id, artifact_type)
 
         version = ArtifactVersion(
-            artifact_id=artifact.id,
-            version_no=artifact.latest_version_no + 1,
+            app_id=app_id,
+            artifact_type=artifact_type,
+            version_no=latest_version_no + 1,
             content=json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
             syntax_valid=True,
             origin=origin,
@@ -475,7 +467,6 @@ def save_file_snapshot(
                     sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
                 )
             )
-        artifact.latest_version_no = version.version_no
         return version.id
 
 
@@ -497,19 +488,19 @@ def load_file_snapshot(
         raise ValueError("Choose either version_no or version_id, not both")
     with session_scope() as session:
         _require_app(session, app_id)
-        artifact = _find_artifact(session, app_id, artifact_type)
-        if artifact is None or artifact.latest_version_no == 0:
-            return None
         if version_id is not None:
             version = session.get(ArtifactVersion, version_id)
-            if version is not None and version.artifact_id != artifact.id:
+            if version is not None and (
+                version.app_id != app_id or version.artifact_type != artifact_type
+            ):
                 version = None
         elif version_no is None:
-            version = _current_version(session, artifact)
+            version = _latest_version(session, app_id, artifact_type)
         else:
             version = session.scalars(
                 select(ArtifactVersion).where(
-                    ArtifactVersion.artifact_id == artifact.id,
+                    ArtifactVersion.app_id == app_id,
+                    ArtifactVersion.artifact_type == artifact_type,
                     ArtifactVersion.version_no == version_no,
                 )
             ).first()
@@ -541,9 +532,6 @@ def list_file_artifact_versions(app_id: str, artifact_type: str) -> list[dict[st
     """파일 산출물의 버전, 파일 수와 metadata를 오래된 순서로 반환한다."""
     with session_scope() as session:
         _require_app(session, app_id)
-        artifact = _find_artifact(session, app_id, artifact_type)
-        if artifact is None:
-            return []
         file_count = (
             select(func.count(ArtifactFile.file_path))
             .where(ArtifactFile.artifact_version_id == ArtifactVersion.id)
@@ -552,14 +540,20 @@ def list_file_artifact_versions(app_id: str, artifact_type: str) -> list[dict[st
         )
         versions = session.execute(
             select(ArtifactVersion, file_count)
-            .where(ArtifactVersion.artifact_id == artifact.id)
+            .where(
+                ArtifactVersion.app_id == app_id,
+                ArtifactVersion.artifact_type == artifact_type,
+            )
             .order_by(ArtifactVersion.version_no)
         ).all()
+        if not versions:
+            return []
+        current_version_no = versions[-1][0].version_no
         return [
             {
                 "version_no": version.version_no,
                 "file_count": count,
-                "is_current": version.version_no == artifact.latest_version_no,
+                "is_current": version.version_no == current_version_no,
                 "metadata": _safe_json_object(version.content),
                 "created_at": version.created_at.isoformat(),
             }
@@ -587,15 +581,12 @@ def _write_version(
     # 기존 artifact가 아직 없는 첫 저장도 포함해 앱 단위로 직렬화한다. artifact 행만
     # 잠그면 "행이 없음"은 잠글 수 없어 두 writer가 같은 version_no=1을 만들 수 있다.
     _lock_app(session, app_id)
-    artifact = _find_artifact(session, app_id, config["artifact_type"])
-    if artifact is None:
-        artifact = Artifact(app_id=app_id, artifact_type=config["artifact_type"])
-        session.add(artifact)
-        session.flush()
+    latest_version_no = _latest_version_no(session, app_id, config["artifact_type"])
 
     version = ArtifactVersion(
-        artifact_id=artifact.id,
-        version_no=artifact.latest_version_no + 1,
+        app_id=app_id,
+        artifact_type=config["artifact_type"],
+        version_no=latest_version_no + 1,
         content=content,
         syntax_valid=(
             state.get(config["valid_key"]) if config["valid_key"] else None
@@ -610,21 +601,33 @@ def _write_version(
     session.add(version)
     session.flush()
 
-    artifact.latest_version_no = version.version_no
     return version.id
 
 
-def _find_artifact(
+def _latest_version(
     session: Session,
     app_id: str,
     artifact_type: str,
-) -> Artifact | None:
-    return session.scalars(
-        select(Artifact).where(
-            Artifact.app_id == app_id,
-            Artifact.artifact_type == artifact_type,
+) -> ArtifactVersion | None:
+    return session.scalar(
+        select(ArtifactVersion)
+        .where(
+            ArtifactVersion.app_id == app_id,
+            ArtifactVersion.artifact_type == artifact_type,
         )
-    ).first()
+        .order_by(ArtifactVersion.version_no.desc())
+        .limit(1)
+    )
+
+
+def _latest_version_no(session: Session, app_id: str, artifact_type: str) -> int:
+    latest = session.scalar(
+        select(func.max(ArtifactVersion.version_no)).where(
+            ArtifactVersion.app_id == app_id,
+            ArtifactVersion.artifact_type == artifact_type,
+        )
+    )
+    return int(latest or 0)
 
 
 def _require_app(session: Session, app_id: str) -> App:
@@ -640,23 +643,6 @@ def _lock_app(session: Session, app_id: str) -> App:
     if app is None:
         raise AppNotFound(app_id)
     return app
-
-
-def _current_version(session: Session, artifact: Artifact) -> ArtifactVersion:
-    """Load the latest row through the artifact-scoped unique version key."""
-    version = session.scalar(
-        select(ArtifactVersion).where(
-            ArtifactVersion.artifact_id == artifact.id,
-            ArtifactVersion.version_no == artifact.latest_version_no,
-        )
-    )
-    if version is None:
-        raise ArtifactIntegrityError(
-            "Artifact latest version is missing: "
-            f"artifact_id={artifact.id}, "
-            f"latest_version_no={artifact.latest_version_no}"
-        )
-    return version
 
 
 def _encode_content(value: Any, content_format: str) -> str:
