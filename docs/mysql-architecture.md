@@ -169,8 +169,14 @@ SQLAlchemy `create_all()`은 없는 테이블만 만들며 기존 테이블의 �
 구조는 Workbench의 기존 `easydep` 스키마를 새로고침하는 것만으로 반영되지 않는다. 데이터베이스를
 삭제하고 다시 만든 뒤 애플리케이션의 `init_db()` 또는 `schema.sql`을 실행해야 한다.
 
+개발 환경에서는 `.env`의 `DB_SCHEMA_RESET_ON_START=true` 또는 실행 스크립트의
+`-ResetDatabaseSchema` 옵션으로 이 절차를 자동화할 수 있다. 옵션이 켜지면 현재 접속 설정의
+`DB_NAME`을 `DROP DATABASE`한 뒤 같은 이름으로 만들고 ORM의 7개 표를 생성한다. 따라서 옛 ORM에만
+존재하던 테이블도 남지 않는다. 시스템 schema는 거부하지만 업무 데이터는 전부 삭제하므로 한 번
+초기화한 직후 `false`로 되돌려야 한다. 해당 DB 계정에는 `DROP/CREATE DATABASE` 권한이 필요하다.
+
 ```powershell
-python -X utf8 -m pytest -q tests/test_db_schema.py tests/test_session_store.py
+python -X utf8 -m pytest -q tests/test_db_schema.py tests/test_db_session.py tests/test_session_store.py
 python -X utf8 verify_db.py
 ```
 
@@ -182,3 +188,7 @@ SCHEMAS 영역의 새로고침 버튼을 누르면 변경된 구조가 보인다
 7개였고, 임시 앱·산출물 버전 2개·파일 4개·명령·checkpoint의 저장과 복원을 통과했다.
 최신 명령, 산출물 버전, 파일, checkpoint blob 조회는 위 표의 인덱스를 실제 선택했으며,
 검증 종료 후 7개 테이블의 행 수가 모두 0임을 확인했다.
+
+2026-09-01에는 로컬 MySQL `127.0.0.1:3306`에서도 기존 구형 `easydep` 스키마에
+`DB_SCHEMA_RESET_ON_START=true`를 일회성 적용했다. 구형 테이블이 제거되고 현재 7개 테이블만
+재생성됐으며, 동일한 repository·checkpoint·인덱스 검증과 최종 0행 정리를 통과했다.

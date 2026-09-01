@@ -89,6 +89,8 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 | `-SkipBootstrap` | 기존 Python 환경과 툴체인 이미지를 신뢰하고 준비 작업을 생략한다. |
 | `-ForceToolchainBuild` | 입력 해시가 같아도 Docker 빌드를 다시 실행한다. Docker layer cache는 재사용한다. |
 | `-ResetDatabase` | 현재 코드와 DB 구조가 맞지 않을 때 개발 DB와 저장된 앱을 지우고 새로 만든다. |
+| `-ForceFrontendBuild` | 입력 해시가 같아도 프론트엔드를 다시 빌드한다. |
+| `-ResetDatabaseSchema` | 시작 시 `easydep` DB의 기존 구조·데이터를 삭제하고 현재 7개 테이블로 재생성한다. |
 | `-Port 8010` | 백엔드 포트를 변경한다. 기본값은 `8000`이다. |
 | `-DatabasePort 33061` | 호스트의 개발용 MySQL 포트를 변경한다. 기본값은 `33060`이다. |
 | `-DatabaseImage mysql:8.4` | 최초 컨테이너 생성에 사용할 MySQL 이미지를 지정한다. |
@@ -99,6 +101,17 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -SkipFrontendBuild
 ```
+
+스키마가 바뀌었고 기존 개발 데이터를 보존할 필요가 없을 때에는 한 번만 다음처럼 실행한다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -ResetDatabaseSchema
+```
+
+이 옵션을 계속 사용하면 실행할 때마다 개발 데이터가 지워진다. 로컬 MySQL의 `3306`을 직접
+사용한다면 `.env`의 `DB_PORT=3306`, 실제 계정·비밀번호와
+`DB_SCHEMA_RESET_ON_START=true`를 설정해 백엔드를 한 번 시작한 뒤 다시 `false`로 바꾼다.
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -Stop
 ```

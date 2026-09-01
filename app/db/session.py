@@ -7,6 +7,7 @@ repository는 이 모듈의 `session_scope()`를 사용한다. 업무 코드가 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from urllib.parse import quote_plus
@@ -27,9 +28,11 @@ load_dotenv()
 # 연결 수가 빠르게 늘고, 서로 다른 pool 설정 때문에 장애 원인을 추적하기 어려워진다.
 _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
+_DATABASE_NAME = re.compile(r"^[A-Za-z0-9_]+$")
+_SYSTEM_DATABASES = {"information_schema", "mysql", "performance_schema", "sys"}
 
 
-def database_settings() -> dict[str, str]:
+def database_settings() -> dict[str, str | int]:
     """전역 설정에서 데이터베이스 접속값만 이름이 분명한 dict로 꺼낸다."""
     return {
         "host": settings.db_host,
@@ -47,8 +50,8 @@ def database_url(include_database: bool = True) -> str:
     사용한다. 비밀번호는 URL 예약 문자가 들어 있어도 안전하도록 percent-encoding한다.
     """
     settings = database_settings()
-    password = quote_plus(settings["password"])
-    database = settings["name"] if include_database else ""
+    password = quote_plus(str(settings["password"]))
+    database = str(settings["name"]) if include_database else ""
     return (
         f"mysql+pymysql://{settings['user']}:{password}"
         f"@{settings['host']}:{settings['port']}/{database}?charset=utf8mb4"
@@ -103,22 +106,50 @@ def session_scope() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """개발·단일 서버 실행에 필요한 database와 table이 없으면 만든다.
+    """개발·단일 서버 실행에 필요한 database와 table을 준비한다.
 
     첫 연결은 database 이름을 제외해야 한다. database를 만든 뒤 bootstrap Engine을 즉시
-    폐기하고, 실제 table 생성은 공용 Engine으로 수행한다.
+    폐기하고, 실제 table 생성은 공용 Engine으로 수행한다. 명시적인 개발 옵션이 켜지면
+    이전 schema 전체를 삭제하므로 현재 ORM에 더 이상 없는 옛 테이블도 남지 않는다.
     """
-    settings = database_settings()
+    global _engine, _session_factory
+
+    connection_settings = database_settings()
+    database_name = _validated_database_name(str(connection_settings["name"]))
+    reset_schema = settings.db_schema_reset_on_start
+
+    # 이미 생성된 pool이 삭제 대상 database의 connection을 잡고 있지 않게 한다. 일반적인
+    # 서버 startup에서는 아직 None이지만 테스트·재초기화 경로에서도 같은 규칙을 보장한다.
+    if reset_schema:
+        if _engine is not None:
+            _engine.dispose()
+        _engine = None
+        _session_factory = None
+
     bootstrap = create_engine(database_url(include_database=False), future=True)
-    with bootstrap.connect() as connection:
+    with bootstrap.begin() as connection:
+        if reset_schema:
+            print(
+                "[database] DB_SCHEMA_RESET_ON_START=true: "
+                f"dropping and recreating `{database_name}`"
+            )
+            connection.execute(text(f"DROP DATABASE IF EXISTS `{database_name}`"))
         connection.execute(
             text(
-                f"CREATE DATABASE IF NOT EXISTS `{settings['name']}` "
+                f"CREATE DATABASE IF NOT EXISTS `{database_name}` "
                 "DEFAULT CHARACTER SET utf8mb4"
             )
         )
-        connection.commit()
     bootstrap.dispose()
 
     engine = get_engine()
     Base.metadata.create_all(engine)
+
+
+def _validated_database_name(value: str) -> str:
+    """DDL에 사용할 database 식별자를 제한하고 MySQL 시스템 schema를 보호한다."""
+    if not _DATABASE_NAME.fullmatch(value):
+        raise ValueError("DB_NAME may contain only ASCII letters, digits, and underscores")
+    if value.lower() in _SYSTEM_DATABASES:
+        raise ValueError(f"Refusing to initialize protected MySQL database: {value}")
+    return value

@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     db_user: str = "root"
     db_password: str = ""
     db_name: str = "easydep"
+    # 개발 DB의 기존 구조와 데이터를 모두 버리고 현재 ORM schema로 다시 만든다.
+    # 운영 환경에서 우발적으로 실행되지 않도록 기본값은 반드시 false다.
+    db_schema_reset_on_start: bool = False
 
     # Experiments / Debug
     easydep_experiment_session: str | None = None
