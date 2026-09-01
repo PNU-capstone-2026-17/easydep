@@ -279,6 +279,22 @@ def _merge_delegated_repair_state(
     }
 
 
+def _close_stalled_delegated_repair(result: dict[str, Any]) -> None:
+    """Expose an exhausted delegated-repair episode as a manual revision gate."""
+
+    result["can_delegate_repair"] = False
+    result["message"] = (
+        "Automatic repair could not reduce the remaining blockers. Review them and "
+        "enter a specific revision request before continuing."
+    )
+    result["blocking_findings"] = [
+        {**blocker, "repairable": False}
+        if isinstance(blocker, dict)
+        else blocker
+        for blocker in result.get("blocking_findings") or []
+    ]
+
+
 # The implementation worker has two distinct parts: initial deterministic
 # generation and the resumable agent workflow.  Keep their user-facing labels
 # here so the workspace can report the same stable milestones even when the
@@ -1034,7 +1050,7 @@ class WorkspaceService:
                 )
                 shaped["repair_state"] = merged_repair_state
                 if merged_repair_state.get("status") == "STALLED":
-                    shaped["can_delegate_repair"] = False
+                    _close_stalled_delegated_repair(shaped)
             return shaped
 
         if stage == "design":
@@ -1140,7 +1156,7 @@ class WorkspaceService:
                 )
                 shaped["repair_state"] = merged_repair_state
                 if merged_repair_state.get("status") == "STALLED":
-                    shaped["can_delegate_repair"] = False
+                    _close_stalled_delegated_repair(shaped)
             return shaped
 
         if stage != "implementation":

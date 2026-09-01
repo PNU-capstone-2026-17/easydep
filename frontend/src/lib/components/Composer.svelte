@@ -40,6 +40,8 @@
   );
   let requiresRevision = $derived(Boolean(result?.requires_revision));
   let canDelegateRepair = $derived(Boolean(result?.can_delegate_repair));
+  let repairStalled = $derived(result?.repair_state?.status === 'STALLED');
+  let repairStallReason = $derived(String(result?.repair_state?.stall_reason ?? '').trim());
   let implementationAction = $derived(
     command?.stage === 'implementation' &&
       ['approve_implementation', 'retry_implementation', 'rerun_implementation', 'start_implementation'].includes(command.action)
@@ -182,7 +184,18 @@
           </Button>
         {/if}
         <span class="px-1 text-xs text-[#74520c]">
-          Review the blocking findings and describe a revision, or delegate the same repair action to the LLM.
+          {#if repairStalled}
+            {canDelegateRepair
+              ? 'Automatic local repair exhausted its strategies. Try one delegated repair or enter a specific revision request.'
+              : 'Automatic repair could not reduce the blockers. Enter a specific revision request to continue.'}
+          {:else if canDelegateRepair}
+            Review the blocking findings and describe a revision, or delegate the repair to the LLM.
+          {:else}
+            Review the blocking findings and enter a specific revision request to continue.
+          {/if}
+          {#if repairStallReason}
+            <span class="mt-1 block text-[11px] text-[#876f45]">{repairStallReason}</span>
+          {/if}
         </span>
       {:else if command?.stage === 'design'}
         <Button size="sm" onclick={() => onAction('advance', { action_id: command?.command_id })} disabled={busy}>

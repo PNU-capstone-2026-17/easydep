@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.design.graphs import subgraphs as design_subgraphs
+from app.design.knowledge.detectors import api_spec_findings
 from app.design.rtm import build_design_rtm
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec import service
@@ -220,6 +221,44 @@ def test_typed_normalization_uses_exact_bce_contract_without_plantuml() -> None:
     assert endpoint.responses[0].is_array is True
     assert endpoint.source_classes == ["CatalogBoundary", "CatalogControl"]
     assert proposal.Endpoints[0].query_params[0].type == "CourseFilter"
+
+
+def test_void_control_canonicalizes_success_response_to_no_content() -> None:
+    """A void BCE operation must not leave an unrepairable 200 body contract."""
+
+    bce_payload = _bce_model().model_dump(by_alias=True)
+    for class_payload in bce_payload["Classes"][:2]:
+        class_payload["operations"][0]["returnType"] = "void"
+    bce_model = BCEModel.model_validate(bce_payload)
+
+    normalized = normalize_api_spec_model(_proposal(), bce_model)
+
+    endpoint = normalized.Endpoints[0]
+    response = endpoint.responses[0]
+    assert response.status == 204
+    assert response.schema_name == ""
+    assert response.is_array is False
+    assert endpoint.control_binding is not None
+    assert [outcome.model_dump() for outcome in endpoint.control_binding.outcomes] == [
+        {"status": 204, "outcome": "completed"}
+    ]
+
+    openapi = build_openapi_from_model(normalized)
+    assert openapi["paths"]["/courses"]["get"]["responses"] == {
+        "204": {"description": "Completed successfully with no response body."}
+    }
+    findings = api_spec_findings(
+        normalized.model_dump(),
+        {
+            "extracted_bce_classes": bce_model.model_dump(by_alias=True),
+            "sequence_diagram_model": _sequence_model().model_dump(),
+        },
+    )
+    assert not [
+        finding
+        for finding in findings
+        if finding.rule_id == "api.control-outcomes-cover-responses"
+    ]
 
 
 def test_body_field_keeps_the_custom_control_parameter_type() -> None:
