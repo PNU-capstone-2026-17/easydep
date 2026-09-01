@@ -290,6 +290,9 @@ def _build_use_case_task(
     depends_on = sorted({writers[path] for path in editable if path in writers})
     requirements, use_cases, sources = _related_requirement_artifacts(spec, bundle.use_case_ids)
     scenarios = _scenarios_for_use_cases(spec, bundle.use_case_ids)
+    implementation_context = _implementation_prompt_context(
+        requirements, use_cases, scenarios
+    )
     # HTTP Controller는 Boundary adapter를 거치지 않고 typed Control을 직접 호출한다.
     # Boundary가 참조하는 다른 기능 DTO까지 closure에 끌어오지 않고 이번 구현에 실제로
     # 쓰는 Control·Entity·Gateway 계약만 전달한다.
@@ -357,8 +360,9 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
   focused scenario leaves one of this task's named body markers below.
 - Use the completed ERD repositories for persistent behavior; do not keep business state in
   an in-memory collection or invent another persistence port.
-- Write the focused JUnit scenario first, then implement until it passes. Assert returned
-  values and persisted state changes, including that rejected requests leave state unchanged.
+- Inspect the current contracts, then implement the feature and its focused JUnit scenario in
+  the order that best fits the existing source. Assert returned values and persisted state
+  changes, including that rejected requests leave state unchanged.
 - Exercise every supplied input that changes the scenario result, and assert every response
   value named by the requirements. Never ignore a filter or fill a required result with an
   empty, synthetic, or demo value. If the supplied contracts cannot produce a required value,
@@ -370,7 +374,7 @@ the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
 
 ## Relevant requirements and scenarios
 ~~~json
-{_prompt_json({"requirements": requirements, "useCases": use_cases, "scenarios": scenarios})}
+{_prompt_json(implementation_context)}
 ~~~
 
 ## Typed HTTP operation contracts
@@ -599,6 +603,75 @@ def _job_artifact_items(
 
 def _artifact_ids(items: list[dict[str, object]]) -> list[str]:
     return sorted({str(item["id"]) for item in items if item.get("id")})
+
+
+def _implementation_prompt_context(
+    requirements: list[dict[str, object]],
+    use_cases: list[dict[str, object]],
+    scenarios: list[dict[str, object]],
+) -> dict[str, object]:
+    """설계 산출물에서 구현 판단에 필요한 값만 골라 prompt 크기를 줄인다.
+
+    요구사항 단계의 수리 횟수와 내부 상태는 이미 승인된 설계를 코드로 옮기는 데 필요하지
+    않다. 반면 시퀀스 호출 순서, 인자 출처와 반환 연결은 구현의 직접 근거이므로 보존한다.
+    """
+
+    def select(item: dict[str, object], names: tuple[str, ...]) -> dict[str, object]:
+        return {name: item[name] for name in names if name in item}
+
+    requirement_fields = ("id", "text", "type")
+    use_case_fields = (
+        "id",
+        "use_case_id",
+        "name",
+        "primary_actor",
+        "supporting_actors",
+        "level",
+        "goal",
+        "requirement_ids",
+        "nfr_ids",
+        "preconditions",
+        "trigger",
+        "main_scenario",
+        "extensions",
+        "success_guarantee",
+        "minimal_guarantee",
+    )
+    diagrams: list[dict[str, object]] = []
+    for scenario in scenarios:
+        participants = scenario.get("Participants")
+        messages = scenario.get("Messages")
+        diagram = select(scenario, ("use_case_id", "use_case_name"))
+        diagram["Participants"] = [
+            select(item, ("name", "alias", "kind", "source_class"))
+            for item in participants
+            if isinstance(item, dict)
+        ] if isinstance(participants, list) else []
+        diagram["Messages"] = [
+            select(
+                item,
+                (
+                    "source",
+                    "target",
+                    "label",
+                    "type",
+                    "fragments",
+                    "use_case_ids",
+                    "step_ids",
+                    "call_id",
+                    "reply_to",
+                    "arguments",
+                ),
+            )
+            for item in messages
+            if isinstance(item, dict)
+        ] if isinstance(messages, list) else []
+        diagrams.append(diagram)
+    return {
+        "requirements": [select(item, requirement_fields) for item in requirements],
+        "useCases": [select(item, use_case_fields) for item in use_cases],
+        "scenarios": diagrams,
+    }
 
 
 def _scenarios_for_use_cases(

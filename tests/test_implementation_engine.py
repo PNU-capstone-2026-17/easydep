@@ -636,8 +636,19 @@ class Order <<Entity>> { - id: UUID }
     requirements.write_text(
         json.dumps(
             [
-                {"id": "FR-ORDER", "use_case_ids": ["UC1"]},
-                {"id": "FR-CANCEL", "use_case_ids": ["UC2"]},
+                {
+                    "id": "FR-ORDER",
+                    "text": "The customer can place an order.",
+                    "type": "FR",
+                    "use_case_ids": ["UC1"],
+                    "repair_history": {"marker": "INTERNAL-REPAIR-MARKER"},
+                },
+                {
+                    "id": "FR-CANCEL",
+                    "text": "The customer can cancel an order.",
+                    "type": "FR",
+                    "use_case_ids": ["UC2"],
+                },
             ]
         ),
         encoding="utf-8",
@@ -646,7 +657,16 @@ class Order <<Entity>> { - id: UUID }
     use_case_specs.write_text(
         json.dumps(
             [
-                {"id": "UC1", "use_case_id": "UC1", "name": "Place order"},
+                {
+                    "id": "UC1",
+                    "use_case_id": "UC1",
+                    "name": "Place order",
+                    "main_scenario": [
+                        {"step_number": 1, "sentence": "The customer places an order."}
+                    ],
+                    "repair_iters": 7,
+                    "repair_history": {"marker": "INTERNAL-USE-CASE-REPAIR"},
+                },
                 {"id": "UC2", "use_case_id": "UC2", "name": "Cancel order"},
             ]
         ),
@@ -841,6 +861,18 @@ class Order <<Entity>> { - id: UUID }
         not set(task["allowed_write_paths"]).intersection(immutable_bce) for task in use_cases
     )
     assert use_cases[0]["allowed_write_roots"]
+    assert all(
+        "application/src/main/java" not in task["allowed_write_roots"]
+        for task in use_cases
+    )
+    uc1_task = next(task for task in use_cases if task["use_case_ids"] == ["UC1"])
+    uc1_prompt = (run / uc1_task["prompt_file"]).read_text(encoding="utf-8")
+    assert "The customer can place an order." in uc1_prompt
+    assert '"call_id"' in uc1_prompt
+    assert '"control_binding"' in uc1_prompt
+    assert "INTERNAL-REPAIR-MARKER" not in uc1_prompt
+    assert "INTERNAL-USE-CASE-REPAIR" not in uc1_prompt
+    assert "Write the focused JUnit scenario first" not in uc1_prompt
 
 
 def test_scenario_failure_returns_to_automatic_repair_without_user_input(

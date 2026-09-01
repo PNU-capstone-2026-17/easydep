@@ -272,24 +272,33 @@ def _active_repair_scope(
     ``immutable_paths``를 그대로 적용하면 계획에는 파일이 보이지만 편집 도구가 다시 막는
     모순이 생긴다.
 
-    공개 BCE/API 계약과 결정론적으로 만든 persistence 파일은 계속 보호한다. 그 밖의
-    ``repairPaths``는 파일 단위로만 허용하고, 새 파일을 만들 수 있는 디렉터리 권한은 wiring이
-    원래 소유한 설정 디렉터리에만 유지한다.
+    공개 BCE/API 계약과 결정론적으로 만든 persistence 파일은 계속 보호한다. 단일 기능
+    수리는 원래 작업의 관련 파일과 전용 디렉터리를 유지하고, 여러 기능을 잇는 wiring 수리는
+    오류에서 확인한 ``repairPaths``만 추가한다.
     """
     base_paths = [str(path).replace("\\", "/") for path in task.get("allowed_write_paths", [])]
     immutable = {
         str(path).replace("\\", "/") for path in task.get("immutable_paths", [])
     }
-    protected_parts = ("/bce/", "/api/", "/persistence/")
-    protected_prefixes = ("application/src/main/resources/db/migration/",)
-    repair_paths = [
+    requested_paths = [
         str(path).replace("\\", "/")
         for path in active_repair.get("repairPaths", [])
-        if isinstance(path, str)
-        and path.startswith("application/")
-        and not any(part in "/" + path.replace("\\", "/") for part in protected_parts)
-        and not path.replace("\\", "/").startswith(protected_prefixes)
+        if isinstance(path, str) and path.startswith("application/")
     ]
+    protected_parts = ("/api/", "/persistence/")
+    protected_prefixes = ("application/src/main/resources/db/migration/",)
+    repair_paths = [
+        path
+        for path in requested_paths
+        if not any(part in "/" + path for part in protected_parts)
+        and not path.startswith(protected_prefixes)
+        # 기능 작업이 원래 소유한 Entity 본문은 고칠 수 있다. 반면 wiring이 공개 BCE
+        # 계약을 새로 소유하게 만들지는 않는다.
+        and ("/bce/" not in "/" + path or path in base_paths)
+    ]
+    # 한 기능이 원래 소유한 관련 파일은 함께 열어 두어 test 실패를 Service나 Entity에서
+    # 고칠 수 있게 한다. 여러 기능을 합치는 wiring 수리는 repair plan이 실제 오류 파일만
+    # 추가하므로 main/java 전체로 넓어지지 않는다.
     editable = list(dict.fromkeys([*base_paths, *repair_paths]))
     # exact repair 파일 위에 놓인 넓은 ownership 경로만 해제한다. 편집기 자체는 editable
     # 파일 목록을 다시 검사하므로 같은 package의 관련 없는 기존 파일까지 열리지 않는다.
@@ -298,8 +307,30 @@ def _active_repair_scope(
         for path in immutable
         if not any(_path_is_immutable(repair_path, {path}) for repair_path in repair_paths)
     }
-    roots = _owned_directory_roots(base_paths)
+    roots = [
+        str(path).replace("\\", "/")
+        for path in task.get("allowed_write_roots", [])
+    ]
+    if str(task.get("task_type")) == "wiring":
+        roots = _owned_directory_roots(base_paths)
     return editable, roots, sorted(immutable)
+
+
+def _task_execution_scope(
+    task: dict[str, object], active_repair: dict[str, object] | None
+) -> tuple[list[str], list[str], list[str]]:
+    """사전 점검과 실제 실행이 함께 사용할 편집 범위를 계산한다."""
+
+    if active_repair is not None:
+        return _active_repair_scope(task, active_repair)
+    return (
+        [str(path).replace("\\", "/") for path in task.get("allowed_write_paths", [])],
+        [str(path).replace("\\", "/") for path in task.get("allowed_write_roots", [])],
+        sorted(
+            str(path).replace("\\", "/")
+            for path in task.get("immutable_paths", [])
+        ),
+    )
 
 
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
@@ -307,36 +338,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task_type = str(task.get("task_type", ""))
     app_id = _run_app_id(run_root)
     active_repair = active_repair_for_task(run_root, task_id)
-    editable_paths = [str(path) for path in task.get("allowed_write_paths", [])]
+    editable_paths, editable_roots, immutable = _task_execution_scope(task, active_repair)
     required_paths = [str(path) for path in task.get("required_output_paths", editable_paths)]
-    immutable_paths = {str(path).replace("\\", "/") for path in task.get("immutable_paths", [])}
-    editable_roots = [str(path).replace("\\", "/") for path in task.get("allowed_write_roots", [])]
-    if task_type == "use-case":
-        # 기능 구현 작업은 서로 강하게 연결된 Controller, Service와 Entity 동작을 한 대화에서
-        # 완성한다. 한 작업만 사용하는 package에는 새 파일도 만들 수 있지만 다른 기능과
-        # 공유하는 package에서는 계획된 파일만 고쳐 병렬 승격 충돌을 막는다.
-        immutable_paths = {
-            path
-            for path in immutable_paths
-            if "api" in Path(path).parts or "bce" in Path(path).parts
-        }
-        task = {
-            **task,
-            "allowed_write_paths": editable_paths,
-            "allowed_write_roots": editable_roots,
-            "immutable_paths": sorted(immutable_paths),
-        }
-    elif active_repair is not None:
-        editable_paths, editable_roots, immutable = _active_repair_scope(
-            task, active_repair
-        )
-        immutable_paths = set(immutable)
-        task = {
-            **task,
-            "allowed_write_paths": editable_paths,
-            "allowed_write_roots": editable_roots,
-            "immutable_paths": immutable,
-        }
+    immutable_paths = set(immutable)
+    task = {
+        **task,
+        "allowed_write_paths": editable_paths,
+        "allowed_write_roots": editable_roots,
+        "immutable_paths": immutable,
+    }
 
     compatibility = openhands_compatibility()
     missing = [
@@ -973,49 +983,19 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         raise RuntimeError("OpenHands SDK prerequisites are missing: " + ", ".join(missing))
     task_type = str(task.get("task_type", ""))
     active_repair = active_repair_for_task(run_root, task_id)
-    validation_allowed = [str(path) for path in task.get("allowed_write_paths", [])]
-    if active_repair is not None:
-        validation_allowed = list(
-            dict.fromkeys(
-                [
-                    *validation_allowed,
-                    *(
-                        str(path)
-                        for path in active_repair.get("repairPaths", [])
-                        if isinstance(path, str) and path.startswith("application/")
-                    ),
-                ]
-            )
-        )
-        task = {**task, "allowed_write_paths": validation_allowed}
-    broad_backend_scope = task_type == "use-case"
-    validation_roots = (
-        ["application/src/main/java"]
-        if broad_backend_scope
-        else _owned_directory_roots(validation_allowed)
-        if active_repair is not None
-        else []
+    validation_allowed, validation_roots, validation_immutable = _task_execution_scope(
+        task, active_repair
     )
-    validation_immutable = {
-        str(path).replace("\\", "/") for path in task.get("immutable_paths", [])
+    task = {
+        **task,
+        "allowed_write_paths": validation_allowed,
+        "allowed_write_roots": validation_roots,
+        "immutable_paths": validation_immutable,
     }
-    if broad_backend_scope:
-        validation_immutable = {
-            path
-            for path in validation_immutable
-            if "api" in Path(path).parts or "bce" in Path(path).parts
-        }
-        task = {
-            **task,
-            "allowed_write_roots": validation_roots,
-            "immutable_paths": sorted(validation_immutable),
-        }
-    elif active_repair is not None:
-        task = {**task, "allowed_write_roots": validation_roots}
     sandbox = prepare_agent_workspace(run_root, task)
     allowed = [str((sandbox / path).resolve()) for path in validation_allowed]
     allowed_roots = [str((sandbox / path).resolve()) for path in validation_roots]
-    immutable = [str((sandbox / path).resolve()) for path in sorted(validation_immutable)]
+    immutable = [str((sandbox / path).resolve()) for path in validation_immutable]
     validation_journal = EventJournal(
         run_root / "reports" / f"agent-validation-{task_id}.events.jsonl"
     )

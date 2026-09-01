@@ -340,7 +340,8 @@ def _repair_paths(
             str(path).replace("\\", "/")
             for path in task.get("allowed_write_paths", [])
         ]
-        # wiring이 서로 다른 기능을 대신 통합 수리할 때는 업무 source 전체를 얻지 않는다.
+        # 하나의 기능 작업 안에서는 test에서 드러난 원인을 Service나 Entity에서 고칠 수
+        # 있어야 한다. wiring이 여러 기능을 대신 고칠 때만 실제 오류 파일로 제한한다.
         if str(task.get("task_type")) == "wiring" and evidence_paths:
             outside = [path for path in evidence_paths if path not in task_paths]
             if outside:
