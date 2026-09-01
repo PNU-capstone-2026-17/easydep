@@ -26,7 +26,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         mappings.append({
             "target_file": _posix(contract_file, run_root),
             "element_name": control,
-            "origin_artifact": "bceClass",
+            "origin_artifact": "bceModel",
             "origin_element": f"component {control} <<control>>",
             "contract_level": "IMMUTABLE_CONTRACT",
             "allowed_edits": [],
@@ -35,7 +35,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         mappings.append({
             "target_file": _posix(impl_file, run_root),
             "element_name": f"{control}Service",
-            "origin_artifact": "bceClass",
+            "origin_artifact": "bceModel",
             "origin_element": f"component {control} <<control>>",
             "contract_level": "IMPLEMENTATION_INTERNAL",
             "allowed_edits": ["METHOD_BODY_ONLY", "PRIVATE_HELPERS"],
@@ -54,7 +54,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         mappings.append({
             "target_file": _posix(interface_file, run_root),
             "element_name": f"{api_name}Api",
-            "origin_artifact": "openapi",
+            "origin_artifact": "apiModel",
             "origin_element": f"API port {api_name} ({len(api_port.operations)} operations)",
             "contract_level": "IMMUTABLE_CONTRACT",
             "allowed_edits": [],
@@ -63,7 +63,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         mappings.append({
             "target_file": _posix(controller_file, run_root),
             "element_name": f"{api_name}ApiController",
-            "origin_artifact": "openapi",
+            "origin_artifact": "apiModel",
             "origin_element": f"API port {api_name}",
             "contract_level": "IMPLEMENTATION_INTERNAL",
             "allowed_edits": ["METHOD_BODY_ONLY"],
@@ -78,7 +78,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         mappings.append({
             "target_file": _posix(entity_file, run_root),
             "element_name": f"{entity}Entity",
-            "origin_artifact": "erd",
+            "origin_artifact": "erdBceModel",
             "origin_element": f"entity {entity}",
             "contract_level": "DATABASE_SCHEMA_BOUND",
             "allowed_edits": ["GETTERS_SETTERS", "CONSTRUCTORS"],
@@ -87,7 +87,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         mappings.append({
             "target_file": _posix(repo_file, run_root),
             "element_name": f"{entity}Repository",
-            "origin_artifact": "erd",
+            "origin_artifact": "erdBceModel",
             "origin_element": f"entity {entity}",
             "contract_level": "IMMUTABLE_CONTRACT",
             "allowed_edits": ["CUSTOM_QUERY_METHODS"],
@@ -101,7 +101,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         mappings.append({
             "target_file": _posix(gw_contract, run_root),
             "element_name": gw_name,
-            "origin_artifact": "sequence",
+            "origin_artifact": "sequenceModel",
             "origin_element": f"gateway {gw_name} ({gateway.kind})",
             "contract_level": "IMMUTABLE_CONTRACT",
             "allowed_edits": [],
@@ -119,7 +119,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
                 run_root,
             ),
             "element_name": adapter_name,
-            "origin_artifact": "sequence",
+            "origin_artifact": "sequenceModel",
             "origin_element": f"gateway implementation {gw_name}",
             "contract_level": "IMPLEMENTATION_INTERNAL",
             "allowed_edits": ["METHOD_BODY_ONLY", "PRIVATE_HELPERS"],
@@ -128,7 +128,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
 
     # 5. Infrastructure & IaC (Deployment Diagram / Cloud Spec)
     cloud = spec.inputs.get("cloud")
-    deployment = spec.inputs.get("deployment")
+    deployment = spec.inputs.get("deploymentBundle")
     terraform_main = run_root / "application/terraform/main.tf"
     # 리소스 요구사항 파일이 있다고 해서 IaC가 항상 생성되는 것은 아니다. 배포 설계가
     # 아직 사용자 입력을 기다리는 경우에는 로컬 컨테이너까지만 검증하므로, 실제로 만든
@@ -150,7 +150,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
             "target_file": "application/Dockerfile",
             "element_name": "Dockerfile",
             "origin_artifact": (
-                "deployment"
+                "deploymentBundle"
                 if deployment and deployment.is_file()
                 else "cloud" if cloud and cloud.is_file() else "generated-contracts"
             ),
@@ -264,7 +264,7 @@ def evaluate_feedback_rtm_traceability(
         ),
         (
             "CLASS_CONTRACT_CHANGE",
-            "bceClass",
+            "bceModel",
             "BCE/class-diagram contract change requested.",
             (
                 r"\b(?:bce|class\s+diagram|interface|field|attribute|method\s+signature|return\s+type)\b",
@@ -273,7 +273,7 @@ def evaluate_feedback_rtm_traceability(
         ),
         (
             "OPENAPI_CONTRACT_CHANGE",
-            "openapi",
+            "apiModel",
             "OpenAPI endpoint or schema contract change requested.",
             (
                 r"\b(?:openapi|api\s+(?:spec|contract)|endpoint|request\s+body|response\s+(?:body|schema)|http\s+(?:method|status)|dto|schema)\b",
@@ -283,7 +283,7 @@ def evaluate_feedback_rtm_traceability(
         ),
         (
             "SEQUENCE_FLOW_CHANGE",
-            "sequence",
+            "sequenceModel",
             "Sequence diagram message flow change requested.",
             (
                 r"\b(?:sequence\s+diagram|call\s+order|message\s+flow)\b",
@@ -292,7 +292,7 @@ def evaluate_feedback_rtm_traceability(
         ),
         (
             "DATA_MODEL_CHANGE",
-            "erd",
+            "erdBceModel",
             "ERD/database schema change requested.",
             (
                 r"\b(?:erd|database\s+schema|table|column|entity\s+relationship)\b",
@@ -370,21 +370,21 @@ def _extract_design_elements(
             if mapping.get("contract_level") in {"IMMUTABLE_CONTRACT", "DATABASE_SCHEMA_BOUND"}:
                 elements[str(mapping["element_name"])] = str(mapping["origin_artifact"])
 
-    class_diagram = str(design.get("class_diagram_puml", ""))
-    for name in re.findall(r"(?im)^\s*(?:class|interface|entity)\s+(?:\"[^\"]+\"\s+as\s+)?([A-Za-z_]\w*)", class_diagram):
-        if len(name) > 2:
-            elements[name] = "bceClass"
+    for field, artifact in (
+        ("extracted_bce_classes", "bceModel"),
+        ("erd_bce_classes", "erdBceModel"),
+    ):
+        model = design.get(field, {})
+        classes = model.get("Classes", []) if isinstance(model, dict) else []
+        for item in classes if isinstance(classes, list) else []:
+            if isinstance(item, dict) and item.get("className"):
+                elements[str(item["className"])] = artifact
 
-    erd_puml = str(design.get("erd_puml", ""))
-    for name in re.findall(r"(?im)^\s*entity\s+\"[^\"]+\"\s+as\s+([A-Za-z_]\w*)", erd_puml):
-        if len(name) > 2:
-            elements[name] = "erd"
-
-    api_spec = design.get("api_spec", {})
-    if isinstance(api_spec, dict):
-        for name in api_spec.get("components", {}).get("schemas", {}):
-            if str(name).isidentifier() and len(str(name)) > 2:
-                elements[str(name)] = "openapi"
+    api_model = design.get("api_spec_model", {})
+    schemas = api_model.get("Schemas", []) if isinstance(api_model, dict) else []
+    for schema in schemas if isinstance(schemas, list) else []:
+        if isinstance(schema, dict) and schema.get("name"):
+            elements[str(schema["name"])] = "apiModel"
 
     return elements
 

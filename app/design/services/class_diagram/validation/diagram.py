@@ -151,12 +151,10 @@ def relationship_endpoints(model: dict, state: dict) -> list[Finding]:
 
       - PlantUML은 오류를 내지 않고 그 이름으로 **빈 클래스를 하나 만든다**(실측:
         선언 1개 + 매달린 끝 1개 → `-syntax`가 `(2 entities)`를 보고하고 통과).
-      - 구현 단계의 `parse_design_classes`는 `class X <<S>> {…}` 선언만 정규식으로 읽으므로
-        그 유령을 **못 본다**. 그런데 같은 파일의 `parse_relations`는 관계 줄에서 식별자를
-        긁어 가므로 **유령을 본다**. 그래서 `design_context.py`의 `relation_context`가
-        "존재하지 않는 클래스를 가리키는 관계 줄"을 코드 생성 프롬프트에 실어 보낸다.
+      - 구현 단계는 검증을 통과한 typed 모델을 직접 사용하므로 표시 문자열을 다시 읽지는
+        않지만, 잘못된 관계가 모델에 남으면 구현 계약도 존재하지 않는 클래스를 참조한다.
 
-    즉 문법 검증도, 하류 파서도 이것을 막지 못한다. 여기서 막아야 한다.
+    즉 그림 문법 검증만으로는 막을 수 없으므로 모델을 저장하기 전에 여기서 막아야 한다.
     """
     return _dangling_endpoints(
         model,

@@ -15,7 +15,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ..workspace import cleanup_agent_workspace, prepare_agent_workspace
-from .frontend import run_frontend_command, run_frontend_verification
+from .frontend import (
+    reuse_frontend_build,
+    run_frontend_command,
+    run_frontend_verification,
+    store_frontend_build,
+)
 
 
 def gradle_command() -> list[str]:
@@ -61,6 +66,7 @@ def verify_run_workspace(
     verify_end_to_end: bool = True,
 ) -> dict[str, object]:
     """현재 run의 backend와 필요한 경우 frontend를 한 번에 검증한다."""
+    cached_frontend = reuse_frontend_build(run_root) if verify_frontend else None
     sandbox = prepare_agent_workspace(
         run_root,
         {
@@ -85,7 +91,9 @@ def verify_run_workspace(
             verify_frontend
             and (sandbox / "application" / "frontend" / "package.json").is_file()
         ):
-            frontend_verification = verify_frontend_workspace(sandbox)
+            frontend_verification = cached_frontend or verify_frontend_workspace(sandbox)
+            if cached_frontend is None:
+                store_frontend_build(run_root, sandbox, frontend_verification)
         result = {
             "status": (
                 "SUCCEEDED"
@@ -182,7 +190,9 @@ def task_verification_command(
     직접 실행한다.
     """
     if not task_type and allowed_write_paths is None:
-        command = [*executable, "test", "bootJar", "--build-cache"]
+        # 이어지는 Docker build가 배포할 bootJar를 실제로 만든다. 여기서는 전체 test만
+        # 실행해 같은 jar packaging을 연속으로 두 번 하지 않는다.
+        command = [*executable, "test", "--build-cache"]
     else:
         test_names = sorted(
             {
@@ -238,9 +248,9 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
     """각 유스케이스 작업의 시나리오 테스트가 실제로 실행됐는지 확인한다.
 
     Java 소스에 특정 문자열이 있는지는 보지 않는다. Gradle이 만든 JUnit XML만 읽어 각
-    작업이 약속한 테스트 클래스와 유스케이스 수만큼 성공한 test case가 있는지 확인한다.
-    테스트 본문의 관찰값 검사는 JUnit assertion이 담당하고, 이 함수는 실행되지 않은
-    테스트를 성공으로 오인하는 문제만 막는다.
+    작업이 약속한 테스트 클래스가 실제로 성공했는지 확인한다. 하나의 시나리오 메서드가
+    여러 유스케이스를 이어서 검사할 수 있으므로 유스케이스 수와 JUnit 메서드 수를 같다고
+    가정하지 않는다. 테스트 본문의 관찰값 검사는 JUnit assertion이 담당한다.
     """
     manifest_path = run_root / "reports" / "run-manifest.json"
     if not manifest_path.is_file():
@@ -298,7 +308,9 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
         passed = sum(executed.get(name, {}).get("passed", 0) for name in classes)
         failed = sum(executed.get(name, {}).get("failed", 0) for name in classes)
         skipped = sum(executed.get(name, {}).get("skipped", 0) for name in classes)
-        required_passes = max(1, len(use_case_ids))
+        # 한 테스트 메서드가 묶음의 여러 유스케이스를 하나의 흐름으로 실행할 수 있다.
+        # 여기서는 약속한 테스트 클래스가 실제로 실행됐는지만 확인한다.
+        required_passes = 1
         status = (
             "PASSED"
             if classes and passed >= required_passes and failed == 0 and skipped == 0
@@ -317,15 +329,16 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
         task_results.append(result)
         if status == "FAILED":
             findings.append(
-                f"{result['taskId']}: expected {required_passes} passed scenario test(s), "
+                f"{result['taskId']}: expected a passing scenario test, "
                 f"got passed={passed}, failed={failed}, skipped={skipped}; "
                 + (", ".join(test_paths) or "required scenario test file is missing")
             )
 
+    # 유스케이스 coverage의 기준은 그 기능을 구현한 작업 자체다. 수리용 wiring 작업에
+    # 같은 ID 목록을 복사해 두고 다시 비교하지 않는다.
     expected_use_cases = {
         str(use_case_id)
-        for task in manifest.get("implementation_tasks", [])
-        if isinstance(task, dict) and task.get("task_type") == "wiring"
+        for task in planned
         for use_case_id in task.get("use_case_ids", task.get("useCaseIds", []))
         if str(use_case_id)
     }
@@ -336,45 +349,6 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
             "use-case planning coverage mismatch: "
             f"missing={missing or 'none'}, unexpected={unexpected or 'none'}"
         )
-
-    # 묶음별 빠른 테스트와 별개로, wiring 작업의 한 통합 테스트 클래스가 모든
-    # 유스케이스 흐름을 실제 Spring HTTP 경계에서 실행했는지도 JUnit 결과로 확인한다.
-    for task in manifest.get("implementation_tasks", []):
-        if not isinstance(task, dict) or task.get("task_type") != "wiring":
-            continue
-        test_paths = [
-            str(path)
-            for path in task.get("required_test_paths", [])
-            if str(path).endswith("FlowTest.java")
-        ]
-        classes = [Path(path).stem for path in test_paths]
-        passed = sum(executed.get(name, {}).get("passed", 0) for name in classes)
-        failed = sum(executed.get(name, {}).get("failed", 0) for name in classes)
-        skipped = sum(executed.get(name, {}).get("skipped", 0) for name in classes)
-        required_passes = max(1, len(expected_use_cases))
-        status = (
-            "PASSED"
-            if classes and passed >= required_passes and failed == 0 and skipped == 0
-            else "FAILED"
-        )
-        task_results.append(
-            {
-                "taskId": str(task.get("task_id") or ""),
-                "useCaseIds": sorted(expected_use_cases),
-                "testPaths": test_paths,
-                "requiredPassedCases": required_passes,
-                "passedCases": passed,
-                "failedCases": failed,
-                "skippedCases": skipped,
-                "status": status,
-            }
-        )
-        if status == "FAILED":
-            findings.append(
-                "final HTTP FlowTest did not execute every use-case scenario: "
-                f"expected={required_passes}, passed={passed}, failed={failed}, "
-                f"skipped={skipped}"
-            )
 
     return {
         "status": "FAILED" if findings else "PASSED",
@@ -402,6 +376,46 @@ def summarize_test_failure(detail: str) -> str:
         "\n".join(dict.fromkeys(selected)),
         max_chars=8000,
     )
+
+
+def compact_verification_evidence(
+    evidence: dict[str, object],
+    *,
+    max_chars: int = 8000,
+) -> str:
+    """LLM에 한 번만 전달할 build/test 핵심 진단을 만든다.
+
+    원본 evidence에는 같은 Gradle 오류가 test XML, stderr와 stdout에 반복될 수 있다. 전체
+    stack trace를 그대로 이어 붙이면 실제 원인은 묻히고 Conversation만 빠르게 커진다. 명령과
+    종료 코드는 남기되, 출력은 최초 원인과 애플리케이션 위치를 고르는 기존 요약기를 거친 뒤
+    중복 줄을 제거한다. 원본 evidence 자체는 바꾸지 않으므로 보고서와 사용자 조회에는 전체
+    기록이 계속 남는다.
+    """
+
+    command = evidence.get("command") or []
+    command_text = (
+        " ".join(str(part) for part in command)
+        if isinstance(command, list)
+        else str(command)
+    )
+    lines = [
+        f"Command: {command_text or '(not available)'}",
+        f"Exit code: {evidence.get('exitCode', 1)}",
+    ]
+    seen_outputs: set[str] = set()
+    for key in ("testResults", "stderr", "stdout"):
+        raw = str(evidence.get(key) or "").strip()
+        if not raw or raw in seen_outputs:
+            continue
+        seen_outputs.add(raw)
+        lines.extend(summarize_test_failure(raw).splitlines())
+
+    # Spring test 설정처럼 한 줄 자체가 매우 길 때도 model 입력의 대부분을 차지하지 않게 한다.
+    shortened = [
+        line if len(line) <= 1200 else line[:850] + " ... " + line[-300:]
+        for line in dict.fromkeys(lines)
+    ]
+    return _truncate_log_snippet("\n".join(shortened), max_chars=max_chars)
 
 
 def _truncate_log_snippet(text: str, max_chars: int) -> str:

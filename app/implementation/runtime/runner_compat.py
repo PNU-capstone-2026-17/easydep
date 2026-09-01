@@ -9,8 +9,10 @@ RUNNER_WORKSPACE = Path("/easydep-workspace")
 _INSTALLED = False
 GRADLE_SYSTEM_PROPERTIES = (
     "-Dorg.gradle.caching=true",
+    "-Dorg.gradle.daemon=false",
     "-Dorg.gradle.parallel=false",
     "-Dorg.gradle.workers.max=1",
+    "-Dorg.gradle.vfs.watch=false",
     "-Dorg.gradle.jvmargs=-Xmx384m -Xss256k -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC",
 )
 

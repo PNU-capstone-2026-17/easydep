@@ -44,8 +44,8 @@ from app.db.models import (
 from app.db.session import session_scope
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.api_spec.normalization import normalize_stored_api_spec_model
+from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.deployment_diagram.bundle import (
     hydrate_deployment_diagram_bundle,

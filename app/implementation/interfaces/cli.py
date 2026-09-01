@@ -1,4 +1,5 @@
 """제품 worker가 사용하는 구현 생성·계획·실행 명령을 제공한다."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,14 +11,15 @@ from ..generation.orchestrator import PrototypeOrchestrator, load_job
 from ..workflows.coordinator import plan_workflow, run_workflow
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """명령행 인자를 읽어 현재 제품 경로에 필요한 작업 하나를 실행한다."""
+    arguments = sys.argv[1:] if argv is None else argv
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-    if len(sys.argv) > 1 and sys.argv[1] in {"plan-workflow", "run-workflow"}:
+    if arguments and arguments[0] in {"plan-workflow", "run-workflow"}:
         parser = argparse.ArgumentParser(
             description="Plan or run the resumable implementation workflow"
         )
@@ -26,7 +28,7 @@ def main() -> int:
         parser.add_argument("job", type=Path)
         parser.add_argument("--approval", type=Path)
         parser.add_argument("--retry-failed", action="store_true")
-        args = parser.parse_args()
+        args = parser.parse_args(arguments)
         spec = load_job(args.job.resolve())
         if args.command == "plan-workflow":
             result = plan_workflow(args.run.resolve(), spec)
@@ -42,11 +44,9 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="EasyDep implementation generator")
     parser.add_argument("job", type=Path, help="Path to a prototype job JSON file")
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
     output = PrototypeOrchestrator(load_job(args.job)).run()
-    manifest = json.loads(
-        (output / "reports" / "run-manifest.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads((output / "reports" / "run-manifest.json").read_text(encoding="utf-8"))
     print(
         json.dumps(
             {"status": manifest["status"], "output": str(output)},

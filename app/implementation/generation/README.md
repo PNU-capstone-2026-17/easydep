@@ -63,3 +63,50 @@ Java에서 사용할 수 없는 패키지나 타입 이름은 파일을 일부 �
 
 파일 저장과 빌드는 구현 실행 흐름이 담당한다. 프론트엔드의 고정 초기 파일은
 `frontend_scaffold.py`, 이후 프론트엔드 생성 작업은 `frontend.py`에서 다룬다.
+
+## Spring 실행 설정
+
+`orchestrator.py`는 코딩 에이전트에게 맡길 이유가 없는 실행 설정도 함께 만든다.
+
+- 운영 DB 주소·계정·비밀번호는 `SPRING_DATASOURCE_*` 환경 변수에서 읽는다.
+- test profile은 MySQL 호환 모드의 메모리 H2를 사용한다.
+- health endpoint는 `/healthz`로 노출한다.
+- OpenAPI 또는 승인된 요구사항에 인증·인가가 명시된 경우에만 Spring Security 의존성과
+  기본 HTTP 보안 설정을 만든다. 운영 계정 값은 `SPRING_SECURITY_USER_*` 환경 변수로 받는다.
+
+이 설정으로 정상 기동하면 wiring 코딩 에이전트는 호출하지 않는다. 실제 build나 HTTP 검사에서
+Bean 연결 오류가 확인된 경우에만 수리 작업이 활성화된다.
+
+## Persistence 골격
+
+`persistence_scaffold.py`는 `erdBceModel`에 확정된 Entity마다 다음 파일을 바로 만든다.
+
+- JPA Entity: ERD 필드, 식별자, 기본 생성자와 필드 접근 메서드
+- Spring Data Repository: Entity와 식별자 타입이 정해진 `JpaRepository`
+- Flyway migration: 같은 필드와 식별자를 사용하는 최초 테이블
+
+이 파일들은 같은 typed 모델에서 언제나 똑같이 만들어지므로 별도의 OpenHands 작업을 사용하지
+않는다. null 허용 여부와 외래 키 소유자처럼 ERD에 없는 내용은 추측하지 않는다. 값 객체와
+목록은 JSON column에 원래 타입 그대로 저장하고, 여러 식별자가 있으면 JPA 복합 키 파일도 함께
+만든다. BCE Entity와 JPA Entity 사이에 필드 손실이 생기는 범용 mapper는 생성하지 않는다.
+
+## HTTP Controller 골격
+
+OpenAPI Generator가 만든 Java interface의 경로, annotation과 method signature는 그대로
+사용한다. 그 위에 `apiModel.control_binding`에 적힌 Control과 생성자 주입을 연결한다.
+
+API schema와 BCE 값 객체의 필드 이름·타입이 모두 대응하는 경우에만 요청과 성공 응답의 변환
+본문을 함께 만든다. `UUID`나 날짜처럼 표준 변환 방법이 있는 값도 이 범위에 포함한다. 다음
+경우에는 컴파일 가능한 `EASYDEP_CONTROLLER_BODY_REQUIRED:HTTP메서드:경로` 표식을 남긴다.
+
+- API가 요구하는 필드가 BCE 결과에 없는 경우
+- 설계 타입이 `Object`로 남은 경우
+- BCE Entity처럼 생성·조회 방법이 업무 구현에 따라 달라지는 경우
+- typed 모델만으로는 의미 있는 결과 변환을 정할 수 없는 경우
+
+표식이 있는 method는 해당 기능의 OpenHands 작업이 실제 요구사항과 테스트를 보면서 완성한다.
+공유 Controller에 다른 기능의 표식이 함께 있어도 현재 작업은 자신에게 배정된 HTTP 메서드와
+경로만 확인한다. 모든 기능 작업이 끝나면 완료 검사에서 전체 표식이 사라졌는지 한 번 더 본다.
+생성기는 누락 값을 `UNKNOWN`, `null` 또는 임의 ID로 채우지 않는다. HTTP Controller는 명시된
+Control을 직접 호출하므로 API에만 존재하는 path/query 값도 중간 Boundary 객체에서 잃지 않는다.
+Boundary interface 자체는 BCE 설계 계약으로 계속 생성하지만 별도의 중복 adapter는 만들지 않는다.

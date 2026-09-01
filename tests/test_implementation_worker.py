@@ -53,9 +53,7 @@ def test_initial_job_allows_void_control_with_transport_error_outcomes(
                                     "422": {},
                                     "500": {},
                                 },
-                                "x-easydep-control": {
-                                    "control": "DropControl", "method": "drop"
-                                },
+                                "x-easydep-control": {"control": "DropControl", "method": "drop"},
                             }
                         }
                     },
@@ -88,10 +86,12 @@ def test_needs_input_workflow_exposes_the_design_blocker_in_job_error(tmp_path: 
             {
                 "status": "NEEDS_INPUT",
                 "blockingReason": "Implementation planning is blocked by unresolved Control persistence contracts.",
-                "blockingDetails": [{
-                    "control": "CourseCatalogControl",
-                    "persistentEntities": ["Course"],
-                }],
+                "blockingDetails": [
+                    {
+                        "control": "CourseCatalogControl",
+                        "persistentEntities": ["Course"],
+                    }
+                ],
             },
         )
     finally:
@@ -99,10 +99,12 @@ def test_needs_input_workflow_exposes_the_design_blocker_in_job_error(tmp_path: 
 
     assert record["status"] == "NEEDS_INPUT"
     assert "Control persistence contracts" in record["error"]
-    assert record["blocking_details"] == [{
-        "control": "CourseCatalogControl",
-        "persistentEntities": ["Course"],
-    }]
+    assert record["blocking_details"] == [
+        {
+            "control": "CourseCatalogControl",
+            "persistentEntities": ["Course"],
+        }
+    ]
 
 
 def test_ready_workflow_with_all_tasks_succeeded_is_completed(tmp_path: Path) -> None:
@@ -153,13 +155,15 @@ def test_ready_workflow_with_pending_tasks_remains_ready(tmp_path: Path) -> None
     assert record["status"] == "READY"
 
 
-def test_completed_job_is_not_published_before_artifacts_are_persisted() -> None:
+def test_completed_job_is_not_published_before_artifacts_are_persisted(
+    tmp_path: Path,
+) -> None:
     events: list[tuple[str, str]] = []
     record = {
         "job_id": "job-completed",
         "status": "READY",
-        "run_root": "run-root",
-        "job_path": "job.json",
+        "run_root": str(tmp_path / "run-root"),
+        "job_path": str(tmp_path / "job.json"),
     }
 
     class Client:
@@ -176,18 +180,91 @@ def test_completed_job_is_not_published_before_artifacts_are_persisted() -> None
         def transmission_request(_run_root: Path) -> None:
             return None
 
-    worker = object.__new__(ImplementationWorker)
+        @staticmethod
+        def cancel_all() -> None:
+            return None
+
+    worker = ImplementationWorker(settings(tmp_path))
     worker.client = Client()
     worker._read = lambda _job_id: record
     worker._write = lambda current: events.append(("write", current["status"]))
-    worker._persist_outputs = lambda current: events.append(
-        ("persist", current["status"])
-    )
+    worker._persist_outputs = lambda current: events.append(("persist", current["status"]))
     worker._fail = lambda _record, error: pytest.fail(str(error))
 
-    worker._run("job-completed", "approval.json", False)
+    try:
+        worker._run("job-completed", "approval.json", False)
+    finally:
+        worker.shutdown()
 
     assert events == [("write", "RUNNING"), ("persist", "COMPLETED")]
+
+
+def test_job_execution_lease_rejects_a_second_process(
+    tmp_path: Path,
+) -> None:
+    """같은 Job은 첫 실행권을 반납하기 전까지 다시 시작하지 않는다."""
+    worker = ImplementationWorker(settings(tmp_path))
+    try:
+        first = worker._claim_job_execution("job-one")
+        assert first is not None
+        assert worker._claim_job_execution("job-one") is None
+        worker._release_job_execution("job-one", first)
+        second = worker._claim_job_execution("job-one")
+        assert second is not None
+        worker._release_job_execution("job-one", second)
+    finally:
+        worker.shutdown()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process 조회 경로만 검증한다")
+def test_job_execution_lease_checks_windows_owner_without_signalling_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """두 worker가 같은 서버 PID를 확인해도 그 서버에 signal을 보내지 않는다."""
+    first_worker = ImplementationWorker(settings(tmp_path))
+    second_worker = ImplementationWorker(settings(tmp_path))
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.os.kill",
+        lambda *_args: pytest.fail("Windows lease 확인에서 os.kill을 호출하면 안 된다"),
+    )
+    try:
+        token = first_worker._claim_job_execution("job-shared")
+        assert token is not None
+        assert second_worker._claim_job_execution("job-shared") is None
+        first_worker._release_job_execution("job-shared", token)
+    finally:
+        first_worker.shutdown()
+        second_worker.shutdown()
+
+
+def test_job_execution_lease_keeps_a_recent_partial_file(tmp_path: Path) -> None:
+    """다른 process가 JSON을 쓰는 중인 새 lease를 stale 파일로 지우지 않는다."""
+    worker = ImplementationWorker(settings(tmp_path))
+    path = worker._lease_path("job-partial")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    try:
+        assert worker._claim_job_execution("job-partial") is None
+        assert path.is_file()
+    finally:
+        worker.shutdown()
+
+
+def test_job_execution_lease_reclaims_an_abandoned_partial_file(tmp_path: Path) -> None:
+    """작성 process가 사라진 오래된 빈 lease는 다음 실행이 회수할 수 있다."""
+    worker = ImplementationWorker(settings(tmp_path))
+    worker.client.terminate_orphaned_process = lambda _job_id: None
+    path = worker._lease_path("job-abandoned")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    os.utime(path, (0, 0))
+    try:
+        token = worker._claim_job_execution("job-abandoned")
+        assert token is not None
+        worker._release_job_execution("job-abandoned", token)
+    finally:
+        worker.shutdown()
 
 
 def test_feedback_eligibility_rejects_design_contract_changes() -> None:
@@ -198,7 +275,9 @@ def test_feedback_eligibility_rejects_design_contract_changes() -> None:
 
 
 def test_feedback_eligibility_accepts_existing_contract_behavior_change() -> None:
-    result = assess_feedback_eligibility("배송이 시작된 주문은 취소 요청을 거절하고 테스트를 보강해줘")
+    result = assess_feedback_eligibility(
+        "배송이 시작된 주문은 취소 요청을 거절하고 테스트를 보강해줘"
+    )
 
     assert result["status"] == "ELIGIBLE"
 
@@ -230,7 +309,9 @@ def test_unsuitable_feedback_does_not_create_an_execution_run(monkeypatch, tmp_p
     assert record["prompt"]["kind"] == "upstream_revision_confirmation"
     assert record["prompt"]["requiredStage"] == "design"
     assert record["prompt"]["question"]
-    assert (tmp_path / ".easydep/implementation-runs" / record["job_id"] / "feedback-eligibility.json").is_file()
+    assert (
+        tmp_path / ".easydep/implementation-runs" / record["job_id"] / "feedback-eligibility.json"
+    ).is_file()
 
 
 def test_requirement_feedback_asks_before_returning_to_requirements() -> None:
@@ -245,22 +326,43 @@ def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path
     run = tmp_path / "run_repair"
     reports = run / "reports"
     reports.mkdir(parents=True)
-    (reports / "run-manifest.json").write_text(json.dumps({
-        "input_hash": "input-hash",
-        "implementation_tasks": [],
-    }), encoding="utf-8")
-    (reports / "repair-plan.json").write_text(json.dumps({
-        "entries": [{"revision": 1, "ownerTaskIds": ["repair-api"], "revalidationTaskIds": ["repair-e2e"]}]
-    }), encoding="utf-8")
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "input_hash": "input-hash",
+                "implementation_tasks": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports / "repair-plan.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "revision": 1,
+                        "ownerTaskIds": ["repair-api"],
+                        "revalidationTaskIds": ["repair-e2e"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     approval = tmp_path / "approval.json"
-    approval.write_text(json.dumps({
-        "delegatedRepairApprovals": True,
-        "delegationScope": {
-            "runId": run.name,
-            "inputHash": "input-hash",
-            "initialTaskIds": ["initial-wiring"],
-        },
-    }), encoding="utf-8")
+    approval.write_text(
+        json.dumps(
+            {
+                "delegatedRepairApprovals": True,
+                "delegationScope": {
+                    "runId": run.name,
+                    "inputHash": "input-hash",
+                    "initialTaskIds": ["initial-wiring"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     record = {
         "run_root": str(run),
         "transmission_request": {"tasks": [{"taskId": "repair-api"}, {"taskId": "repair-e2e"}]},
@@ -277,9 +379,14 @@ def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path
 
     # 자동 승인된 다음 묶음은 AWAITING_APPROVAL을 외부에 노출하지 않고, 앞선 실패
     # task를 실제로 재실행할 수 있도록 retry_failed=True로 이어져야 한다.
-    (reports / "repair-plan.json").write_text(json.dumps({
-        "entries": [{"ownerTaskIds": ["repair-api"], "revalidationTaskIds": []}],
-    }), encoding="utf-8")
+    (reports / "repair-plan.json").write_text(
+        json.dumps(
+            {
+                "entries": [{"ownerTaskIds": ["repair-api"], "revalidationTaskIds": []}],
+            }
+        ),
+        encoding="utf-8",
+    )
     worker = ImplementationWorker(settings(tmp_path))
     submitted: list[tuple[object, ...]] = []
     worker.executor.submit = lambda *args: submitted.append(args)  # type: ignore[method-assign]
@@ -386,6 +493,49 @@ def settings(repository_root: Path) -> ImplementationSettings:
     )
 
 
+def test_run_phase_uses_linux_runner_when_image_is_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = PrototypeClient(settings(tmp_path))
+    run_root = tmp_path / ".easydep" / "run_123"
+    job_path = tmp_path / ".easydep" / "job" / "job.json"
+    approval_path = job_path.with_name("approval.json")
+    for path in (run_root, job_path.parent):
+        path.mkdir(parents=True, exist_ok=True)
+    job_path.write_text("{}", encoding="utf-8")
+    approval_path.write_text("{}", encoding="utf-8")
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "app.implementation.application.prototype.configured_runner_image",
+        lambda: "runner:test",
+    )
+
+    def fake_call(
+        command: list[str], operation_id: str | None, environment: dict[str, str]
+    ) -> dict[str, object]:
+        observed.update(command=command, operation_id=operation_id, environment=environment)
+        return {"status": "RUNNING"}
+
+    monkeypatch.setattr(client, "_call_command", fake_call)
+
+    result = client.run_phase(run_root, job_path, approval_path, retry_failed=True)
+
+    command = observed["command"]
+    assert isinstance(command, list)
+    assert command[-7:] == [
+        "cli",
+        "run-workflow",
+        "/easydep-workspace/.easydep/run_123",
+        "/easydep-workspace/.easydep/job/job.json",
+        "--approval",
+        "/easydep-workspace/.easydep/job/approval.json",
+        "--retry-failed",
+    ]
+    assert observed["operation_id"] == "job"
+    assert result == {"status": "RUNNING"}
+
+
 def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) -> None:
     client = PrototypeClient(settings(tmp_path))
     path = client.prepare_job(
@@ -416,12 +566,23 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     )
     job = json.loads(path.read_text(encoding="utf-8"))
     assert set(job["inputs"]) == {
-        "bceClass", "sequence", "openapi", "erd", "deployment",
-        "deploymentBundle", "cloud", "bceModel", "sequenceModel", "apiModel",
+        "bceClass",
+        "sequence",
+        "openapi",
+        "erd",
+        "deployment",
+        "deploymentBundle",
+        "cloud",
+        "bceModel",
+        "sequenceModel",
+        "apiModel",
     }
     assert job["generation"]["basePackage"] == "com.example.orders"
     assert job["requiredInputs"] == [
-        "bceClass", "sequence", "openapi", "bceModel", "sequenceModel", "apiModel",
+        "bceModel",
+        "sequenceModel",
+        "apiModel",
+        "openapi",
     ]
     assert (tmp_path / job["inputs"]["openapi"]).is_file()
     sequence_path = tmp_path / job["inputs"]["sequence"]
@@ -565,7 +726,9 @@ def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: P
     assert record["workflow"]["currentPhase"] == "design-validation"
     assert record["design_validation"]["status"] == "NEEDS_INPUT"
     assert "api.operations-present" in record["error"]
-    report = tmp_path / ".easydep" / "implementation-runs" / record["job_id"] / "design-readiness.json"
+    report = (
+        tmp_path / ".easydep" / "implementation-runs" / record["job_id"] / "design-readiness.json"
+    )
     assert report.is_file()
 
 
@@ -612,13 +775,14 @@ def test_initial_job_blocks_lossy_erd_bce_identifier_contract(
         "app.implementation.application.jobs.design_readiness_report",
         lambda _design: {
             "status": "NEEDS_INPUT",
-            "findings": [{
-                "stage": "erd",
-                "finding": (
-                    "Session: surrogate key replaces sessionId "
-                    "[erd.surrogate-key-collides]"
-                ),
-            }],
+            "findings": [
+                {
+                    "stage": "erd",
+                    "finding": (
+                        "Session: surrogate key replaces sessionId [erd.surrogate-key-collides]"
+                    ),
+                }
+            ],
         },
     )
     try:
@@ -628,11 +792,7 @@ def test_initial_job_blocks_lossy_erd_bce_identifier_contract(
                 "class_diagram_puml": "class Session",
                 "api_spec": {
                     "openapi": "3.1.0",
-                    "paths": {
-                        "/sessions": {
-                            "post": {"operationId": "createSession"}
-                        }
-                    },
+                    "paths": {"/sessions": {"post": {"operationId": "createSession"}}},
                 },
                 "extracted_bce_classes": {"Classes": [{"className": "Session"}]},
                 "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
@@ -726,9 +886,7 @@ def test_prepare_feedback_job_materializes_existing_application(tmp_path: Path) 
     job = json.loads(path.read_text(encoding="utf-8"))
     assert job["jobType"] == "FEEDBACK_REVISION"
     assert job["requiredInputs"] == ["baseSnapshot"]
-    snapshot = json.loads(
-        (tmp_path / job["inputs"]["baseSnapshot"]).read_text(encoding="utf-8")
-    )
+    snapshot = json.loads((tmp_path / job["inputs"]["baseSnapshot"]).read_text(encoding="utf-8"))
     assert "application/src/main/java/com/example/OrderService.java" in snapshot["files"]
 
 
@@ -749,12 +907,8 @@ def test_feedback_orchestrator_restores_snapshot_without_generation_tools(
         False,
     )
     output = PrototypeOrchestrator(load_job(path)).run()
-    assert (
-        output / "application/src/main/java/com/example/OrderService.java"
-    ).is_file()
-    manifest = json.loads(
-        (output / "reports/run-manifest.json").read_text(encoding="utf-8")
-    )
+    assert (output / "application/src/main/java/com/example/OrderService.java").is_file()
+    manifest = json.loads((output / "reports/run-manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "SUCCEEDED"
     assert (output / "reports/generated-source-contracts.json").is_file()
     assert [task["task_id"] for task in manifest["implementation_tasks"]] == [
@@ -776,17 +930,25 @@ def test_public_job_record_hides_host_source_paths() -> None:
         "job_path": "C:/secret/job.json",
         "run_root": "C:/secret/run",
         "status": "AWAITING_APPROVAL",
+        "workflow": {
+            "tasks": [{"task_id": "control", "status": "RUNNING"}],
+        },
         "transmission_request": {
             "requestId": "a" * 64,
-            "tasks": [{
-                "taskId": "control",
-                "sourceArtifacts": {"class": "C:/secret/class.puml"},
-                "sourceArtifactHashes": {"class": "hash"},
-            }],
+            "tasks": [
+                {
+                    "taskId": "control",
+                    "sourceArtifacts": {"class": "C:/secret/class.puml"},
+                    "sourceArtifactHashes": {"class": "hash"},
+                }
+            ],
         },
     }
     public = ImplementationWorker.public_record(record)
     assert "job_path" not in public and "run_root" not in public
+    assert public["workflow"]["tasks"] == [
+        {"taskId": "control", "status": "RUNNING"}
+    ]
     assert public["transmission_request"]["tasks"][0]["sourceArtifacts"] == ["class"]
 
 
@@ -845,13 +1007,7 @@ def test_live_source_api_reads_only_safe_files_for_the_matching_job(
     reports = run_root / "reports"
     reports.mkdir()
     (reports / "workflow-state.json").write_text(
-        json.dumps(
-            {
-                "tasks": [
-                    {"taskId": "control", "status": "RUNNING"}
-                ]
-            }
-        ),
+        json.dumps({"tasks": [{"task_id": "control", "status": "RUNNING"}]}),
         encoding="utf-8",
     )
     (reports / "run-manifest.json").write_text(
@@ -884,19 +1040,13 @@ def test_live_source_api_reads_only_safe_files_for_the_matching_job(
 
     try:
         client = TestClient(application)
-        listing = client.get(
-            f"/api/implementation/apps/app-1/jobs/{job_id}/live"
-        )
+        listing = client.get(f"/api/implementation/apps/app-1/jobs/{job_id}/live")
         content = client.get(
             f"/api/implementation/apps/app-1/jobs/{job_id}/live/files/"
             "src/main/java/com/example/App.java"
         )
-        wrong_app = client.get(
-            f"/api/implementation/apps/app-2/jobs/{job_id}/live"
-        )
-        secret = client.get(
-            f"/api/implementation/apps/app-1/jobs/{job_id}/live/files/.env"
-        )
+        wrong_app = client.get(f"/api/implementation/apps/app-2/jobs/{job_id}/live")
+        secret = client.get(f"/api/implementation/apps/app-1/jobs/{job_id}/live/files/.env")
         with pytest.raises(FileNotFoundError):
             implementation_worker.live_source_file(job_id, "app-1", "../job.json")
     finally:

@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..generation.java_scaffold import CONTROLLER_BODY_REQUIRED
+
 
 def audit_run_completion(run_root: Path) -> dict[str, object]:
     """누락된 필수 산출물을 해당 기능 작업의 자동 수리 backlog로 만든다."""
@@ -30,16 +32,33 @@ def audit_run_completion(run_root: Path) -> dict[str, object]:
             )
         ]
         missing = [path for path in required if not (run_root / path).is_file()]
+        context_path = run_root / str(task.get("context_file") or "")
+        context = _read_json(context_path) if context_path.is_file() else {}
+        controller_paths = context.get("controllerPaths", [])
+        unfinished = (
+            [
+                path
+                for path in controller_paths
+                if isinstance(path, str)
+                and (run_root / path).is_file()
+                and CONTROLLER_BODY_REQUIRED in (run_root / path).read_text(encoding="utf-8")
+            ]
+            if isinstance(controller_paths, list)
+            else []
+        )
         expected += len(required)
         produced += len(required) - len(missing)
-        if missing:
+        if missing or unfinished:
             backlog.append(
                 {
                     "task_id": str(task["task_id"]),
                     "task_type": str(task.get("task_type", "")),
                     "objective": "필수 구현 파일을 만들고 관련 build/test를 통과한다.",
                     "missing_outputs": missing,
-                    "evidence": [f"Missing required output: {path}" for path in missing],
+                    "evidence": [
+                        *[f"Missing required output: {path}" for path in missing],
+                        *[f"Unimplemented Controller body remains: {path}" for path in unfinished],
+                    ],
                 }
             )
 

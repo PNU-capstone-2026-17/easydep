@@ -5,12 +5,12 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.models import (
+from app.design.contracts.api_spec import (
     ApiEndpoint,
     ApiSpecModel,
     ApiSpecProposal,
 )
+from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram.type_system import types_compatible
 
 _JSON_TYPES = {

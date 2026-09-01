@@ -33,13 +33,19 @@ MySQL에 저장한 최종 소스 산출물로 자연스럽게 전환한다.
 간결하게 기록한다. 요구사항이나 설계 선택이 꼭 필요하거나 외부 credential·권한이
 필요할 때에만 사람의 판단을 기다린다.
 
-OpenHands는 관련 package 또는 디렉터리 안에서 `조사 → 여러 파일 수정 → compile·test
-실행 → 결과에 따른 재수정`을 반복한다. 한 요청이 너무 오래 멈추지 않도록 요청 시간과
-tool turn에는 안전 한도를 둘 수 있지만, 한 run의 전체 repair 횟수에는 숫자 상한을 두지
-않는다. 다음 요청에도 실패 원인과 이미 시도한 방법의 요약만 전달해 같은 작업 공간에서
-이어 간다. 여러 영역이 얽힌 오류는 작업 사이를 왕복시키지 않고 관련 범위를 합친 repair
-작업으로 확장한다. `auto`는 별도 수리 알고리즘이 아니라 외부 전송 승인을 자동 처리하는
-선택이다.
+OpenHands는 관련 package 또는 디렉터리 안에서 `조사 → 여러 파일 수정 → run_task_check
+실행 → 결과에 따른 재수정`을 같은 대화에서 반복한다. `run_task_check`는 LLM이 명령을
+작성하는 shell이 아니다. EasyDep이 현재 작업에 미리 정한 focused test나 compile만 실행한다.
+OpenHands가 실행한 검사가 성공했고 그 뒤 source가 바뀌지 않았다면 EasyDep은 그 결과를
+재사용한다. 모든 기능이 끝난 시점의 전체 검사는 별도로 한 번 실행한다.
+
+한 요청이 너무 오래 멈추지 않도록 요청 시간과 tool turn에는 안전 한도를 둘 수 있지만, 한
+run의 전체 repair 횟수에는 숫자 상한을 두지 않는다. NIM 연결이 끊기거나 한 대화의 안전
+한도에 도달했을 때만 현재 오류와 변경 파일을 짧게 요약해 같은 작업 공간에서 새 대화를
+이어 간다. OpenHands SDK의 반복 감지와 대화 요약도 함께 사용해 같은 조회·편집과 오래된 전체
+로그가 계속 쌓이지 않게 한다. compiler와 test가 파일을 알려 주면 그 기능 작업으로 돌아가고,
+서로 다른 기능의 파일이 실제로 함께 실패한 경우에만 wiring 작업이 그 파일들을 통합해 고친다.
+`auto`는 별도 수리 알고리즘이 아니라 외부 전송 승인을 자동 처리하는 선택이다.
 
 ## 작업별 소유 계약
 
@@ -50,19 +56,27 @@ tool turn에는 안전 한도를 둘 수 있지만, 한 run의 전체 repair 횟
 - 유스케이스 묶음 작업은 같은 Control·Entity를 사용하는 Control, API/Boundary adapter와
   관련 테스트를 함께 구현한다.
 - frontend 작업은 API client, 화면과 사용자 흐름을 함께 구현한다.
-- wiring·실행 작업은 Spring 설정, 외부 연결, 실행 검사와 배포 연결을 마무리한다.
+- Spring 설정은 생성기가 만들고, wiring 작업은 실제 연결 오류가 생겼을 때만 수리한다.
 
-생성된 BCE·Java·OpenAPI 공개 계약은 읽기 전용이다. 작업자는 관련 package·디렉터리에서
-필요한 여러 파일을 수정할 수 있지만 설계에 없는 공개 signature를 임의로 추가하거나 바꾸지
-않는다. 생성된 계약의 변경이 필요하면 구현 repair가 아니라 설계 입력을 다시 만든다.
+생성된 BCE·Java·OpenAPI 공개 계약은 읽기 전용이다. 한 기능만 사용하는 package에서는
+OpenHands가 새 helper 파일도 만들 수 있다. 여러 작업이 같은 package를 공유하면 각 작업에
+기록된 파일만 수정해 병렬 실행 충돌을 막는다. Entity에는 기존 메서드를 보존하면서 생성자,
+persistence 변환과 내부 helper를 추가할 수 있다. 생성된 계약 자체의 변경이 필요하면 구현
+repair가 아니라 설계 입력을 다시 만든다.
 
-## typed sequence와 runtime 입력
+EasyDep은 목표, 관련 설계, 편집 범위, 사용할 도구와 완료 검사를 전달한다. source 조사,
+기능 코드 수정과 테스트 작성 중 무엇을 먼저 할지는 OpenHands가 현재 코드에 맞게 선택한다.
+수리할 때도 단일 기능은 그 기능이 소유한 관련 파일과 전용 package를 계속 사용할 수 있다.
+없애는 것은 `main/java` 전체 권한과 오류에 관계없는 다른 기능 수정이다.
 
-구현 작업의 기준 입력은 표시용 PlantUML이 아니라 `sequenceModel`이다. 작업 context의
+## typed 설계와 runtime 입력
+
+구현 작업의 기준 입력은 `bceModel`, `sequenceModel`, `apiModel`, `erdBceModel`과
+`deploymentBundle`이다. 표시용 PlantUML과 OpenAPI는 화면·다운로드와 외부 코드 생성기에만
+사용하며 구현 계획이 다시 정규식으로 읽지 않는다. 작업 context의
 `sequence[]`는 유스케이스(`use_case_id`), `Participants`, `Messages`를 묶어
 전달하며, 각 message의 `arguments`, `call_id`, `reply_to`, `fragments`를 그대로 보존한다.
-따라서 Control·Boundary·API·Frontend가 같은 호출 인자와 호출/반환 연결을 읽는다. PlantUML은
-사람이 다이어그램을 보는 용도로만 사용한다.
+따라서 Control·Boundary·API·Frontend가 같은 호출 인자와 호출/반환 연결을 읽는다.
 
 배포 실행 정보는 필요한 작업에만 `deployment`로 투영한다. 투영에는 `workloads[].id`,
 `interfaces`, `configuration`, `storage`와 연결된 `connections`만 들어가며, 전체 CSP 계획이나
@@ -109,9 +123,25 @@ method를 곧바로 OpenHands가 구현하므로 이 시점의 compile은 같은
 때문이다. 생성기 자체를 확인해야 할 때는 `IMPLEMENTATION_VERIFY_INITIAL_COMPILE=true`로 켤 수
 있다. 이 설정은 OpenHands 작업별 compile·test와 마지막 통합 검증에는 영향을 주지 않는다.
 
-수리 대화 뒤의 Gradle 검증은 같은 sandbox의 증분 compile과 build cache를 재사용한다. 변경된
-Java source는 Gradle이 자동으로 다시 compile하므로 `--rerun-tasks`로 관계없는 task까지 매번
-강제 실행하지 않는다. 모든 기능 작업이 끝나면 전체 backend build와 test를 한 번 실행한다.
+OpenHands의 `run_task_check`와 마지막 확인은 같은 sandbox의 증분 compile과 build cache를
+재사용한다. 변경된 Java source는 Gradle이 자동으로 다시 compile하므로 `--rerun-tasks`로
+관계없는 task까지 매번 강제 실행하지 않는다. 실패한 뒤 source가 전혀 바뀌지 않았다면 같은
+검사를 다시 실행하지 않고 먼저 코드를 수정하도록 안내한다. 모든 기능 작업이 끝나면 전체
+backend test를 한 번 실행한다. OpenHands 안에서 같은 source로 이미 성공한 `run_task_check`는
+대화 종료 직후 다시 실행하지 않으며, 배포용 `bootJar`는 마지막 Docker build가 한 번 만든다.
+
+유스케이스 개수로 작업을 억지로 자르지 않는다. 같은 Control, Boundary, Entity, Gateway 또는
+Controller를 수정하는 흐름은 한 코딩 작업이 맡는다. 실제 수정 파일과 전용 package가 겹치지
+않는 작업만 기본 병렬도 2 안에서 함께 실행한다.
+
+Spring Boot entrypoint, 운영 datasource 환경 변수, test용 H2 설정과 health endpoint는
+생성기가 작성한다. 인증·인가 요구가 명시된 앱에만 Spring Security를 추가하고, 인증 근거가
+없는 앱에는 기본 비밀번호와 401 응답을 만드는 Security 의존성을 넣지 않는다. Control과
+adapter는 각 기능 작업이 Spring component로 완성한다. 모든 기능 작업 뒤 실제 compile·test와
+HTTP 검사가 통과하면 별도의 wiring LLM 호출은 없다. Bean 충돌이나 HTTP 연결 오류가 실제로
+확인된 경우에만 수리 전용 wiring 작업이 설정 package 안에서 자율적으로 수정한다.
+정상 실행에서는 쓰지 않는 전체 Java 계약을 wiring prompt로 미리 만들지 않는다. 실제 오류가
+생겼을 때 현재 오류, 관련 파일, 읽기 전용 계약과 최근 실패 방법만 담은 짧은 수리 지시를 만든다.
 
 ## 상태를 읽는 법
 
@@ -128,7 +158,9 @@ Java source는 Gradle이 자동으로 다시 compile하므로 `--rerun-tasks`로
 ## 계약과 안전 규칙
 
 - 실행 시작 때 고정한 설계 snapshot을 실행 도중 최신 버전으로 교체하지 않는다.
-- agent는 할당된 package·디렉터리만 수정한다. shell이나 저장소 전체 탐색 권한을 주지 않는다.
+- agent는 맡은 기능의 package·디렉터리 안에서 구현 방법, 새 파일과 테스트를 스스로 정한다.
+  다른 기능의 source와 생성된 공개 계약만 수정하지 않는다.
+- agent의 `run_task_check`는 현재 작업의 명령만 실행하며 `clean`이나 임의 옵션을 받지 않는다.
 - `TODO`, `FIXME`, `UnsupportedOperationException` 같은 미완성 표식을 성공 산출물에 남기지 않는다.
 - compile → test → 설계 정합성 검사 순서를 바꾸지 않는다.
 - 외부 도구의 제한을 업무 규칙처럼 취급하지 않는다. EasyDep가 소유한 연결 코드에서 명시적으로
@@ -148,6 +180,9 @@ frontend production build와 container 검사를 반복하지 않는다. 마지�
 - container health, 환경 변수와 mount
 
 실패한 경우에는 현재 source와 repair 기록을 유지한 채 실패한 작업부터 재개한다.
+
+각 OpenHands 실행의 event journal에는 LLM 메시지와 도구 호출·검사 결과를 남긴다. 현재 source
+본문은 실제 작업 공간에 있으므로 수리 prompt마다 전체 파일을 다시 복사하지 않는다.
 
 ```powershell
 python -X utf8 -m pytest -q tests/test_implementation_worker.py

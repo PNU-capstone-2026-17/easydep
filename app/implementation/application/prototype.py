@@ -13,15 +13,23 @@ import re
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from app.config import settings
 
 from ..config import ImplementationSettings
+from ..runtime.linux_runner_transport import (
+    configured_runner_image,
+    runner_command,
+    to_container_path,
+)
 
 _OPENAPI_PATH_PARAMETER = re.compile(r"\{([^{}]+)\}")
-_OPENAPI_OPERATIONS = frozenset({"delete", "get", "head", "options", "patch", "post", "put", "trace"})
+_OPENAPI_OPERATIONS = frozenset(
+    {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
+)
 
 
 class PrototypeExecutionError(RuntimeError):
@@ -49,12 +57,17 @@ def _normalize_openapi_path_parameters(api_spec: Any) -> Any:
             continue
 
         shared_parameters = path_item.get("parameters")
-        shared_names = {
-            parameter.get("name")
-            for parameter in shared_parameters if isinstance(parameter, dict)
-            and parameter.get("in") == "path"
-            and isinstance(parameter.get("name"), str)
-        } if isinstance(shared_parameters, list) else set()
+        shared_names = (
+            {
+                parameter.get("name")
+                for parameter in shared_parameters
+                if isinstance(parameter, dict)
+                and parameter.get("in") == "path"
+                and isinstance(parameter.get("name"), str)
+            }
+            if isinstance(shared_parameters, list)
+            else set()
+        )
 
         for operation_name, operation in path_item.items():
             if operation_name.lower() not in _OPENAPI_OPERATIONS or not isinstance(operation, dict):
@@ -65,7 +78,8 @@ def _normalize_openapi_path_parameters(api_spec: Any) -> Any:
                 operation["parameters"] = operation_parameters
             declared_names = shared_names | {
                 parameter.get("name")
-                for parameter in operation_parameters if isinstance(parameter, dict)
+                for parameter in operation_parameters
+                if isinstance(parameter, dict)
                 and parameter.get("in") == "path"
                 and isinstance(parameter.get("name"), str)
             }
@@ -108,7 +122,14 @@ class PrototypeClient:
         self._process_lock = threading.RLock()
         self._processes: dict[str, subprocess.Popen[str]] = {}
 
-    def prepare_job(self, job_id: str, app_id: str, design: dict[str, Any], base_package: str, allow_assumptions: bool) -> Path:
+    def prepare_job(
+        self,
+        job_id: str,
+        app_id: str,
+        design: dict[str, Any],
+        base_package: str,
+        allow_assumptions: bool,
+    ) -> Path:
         """설계 파일과 실행 옵션을 작업 디렉터리에 쓰고 ``job.json`` 경로를 반환한다."""
         if not self.settings.python_executable.is_file():
             raise PrototypeExecutionError(
@@ -131,7 +152,11 @@ class PrototypeClient:
             if value in (None, "", {}):
                 return
             path = context / filename
-            text = json.dumps(value, ensure_ascii=False, indent=2) if isinstance(value, (dict, list)) else str(value)
+            text = (
+                json.dumps(value, ensure_ascii=False, indent=2)
+                if isinstance(value, (dict, list))
+                else str(value)
+            )
             path.write_text(text, encoding="utf-8")
             inputs[name] = path.relative_to(self.settings.repository_root).as_posix()
 
@@ -169,8 +194,10 @@ class PrototypeClient:
         )
         write("cloud", "resource-spec.json", design.get("resource_spec"))
         required_inputs = [
-            "bceClass", "sequence", "openapi",
-            "bceModel", "sequenceModel", "apiModel",
+            "bceModel",
+            "sequenceModel",
+            "apiModel",
+            "openapi",
         ]
         if "erdBceModel" in inputs:
             required_inputs.append("erdBceModel")
@@ -180,7 +207,9 @@ class PrototypeClient:
             "workspaceRoot": str(self.settings.repository_root),
             "inputs": inputs,
             "requiredInputs": required_inputs,
-            "outputRoot": (root / "generated" / "runs").relative_to(self.settings.repository_root).as_posix(),
+            "outputRoot": (root / "generated" / "runs")
+            .relative_to(self.settings.repository_root)
+            .as_posix(),
             "generation": {"basePackage": base_package, "allowAssumptions": allow_assumptions},
             # 빈 method body가 많은 scaffold를 구현 전에 빌드하는 것은 실제 구현 품질을
             # 확인하지 못하면서 Gradle 시간을 한 번 더 쓴다. 생성기 회귀를 조사할 때만
@@ -210,9 +239,7 @@ class PrototypeClient:
         allow_assumptions: bool,
     ) -> Path:
         """기존 파일 snapshot과 피드백을 사용하는 수정 작업의 ``job.json``을 만든다."""
-        path = self.prepare_job(
-            job_id, app_id, design, base_package, allow_assumptions
-        )
+        path = self.prepare_job(job_id, app_id, design, base_package, allow_assumptions)
         job = json.loads(path.read_text(encoding="utf-8"))
         root = path.parent
         snapshot_path = root / "base-application.json"
@@ -236,9 +263,7 @@ class PrototypeClient:
             self.settings.repository_root
         ).as_posix()
         job["requiredInputs"] = ["baseSnapshot"]
-        path.write_text(
-            json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
 
     def generate(self, job_path: Path) -> Path:
@@ -248,20 +273,43 @@ class PrototypeClient:
 
     def plan_workflow(self, run_root: Path, job_path: Path) -> dict[str, Any]:
         """생성 결과를 실행·검증하기 위한 workflow를 계획한다."""
-        return self._call(
-            ["plan-workflow", str(run_root), str(job_path)], job_path.parent.name
-        )
+        return self._call(["plan-workflow", str(run_root), str(job_path)], job_path.parent.name)
 
     def generate_and_plan(self, job_path: Path) -> tuple[Path, dict[str, Any]]:
         """Web worker 밖의 호출자가 생성과 planning을 연속 실행할 때 사용하는 helper."""
         run_root = self.generate(job_path)
         return run_root, self.plan_workflow(run_root, job_path)
 
-    def run_phase(self, run_root: Path, job_path: Path, approval_path: Path, retry_failed: bool) -> dict[str, Any]:
+    def run_phase(
+        self, run_root: Path, job_path: Path, approval_path: Path, retry_failed: bool
+    ) -> dict[str, Any]:
         """승인 파일을 전달해 workflow의 실행 가능한 phase를 수행한다."""
         args = ["run-workflow", str(run_root), str(job_path), "--approval", str(approval_path)]
         if retry_failed:
             args.append("--retry-failed")
+        runner_image = configured_runner_image()
+        if runner_image:
+            # 설계 snapshot과 실행 상태는 저장소 안에 있으므로 같은 파일을 Linux 경로로만
+            # 바꿔 전달한다. 생성·계획은 빠른 호스트 프로세스에서 끝내고, OpenHands와
+            # Gradle이 실제로 동작하는 phase만 고정 Linux 환경에서 실행한다.
+            container_args = [
+                "run-workflow",
+                str(to_container_path(run_root, self.settings.repository_root)),
+                str(to_container_path(job_path, self.settings.repository_root)),
+                "--approval",
+                str(to_container_path(approval_path, self.settings.repository_root)),
+            ]
+            if retry_failed:
+                container_args.append("--retry-failed")
+            environment = os.environ.copy()
+            command = runner_command(
+                image=runner_image,
+                repository_root=self.settings.repository_root,
+                operation="cli",
+                arguments=container_args,
+                environment=environment,
+            )
+            return self._call_command(command, job_path.parent.name, environment)
         return self._call(args, job_path.parent.name)
 
     def transmission_request(self, run_root: Path) -> dict[str, Any] | None:
@@ -297,9 +345,69 @@ class PrototypeClient:
         for process in processes:
             self._terminate_process_tree(process)
 
-    def _call(
-        self, args: list[str], operation_id: str | None = None
-    ) -> dict[str, Any]:
+    def terminate_orphaned_process(self, job_id: str) -> bool:
+        """이전 서버가 남긴 해당 Job의 하위 프로세스 tree만 종료한다.
+
+        서버가 강제로 끝나면 메모리 registry는 사라지지만 작은 process marker는 남는다.
+        새 서버는 같은 Job을 재개하기 전에 이 PID만 정리하므로 다른 구현 Job이나 사용자가
+        직접 실행한 Python 프로세스에는 손대지 않는다.
+        """
+        marker = self._process_marker_path(job_id)
+        try:
+            value = json.loads(marker.read_text(encoding="utf-8"))
+            pid = int(value["pid"])
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            marker.unlink(missing_ok=True)
+            return False
+        if not _process_is_alive(pid):
+            marker.unlink(missing_ok=True)
+            return False
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        else:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        marker.unlink(missing_ok=True)
+        return True
+
+    def _process_marker_path(self, job_id: str) -> Path:
+        return self.settings.work_root / job_id / "implementation-process.json"
+
+    def _write_process_marker(self, job_id: str, pid: int) -> None:
+        marker = self._process_marker_path(job_id)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {
+                    "jobId": job_id,
+                    "pid": pid,
+                    "ownerPid": os.getpid(),
+                    "startedAt": time.time(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    def _remove_process_marker(self, job_id: str, pid: int) -> None:
+        marker = self._process_marker_path(job_id)
+        try:
+            current = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if int(current.get("pid", -1)) == pid:
+            marker.unlink(missing_ok=True)
+
+    def _call(self, args: list[str], operation_id: str | None = None) -> dict[str, Any]:
         """구현 CLI를 UTF-8 하위 프로세스로 실행하고 마지막 JSON 응답을 반환한다."""
         env = os.environ.copy()
         # Windows 기본 code page와 관계없이 한글 설계 파일과 JSON 로그를 읽도록 강제한다.
@@ -308,15 +416,33 @@ class PrototypeClient:
             "GRADLE_USER_HOME",
             str(self.settings.repository_root / ".easydep" / "gradle-cache"),
         )
-        process: subprocess.Popen[str] | None = None
-        creationflags = (
-            subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        return self._call_command(
+            [
+                str(self.settings.python_executable),
+                "-B",
+                "-m",
+                "app.implementation.interfaces.cli",
+                *args,
+            ],
+            operation_id,
+            env,
         )
+
+    def _call_command(
+        self,
+        command: list[str],
+        operation_id: str | None,
+        environment: dict[str, str],
+    ) -> dict[str, Any]:
+        """호스트 CLI와 Docker runner에 같은 timeout·취소·JSON 처리를 적용한다."""
+        environment["PYTHONUTF8"] = "1"
+        process: subprocess.Popen[str] | None = None
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         try:
             process = subprocess.Popen(
-                [str(self.settings.python_executable), "-B", "-m", "app.implementation.interfaces.cli", *args],
+                command,
                 cwd=self.settings.repository_root,
-                env=env,
+                env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -328,9 +454,8 @@ class PrototypeClient:
             if operation_id:
                 with self._process_lock:
                     self._processes[operation_id] = process
-            stdout, stderr = process.communicate(
-                timeout=self.settings.command_timeout_seconds
-            )
+                self._write_process_marker(operation_id, process.pid)
+            stdout, stderr = process.communicate(timeout=self.settings.command_timeout_seconds)
         except subprocess.TimeoutExpired as error:
             if process is not None:
                 self._terminate_process_tree(process)
@@ -342,6 +467,7 @@ class PrototypeClient:
                 with self._process_lock:
                     if self._processes.get(operation_id) is process:
                         self._processes.pop(operation_id, None)
+                self._remove_process_marker(operation_id, process.pid)
         if process.returncode != 0:
             # 일반 stderr보다 run manifest의 ERROR 진단이 사용자에게 더 구체적이다. CLI가
             # 출력 디렉터리를 JSON으로 남겼다면 manifest를 찾아 마지막 오류를 우선 사용한다.
@@ -363,7 +489,9 @@ class PrototypeClient:
                     if messages:
                         evidence = "; ".join(messages)[-4000:]
                 break
-            raise PrototypeExecutionError(f"Implementation prototype exited with {process.returncode}: {evidence}")
+            raise PrototypeExecutionError(
+                f"Implementation prototype exited with {process.returncode}: {evidence}"
+            )
         # 빌드 도구의 일반 로그가 앞에 섞일 수 있으므로 뒤에서부터 유효한 JSON 객체를 찾는다.
         for line in reversed(stdout.splitlines()):
             try:
@@ -401,3 +529,14 @@ class PrototypeClient:
                 process.wait(timeout=5)
             except (OSError, subprocess.TimeoutExpired):
                 process.kill()
+
+
+def _process_is_alive(pid: int) -> bool:
+    """추가 패키지 없이 PID가 현재 실행 중인지 확인한다."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True

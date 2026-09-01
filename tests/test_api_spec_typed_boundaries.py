@@ -7,12 +7,12 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from app.design.contracts.api_spec import ApiSpecModel, ApiSpecProposal
 from app.design.graphs import subgraphs as design_subgraphs
 from app.design.knowledge.detectors import api_spec_findings
 from app.design.rtm import build_design_rtm
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec import service
-from app.design.services.api_spec.models import ApiSpecModel, ApiSpecProposal
 from app.design.services.api_spec.normalization import (
     normalize_api_spec_model,
     normalize_stored_api_spec_model,

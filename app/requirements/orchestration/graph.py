@@ -54,16 +54,16 @@ from app.requirements.orchestration.feedback_gates import (
 )
 from app.requirements.orchestration.persistence import SqlCheckpointSaver
 from app.requirements.orchestration.subgraphs import build_stage_subgraphs
-from app.requirements.resources.capability_contract import (
-    apply_capability_answers,
-    capability_resource_questions,
-)
 from app.requirements.orchestration.supervisor import (
     blocking_findings,
     blocking_issues,
     repair_state,
     route_redo,
     supervise_for,
+)
+from app.requirements.resources.capability_contract import (
+    apply_capability_answers,
+    capability_resource_questions,
 )
 from app.requirements.runtime import telemetry
 

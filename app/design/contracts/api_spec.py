@@ -1,7 +1,8 @@
-"""API 제안과 승인 endpoint가 공유하는 타입 계약이다.
+"""API 제안과 승인 endpoint가 공유하는 공개 타입 계약이다.
 
 LLM은 작은 proposal만 답하고, 코드는 실행 연결이 추가된 저장 모델을 만든다.
 렌더된 OpenAPI가 아니라 이 두 Pydantic 모델을 생성과 수정의 기준으로 삼는다.
+설계 서비스뿐 아니라 구현 단계도 이 파일의 승인된 저장 모델만 참조한다.
 """
 from __future__ import annotations
 

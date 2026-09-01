@@ -16,11 +16,13 @@ from app.implementation.config import (
 SCHEMA_VERSION = "easydep-deployment-intent/v1alpha1"
 
 
-def application_dockerfile(*, include_frontend: bool = True) -> str:
+def application_dockerfile(
+    *, include_frontend: bool = True, prebuilt_frontend: bool = False
+) -> str:
     """Spring Boot 애플리케이션용 다단계 Dockerfile을 반환한다."""
     frontend_stage = ""
     frontend_copy = ""
-    if include_frontend:
+    if include_frontend and not prebuilt_frontend:
         frontend_stage = """FROM node:20-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -35,6 +37,8 @@ RUN npm run build
             "COPY --from=frontend-build /app/frontend/dist/ "
             "src/main/resources/static/\n"
         )
+    elif include_frontend:
+        frontend_copy = "COPY frontend/dist/ src/main/resources/static/\n"
     return f"""{frontend_stage}FROM {DEFAULT_DOCKER_GRADLE_IMAGE} AS build
 WORKDIR /app
 COPY . .
@@ -104,7 +108,11 @@ def render_local_container(run_root: Path) -> dict[str, object]:
     frontend = application / "frontend" / "package.json"
     application.mkdir(parents=True, exist_ok=True)
     (application / "Dockerfile").write_text(
-        application_dockerfile(include_frontend=frontend.is_file()) + "\n",
+        application_dockerfile(
+            include_frontend=frontend.is_file(),
+            prebuilt_frontend=(application / "frontend/dist/index.html").is_file(),
+        )
+        + "\n",
         encoding="utf-8",
     )
     (application / ".dockerignore").write_text(
@@ -164,7 +172,8 @@ def render_deployment(run_root: Path, spec: Any) -> dict[str, object]:
         "Dockerfile",
         application_dockerfile(
             include_frontend=(application / "frontend/package.json").is_file()
-            and not separate_frontend
+            and not separate_frontend,
+            prebuilt_frontend=(application / "frontend/dist/index.html").is_file(),
         ),
     )
     write(".dockerignore", dockerignore())

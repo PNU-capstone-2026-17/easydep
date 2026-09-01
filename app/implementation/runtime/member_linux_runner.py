@@ -33,6 +33,24 @@ def _worker(arguments: list[str]) -> int:
     return worker_main([str(_runner_job(Path(arguments[0]))), *arguments[1:]])
 
 
+def _cli(arguments: list[str]) -> int:
+    """호스트가 승인한 workflow phase를 현재 Linux 환경에서 그대로 실행한다."""
+    _configure_runner_tools()
+    from app.implementation.interfaces.cli import main as cli_main
+
+    if not arguments:
+        raise SystemExit("cli requires an implementation command")
+    runner_arguments = list(arguments)
+    if runner_arguments[0] in {"plan-workflow", "run-workflow"}:
+        if len(runner_arguments) < 3:
+            raise SystemExit(f"{runner_arguments[0]} requires run and job paths")
+        # job.json의 workspaceRoot는 호스트 절대 경로다. Linux에서 그 문자열을 그대로
+        # Path로 해석하면 존재하지 않는 디렉터리가 되므로, 같은 입력을 가리키는 runner
+        # 전용 사본만 만들고 현재 bind mount 경로를 기준으로 읽는다.
+        runner_arguments[2] = str(_runner_job(Path(runner_arguments[2])))
+    return cli_main(runner_arguments)
+
+
 def _test(arguments: list[str]) -> int:
     _configure_runner_tools()
     from app.testing.runtime.adapter import TestingAdapter
@@ -42,9 +60,7 @@ def _test(arguments: list[str]) -> int:
     request = json.loads(Path(arguments[0]).read_text(encoding="utf-8"))
     implementation_result = dict(request["implementationResult"])
     implementation_result.pop("member_runner", None)
-    result = TestingAdapter(
-        timeout_seconds=int(request.get("timeoutSeconds", 600))
-    ).run(
+    result = TestingAdapter(timeout_seconds=int(request.get("timeoutSeconds", 600))).run(
         implementation_result=implementation_result,
         case_id=str(request.get("caseId", "adhoc")),
     )
@@ -90,17 +106,23 @@ def _preflight(arguments: list[str]) -> int:
         "artifacts": jars,
     }
     print(json.dumps(preflight_result, ensure_ascii=False))
-    return 0 if preflight_result["workspaceBindPassed"] and all(
-        item["passed"] for item in observed.values()
-    ) and all(jars.values()) else 1
+    return (
+        0
+        if preflight_result["workspaceBindPassed"]
+        and all(item["passed"] for item in observed.values())
+        and all(jars.values())
+        else 1
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = argv or sys.argv[1:]
     if not arguments:
-        raise SystemExit("usage: member_linux_runner {worker|test|preflight} ...")
+        raise SystemExit("usage: member_linux_runner {worker|cli|test|preflight} ...")
     if arguments[0] == "worker":
         return _worker(arguments[1:])
+    if arguments[0] == "cli":
+        return _cli(arguments[1:])
     if arguments[0] == "test":
         return _test(arguments[1:])
     if arguments[0] == "preflight":

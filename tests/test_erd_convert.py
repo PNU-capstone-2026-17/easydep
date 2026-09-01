@@ -167,11 +167,8 @@ def test_a_composite_unique_constraint_is_drawn_inside_the_table_block():
     """복합 유일 제약이 **표 블록 안에** 나오는가.
 
     컬럼의 `unique`는 불리언 하나라 여러 칸이 함께 유일한 것을 못 담는다. 담을 곳을
-    표에 만들었으니 그리는 자리도 있어야 한다 — 안 그리면 상속이 복합 자연키를 강등한
-    표에서 유일성이 그림과 하류에서 통째로 사라진다.
-
-    **블록 안이어야 한다.** `design_context.slice_erd`가 `entity "N" as N {` 부터 `}`
-    까지를 잘라 가므로, 밖에 두면 이 제약만 하류에서 조용히 빠진다.
+    표에 만들었으니 그리는 자리도 있어야 한다. 관련 컬럼과 같은 블록에 있어야 사용자가
+    복합 제약을 한 테이블의 규칙으로 읽을 수 있다.
     """
     puml = generate_erd_from_bce_json({
         "Classes": [

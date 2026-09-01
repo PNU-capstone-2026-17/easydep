@@ -15,6 +15,12 @@ port, health 경로, 환경 변수와 mount 사용을 읽어 배포 단계에 �
 - **부수효과:** subprocess/container를 만들고 timeout 시 전체 자식 트리를 종료한다.
   scaffold와 runner는 요청받은 작업공간에 파일을 만들거나 갱신할 수 있으며,
   runtime hook은 프로세스 환경에 경로 어댑터를 설치한다.
+- Linux 멤버 runner는 이미지에 저장된 예전 Python 진입점을 사용하지 않고 현재 저장소의
+  `app.implementation.runtime.member_linux_runner`를 명시한다. Gradle 캐시는 Windows 공유
+  경로가 아닌 컨테이너의 `/tmp/easydep-gradle-cache`에 두고 한 workflow 안에서 재사용한다.
+- `EASYDEP_MEMBER_RUNNER_IMAGE`가 설정되면 서버가 승인한 구현 phase는 같은 API 흐름을
+  유지한 채 Linux runner에서 실행한다. 이미지가 설정되지 않은 개발 환경에서만 호스트
+  Python 실행 경로를 사용한다.
 - **사용하면 안 되는 import:** `app.core` 레거시 경로와 요구사항/설계 서비스 내부, Cloud KB,
   LLM 호출이나 orchestration graph에 의존하지 않는다. runtime 관찰은 전달받은 workload
   항목과 생성 파일만 읽으며 배치나 provider를 선택하지 않는다.

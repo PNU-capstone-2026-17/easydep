@@ -14,11 +14,16 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.design.contracts.api_spec import ApiSpecModel
+from app.design.schemas.class_model import BCEModel
 from app.implementation.generation.java_scaffold import (
     JavaScaffoldInput,
     java_type,
     render_java_scaffold,
     render_openapi_controller_scaffold,
+)
+from app.implementation.generation.persistence_scaffold import (
+    render_persistence_scaffold,
 )
 
 
@@ -31,28 +36,32 @@ def _payload() -> dict[str, object]:
                     "className": "OrderBoundary",
                     "stereotype": "Boundary",
                     "use_case_ids": ["UC-ORDER"],
-                    "operations": [{
-                        "operationId": "입력값은 BCEModel이 다시 계산한다",
-                        "name": "submit",
-                        "parameters": [{"name": "request", "type": "OrderRequest"}],
-                        "returnType": "OrderReceipt",
-                        "stepRefs": ["UC-ORDER:main:1"],
-                    }],
+                    "operations": [
+                        {
+                            "operationId": "입력값은 BCEModel이 다시 계산한다",
+                            "name": "submit",
+                            "parameters": [{"name": "request", "type": "OrderRequest"}],
+                            "returnType": "OrderReceipt",
+                            "stepRefs": ["UC-ORDER:main:1"],
+                        }
+                    ],
                 },
                 {
                     "className": "OrderControl",
                     "stereotype": "Control",
                     "use_case_ids": ["UC-ORDER"],
-                    "operations": [{
-                        "operationId": "입력값은 BCEModel이 다시 계산한다",
-                        "name": "place",
-                        "parameters": [
-                            {"name": "request", "type": "OrderRequest"},
-                            {"name": "attempt", "type": "integer"},
-                        ],
-                        "returnType": "optional<OrderReceipt>",
-                        "stepRefs": ["UC-ORDER:main:2"],
-                    }],
+                    "operations": [
+                        {
+                            "operationId": "입력값은 BCEModel이 다시 계산한다",
+                            "name": "place",
+                            "parameters": [
+                                {"name": "request", "type": "OrderRequest"},
+                                {"name": "attempt", "type": "integer"},
+                            ],
+                            "returnType": "optional<OrderReceipt>",
+                            "stepRefs": ["UC-ORDER:main:2"],
+                        }
+                    ],
                 },
                 {
                     "className": "Order",
@@ -122,7 +131,8 @@ def _render() -> dict[str, str]:
 
 def _source(files: dict[str, str], type_name: str) -> str:
     matches = [
-        source for path, source in files.items()
+        source
+        for path, source in files.items()
         if path.replace("\\", "/").endswith(f"/{type_name}.java")
     ]
     assert len(matches) == 1
@@ -186,6 +196,29 @@ def test_same_input_produces_identical_files() -> None:
     assert render_java_scaffold(request) == render_java_scaffold(request)
 
 
+def test_erd_entities_generate_persistence_without_an_llm_mapper() -> None:
+    """ERD의 확정 필드만으로 JPA·Repository·migration을 바로 만든다."""
+    model = BCEModel.model_validate(_payload()["bceModel"])
+
+    files = render_persistence_scaffold(model, "com.example.orders")
+
+    entity = files["src/main/java/com/example/orders/persistence/entity/OrderEntity.java"]
+    repository = files[
+        "src/main/java/com/example/orders/persistence/repository/OrderRepository.java"
+    ]
+    migration = files["src/main/resources/db/migration/V1__initial_schema.sql"]
+    assert "@Entity" in entity
+    assert "@Id" in entity
+    assert "private String id;" in entity
+    assert "DB 기본 키로 쓸 수 있는 문자열 표현" in entity
+    assert "private OrderStatus status;" in entity
+    assert "extends JpaRepository<OrderEntity, String>" in repository
+    assert "CREATE TABLE easydep_order (" in migration
+    assert "id VARCHAR(255) PRIMARY KEY" in migration
+    assert all("BcePersistenceMapper" not in path for path in files)
+    assert files == render_persistence_scaffold(model, "com.example.orders")
+
+
 def test_controller_scaffold_preserves_generated_openapi_declarations() -> None:
     """OpenAPI Generator interface 선언을 보존하고 구현 본문만 골격으로 채운다."""
     interface = """package com.example.orders.api;
@@ -213,9 +246,7 @@ public interface OrdersApi {
 }
 """
 
-    controller_name, source = render_openapi_controller_scaffold(
-        interface, "com.example.orders"
-    )
+    controller_name, source = render_openapi_controller_scaffold(interface, "com.example.orders")
 
     assert controller_name == "OrdersApiController"
     assert "public class OrdersApiController implements OrdersApi" in source
@@ -229,6 +260,157 @@ public interface OrdersApi {
     assert '@PathVariable("orderId") String orderId' in source
     assert "@Valid @RequestBody CreateOrderRequest request" in source
     assert source.count("EASYDEP_CONTROLLER_BODY_REQUIRED") == 1
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED:submitOrderWithLongOperationIdentifier" in source
+
+
+def test_controller_scaffold_connects_typed_control_without_llm_rewrite() -> None:
+    """타입이 완결된 API binding은 생성 시점에 Control과 응답까지 연결한다."""
+    interface = """package com.example.orders.api;
+
+import com.example.orders.api.model.OrderReceipt;
+import com.example.orders.api.model.OrderRequest;
+import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+public interface OrdersApi {
+    @RequestMapping(method = RequestMethod.POST, value = "/orders")
+    ResponseEntity<OrderReceipt> submitOrder(
+        @Valid @RequestBody OrderRequest request);
+}
+"""
+    payload = _payload()["bceModel"]
+    payload["Classes"][1]["operations"][0]["parameters"] = [
+        {"name": "request", "type": "OrderRequest"}
+    ]
+    payload["Classes"][1]["operations"][0]["returnType"] = "OrderReceipt"
+    payload["DataTypes"][0]["fields"] = ["name : string"]
+    payload["DataTypes"][1]["fields"] = ["accepted : boolean"]
+    bce_model = BCEModel.model_validate(payload)
+    api_model = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "interaction_id": (
+                        "OrderBoundary::submit(request:OrderRequest) -> "
+                        "OrderControl::place(request:OrderRequest,attempt:integer)"
+                    ),
+                    "method": "POST",
+                    "path": "/orders",
+                    "request_schema": "OrderRequest",
+                    "responses": [
+                        {
+                            "status": 201,
+                            "schema_name": "OrderReceipt",
+                            "is_array": False,
+                        }
+                    ],
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [{"name": "request", "source": "$body"}],
+                        "outcomes": [{"status": 201, "outcome": "created"}],
+                    },
+                }
+            ],
+            "Schemas": [
+                {
+                    "name": "OrderRequest",
+                    "fields": [{"name": "name", "type": "string", "required": True}],
+                },
+                {
+                    "name": "OrderReceipt",
+                    "fields": [{"name": "accepted", "type": "boolean", "required": True}],
+                },
+            ],
+        }
+    )
+
+    _name, source = render_openapi_controller_scaffold(
+        interface,
+        "com.example.orders",
+        api_model=api_model,
+        bce_model=bce_model,
+    )
+
+    assert "private final OrderControl orderControl;" in source
+    assert "private final ObjectMapper objectMapper;" in source
+    assert (
+        "public OrdersApiController(OrderControl orderControl, ObjectMapper objectMapper)" in source
+    )
+    assert "var result = orderControl.place(" in source
+    assert "com.example.orders.bce.OrderRequest.class" in source
+    assert "return ResponseEntity.status(201).body(response);" in source
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED" not in source
+
+
+def test_controller_keeps_llm_body_when_typed_fields_do_not_match() -> None:
+    """API가 요구하는 값을 BCE 결과가 제공하지 못하면 자동 변환을 성공 처리하지 않는다."""
+    payload = _payload()["bceModel"]
+    payload["Classes"][1]["operations"][0]["parameters"] = [
+        {"name": "request", "type": "OrderRequest"}
+    ]
+    payload["Classes"][1]["operations"][0]["returnType"] = "OrderReceipt"
+    payload["DataTypes"][0]["fields"] = ["name : string"]
+    payload["DataTypes"][1]["fields"] = ["accepted : boolean"]
+    bce_model = BCEModel.model_validate(payload)
+    api_model = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "interaction_id": "typed interaction",
+                    "method": "POST",
+                    "path": "/orders",
+                    "request_schema": "OrderRequest",
+                    "responses": [{"status": 201, "schema_name": "OrderReceipt"}],
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [{"name": "request", "source": "$body"}],
+                    },
+                }
+            ],
+            "Schemas": [
+                {
+                    "name": "OrderRequest",
+                    "fields": [{"name": "name", "type": "string", "required": True}],
+                },
+                {
+                    "name": "OrderReceipt",
+                    "fields": [
+                        {"name": "accepted", "type": "boolean", "required": True},
+                        {"name": "missingValue", "type": "string", "required": True},
+                    ],
+                },
+            ],
+        }
+    )
+    interface = """package com.example.orders.api;
+import com.example.orders.api.model.OrderReceipt;
+import com.example.orders.api.model.OrderRequest;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+public interface OrdersApi {
+    @RequestMapping(method = RequestMethod.POST, value = "/orders")
+    ResponseEntity<OrderReceipt> submitOrder(@RequestBody OrderRequest request);
+}
+"""
+
+    _name, source = render_openapi_controller_scaffold(
+        interface,
+        "com.example.orders",
+        api_model=api_model,
+        bce_model=bce_model,
+    )
+
+    assert "private final OrderControl orderControl;" in source
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED:POST:/orders" in source
+    assert "ObjectMapper objectMapper" not in source
+    assert "missingValue" not in source
 
 
 @pytest.mark.parametrize("bad_name", ["9Order", "Bad-Type", "class"])

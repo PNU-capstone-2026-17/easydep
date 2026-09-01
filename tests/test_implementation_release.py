@@ -3,6 +3,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from app.implementation.agents.verification.build import WorkspaceVerificationError
 from app.implementation.agents.verification.release import verify_container_runtime
 from app.implementation.workflows.release import write_release_manifest
 
@@ -49,6 +52,22 @@ def test_container_runtime_smoke_builds_starts_probes_and_cleans(tmp_path: Path)
     assert any(command[1:3] == ["image", "rm"] for command in commands)
 
 
+def test_container_build_failure_is_not_sent_to_source_repair(tmp_path: Path) -> None:
+    application = tmp_path / "application"
+    application.mkdir()
+    (application / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
+
+    def run(command: list[str], **_kwargs):
+        if command[1] == "build":
+            return subprocess.CompletedProcess(command, 1, "", "Docker daemon unavailable")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(RuntimeError, match="Container runtime preparation failed") as raised:
+        verify_container_runtime(tmp_path, run_command=run)
+
+    assert not isinstance(raised.value, WorkspaceVerificationError)
+
+
 def test_container_runtime_smoke_proves_frontend_index_and_bundle(
     tmp_path: Path,
 ) -> None:
@@ -79,6 +98,51 @@ def test_container_runtime_smoke_proves_frontend_index_and_bundle(
     )
 
     assert report["frontendRuntime"]["status"] == "SUCCEEDED"
+
+
+def test_container_runtime_failure_keeps_the_last_http_probe_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """프론트엔드 인증 오류를 wiring 수리에 전달할 수 있게 실제 원인을 보존한다."""
+    application = tmp_path / "application"
+    frontend = application / "frontend"
+    frontend.mkdir(parents=True)
+    (application / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+
+    def run(command: list[str], **_kwargs):
+        stdout = "127.0.0.1:49152\n" if command[1] == "port" else ""
+        return subprocess.CompletedProcess(command, 0, stdout, "container log")
+
+    calls = 0
+
+    def http_get(url: str, _timeout: float) -> tuple[int, str, str]:
+        nonlocal calls
+        calls += 1
+        if url.endswith("/actuator/health"):
+            return 200, "application/json", '{"status":"UP"}'
+        raise OSError("HTTP 401 Unauthorized")
+
+    monkeypatch.setattr(
+        "app.implementation.agents.verification.release.time.sleep",
+        lambda _seconds: None,
+    )
+
+    with pytest.raises(WorkspaceVerificationError) as raised:
+        verify_container_runtime(
+            tmp_path,
+            run_command=run,
+            probe=lambda *_args: True,
+            http_get=http_get,
+            startup_timeout_seconds=0.01,
+        )
+
+    # health 한 번과 frontend 한 번 뒤 바로 수리로 넘어간다. 같은 401을 90초 동안
+    # 반복해서 묻지 않는다.
+    assert calls == 2
+    assert "frontend HTTP probe failed: HTTP 401 Unauthorized" in str(
+        raised.value.evidence["stderr"]
+    )
 
 
 def test_container_runtime_smoke_builds_separate_frontend_image(

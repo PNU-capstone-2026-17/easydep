@@ -8,11 +8,8 @@
 모델만 편집하고, 다이어그램 텍스트는 이 함수가 **구성에 의해** 항상 문법적으로 유효한
 PlantUML로 재렌더한다. jar 실행·렌더는 `common.plantuml`이 맡는다.
 
-## 하류가 이 형태에 기대고 있다
-
-`app/implementation/planning/design_context.py`의 `slice_erd`가 정규식으로
-`^entity "이름" as 이름 {` … `^}` 블록을 잘라 간다. 연결 테이블과 제1정규화 자식 테이블도
-**같은 형태로** 낸다 — 형태가 다르면 그 테이블만 하류에서 조용히 사라진다.
+구현 단계는 저장된 `erdBceModel`을 직접 사용한다. 이 PlantUML은 화면과 다운로드용 표현이므로
+문구나 줄바꿈이 구현 입력 계약이 되지 않는다.
 """
 from __future__ import annotations
 
@@ -43,19 +40,16 @@ def _column_line(column: dict[str, Any]) -> str:
     if column["unique"]:
         tags.append("<<unique>>")
     # 기본키는 필수인 것이 당연하므로 안 적는다. 적을 값이 있는 것은 **합성 관계의
-    # 외래키**다 — 부분이 전체 없이 존재할 수 없다는 뜻이고, 하류가 이 문자열에서 DDL을
-    # 만들므로 여기 없으면 그 제약이 사라진다.
+    # 외래키**다 — 부분이 전체 없이 존재할 수 없다는 뜻이며 그림에도 그 차이를 보여 준다.
     if column["mandatory"] and column["role"] != "pk":
         tags.append("<<not null>>")
     return (line + (" " + " ".join(tags) if tags else "")).rstrip()
 
 
 def _table_block(table: dict[str, Any]) -> str:
-    """`entity "N" as N { … }` 한 덩어리. **이 형태를 바꾸면 `slice_erd`가 못 읽는다.**
+    """테이블 하나를 사람이 읽을 수 있는 PlantUML entity 블록으로 만든다.
 
-    표 수준 유일 제약(`uniqueTogether`)은 **블록 안에** 적는다. `slice_erd`가
-    `^entity "N" as N {` 부터 `^}` 까지를 잘라 가므로 블록 밖에 두면 그 제약만 하류에서
-    조용히 사라진다 — 컬럼의 `<<unique>>`와 같은 자리에 있어야 같이 따라간다.
+    표 수준 유일 제약(`uniqueTogether`)은 관련 컬럼과 함께 보이도록 블록 안에 적는다.
     """
     lines = [f'entity "{table["name"]}" as {table["name"]} {{']
     keys = [c for c in table["columns"] if c["role"] == "pk"]

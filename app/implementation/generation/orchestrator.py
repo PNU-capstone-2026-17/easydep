@@ -15,21 +15,22 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from app.config import settings
+from app.design.contracts.api_spec import ApiSpecModel
+from app.design.schemas.class_model import BCEModel
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
+    api_operations_from_model,
     assess_bce_erd_entity_contract,
-    parse_components,
-    parse_openapi_operations,
+    entity_names,
     pascal_case,
     remove_readonly,
 )
 from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from ..planning.design_context import (
-    ImplementationTask,
+    TaskSpec,
     generate_api_adapter_tasks,
     generate_frontend_tasks,
-    generate_persistence_tasks,
     generate_wiring_tasks,
 )
 from ..workflows.conformance import capture_generated_contracts
@@ -41,8 +42,12 @@ from .java_scaffold import (
     render_java_scaffold,
     render_openapi_controller_scaffold,
 )
+from .persistence_scaffold import (
+    PERSISTENCE_SCAFFOLDER_VERSION,
+    render_persistence_scaffold,
+)
 
-OPTIONAL_DESIGN_INPUTS = ("erd", "deployment", "cloud")
+OPTIONAL_DESIGN_INPUTS = ("erdBceModel", "deploymentBundle", "cloud")
 IMPLEMENTATION_PIPELINE_VERSION = "0.6.0-strict-release"
 OPENAPI_GENERATOR_IMAGE = "openapitools/openapi-generator-cli:v7.24.0"
 GRADLE_GENERATOR_IMAGE = "gradle:8.14.2-jdk21"
@@ -83,7 +88,10 @@ def load_job(path: Path) -> JobSpec:
         workspace_root=root,
         inputs=inputs,
         required_inputs=list(
-            data.get("requiredInputs", ["bceClass", "sequence", "openapi"])
+            data.get(
+                "requiredInputs",
+                ["bceModel", "sequenceModel", "apiModel", "openapi"],
+            )
         ),
         base_package=generation.get("basePackage", "com.example.generated"),
         allow_assumptions=bool(generation.get("allowAssumptions", False)),
@@ -345,7 +353,7 @@ class PrototypeOrchestrator:
         )
         prompt_path = task_dir / "source-feedback.prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
-        task = ImplementationTask(
+        task = TaskSpec(
             task_id="apply-source-feedback",
             control="Natural-language source feedback",
             prompt_file=str(prompt_path.relative_to(staging)).replace("\\", "/"),
@@ -401,103 +409,63 @@ class PrototypeOrchestrator:
             }
 
         if self.spec.job_type != "FEEDBACK_REVISION":
-            sequence = self.spec.inputs.get("sequence")
-            if sequence and sequence.is_file() and not re.search(
-                r"(?m)^\s*[A-Za-z_]\w*\s*(?:-|--)+>+\s*[A-Za-z_]\w*\s*:",
-                sequence.read_text(encoding="utf-8"),
-            ):
+            def read_model(name: str) -> dict[str, object]:
+                path = self.spec.inputs.get(name)
+                if not path or not path.is_file():
+                    return {}
+                value = json.loads(path.read_text(encoding="utf-8"))
+                return value if isinstance(value, dict) else {}
+
+            sequence_model = read_model("sequenceModel")
+            diagrams = sequence_model.get("Diagrams", [])
+            messages = [
+                message
+                for diagram in diagrams
+                if isinstance(diagram, dict)
+                for message in diagram.get("Messages", [])
+                if isinstance(message, dict) and message.get("type") != "return"
+            ] if isinstance(diagrams, list) else []
+            if not messages:
                 self.manifest.diagnostics.append(
                     Diagnostic(
                         "SEQUENCE_HAS_NO_CALLS",
                         "ERROR",
-                        "Sequence input contains no executable participant calls.",
-                        str(sequence),
+                        "sequenceModel contains no executable participant calls.",
+                        str(self.spec.inputs.get("sequenceModel", "")),
                     )
                 )
-            openapi = self.spec.inputs.get("openapi")
-            if openapi and openapi.is_file():
-                openapi_readable = True
-                try:
-                    operations = parse_openapi_operations(
-                        openapi.read_text(encoding="utf-8")
-                    )
-                except (
-                    OSError,
-                    UnicodeDecodeError,
-                    json.JSONDecodeError,
-                    AttributeError,
-                    TypeError,
-                ) as error:
-                    self.manifest.diagnostics.append(
-                        Diagnostic(
-                            "OPENAPI_INVALID_DOCUMENT",
-                            "ERROR",
-                            f"OpenAPI input could not be read as a document: {error}",
-                            str(openapi),
-                        )
-                    )
-                    openapi_readable = False
-                    operations = []
-                if openapi_readable and not operations:
-                    self.manifest.diagnostics.append(
-                        Diagnostic(
-                            "OPENAPI_NO_OPERATIONS",
-                            "ERROR",
-                            "OpenAPI paths must contain at least one HTTP operation before implementation can start.",
-                            str(openapi),
-                        )
-                    )
-                missing = [
-                    f"{operation.method} {operation.path}"
-                    for operation in operations
-                    if not operation.operation_id
-                ]
-                for operation in missing:
-                    self.manifest.diagnostics.append(
-                        Diagnostic(
-                            "OPENAPI_MISSING_OPERATION_ID",
-                            "ERROR",
-                            f"OpenAPI operation requires operationId: {operation}",
-                            str(openapi),
-                        )
-                    )
-            deployment = self.spec.inputs.get("deployment")
-            cloud = self.spec.inputs.get("cloud")
-            intent = self.spec.inputs.get("deploymentIntent")
-            if (
-                deployment
-                and deployment.is_file()
-                and not (cloud and cloud.is_file())
-                and not (intent and intent.is_file())
-            ):
+            api_model = read_model("apiModel")
+            operations = api_operations_from_model(api_model)
+            if not operations:
                 self.manifest.diagnostics.append(
                     Diagnostic(
-                        "DEPLOYMENT_INTENT_SOURCE_MISSING",
+                        "API_MODEL_NO_OPERATIONS",
                         "ERROR",
-                        "Deployment diagram requires cloud or deploymentIntent input.",
-                        str(deployment),
+                        "apiModel must contain at least one endpoint before implementation can start.",
+                        str(self.spec.inputs.get("apiModel", "")),
                     )
                 )
-            bce = self.spec.inputs.get("bceClass")
-            erd = self.spec.inputs.get("erd")
-            bce_entities = {
-                item.name
-                for item in (
-                    parse_components(bce.read_text(encoding="utf-8"))
-                    if bce and bce.is_file()
-                    else []
-                )
-                if item.stereotype.lower() == "entity"
-            }
-            erd_source = erd.read_text(encoding="utf-8") if erd and erd.is_file() else ""
-            contract = assess_bce_erd_entity_contract(erd_source, bce_entities)
+            for operation in operations:
+                if not operation.operation_id:
+                    self.manifest.diagnostics.append(
+                        Diagnostic(
+                            "API_MODEL_MISSING_OPERATION_ID",
+                            "ERROR",
+                            f"API endpoint requires operation_id: {operation.method} {operation.path}",
+                            str(self.spec.inputs.get("apiModel", "")),
+                        )
+                    )
+            bce_model = read_model("bceModel")
+            erd_model = read_model("erdBceModel")
+            bce_entities = entity_names(bce_model)
+            contract = assess_bce_erd_entity_contract(erd_model, bce_entities)
             if bce_entities and not contract.erd_entities:
                 self.manifest.diagnostics.append(
                     Diagnostic(
                         "ERD_REQUIRED_FOR_BCE_ENTITIES",
                         "ERROR",
-                        "ERD input is required when BCE contains Entity components.",
-                        str(bce),
+                        "erdBceModel is required when bceModel contains Entity classes.",
+                        str(self.spec.inputs.get("bceModel", "")),
                     )
                 )
             elif contract.missing_bce_entities or contract.unexpected_erd_entities:
@@ -508,11 +476,11 @@ class PrototypeOrchestrator:
                         Diagnostic(
                             "BCE_ERD_ENTITY_MISMATCH",
                             "ERROR",
-                            "BCE and ERD entity aliases must match (generated physical tables are allowed): "
+                            "bceModel and erdBceModel Entity names must match: "
                             f"BCE={sorted(bce_entities)}, ERD={sorted(contract.erd_entities)}, "
                             f"unmatched ERD={sorted(unexpected_erd_entities)}, "
                             f"missing ERD={sorted(missing_erd_entities)}",
-                            str(erd),
+                            str(self.spec.inputs.get("erdBceModel", "")),
                         )
                     )
 
@@ -603,7 +571,7 @@ class PrototypeOrchestrator:
                     pass
 
     def _generate_bce(self, java_root: Path) -> None:
-        """구조화된 BCE JSON을 검증하고 Java source root 아래에 직접 쓴다."""
+        """구조화된 BCE와 ERD JSON에서 Java 계약과 저장 골격을 함께 만든다."""
         def read_json(name: str) -> dict[str, object]:
             return json.loads(self.spec.inputs[name].read_text(encoding="utf-8"))
 
@@ -626,6 +594,16 @@ class PrototypeOrchestrator:
             target = java_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8", newline="\n")
+        persistence_files = (
+            render_persistence_scaffold(scaffold.erd_bce_model, self.spec.base_package)
+            if scaffold.erd_bce_model is not None
+            else {}
+        )
+        application = java_root.parents[2]
+        for relative, content in persistence_files.items():
+            target = application / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8", newline="\n")
         trace_path = java_root.parents[3] / "reports" / "java-scaffold-trace.json"
         trace_path.parent.mkdir(parents=True, exist_ok=True)
         trace_path.write_text(
@@ -641,6 +619,12 @@ class PrototypeOrchestrator:
             "input": "BCEModel",
             "javaVersion": "21",
         }
+        if persistence_files:
+            self._sink().tools["typed-persistence-scaffolder"] = {
+                "version": PERSISTENCE_SCAFFOLDER_VERSION,
+                "input": "erdBceModel",
+                "files": str(len(persistence_files)),
+            }
 
     def _generate_openapi(self, application: Path) -> None:
         command = [
@@ -705,12 +689,21 @@ class PrototypeOrchestrator:
         controller_root = (
             application / "src" / "main" / "java" / package_path / "adapter" / "in" / "web"
         )
+        api_model = ApiSpecModel.model_validate_json(
+            self.spec.inputs["apiModel"].read_text(encoding="utf-8")
+        )
+        bce_model = BCEModel.model_validate_json(
+            self.spec.inputs["bceModel"].read_text(encoding="utf-8")
+        )
         generated = 0
         for interface_path in sorted(api_root.glob("*Api.java")):
             if interface_path.name == "ApiUtil.java":
                 continue
             controller_name, source = render_openapi_controller_scaffold(
-                interface_path.read_text(encoding="utf-8"), self.spec.base_package
+                interface_path.read_text(encoding="utf-8"),
+                self.spec.base_package,
+                api_model=api_model,
+                bce_model=bce_model,
             )
             target = controller_root / f"{controller_name}.java"
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -736,27 +729,32 @@ class PrototypeOrchestrator:
         self._sink().tools["easydep-frontend-generator"] = generation.tool_metadata()
 
     def _write_gradle_project(self, application: Path) -> None:
-        build = """plugins {
+        security_dependencies = ""
+        if _requires_application_security(self.spec):
+            security_dependencies = (
+                "    implementation 'org.springframework.boot:spring-boot-starter-security'\n"
+                "    testImplementation 'org.springframework.security:spring-security-test'\n"
+            )
+        build = f"""plugins {{
     id 'org.springframework.boot' version '3.3.13'
     id 'io.spring.dependency-management' version '1.1.6'
     id 'java'
-}
+}}
 
 group = 'com.example'
 version = '0.1.0-SNAPSHOT'
 
-java {
-    toolchain { languageVersion = JavaLanguageVersion.of(21) }
-}
+java {{
+    toolchain {{ languageVersion = JavaLanguageVersion.of(21) }}
+}}
 
-repositories { mavenCentral() }
+repositories {{ mavenCentral() }}
 
-dependencies {
+dependencies {{
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.flywaydb:flyway-core'
     runtimeOnly 'org.flywaydb:flyway-mysql'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0'
@@ -765,10 +763,11 @@ dependencies {
     implementation 'org.openapitools:jackson-databind-nullable:0.2.10'
     runtimeOnly 'com.mysql:mysql-connector-j'
     runtimeOnly 'com.h2database:h2'
+{security_dependencies.rstrip()}
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
+}}
 
-tasks.withType(Test).configureEach { useJUnitPlatform() }
+tasks.withType(Test).configureEach {{ useJUnitPlatform() }}
 """
         (application / "build.gradle").write_text(build, encoding="utf-8")
         (application / "settings.gradle").write_text(
@@ -799,12 +798,31 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
         )
 
     def _write_runtime_configuration(self, application: Path) -> None:
+        """운영 DB와 test DB처럼 선택 여지가 없는 Spring 설정을 미리 만든다."""
+        security_required = _requires_application_security(self.spec)
+        production_security = (
+            "  security:\n"
+            "    user:\n"
+            "      name: ${SPRING_SECURITY_USER_NAME}\n"
+            "      password: ${SPRING_SECURITY_USER_PASSWORD}\n"
+            "      roles: ${SPRING_SECURITY_USER_ROLES:USER}\n"
+            if security_required
+            else ""
+        )
         resources = application / "src" / "main" / "resources"
         resources.mkdir(parents=True, exist_ok=True)
-        (resources / "application.yml").write_text(
+        application_config = (
             "server:\n"
             "  port: 8000\n"
-            "management:\n"
+            "spring:\n"
+            "  datasource:\n"
+            "    url: ${SPRING_DATASOURCE_URL}\n"
+            "    username: ${SPRING_DATASOURCE_USERNAME}\n"
+            "    password: ${SPRING_DATASOURCE_PASSWORD}\n"
+            "  jpa:\n"
+            "    open-in-view: false\n"
+            + production_security
+            + "management:\n"
             "  endpoints:\n"
             "    web:\n"
             "      base-path: /\n"
@@ -815,7 +833,83 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             "  endpoint:\n"
             "    health:\n"
             "      probes:\n"
-            "        enabled: true\n",
+            "        enabled: true\n"
+        )
+        (resources / "application.yml").write_text(
+            application_config,
+            encoding="utf-8",
+        )
+        test_resources = application / "src" / "test" / "resources"
+        test_resources.mkdir(parents=True, exist_ok=True)
+        test_security = (
+            "  security:\n"
+            "    user:\n"
+            "      name: easydep-test\n"
+            "      password: easydep-test\n"
+            "      roles: USER\n"
+            if security_required
+            else ""
+        )
+        (test_resources / "application-test.yml").write_text(
+            "spring:\n"
+            "  datasource:\n"
+            "    url: jdbc:h2:mem:easydep_test;MODE=MySQL;DB_CLOSE_DELAY=-1\n"
+            "    username: sa\n"
+            "    password: ''\n"
+            "    driver-class-name: org.h2.Driver\n"
+            "  jpa:\n"
+            "    hibernate:\n"
+            "      ddl-auto: none\n"
+            "  flyway:\n"
+            "    enabled: true\n"
+            + test_security,
+            encoding="utf-8",
+        )
+        if security_required:
+            self._write_security_configuration(application)
+
+    def _write_security_configuration(self, application: Path) -> None:
+        """명시적인 인증 요구가 있을 때 Spring의 임의 기본 동작을 대신한다."""
+        package = self.spec.base_package
+        target = (
+            application
+            / "src"
+            / "main"
+            / "java"
+            / Path(package.replace(".", "/"))
+            / "config"
+            / "SecurityConfiguration.java"
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"""package {package}.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+
+/**
+ * 설계에 인증 요구가 있을 때 사용하는 최소 HTTP 보안 설정이다.
+ * 운영 계정은 SPRING_SECURITY_USER_NAME/PASSWORD/ROLES 환경 변수로 전달한다.
+ */
+@Configuration
+public class SecurityConfiguration {{
+    @Bean
+    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {{
+        return http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/", "/index.html", "/assets/**", "/healthz", "/error").permitAll()
+                .anyRequest().authenticated())
+            .httpBasic(Customizer.withDefaults())
+            .build();
+    }}
+}}
+""",
             encoding="utf-8",
         )
 
@@ -905,7 +999,7 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             writer.writerow(["source_artifact", "source_sha256", "generated_file"])
             for name, metadata in sorted(self.manifest.inputs.items()):
                 for generated in self.manifest.generated_files:
-                    if (name == "bceClass" and "/bce/" in generated) or (
+                    if (name == "bceModel" and "/bce/" in generated) or (
                         name == "openapi" and ("/api/" in generated or "/api/model/" in generated)
                     ):
                         writer.writerow([name, metadata["sha256"], generated])
@@ -944,126 +1038,65 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
                 time.sleep(delay)
 
 
-def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
-    """Add persistence tasks and deterministic dependencies to an existing run."""
+def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> None:
+    """결정론적으로 생성된 persistence 파일을 확인하고 LLM 작업은 만들지 않는다."""
     run_root = run_root.resolve()
-    build = run_root / "application" / "build.gradle"
-    if not build.is_file():
-        raise ValueError(f"Run build.gradle was not found: {build}")
-    source = build.read_text(encoding="utf-8")
-    source = source.replace(
-        "    implementation 'org.springframework.data:spring-data-commons'\n",
-        "    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n"
-        "    implementation 'org.flywaydb:flyway-core'\n",
-    )
-    if "spring-boot-starter-data-jpa" not in source:
-        marker = "    implementation 'org.springframework.boot:spring-boot-starter-validation'\n"
-        source = source.replace(
-            marker,
-            marker
-            + "    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n"
-            + "    implementation 'org.flywaydb:flyway-core'\n"
-            + "    runtimeOnly 'org.flywaydb:flyway-mysql'\n",
-        )
-    if "flyway-mysql" not in source:
-        source = source.replace(
-            "    implementation 'org.flywaydb:flyway-core'\n",
-            "    implementation 'org.flywaydb:flyway-core'\n"
-            "    runtimeOnly 'org.flywaydb:flyway-mysql'\n",
-        )
-    if "spring-boot-starter-security" not in source:
-        marker = "    implementation 'org.springframework.boot:spring-boot-starter-validation'\n"
-        source = source.replace(
-            marker,
-            marker
-            + "    implementation 'org.springframework.boot:spring-boot-starter-security'\n",
-        )
-    if "runtimeOnly 'com.mysql:mysql-connector-j'" not in source:
-        source = source.replace(
-            "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n",
-            "    runtimeOnly 'com.mysql:mysql-connector-j'\n"
-            "    runtimeOnly 'com.h2database:h2'\n"
-            "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n",
-        )
-    build.write_text(source, encoding="utf-8")
+    erd_path = spec.inputs.get("erdBceModel")
+    if erd_path is None or not erd_path.is_file():
+        raise ValueError("erdBceModel is required to generate persistence files")
+    model = BCEModel.model_validate_json(erd_path.read_text(encoding="utf-8"))
+    for relative, content in render_persistence_scaffold(model, spec.base_package).items():
+        target = run_root / "application" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8", newline="\n")
 
-    tasks = generate_persistence_tasks(spec, run_root)
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
-    }
-    # The persistence planner can change task boundaries when the ERD gains
-    # relationships. Replace all of its previous tasks as a unit so an old
-    # per-file entity task never overlaps a new relationship-group task.
     persistence_task_types = {
+        "persistence",
         "persistence-entities",
         "persistence-repositories",
         "persistence-mapping",
         "persistence-schema",
     }
-    existing = {
-        task_id: item for task_id, item in existing.items()
-        if item.get("task_type") not in persistence_task_types
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task.to_dict() for task in tasks]
+    _merge_implementation_tasks(run_root, [], replace_types=persistence_task_types)
 
 
-def plan_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+def plan_api_adapter_tasks(spec: JobSpec, run_root: Path) -> None:
     """Add generated OpenAPI adapter tasks to an existing run manifest."""
     run_root = run_root.resolve()
-    tasks = generate_api_adapter_tasks(spec, run_root)
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task.to_dict() for task in tasks]
+    _merge_implementation_tasks(run_root, generate_api_adapter_tasks(spec, run_root))
 
 
-def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> None:
     """Add the Spring application wiring task to an existing run manifest."""
     run_root = run_root.resolve()
-    tasks = generate_wiring_tasks(spec, run_root)
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task.to_dict() for task in tasks]
+    _merge_implementation_tasks(run_root, generate_wiring_tasks(spec, run_root))
 
 
-def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
     """Add the design-driven React implementation task to the run manifest."""
     run_root = run_root.resolve()
-    tasks = generate_frontend_tasks(spec, run_root)
+    _merge_implementation_tasks(
+        run_root,
+        generate_frontend_tasks(spec, run_root),
+        replace_types={"frontend-implementation"},
+    )
+
+
+def _merge_implementation_tasks(
+    run_root: Path,
+    tasks: list[TaskSpec],
+    *,
+    replace_types: set[str] | None = None,
+) -> None:
+    """새 작업을 manifest에 합치고, 같은 종류의 이전 계획은 한 번에 교체한다."""
+
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    removed_types = replace_types or set()
     existing = {
         item.get("task_id"): item
         for item in manifest.get("implementation_tasks", [])
-        if item.get("task_type") != "frontend-implementation"
+        if item.get("task_type") not in removed_types
     }
     for task in tasks:
         existing[task.task_id] = task.to_dict()
@@ -1071,7 +1104,53 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    return [task.to_dict() for task in tasks]
+
+
+def _requires_application_security(spec: JobSpec) -> bool:
+    """명시적인 API 또는 요구사항 근거가 있을 때만 Security를 켠다.
+
+    현재 API 저장 모델에는 보안 항목이 없으므로 OpenAPI의 표준 ``security``와 승인된
+    요구사항 문장을 함께 본다. 단순히 actor 역할이 존재한다는 이유로 인증을 추측하지 않고,
+    인증·인가를 직접 요구한 문장만 사용한다.
+    """
+    openapi_path = spec.inputs.get("openapi")
+    if openapi_path and openapi_path.is_file():
+        try:
+            document = json.loads(openapi_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            document = {}
+        if isinstance(document, dict):
+            components = document.get("components", {})
+            schemes = components.get("securitySchemes", {}) if isinstance(components, dict) else {}
+            if document.get("security") or schemes:
+                return True
+            paths = document.get("paths", {})
+            if isinstance(paths, dict) and any(
+                operation.get("security")
+                for path_item in paths.values()
+                if isinstance(path_item, dict)
+                for operation in path_item.values()
+                if isinstance(operation, dict)
+            ):
+                return True
+
+    requirements_path = spec.inputs.get("refinedRequirements")
+    if not requirements_path or not requirements_path.is_file():
+        return False
+    try:
+        requirements = json.loads(requirements_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    items = requirements if isinstance(requirements, list) else []
+    security_words = re.compile(
+        r"\b(?:authenticat(?:e|ed|ion)|authoriz(?:e|ed|ation))\b|인증|인가|접근\s*권한",
+        re.IGNORECASE,
+    )
+    return any(
+        security_words.search(str(item.get("text", "")))
+        for item in items
+        if isinstance(item, dict)
+    )
 
 
 def sha256_file(path: Path) -> str:

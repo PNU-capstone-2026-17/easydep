@@ -14,7 +14,8 @@ LLM은 HTTP 설계에 필요한 선택만 제안하고, 이미 클래스 모델�
   → OpenAPI 3.1 JSON 생성
 ```
 
-- `models.py`: 작은 LLM 응답인 `ApiSpecProposal`과 저장 모델인 `ApiSpecModel`
+- `app.design.contracts.api_spec`: 작은 LLM 응답인 `ApiSpecProposal`과 저장 모델인
+  `ApiSpecModel`의 공개 타입 계약
 - `prompts.py`: 생성·수정 지침과 LLM 입력 조립
 - `normalization.py`: 승인된 Boundary→Control 호출과 HTTP 제안을 결합
 - `service.py`: 생성·수정 LLM 호출과 정규화 순서 관리

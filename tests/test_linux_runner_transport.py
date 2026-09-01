@@ -1,11 +1,17 @@
 from pathlib import Path
 
+from app.implementation.agents.verification.build import verification_timeout_seconds
 from app.implementation.runtime.linux_runner_transport import (
+    configured_runner_image,
     runner_command,
     to_container_path,
     to_host_path,
 )
-from app.implementation.agents.verification.build import verification_timeout_seconds
+
+
+def test_configured_runner_image_uses_explicit_environment_only():
+    assert configured_runner_image({"EASYDEP_MEMBER_RUNNER_IMAGE": "runner:test"}) == "runner:test"
+    assert configured_runner_image({}) is None
 
 
 def test_runner_transport_round_trips_workspace_path(tmp_path: Path):
@@ -32,6 +38,9 @@ def test_runner_command_transmits_only_named_environment(tmp_path: Path):
     assert "UNRELATED_SECRET" not in command
     assert "secret" not in command
     assert command[-2:] == ["worker", "/easydep-workspace/job.json"]
+    assert "GRADLE_USER_HOME=/tmp/easydep-gradle-cache" in command
+    assert command[command.index("--entrypoint") + 1] == "python"
+    assert "app.implementation.runtime.member_linux_runner" in command
 
 
 def test_runner_command_transmits_verification_timeout(tmp_path: Path):

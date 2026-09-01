@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.models import ApiSpecModel, ApiSpecProposal
+from app.design.contracts.api_spec import ApiSpecModel, ApiSpecProposal
 from app.design.services.api_spec.normalization import (
     api_spec_proposal_from_model,
     normalize_api_spec_model,
