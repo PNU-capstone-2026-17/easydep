@@ -296,10 +296,29 @@ def get_workspace(app_id: str) -> dict[str, Any]:
         "command": workspace_service.present_command(
             app_id, repository.latest_command(app_id)
         ),
-        "events": repository.list_events(app_id),
+        "events": repository.list_events(app_id, include_llm_timings=False),
         "artifacts": artifacts,
         "deployment_preferences": repository.get_deployment_preferences(app_id),
     }
+
+
+@router.get("/apps/{app_id}/events/{event_id}/llm-timings")
+def get_event_llm_timings(
+    app_id: str,
+    event_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """큰 설계 LLM 원문 기록을 Workspace에서 펼친 page만 반환한다."""
+    validate_app_id(app_id)
+    try:
+        return repository.get_event_llm_timings(
+            app_id, event_id, offset=offset, limit=limit
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Unknown workspace event.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.post("/apps/{app_id}/commands", status_code=202)
@@ -345,7 +364,9 @@ async def stream_events(
         nonlocal cursor
         idle = 0
         while not await request.is_disconnected():
-            events = repository.list_events(app_id, after=cursor, limit=100)
+            events = repository.list_events(
+                app_id, after=cursor, limit=100, include_llm_timings=False
+            )
             if events:
                 idle = 0
                 for event in events:

@@ -7,6 +7,7 @@
   import { artifactPresent, fileArtifactTypes } from '$lib/artifacts';
   import DeploymentPreferencesCard from '$lib/components/DeploymentPreferencesCard.svelte';
   import ImplementationErrorPanel from '$lib/components/ImplementationErrorPanel.svelte';
+  import LlmTimingHistory from '$lib/components/LlmTimingHistory.svelte';
 
   let {
     appId,
@@ -233,7 +234,7 @@
   {/if}
   {#each visibleEvents as event (event.event_id)}
     {@const relatedArtifacts = eventArtifactStages(event)}
-    {@const llmTimings = Array.isArray(event.metadata?.llm_timing_events) ? event.metadata.llm_timing_events : []}
+    {@const isLlmMetrics = event.metadata?.progress_event === 'designLlmMetrics'}
     {#if event.kind === 'progress'}
       <div
         class="mb-4 ml-11 rounded-xl border border-[#dfe3dc] bg-[#fafbf8] px-3 py-2.5 text-xs text-[#555950]"
@@ -241,41 +242,19 @@
       >
         <div class="mb-2 flex items-center justify-between gap-3">
           <span class="font-semibold text-[#343831]">
-            {llmTimings.length
+            {isLlmMetrics
               ? 'LLM 실행 기록'
               : String(event.metadata?.progress_card_label ?? 'Requirements analysis')}
           </span>
           <time class="text-[10px] text-[#a0a29a]">{formatTime(event.created_at)}</time>
         </div>
         <div class="space-y-2">
-          {#if llmTimings.length}
-            <details class="rounded-lg border border-[#dfe3dc] bg-white px-3 py-2">
-              <summary class="cursor-pointer font-semibold text-[#343831]">
-                LLM 원문 응답 {llmTimings.length}건
-              </summary>
-              <div class="mt-2 space-y-2">
-                {#each llmTimings as timing, index}
-                  <details class="rounded-md border border-[#e5e7e1] bg-[#fafbf8] px-2.5 py-2">
-                    <summary class="cursor-pointer font-mono text-[10px] text-[#555950]">
-                      {index + 1}. {String(timing.operation ?? 'LLM')}
-                      · {String(timing.status ?? 'unknown')}
-                    </summary>
-                    {#if timing.reasoningContent}
-                      <h4 class="mb-1 mt-2 font-semibold text-[#555950]">Reasoning</h4>
-                      <pre class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-[#f2f3ef] p-2 text-[10px] leading-4">{String(timing.reasoningContent)}</pre>
-                    {/if}
-                    {#if timing.responseContent}
-                      <h4 class="mb-1 mt-2 font-semibold text-[#555950]">Response</h4>
-                      <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-[#f2f3ef] p-2 text-[10px] leading-4">{String(timing.responseContent)}</pre>
-                    {/if}
-                    {#if Array.isArray(timing.schemaValidationErrors) && timing.schemaValidationErrors.length}
-                      <h4 class="mb-1 mt-2 font-semibold text-[#8a473f]">Schema validation</h4>
-                      <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-[#fff3f1] p-2 text-[10px] leading-4">{JSON.stringify(timing.schemaValidationErrors, null, 2)}</pre>
-                    {/if}
-                  </details>
-                {/each}
-              </div>
-            </details>
+          {#if isLlmMetrics}
+            <LlmTimingHistory
+              {appId}
+              eventId={event.event_id}
+              count={Number(event.metadata?.llm_timing_count ?? 0)}
+            />
           {:else if progressSteps.length === 0}
             <div class="flex items-center gap-2">
               <LoaderCircle size={13} class="shrink-0 animate-spin text-[#2d7354]" />

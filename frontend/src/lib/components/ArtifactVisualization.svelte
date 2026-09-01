@@ -81,17 +81,17 @@
 </script>
 
 {#if stage === 'refined_requirements' && requirements.length}
-  <div class="space-y-5" aria-label="Refined requirements">
+  <div class="divide-y divide-[#e0e1da]" aria-label="Refined requirements">
     {#each requirementGroups as group}
-      <section aria-label={group.title}>
+      <section class="bg-white px-3 py-3" aria-label={group.title}>
         <div class="mb-2 flex items-center justify-between gap-3">
           <h3 class="text-xs font-semibold text-[#3f423b]">{group.title}</h3>
           <Badge>{group.items.length}</Badge>
         </div>
-        <div class="space-y-2">
+        <div class="divide-y divide-[#ecece7]">
           {#each group.items as raw, index}
             {@const requirement = object(raw)}
-            <article class="rounded-xl border border-[#e0e1da] bg-white p-3.5">
+            <article class="py-2.5">
               <div class="mb-2 flex items-center gap-2">
                 <Badge tone={String(requirement.type).toUpperCase() === 'NFR' ? 'warning' : 'accent'}>
                   {requirement.type ?? 'REQ'}
@@ -111,14 +111,14 @@
     {/each}
   </div>
 {:else if stage === 'usecase_spec' && (actors.length || useCases.length || specifications.length)}
-  <div class="space-y-4">
+  <div class="divide-y divide-[#e0e1da]">
     {#if actors.length}
-      <section class="rounded-xl border border-[#e0e1da] bg-white p-4">
+      <section class="bg-white p-3">
         <h3 class="mb-3 flex items-center gap-2 text-xs font-semibold"><UsersRound size={15} /> Actors</h3>
         <div class="grid gap-2 sm:grid-cols-2">
           {#each actors as raw, index}
             {@const actor = object(raw)}
-            <div class="rounded-lg bg-[#f5f6f2] p-3">
+            <div class="border-t border-[#ecece7] py-2 first:border-t-0">
               <strong class="text-xs">{itemTitle(actor, index)}</strong>
               <p class="mt-1 text-[11px] leading-5 text-[#696c63]">{scalar(actor.description)}</p>
             </div>
@@ -128,12 +128,12 @@
     {/if}
 
     {#if useCases.length}
-      <section class="rounded-xl border border-[#e0e1da] bg-white p-4">
+      <section class="bg-white p-3">
         <h3 class="mb-3 flex items-center gap-2 text-xs font-semibold"><CircleDot size={15} /> Use cases</h3>
         <div class="space-y-2">
           {#each useCases as raw, index}
             {@const useCase = object(raw)}
-            <div class="rounded-lg border border-[#e8e8e2] p-3">
+            <div class="border-t border-[#e8e8e2] py-2.5 first:border-t-0">
               <div class="flex flex-wrap items-center gap-2">
                 <strong class="text-xs">{itemTitle(useCase, index)}</strong>
                 {#if useCase.primary_actor}<Badge>{useCase.primary_actor}</Badge>{/if}
@@ -149,12 +149,12 @@
     {/if}
 
     {#if specifications.length}
-      <section class="space-y-2">
+      <section class="bg-white">
         {#each specifications as raw, index}
           {@const spec = object(raw)}
-          <details class="rounded-xl border border-[#e0e1da] bg-white" open={index === 0}>
-            <summary class="cursor-pointer px-4 py-3 text-xs font-semibold">{itemTitle(spec, index)}</summary>
-            <div class="space-y-4 border-t border-[#ecece7] p-4 text-xs">
+          <details class="border-b border-[#e0e1da] bg-white" open={index === 0}>
+            <summary class="cursor-pointer px-3 py-2.5 text-xs font-semibold">{itemTitle(spec, index)}</summary>
+            <div class="space-y-3 border-t border-[#ecece7] p-3 text-xs">
               <div class="grid gap-3 sm:grid-cols-2">
                 <div><span class="text-[#85877e]">Trigger</span><p class="mt-1 leading-5">{scalar(spec.trigger)}</p></div>
                 <div><span class="text-[#85877e]">Preconditions</span><p class="mt-1 leading-5">{scalar(spec.preconditions)}</p></div>
@@ -215,14 +215,14 @@
     {/if}
   </div>
 {:else if stage === 'api_spec' && Object.keys(paths).length}
-  <div class="space-y-3">
-    <div class="rounded-xl border border-[#dce5df] bg-[#f2f8f4] p-4">
+  <div class="divide-y divide-[#e0e1da]">
+    <div class="bg-[#f2f8f4] p-3">
       <p class="text-[10px] font-bold uppercase tracking-[.14em] text-[#64806f]">API contract</p>
       <h3 class="mt-1 text-base font-semibold">{root.info?.title ?? 'OpenAPI endpoints'}</h3>
       {#if root.info?.description}<p class="mt-2 text-xs leading-5 text-[#62675f]">{root.info.description}</p>{/if}
     </div>
     {#each Object.entries(paths) as [path, rawPath]}
-      <section class="rounded-xl border border-[#e0e1da] bg-white p-3.5">
+      <section class="bg-white p-3">
         <h3 class="mb-3 flex items-center gap-2 font-mono text-xs font-semibold"><Route size={14} /> {path}</h3>
         <div class="space-y-2">
           {#each Object.entries(object(rawPath)).filter(([method]) => httpMethods.has(method.toLowerCase())) as [method, rawOperation]}
@@ -240,9 +240,9 @@
     {/each}
   </div>
 {:else if Object.keys(root).length}
-  <div class="space-y-3">
+  <div class="divide-y divide-[#e0e1da]">
     {#each Object.entries(root) as [key, nested]}
-      <section class="rounded-xl border border-[#e0e1da] bg-white p-3.5">
+      <section class="bg-white p-3">
         <h3 class="mb-2 flex items-center gap-2 text-xs font-semibold">
           {#if key.toLowerCase().includes('storage') || key.toLowerCase().includes('data')}<Database size={14} />{:else}<Braces size={14} />{/if}
           {words(key)}
@@ -280,5 +280,5 @@
     {/each}
   </div>
 {:else}
-  <div class="rounded-xl border border-[#e0e1da] bg-white p-4 text-sm leading-6">{scalar(parsed)}</div>
+  <div class="bg-white p-3 text-sm leading-6">{scalar(parsed)}</div>
 {/if}

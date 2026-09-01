@@ -89,7 +89,9 @@ def test_frontend_can_create_read_and_advance_a_workspace(
         "latest_command",
         lambda _app_id: commands[-1] if commands else None,
     )
-    monkeypatch.setattr(workspace_api.repository, "list_events", lambda _app_id: [])
+    monkeypatch.setattr(
+        workspace_api.repository, "list_events", lambda _app_id, **_kwargs: []
+    )
     monkeypatch.setattr(
         workspace_api.repository, "get_deployment_preferences", lambda _app_id: None
     )
@@ -119,6 +121,36 @@ def test_frontend_can_create_read_and_advance_a_workspace(
     assert advanced.status_code == 202
     assert advanced.json()["command"]["action"] == "start_design"
     assert [call["action"] for call in submitted] == ["message", "start_design"]
+
+
+def test_llm_timing_details_are_loaded_one_page_at_a_time(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def get_page(app_id: str, event_id: int, *, offset: int, limit: int):
+        calls.append(
+            {"app_id": app_id, "event_id": event_id, "offset": offset, "limit": limit}
+        )
+        return {
+            "event_id": event_id,
+            "total": 1240,
+            "offset": offset,
+            "timings": [{"operation": "ClassInventory", "responseContent": "{}"}],
+        }
+
+    monkeypatch.setattr(workspace_api.repository, "get_event_llm_timings", get_page)
+
+    response = client.get(
+        f"/api/workspace/apps/{APP_ID}/events/3773/llm-timings?offset=20&limit=20"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1240
+    assert response.json()["timings"][0]["operation"] == "ClassInventory"
+    assert calls == [
+        {"app_id": APP_ID, "event_id": 3773, "offset": 20, "limit": 20}
+    ]
 
 
 def test_repair_and_retry_commands_reach_the_workspace_service(

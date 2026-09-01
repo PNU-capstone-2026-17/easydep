@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.db.models import Base
+from app.db.models import Base, WorkspaceEvent
 from app.design import progress as design_progress
 from app.design.services.common.structured import record_llm_timing
 from app.repositories import artifact_repository
@@ -32,6 +32,37 @@ def test_workspace_tables_are_part_of_the_shared_database_schema() -> None:
         "workspace_events",
         "deployment_preferences",
     } <= set(Base.metadata.tables)
+
+
+def test_workspace_event_summary_omits_large_llm_contents() -> None:
+    row = WorkspaceEvent(
+        app_id="app-1",
+        command_id="command-1",
+        stage="design",
+        kind="progress",
+        actor="system",
+        text="Design LLM metrics recorded.",
+        event_data={
+            "progress_event": "designLlmMetrics",
+            "analysis_step": "class_diagram",
+            "llm_timing_events": [
+                {"operation": "ClassInventory", "responseContent": "x" * 1_000_000},
+                {"operation": "ClassRepair", "reasoningContent": "y" * 1_000_000},
+            ],
+        },
+    )
+    row.event_id = 7
+    row.created_at = datetime.now(UTC).replace(tzinfo=None)
+
+    summary = repository.event_dict(row, include_llm_timings=False)
+
+    assert summary["metadata"] == {
+        "progress_event": "designLlmMetrics",
+        "analysis_step": "class_diagram",
+        "llm_timing_count": 2,
+    }
+    assert len(json.dumps(summary)) < 1000
+    assert len(row.event_data["llm_timing_events"]) == 2
 
 
 def test_reconcile_implementation_command_closes_stale_running_command(monkeypatch) -> None:

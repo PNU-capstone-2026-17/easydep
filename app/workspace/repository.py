@@ -78,8 +78,18 @@ def command_dict(row: WorkspaceCommand) -> dict[str, Any]:
     }
 
 
-def event_dict(row: WorkspaceEvent) -> dict[str, Any]:
-    """ORM event 행을 API와 SSE가 공유하는 dict 형태로 복사한다."""
+def event_dict(
+    row: WorkspaceEvent, *, include_llm_timings: bool = True
+) -> dict[str, Any]:
+    """ORM event 행을 DB Session 밖에서도 안전하게 쓸 수 있는 dict로 복사한다.
+
+    설계 LLM 원문은 한 이벤트에 수 MB가 될 수 있다. Workspace 첫 snapshot과 SSE에는
+    개수만 보내고, 원문은 전용 pagination endpoint에서 요청할 때만 반환한다.
+    """
+    metadata = dict(row.event_data or {})
+    if not include_llm_timings and metadata.get("progress_event") == "designLlmMetrics":
+        timings = metadata.pop("llm_timing_events", [])
+        metadata["llm_timing_count"] = len(timings) if isinstance(timings, list) else 0
     return {
         "event_id": row.event_id,
         "app_id": row.app_id,
@@ -88,7 +98,7 @@ def event_dict(row: WorkspaceEvent) -> dict[str, Any]:
         "kind": row.kind,
         "actor": row.actor,
         "text": row.text,
-        "metadata": row.event_data or {},
+        "metadata": metadata,
         "created_at": _timestamp_in_kst(row.created_at),
     }
 
@@ -188,7 +198,13 @@ def append_event(
         return event_dict(row)
 
 
-def list_events(app_id: str, *, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+def list_events(
+    app_id: str,
+    *,
+    after: int = 0,
+    limit: int = 500,
+    include_llm_timings: bool = True,
+) -> list[dict[str, Any]]:
     """지정한 event ID 뒤의 기록을 오래된 순서로 반환한다.
 
     SSE client는 마지막으로 받은 ID를 `after`에 넣어 중복 전송을 줄인다. `limit`은 오랫동안
@@ -204,7 +220,36 @@ def list_events(app_id: str, *, after: int = 0, limit: int = 500) -> list[dict[s
             .order_by(WorkspaceEvent.event_id)
             .limit(limit)
         ).all()
-        return [event_dict(row) for row in rows]
+        return [
+            event_dict(row, include_llm_timings=include_llm_timings) for row in rows
+        ]
+
+
+def get_event_llm_timings(
+    app_id: str, event_id: int, *, offset: int = 0, limit: int = 20
+) -> dict[str, Any]:
+    """설계 metrics 이벤트의 LLM 원문을 작은 page 단위로 반환한다."""
+    with session_scope() as session:
+        row = session.scalar(
+            select(WorkspaceEvent).where(
+                WorkspaceEvent.app_id == app_id,
+                WorkspaceEvent.event_id == event_id,
+            )
+        )
+        if row is None:
+            raise KeyError(event_id)
+        metadata = row.event_data or {}
+        timings = metadata.get("llm_timing_events")
+        if metadata.get("progress_event") != "designLlmMetrics" or not isinstance(
+            timings, list
+        ):
+            raise ValueError("The event does not contain design LLM timings.")
+        return {
+            "event_id": event_id,
+            "total": len(timings),
+            "offset": offset,
+            "timings": timings[offset : offset + limit],
+        }
 
 
 def get_app_summary(app_id: str) -> dict[str, Any]:
@@ -273,7 +318,17 @@ def list_workspace_apps(limit: int = 50) -> list[dict[str, Any]]:
                         else workflow_stage(row.current_stage)
                     ),
                     "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "command": command_dict(command) if command is not None else None,
+                    "command": (
+                        {
+                            "command_id": command.command_id,
+                            "action": command.action,
+                            "stage": command.stage,
+                            "status": command.status,
+                            "created_at": _timestamp_in_kst(command.created_at),
+                        }
+                        if command is not None
+                        else None
+                    ),
                 }
             )
         return result
