@@ -1248,6 +1248,27 @@ def test_delegated_repair_stalls_when_the_same_blockers_return() -> None:
     assert "targeted_findings" in state["tried_strategies"]
 
 
+def test_exhausted_delegated_repair_becomes_an_explicit_manual_gate() -> None:
+    result = {
+        "message": "Delegate the repair to the LLM.",
+        "can_delegate_repair": True,
+        "blocking_findings": [
+            {
+                "code": "design.validation",
+                "stage": "api_spec",
+                "message": "The same API blocker remains.",
+                "repairable": True,
+            }
+        ],
+    }
+
+    workspace_module._close_stalled_delegated_repair(result)
+
+    assert result["can_delegate_repair"] is False
+    assert result["blocking_findings"][0]["repairable"] is False
+    assert "specific revision request" in result["message"]
+
+
 def test_delegated_repair_keeps_running_after_blockers_make_progress() -> None:
     previous = {
         "blocking_findings": [
