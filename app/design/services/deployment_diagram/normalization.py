@@ -712,18 +712,22 @@ def _apply_explicit_contract_facts(
         configuration = source.setdefault("configuration", [])
         target_name = re.sub(r"[^A-Z0-9]+", "_", target_id.upper()).strip("_")
         if value.get("endpointBindingRequired"):
-            _upsert_by_id(
-                configuration,
-                {
-                    "id": f"{target_id}-endpoint",
-                    "name": f"{target_name}_HOST",
-                    "kind": "endpointBinding",
-                    "connectionRef": connection_id,
-                    "projection": "host",
-                    "sensitive": False,
-                    "sourceRefs": refs,
-                },
-            )
+            # URL 형식은 애플리케이션별 스키마를 알아야 만들 수 있다. 명시적인 연결
+            # 계약만 있는 경우에는 모든 TCP/HTTP client가 조합할 수 있는 HOST와 PORT를
+            # 한 쌍으로 제공한다.
+            for projection in ("host", "port"):
+                _upsert_by_id(
+                    configuration,
+                    {
+                        "id": f"{target_id}-{projection}",
+                        "name": f"{target_name}_{projection.upper()}",
+                        "kind": "endpointBinding",
+                        "connectionRef": connection_id,
+                        "projection": projection,
+                        "sensitive": False,
+                        "sourceRefs": refs,
+                    },
+                )
         if value.get("secretBindingRequired"):
             _upsert_by_id(
                 configuration,

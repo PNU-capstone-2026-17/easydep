@@ -1,5 +1,6 @@
 {
   "baselineCommit": "190f78fc43cc804d3a4b28d428a53ade5b1ec3f4",
+  "acceptedChangeCommits": ["998f814797b99fa40bee41f46cc4809817922912"],
   "inputHash": "65e464fe581f7d4079c6f05dcf89b8e5fe3d5ab74f727ba9271c4f5d7bb86e37",
   "summary": {
     "hashes": {
@@ -8,7 +9,7 @@
       "deploymentPlan": "c0c713b141acdb6bfa6ffdeb825f6a849ed2021f0ca09464e56a3fb29837cfc2",
       "runtimeBinding": "cba16104ac95bf12ccacecd47309c874c694be243c0a679ace416ee52c0da507",
       "resourcePlan": "08873b614e4547116272d07bcf844b0682721b7585720e637f9618e537de5d41",
-      "invalidGraph": "cba050910ce824b2fe727d9743102db4130c7a867a26251998c41dc35b425302",
+      "invalidGraph": "3fbfafb3384fc24995e8daec4f5df0576b88ac5df970626d56defc5bfe3b2518",
       "bundle": "a8ad645baa4a85460c66c3207bafa7b35b0991578e45a5bb3caaf41c03fd65f4"
     },
     "structureDigests": {

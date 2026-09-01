@@ -1,5 +1,6 @@
 {
   "baselineCommit": "bb6ecab8385dc56868c597e6c6a6876321e3f420",
+  "acceptedChangeCommits": ["998f814797b99fa40bee41f46cc4809817922912"],
   "inputHash": "bfe0340ce4fd3142722e71b73b756664ad5c5fbe686a979165c03d3e3138eecd",
   "providers": {
     "aws": {
@@ -8,7 +9,7 @@
         "resourcePlan": "db34a8ab98bba1ef1e6a3ef8192650fd75c100ab7196821e474a7efd7a9e2e25",
         "runtimePuml": "e892b1f25ca275a460b11f9bfb94fddc71d6419ae57c8adb206f06a48808e297",
         "provisioningPuml": "54327d77edbb7409d98447a7a0c8ac88111130c1ed79b0d705f51deb710252f8",
-        "iacFiles": "beff56aa35c66110479979685954c8d375a001608449dc56b4a43ef45f61fc55",
+        "iacFiles": "72193e5d027ef27303441cb95f0238b015df4ae67a470d1bf655dee87328a8f8",
         "nodeSourceRefs": "ae7baf0fa1d8cae1eb8ecab25dea05f2536cfbb519c648b84dd92948b0c228f6",
         "referenceSourceRefs": "9a45e04e2bcd49ed9610b71f3e2c8a9067411d4986fd9efb357a53f0e797a230",
         "bindingSourceRefs": "f211031db0901845f106102d1ae66a8b332b44220f3ea30768e2de50cdc16703"
@@ -79,10 +80,10 @@
       "iacFileHashes": {
         "easydep-provider.tf": "b0a1eb3f136e216cbe4a6c22506bf40d2b699a05b9920d9f6357cae93d949fb1",
         "variables.tf": "1ec5f41a4c435617ac9a0a15f9bf6eeae23c03c6bd14b061f2d96e0e63278886",
-        "main.tf": "77c20bb29c29a38503300bdf055ac182f95383d64baa02c272539fa487b3165b",
+          "main.tf": "02a821df75183cc05ce7a976d3a3f11b2edfeb12b063056912ab188adbd54630",
         "outputs.tf": "3179605bc6f63afa04acba5a81c8ffd72e4c7fa458674a7f9445edfa485e4027",
         "bootstrap_compute_1.sh.tftpl": "b6d453ed27645d527b31ae0fca9e22f65619a474faaffa04d3d2f16d7f4faa19",
-        "bootstrap_compute_2.sh.tftpl": "017e5e450a9b9e91ce586f830ba7224a3ad86fd61410a16de63ee42b791cd169",
+          "bootstrap_compute_2.sh.tftpl": "02451baab4e9e31a07c338a4aa828c3452205a359e8546247041ce79a0c8533b",
         "doctor.sh": "5294f8413f2cfa2cd584a18555f7ca48f22d9aa56ede61e8a7899808134dad26",
         "plan.sh": "19bba18520981a48c34a99c9cd5e1b57fa03b3b703f1dc8b323b5c3fa0b9114f",
         "deploy.sh": "48a866c74752739b1b24432cd6db2e334ed3efca79fb4bc6210625f11116c814",
@@ -96,7 +97,7 @@
         "resourcePlan": "d7f752203336eaf21f7d229546f35b014d9da50b9c61a442596c9dd8d317ddf6",
         "runtimePuml": "b0d83b35d6b6b1dd58c3d2a62c6a2923bfaeb6db1360d4cc22d999cdd4231e06",
         "provisioningPuml": "1c0ca6349b4892d23e764214e2d0fe7aeb02664c84dff0ffd40b2cba6542bd13",
-        "iacFiles": "dd241d480e0367cf44b4d86ddbe19b5079bba9490c7d0ca6c3eca4c25917e72e",
+        "iacFiles": "4f41a40a123f2642ce12acc78aaf3993572db35405f3cbc18f092a416531b193",
         "nodeSourceRefs": "40636fd28fb41534b0b3980baf447c370195a329b76b9bf2edc708d5dc9efe96",
         "referenceSourceRefs": "dda3c75e0e6de9685920882cac0b2d7d6ad46603380529f1516a43a763aca734",
         "bindingSourceRefs": "f211031db0901845f106102d1ae66a8b332b44220f3ea30768e2de50cdc16703"
@@ -163,10 +164,10 @@
       "iacFileHashes": {
         "easydep-provider.tf": "a4584069b106c5f5603cfff349745dd0374367e136d126cdd7c327b711dce4b0",
         "variables.tf": "5ddff1cf03fb1978a34432c5c952abfd29e41cd895063995ff0ee3a71c16b924",
-        "main.tf": "5c724a885d6f3049e45469aaa6c45323824d25c1c6ff8a590213e56a275cf7ea",
+          "main.tf": "2a70bdd8bbe8fb3847cf3d4c1b9b6d1f143e3253e870bd979d6ef988560ebdd3",
         "outputs.tf": "67a3a5a21a149cd3f40a7fc095983ea2bd54c13fded57b0e2628f44523c670ff",
         "bootstrap_compute_1.sh.tftpl": "36ac3afb1ae839decc63c834fc42d703350a34f4b946704282ee6d5463b3bfe4",
-        "bootstrap_compute_2.sh.tftpl": "25bc3562b0ac86da06b84a31b305055c92bf702861d9a65624caf2ac5f72801d",
+          "bootstrap_compute_2.sh.tftpl": "231ca0c4ea2a60941be37f0a58d58d4249924b7cdf2cf1d01899d9d2585e1f2e",
         "doctor.sh": "16180f6a4d0cfe7a7ad3dc54ea0423171fb7742da6e8bbff6a5c68d1d5505d52",
         "plan.sh": "07eb59682b65e8e9d582c84a9586f2a79006e64f59b8c7a4a10c522629b64a4b",
         "deploy.sh": "eacf1c2cb68a03198f61bf67c1c60054bf8381c873ee6662cce8362bff851511",
@@ -181,7 +182,7 @@
         "resourcePlan": "cbfe2cb57da61a28b2cde1fb7c5931cc6b0be4901e816b36fb176aef735540b3",
         "runtimePuml": "746616897fefbe9f8920e2fdf713b318995cb887d604cbada21c8b3044abdb02",
         "provisioningPuml": "5fac2296566dbfe5b2e6b417ead64e713e416cdd2806ca53ff446d05664bb031",
-        "iacFiles": "30d1f20ffea61600d35f30e7deba3b78b9c8d7bacc208c4e8dc6937b70d0b1cb",
+        "iacFiles": "4c9d5dc39e43693aec964aa768b2a8f718e0ddc2717d0f3fd537d2bbde9838f5",
         "nodeSourceRefs": "205dc94f919a6202c15181b77e51fd56098f65b55a2517da68029e8b45633e3e",
         "referenceSourceRefs": "ada96f7e13a549c7391655fc7cd608ca5fc5ef9728e4eea69a6d4f7690fec64a",
         "bindingSourceRefs": "f211031db0901845f106102d1ae66a8b332b44220f3ea30768e2de50cdc16703"
@@ -245,10 +246,10 @@
       "iacFileHashes": {
         "easydep-provider.tf": "4536ed78d9baaab429d0c1d44b69bd01a7edcfa45b4fe91b5a326fb82de4cf6e",
         "variables.tf": "87910ecb3938e92fd887260ff8ccf026ac8e8024afa0e531850357df0acc3d39",
-        "main.tf": "51d7b4d62b9350ce48e226eb680ec44ffe95c642edb7dc0a748add12f3da2935",
+          "main.tf": "25f5c0faa7465035deaded47751e7e66d76716d60e2eb9c02b004f29b09f8351",
         "outputs.tf": "1823b97749bde062ac3126240f7e714dcce1afb7c0caeaa6c736a217e52a519e",
         "bootstrap_compute_1.sh.tftpl": "8e29ee4467eefac09edf80c46f9543d5e3f2941e43cde7238169cfc2792d81e9",
-        "bootstrap_compute_2.sh.tftpl": "36bb2fd58259f38180b7772421840563f0ef7d49644fa0f7f1d506b88a9eff75",
+          "bootstrap_compute_2.sh.tftpl": "2987f9fd794c276495729478dc7ef6a2bcfe72e1596d121df8b48fcf8901520f",
         "doctor.sh": "9c6fe404e90b2b6127d4bb35921a8257f344947fcb7e1aac1bbc7767706639d1",
         "plan.sh": "0a68abb48f2b4f2ccb90b73e6bf757064022aa899047ed031165bf8e77cf033a",
         "deploy.sh": "38c7a867020d1a02123869787e912435b9f38aafba7bb12a5efb44023688121f",

@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import pytest
+
 import app.testing.runtime.adapter as testing_module
 from app.requirements.resources.application_cloud import infer_application_contract
 from app.testing.runtime.adapter import TestingAdapter as VerificationAdapter
+
+
+@pytest.fixture(autouse=True)
+def _use_local_testing_adapter(monkeypatch):
+    """이 파일은 컨테이너 transport가 아니라 로컬 테스트 판정만 확인한다."""
+
+    monkeypatch.setattr(testing_module, "configured_runner_image", lambda: None)
 
 
 def test_testing_preserves_configured_gradle_cache(tmp_path, monkeypatch):
