@@ -493,6 +493,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             conversation.send_message(round_prompt)
                             message_sent = True
                         conversation.run()
+                        # OpenHands 1.36은 iteration 한도와 반복 감지를 예외로 던지지
+                        # 않고 Conversation 상태만 ERROR로 바꾼 뒤 run()을 반환한다.
+                        # 이 상태를 놓치면 다음 수리 문장을 같은 긴 대화에 붙이게 된다.
+                        if _conversation_finished_with_error(conversation):
+                            restart_after_verification = True
                     except Exception as error:
                         # A provider can reject the final turn after the agent has
                         # already written every contracted output. Keep the warning
@@ -860,6 +865,21 @@ def _conversation_needs_fresh_context(error: Exception) -> bool:
             "no tool call and no content",
         )
     )
+
+
+def _conversation_finished_with_error(conversation: object) -> bool:
+    """SDK가 예외 없이 끝낸 실패 대화인지 확인한다.
+
+    OpenHands의 로컬 Conversation은 iteration 한도나 stuck detector가 동작하면
+    ``run()``을 정상 반환하면서 ``execution_status``만 ``ERROR``로 기록한다. SDK
+    enum을 모듈 import 시점에 의존하지 않고 값만 읽어, 테스트용 대화와 호스트의
+    선택적 OpenHands 설치도 그대로 지원한다.
+    """
+
+    state = getattr(conversation, "state", None)
+    status = getattr(state, "execution_status", None)
+    value = getattr(status, "value", status)
+    return str(value or "").rsplit(".", 1)[-1].upper() == "ERROR"
 
 
 def _implementation_repair_history(ledger: RepairLedger) -> str:

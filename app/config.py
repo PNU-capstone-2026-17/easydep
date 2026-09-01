@@ -93,7 +93,9 @@ class Settings(BaseSettings):
     implementation_agent_max_output_tokens: int = 16384
     implementation_reasoning_effort: str = "medium"
     implementation_command_timeout_seconds: int = 3600
-    implementation_startup_warmup: bool = True
+    # 서버 시작 때 별도 Gradle compile을 실행하지 않는다. 첫 구현 요청 지연보다 시작 시간과
+    # 디스크 사용량이 중요한 환경에서 기본 동작이 가벼워야 하며, 필요할 때만 env로 켠다.
+    implementation_startup_warmup: bool = False
     # 기본 scaffold는 곧바로 OpenHands가 채우므로 구현 전 Gradle compile은 생략한다.
     # 생성기 자체를 점검할 때만 환경변수로 켜며, 작업별·최종 compile/test는 항상 별개로 실행한다.
     implementation_verify_initial_compile: bool = False

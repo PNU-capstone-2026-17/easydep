@@ -10,6 +10,8 @@ from app.config import settings
 
 CONTAINER_WORKSPACE = PurePosixPath("/easydep-workspace")
 RUNNER_IMAGE_ENV = "EASYDEP_MEMBER_RUNNER_IMAGE"
+RUNNER_GRADLE_CACHE_VOLUME = "easydep-member-gradle-cache"
+HOST_FINALIZATION_PENDING = "HOST_FINALIZATION_PENDING"
 TRANSMITTED_ENVIRONMENT = (
     "API_KEY",
     "LLM_API_KEY",
@@ -70,13 +72,16 @@ def runner_command(
         "easydep.owner=member-runner",
         "-v",
         f"{root}:{CONTAINER_WORKSPACE.as_posix()}",
+        # 컨테이너가 끝나도 Gradle 배포본과 Maven dependency를 남긴다. 구현 Job마다
+        # 130MB가 넘는 배포본을 다시 받거나 Windows bind mount에서 수천 파일을 읽지 않는다.
+        "-v",
+        f"{RUNNER_GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache",
         "-e",
         f"PYTHONPATH={CONTAINER_WORKSPACE}/app/implementation/runtime/runtime_hooks:{CONTAINER_WORKSPACE}",
         "-e",
         "EASYDEP_FIXED_LINUX_RUNNER=1",
-        # 컨테이너의 쓰기 계층에 둔 캐시는 한 workflow 동안 모든 Gradle 검사에서
-        # 재사용된다. 오래된 이미지가 Windows bind mount 아래를 cache로 선택하더라도
-        # 이 값으로 덮어써 Docker Desktop의 간헐적인 I/O 오류를 피한다.
+        # 위 named volume을 Gradle의 공용 저장소로 사용한다. 오래된 이미지가 Windows
+        # bind mount 아래를 cache로 선택하더라도 이 값으로 덮어쓴다.
         "-e",
         "GRADLE_USER_HOME=/tmp/easydep-gradle-cache",
     ]

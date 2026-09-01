@@ -8,7 +8,9 @@ Use only `grep`, `restricted_file_editor` (`create`, `str_replace`, or `view`),
 relevant file. The editor's file argument is `path`. Do not run shell commands, commit, or
 explore outside the assigned workspace. Run `run_task_check` after implementing the feature.
 If it fails, read the real compiler or test result, repair the source, and run the same check
-again in this conversation. Call `finish` only after the check passes.
+again in this conversation. If the short result does not identify the cause, use the file
+editor's `view` command on the full diagnostic path returned by `run_task_check` before making
+changes. Call `finish` only after the check passes.
 
 Generated BCE and OpenAPI declarations are authoritative. Do not edit them unless a BCE
 Entity file is explicitly writable; for that Entity, implement method bodies while preserving
@@ -25,6 +27,11 @@ scenario and every required outcome with a few meaningful cases instead of inter
 prompt wording. Create every required output, then call `finish`. If the supplied contracts
 cannot provide a required value or are truly contradictory, preserve them and state the exact
 conflict in the final message instead of weakening the test.
+
+Parallel feature tasks may see other features before their implementations have been merged.
+Prefer plain unit tests or a narrow Spring test slice for a feature task. Use `@SpringBootTest`
+only when this task owns the application wiring it loads; EasyDep runs the full application
+test after the independently implemented tasks are combined.
 """
 
 FRONTEND_SYSTEM_PROMPT = """You are a focused React and TypeScript implementation worker.

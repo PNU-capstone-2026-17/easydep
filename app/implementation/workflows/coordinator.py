@@ -34,6 +34,7 @@ from ..generation.orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
+from ..runtime.linux_runner_transport import HOST_FINALIZATION_PENDING
 from ..runtime.observations import observe_runtime_contract
 from .completion import audit_run_completion
 from .conformance import (
@@ -299,6 +300,9 @@ def _run_workflow(
             + ", ".join(failed_runnable)
         )
     if not runnable:
+        deferred = _defer_finalization_to_host(run_root, state)
+        if deferred is not None:
+            return deferred
         return _finalize_workflow(
             run_root,
             spec,
@@ -392,6 +396,9 @@ def _run_workflow(
         final_state.pop("currentActivity", None)
         _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
         return final_state
+    deferred = _defer_finalization_to_host(run_root, final_state)
+    if deferred is not None:
+        return deferred
     return _finalize_workflow(
         run_root,
         spec,
@@ -399,6 +406,30 @@ def _run_workflow(
         verifier=verifier,
         auditor=auditor,
     )
+
+
+def _defer_finalization_to_host(
+    run_root: Path,
+    state: dict[str, object],
+) -> dict[str, object] | None:
+    """격리 runner가 끝낸 source를 Docker 권한이 있는 호스트에 넘긴다.
+
+    멤버 runner는 OpenHands와 Linux build 도구만 실행하며 Docker 소켓을 공유하지 않는다.
+    따라서 모든 구현 task가 끝난 시점에만 상태를 반환하고, 전체 test와 실제 container
+    health 검사는 호스트 CLI가 같은 체크포인트에서 한 번 수행한다.
+    """
+    if os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") != "1":
+        return None
+    state["status"] = HOST_FINALIZATION_PENDING
+    state["blockingReason"] = None
+    state["currentActivity"] = {
+        "id": "host-release-verification",
+        "label": "최종 실행 검증 준비",
+        "status": "RUNNING",
+        "detail": "구현 작업을 마치고 호스트의 Docker 검증으로 전환하고 있습니다.",
+    }
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+    return state
 
 
 def _finalize_workflow(

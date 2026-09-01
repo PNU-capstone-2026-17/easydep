@@ -21,7 +21,7 @@ ENV PYTHONUTF8=1
 ENV GRADLE_USER_HOME=/tmp/easydep-gradle-cache
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends curl ca-certificates ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /opt/easydep \

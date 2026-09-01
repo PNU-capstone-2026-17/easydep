@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,9 +12,40 @@ from pathlib import Path
 from app.implementation.runtime.runner_compat import gradle_command, install
 
 RUNNER_WORKSPACE = Path("/easydep-workspace")
+HOST_BOOTSTRAP_GRADLE_CACHE = RUNNER_WORKSPACE / ".easydep/gradle-cache"
+# 임시 파일이 아니라 이름 있는 Docker volume이 이 고정 경로에 mount된다.
+RUNNER_GRADLE_CACHE = Path("/tmp/easydep-gradle-cache")  # noqa: S108
+GRADLE_CACHE_MARKER = RUNNER_GRADLE_CACHE / ".easydep-bootstrap-v1"
+
+
+def _seed_gradle_cache() -> None:
+    """호스트에서 이미 받은 Gradle 파일을 비어 있는 Linux cache에 한 번 복사한다.
+
+    개발 환경 준비 스크립트가 만든 cache는 저장소 bind mount 안에서 읽을 수 있다.
+    Linux named volume이 처음 만들어진 경우에만 이를 복사하고, 이후 Job은 volume을
+    그대로 재사용한다. 호스트 cache가 없으면 wrapper가 직접 내려받아 같은 volume에
+    저장하므로 이 준비 단계가 구현 실행의 필수 조건은 아니다.
+    """
+
+    if GRADLE_CACHE_MARKER.is_file() or not HOST_BOOTSTRAP_GRADLE_CACHE.is_dir():
+        return
+    RUNNER_GRADLE_CACHE.mkdir(parents=True, exist_ok=True)
+    # 여러 Job이 동시에 시작해도 같은 volume을 함께 복사하지 않도록 Linux 파일 잠금을
+    # 사용한다. 이 모듈의 실제 진입점은 고정 Linux runner뿐이므로 여기서만 import한다.
+    import fcntl
+
+    lock_path = RUNNER_GRADLE_CACHE / ".easydep-bootstrap.lock"
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if GRADLE_CACHE_MARKER.is_file():
+            return
+        shutil.copytree(HOST_BOOTSTRAP_GRADLE_CACHE, RUNNER_GRADLE_CACHE, dirs_exist_ok=True)
+        GRADLE_CACHE_MARKER.write_text("ready\n", encoding="utf-8")
 
 
 def _configure_runner_tools() -> None:
+    if os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") == "1":
+        _seed_gradle_cache()
     install()
 
 
@@ -71,11 +104,13 @@ def _test(arguments: list[str]) -> int:
 def _preflight(arguments: list[str]) -> int:
     if arguments:
         raise SystemExit("preflight accepts no arguments")
+    _configure_runner_tools()
     commands = {
         "python": ["python", "--version"],
         "java": ["java", "-version"],
         "node": ["node", "--version"],
         "npm": ["npm", "--version"],
+        "ripgrep": ["rg", "--version"],
         "gradle": [
             *gradle_command(),
             "--version",

@@ -249,5 +249,14 @@ def register_task_check_tool() -> str:
 
 
 def _render_check_result(status: str, evidence: dict[str, object]) -> str:
-    """중복 stack trace 없이 에이전트가 고칠 수 있는 검사 결과만 반환한다."""
-    return f"TASK CHECK {status}\n{compact_verification_evidence(evidence)}"
+    """짧은 첫 진단과 필요할 때 열어 볼 원본 경로를 함께 반환한다."""
+    result = f"TASK CHECK {status}\n{compact_verification_evidence(evidence)}"
+    paths = evidence.get("diagnosticPaths")
+    if status == "FAILED" and isinstance(paths, list) and paths:
+        readable_paths = "\n".join(f"- {path}" for path in paths if str(path).strip())
+        if readable_paths:
+            result += (
+                "\nFull diagnostics (use restricted_file_editor view; inspect these "
+                "before guessing):\n" + readable_paths
+            )
+    return result

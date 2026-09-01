@@ -16,10 +16,10 @@ class ImplementationSettings:
     model: str
     base_url: str
     command_timeout_seconds: int
-    startup_warmup: bool = True
+    startup_warmup: bool = False
 
     @classmethod
-    def from_env(cls) -> "ImplementationSettings":
+    def from_env(cls) -> ImplementationSettings:
         repository_root = Path(__file__).resolve().parents[2]
         python = Path(sys.executable).resolve()
         work_root = (repository_root / ".easydep" / "implementation-runs").resolve()

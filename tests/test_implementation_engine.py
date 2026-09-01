@@ -130,6 +130,11 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
         "test",
         "--build-cache",
     ]
+    assert task_verification_command(
+        ["gradlew"],
+        "wiring",
+        ["application/src/test/java/com/example/NotCreatedYetTest.java"],
+    ) == ["gradlew", "test", "--build-cache"]
 
 
 def test_agent_task_check_returns_real_focused_verification_result(
@@ -142,6 +147,7 @@ def test_agent_task_check_returns_real_focused_verification_result(
         "durationMs": 321,
         "stderr": "OrderService.java:42: incompatible types",
         "testResults": "OrderScenarioTest.placesOrder: assertion failed",
+        "diagnosticPaths": [str(tmp_path / "application/build/test-results/test")],
     }
     with patch(
         "app.implementation.agents.task_check.verify_agent_workspace",
@@ -155,8 +161,9 @@ def test_agent_task_check_returns_real_focused_verification_result(
 
     assert passed is False
     assert "TASK CHECK FAILED" in output
-    assert "OrderService.java:42: incompatible types" in output
     assert "OrderScenarioTest.placesOrder: assertion failed" in output
+    assert "Full diagnostics" in output
+    assert str(tmp_path / "application/build/test-results/test") in output
     verify.assert_called_once_with(
         tmp_path,
         "use-case",
@@ -392,6 +399,7 @@ def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(
             self.messages: list[str] = []
             self.run_count = 0
             self.close_count = 0
+            self.state = SimpleNamespace(execution_status="IDLE")
 
         def send_message(self, message: str) -> None:
             self.messages.append(message)
@@ -399,11 +407,15 @@ def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(
         def run(self) -> None:
             self.run_count += 1
             if self.number == 1:
-                raise RuntimeError("Agent reached maximum iterations limit (32).")
+                # 실제 OpenHands SDK는 한도 도달을 예외로 던지지 않고 ERROR 상태로
+                # 기록한 뒤 run()을 반환한다.
+                self.state.execution_status = "ERROR"
+                return
             (self.sandbox / source_path).write_text(
                 "class OrderService { int repairedInFreshContext; }",
                 encoding="utf-8",
             )
+            self.state.execution_status = "FINISHED"
 
         def close(self) -> None:
             self.close_count += 1

@@ -149,6 +149,9 @@ def verify_agent_workspace(
     )
     started = time.monotonic()
     environment = os.environ.copy()
+    # 생성 애플리케이션의 일반 설정은 실제 DB 주소를 환경변수로 받는다. 기능 검사는
+    # 함께 생성한 H2용 application-test.yml을 사용해야 개발자 PC의 DB 설정에 의존하지 않는다.
+    environment.setdefault("SPRING_PROFILES_ACTIVE", "test")
     gradle_opts = environment.get("GRADLE_OPTS", "").strip()
     vfs_option = "-Dorg.gradle.vfs.watch=false"
     if vfs_option not in gradle_opts:
@@ -164,6 +167,11 @@ def verify_agent_workspace(
         timeout=verification_timeout_seconds(),
         check=False,
     )
+    diagnostic_paths = (
+        _store_failed_verification_output(sandbox, result.stdout, result.stderr)
+        if result.returncode != 0
+        else []
+    )
     evidence = {
         "command": command,
         "exitCode": result.returncode,
@@ -171,10 +179,42 @@ def verify_agent_workspace(
         "stdout": _truncate_log_snippet(result.stdout, 16000),
         "stderr": _truncate_log_snippet(result.stderr, 16000),
         "testResults": read_gradle_test_failures(sandbox),
+        "diagnosticPaths": diagnostic_paths,
     }
     if result.returncode != 0:
         raise WorkspaceVerificationError(evidence)
     return evidence
+
+
+def _store_failed_verification_output(
+    sandbox: Path,
+    stdout: str,
+    stderr: str,
+) -> list[str]:
+    """축약하지 않은 명령 출력을 작업 공간에 보존하고 조회 경로를 반환한다.
+
+    긴 로그를 매번 LLM 대화에 넣으면 같은 Spring stack trace가 문맥을 대부분 차지한다.
+    대신 첫 진단은 짧게 유지하고, 원인이 충분하지 않을 때 코딩 에이전트가 기존 파일 보기
+    도구로 원문을 직접 열 수 있게 한다. ``build``는 구현 결과 수집 대상이 아니므로 이 파일이
+    생성 애플리케이션에 섞이지 않는다.
+    """
+    output_dir = sandbox / "application" / "build" / "easydep-verification"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    paths: list[str] = []
+    for name, content in (("stdout.log", stdout), ("stderr.log", stderr)):
+        if not content.strip():
+            continue
+        path = output_dir / name
+        path.write_text(content, encoding="utf-8")
+        paths.append(str(path.resolve()))
+
+    # Gradle의 JUnit XML에는 console 출력보다 더 깊은 예외 원인이 기록되는 경우가 많다.
+    # 파일이 여러 개일 수 있으므로 디렉터리를 알려 주고 필요한 보고서만 열게 한다.
+    test_results = sandbox / "application" / "build" / "test-results" / "test"
+    if any(test_results.glob("*.xml")):
+        paths.append(str(test_results.resolve()))
+    return paths
 
 
 def task_verification_command(
@@ -192,6 +232,11 @@ def task_verification_command(
     if not task_type and allowed_write_paths is None:
         # 이어지는 Docker build가 배포할 bootJar를 실제로 만든다. 여기서는 전체 test만
         # 실행해 같은 jar packaging을 연속으로 두 번 하지 않는다.
+        command = [*executable, "test", "--build-cache"]
+    elif task_type == "wiring":
+        # wiring은 서로 독립적으로 만든 기능을 모두 합친 뒤 Spring Bean, DB migration과
+        # 통합 흐름을 확인하는 단계다. 수정 가능 목록에는 아직 없는 테스트 파일도 후보로
+        # 들어갈 수 있으므로 파일 이름으로 Gradle filter를 만들지 않고 전체 test를 한 번 돈다.
         command = [*executable, "test", "--build-cache"]
     else:
         test_names = sorted(
@@ -371,7 +416,15 @@ def summarize_test_failure(detail: str) -> str:
         for line in lines
         if re.search(r"\bat (?:app//)?(?!org\.|java\.|jdk\.|worker\.)[A-Za-z_]", line)
     ]
-    selected = [*lines[:12], *causes[:12], *application_frames[:12], *lines[-8:]]
+    # 바깥 예외뿐 아니라 stack trace 뒤쪽의 가장 구체적인 원인도 남긴다. Spring은
+    # ApplicationContext 예외 아래에 누락된 property나 Bean 이름을 여러 단계 뒤에 기록한다.
+    selected = [
+        *lines[:10],
+        *causes[:6],
+        *application_frames[:8],
+        *causes[-12:],
+        *lines[-8:],
+    ]
     return _truncate_log_snippet(
         "\n".join(dict.fromkeys(selected)),
         max_chars=8000,
@@ -402,13 +455,14 @@ def compact_verification_evidence(
         f"Command: {command_text or '(not available)'}",
         f"Exit code: {evidence.get('exitCode', 1)}",
     ]
-    seen_outputs: set[str] = set()
+    # JUnit XML이 있으면 test 이름과 가장 깊은 원인을 이미 담고 있다. 같은 stack trace의
+    # stdout/stderr 사본을 다시 붙이지 않는다. compile 실패처럼 XML이 없을 때만 다음
+    # 출력으로 물러난다.
     for key in ("testResults", "stderr", "stdout"):
         raw = str(evidence.get(key) or "").strip()
-        if not raw or raw in seen_outputs:
-            continue
-        seen_outputs.add(raw)
-        lines.extend(summarize_test_failure(raw).splitlines())
+        if raw:
+            lines.extend(summarize_test_failure(raw).splitlines())
+            break
 
     # Spring test 설정처럼 한 줄 자체가 매우 길 때도 model 입력의 대부분을 차지하지 않게 한다.
     shortened = [

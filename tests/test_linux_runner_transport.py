@@ -2,6 +2,7 @@ from pathlib import Path
 
 from app.implementation.agents.verification.build import verification_timeout_seconds
 from app.implementation.runtime.linux_runner_transport import (
+    RUNNER_GRADLE_CACHE_VOLUME,
     configured_runner_image,
     runner_command,
     to_container_path,
@@ -39,6 +40,7 @@ def test_runner_command_transmits_only_named_environment(tmp_path: Path):
     assert "secret" not in command
     assert command[-2:] == ["worker", "/easydep-workspace/job.json"]
     assert "GRADLE_USER_HOME=/tmp/easydep-gradle-cache" in command
+    assert f"{RUNNER_GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache" in command
     assert command[command.index("--entrypoint") + 1] == "python"
     assert "app.implementation.runtime.member_linux_runner" in command
 

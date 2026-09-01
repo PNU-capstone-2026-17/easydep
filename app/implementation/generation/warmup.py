@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..runtime.linux_runner_transport import RUNNER_GRADLE_CACHE_VOLUME
 from .frontend_scaffold import react_scaffold_files
 from .orchestrator import GRADLE_GENERATOR_IMAGE, OPENAPI_GENERATOR_IMAGE
 
@@ -124,6 +125,10 @@ def warmup_implementation_runtime(
             "--rm",
             "-v",
             f"{gradle_project.resolve()}:/workspace",
+            # 임시 컨테이너의 쓰기 계층에 cache를 두면 --rm과 함께 사라진다. 명시적으로
+            # warmup을 켠 경우에만 실제 구현 runner와 같은 named volume을 채운다.
+            "-v",
+            f"{RUNNER_GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-home",
             "-e",
             "GRADLE_USER_HOME=/tmp/easydep-gradle-home",
             "-w",
