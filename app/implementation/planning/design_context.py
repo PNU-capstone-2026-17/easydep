@@ -701,12 +701,7 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     """
     package_path = spec.base_package.replace(".", "/")
     ir = build_implementation_ir(spec, run_root)
-    package_root = run_root / "application" / "src" / "main" / "java" / package_path
     write_spring_boot_entrypoint(run_root, spec.base_package, ir.application_class)
-    source_paths: list[Path] = []
-    for relative in ("application/impl", "adapter", "bce", "persistence/repository"):
-        source_paths.extend(sorted((package_root / relative).rglob("*.java")))
-    contracts = render_source_contracts(run_root, source_paths)
     flow_test_path = (
         "application/src/test/java/"
         f"{package_path}/integration/"
@@ -747,17 +742,17 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     output.mkdir(parents=True, exist_ok=True)
     context_path = output / "application-wiring.context.json"
     context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
-    prompt = render_wiring_prompt(spec, ir.application_class, contracts)
-    prompt += (
-        "\n\nThis task is invoked only after a real compile, context, or HTTP failure. "
-        "Use the supplied failure evidence as the primary target. Do not reimplement "
-        "business use cases or duplicate their focused tests."
-    )
-    prompt += _render_deployment_context(deployment_context)
-    prompt += "\n\n## Editable directories\n" + "\n".join(
-        f"- `{path}`" for path in editable_directories
-    )
-    prompt += render_allowed_output_rules(repair_paths)
+    # 정상 경로에서는 실행하지 않는 작업이므로 전체 Java 계약을 미리 복사하지 않는다.
+    # 실제 실패가 생기면 apply_repair_directives가 오류, 관련 파일과 최근 시도만 담은 별도
+    # prompt를 만들고 runtime은 그 파일을 사용한다.
+    prompt = f"""# Spring application integration repair
+
+This task is dormant during normal generation. It runs only after a real compile, Spring
+context, HTTP, or container failure. Use the separate repair instructions created from that
+failure, preserve generated contracts, and do not reimplement completed business use cases.
+
+Application entry point: `{ir.application_class}`
+"""
     prompt_path = output / "application-wiring.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
     task = TaskSpec(
@@ -1010,43 +1005,6 @@ def _render_deployment_context(deployment: object) -> str:
 def _prompt_json(value: object) -> str:
     """구조는 그대로 두고 LLM 입력에 불필요한 화면용 들여쓰기만 없앤다."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-
-def render_wiring_prompt(spec: JobSpec, application_class: str, contracts: str) -> str:
-    return f"""# Implementation task: Spring application wiring
-
-The system has already created the complete `{application_class}` Spring Boot entry point.
-Create the explicit production bean configuration, local runtime properties, and a context-load
-integration test for that generated application.
-
-Rules:
-- Do not create or edit `{application_class}`; it is a deterministic framework bootstrap.
-- Put explicit `@Bean` factory methods in `{spec.base_package}.config.ApplicationConfiguration` for every BCE Control service, stateful BCE Entity required directly by a service, concrete Boundary adapter, and concrete outbound Gateway adapter needed by the application graph.
-- Use only the exact public constructors below. Do not add annotations to or edit generated/agent-produced classes.
-- Generated Spring Data repositories are discovered by Spring Boot; do not instantiate repository proxies manually.
-- Every generated persistence mapper under `{spec.base_package}.persistence.mapper` has no Spring stereotype. Declare one explicit `@Bean` for each mapper using its no-argument constructor.
-- Do not add `@EnableJpaRepositories` exclusions, repository scan filters, or any workaround that removes a generated repository bean. If a repository contract is invalid, allow the context test to fail so the upstream repository task can be repaired.
-- Existing `@RestController` API adapters are component-scanned; do not declare duplicate controller beans.
-- Existing adapters annotated with `@Component`, `@Service`, `@Repository`, or `@RestController` are component-scanned. Do not also create an `@Bean` for any of those adapter classes; inject their port interface into the dependent Control instead. Each port must have exactly one candidate bean unless an explicit qualifier is part of the generated contract.
-- Detect constructor cycles where a Boundary adapter delegates to a Control that itself consumes the Boundary. Break only that Control parameter with Spring `@Lazy`; never enable global circular references and never use field injection or `ApplicationContext.getBean`.
-- It is acceptable to expose standalone UI adapters as beans even when no service currently consumes them.
-- `ApplicationConfiguration` and every production file under `src/main/java` must use only real application beans. Never import, call, or create Mockito/JUnit mocks, spies, or test configuration there; test doubles belong only under `src/test/java`.
-- Configure the production datasource in `application.yml` from `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, and `SPRING_DATASOURCE_PASSWORD`. Never store a credential in source and never silently fall back to an in-memory production database.
-- Put the H2 in-memory datasource only in `src/test/resources/application-test.yml`, and activate that profile explicitly in tests.
-- If the supplied requirements protect operations by identity or role, configure Spring Security with an environment-provided production identity boundary and local identities only in the test profile. The FlowTest must reject unauthenticated and wrong-role requests. If no authorization requirement exists, configure the filter chain to permit the documented API instead of accepting Spring Security's generated password behavior.
-- The context test must use `@SpringBootTest`, assert that the application context loads, and
-  dynamically cover every generated Control service, API controller, outbound Gateway adapter,
-  and every generated Spring Data repository bean shown below. Do not select one domain-specific "main Control" and
-  do not mock beans or disable Flyway/JPA.
-- Do not leave TODO/FIXME markers, placeholder wording in production comments, duplicate bean definitions, or speculative configuration.
-- Create every contracted output, then finish immediately.
-
-## Exact existing Java contracts and constructors
-
-```java
-{contracts}
-```
-"""
 
 
 def _llm_config(spec: JobSpec) -> dict[str, object]:

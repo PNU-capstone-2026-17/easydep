@@ -379,10 +379,9 @@ def _run_workflow(
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
     state.pop("currentPhases", None)
 
-    # A completed work unit can change source contracts embedded in the
-    # downstream wiring prompt.
-    # Re-plan before emitting the next approval request so its hash never
-    # describes stale pre-phase context.
+    # 방금 끝난 작업의 결과와 수리 지시를 checkpoint에 반영한 뒤 다음 승인 요청을 만든다.
+    # wiring은 실패가 있을 때만 짧은 별도 수리 prompt를 받으므로 전체 source 계약을 여기서
+    # 다시 직렬화하지 않는다.
     final_state = plan_workflow(run_root, spec)
     if final_state.get("nextRunnableTasks"):
         # Every work unit performs its own focused verification.  Do not scan
