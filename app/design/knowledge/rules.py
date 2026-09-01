@@ -887,7 +887,7 @@ RULES: tuple[Rule, ...] = (
             "Every documented HTTP response status must have one explicit named "
             "Control outcome, and non-empty responses must not rely on Object/void."
         ),
-        citation="app/design/services/api_spec/extractor.py (ApiControlOutcome)",
+        citation="app/design/services/api_spec/models.py (ApiControlOutcome)",
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="api_control_outcomes",

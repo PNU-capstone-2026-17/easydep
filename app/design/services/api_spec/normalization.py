@@ -292,11 +292,32 @@ def _materialize_endpoint(
     response_type, response_is_array = response_contract_for_control(
         contract.return_type
     )
+    control_returns_void = _type_parts(contract.return_type)[0].casefold() == "void"
     responses = []
+    void_success_added = False
     for response in endpoint.get("responses") or []:
         status = int(response.get("status", 0) or 0)
+        # A void Control cannot satisfy a successful HTTP response-body
+        # contract.  Keep the accepted BCE operation authoritative and
+        # canonicalize an LLM-proposed 2xx response to No Content before the
+        # response schema and named outcomes are derived.  Without this step
+        # every API-only revision is normalized back to the same invalid
+        # ``200 + empty schema`` candidate and the repair loop stalls.
+        void_success = control_returns_void and 200 <= status < 300
+        if void_success and void_success_added:
+            continue
+        normalized_void_success = void_success and status != 204
+        if void_success:
+            status = 204
+            void_success_added = True
         responses.append({
             **response,
+            "status": status,
+            **(
+                {"description": "Completed successfully with no response body."}
+                if normalized_void_success
+                else {}
+            ),
             "schema_name": response_type if 200 <= status < 300 and status != 204 else "",
             "is_array": response_is_array if 200 <= status < 300 and status != 204 else False,
         })
