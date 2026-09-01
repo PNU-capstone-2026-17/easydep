@@ -1,12 +1,14 @@
 <script lang="ts">
-  import { Braces, Check, CheckCircle2, Clock3, Copy, FileCode2, FileText, Image, Layers3, LoaderCircle, Maximize2, ShieldCheck, X } from '@lucide/svelte';
-  import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceFile, LiveSourceSnapshot, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
+  import { Braces, Check, CheckCircle2, Clock3, Copy, FileText, Image, Layers3, LoaderCircle, Maximize2, ShieldCheck, X } from '@lucide/svelte';
+  import { Dialog } from 'bits-ui';
+  import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
   import { getArtifactFile, getFileArtifactVersions, getLiveImplementationFile, getSequenceDiagrams, getVersions } from '$lib/api';
   import { errorMessage } from '$lib/utils';
   import ArtifactVisualization from '$lib/components/ArtifactVisualization.svelte';
   import ArtifactNavigator from '$lib/components/ArtifactNavigator.svelte';
   import DraggableDiagramViewport from '$lib/components/DraggableDiagramViewport.svelte';
   import ReadOnlySourceViewer from '$lib/components/ReadOnlySourceViewer.svelte';
+  import SourceFileExplorer from '$lib/components/SourceFileExplorer.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { artifactLabels, artifactPresent, diagramArtifactTypes, requirementsArtifactTypes } from '$lib/artifacts';
 
@@ -56,7 +58,10 @@
   let selectedFile = $state('');
   let fileContent = $state('');
   let fileError = $state('');
+  let fileLoading = $state(false);
+  let sourceExpanded = $state(false);
   let loadedFileKey = '';
+  let fileRequestVersion = 0;
   let copiedFile = $state(false);
   let sequenceDiagrams = $state<SequenceDiagramSummary[]>([]);
   let sequenceError = $state('');
@@ -80,7 +85,6 @@
       Object.keys(fileArtifacts).filter((stage) => Boolean(fileArtifacts[stage]))
     )
   );
-  let fileTreeRows = $derived(buildFileTree(fileArtifact?.files ?? []));
   let validation = $derived(document?.validation?.[selected]);
   // The sequence artifact itself changes when feedback is applied, even when
   // the UC summary list keeps the same IDs.  Track it separately so images
@@ -102,6 +106,7 @@
       previouslySelected = currentSelection;
       tab = 'artifact';
       diagramExpanded = false;
+      sourceExpanded = false;
       deploymentView = 'runtime';
       expandedSequence = null;
       indexOpen = false;
@@ -154,8 +159,11 @@
   $effect(() => {
     const snapshot = fileArtifact;
     if (!snapshot) {
+      fileRequestVersion += 1;
       selectedFile = '';
       fileContent = '';
+      fileLoading = false;
+      sourceExpanded = false;
       loadedFileKey = '';
       return;
     }
@@ -178,52 +186,53 @@
     if (loadedFileKey !== nextKey) void loadFile(nextFile.path, nextKey);
   });
 
-  async function loadFile(path: string, expectedKey = '') {
+  async function loadFile(path: string, expectedKey = '', reveal = false) {
     if (!path) return;
+    const requestVersion = ++fileRequestVersion;
+    if (expectedKey) loadedFileKey = expectedKey;
     selectedFile = path;
     onFileSelect?.(path);
     fileError = '';
+    fileLoading = true;
+    if (reveal) sourceExpanded = true;
     const requestSelection = selected;
     try {
       const response =
         requestSelection === 'LIVE_SOURCE' && liveSources
           ? await getLiveImplementationFile(appId, liveSources.job_id, path)
           : await getArtifactFile(appId, requestSelection, path);
-      if (requestSelection !== selected || path !== selectedFile) return;
+      if (
+        requestVersion !== fileRequestVersion ||
+        requestSelection !== selected ||
+        path !== selectedFile
+      ) return;
       fileContent = response.content;
       loadedFileKey = expectedKey || `${requestSelection}:${path}:${response.sha256}`;
     } catch (error) {
-      if (requestSelection !== selected || path !== selectedFile) return;
+      if (
+        requestVersion !== fileRequestVersion ||
+        requestSelection !== selected ||
+        path !== selectedFile
+      ) return;
       fileError = errorMessage(error);
       fileContent = '';
       loadedFileKey = '';
+    } finally {
+      if (requestVersion === fileRequestVersion) fileLoading = false;
     }
   }
 
-  type TreeRow =
-    | { kind: 'directory'; path: string; label: string; depth: number }
-    | { kind: 'file'; path: string; label: string; depth: number; file: FileArtifactSnapshot['files'][number] | LiveSourceFile };
-
-  function buildFileTree(files: Array<FileArtifactSnapshot['files'][number] | LiveSourceFile>): TreeRow[] {
-    const rows: TreeRow[] = [];
-    const directories = new Set<string>();
-    for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
-      const parts = file.path.split('/');
-      for (let index = 0; index < parts.length - 1; index += 1) {
-        const path = parts.slice(0, index + 1).join('/');
-        if (directories.has(path)) continue;
-        directories.add(path);
-        rows.push({ kind: 'directory', path, label: parts[index], depth: index });
-      }
-      rows.push({
-        kind: 'file',
-        path: file.path,
-        label: parts.at(-1) ?? file.path,
-        depth: Math.max(0, parts.length - 1),
-        file
-      });
+  function openSourceFile(path: string) {
+    const file = fileArtifact?.files.find((candidate) => candidate.path === path);
+    const expectedKey = file ? `${selected}:${path}:${file.sha256}` : '';
+    if (expectedKey && loadedFileKey === expectedKey && fileContent) {
+      selectedFile = path;
+      onFileSelect?.(path);
+      fileError = '';
+      sourceExpanded = true;
+      return;
     }
-    return rows;
+    void loadFile(path, expectedKey, true);
   }
 
   function fileLanguage(path: string): string {
@@ -254,6 +263,7 @@
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       diagramExpanded = false;
+      sourceExpanded = false;
       indexOpen = false;
     }
   }
@@ -370,8 +380,8 @@
     {/each}
   </div>
 
-  <div class="scrollbar-thin flex-1 overflow-auto bg-[#fbfbf8] p-4 md:p-5">
-    <div class="mx-auto w-full max-w-6xl">
+  <div class="scrollbar-thin flex-1 overflow-auto bg-[#fbfbf8]">
+    <div class="min-h-full w-full">
     {#if classGenerating && selected === 'class_diagram' && !displayContent}
       <div class="mt-16 text-center text-[#5d7565]" role="status">
         <LoaderCircle class="mx-auto mb-3 animate-spin" size={25} strokeWidth={1.5} />
@@ -385,20 +395,20 @@
       </div>
     {:else if tab === 'artifact'}
       {#if liveClassPreview}
-        <div class="mb-4 rounded-xl border border-[#b8d7c5] bg-[#eef8f1] px-3 py-2 text-xs leading-5 text-[#24553d]" role="status">
+        <div class="border-b border-[#b8d7c5] bg-[#eef8f1] px-3 py-2 text-xs leading-5 text-[#24553d]" role="status">
           <strong>Generating the class diagram</strong>
           <span class="ml-1">{liveClassPreview.completed}/{liveClassPreview.total || '?'} · {liveClassPreview.unit || liveClassPreview.phase}</span>
         </div>
       {/if}
       {#if selected === 'deployment_diagram' && document?.artifact_metadata?.deployment_diagram?.readOnly}
-        <div class="mb-4 rounded-xl border border-[#e3c98b] bg-[#fff8e7] p-3 text-xs leading-5 text-[#755b24]" role="status">
+        <div class="border-b border-[#e3c98b] bg-[#fff8e7] px-3 py-2 text-xs leading-5 text-[#755b24]" role="status">
           <strong class="block">Legacy deployment plan is read-only</strong>
           <span>{document.artifact_metadata.deployment_diagram.regeneration?.reason ?? 'Regenerate this artifact as WorkloadGraph v2 before editing or IaC generation.'}</span>
         </div>
       {/if}
       {#if fileArtifact}
-        <section class="overflow-hidden rounded-xl border border-[#d9ddd7] bg-white shadow-[0_10px_24px_rgba(32,48,38,.06)]" aria-label="Implementation source review">
-          <header class="border-b border-[#e4e7e1] bg-[#f6f8f4] px-3 py-3">
+        <section class="overflow-hidden bg-white" aria-label="Implementation source review">
+          <header class="border-b border-[#e4e7e1] bg-[#f6f8f4] px-3 py-2">
             <div class="flex items-start justify-between gap-3">
               <div>
                 <p class="text-[10px] font-bold uppercase tracking-[.13em] text-[#65806d]">{selected === 'LIVE_SOURCE' ? 'Writing now' : 'Implementation review'}</p>
@@ -417,61 +427,18 @@
               {/each}
             </div>
           </header>
-          <div class="grid min-h-[30rem] grid-cols-[minmax(10rem,31%)_minmax(0,1fr)] bg-[#fcfdfb]">
-            <nav class="scrollbar-thin overflow-auto border-r border-[#e4e7e1] bg-[#f5f7f3] p-2" aria-label="Source files">
-              <p class="px-2 pb-2 pt-1 text-[9px] font-bold uppercase tracking-[.13em] text-[#83887e]">Explorer</p>
-              <div class="space-y-0.5">
-                {#each fileTreeRows as row (`${row.kind}:${row.path}`)}
-                  {#if row.kind === 'directory'}
-                    <div
-                      class="flex items-center gap-1.5 py-1 text-[10px] font-semibold text-[#7a8077]"
-                      style={`padding-left: ${0.5 + row.depth * 0.75}rem`}
-                      title={row.path}
-                    >
-                      <span class="text-[#9aa198]">▾</span><span class="truncate">{row.label}</span>
-                    </div>
-                  {:else}
-                    <button
-                      class="focus-ring flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[11px] transition {selectedFile === row.path ? 'bg-[#dceee1] text-[#24553d]' : 'text-[#596057] hover:bg-[#e9eee9]'} disabled:cursor-wait disabled:opacity-60"
-                      style={`padding-left: ${0.75 + row.depth * 0.75}rem`}
-                      onclick={() => loadFile(row.path)}
-                      disabled={'exists' in row.file && !row.file.exists}
-                      title={row.path}
-                    >
-                      <FileCode2 size={13} class="shrink-0" />
-                      <span class="min-w-0 flex-1 truncate font-mono">{row.label}</span>
-                      {#if 'status' in row.file && row.file.status === 'writing'}
-                        <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-[#3c8d62]" title="작성 중"></span>
-                      {/if}
-                    </button>
-                  {/if}
-                {/each}
-              </div>
-            </nav>
-            <div class="flex min-w-0 flex-col overflow-hidden bg-[#1e2420]">
-              <header class="flex min-w-0 items-center justify-between gap-2 border-b border-white/10 bg-[#262f29] px-3 py-2 text-[10px] text-[#c9d2ca]">
-                <div class="min-w-0 truncate font-mono">{selectedFile || 'Select a file'}</div>
-                <div class="flex shrink-0 items-center gap-2">
-                  <span class="rounded bg-white/10 px-1.5 py-0.5 text-[9px] font-semibold text-[#d9e8dc]">{fileLanguage(selectedFile)}</span>
-                  <button class="focus-ring flex items-center gap-1 rounded px-1.5 py-1 hover:bg-white/10" onclick={copySelectedFile} aria-label="Copy source code">
-                    {#if copiedFile}<Check size={12} /> Copied{:else}<Copy size={12} /> Copy{/if}
-                  </button>
-                </div>
-              </header>
-              {#if fileError}
-                <p class="m-3 rounded-md border border-[#8e4a42] bg-[#3b2623] p-2 text-xs text-[#ffb8ae]">{fileError}</p>
-              {:else}
-                <div class="min-h-0 flex-1" aria-label="Source code">
-                  <ReadOnlySourceViewer path={selectedFile} value={fileContent} />
-                </div>
-              {/if}
-            </div>
+          <div class="min-h-[26rem] bg-[#f5f7f3]">
+            <SourceFileExplorer
+              files={fileArtifact.files}
+              {selectedFile}
+              onSelect={openSourceFile}
+            />
           </div>
         </section>
       {:else}
       {#if diagramArtifactTypes.has(selected)}
-        <div class="mb-4 overflow-hidden rounded-xl border border-[#deded7] bg-white p-3">
-          <div class="mb-2 flex items-center justify-between gap-2 text-[11px] font-semibold text-[#676960]">
+        <div class="overflow-hidden bg-white">
+          <div class="flex items-center justify-between gap-2 border-b border-[#e4e4de] px-3 py-2 text-[11px] font-semibold text-[#676960]">
             <span class="flex items-center gap-2"><Image size={13} /> Rendered view</span>
             <span class="flex items-center gap-1 font-normal text-[#85877e]"><Maximize2 size={12} /> Click to expand</span>
           </div>
@@ -574,7 +541,7 @@
               </div>
             {/if}
           {:else}
-            <button class="focus-ring block w-full cursor-zoom-in rounded-lg bg-[#f8f8f5] p-2" onclick={() => expandDiagram()} aria-label={`Expand ${artifactLabels[selected]}`}>
+            <button class="focus-ring block w-full cursor-zoom-in bg-[#f8f8f5]" onclick={() => expandDiagram()} aria-label={`Expand ${artifactLabels[selected]}`}>
               <img
                 class="max-h-[68vh] w-full object-contain"
                 src={diagramImageUrl(selected)}
@@ -586,7 +553,7 @@
       {:else}
         <ArtifactVisualization stage={selected} value={displayContent} />
       {/if}
-      <details class="mt-4 rounded-xl border border-[#e1e1db] bg-white">
+      <details class="border-t border-[#e1e1db] bg-white">
         <summary class="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-[11px] font-semibold text-[#65675f]">
           <Braces size={13} /> Raw source
         </summary>
@@ -594,7 +561,7 @@
       </details>
       {/if}
     {:else if tab === 'validation'}
-      <div class="rounded-xl border border-[#e0e1da] bg-white p-4">
+      <div class="border-b border-[#e0e1da] bg-white p-3">
         <div class="mb-4 flex items-center gap-2">
           <ShieldCheck size={17} class="text-[#2d7354]" />
           <strong class="text-sm">Artifact validation</strong>
@@ -636,10 +603,10 @@
         {/if}
       </div>
     {:else if tab === 'changes'}
-      <div class="space-y-2">
+      <div class="divide-y divide-[#e1e1db]">
         {#if versionsError}<p class="text-xs text-[#9a4139]">{versionsError}</p>{/if}
         {#each versions as version}
-          <div class="rounded-xl border border-[#e1e1db] bg-white p-3 text-xs">
+          <div class="bg-white p-3 text-xs">
             <div class="flex items-center justify-between">
               <strong>Version {version.version_no ?? version.versionNo}</strong>
               <Badge tone={version.syntax_valid === false ? 'danger' : 'neutral'}>{version.origin ?? 'generated'}</Badge>
@@ -651,9 +618,9 @@
         {/each}
       </div>
     {:else}
-      <div class="space-y-2">
+      <div class="divide-y divide-[#e1e1db]">
         {#each events.filter((event) => event.stage === (fileArtifact ? 'implementation' : requirementsArtifactTypes.has(selected) ? 'requirements' : 'design')).slice().reverse() as event}
-          <div class="rounded-xl border border-[#e1e1db] bg-white p-3">
+          <div class="bg-white p-3">
             <div class="flex items-center gap-2 text-[11px] font-semibold"><Clock3 size={12} />{event.kind}</div>
             <p class="mt-2 text-xs leading-5 text-[#66685f]">{event.text}</p>
           </div>
@@ -665,6 +632,58 @@
     </div>
   </div>
 </aside>
+
+<Dialog.Root bind:open={sourceExpanded}>
+  {#if fileArtifact}
+    <Dialog.Portal>
+      <Dialog.Overlay class="fixed inset-0 z-[100] bg-[#101612]/55 backdrop-blur-sm" />
+      <Dialog.Content class="fixed inset-0 z-[101] flex min-h-0 flex-col overflow-hidden bg-[#1e2420] text-[#d7dfd8] outline-none">
+        <header class="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-white/10 bg-[#262f29] px-4 sm:px-6">
+          <div class="min-w-0 flex-1">
+            <p class="text-[9px] font-bold uppercase tracking-[.14em] text-[#8fa296]">{artifactLabels[selected] ?? 'Implementation source'}</p>
+            <Dialog.Title class="mt-0.5 truncate font-mono text-xs font-semibold">{selectedFile || 'Select a file'}</Dialog.Title>
+            <Dialog.Description class="sr-only">Browse implementation files and inspect the selected source in Monaco.</Dialog.Description>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <span class="rounded bg-white/10 px-2 py-1 text-[9px] font-semibold text-[#d9e8dc]">{fileLanguage(selectedFile)}</span>
+            <button
+              class="focus-ring flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              onclick={copySelectedFile}
+              disabled={!fileContent || fileLoading}
+              aria-label="Copy source code"
+            >
+              {#if copiedFile}<Check size={13} /> Copied{:else}<Copy size={13} /> Copy{/if}
+            </button>
+            <Dialog.Close class="focus-ring flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs hover:bg-white/10" aria-label="Close source detail">
+              <X size={15} /> Close
+            </Dialog.Close>
+          </div>
+        </header>
+        <div class="flex min-h-0 flex-1 overflow-hidden">
+          <aside class="h-full min-h-0 w-44 min-w-36 shrink-0 border-r border-white/10 bg-[#202722] sm:w-52 md:w-64 md:min-w-52" aria-label="Source file explorer">
+            <SourceFileExplorer
+              files={fileArtifact.files}
+              {selectedFile}
+              mode="modal"
+              onSelect={openSourceFile}
+            />
+          </aside>
+          <div class="min-h-0 min-w-0 flex-1 overflow-hidden">
+            {#if fileLoading}
+              <div class="flex h-full items-center justify-center gap-2 text-xs text-[#b9c8bd]" role="status">
+                <LoaderCircle size={16} class="animate-spin" /> Loading source…
+              </div>
+            {:else if fileError}
+              <p class="m-4 rounded-md border border-[#8e4a42] bg-[#3b2623] p-3 text-xs text-[#ffb8ae]">{fileError}</p>
+            {:else}
+              <ReadOnlySourceViewer path={selectedFile} value={fileContent} />
+            {/if}
+          </div>
+        </div>
+      </Dialog.Content>
+    </Dialog.Portal>
+  {/if}
+</Dialog.Root>
 
 {#if diagramExpanded && diagramArtifactTypes.has(selected)}
   <div

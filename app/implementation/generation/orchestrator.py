@@ -35,6 +35,7 @@ from ..planning.design_context import (
 )
 from ..workflows.conformance import capture_generated_contracts
 from .frontend import generate_frontend_project
+from .frontend_scaffold import installed_openapi_generator
 from .java_scaffold import (
     JAVA_SCAFFOLDER_VERSION,
     JavaScaffoldInput,
@@ -627,14 +628,18 @@ class PrototypeOrchestrator:
             }
 
     def _generate_openapi(self, application: Path) -> None:
-        command = [
-            "docker", "run", "--rm",
-            "-v", self._workspace_volume(),
-            "-w", CONTAINER_WORKSPACE.as_posix(),
-            OPENAPI_GENERATOR_IMAGE, "generate",
+        jar = installed_openapi_generator()
+        input_path = (
+            str(self.spec.inputs["openapi"])
+            if jar
+            else self._container_path(self.spec.inputs["openapi"])
+        )
+        output_path = str(application) if jar else self._container_path(application)
+        generator_arguments = [
+            "generate",
             "-g", "spring",
-            "-i", self._container_path(self.spec.inputs["openapi"]),
-            "-o", self._container_path(application),
+            "-i", input_path,
+            "-o", output_path,
             "--additional-properties=" + ",".join(
                 [
                     "library=spring-boot",
@@ -652,6 +657,21 @@ class PrototypeOrchestrator:
             ),
             "--global-property", "apis,models",
         ]
+        command = (
+            ["java", "-jar", str(jar), *generator_arguments]
+            if jar
+            else [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                self._workspace_volume(),
+                "-w",
+                CONTAINER_WORKSPACE.as_posix(),
+                OPENAPI_GENERATOR_IMAGE,
+                *generator_arguments,
+            ]
+        )
         evidence = self._run_command(
             "openapi-generator", command, self.spec.workspace_root
         )
@@ -675,7 +695,8 @@ class PrototypeOrchestrator:
                 )
             )
         self._sink().tools["openapi-generator"] = {
-            "image": OPENAPI_GENERATOR_IMAGE,
+            "kind": "bundled-jar" if jar else "docker-image",
+            "version": "7.24.0",
         }
 
     def _generate_openapi_controllers(self, application: Path) -> None:
@@ -914,14 +935,19 @@ public class SecurityConfiguration {{
         )
 
     def _compile(self, application: Path) -> None:
-        # Do not mount the Windows-host Gradle cache into the container. Gradle's
-        # FileAccessTimeJournal is lock-sensitive and can fail before compilation
-        # with WinError 5/I/O errors when the host cache is shared by jobs. The
-        # generator image keeps its own dependency layers; an isolated container
-        # home trades cache reuse for a reliable pre-approval compile gate.
-        self._run_command(
-            "gradle-compile",
-            [
+        # 공용 툴체인 안에서는 설치된 Gradle을 바로 사용한다. 로컬 개발자가 아직 툴체인
+        # 이미지를 쓰지 않고 Gradle도 설치하지 않은 경우에만 기존 Docker 경로를 사용한다.
+        local_gradle = shutil.which("gradle")
+        if local_gradle:
+            command = [
+                local_gradle,
+                "compileJava",
+                "--no-daemon",
+                "-Dorg.gradle.vfs.watch=false",
+                "--build-cache",
+            ]
+        else:
+            command = [
                 "docker", "run", "--rm",
                 "-v", self._workspace_volume(),
                 "-e", "GRADLE_USER_HOME=/tmp/easydep-gradle-home",
@@ -932,7 +958,10 @@ public class SecurityConfiguration {{
                 "--no-daemon",
                 "-Dorg.gradle.vfs.watch=false",
                 "--build-cache",
-            ],
+            ]
+        self._run_command(
+            "gradle-compile",
+            command,
             application,
             timeout_seconds=GRADLE_COMMAND_TIMEOUT_SECONDS,
         )
@@ -943,9 +972,9 @@ public class SecurityConfiguration {{
         # agents/verification/build.py repackages after approval, the delivery
         # images build their own jar from source, and _persist_outputs skips
         # every `build/` path.
-        local_gradle = application / ".gradle"
-        if local_gradle.exists():
-            shutil.rmtree(local_gradle)
+        local_state = application / ".gradle"
+        if local_state.exists():
+            shutil.rmtree(local_state)
 
     def _run_command(
         self,

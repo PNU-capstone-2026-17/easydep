@@ -44,6 +44,7 @@ def run_verification_graph(
     application_dir: str = "",
     repair_history: dict[str, Any] | None = None,
     implementation_job_id: str | None = None,
+    run_dynamic: bool = True,
 ) -> dict[str, Any]:
     with langsmith_metrics.trace_scope(
         "easydep.testing.verification",
@@ -62,6 +63,7 @@ def run_verification_graph(
             application_dir=application_dir,
             repair_history=repair_history,
             implementation_job_id=implementation_job_id,
+            run_dynamic=run_dynamic,
         )
 
 
@@ -73,6 +75,7 @@ def _run_verification_graph(
     application_dir: str = "",
     repair_history: dict[str, Any] | None = None,
     implementation_job_id: str | None = None,
+    run_dynamic: bool = True,
 ) -> dict[str, Any]:
     """저장된 애플리케이션을 실행한 뒤 testing graph를 호출한다.
 
@@ -84,24 +87,9 @@ def _run_verification_graph(
     application: dict[str, Any] = {}
     launch_error: str | None = None
 
-    try:
-        with _launch(
-            app_id,
-            target_url,
-            launch_id=run_id,
-            application_dir=application_dir,
-        ) as (url, application):
-            result = graph.invoke(
-                initial_state(
-                    run_id=run_id,
-                    app_id=app_id,
-                    target_url=url,
-                    application_dir=application_dir,
-                    repair_history=repair_history,
-                )
-            )
-    except ApplicationLaunchError as error:
-        launch_error = str(error)
+    if not run_dynamic:
+        # 전체 test나 frontend build가 이미 실패했다면 Docker image까지 만들 이유가 없다.
+        # 정적 설정 검사는 계속 실행하고 동적 노드는 target URL이 없으므로 SKIPPED가 된다.
         result = graph.invoke(
             initial_state(
                 run_id=run_id,
@@ -110,12 +98,38 @@ def _run_verification_graph(
                 repair_history=repair_history,
             )
         )
+    else:
+        try:
+            with _launch(
+                app_id,
+                target_url,
+                launch_id=run_id,
+                application_dir=application_dir,
+            ) as (url, application):
+                result = graph.invoke(
+                    initial_state(
+                        run_id=run_id,
+                        app_id=app_id,
+                        target_url=url,
+                        application_dir=application_dir,
+                        repair_history=repair_history,
+                    )
+                )
+        except ApplicationLaunchError as error:
+            launch_error = str(error)
+            result = graph.invoke(
+                initial_state(
+                    run_id=run_id,
+                    app_id=app_id,
+                    application_dir=application_dir,
+                    repair_history=repair_history,
+                )
+            )
 
     reports = {
         "static": result.get("static_report"),
         "iac": result.get("iac_report"),
         "dynamicFunctional": result.get("dynamic_functional_report"),
-        "dynamicNfr": result.get("dynamic_nfr_report"),
     }
     blocking = (
         f"애플리케이션을 실행하지 못해 동적 테스트를 수행할 수 없습니다: {launch_error}"
@@ -143,13 +157,21 @@ def _run_verification_graph(
 
 
 def blocking_reason(reports: dict[str, Any]) -> str | None:
-    """전체 검증을 실패로 처리할 이유를 반환하며, 문제가 없으면 ``None``을 반환한다.
+    """정적 또는 동적 필수 검사가 실패한 첫 번째 이유를 반환한다."""
+    for label, key in (("배포 설정", "static"), ("IaC", "iac")):
+        report = reports.get(key) or {}
+        if str(report.get("status") or "").upper() == "FAILED":
+            issues = report.get("issues") or []
+            detail = str(issues[0]) if issues else str(report.get("message") or "")
+            return f"{label} 정적 검사에 실패했습니다: {detail}".rstrip()
 
-    정적 설정 문제는 진단에는 남기지만, 동적 기능 검사 실패만 전체 결과를 차단한다.
-    """
     report = reports.get("dynamicFunctional") or {}
     if str(report.get("status", "")).upper() == "FAILED":
-        return str(report.get("reason") or "Dynamic functional tests failed.")
+        return str(
+            report.get("reason")
+            or report.get("stderr")
+            or "동적 기능 테스트에 실패했습니다."
+        )[-2000:]
     return None
 
 
@@ -171,7 +193,7 @@ def misconfiguration_diagnostics(reports: dict[str, Any]) -> list[dict[str, str]
             diagnostics.append(
                 {
                     "code": f"{subject}_MISCONFIGURATION",
-                    "message": f"Trivy found {len(issues)} issue(s): "
+                    "message": f"정적 검사에서 {len(issues)}개 문제를 찾았습니다: "
                     + "; ".join(issues[:5]),
                 }
             )

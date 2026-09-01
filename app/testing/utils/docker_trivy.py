@@ -1,45 +1,74 @@
 import json
+import shutil
 import subprocess
-from typing import Any
+
+from app.testing.runtime.process import run_process_tree
+
 
 def run_trivy_scan(target_dir: str) -> list[str]:
+    """Trivy 구성 검사를 실행하고 발견한 문제를 읽기 쉬운 문자열로 반환한다.
+
+    공용 툴체인 안에서는 설치된 ``trivy``를 바로 실행한다. 로컬 개발자가 아직 툴체인
+    이미지를 사용하지 않는 경우에만 기존 Docker 이미지 실행을 예비 경로로 남긴다.
     """
-    Runs Trivy config scan on a given directory via Docker and parses the results.
-    Returns a list of issue strings.
-    """
-    cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{target_dir}:/src",
-        "aquasec/trivy", "config", "/src",
-        "--format", "json",
-        "--severity", "HIGH,CRITICAL"
-    ]
-    
+    executable = shutil.which("trivy")
+    command = (
+        [
+            executable,
+            "config",
+            target_dir,
+            "--format",
+            "json",
+            "--severity",
+            "HIGH,CRITICAL",
+        ]
+        if executable
+        else [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{target_dir}:/src:ro",
+            "aquasec/trivy:0.74.0",
+            "config",
+            "/src",
+            "--format",
+            "json",
+            "--severity",
+            "HIGH,CRITICAL",
+        ]
+    )
+
     try:
-        # trivy may exit with non-zero if issues are found, so check=False is used
-        # We capture stdout and stderr separately, because older trivy versions might mix logs.
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        
-        # Trivy output might be empty or invalid JSON if docker fails to run
+        result = run_process_tree(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=300,
+        )
         if not result.stdout.strip():
-            return [f"Trivy scan failed or returned no output. Stderr: {result.stderr}"]
+            return [f"Trivy가 결과를 반환하지 않았습니다: {result.stderr[-2000:]}"]
 
         try:
             parsed = json.loads(result.stdout)
         except json.JSONDecodeError:
-            return [f"Failed to parse Trivy JSON output. Output: {result.stdout[:200]}"]
+            return [f"Trivy JSON 결과를 읽을 수 없습니다: {result.stdout[:500]}"]
 
-        issues = []
-        # 'Results' contains the findings per file
+        issues: list[str] = []
         results = parsed.get("Results", [])
-        for r in results:
-            target = r.get("Target", "Unknown File")
-            misconfigs = r.get("Misconfigurations", [])
+        for result_item in results:
+            target = result_item.get("Target", "Unknown File")
+            misconfigs = result_item.get("Misconfigurations", [])
             for misconf in misconfigs:
-                msg = f"[{target}] {misconf.get('Title', 'Unknown Issue')} ({misconf.get('Severity', 'UNKNOWN')}): {misconf.get('Message', '')}"
-                issues.append(msg)
-                
+                issues.append(
+                    f"[{target}] {misconf.get('Title', 'Unknown Issue')} "
+                    f"({misconf.get('Severity', 'UNKNOWN')}): "
+                    f"{misconf.get('Message', '')}"
+                )
         return issues
-        
-    except Exception as e:
-        return [f"Error running Trivy container: {str(e)}"]
+
+    except (OSError, subprocess.SubprocessError) as error:
+        return [f"Trivy 실행 실패: {error}"]

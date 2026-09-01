@@ -7,6 +7,7 @@
   import ChatTimeline from '$lib/components/ChatTimeline.svelte';
   import Composer from '$lib/components/Composer.svelte';
   import StageRail from '$lib/components/StageRail.svelte';
+  import ResizableWorkspace from '$lib/components/ResizableWorkspace.svelte';
   import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getLiveImplementationSources, getWorkspace, listApps, saveDeploymentPreferences, sendCommand } from '$lib/api';
   import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, Stage, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
   import { errorMessage } from '$lib/utils';
@@ -24,12 +25,12 @@
   const AUTO_MODE_STORAGE_KEY = 'easydep:auto-mode';
 
   let appId = $state('');
-  let apps = $state<WorkspaceApp[]>([]);
-  let events = $state<WorkspaceEvent[]>([]);
-  let command = $state<WorkspaceCommand | null>(null);
+  let apps = $state.raw<WorkspaceApp[]>([]);
+  let events = $state.raw<WorkspaceEvent[]>([]);
+  let command = $state.raw<WorkspaceCommand | null>(null);
   let currentStage = $state<Stage>('requirements');
-  let artifacts = $state<ArtifactDocument | null>(null);
-  let fileArtifacts = $state<Record<string, FileArtifactSnapshot>>({});
+  let artifacts = $state.raw<ArtifactDocument | null>(null);
+  let fileArtifacts = $state.raw<Record<string, FileArtifactSnapshot>>({});
   let selectedArtifact = $state('refined_requirements');
   let sidebarCollapsed = $state(false);
   let artifactOpen = $state(true);
@@ -516,8 +517,8 @@
     {#if !appId}
       <div class="flex flex-1 items-center justify-center text-sm text-[#777970]">Select an application on the left or start a new one.</div>
     {:else}
-      <div class="relative grid min-h-0 flex-1 overflow-hidden {artifactOpen ? 'grid-cols-[minmax(440px,1fr)_minmax(400px,42%)]' : 'grid-cols-1'}">
-        <section class="flex min-h-0 flex-col overflow-hidden bg-[#f7f7f4]">
+      <ResizableWorkspace sidebarOpen={artifactOpen}>
+        <section class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#f7f7f4]">
           <div
             class="scrollbar-thin min-h-0 flex-1 overflow-y-auto overscroll-contain"
             bind:this={timelineScroller}
@@ -553,7 +554,7 @@
             onToggleAutoMode={toggleAutoMode}
           />
         </section>
-        {#if artifactOpen}
+        {#snippet sidebar()}
           <ArtifactPane
             {appId}
             document={artifacts}
@@ -572,8 +573,8 @@
             onFileSelect={(path) => (selectedSourcePath = path)}
             onClose={() => (artifactOpen = false)}
           />
-        {/if}
-      </div>
+        {/snippet}
+      </ResizableWorkspace>
     {/if}
   </main>
 </div>

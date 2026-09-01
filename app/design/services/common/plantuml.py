@@ -121,9 +121,18 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
                 renderer="local",
             )
             return ["PlantUML syntax check timed out."]
+    # 배포 이미지에는 PlantUML JAR가 이미 들어 있다. Docker를 다시 호출하지 않고 같은
+    # JAR를 사용해야 문법 검사와 상시 이미지 렌더러의 버전도 정확히 일치한다.
+    jar = _find_plantuml_jar()
+    command = (
+        ["java", "-jar", str(jar), "-charset", "UTF-8", "-syntax", "-pipe"]
+        if jar
+        else plantuml_command("-syntax", "-pipe")
+    )
+    renderer = "jar" if jar else "docker"
     try:
         docker_result = subprocess.run(
-            plantuml_command("-syntax", "-pipe"),
+            command,
             input=puml_text.encode("utf-8"),
             capture_output=True,
             stdin=None,
@@ -134,16 +143,18 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
         log_design_timing(
             "plantuml.syntax_check.failed",
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
-            reason="docker_not_available",
+            reason="renderer_not_available",
             source_chars=len(puml_text),
+            renderer=renderer,
         )
-        return ["Docker is not installed or plantuml/plantuml cannot be executed."]
+        return ["PlantUML JAR 또는 Docker를 실행할 수 없습니다."]
     except subprocess.TimeoutExpired:
         log_design_timing(
             "plantuml.syntax_check.failed",
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
             reason="timeout",
             source_chars=len(puml_text),
+            renderer=renderer,
         )
         return ["PlantUML syntax check timed out."]
 
@@ -160,6 +171,7 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
             exit_code=docker_result.returncode,
             source_chars=len(puml_text),
             syntax_valid=False,
+            renderer=renderer,
         )
         return errors
 
@@ -172,6 +184,7 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
             exit_code=docker_result.returncode,
             source_chars=len(puml_text),
             syntax_valid=False,
+            renderer=renderer,
         )
         return errors
 
@@ -181,6 +194,7 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
         exit_code=docker_result.returncode,
         source_chars=len(puml_text),
         syntax_valid=True,
+        renderer=renderer,
     )
     return []
 

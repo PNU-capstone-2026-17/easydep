@@ -116,36 +116,7 @@ def test_one_scenario_method_can_cover_multiple_use_cases(tmp_path: Path) -> Non
     assert result["status"] == "PASSED"
     assert result["coveredUseCaseIds"] == ["UC1", "UC2", "UC3"]
     assert [task["requiredPassedCases"] for task in result["tasks"]] == [1]
-    
-def test_agent_workspace_refresh_preserves_ignored_build_outputs(
-    tmp_path: Path,
-) -> None:
-    """재시도 준비는 Windows가 잠글 수 있는 Gradle 산출물을 건드리지 않는다."""
-    run = tmp_path / "generated" / "runs" / "run_abcdef1234567890"
-    source = run / "application" / "src" / "Main.java"
-    source.parent.mkdir(parents=True)
-    source.write_text("class Main {}", encoding="utf-8")
-    task = {"task_id": "locked-build", "allowed_write_paths": []}
 
-    with patch(
-        "app.implementation.agents.workspace.tempfile.gettempdir",
-        return_value=str(tmp_path / "temp"),
-    ):
-        sandbox = prepare_agent_workspace(run, task)
-        build_output = (
-            sandbox
-            / "application/build/test-results/test/binary/output.bin"
-        )
-        build_output.parent.mkdir(parents=True)
-        build_output.write_bytes(b"test output")
-        stale_source = sandbox / "application/src/Stale.java"
-        stale_source.write_text("class Stale {}", encoding="utf-8")
-
-        refreshed = prepare_agent_workspace(run, task)
-
-    assert refreshed == sandbox
-    assert build_output.read_bytes() == b"test output"
-    assert not stale_source.exists()
 
 def test_agent_workspace_refresh_preserves_ignored_build_outputs(
     tmp_path: Path,
@@ -947,67 +918,54 @@ class Order <<Entity>> { - id: UUID }
     assert "Write the focused JUnit scenario first" not in uc1_prompt
 
 
-def test_scenario_failure_returns_to_automatic_repair_without_user_input(
+def test_completed_workflow_hands_full_verification_to_testing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """최종 검사도 오류 파일을 원래 소유한 기능 작업으로 돌려보낸다."""
+    """구현은 산출물을 완성하고 전체 build·container 검사는 실행하지 않는다."""
     run = tmp_path / "run"
-    flow_path = "application/src/test/java/com/example/OrderScenarioTest.java"
-    flow = run / flow_path
-    flow.parent.mkdir(parents=True)
-    flow.write_text("class OrderScenarioTest {}", encoding="utf-8")
     reports = run / "reports"
     reports.mkdir(parents=True)
-    (reports / "run-manifest.json").write_text(
-        json.dumps(
-            {
-                "implementation_tasks": [
-                    {
-                        "task_id": "implement-order-use-cases",
-                        "task_type": "use-case",
-                        "allowed_write_paths": [flow_path],
-                    },
-                    {
-                        "task_id": "implement-application-wiring",
-                        "task_type": "wiring",
-                        "allowed_write_paths": [flow_path],
-                    },
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
     monkeypatch.setattr(
         "app.implementation.workflows.coordinator.plan_workflow",
         lambda *_args: {
             "status": "COMPLETE",
             "tasks": [
-                {"task_id": "implement-order-use-cases", "status": "SUCCEEDED", "phase": "use-cases"}
+                {
+                    "task_id": "implement-order-use-cases",
+                    "status": "SUCCEEDED",
+                    "phase": "use-cases",
+                }
             ],
             "phases": [{"phaseId": "use-cases", "status": "SUCCEEDED"}],
             "nextRunnableTasks": [],
         },
     )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_source_design_conformance",
+        lambda *_args: {"status": "PASSED"},
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator._render_deployment_if_configured",
+        lambda *_args: (None, None),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.build_rtm_traceability_map",
+        lambda *_args: {"summary": {"missing": 0}},
+    )
 
-    def failed_scenario(_run_root: Path) -> dict[str, object]:
-        raise WorkspaceVerificationError(
-            {
-                "command": ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"],
-                "exitCode": 1,
-                "stderr": f"{flow_path}: scenario assertion failed",
-            }
-        )
-
-    result = run_workflow(run, SimpleNamespace(app_id="app-1"), None, verifier=failed_scenario)
+    result = run_workflow(
+        run,
+        SimpleNamespace(app_id="app-1", inputs={}),
+        None,
+        auditor=lambda _run: {"status": "COMPLETE"},
+    )
 
     assert result["status"] == "COMPLETE"
-    assert result.get("blockingReason") is None
-    assert result["repairPlan"] == "reports/repair-plan.json"
-    repair = json.loads((reports / "repair-plan.json").read_text(encoding="utf-8"))
-    assert repair["status"] == "ACTIVE"
-    assert repair["entries"][-1]["ownerTaskIds"] == ["implement-order-use-cases"]
-    assert repair["entries"][-1]["repairPaths"] == [flow_path]
+    assert result["testingRequired"] is True
+    assert (run / "application/Dockerfile").is_file()
+    assert not (reports / "final-verification.json").exists()
+    assert not (reports / "container-runtime-smoke.json").exists()
 
 
 def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
@@ -1105,77 +1063,6 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     )
     assert not extra.exists()
     cleanup_agent_workspace(restored)
-
-
-def test_retried_release_failure_returns_to_wiring_repair(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """완료 작업을 재검증하다 난 컨테이너 오류도 wiring 수리로 이어진다."""
-    run = tmp_path / "run"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "run-manifest.json").write_text(
-        json.dumps(
-            {
-                "implementation_tasks": [
-                    {
-                        "task_id": "implement-application-wiring",
-                        "task_type": "wiring",
-                        "allowed_write_paths": ["application/src/main/java"],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    completed = {
-        "status": "COMPLETE",
-        "tasks": [
-            {
-                "task_id": "implement-application-wiring",
-                "status": "SUCCEEDED",
-                "phase": "wiring",
-            }
-        ],
-        "phases": [{"phaseId": "wiring", "status": "SUCCEEDED"}],
-        "nextRunnableTasks": [],
-    }
-    monkeypatch.setattr(
-        "app.implementation.workflows.coordinator.plan_workflow",
-        lambda *_args: dict(completed),
-    )
-    monkeypatch.setattr(
-        "app.implementation.workflows.coordinator.verify_source_design_conformance",
-        lambda *_args: {"status": "PASSED"},
-    )
-
-    def failed_container(*_args: object) -> None:
-        raise WorkspaceVerificationError(
-            {
-                "command": ["docker", "runtime-smoke"],
-                "exitCode": 1,
-                "stderr": "frontend HTTP probe failed: HTTP 401 Unauthorized",
-            }
-        )
-
-    monkeypatch.setattr(
-        "app.implementation.workflows.coordinator._complete_release",
-        failed_container,
-    )
-
-    result = run_workflow(
-        run,
-        SimpleNamespace(app_id="app-1"),
-        None,
-        verifier=lambda _run: {"status": "SUCCEEDED"},
-        auditor=lambda _run: {"status": "COMPLETE"},
-    )
-
-    assert result.get("blockingReason") is None
-    repair = json.loads((reports / "repair-plan.json").read_text(encoding="utf-8"))
-    assert repair["entries"][-1]["ownerTaskIds"] == ["implement-application-wiring"]
-    assert "401 Unauthorized" in repair["entries"][-1]["evidence"]
 
 
 def test_source_conformance_rejects_agent_changes_to_generated_contract(
@@ -1311,12 +1198,8 @@ def test_cloud_spec_renders_deployment_and_matching_iac(tmp_path: Path) -> None:
     spec = SimpleNamespace(name="orders", inputs={"cloud": cloud})
     run = tmp_path / "run"
 
-    with patch(
-        "app.implementation.delivery.terraform.validate_terraform",
-        return_value={"status": "SUCCEEDED"},
-    ):
-        deployment = render_deployment(run, spec)
-        iac = render_iac(run, spec)
+    deployment = render_deployment(run, spec)
+    iac = render_iac(run, spec)
 
     assert deployment["intentSource"] == "implementation-agent-inference"
     assert deployment["kubernetesManifests"] is False

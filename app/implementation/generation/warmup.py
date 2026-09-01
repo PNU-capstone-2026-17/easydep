@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -15,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from ..runtime.linux_runner_transport import RUNNER_GRADLE_CACHE_VOLUME
+from ..runtime.linux_runner_transport import configured_runner_image
 from .frontend_scaffold import react_scaffold_files
-from .orchestrator import GRADLE_GENERATOR_IMAGE, OPENAPI_GENERATOR_IMAGE
 
 WARMUP_SCHEMA = "easydep-implementation-warmup/v1alpha1"
 WARMUP_GRADLE_BUILD = """plugins {
@@ -89,12 +90,16 @@ def warmup_implementation_runtime(
         )
         return ok
 
-    # Immutable image tags are checked locally first, so a normal server restart
-    # does not wait on a registry request just to learn an image is already warm.
-    for image in (OPENAPI_GENERATOR_IMAGE, GRADLE_GENERATOR_IMAGE):
-        available = run("inspect-" + image.replace("/", "-"), ["docker", "image", "inspect", image], repository_root)
+    # API·구현·Testing이 같은 이미지를 사용하므로 별도 OpenAPI/Gradle 이미지를 받지 않는다.
+    toolchain_image = configured_runner_image()
+    if toolchain_image:
+        available = run(
+            "inspect-toolchain",
+            ["docker", "image", "inspect", toolchain_image],
+            repository_root,
+        )
         if not available:
-            run("pull-" + image.replace("/", "-"), ["docker", "pull", image], repository_root)
+            run("pull-toolchain", ["docker", "pull", toolchain_image], repository_root)
 
     gradle_project = root / "gradle"
     gradle_project.mkdir(parents=True, exist_ok=True)
@@ -117,9 +122,17 @@ def warmup_implementation_runtime(
         "}\n",
         encoding="utf-8",
     )
-    run(
-        "warm-gradle-dependencies",
-        [
+    local_gradle = shutil.which("gradle")
+    if local_gradle:
+        gradle_command = [
+            local_gradle,
+            "compileJava",
+            "--no-daemon",
+            "-Dorg.gradle.vfs.watch=false",
+            "--build-cache",
+        ]
+    elif toolchain_image:
+        gradle_command = [
             "docker",
             "run",
             "--rm",
@@ -133,13 +146,19 @@ def warmup_implementation_runtime(
             "GRADLE_USER_HOME=/tmp/easydep-gradle-home",
             "-w",
             "/workspace",
-            GRADLE_GENERATOR_IMAGE,
+            "--entrypoint",
             "gradle",
+            toolchain_image,
             "compileJava",
             "--no-daemon",
             "-Dorg.gradle.vfs.watch=false",
             "--build-cache",
-        ],
+        ]
+    else:
+        gradle_command = ["gradle", "--version"]
+    run(
+        "warm-gradle-dependencies",
+        gradle_command,
         gradle_project,
     )
 

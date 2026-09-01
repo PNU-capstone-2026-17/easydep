@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -24,31 +23,6 @@ SCHEMA_VERSION = "easydep-iac-render/v1alpha1"
 MANAGED_FILES = ("terraform/main.tf", "terraform/variables.tf", "terraform/outputs.tf")
 SUPPORTED_PROVIDERS = ("azure", "aws", "gcp")
 DEPLOYMENT_BUNDLE_SCHEMA = "easydep-deployment-diagram"
-
-
-def _find_terraform() -> str | None:
-    from app.config import settings
-    configured = settings.easydep_terraform_path
-    return configured if configured and Path(configured).is_file() else shutil.which("terraform")
-
-
-def validate_terraform(application: Path) -> dict[str, object]:
-    """Terraform 실행 파일이 있으면 격리된 사본에서 format과 provider 검사를 실행한다."""
-    executable = _find_terraform()
-    source = application / "terraform"
-    if executable is None:
-        return {"status": "FAILED", "errors": ["terraform executable is not installed"]}
-    if not source.is_dir():
-        return {"status": "FAILED", "errors": ["Terraform directory is missing"]}
-    with tempfile.TemporaryDirectory(prefix="easydep-terraform-") as directory:
-        work = Path(directory) / "terraform"
-        shutil.copytree(source, work)
-        commands = ([executable, "fmt", "-recursive", "-no-color"], [executable, "init", "-backend=false", "-input=false", "-no-color"], [executable, "validate", "-no-color"])
-        for command in commands:
-            result = subprocess.run(command, cwd=work, text=True, capture_output=True, check=False, timeout=120)
-            if result.returncode:
-                return {"status": "FAILED", "command": command[1], "errors": [result.stderr.strip() or result.stdout.strip()]}
-    return {"status": "SUCCEEDED", "commands": ["fmt", "init -backend=false", "validate"]}
 
 
 def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
@@ -96,21 +70,12 @@ def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
         (terraform / filename).write_text(content.rstrip() + "\n", encoding="utf-8")
     if resource_plan is None:
         conformance = validate_deployment_iac_conformance(cloud, intent, application)
-    terraform_validation = validate_terraform(application)
-    report = {"schemaVersion": SCHEMA_VERSION, "renderer": f"deterministic-terraform-{provider}", "provider": provider, "renderedFiles": [f"application/terraform/{name}" for name in files], "requiredVariables": required_variables, "sourceConformance": conformance, "terraformValidation": terraform_validation, "kubernetesManifests": False, "sourceEvidence": deployment_evidence}
+    report = {"schemaVersion": SCHEMA_VERSION, "renderer": f"deterministic-terraform-{provider}", "provider": provider, "renderedFiles": [f"application/terraform/{name}" for name in files], "requiredVariables": required_variables, "sourceConformance": conformance, "kubernetesManifests": False, "sourceEvidence": deployment_evidence}
     reports = run_root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     if conformance["status"] == "FAILED":
         raise ValueError("Deployment/IaC conformance failed:\n- " + "\n- ".join(conformance["errors"]))
-    if terraform_validation["status"] == "FAILED":
-        terraform_errors = terraform_validation.get("errors", [])
-        messages = (
-            [str(item) for item in terraform_errors]
-            if isinstance(terraform_errors, list)
-            else [str(terraform_errors)]
-        )
-        raise ValueError("Terraform validation failed:\n- " + "\n- ".join(messages))
     bundle = sync_deployment_bundle(application)
     report["deploymentBundle"] = bundle.relative_to(application.parent).as_posix()
     (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

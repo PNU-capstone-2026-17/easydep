@@ -36,7 +36,14 @@ export interface WorkspaceApp {
   title: string;
   current_stage: Stage;
   created_at: string;
-  command?: WorkspaceCommand | null;
+  command?: Pick<WorkspaceCommand, 'command_id' | 'action' | 'stage' | 'status' | 'created_at'> | null;
+}
+
+export interface LlmTimingPage {
+  event_id: number;
+  total: number;
+  offset: number;
+  timings: Array<Record<string, any>>;
 }
 
 export interface ArtifactSummary {

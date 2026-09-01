@@ -10,7 +10,8 @@ import type {
   DeploymentPreferences,
   SequenceDiagramSummary,
   LiveDiagramPreview,
-  LiveSourceSnapshot
+  LiveSourceSnapshot,
+  LlmTimingPage
 } from '$lib/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -68,6 +69,17 @@ export function sendCommand(appId: string, payload: CommandPayload) {
 
 export function getArtifacts(appId: string) {
   return request<{ app_id: string } & ArtifactDocument>(`/api/apps/${appId}`);
+}
+
+export function getEventLlmTimings(
+  appId: string,
+  eventId: number,
+  offset = 0,
+  limit = 20
+) {
+  return request<LlmTimingPage>(
+    `/api/workspace/apps/${encodeURIComponent(appId)}/events/${eventId}/llm-timings?offset=${offset}&limit=${limit}`
+  );
 }
 
 export function getClassDiagramPreview(appId: string, commandId: string) {

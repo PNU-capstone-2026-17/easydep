@@ -18,10 +18,8 @@ def test_runner_shim_translates_declared_gradle_tool_only():
     )
 
     assert command[-2:] == ["test", "--no-daemon"]
-    assert command[0] == "java"
+    assert command[0] == "gradle"
     assert "-Dorg.gradle.caching=true" in command
-    assert "-classpath" in command
-    assert "org.gradle.wrapper.GradleWrapperMain" in command
     assert cwd.as_posix() == "/easydep-workspace/app"
 
 

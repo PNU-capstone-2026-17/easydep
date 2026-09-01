@@ -60,14 +60,14 @@ def free_port() -> int:
 
 
 def _responds(url: str) -> bool:
-    """HTTP 상태와 관계없이 응답이 오면 서버가 준비된 것으로 본다."""
+    """health endpoint가 실제 성공 응답을 반환하는지 확인한다."""
     try:
-        urllib.request.urlopen(url, timeout=5)  # noqa: S310 - localhost only
+        response = urllib.request.urlopen(url, timeout=5)  # noqa: S310 - localhost only
+        return 200 <= response.status < 300
     except urllib.error.HTTPError:
-        return True
+        return False
     except (urllib.error.URLError, OSError):
         return False
-    return True
 
 
 def _container_logs(name: str) -> str:
@@ -108,6 +108,7 @@ def running_application(
     application_dir: str | Path,
     *,
     launch_id: str | None = None,
+    health_path: str = "/actuator/health",
     build_timeout_seconds: int = DEFAULT_BUILD_TIMEOUT_SECONDS,
     start_timeout_seconds: int = DEFAULT_START_TIMEOUT_SECONDS,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
@@ -133,10 +134,19 @@ def running_application(
     started = _docker(
         [
             "run",
-            "--rm",
             "-d",
             "--name",
             name,
+            # Testing은 아직 CSP의 실제 DB를 provision하지 않는다. 생성 애플리케이션이
+            # 외부 DB 주소 때문에 실패하지 않도록 함께 생성된 test profile과 임시 H2를 쓴다.
+            "-e",
+            "SPRING_PROFILES_ACTIVE=test",
+            "-e",
+            "SPRING_DATASOURCE_URL=jdbc:h2:mem:easydep_testing;MODE=MySQL;DB_CLOSE_DELAY=-1",
+            "-e",
+            "SPRING_DATASOURCE_USERNAME=sa",
+            "-e",
+            "SPRING_DATASOURCE_PASSWORD=",
             "-p",
             f"127.0.0.1:{host_port}:{container_port}",
             tag,
@@ -152,13 +162,15 @@ def running_application(
 
     base_url = f"http://localhost:{host_port}"
     try:
-        _wait_until_ready(name, base_url, start_timeout_seconds)
+        normalized_health = health_path if health_path.startswith("/") else f"/{health_path}"
+        _wait_until_ready(name, f"{base_url}{normalized_health}", start_timeout_seconds)
         yield base_url, {
             "source": "application",
             "image": tag,
             "container": name,
             "containerPort": container_port,
             "hostPort": host_port,
+            "healthPath": normalized_health,
         }
     finally:
         _docker(["rm", "-f", name], timeout=120)

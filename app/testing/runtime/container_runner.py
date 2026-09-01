@@ -11,9 +11,11 @@ import os
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
-
 CONTAINER_WORKSPACE = PurePosixPath("/easydep-workspace")
-RUNNER_IMAGE_ENV = "EASYDEP_MEMBER_RUNNER_IMAGE"
+RUNNER_IMAGE_ENV = "EASYDEP_TOOLCHAIN_IMAGE"
+GRADLE_CACHE_VOLUME = "easydep-member-gradle-cache"
+TOFU_CACHE_VOLUME = "easydep-tofu-provider-cache"
+TOFU_CACHE_PATH = "/app/.cache/opentofu"
 
 
 def configured_runner_image(environment: dict[str, str] | None = None) -> str | None:
@@ -45,8 +47,20 @@ def runner_command(
         "easydep.owner=testing-runner",
         "-v",
         f"{root}:{CONTAINER_WORKSPACE.as_posix()}",
+        # 구현 작업이 이미 받은 Gradle 배포본과 dependency를 Testing에서도 재사용한다.
+        # 생성 애플리케이션 source는 고정 snapshot이지만 도구 cache까지 매번 버릴 필요는 없다.
+        "-v",
+        f"{GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache",
+        "-v",
+        f"{TOFU_CACHE_VOLUME}:{TOFU_CACHE_PATH}",
         "-e",
         f"PYTHONPATH={CONTAINER_WORKSPACE}",
+        "-e",
+        "GRADLE_USER_HOME=/tmp/easydep-gradle-cache",
+        "-e",
+        f"EASYDEP_TOFU_PLUGIN_CACHE={TOFU_CACHE_PATH}",
+        "-e",
+        f"TF_PLUGIN_CACHE_DIR={TOFU_CACHE_PATH}",
         "--entrypoint",
         "python",
         image,

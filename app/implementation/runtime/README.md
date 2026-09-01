@@ -15,17 +15,17 @@ port, health 경로, 환경 변수와 mount 사용을 읽어 배포 단계에 �
 - **부수효과:** subprocess/container를 만들고 timeout 시 전체 자식 트리를 종료한다.
   scaffold와 runner는 요청받은 작업공간에 파일을 만들거나 갱신할 수 있으며,
   runtime hook은 프로세스 환경에 경로 어댑터를 설치한다.
-- Linux 멤버 runner는 이미지에 저장된 예전 Python 진입점을 사용하지 않고 현재 저장소의
+- Linux 멤버 runner는 공용 툴체인 이미지에 저장된 예전 Python 진입점을 사용하지 않고 현재 저장소의
   `app.implementation.runtime.member_linux_runner`를 명시한다. Gradle 캐시는 Windows 공유
   경로가 아닌 `easydep-member-gradle-cache` Docker volume에 두고 여러 workflow가 재사용한다.
   volume이 처음 비어 있으면 개발 환경 준비 스크립트가 만든 `.easydep/gradle-cache`를 한 번
-  복사하며, 그 cache가 없어도 Gradle wrapper가 내려받은 파일을 같은 volume에 보존한다.
-- `EASYDEP_MEMBER_RUNNER_IMAGE`가 설정되면 서버가 승인한 구현 phase는 같은 API 흐름을
+  복사한다. 툴체인에는 고정 Gradle이 이미 설치되어 있어 wrapper 배포본은 다시 받지 않는다.
+- `EASYDEP_TOOLCHAIN_IMAGE`가 설정되면 서버가 승인한 구현 phase는 같은 API 흐름을
   유지한 채 Linux runner에서 실행한다. 이미지가 설정되지 않은 개발 환경에서만 호스트
   Python 실행 경로를 사용한다.
-- Linux runner에는 Docker 소켓을 공유하지 않는다. 모든 구현 작업이 끝나면 같은
-  체크포인트를 호스트 CLI에 넘기고, 호스트가 전체 테스트와 Docker image·health 검사를
-  이어서 실행한다. 따라서 생성 도구용 Docker shim과 실제 container 검증이 섞이지 않는다.
+- Linux runner에는 Docker 소켓을 공유하지 않는다. 각 작업은 수정 범위에 맞는 빠른 검사를
+  통과한 뒤 산출물을 저장하며, 전체 테스트와 Docker image·health 검사는 Testing 단계가
+  같은 산출물 snapshot으로 실행한다.
 - **사용하면 안 되는 import:** `app.core` 레거시 경로와 요구사항/설계 서비스 내부, Cloud KB,
   LLM 호출이나 orchestration graph에 의존하지 않는다. runtime 관찰은 전달받은 workload
   항목과 생성 파일만 읽으며 배치나 provider를 선택하지 않는다.

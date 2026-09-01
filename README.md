@@ -53,38 +53,30 @@ Docker-on-VM 애플리케이션이다.
 
 ## 실행
 
-필수 환경은 Python 3.11 이상, JDK 21, Node.js/npm, Docker Desktop이다. PlantUML 다이어그램은
-고정 버전의 Docker 이미지로 검사하고 렌더링한다. 개발용 MySQL은 통합 실행 스크립트가 Docker
+필수 환경은 Python 3.11 이상과 Docker Desktop이다. 원격 배포와 고정 Linux 실행에는
+PlantUML, FR/NFR 분류 모델, JDK, Gradle, Node/npm, OpenAPI Generator, Trivy, OpenTofu를
+담은 공용 `easydep-toolchain` 이미지를 사용한다. 개발용 MySQL은 통합 실행 스크립트가 Docker
 컨테이너로 준비한다.
 
 ### 통합 실행 스크립트
 
-최초 한 번 Python 가상환경과 구현 도구를 준비하고, `.env.example`을 복사해 사용할 LLM과
-데이터베이스 접속 정보를 설정한다. `MODEL`은 요구사항 분석, 설계 구조화 호출, 공통 생성 경로와
-LLM 지연 진단에서 함께 사용한다.
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-powershell -ExecutionPolicy Bypass -File scripts\bootstrap-implementation-tools.ps1
-
-Copy-Item .env.example .env
-# .env의 API_KEY, BASE_URL, MODEL 값을 사용할 엔드포인트에 맞게 수정한다.
-```
-
-Docker Desktop을 실행한 다음 저장소 루트에서 아래 명령을 사용한다.
+Docker Desktop을 실행한 다음 저장소 루트에서 아래 명령 하나를 사용한다.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 ```
 
+첫 실행에서는 `.env.example`을 `.env`로 복사한다. LLM 단계를 실행하기 전 `API_KEY`,
+`BASE_URL`, `MODEL`을 사용할 엔드포인트에 맞게 수정한다. `MODEL`은 요구사항 분석, 설계
+구조화 호출, 공통 생성 경로와 LLM 지연 진단에서 함께 사용한다.
+
 이 스크립트는 다음 작업을 한 번에 수행한다.
 
-1. `package-lock.json`이 바뀌었거나 설치본이 없을 때만 `npm ci`를 실행한다.
-2. 프론트엔드 입력 파일의 SHA-256이 바뀌었을 때만 SvelteKit을 다시 빌드한다.
-3. `easydep-mysql-dev` 컨테이너를 생성하거나 재사용하고 준비 완료까지 기다린다.
-4. FastAPI 백엔드를 시작하고 UI·워크스페이스 API의 종단 연결을 확인한다.
+1. `.venv`를 만들고 `requirements.txt`가 바뀐 경우에만 Python 패키지를 설치한다.
+2. Docker 빌드 입력이 바뀐 경우에만 `easydep-toolchain:local` 이미지를 빌드·검증한다.
+3. 이미지의 고정 Node/npm으로 만든 SvelteKit 결과를 `frontend/build`에 복사한다.
+4. `easydep-mysql-dev` 컨테이너를 생성하거나 재사용하고 준비 완료까지 기다린다.
+5. FastAPI 백엔드를 시작하고 UI·워크스페이스 API의 종단 연결을 확인한다.
 
 정상적으로 준비되면 기본 UI는 `http://127.0.0.1:8000/`, API 문서는
 `http://127.0.0.1:8000/docs`에서 볼 수 있다. 실행 상태와 로그는 `.easydep/dev/`에 저장된다.
@@ -93,6 +85,10 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 |---|---|
 | `-OpenBrowser` | 준비 완료 후 기본 브라우저에서 UI를 연다. |
 | `-SkipFrontendBuild` | 기존 `frontend/build/index.html`을 그대로 사용한다. 빌드가 없으면 실패한다. |
+| `-ForceFrontendBuild` | 입력 해시가 같아도 프론트엔드 결과를 이미지에서 다시 복사한다. |
+| `-SkipBootstrap` | 기존 Python 환경과 툴체인 이미지를 신뢰하고 준비 작업을 생략한다. |
+| `-ForceToolchainBuild` | 입력 해시가 같아도 Docker 빌드를 다시 실행한다. Docker layer cache는 재사용한다. |
+| `-ResetDatabase` | 현재 코드와 DB 구조가 맞지 않을 때 개발 DB와 저장된 앱을 지우고 새로 만든다. |
 | `-ForceFrontendBuild` | 입력 해시가 같아도 프론트엔드를 다시 빌드한다. |
 | `-ResetDatabaseSchema` | 시작 시 `easydep` DB의 기존 구조·데이터를 삭제하고 현재 7개 테이블로 재생성한다. |
 | `-Port 8010` | 백엔드 포트를 변경한다. 기본값은 `8000`이다. |

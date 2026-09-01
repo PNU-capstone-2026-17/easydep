@@ -89,8 +89,18 @@ def command_dict(row: WorkspaceCommand) -> dict[str, Any]:
     }
 
 
-def event_dict(row: Any) -> dict[str, Any]:
-    """Convert an event-like object to the API shape (legacy test compatibility)."""
+def event_dict(
+    row: Any, *, include_llm_timings: bool = True
+) -> dict[str, Any]:
+    """이전 ORM 형식의 event 객체를 현재 API 형식으로 바꾼다.
+
+    원격 DB 정리 이후 새 event는 메모리에 저장하지만, 기존 호출부와 단위 테스트가 넘기는
+    event 모양도 간단히 변환할 수 있도록 이 작은 호환 함수는 유지한다.
+    """
+    metadata = _event_metadata(
+        getattr(row, "event_data", None) or {},
+        include_llm_timings=include_llm_timings,
+    )
     return {
         "event_id": row.event_id,
         "app_id": row.app_id,
@@ -99,9 +109,20 @@ def event_dict(row: Any) -> dict[str, Any]:
         "kind": row.kind,
         "actor": row.actor,
         "text": row.text,
-        "metadata": getattr(row, "event_data", None) or {},
+        "metadata": metadata,
         "created_at": _timestamp_in_kst(row.created_at),
     }
+
+
+def _event_metadata(
+    metadata: dict[str, Any], *, include_llm_timings: bool
+) -> dict[str, Any]:
+    """목록 응답에서는 큰 LLM 원문 대신 개수만 남긴다."""
+    result = dict(metadata)
+    if not include_llm_timings and result.get("progress_event") == "designLlmMetrics":
+        timings = result.pop("llm_timing_events", [])
+        result["llm_timing_count"] = len(timings) if isinstance(timings, list) else 0
+    return result
 
 
 def create_command(
@@ -212,18 +233,61 @@ def append_event(
         return dict(event)
 
 
-def list_events(app_id: str, *, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+def list_events(
+    app_id: str,
+    *,
+    after: int = 0,
+    limit: int = 500,
+    include_llm_timings: bool = True,
+) -> list[dict[str, Any]]:
     """현재 process가 보유한 ``after`` 이후 event를 반환한다.
 
     서버 재시작 전 event는 의도적으로 복원하지 않는다. 최종 상태는 MySQL의 command에서
     복원하고, event history는 앱당 최근 1,000건으로 제한한다.
     """
     with _event_lock:
-        return [
+        events = [
             dict(event)
             for event in _events.get(app_id, ())
             if int(event["event_id"]) > after
         ][:limit]
+    for event in events:
+        event["metadata"] = _event_metadata(
+            event.get("metadata", {}),
+            include_llm_timings=include_llm_timings,
+        )
+    return events
+
+
+def get_event_llm_timings(
+    app_id: str, event_id: int, *, offset: int = 0, limit: int = 20
+) -> dict[str, Any]:
+    """메모리에 남아 있는 설계 LLM 원문을 작은 page 단위로 반환한다."""
+    with _event_lock:
+        event = next(
+            (
+                item
+                for item in _events.get(app_id, ())
+                if int(item["event_id"]) == event_id
+            ),
+            None,
+        )
+        if event is None:
+            raise KeyError(event_id)
+        metadata = event.get("metadata", {})
+        timings = metadata.get("llm_timing_events")
+        if metadata.get("progress_event") != "designLlmMetrics" or not isinstance(
+            timings, list
+        ):
+            raise ValueError("The event does not contain design LLM timings.")
+        page = list(timings[offset : offset + limit])
+        total = len(timings)
+    return {
+        "event_id": event_id,
+        "total": total,
+        "offset": offset,
+        "timings": page,
+    }
 
 
 def get_app_summary(app_id: str) -> dict[str, Any]:
