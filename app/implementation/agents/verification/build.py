@@ -378,6 +378,46 @@ def summarize_test_failure(detail: str) -> str:
     )
 
 
+def compact_verification_evidence(
+    evidence: dict[str, object],
+    *,
+    max_chars: int = 8000,
+) -> str:
+    """LLM에 한 번만 전달할 build/test 핵심 진단을 만든다.
+
+    원본 evidence에는 같은 Gradle 오류가 test XML, stderr와 stdout에 반복될 수 있다. 전체
+    stack trace를 그대로 이어 붙이면 실제 원인은 묻히고 Conversation만 빠르게 커진다. 명령과
+    종료 코드는 남기되, 출력은 최초 원인과 애플리케이션 위치를 고르는 기존 요약기를 거친 뒤
+    중복 줄을 제거한다. 원본 evidence 자체는 바꾸지 않으므로 보고서와 사용자 조회에는 전체
+    기록이 계속 남는다.
+    """
+
+    command = evidence.get("command") or []
+    command_text = (
+        " ".join(str(part) for part in command)
+        if isinstance(command, list)
+        else str(command)
+    )
+    lines = [
+        f"Command: {command_text or '(not available)'}",
+        f"Exit code: {evidence.get('exitCode', 1)}",
+    ]
+    seen_outputs: set[str] = set()
+    for key in ("testResults", "stderr", "stdout"):
+        raw = str(evidence.get(key) or "").strip()
+        if not raw or raw in seen_outputs:
+            continue
+        seen_outputs.add(raw)
+        lines.extend(summarize_test_failure(raw).splitlines())
+
+    # Spring test 설정처럼 한 줄 자체가 매우 길 때도 model 입력의 대부분을 차지하지 않게 한다.
+    shortened = [
+        line if len(line) <= 1200 else line[:850] + " ... " + line[-300:]
+        for line in dict.fromkeys(lines)
+    ]
+    return _truncate_log_snippet("\n".join(shortened), max_chars=max_chars)
+
+
 def _truncate_log_snippet(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text

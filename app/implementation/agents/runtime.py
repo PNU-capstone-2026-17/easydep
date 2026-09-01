@@ -37,6 +37,7 @@ from .task_check import (
 )
 from .verification.build import (
     WorkspaceVerificationError,
+    compact_verification_evidence,
     verify_agent_workspace,
 )
 from .verification.frontend import store_frontend_build
@@ -50,9 +51,9 @@ from .workspace import (
     snapshot_files,
 )
 
-# 하나의 기능 작업은 여러 파일을 함께 만들므로 한 대화가 중간에 끊기지 않을 만큼의
-# tool turn을 준다. 두 값 모두 전체 생성·수리 횟수 상한이 아니다. 대화 하나가 멈추는
-# 것을 막는 안전 한도이며, 바깥 loop는 build가 통과할 때까지 새 대화로 계속된다.
+# 하나의 기능 작업은 여러 파일을 함께 만들므로 한 번의 Conversation run이 의미 있는 편집과
+# focused 검사까지 진행할 만큼의 tool turn을 준다. 이 값은 전체 수리 횟수 상한이 아니다.
+# 한도나 context에 닿으면 workspace는 유지하고 짧은 인계문으로 새 Conversation을 연다.
 MAX_AGENT_TURN_ITERATIONS = 32
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
@@ -429,26 +430,33 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 )
             ),
         )
-        conversation, agent = create_openhands_conversation(
-            sandbox,
-            allowed_absolute,
-            api_key,
-            task["llm"],
-            task_type=task_type,
-            verification_paths=editable_paths,
-            editable_roots=editable_root_absolute,
-            immutable_paths=immutable_absolute,
-            callbacks=[journal],
-            max_iterations=MAX_AGENT_TURN_ITERATIONS,
-            reasoning_effort=reasoning_effort,
-            system_prompt=(
-                FRONTEND_SYSTEM_PROMPT
-                if task_type == "frontend-implementation"
-                else IMPLEMENTATION_SYSTEM_PROMPT
-            ),
-        )
+        def open_conversation():
+            """현재 workspace를 유지한 채 독립된 OpenHands 대화를 연다."""
+
+            return create_openhands_conversation(
+                sandbox,
+                allowed_absolute,
+                api_key,
+                task["llm"],
+                task_type=task_type,
+                verification_paths=editable_paths,
+                editable_roots=editable_root_absolute,
+                immutable_paths=immutable_absolute,
+                callbacks=[journal],
+                max_iterations=MAX_AGENT_TURN_ITERATIONS,
+                reasoning_effort=reasoning_effort,
+                system_prompt=(
+                    FRONTEND_SYSTEM_PROMPT
+                    if task_type == "frontend-implementation"
+                    else IMPLEMENTATION_SYSTEM_PROMPT
+                ),
+            )
+
         while True:
+            if conversation is None:
+                conversation, agent = open_conversation()
             _extend_conversation_write_files(agent, round_allowed)
+            restart_after_verification = False
             # A transient provider failure is a transport concern, not a source
             # verification failure. 같은 Conversation의 현재 메시지부터 재개해 이미 읽은
             # source와 판단을 버리지 않는다.
@@ -489,13 +497,26 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                                 input_tokens=max(0, usage[0] - usage_before[0]),
                                 output_tokens=max(0, usage[1] - usage_before[1]),
                             )
-                if conversation_error is None or not transient_provider_error(conversation_error):
+                if conversation_error is None:
+                    provider_retries = 0
                     break
+                if not transient_provider_error(conversation_error):
+                    # iteration/context/stuck 오류가 난 Conversation에는 메시지를 더 넣지 않는다.
+                    # 이미 작성한 source가 있으면 아래 결정론적 검사로 살릴 수 있는지 먼저 보고,
+                    # 수리가 필요할 때 같은 workspace에서 새 Conversation을 연다.
+                    if _conversation_needs_fresh_context(conversation_error):
+                        restart_after_verification = True
+                        break
+                    if not missing_required_outputs(sandbox, required_paths):
+                        restart_after_verification = True
+                        break
+                    raise conversation_error
                 # A provider may fail while emitting its final response after
                 # the agent has already written every contracted file. In that
                 # case do not repeat the generation and risk overwriting valid
                 # work; continue to deterministic verification instead.
                 if not missing_required_outputs(sandbox, required_paths):
+                    restart_after_verification = True
                     break
                 provider_retries += 1
                 if provider_retries > MAX_PROVIDER_RETRIES:
@@ -557,6 +578,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     + _implementation_repair_history(repair_ledger)
                 )
                 repair_attempt += 1
+                if restart_after_verification:
+                    conversation.close()
+                    conversation = None
+                    agent = None
                 continue
 
             changed = changed_files(before, snapshot_files(sandbox))
@@ -654,7 +679,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 changed = changed_files(before, snapshot_files(sandbox))
                 break
             except WorkspaceVerificationError as error:
-                evidence_digest = stable_digest(error.evidence)
+                diagnostic = compact_verification_evidence(
+                    error.evidence,
+                    max_chars=4000,
+                )
+                evidence_digest = stable_digest(
+                    {
+                        "command": error.evidence.get("command"),
+                        "exitCode": error.evidence.get("exitCode"),
+                        "diagnostic": diagnostic,
+                    }
+                )
                 finding_keys = (f"verification:{evidence_digest}",)
                 candidate_digest = stable_digest(snapshot_files(sandbox))
                 repeated = repair_attempt > 0 and _repeated_failure(
@@ -682,21 +717,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         finding_keys_before=finding_keys,
                         finding_keys_after=finding_keys,
                         outcome="repeated_candidate" if repeated else "no_improvement",
-                        detail=json.dumps(
-                            {
-                                "command": error.evidence.get("command"),
-                                "error": next(
-                                    (
-                                        str(error.evidence.get(key))
-                                        for key in ("testResults", "stderr", "stdout")
-                                        if error.evidence.get(key)
-                                    ),
-                                    "verification failed",
-                                ),
-                                "changedFiles": sorted(changed),
-                            },
-                            ensure_ascii=False,
-                        )[-4000:],
+                        detail=diagnostic,
                     )
                 )
                 if repeated:
@@ -724,6 +745,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     + _implementation_repair_history(repair_ledger)
                 )
                 repair_attempt += 1
+                if restart_after_verification:
+                    conversation.close()
+                    conversation = None
+                    agent = None
         conversation.close()
         conversation = None
     except Exception as error:
@@ -800,6 +825,31 @@ def _conversation_token_usage(conversation) -> tuple[int, int] | None:
         )
     except Exception:  # noqa: BLE001 - observability is optional
         return None
+
+
+def _conversation_needs_fresh_context(error: Exception) -> bool:
+    """같은 OpenHands Conversation에서 재실행하면 안 되는 오류인지 확인한다.
+
+    네트워크 오류는 provider retry가 담당한다. 반면 iteration/context/stuck 오류는 대화 기록
+    자체가 이미 한계에 닿았다는 뜻이므로 같은 객체에 메시지를 추가할수록 악화된다. 오류 class는
+    SDK와 LiteLLM 버전에 따라 달라질 수 있어 안정적으로 노출되는 문구만 사용한다.
+    """
+
+    text = f"{error.__class__.__name__}: {error}".lower()
+    return any(
+        marker in text
+        for marker in (
+            "maximum iteration",
+            "max iterations",
+            "context window",
+            "maximum context length",
+            "max_tokens must be at least 1",
+            "token limit",
+            "agent is stuck",
+            "execution status is stuck",
+            "no tool call and no content",
+        )
+    )
 
 
 def _implementation_repair_history(ledger: RepairLedger) -> str:
@@ -1035,7 +1085,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
     finally:
         conversation.close()
     if (
-        set(tools) != {"restricted_file_editor", TASK_CHECK_TOOL_NAME, "finish"}
+        set(tools) != {"restricted_file_editor", "grep", TASK_CHECK_TOOL_NAME, "finish"}
         or not enforced
         or not unauthorized_blocked
         or not allowed_write_succeeded
@@ -1054,7 +1104,8 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "allowedOverwriteSucceeded": allowed_overwrite_succeeded,
         "filePathAliasAccepted": file_path_alias_accepted,
         "maxConversationToolTurns": MAX_AGENT_TURN_ITERATIONS,
-        "stuckDetection": False,
+        "stuckDetection": True,
+        "contextCondenser": "LLMSummarizingCondenser",
         "verificationRepairPolicy": "history-and-progress/v1",
         "reasoningBudgetCap": MAX_REASONING_BUDGET,
         "reasoningEffort": task["llm"].get(
@@ -1094,10 +1145,12 @@ def create_openhands_conversation(
     global _RESTRICTED_EDITOR_REGISTERED
 
     from openhands.sdk import LLM, Agent, Conversation, Tool, register_tool
+    from openhands.sdk.context.condenser import LLMSummarizingCondenser
     from openhands.tools.file_editor import FileEditorAction, FileEditorTool
     from openhands.tools.file_editor.definition import FileEditorObservation
     from openhands.tools.file_editor.exceptions import ToolError
     from openhands.tools.file_editor.impl import FileEditorExecutor
+    from openhands.tools.grep import GrepTool
     from pydantic import AliasChoices, Field, SecretStr
 
     _configure_openhands_profile_store()
@@ -1266,8 +1319,9 @@ def create_openhands_conversation(
         message=r"Cost calculation failed:.*",
         module=r"openhands\.sdk\.llm\.utils\.telemetry",
     )
+    llm = LLM(**llm_options)
     agent = Agent(
-        llm=LLM(**llm_options),
+        llm=llm,
         tools=[
             Tool(
                 name=registry_name,
@@ -1277,6 +1331,7 @@ def create_openhands_conversation(
                     "immutable_edit_paths": immutable_paths or [],
                 },
             ),
+            Tool(name=GrepTool.name),
             Tool(
                 name=task_check_tool_name,
                 params={
@@ -1287,13 +1342,20 @@ def create_openhands_conversation(
         ],
         include_default_tools=["FinishTool"],
         system_prompt=system_prompt,
+        # OpenHands가 오래된 도구 기록을 요약하도록 공식 condenser를 그대로 사용한다.
+        # 별도 요약 상태를 만들지 않으며 최초 지시와 최근 작업은 SDK 기본값으로 보존한다.
+        condenser=LLMSummarizingCondenser(
+            llm=llm.model_copy(update={"usage_id": "implementation_condenser"}),
+        ),
     )
     conversation = Conversation(
         agent=agent,
         workspace=str(sandbox),
         callbacks=callbacks,
         max_iteration_per_run=max_iterations,
-        stuck_detection=False,
+        # 반복 action/error와 같은 파일 편집 루프는 SDK가 먼저 감지한다. 전체 자동 수리
+        # 횟수와는 별개이며, 감지 뒤에는 위 실행부가 새 Conversation으로 작업을 인계한다.
+        stuck_detection=True,
         visualizer=None,
     )
     return conversation, agent

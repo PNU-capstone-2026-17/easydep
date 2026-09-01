@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from app.implementation.agents import execute_openhands_task
+from app.implementation.agents.runtime import create_openhands_conversation
 from app.implementation.agents.task_check import (
     TaskCheckSession,
     consume_successful_task_check,
@@ -163,6 +164,29 @@ def test_agent_task_check_returns_real_focused_verification_result(
     )
 
 
+def test_agent_task_check_compacts_duplicate_framework_traces(tmp_path: Path) -> None:
+    """같은 Spring trace가 여러 출력에 있어도 핵심 원인은 한 번만 전달한다."""
+    root_cause = "Caused by: NoSuchBeanDefinitionException: OrderRepository"
+    framework_trace = "\n".join(
+        [root_cause, *[f"at org.springframework.example.Frame{i}" for i in range(500)]]
+    )
+    evidence = {
+        "command": ["gradlew", "test"],
+        "exitCode": 1,
+        "testResults": framework_trace,
+        "stderr": framework_trace,
+    }
+    with patch(
+        "app.implementation.agents.task_check.verify_agent_workspace",
+        side_effect=WorkspaceVerificationError(evidence),
+    ):
+        passed, output = run_task_check(tmp_path, "use-case", [])
+
+    assert passed is False
+    assert output.count(root_cause) == 1
+    assert len(output) < 8500
+
+
 def test_agent_task_check_requires_a_source_change_before_retry(
     tmp_path: Path,
 ) -> None:
@@ -242,10 +266,8 @@ def test_use_case_scope_allows_owned_package_but_protects_other_features() -> No
     )
 
 
-def test_verification_failure_continues_the_same_openhands_conversation(
-    tmp_path: Path,
-) -> None:
-    """focused 검사 실패는 새 에이전트를 만들지 않고 현재 대화로 돌아간다."""
+def _write_minimal_agent_task(tmp_path: Path) -> tuple[Path, str, str, Path]:
+    """Conversation 수리 테스트가 함께 쓰는 작은 구현 작업을 만든다."""
     run = tmp_path / "run_abcdef123456"
     task_id = "implement-order"
     source_path = "application/src/main/java/com/example/application/OrderService.java"
@@ -280,6 +302,14 @@ def test_verification_failure_continues_the_same_openhands_conversation(
         },
     }
     (tasks / "order.task.json").write_text(json.dumps(task), encoding="utf-8")
+    return run, task_id, source_path, source
+
+
+def test_verification_failure_continues_the_same_openhands_conversation(
+    tmp_path: Path,
+) -> None:
+    """일반적인 focused 검사 실패는 현재 대화에서 바로 고친다."""
+    run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
 
     class FakeConversation:
         def __init__(self, sandbox: Path) -> None:
@@ -347,6 +377,113 @@ def test_verification_failure_continues_the_same_openhands_conversation(
     assert created[0].run_count == 2
     assert created[0].close_count == 1
     assert "int repaired" in source.read_text(encoding="utf-8")
+
+
+def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(
+    tmp_path: Path,
+) -> None:
+    """iteration 한도에 닿은 대화는 닫고 짧은 수리 대화를 새로 연다."""
+    run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path, number: int) -> None:
+            self.sandbox = sandbox
+            self.number = number
+            self.messages: list[str] = []
+            self.run_count = 0
+            self.close_count = 0
+
+        def send_message(self, message: str) -> None:
+            self.messages.append(message)
+
+        def run(self) -> None:
+            self.run_count += 1
+            if self.number == 1:
+                raise RuntimeError("Agent reached maximum iterations limit (32).")
+            (self.sandbox / source_path).write_text(
+                "class OrderService { int repairedInFreshContext; }",
+                encoding="utf-8",
+            )
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    created: list[FakeConversation] = []
+
+    def create_conversation(sandbox: Path, *_args, **_kwargs):
+        conversation = FakeConversation(sandbox, len(created) + 1)
+        created.append(conversation)
+        return conversation, SimpleNamespace(_tools={})
+
+    failure = WorkspaceVerificationError(
+        {
+            "command": ["gradlew", "compileJava"],
+            "exitCode": 1,
+            "stderr": f"{source_path}: cannot find symbol",
+        }
+    )
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.configured_api_key",
+            return_value="approved-key",
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=create_conversation,
+        ),
+        patch(
+            "app.implementation.agents.runtime.verify_agent_workspace",
+            side_effect=[failure, {"command": ["gradlew", "compileJava"], "exitCode": 0}],
+        ),
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    assert result["status"] == "SUCCEEDED"
+    assert len(created) == 2
+    assert [item.run_count for item in created] == [1, 1]
+    assert [item.close_count for item in created] == [1, 1]
+    assert "cannot find symbol" in created[1].messages[0]
+    assert "repairedInFreshContext" in source.read_text(encoding="utf-8")
+
+
+def test_openhands_conversation_enables_stuck_detection_and_condensation(
+    tmp_path: Path,
+) -> None:
+    """공식 SDK의 반복 감지와 context condenser를 기본 실행에 연결한다."""
+    source = tmp_path / "OrderService.java"
+    source.write_text("class OrderService {}", encoding="utf-8")
+    llm = {
+        "model": "openai/gpt-oss-120b",
+        "baseUrl": "http://localhost",
+        "temperature": 0.2,
+        "topP": 1.0,
+        "maxOutputTokens": 1024,
+        "reasoningBudget": 0,
+        "chatTemplateKwargs": {},
+    }
+
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        [str(source.resolve())],
+        "approved-key",
+        llm,
+    )
+    try:
+        conversation.send_message("Initialize tools without running the model.")
+        assert conversation.stuck_detector is not None
+        assert agent.condenser.__class__.__name__ == "LLMSummarizingCondenser"
+        assert "grep" in agent._tools
+    finally:
+        conversation.close()
 
 
 def test_completion_audit_rejects_an_unfinished_controller_body(

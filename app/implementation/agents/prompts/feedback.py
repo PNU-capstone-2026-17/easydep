@@ -1,5 +1,8 @@
 """실제 build 오류를 현재 OpenHands 대화의 다음 수리 메시지로 전달한다."""
 
+from ..verification.build import compact_verification_evidence
+
+
 def render_verification_feedback(
     evidence: dict[str, object],
     repair_targets: list[str] | None = None,
@@ -49,10 +52,5 @@ the production build passes. Then call `finish`.
 
 
 def _verification_output(evidence: dict[str, object]) -> str:
-    """명령, 표준 출력, 오류와 test 결과를 한 번만 이어 붙인다."""
-    parts = [
-        str(evidence.get(key, "")).strip()
-        for key in ("command", "stdout", "stderr", "testResults")
-        if evidence.get(key)
-    ]
-    return "\n\n".join(parts)[-24000:]
+    """원본 로그 대신 최초 원인과 애플리케이션 위치를 한 번만 전달한다."""
+    return compact_verification_evidence(evidence)

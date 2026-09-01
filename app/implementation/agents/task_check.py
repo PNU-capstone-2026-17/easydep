@@ -12,7 +12,11 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .verification.build import WorkspaceVerificationError, verify_agent_workspace
+from .verification.build import (
+    WorkspaceVerificationError,
+    compact_verification_evidence,
+    verify_agent_workspace,
+)
 from .workspace import snapshot_files
 
 TASK_CHECK_TOOL_NAME = "run_task_check"
@@ -245,35 +249,5 @@ def register_task_check_tool() -> str:
 
 
 def _render_check_result(status: str, evidence: dict[str, object]) -> str:
-    """중복 필드를 빼고 검사 결과의 앞뒤를 보존한다."""
-    command = evidence.get("command") or []
-    command_text = (
-        " ".join(str(part) for part in command)
-        if isinstance(command, list)
-        else str(command)
-    )
-    header = [
-        f"TASK CHECK {status}",
-        f"Command: {command_text or '(not available)'}",
-        f"Exit code: {evidence.get('exitCode', 0 if status == 'PASSED' else 1)}",
-        f"Duration: {evidence.get('durationMs', 0)} ms",
-    ]
-    diagnostics = [
-        str(evidence.get(key) or "").strip()
-        for key in ("testResults", "stderr", "stdout")
-        if str(evidence.get(key) or "").strip()
-    ]
-    output = "\n".join(header)
-    if diagnostics:
-        output += "\n\nDiagnostics:\n" + "\n\n".join(diagnostics)
-    return _bounded_text(output, 24000)
-
-
-def _bounded_text(value: str, limit: int) -> str:
-    """긴 build 출력의 원인과 마지막 요약이 모두 남도록 가운데만 줄인다."""
-    if len(value) <= limit:
-        return value
-    marker = "\n... output middle omitted ...\n"
-    remaining = limit - len(marker)
-    head = remaining // 2
-    return value[:head] + marker + value[-(remaining - head) :]
+    """중복 stack trace 없이 에이전트가 고칠 수 있는 검사 결과만 반환한다."""
+    return f"TASK CHECK {status}\n{compact_verification_evidence(evidence)}"
