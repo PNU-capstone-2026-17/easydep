@@ -84,23 +84,6 @@ def _cli(arguments: list[str]) -> int:
     return cli_main(runner_arguments)
 
 
-def _test(arguments: list[str]) -> int:
-    _configure_runner_tools()
-    from app.testing.runtime.adapter import TestingAdapter
-
-    if len(arguments) != 1:
-        raise SystemExit("test requires an input JSON path")
-    request = json.loads(Path(arguments[0]).read_text(encoding="utf-8"))
-    implementation_result = dict(request["implementationResult"])
-    implementation_result.pop("member_runner", None)
-    result = TestingAdapter(timeout_seconds=int(request.get("timeoutSeconds", 600))).run(
-        implementation_result=implementation_result,
-        case_id=str(request.get("caseId", "adhoc")),
-    )
-    print(json.dumps(result, ensure_ascii=False))
-    return 0
-
-
 def _preflight(arguments: list[str]) -> int:
     if arguments:
         raise SystemExit("preflight accepts no arguments")
@@ -154,13 +137,11 @@ def _preflight(arguments: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     arguments = argv or sys.argv[1:]
     if not arguments:
-        raise SystemExit("usage: member_linux_runner {worker|cli|test|preflight} ...")
+        raise SystemExit("usage: member_linux_runner {worker|cli|preflight} ...")
     if arguments[0] == "worker":
         return _worker(arguments[1:])
     if arguments[0] == "cli":
         return _cli(arguments[1:])
-    if arguments[0] == "test":
-        return _test(arguments[1:])
     if arguments[0] == "preflight":
         return _preflight(arguments[1:])
     raise SystemExit(f"unsupported runner operation: {arguments[0]}")

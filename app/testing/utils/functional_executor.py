@@ -195,7 +195,7 @@ def operation_for_id(document: dict[str, Any], operation_id: str, *, use_case_id
 
 def _response_schema(
     document: dict[str, Any], operation: Operation, status: int | None = None
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     responses = operation.value.get("responses")
     if not isinstance(responses, dict):
         raise UpstreamAmbiguity(f"OpenAPI responses가 비어 있습니다: {operation.operation_id}")
@@ -216,7 +216,15 @@ def _response_schema(
             or responses.get(f"{str(status)[0]}XX")
             or responses.get("default")
         )
-    content = response.get("content") if isinstance(response, dict) else None
+    if not isinstance(response, dict):
+        raise UpstreamAmbiguity(
+            f"OpenAPI success response가 비어 있습니다: {operation.operation_id}"
+        )
+    content = response.get("content")
+    # 204처럼 본문이 없는 성공 응답은 schema가 없는 것이 정상이다. ``content``를
+    # 선언했는데 JSON schema만 빠진 경우와 구분하여, 후자는 계속 명세 오류로 다룬다.
+    if content is None:
+        return None
     json_content = content.get("application/json") if isinstance(content, dict) else None
     schema = json_content.get("schema") if isinstance(json_content, dict) else None
     if not isinstance(schema, dict):
@@ -483,6 +491,11 @@ def execute_functional_plan(
             }
         try:
             schema = _response_schema(openapi, operation, response.status_code)
+            if schema is None:
+                if response.content:
+                    raise ValueError("OpenAPI에는 없는 성공 응답 본문이 반환되었습니다.")
+                reports.append(report)
+                continue
             payload = response.json()
             errors = sorted(
                 jsonschema.Draft202012Validator(_inline_refs(openapi, schema)).iter_errors(payload),
@@ -541,7 +554,9 @@ def operation_prompt_projection(
                 "requiredRequestFields": _request_fields(document, operation),
                 "successResponseFields": [
                     {"name": name, "type": kind}
-                    for name, kind, _value, _path in _leaves(document, response)
+                    for name, kind, _value, _path in (
+                        _leaves(document, response) if response is not None else []
+                    )
                 ],
             }
         )

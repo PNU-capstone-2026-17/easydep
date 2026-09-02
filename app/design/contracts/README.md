@@ -12,4 +12,5 @@
 
 `api_spec.py`는 API 제안과 저장 endpoint의 Pydantic 모델을 소유한다. API 설계 서비스와
 구현 단계가 같은 `ApiSpecModel`을 사용하므로, 구현 코드가 설계 서비스 내부 모듈을 import하지
-않는다. `deployment.py`는 배포 bundle과 runtime binding의 공개 함수를 제공한다.
+않는다. `erd.py`는 검증된 BCE 모델을 논리 데이터 모델로 바꾸는 순수 함수를 공개한다.
+`deployment.py`는 배포 bundle과 runtime binding의 공개 함수를 제공한다.

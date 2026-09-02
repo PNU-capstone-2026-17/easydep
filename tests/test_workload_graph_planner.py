@@ -296,7 +296,7 @@ def test_reference_integrity_and_ambiguous_exposure_are_blocking() -> None:
     assert any("targetRef" in item["field"] for item in model["issues"])
 
 
-def test_generated_connection_accepts_url_or_host_port_environment_bindings() -> None:
+def test_generated_connection_derives_url_and_accepts_host_port_bindings() -> None:
     source = workload("web", public=False)
     target = workload("api", public=False)
     value = graph(source, target)
@@ -310,26 +310,23 @@ def test_generated_connection_accepts_url_or_host_port_environment_bindings() ->
             "sourceRefs": ["sequence:CALL-API"],
         }
     ]
-    missing = normalized(value)
-    assert any(item["field"].endswith("endpointBinding") for item in missing["issues"])
-
-    source["configuration"] = [
+    complete = normalized(value)
+    assert complete["issues"] == []
+    generated_source = next(item for item in complete["workloads"] if item["id"] == "web")
+    assert generated_source["configuration"] == [
         {
             "id": "api-url",
-            "name": "API_SERVICE_URL",
+            "name": "API_URL",
             "kind": "endpointBinding",
             "connectionRef": "web-to-api",
             "projection": "url",
+            "sensitive": False,
             "sourceRefs": ["sequence:CALL-API"],
         }
     ]
-    complete = normalized(value)
-    assert not any(
-        item["field"].endswith("endpointBinding") for item in complete["issues"]
-    )
     plan = build_deployment_plan(complete)
     binding = next(item for item in plan["runtimeBindings"] if item["kind"] == "endpointEnvironment")
-    assert binding["environmentName"] == "API_SERVICE_URL"
+    assert binding["environmentName"] == "API_URL"
     assert binding["strategy"] == "containerDns"
 
     source["configuration"] = [

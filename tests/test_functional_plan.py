@@ -207,6 +207,21 @@ def test_executor_builds_schema_requests_and_passes_only_unique_previous_field(
                     },
                 }
             },
+            "/orders/{orderId}/archive": {
+                "post": {
+                    "operationId": "archiveOrder",
+                    "x-easydep-use-case-ids": ["UC-1"],
+                    "parameters": [
+                        {
+                            "name": "orderId",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string"},
+                        }
+                    ],
+                    "responses": {"204": {"description": "Order archived"}},
+                }
+            },
         },
     }
     plan = FunctionalTestCase(
@@ -216,12 +231,14 @@ def test_executor_builds_schema_requests_and_passes_only_unique_previous_field(
         steps=[
             {"step_id": "create", "operation_id": "createOrder"},
             {"step_id": "confirm", "operation_id": "confirmOrder"},
+            {"step_id": "archive", "operation_id": "archiveOrder"},
         ],
     )
     responses = iter(
         [
             httpx.Response(201, json={"orderId": "order-42", "status": "created"}),
             httpx.Response(200, json={"confirmed": True}),
+            httpx.Response(204),
         ]
     )
     requests: list[tuple[str, str, dict]] = []
@@ -242,6 +259,8 @@ def test_executor_builds_schema_requests_and_passes_only_unique_previous_field(
     assert set(requests[1][2]["json"]) == {"orderId", "confirmationCode"}
     assert result["steps"][1]["inputSources"]["path.orderId"] == "previous-response"
     assert result["steps"][1]["inputSources"]["body.orderId"] == "previous-response"
+    assert requests[2][0:2] == ("POST", "http://app.test/orders/order-42/archive")
+    assert result["steps"][2]["statusCode"] == 204
 
 
 def test_schema_generated_4xx_requests_test_profile_data(
@@ -294,7 +313,7 @@ def test_schema_generated_4xx_requests_test_profile_data(
     assert result["finding"]["generatedInputs"] == ["path.orderId"]
 
 
-def test_one_failed_case_is_reported_without_rerunning_another_case(
+def test_all_cases_are_reported_when_one_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dynamic_module = importlib.import_module("app.testing.nodes.dynamic_functional")
@@ -360,13 +379,23 @@ def test_one_failed_case_is_reported_without_rerunning_another_case(
             "target_url": "http://app.test",
             "testing_input": {
                 "contract_artifacts": {
-                    "requirements": {"content": [{"id": "FR-1", "type": "functional"}]},
+                    "requirements": {
+                        "content": [
+                            {"id": "FR-1", "type": "functional"},
+                            {"id": "FR-POLICY", "type": "functional"},
+                        ]
+                    },
                     "use_cases": {
                         "content": {
                             "use_case_specs": [
                                 {"use_case_id": "UC-1", "requirement_ids": ["FR-1"]},
                                 {"use_case_id": "UC-2", "requirement_ids": ["FR-1"]},
-                            ]
+                            ],
+                            "traceability": {
+                                "requirements": {
+                                    "FR-POLICY": {"modeled_as_constraint": True}
+                                }
+                            },
                         }
                     },
                     "openapi": {"content": document},
@@ -383,6 +412,8 @@ def test_one_failed_case_is_reported_without_rerunning_another_case(
     assert len(report["candidatePlan"]["cases"][1]["steps"]) == 1
     assert report["gateStatus"] == "FAIL"
     assert report["cases"][0]["result"]["reason"] == "broken app"
+    assert report["requirements"]["ids"] == []
+    assert report["requirements"]["unverifiedIds"] == ["FR-1", "FR-POLICY"]
 
 
 def test_missing_or_ambiguous_operation_is_upstream_ambiguity() -> None:

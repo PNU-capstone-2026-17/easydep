@@ -173,7 +173,7 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
     task = TraceRef("task", "TASK-1")
     file_ref = TraceRef("file", "src/orders.py")
     test = TraceRef("test", "digest-1:UC-1")
-    finding = TraceRef("finding", "testing.unit-tests")
+    finding = TraceRef("finding", "testing.dynamicFunctional")
     trace = project_artifact_trace(
         {
             "refined_requirements": {
@@ -234,7 +234,12 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
                     ]
                 },
             },
-            "blocking_findings": [{"code": "testing.unit-tests"}],
+            "blocking_findings": [
+                {
+                    "code": "testing.dynamicFunctional",
+                    "target_ids": ["test:digest-1:UC-1"],
+                }
+            ],
         },
     )
 

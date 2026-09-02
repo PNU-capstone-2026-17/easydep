@@ -19,7 +19,6 @@ class TestingState(TypedDict):
     # 검사는 이 폴더를 함께 사용하며 검사 도중 DB에서 파일을 다시 읽지 않는다.
     application_dir: str
     target_url: str  # Target URL for dynamic testing, defaults to localhost:8080
-    application_network: str | None
     # 사용자가 선택한 이전 수리 이력. 동적 테스트 생성기는 같은 실패와 후보를
     # 반복하지 않도록 이 값을 프롬프트 문맥으로만 사용한다.
     repair_history: dict[str, Any]

@@ -227,7 +227,6 @@ def _run_test(
                 application_dir=str(run_root / "application"),
                 repair_history=ledger.model_dump(mode="json"),
                 implementation_job_id=testing_input.implementation_job_id,
-                run_dynamic=True,
                 testing_input=testing_input.model_dump(mode="json"),
                 iac_expected=TYPE_IAC_CODE in testing_input.artifact_version_ids,
                 # DEPLOYMENT_FILE에는 Dockerfile도 들어간다. 실제 package 필요 여부는

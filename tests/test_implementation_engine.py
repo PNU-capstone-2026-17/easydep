@@ -1557,6 +1557,9 @@ def test_cloud_spec_renders_deployment_and_matching_iac(tmp_path: Path) -> None:
     assert iac["sourceConformance"]["status"] == "SUCCEEDED"
     assert (run / "application/Dockerfile").is_file()
     assert (run / "application/terraform/main.tf").is_file()
-    assert (run / "application/deployment-bundle/README.md").is_file()
+    # 이전 cloud JSON 경로는 Terraform만 만든다. 사용자용 배포 묶음은 검토된
+    # ResourcePlan이 있는 현재 경로에서만 생성한다.
+    assert "deploymentPackage" not in iac
+    assert not (run / "application/deployment-bundle").exists()
     assert not (run / "application/k8s").exists()
     assert not (run / "application/deployment-bundle/application/k8s").exists()

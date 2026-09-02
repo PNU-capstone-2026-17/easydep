@@ -78,6 +78,26 @@ def _frozen(state: TestingState) -> dict[str, Any]:
     }
 
 
+def _functional_requirement_ids(value: Any) -> set[str]:
+    """고정 요구사항에서 기능 요구사항 ID만 읽는다."""
+
+    if not isinstance(value, list):
+        raise UpstreamAmbiguity("TestingContracts.requirements content가 list가 아닙니다.")
+    result: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        identifier = str(item.get("id") or "").strip()
+        requirement_type = str(item.get("type") or "").strip().upper()
+        if (
+            identifier
+            and not identifier.upper().startswith("NFR")
+            and requirement_type not in _NON_FUNCTIONAL
+        ):
+            result.add(identifier)
+    return result
+
+
 def _functional_requirements(value: Any, requirement_trace: dict[str, Any]) -> set[str]:
     """고정 요구사항에서 유스케이스로 실행할 수 있는 기능 ID만 고른다.
 
@@ -86,16 +106,8 @@ def _functional_requirements(value: Any, requirement_trace: dict[str, Any]) -> s
     시험하지 않는다. 반대로 일반 기능 요구사항의 연결이 빠졌다면 아래 coverage
     검사에서 상류 명세 오류로 그대로 보고한다.
     """
-    if not isinstance(value, list):
-        raise UpstreamAmbiguity("TestingContracts.requirements content가 list가 아닙니다.")
-    result = set()
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        identifier = str(item.get("id") or "").strip()
-        kind = str(item.get("type") or "").strip().upper()
-        if not identifier or identifier.upper().startswith("NFR") or kind in _NON_FUNCTIONAL:
-            continue
+    result = _functional_requirement_ids(value)
+    for identifier in tuple(result):
         trace = requirement_trace.get(identifier)
         if isinstance(trace, dict) and trace.get("modeled_as_constraint") is True:
             linked_use_cases = [
@@ -105,8 +117,7 @@ def _functional_requirements(value: Any, requirement_trace: dict[str, Any]) -> s
                 if isinstance(use_case_id, str) and use_case_id.strip()
             ]
             if not linked_use_cases:
-                continue
-        result.add(identifier)
+                result.remove(identifier)
     return result
 
 
@@ -304,20 +315,27 @@ def _case_result(case: FunctionalTestCase, result: dict[str, Any]) -> dict[str, 
     }
 
 
-def _requirements(results: list[dict[str, Any]]) -> dict[str, Any]:
+def _requirements(results: list[dict[str, Any]], frozen_requirements: Any) -> dict[str, Any]:
+    """통과한 기능 요구사항과 아직 동작 증거가 없는 요구사항을 함께 표시한다."""
+
+    outcomes: dict[str, list[bool]] = {}
+    for item in results:
+        passed = str((item["result"]).get("gateStatus") or "").upper() == "PASS"
+        for requirement in item["requirementIds"]:
+            outcomes.setdefault(requirement, []).append(passed)
+    # 같은 요구사항을 여러 유스케이스가 실현하면 그중 하나만 성공했다고 검증된 것으로
+    # 표시하지 않는다. 연결된 실행 결과가 모두 통과해야 이 HTTP 보고서의 증거가 된다.
     executed = sorted(
-        {
-            requirement
-            for item in results
-            if str((item["result"]).get("gateStatus") or "").upper() == "PASS"
-            for requirement in item["requirementIds"]
-        }
+        requirement for requirement, statuses in outcomes.items() if statuses and all(statuses)
     )
     return {
         "source": "TestingInput",
         "artifact_type": "REFINE_REQ",
         "count": len(executed),
         "ids": executed,
+        # 전역 정책처럼 유스케이스 HTTP 계획에 포함되지 않은 요구사항을 숨기지 않는다.
+        # 이 목록은 실패를 뜻하지 않고, 이 보고서만으로는 동작을 입증하지 않았다는 뜻이다.
+        "unverifiedIds": sorted(_functional_requirement_ids(frozen_requirements) - set(executed)),
     }
 
 
@@ -452,7 +470,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             "caseId": first_failure_case_id,
             "cases": results,
             "reusedCaseIds": reused_case_ids,
-            "requirements": _requirements(results),
+            "requirements": _requirements(results, frozen["requirements"]),
             "targetUrl": target_url,
         }
         report["defect"] = classify_dynamic_failure(report)
@@ -466,7 +484,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             "candidateDigest": stable_digest(candidate_plan),
             "cases": results,
             "reusedCaseIds": reused_case_ids,
-            "requirements": _requirements(results),
+            "requirements": _requirements(results, frozen["requirements"]),
             "targetUrl": target_url,
         },
     }

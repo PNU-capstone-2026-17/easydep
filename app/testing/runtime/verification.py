@@ -47,11 +47,9 @@ def run_verification_graph(
     fixed_test_plan: dict[str, Any] | None = None,
     preserved_case_results: list[dict[str, Any]] | None = None,
     implementation_job_id: str | None = None,
-    run_dynamic: bool = True,
     testing_input: dict[str, Any] | None = None,
     iac_expected: bool | None = None,
     deployment_package_expected: bool | None = None,
-    application_network: str | None = None,
 ) -> dict[str, Any]:
     with langsmith_metrics.trace_scope(
         "easydep.testing.verification",
@@ -72,11 +70,9 @@ def run_verification_graph(
             fixed_test_plan=fixed_test_plan,
             preserved_case_results=preserved_case_results,
             implementation_job_id=implementation_job_id,
-            run_dynamic=run_dynamic,
             testing_input=testing_input,
             iac_expected=iac_expected,
             deployment_package_expected=deployment_package_expected,
-            application_network=application_network,
         )
 
 
@@ -90,11 +86,9 @@ def _run_verification_graph(
     fixed_test_plan: dict[str, Any] | None = None,
     preserved_case_results: list[dict[str, Any]] | None = None,
     implementation_job_id: str | None = None,
-    run_dynamic: bool = True,
     testing_input: dict[str, Any] | None = None,
     iac_expected: bool | None = None,
     deployment_package_expected: bool | None = None,
-    application_network: str | None = None,
 ) -> dict[str, Any]:
     """저장된 애플리케이션을 실행한 뒤 testing graph를 호출한다.
 
@@ -107,9 +101,30 @@ def _run_verification_graph(
     launch_error: str | None = None
     launch_defect_class = "SUT_DEFECT"
 
-    if not run_dynamic:
-        # 전체 test나 frontend build가 이미 실패했다면 Docker image까지 만들 이유가 없다.
-        # 정적 설정 검사는 계속 실행하고 동적 노드는 target URL이 없으므로 SKIPPED가 된다.
+    try:
+        with _launch(
+            app_id,
+            target_url,
+            launch_id=run_id,
+            application_dir=application_dir,
+        ) as (url, application):
+            result = graph.invoke(
+                initial_state(
+                    run_id=run_id,
+                    app_id=app_id,
+                    target_url=url,
+                    application_dir=application_dir,
+                    repair_history=repair_history,
+                    fixed_test_plan=fixed_test_plan,
+                    preserved_case_results=preserved_case_results,
+                    testing_input=testing_input,
+                    iac_expected=iac_expected,
+                    deployment_package_expected=deployment_package_expected,
+                )
+            )
+    except ApplicationLaunchError as error:
+        launch_error = str(error)
+        launch_defect_class = error.defect_class
         result = graph.invoke(
             initial_state(
                 run_id=run_id,
@@ -121,66 +136,25 @@ def _run_verification_graph(
                 testing_input=testing_input,
                 iac_expected=iac_expected,
                 deployment_package_expected=deployment_package_expected,
-                application_network=None,
             )
         )
-    else:
-        try:
-            with _launch(
-                app_id,
-                target_url,
-                launch_id=run_id,
-                application_dir=application_dir,
-            ) as (url, application):
-                result = graph.invoke(
-                    initial_state(
-                        run_id=run_id,
-                        app_id=app_id,
-                        target_url=url,
-                        application_dir=application_dir,
-                        repair_history=repair_history,
-                        fixed_test_plan=fixed_test_plan,
-                        preserved_case_results=preserved_case_results,
-                        testing_input=testing_input,
-                        iac_expected=iac_expected,
-                        deployment_package_expected=deployment_package_expected,
-                        application_network=application.get("network") or application_network,
-                    )
-                )
-        except ApplicationLaunchError as error:
-            launch_error = str(error)
-            launch_defect_class = error.defect_class
-            result = graph.invoke(
-                initial_state(
-                    run_id=run_id,
-                    app_id=app_id,
-                    application_dir=application_dir,
-                    repair_history=repair_history,
-                    fixed_test_plan=fixed_test_plan,
-                    preserved_case_results=preserved_case_results,
-                    testing_input=testing_input,
-                    iac_expected=iac_expected,
-                    deployment_package_expected=deployment_package_expected,
-                    application_network=None,
-                )
-            )
 
-            # 앱을 띄우지 못했는데 동적 검사를 NOT_APPLICABLE로 두면 최종 finding에서
-            # 시작 실패가 사라진다. Docker 환경 문제는 재실행 대기, 생성 앱 문제는 구현
-            # 수리로 보낼 수 있도록 같은 dynamic gate에 명시적인 실패를 남긴다.
-            environment_failure = launch_defect_class == "ENVIRONMENT_DEFECT"
-            result["dynamic_functional_report"] = {
-                "status": "UNAVAILABLE" if environment_failure else "FAILED",
-                "gateStatus": "INCONCLUSIVE" if environment_failure else "FAIL",
-                "reason": launch_error,
+        # 앱을 띄우지 못했는데 동적 검사를 NOT_APPLICABLE로 두면 최종 finding에서
+        # 시작 실패가 사라진다. Docker 환경 문제는 재실행 대기, 생성 앱 문제는 구현
+        # 수리로 보낼 수 있도록 같은 dynamic gate에 명시적인 실패를 남긴다.
+        environment_failure = launch_defect_class == "ENVIRONMENT_DEFECT"
+        result["dynamic_functional_report"] = {
+            "status": "UNAVAILABLE" if environment_failure else "FAILED",
+            "gateStatus": "INCONCLUSIVE" if environment_failure else "FAIL",
+            "reason": launch_error,
+            "defectClass": launch_defect_class,
+            "defect": {
+                "class": launch_defect_class,
                 "defectClass": launch_defect_class,
-                "defect": {
-                    "class": launch_defect_class,
-                    "defectClass": launch_defect_class,
-                    "route": "environment" if environment_failure else "implementation",
-                    "preserveTests": True,
-                },
-            }
+                "route": "environment" if environment_failure else "implementation",
+                "preserveTests": True,
+            },
+        }
 
     reports = {
         "static": result.get("static_report"),
@@ -192,7 +166,7 @@ def _run_verification_graph(
         # An unspecified IaC contract is a legacy/no-IaC application. The service
         # supplies True when the fixed implementation snapshot contains IaC.
         "iac": iac_expected is True,
-        "dynamicFunctional": run_dynamic,
+        "dynamicFunctional": True,
     }
     aggregate = aggregate_gate_report(reports, required=required)
     blocking = (

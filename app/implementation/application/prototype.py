@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.design.contracts.erd import project_logical_model
 from app.design.schemas.class_model import BCEModel
-from app.design.services.erd.projection import project_logical_model
 
 from ..config import ImplementationSettings
 from ..runtime.linux_runner_transport import (

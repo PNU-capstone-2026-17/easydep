@@ -321,7 +321,12 @@ def _cart_contract_state(binding: dict | None) -> tuple[dict, dict]:
         endpoint["control_binding"] = binding
     model = {
         "Endpoints": [endpoint],
-        "Schemas": [{"name": "CartResponse", "fields": []}],
+        "Schemas": [
+            {
+                "name": "CartResponse",
+                "fields": [{"name": "cartId", "type": "string", "required": True}],
+            }
+        ],
     }
     return state, model
 
