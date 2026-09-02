@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +14,7 @@ from app.implementation.config import (
     DEFAULT_AZURE_MYSQL_BACKUP_RETENTION_DAYS,
 )
 from app.implementation.delivery.iac_renderer import render_open_tofu
-
-from ..domain.implementation_ir import remove_readonly
+from app.implementation.delivery.package import render_deployment_package
 
 SCHEMA_VERSION = "easydep-iac-render/v1alpha1"
 MANAGED_FILES = ("terraform/main.tf", "terraform/variables.tf", "terraform/outputs.tf")
@@ -68,6 +65,9 @@ def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
         required_variables = _required_variables(provider)
     for filename, content in files.items():
         (terraform / filename).write_text(content.rstrip() + "\n", encoding="utf-8")
+    package: Path | None = None
+    if resource_plan is not None:
+        package = render_deployment_package(application, resource_plan, files)
     if resource_plan is None:
         conformance = validate_deployment_iac_conformance(cloud, intent, application)
     report = {"schemaVersion": SCHEMA_VERSION, "renderer": f"deterministic-terraform-{provider}", "provider": provider, "renderedFiles": [f"application/terraform/{name}" for name in files], "requiredVariables": required_variables, "sourceConformance": conformance, "kubernetesManifests": False, "sourceEvidence": deployment_evidence}
@@ -76,8 +76,8 @@ def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
     (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     if conformance["status"] == "FAILED":
         raise ValueError("Deployment/IaC conformance failed:\n- " + "\n- ".join(conformance["errors"]))
-    bundle = sync_deployment_bundle(application)
-    report["deploymentBundle"] = bundle.relative_to(application.parent).as_posix()
+    if package is not None:
+        report["deploymentPackage"] = package.relative_to(application).as_posix()
     (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
 
@@ -120,15 +120,19 @@ def _iac_design_source(
     resource_spec = bundle.get("resourceSpec")
     if not isinstance(resource_spec, dict):
         raise ValueError("Deployment diagram bundle has no resource specification")
-    provider = str(
-        resource_spec.get("provider")
-        or (legacy_cloud or {}).get("provider")
-        or ""
-    ).lower()
-    region = str(
-        resource_spec.get("region") or (legacy_cloud or {}).get("region") or ""
-    )
-    projection = _deployment_projection(bundle, provider, region)
+    selected_target = bundle.get("selectedTarget")
+    if not isinstance(selected_target, dict):
+        # Single-target bundles saved before selectedTarget was introduced remain
+        # unambiguous. New bundles always persist it; alternatives never use this
+        # compatibility path.
+        projections = [item for item in bundle.get("projections") or [] if isinstance(item, dict)]
+        if len(projections) != 1:
+            raise ValueError("IaC rendering requires a selected deployment target")
+        selected_target = {
+            "provider": projections[0].get("provider"),
+            "region": projections[0].get("region"),
+        }
+    projection = _deployment_projection(bundle, selected_target)
     resource_plan = projection.get("resourcePlan") if isinstance(projection, dict) else None
     if not isinstance(resource_plan, dict):
         raise ValueError("Deployment diagram bundle has no provider resource plan for Terraform")
@@ -146,22 +150,25 @@ def _iac_design_source(
     }, resource_plan
 
 
-def _deployment_projection(
-    bundle: dict[str, Any], provider: str, region: str
-) -> dict[str, Any]:
+def _deployment_projection(bundle: dict[str, Any], selected_target: dict[str, Any]) -> dict[str, Any]:
     projections = [
         item for item in bundle.get("projections") or [] if isinstance(item, dict)
     ]
     matches = [
         item
         for item in projections
-        if (not provider or str(item.get("provider") or "").lower() == provider)
-        and (not region or str(item.get("region") or "") == region)
+        if (
+            str(item["target"].get("id") or "") == str(selected_target.get("id") or "")
+            if selected_target.get("id") and isinstance(item.get("target"), dict)
+            else str(item.get("provider") or "").lower()
+            == str(selected_target.get("provider") or "").lower()
+            and str(item.get("region") or "") == str(selected_target.get("region") or "")
+        )
         and item.get("status") == "completed"
     ]
     if len(matches) != 1:
         raise ValueError(
-            "Deployment diagram bundle must contain exactly one completed provider projection for the selected resource specification"
+            "Deployment diagram bundle must contain exactly one completed projection for selectedTarget"
         )
     return matches[0]
 
@@ -181,39 +188,6 @@ def _rendered_required_variables(files: dict[str, str]) -> list[dict[str, str]]:
         {"name": name, "description": "required deployment input"}
         for name in variables
     ]
-
-
-def sync_deployment_bundle(application: Path) -> Path:
-    """IaC 검사가 성공하면 다른 파일 없이 실행 가능한 deployment bundle을 만든다."""
-    bundle = application / "deployment-bundle"
-    marker = bundle / ".easydep-managed"
-    staging = Path(tempfile.mkdtemp(prefix="easydep-bundle-"))
-    try:
-        shutil.copytree(
-            application,
-            staging / "application",
-            ignore=shutil.ignore_patterns("deployment-bundle", "build", ".gradle", "__pycache__", "test"),
-        )
-        (staging / ".easydep-managed").write_text("easydep deployment bundle\n", encoding="utf-8")
-        instructions = (
-            "Build the Docker image from `application` (and `application/frontend` "
-            "when it has its own Dockerfile). Apply the generated OpenTofu/Terraform "
-            "under `application/terraform` after configuring provider credentials."
-        )
-        (staging / "README.md").write_text(
-            f"# EasyDep deployment bundle\n\n{instructions}\n",
-            encoding="utf-8",
-        )
-        if bundle.exists():
-            legacy_managed = (bundle / "application" / "terraform" / "main.tf").is_file()
-            if not marker.is_file() and not legacy_managed:
-                raise ValueError(f"Refusing to replace unmanaged deployment bundle: {bundle}")
-            shutil.rmtree(bundle, onerror=remove_readonly)
-        shutil.move(str(staging), str(bundle))
-        return bundle
-    except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
 
 
 def validate_deployment_iac_conformance(

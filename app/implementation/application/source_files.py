@@ -50,6 +50,13 @@ def classify_source_path(workspace_path: str) -> tuple[str, str]:
     lowered = relative.lower()
     if relative.startswith("frontend/"):
         return TYPE_FRONTEND_SOURCE_CODE, relative.removeprefix("frontend/")
+    if relative.startswith("deployment/"):
+        # OpenTofu 파일은 기존 IaC gate가 독립적으로 고정할 수 있게 IAC_CODE에 두고,
+        # README·Compose·cloud-init·실행 script·환경변수 예시는 배포 패키지 한 묶음으로
+        # 저장한다. materialize 시 두 snapshot은 같은 application 경로에 합쳐진다.
+        if "/tofu/" in f"/{lowered}" or lowered.endswith((".tf", ".tf.json", ".tftpl")):
+            return TYPE_IAC_CODE, relative
+        return TYPE_DEPLOYMENT_FILE, relative
     if relative.startswith("deployment-bundle/"):
         return TYPE_DEPLOYMENT_FILE, relative
     if "/test/" in f"/{lowered}":
@@ -73,7 +80,10 @@ def is_visible_source_path(workspace_path: str) -> bool:
     name = relative.name.lower()
     return (
         not lowered_parts.intersection(_IGNORED_DIRECTORIES)
-        and not name.startswith(".env")
+        # 실제 ``.env``에는 비밀값이 들어갈 수 있어 계속 제외한다. 이름과 설명만 담는
+        # ``.env.example``은 사용자가 배포 패키지를 실행하는 데 필요한 문서이므로 저장하고
+        # viewer에도 보여 준다.
+        and (not name.startswith(".env") or name == ".env.example")
         and name not in _SECRET_NAMES
         and relative.suffix.lower() not in _SECRET_SUFFIXES
     )

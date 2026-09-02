@@ -161,10 +161,26 @@ def to_web_response(result: Mapping[str, Any]) -> dict[str, Any]:
     deployment_bundle = result.get("deployment_diagram_bundle") or {}
     artifact_metadata: dict[str, Any] = {}
     if deployment_bundle:
+        projections = [
+            item
+            for item in deployment_bundle.get("projections") or []
+            if isinstance(item, dict) and isinstance(item.get("target"), dict)
+        ]
         artifact_metadata["deployment_diagram"] = {
             "schemaVersion": deployment_bundle.get("schemaVersion"),
             "readOnly": deployment_bundle.get("readOnly") is True,
             "regeneration": deployment_bundle.get("regeneration"),
+            "status": deployment_bundle.get("status"),
+            "selection": deployment_bundle.get("selection"),
+            "selectedTarget": deployment_bundle.get("selectedTarget"),
+            "targets": [
+                {
+                    **dict(item["target"]),
+                    "status": item.get("status"),
+                    "issueCount": len(item.get("issues") or []),
+                }
+                for item in projections
+            ],
         }
     return {
         "artifacts": artifacts,

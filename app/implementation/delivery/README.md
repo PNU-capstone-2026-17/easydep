@@ -9,7 +9,9 @@
 - **입력:** schema-version이 있는 ResourcePlan, provider별 primitive와 binding,
   배포 설정 및 필요한 application contract.
 - **출력:** provider별 IaC 텍스트/파일, delivery bundle, Terraform 검사 결과와
-  검증 결과. 렌더러는 입력의 선택을 그대로 실현하고 새 리소스 타입을 추론하지
+  검증 결과. 선택된 ResourcePlan이 있으면 `application/deployment/`에 OpenTofu,
+  cloud-init 예시, Compose, 비밀값 없는 env 예시와 PowerShell/POSIX 실행 script도
+  함께 만든다. 렌더러는 입력의 선택을 그대로 실현하고 새 리소스 타입을 추론하지
   않는다.
 - **부수효과:** 순수 renderer/validator는 메모리에서 동작한다. delivery CLI가
   명시적으로 호출될 때만 작업 디렉터리와 산출물을 쓰고 Terraform/OpenTofu를
@@ -20,3 +22,6 @@
 - **실패 조건:** plan schema/primitive가 없거나 연결 정보가 중복·불일치하고,
   provider가 지원되지 않거나 생성된 HCL을 검사할 수 없으면 진단과 함께
   중단한다. 도구 실행 실패·시간 초과도 성공으로 포장하지 않는다.
+
+배포 package는 EasyDep 서버가 `apply`하거나 비밀값을 보관하는 기능이 아니다. 사용자는
+생성된 README 순서대로 CSP 인증, image push, plan·deploy·verify·destroy를 직접 실행한다.

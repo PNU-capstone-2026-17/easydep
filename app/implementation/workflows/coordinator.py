@@ -824,58 +824,82 @@ def _bind_deployment_runtime(run_root: Path, spec: JobSpec) -> Path | None:
     projections = bundle.get("projections")
     if not isinstance(graph, dict) or not isinstance(projections, list) or not projections:
         raise ValueError("Completed deployment bundle has no workload graph or projections")
-    rebound: list[dict[str, object]] = []
-    bound_graph: dict[str, object] | None = None
-    for projection in projections:
-        if not isinstance(projection, dict) or projection.get("status") != "completed":
-            raise ValueError("Completed deployment bundle contains an incomplete projection")
-        deployment_plan = projection.get("deploymentPlan")
-        if not isinstance(deployment_plan, dict):
-            raise TypeError("Deployment projection has no deployment plan")
-        binding = bind_runtime_contract(graph, deployment_plan, observed)
-        if binding.get("status") != "bound":
-            issues = binding.get("issues") or []
-            _write_json_atomic(
-                report_path,
-                {
-                    "schemaVersion": "easydep-implementation-runtime/v1alpha1",
-                    "status": "FAILED",
-                    "runtimeContracts": observed,
-                    "issues": issues,
-                },
-            )
-            reasons = [str(item.get("reason") or item) for item in issues if isinstance(item, dict)]
-            raise RuntimeError(
-                "Generated application does not satisfy the deployment runtime contract: "
-                + "; ".join(reasons or ["unknown runtime mismatch"])
-            )
-        current_graph = binding.get("workloadGraph")
-        current_plan = binding.get("deploymentPlan")
-        if not isinstance(current_graph, dict) or not isinstance(current_plan, dict):
-            raise TypeError("Runtime binding returned no bound graph or deployment plan")
-        resource_plan = build_provider_resource_plan(
-            current_plan,
-            current_graph,
-            provider=str(projection.get("provider") or ""),
-            region=str(projection.get("region") or ""),
+    selected_target = bundle.get("selectedTarget")
+    if not isinstance(selected_target, dict):
+        # A persisted v1 single-target bundle predates selectedTarget. It is
+        # still deterministic; alternatives must be selected explicitly.
+        if len(projections) != 1 or not isinstance(projections[0], dict):
+            raise ValueError("Completed deployment bundle has no selected target")
+        selected_target = {
+            "provider": projections[0].get("provider"),
+            "region": projections[0].get("region"),
+        }
+    selected_id = str(selected_target.get("id") or "")
+    selected_matches = [
+        projection
+        for projection in projections
+        if isinstance(projection, dict)
+        and (
+            str(projection["target"].get("id") or "") == selected_id
+            if selected_id and isinstance(projection.get("target"), dict)
+            else str(projection.get("provider") or "").lower()
+            == str(selected_target.get("provider") or "").lower()
+            and str(projection.get("region") or "") == str(selected_target.get("region") or "")
         )
-        previous_digest = str(projection.get("resourcePlanStructureDigest") or "")
-        current_digest = str(resource_plan.get("structureDigest") or "")
-        if previous_digest and previous_digest != current_digest:
-            raise RuntimeError("Runtime binding changed the ResourcePlan structure")
-        rebound.append(
+    ]
+    if len(selected_matches) != 1 or selected_matches[0].get("status") != "completed":
+        raise ValueError("Selected deployment target has no completed projection")
+    projection = selected_matches[0]
+    deployment_plan = projection.get("deploymentPlan")
+    if not isinstance(deployment_plan, dict):
+        raise TypeError("Selected deployment projection has no deployment plan")
+    binding = bind_runtime_contract(graph, deployment_plan, observed)
+    if binding.get("status") != "bound":
+        issues = binding.get("issues") or []
+        _write_json_atomic(
+            report_path,
             {
-                **projection,
-                "deploymentPlan": current_plan,
-                "deploymentPlanStructureDigest": current_plan.get("structureDigest"),
-                "resourcePlan": resource_plan,
-                "resourcePlanStructureDigest": current_digest,
-                "issues": [],
-            }
+                "schemaVersion": "easydep-implementation-runtime/v1alpha1",
+                "status": "FAILED",
+                "runtimeContracts": observed,
+                "issues": issues,
+            },
         )
-        bound_graph = current_graph
+        reasons = [str(item.get("reason") or item) for item in issues if isinstance(item, dict)]
+        raise RuntimeError(
+            "Generated application does not satisfy the deployment runtime contract: "
+            + "; ".join(reasons or ["unknown runtime mismatch"])
+        )
+    current_graph = binding.get("workloadGraph")
+    current_plan = binding.get("deploymentPlan")
+    if not isinstance(current_graph, dict) or not isinstance(current_plan, dict):
+        raise TypeError("Runtime binding returned no bound graph or deployment plan")
+    resource_plan = build_provider_resource_plan(
+        current_plan,
+        current_graph,
+        provider=str(projection.get("provider") or ""),
+        region=str(projection.get("region") or ""),
+    )
+    previous_digest = str(projection.get("resourcePlanStructureDigest") or "")
+    current_digest = str(resource_plan.get("structureDigest") or "")
+    if previous_digest and previous_digest != current_digest:
+        raise RuntimeError("Runtime binding changed the ResourcePlan structure")
+    rebound = [
+        {
+            **item,
+            "deploymentPlan": current_plan,
+            "deploymentPlanStructureDigest": current_plan.get("structureDigest"),
+            "resourcePlan": resource_plan,
+            "resourcePlanStructureDigest": current_digest,
+            "issues": [],
+        }
+        if item is projection
+        else item
+        for item in projections
+        if isinstance(item, dict)
+    ]
 
-    bound_bundle = {**bundle, "workloadGraph": bound_graph or graph, "projections": rebound}
+    bound_bundle = {**bundle, "workloadGraph": current_graph, "projections": rebound}
     target = reports / "runtime-bound-deployment-bundle.json"
     _write_json_atomic(target, bound_bundle)
     _write_json_atomic(
