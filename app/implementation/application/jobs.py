@@ -32,6 +32,7 @@ from app.db.models import (
     TYPE_TEST_CODE,
     TYPE_USECASE_SPEC,
 )
+from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
 
 from ..config import ImplementationSettings
@@ -229,7 +230,7 @@ class ImplementationWorker:
             "transmission_request": None, "error": None, "created_at": _now(), "updated_at": _now(),
         }
         self._write(record)
-        self.executor.submit(self._plan, job_id)
+        self.executor.submit(langsmith_metrics.bind_context(self._plan), job_id)
         return self.public_record(record)
 
     def _create_design_blocked_job(
@@ -403,7 +404,7 @@ class ImplementationWorker:
             "updated_at": _now(),
         }
         self._write(record)
-        self.executor.submit(self._plan, job_id)
+        self.executor.submit(langsmith_metrics.bind_context(self._plan), job_id)
         return self.public_record(record)
 
     def get(self, job_id: str) -> dict[str, Any]:
@@ -559,7 +560,7 @@ class ImplementationWorker:
         record.pop("blocking_details", None)
         self._write(record)
         self.executor.submit(
-            self._run,
+            langsmith_metrics.bind_context(self._run),
             job_id,
             str(approval_path),
             True,
@@ -650,7 +651,12 @@ class ImplementationWorker:
         record["status"] = "QUEUED"
         record["updated_at"] = _now()
         self._write(record)
-        self.executor.submit(self._run, job_id, str(approval_path), retry_failed)
+        self.executor.submit(
+            langsmith_metrics.bind_context(self._run),
+            job_id,
+            str(approval_path),
+            retry_failed,
+        )
         return self.public_record(record)
 
     def _plan(self, job_id: str) -> None:
@@ -738,7 +744,12 @@ class ImplementationWorker:
         # 같은 Job의 다음 수리 cycle은 현재 실행권을 반납한 뒤 시작한다. 먼저 submit하면
         # thread pool이 즉시 새 함수를 실행해 자기 자신의 lease와 충돌할 수 있다.
         if requeue:
-            self.executor.submit(self._run, job_id, approval_path, True)
+            self.executor.submit(
+                langsmith_metrics.bind_context(self._run),
+                job_id,
+                approval_path,
+                True,
+            )
 
     def _apply_workflow(
         self,
@@ -979,7 +990,7 @@ class ImplementationWorker:
             if self._warmup_started:
                 return False
             self._warmup_started = True
-            self.warmup_executor.submit(self._warmup)
+            self.warmup_executor.submit(langsmith_metrics.bind_context(self._warmup))
             return True
 
     def _warmup(self) -> None:
@@ -1008,13 +1019,20 @@ class ImplementationWorker:
             if record.get("run_root"):
                 approval = Path(record["job_path"]).parent / "approval.json"
                 if approval.is_file():
-                    self.executor.submit(self._run, record["job_id"], str(approval), True)
+                    self.executor.submit(
+                        langsmith_metrics.bind_context(self._run),
+                        record["job_id"],
+                        str(approval),
+                        True,
+                    )
                 else:
                     record["status"] = "FAILED"
                     record["error"] = "Interrupted run has no durable approval file"
                     self._write(record)
             else:
-                self.executor.submit(self._plan, record["job_id"])
+                self.executor.submit(
+                    langsmith_metrics.bind_context(self._plan), record["job_id"]
+                )
 
     def _read(self, job_id: str) -> dict[str, Any]:
         """작업 상태 JSON을 읽으며 파일이 없으면 :class:`JobNotFound`를 발생시킨다."""

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -642,6 +644,50 @@ def test_requirements_progress_is_persisted_as_workspace_events(monkeypatch) -> 
     assert events[1]["metadata"]["progress_detail"] == (
         "AI requirement refinement completed in 1.2s"
     )
+
+
+def test_workspace_command_trace_uses_app_as_langsmith_thread(monkeypatch) -> None:
+    command = {
+        "command_id": "command-1",
+        "app_id": "app-1",
+        "action": "message",
+        "stage": "requirements",
+        "payload": {"text": "private requirement text"},
+    }
+    captured: dict[str, Any] = {}
+
+    @contextmanager
+    def trace_scope(name, *, metadata):
+        captured["name"] = name
+        captured["metadata"] = metadata
+        yield
+
+    monkeypatch.setattr(repository, "get_command", lambda _command_id: command)
+    monkeypatch.setattr(workspace_module.langsmith_metrics, "trace_scope", trace_scope)
+    service = WorkspaceService()
+    monkeypatch.setattr(
+        service,
+        "_execute_command",
+        lambda command_id, value: captured.update(
+            {"command_id": command_id, "command": value}
+        ),
+    )
+    try:
+        service._execute("command-1")
+    finally:
+        service.shutdown()
+
+    assert captured["name"] == "easydep.workspace.requirements"
+    assert captured["metadata"] == {
+        "thread_id": "app-1",
+        "app_id": "app-1",
+        "command_id": "command-1",
+        "stage": "requirements",
+        "action": "message",
+        "agent": "requirements",
+        "operation": "workspace_command",
+    }
+    assert "private requirement text" not in str(captured["metadata"])
 
 
 def test_design_operation_emits_a_named_progress_card(monkeypatch) -> None:

@@ -33,6 +33,7 @@ from app.design.services.common.structured import capture_llm_timings
 from app.implementation.application.jobs import (
     worker as implementation_worker,
 )
+from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
 from app.requirements.config import settings as requirements_settings
 from app.requirements.contracts.request import (
@@ -646,6 +647,32 @@ class WorkspaceService:
             return
         app_id = str(command["app_id"])
         stage = str(command["stage"])
+        action = str(command["action"])
+        try:
+            with langsmith_metrics.trace_scope(
+                f"easydep.workspace.{stage}",
+                metadata={
+                    "thread_id": app_id,
+                    "app_id": app_id,
+                    "command_id": command_id,
+                    "stage": stage,
+                    "action": action,
+                    "agent": stage,
+                    "operation": "workspace_command",
+                },
+            ):
+                self._execute_command(command_id, command)
+        except Exception:
+            # ``_execute_command`` has already stored the failure for the UI.
+            # Letting the exception leave the trace scope marks the LangSmith
+            # root run as failed; the background executor must not re-raise it.
+            return
+
+    def _execute_command(self, command_id: str, command: dict[str, Any]) -> None:
+        """Execute a persisted command inside its Workspace LangSmith trace."""
+
+        app_id = str(command["app_id"])
+        stage = str(command["stage"])
         repository.update_command(
             command_id,
             status="RUNNING",
@@ -736,6 +763,7 @@ class WorkspaceService:
                 text=detail,
                 metadata={"status": "FAILED", "error_type": type(error).__name__},
             )
+            raise
 
     def _complete_referenced_action(self, command: dict[str, Any]) -> None:
         action_id = str(command["payload"].get("action_id") or "")
