@@ -40,8 +40,8 @@ def validate_complete_provider_template(plan: dict[str, Any]) -> None:
             raise ValueError(
                 f"Created provider node has no Terraform realization: {node.get('id')}"
             )
-        if not node.get("templateRuleId") or not node.get("sourceRefs"):
-            raise ValueError(f"Provider node has no derivation rule: {node.get('id')}")
+        if not node.get("sourceRefs"):
+            raise ValueError(f"Provider node has no source reference: {node.get('id')}")
     embedded_blocks = list(plan.get("embeddedBlocks") or [])
     embedded_ids = [str(item.get("id") or "") for item in embedded_blocks]
     if any(not item for item in embedded_ids) or len(embedded_ids) != len(set(embedded_ids)):
@@ -50,8 +50,8 @@ def validate_complete_provider_template(plan: dict[str, Any]) -> None:
         owner = str(block.get("ownerRef") or "")
         if owner not in known or not block.get("blockPath"):
             raise ValueError(f"Embedded block has no valid owner/path: {block.get('id')}")
-        if not block.get("templateRuleId") or not block.get("sourceRefs"):
-            raise ValueError(f"Embedded block has no derivation rule: {block.get('id')}")
+        if not block.get("sourceRefs"):
+            raise ValueError(f"Embedded block has no source reference: {block.get('id')}")
     shared_values = list(plan.get("sharedValues") or [])
     shared_ids = [str(item.get("id") or "") for item in shared_values]
     if any(not item for item in shared_ids) or len(shared_ids) != len(set(shared_ids)):
@@ -59,8 +59,8 @@ def validate_complete_provider_template(plan: dict[str, Any]) -> None:
     for value in shared_values:
         if value.get("value") is None or value.get("valueType") not in {"string", "number", "bool"}:
             raise ValueError(f"Shared value is incomplete: {value.get('id')}")
-        if not value.get("templateRuleId") or not value.get("sourceRefs"):
-            raise ValueError(f"Shared value has no derivation rule: {value.get('id')}")
+        if not value.get("sourceRefs"):
+            raise ValueError(f"Shared value has no source reference: {value.get('id')}")
     network_cidr = str((node_by_id.get("network", {}).get("attributes") or {}).get("cidr") or "")
     try:
         network_range: Any = ipaddress.ip_network(network_cidr) if network_cidr else None
@@ -132,8 +132,8 @@ def validate_complete_provider_template(plan: dict[str, Any]) -> None:
             raise ValueError(f"ResourcePlan reference is incomplete: {source}->{target}")
         if reference.get("cardinality") not in {"one", "many"}:
             raise ValueError(f"ResourcePlan reference has invalid cardinality: {source}->{target}")
-        if not reference.get("templateRuleId") or not reference.get("sourceRefs"):
-            raise ValueError(f"ResourcePlan reference has no derivation rule: {source}->{target}")
+        if not reference.get("sourceRefs"):
+            raise ValueError(f"ResourcePlan reference has no source reference: {source}->{target}")
         if target in shared_ids:
             shared_consumer_counts[target] += 1
     unused_shared = sorted(item for item in shared_ids if shared_consumer_counts[item] < 2)

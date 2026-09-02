@@ -323,14 +323,14 @@ def apply_compute_selections(
             ),
             "",
         )
-        compute = next(
+        selected_compute: dict[str, Any] | None = next(
             (item for item in selected_plan.get("computeUnits") or [] if item.get("id") == target_compute),
             None,
         )
-        if compute is not None:
-            compute["vmSku"] = selection.sku
-            compute["selectedVmSku"] = selection.sku
-            compute["selectedReplicaCount"] = selection.replica_count
+        if selected_compute is not None:
+            selected_compute["vmSku"] = selection.sku
+            selected_compute["selectedVmSku"] = selection.sku
+            selected_compute["selectedReplicaCount"] = selection.replica_count
     resource_plan = build_provider_resource_plan(
         selected_plan,
         graph,

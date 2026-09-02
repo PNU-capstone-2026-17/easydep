@@ -102,7 +102,7 @@ def test_all_decision_templates_have_exact_parseable_iac(provider: str, case: st
         for terraform_type in node["terraformTypes"]
     )
     assert rendered_resource_types(files) == expected_types
-    assert all(node["templateRuleId"] and node["sourceRefs"] for node in resource_plan["nodes"])
+    assert all(node["sourceRefs"] for node in resource_plan["nodes"])
     assert all(
         reference["consumerRef"]
         and reference["consumerPath"]

@@ -10,7 +10,6 @@ from pathlib import Path
 from ..domain.implementation_ir import remove_readonly
 
 _IGNORED_WORKSPACE_PARTS = {
-    "deployment-bundle",
     "build",
     ".gradle",
     "node_modules",

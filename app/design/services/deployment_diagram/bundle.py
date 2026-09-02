@@ -158,6 +158,7 @@ def build_deployment_diagram_bundle(
             }
         )
     requested_target = spec.get("selectedTarget")
+    selected: dict[str, Any] | None
     if len(projections) == 1:
         selected = projections[0]
     else:

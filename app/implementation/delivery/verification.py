@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from app.orchestration.process import run_process_tree
+from app.implementation.runtime.process import run_process_tree
 
 _PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 _SECRET_ASSIGNMENT = re.compile(
@@ -26,26 +26,8 @@ _PLACEHOLDER = re.compile(
 
 
 def _package_root(application: Path) -> Path | None:
-    for candidate in (
-        application / "deployment",
-        application / "deployment-bundle",
-        application / "deployment_package",
-    ):
-        if candidate.is_dir() and any(
-            (candidate / name).is_dir() for name in ("tofu", "terraform", "runtime", "scripts")
-        ):
-            return candidate
-    # A generated application commonly has ``terraform/`` but that alone does not
-    # make it a user-facing package. The root layout is accepted only with the
-    # explicit EasyDep marker (or the complete package shape).
-    if (application / ".easydep-managed").is_file() or (
-        (application / "README.md").is_file()
-        and (application / "runtime").is_dir()
-        and (application / "scripts").is_dir()
-        and ((application / "tofu").is_dir() or (application / "terraform").is_dir())
-    ):
-        return application
-    return None
+    root = application / "deployment"
+    return root if root.is_dir() else None
 
 
 def _read_text(path: Path) -> str:
@@ -92,8 +74,6 @@ def _tool(name: str) -> str | None:
 
 def _required_paths(root: Path) -> tuple[list[Path], list[str]]:
     tofu = root / "tofu"
-    if not tofu.is_dir():
-        tofu = root / "terraform"
     runtime = root / "runtime"
     scripts = root / "scripts"
     required = [root / "README.md"]
@@ -104,7 +84,7 @@ def _required_paths(root: Path) -> tuple[list[Path], list[str]]:
             # Providers may use a plain cloud-init file, but one of them is required.
             required.append(tofu / "cloud-init.yaml")
     else:
-        missing.append("tofu/ or terraform/")
+        missing.append("tofu/")
     required.append(runtime / "compose.yaml")
     required.append(runtime / ".env.example")
     for name in ("plan.sh", "deploy.sh", "verify.sh", "destroy.sh"):
@@ -207,8 +187,6 @@ def check_deployment_package(
     tofu_commands: list[dict[str, Any]] = []
 
     tofu = root / "tofu"
-    if not tofu.is_dir():
-        tofu = root / "terraform"
     if tofu.is_dir():
         executable = _tool("tofu") or _tool("terraform")
         if executable:
@@ -279,7 +257,12 @@ def check_deployment_package(
     bash = _tool("bash")
     for script in sorted((root / "scripts").glob("*.sh")) if (root / "scripts").is_dir() else []:
         if bash:
-            commands.append(_command_result([bash, "-n", str(script)], root, timeout_seconds))
+            # Windows의 Git Bash/WSL Bash는 ``C:\\...`` 경로의 역슬래시를 escape로
+            # 해석한다. script 디렉터리를 작업 폴더로 쓰고 파일명만 넘기면 운영체제별
+            # 경로 변환 없이 같은 구문 검사를 실행할 수 있다.
+            commands.append(
+                _command_result([bash, "-n", script.name], script.parent, timeout_seconds)
+            )
         else:
             commands.append({"name": f"bash -n {script.name}", "status": "INCONCLUSIVE", "reason": "bash is unavailable."})
 
@@ -302,12 +285,10 @@ def check_deployment_package(
         if item.get("status") == "FAIL"
     ]
     all_issues = [*issues, *[item for item in command_issues if item]]
-    if issues:
+    if issues or any(item.get("status") == "FAIL" for item in commands):
         status, gate = "FAILED", "FAIL"
     elif any(item.get("status") == "INCONCLUSIVE" for item in commands):
         status, gate = "UNAVAILABLE", "INCONCLUSIVE"
-    elif any(item.get("status") == "FAIL" for item in commands):
-        status, gate = "FAILED", "FAIL"
     else:
         status, gate = "PASSED", "PASS"
     tofu_issues = [
@@ -350,8 +331,3 @@ def check_deployment_package(
             else f"Deployment package checks produced {len(all_issues)} finding(s)."
         ),
     }
-
-
-# Names used by callers in early Wave implementations remain valid.
-run_deployment_package_checks = check_deployment_package
-verify_deployment_package = check_deployment_package

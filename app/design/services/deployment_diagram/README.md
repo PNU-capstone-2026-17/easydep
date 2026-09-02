@@ -132,21 +132,10 @@ planner 내부 책임은 다음 공개 module로 나뉜다.
 | `digest.py` | graph·DeploymentPlan·ResourcePlan | 각 structure digest |
 | `planner.py` | 기존 공개 import | 위 함수 재노출과 provider ResourcePlan 연결 |
 
-`planner.py`의 기존 공개 import는 compatibility facade로 유지한다. facade와 소유 module은 같은
-함수 객체를 노출하며, `bundle.py`의 입력·출력 shape와 호출 순서는 바뀌지 않는다. fact,
-constraint, issue, derivation, compute, placement, network, runtime binding, ResourcePlan node와
-reference 배열은 입력 순서와 기존 정책 순서를 그대로 유지한다. 세 `structureDigest`는
-issue·관측값처럼 구조를 바꾸지 않는 필드를 제외하는 기존 규칙을 사용한다.
-
-### 분리 전 baseline provenance
-
-[planner baseline fixture](../../../../tests/fixtures/deployment_planner_baseline.json)는 분리 후
-구현에서 만든 기대값이 아니다. 부모 기준점
-`190f78fc43cc804d3a4b28d428a53ade5b1ec3f4`의 기존 `planner.py`와 `bundle.py` blob을 체크아웃
-없이 직접 실행해 캡처했다. 고정 입력의 canonical SHA-256은
-`65e464fe581f7d4079c6f05dcf89b8e5fe3d5ab74f727ba9271c4f5d7bb86e37`이다. fixture는 planning
-facts, normalized graph, DeploymentPlan, runtime binding, ResourcePlan, invalid graph와 bundle의
-전체 canonical hash뿐 아니라 배열 순서와 모든 structure digest를 함께 보존한다.
+`planner.py`는 외부 호출자가 세부 모듈을 모두 알지 않아도 되게 위 흐름의 공개 진입점을
+모은다. `DeploymentPlan`에는 배치와 실행 연결처럼 다음 단계가 읽는 값만 저장한다. 진단용
+설명 목록과 별도의 late-binding 복사본은 저장하지 않는다. 구조를 바꾸지 않는 실행 시점 값과
+검사 결과는 `structureDigest`에서 제외한다.
 
 ## Provider projection과 renderer 경계
 
@@ -161,24 +150,12 @@ placement, provider 선택을 추론하지 않는다.
 | `provisioning_renderer.py` | 단일 projection bundle | IaC prerequisite·association 중심 provisioning PlantUML |
 | `renderer_support.py` | bundle·ResourcePlan | 두 renderer가 공유하는 읽기 전용 context와 표기 도우미 |
 
-`provider_template.py`와 `provider_plantuml.py`는 기존 public import와 wrapper validation을
-보존하는 compatibility facade다. facade는 새 generation·validation·renderer의 같은 공개 함수에
-위임하며 자체 projection 규칙을 갖지 않는다. implementation의 OpenTofu renderer는 완결된
-ResourcePlan만 소비하고 provider resource나 dependency를 새로 선택하지 않는다.
-
-### Projection baseline provenance
-
-[projection baseline fixture](../../../../tests/fixtures/deployment_projection_baseline.json)는
-부모 기준점 `bb6ecab8385dc56868c597e6c6a6876321e3f420`의 기존 provider template,
-runtime/provisioning PlantUML, OpenTofu renderer를 AWS·Azure·GCP 대표 입력에 직접 실행해
-캡처했다. 입력 SHA-256은
-`bfe0340ce4fd3142722e71b73b756664ad5c5fbe686a979165c03d3e3138eecd`다.
-
-fixture는 provider별 bundle·ResourcePlan canonical hash, PlantUML UTF-8 byte hash와 byte 길이,
-OpenTofu 전체·파일별 hash와 파일 순서를 고정한다. ResourcePlan key·node·runtime binding·binding
-slot·late binding·derivation 순서, reference edge ID 순서 hash, node/reference/binding sourceRef
-순서 hash와 structure digest도 함께 비교한다. 따라서 이름이나 내용뿐 아니라 배열과 문자열의
-byte-level 계약까지 분리 전과 같아야 한다.
+`provider_template.py`와 `provider_plantuml.py`는 호출 위치에서 generation·validation·renderer의
+세부 파일을 알 필요가 없도록 공개 진입점만 모은다. 자체 변환 규칙은 없다. implementation의
+OpenTofu renderer는 완결된 ResourcePlan만 소비하고 provider resource나 dependency를 새로
+선택하지 않는다. 이전 저장 형식의 byte 단위 비교 fixture는 현재 계약을 설명하지 못하고 실제
+테스트에서도 사용되지 않아 제거했다. 대표 토폴로지 테스트는 현재 타입, reference 완결성,
+PlantUML 생성과 파싱 가능한 OpenTofu 결과를 직접 확인한다.
 
 `extractor.extract_deployment_model`과 `reviser.revise_deployment_model`은 이전 내부 호출자를 위한
 dict compatibility facade다. facade는 canonical typed 서비스에 위임하고 자체 prompt나 repair

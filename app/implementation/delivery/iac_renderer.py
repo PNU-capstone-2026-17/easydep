@@ -52,7 +52,7 @@ def _health_path(plan: dict[str, Any], health_owner: dict[str, Any]) -> str:
     """
 
     workload_id = str(health_owner.get("logicalRef") or "")
-    workload = next(
+    workload: dict[str, Any] = next(
         (
             item for item in plan.get("workloads") or []
             if str(item.get("id") or "") == workload_id
@@ -868,7 +868,7 @@ def _aws_resources(
             body = f'name = substr("${{var.resource_prefix}}-lb-${{substr(sha1({_quoted(node_id)}), 0, 8)}}", 0, 32)\ninternal = {str(internal).lower()}\nload_balancer_type = "network"\nsubnets = [{", ".join(context.ref(item) for item in subnets)}]'
         elif kind == "aws_lb_target_group":
             port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
-            health = next(
+            health: dict[str, Any] = next(
                 (
                     block
                     for block in context.embedded_blocks.values()
@@ -1165,9 +1165,9 @@ def _gcp_resources(
             else:
                 body += '\nsource_ranges = ["0.0.0.0/0"]'
         elif kind == "google_compute_instance":
-            subnet = context.target(node_id, "network_interface.subnetwork")
+            gcp_subnet = context.target(node_id, "network_interface.subnetwork")
             tag_values = context.dependency_refs(node_id, "tags[]")
-            identity = context.target(node_id, "service_account.email")
+            gcp_identity = context.target(node_id, "service_account.email")
             public_address = context.target(
                 node_id, "network_interface.access_config.nat_ip"
             )
@@ -1178,19 +1178,19 @@ def _gcp_resources(
             body = (
                 f'name = "${{var.resource_prefix}}-{cloud_label}"\nzone = {_quoted(zone)}\nmachine_type = {_vm_sku(node)}\n'
                 f"boot_disk {{ initialize_params {{ image = {context.dependency_ref(node_id, 'boot_disk.initialize_params.image')} }} }}\n"
-                f"network_interface {{ subnetwork = {context.ref(subnet or '')}"
+                f"network_interface {{ subnetwork = {context.ref(gcp_subnet or '')}"
             )
             if attributes.get("privateIp"):
                 body += f"; network_ip = {_quoted(attributes.get('privateIp'))}"
             if public_address:
                 body += f"; access_config {{ nat_ip = {context.dependency_ref(node_id, 'network_interface.access_config.nat_ip')} }}"
             body += " }\n"
-            if identity:
-                body += f"service_account {{ email = {context.ref(identity, 'email')}; scopes = [\"cloud-platform\"] }}\n"
+            if gcp_identity:
+                body += f"service_account {{ email = {context.ref(gcp_identity, 'email')}; scopes = [\"cloud-platform\"] }}\n"
             body += f'metadata = {{ user-data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\ntags = [{", ".join(tag_values)}]'
         elif kind == "google_compute_instance_template":
-            subnet = context.target(node_id, "network_interface.subnetwork")
-            identity = context.target(node_id, "service_account.email")
+            gcp_template_subnet = context.target(node_id, "network_interface.subnetwork")
+            gcp_template_identity = context.target(node_id, "service_account.email")
             tag_values = context.dependency_refs(node_id, "tags[]")
             bootstrap_file, bootstrap_vars = _bootstrap_expression(
                 node_id, vars_by_compute
@@ -1198,10 +1198,10 @@ def _gcp_resources(
             body = (
                 f'name_prefix = "${{var.resource_prefix}}-{cloud_label}-"\nmachine_type = {_vm_sku(node)}\n'
                 f"disk {{ source_image = {context.dependency_ref(node_id, 'boot_disk.initialize_params.image')}; auto_delete = true; boot = true }}\n"
-                f"network_interface {{ subnetwork = {context.ref(subnet or '')} }}\n"
+                f"network_interface {{ subnetwork = {context.ref(gcp_template_subnet or '')} }}\n"
             )
-            if identity:
-                body += f"service_account {{ email = {context.ref(identity, 'email')}; scopes = [\"cloud-platform\"] }}\n"
+            if gcp_template_identity:
+                body += f"service_account {{ email = {context.ref(gcp_template_identity, 'email')}; scopes = [\"cloud-platform\"] }}\n"
             for child_id, child in context.embedded_blocks.items():
                 if child.get("ownerRef") != node_id or child.get("blockPath") != "disk":
                     continue
@@ -1325,11 +1325,11 @@ def _output_file(
         port = path.get("port")
         if not isinstance(port, int):
             port = f"var.container_port_{_label(workload_id)}_{_label(interface_id)}"
-        workload = next(
+        workload: dict[str, Any] = next(
             (item for item in plan.get("workloads") or [] if item.get("id") == workload_id),
             {},
         )
-        interface = next(
+        interface: dict[str, Any] = next(
             (item for item in workload.get("interfaces") or [] if item.get("id") == interface_id),
             {},
         )

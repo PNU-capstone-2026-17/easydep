@@ -57,16 +57,12 @@ def classify_source_path(workspace_path: str) -> tuple[str, str]:
         if "/tofu/" in f"/{lowered}" or lowered.endswith((".tf", ".tf.json", ".tftpl")):
             return TYPE_IAC_CODE, relative
         return TYPE_DEPLOYMENT_FILE, relative
-    if relative.startswith("deployment-bundle/"):
-        return TYPE_DEPLOYMENT_FILE, relative
     if "/test/" in f"/{lowered}":
         return TYPE_TEST_CODE, relative
     if relative == ".dockerignore" or any(
         token in lowered for token in ("k8s/", "dockerfile", "helm/")
     ):
         return TYPE_DEPLOYMENT_FILE, relative
-    if any(token in lowered for token in ("terraform/", ".tf", "pulumi/")):
-        return TYPE_IAC_CODE, relative
     return TYPE_SOURCE_CODE, relative
 
 

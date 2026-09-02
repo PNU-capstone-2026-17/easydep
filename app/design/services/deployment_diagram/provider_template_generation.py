@@ -128,7 +128,6 @@ class _Template:
             "handling": handling,
             "terraformTypes": [] if handling == "referenceExisting" else terraform_types,
             "attributes": copy.deepcopy(attributes or {}),
-            "templateRuleId": rule,
             "sourceRefs": _refs(source_refs, f"project-policy:{rule}"),
             **({"logicalRef": logical_ref} if logical_ref else {}),
             **({"ownerRef": owner_ref} if owner_ref else {}),
@@ -154,7 +153,6 @@ class _Template:
             "producerRef": producer,
             "producerAttribute": producer_attribute,
             "cardinality": cardinality,
-            "templateRuleId": rule,
             "sourceRefs": _refs(source_refs, f"project-policy:{rule}"),
         }
 
@@ -173,7 +171,6 @@ class _Template:
             "name": name,
             "value": copy.deepcopy(value),
             "valueType": value_type,
-            "templateRuleId": rule,
             "sourceRefs": _refs(source_refs, f"project-policy:{rule}"),
         }
         return value_id
@@ -196,7 +193,6 @@ class _Template:
             "ownerRef": owner_ref,
             "blockPath": block_path,
             "attributes": copy.deepcopy(attributes or {}),
-            "templateRuleId": rule,
             "sourceRefs": _refs(source_refs, f"project-policy:{rule}"),
             **({"logicalRef": logical_ref} if logical_ref else {}),
         }
@@ -2141,17 +2137,8 @@ def build_complete_provider_template(
         "runtimeBindings": copy.deepcopy(deployment_plan.get("runtimeBindings") or []),
         "runtimeUnits": runtime_units,
         "bindingSlots": list(template.bindings.values()),
-        "lateBindings": list(template.bindings.values()),
         "issues": issues,
         "unresolved": [item for item in issues if item.get("classification") in BLOCKING_CLASSES],
-        "derivations": [
-            *copy.deepcopy(deployment_plan.get("derivations") or []),
-            {
-                "ruleId": f"{normalized_provider}.complete-provider-template",
-                "summary": "Expanded DeploymentPlan into a complete provider resource and runtime delivery template.",
-                "sourceRefs": [f"project-policy:{normalized_provider}.complete-provider-template"],
-            },
-        ],
     }
     validate_complete_provider_template(plan)
     plan["structureDigest"] = provider_template_structure_digest(plan)

@@ -177,6 +177,13 @@ def _deployment_model_findings(
         if isinstance(issue, dict)
     ]
 
+
+# 지식 규칙의 detector 이름과 실제 함수를 한곳에서 연결한다. 배포 검사는 상류 산출물
+# 버전을 함께 읽어야 하므로 일반 모델 검출기 파일이 아니라 graph adapter가 소유한다.
+DEPLOYMENT_DIAGRAM_DETECTORS = {
+    "deployment_workload_graph": _deployment_model_findings,
+}
+
 # 수락 단위 cache는 process에만 존재한다. graph state와 checkpoint에는 기록하지 않는다.
 _CLASS_DESIGN_ACCEPTED_UNIT_CACHE = ProcessLocalAcceptedUnitCache(capacity=256)
 

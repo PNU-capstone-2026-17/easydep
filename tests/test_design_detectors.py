@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 
-from app.design.graphs.subgraphs import DESIGN_STAGES
+from app.design.graphs.subgraphs import DEPLOYMENT_DIAGRAM_DETECTORS, DESIGN_STAGES
 from app.design.knowledge import basis, detectors, rules
 from app.design.services.class_diagram.validation import diagram as class_validation
 from app.design.services.sequence_diagram import validation as sequence_validation
@@ -15,6 +15,7 @@ DETECTOR_REGISTRIES = {
     rules.SEQUENCE_DIAGRAM: sequence_validation.SEQUENCE_DIAGRAM_DETECTORS,
     rules.API_SPEC: detectors.API_SPEC_DETECTORS,
     rules.ERD: detectors.ERD_DETECTORS,
+    rules.DEPLOYMENT_DIAGRAM: DEPLOYMENT_DIAGRAM_DETECTORS,
 }
 
 

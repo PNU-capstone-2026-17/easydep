@@ -15,11 +15,11 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
+from app.implementation.runtime.process import run_process_tree
 from app.testing.runtime.container_runner import (
     GRADLE_CACHE_VOLUME,
     configured_runner_image,
 )
-from app.orchestration.process import run_process_tree
 
 DEFAULT_START_TIMEOUT_SECONDS = 360
 _EXPOSE = re.compile(r"(?mi)^\s*EXPOSE\s+(?P<port>\d+)")

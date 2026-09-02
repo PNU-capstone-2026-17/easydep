@@ -214,17 +214,9 @@ def _instance_label(provider: str) -> str:
     }.get(provider, "VM instance")
 
 
-def _runtime_workload_shape(workload: dict[str, Any], *, current_style: bool) -> str:
-    """Use shape for runtime role."""
+def _persistent_workload(workload: dict[str, Any]) -> bool:
+    """workload가 직접 소유한 영구 저장소가 있는지 반환한다."""
 
-    if current_style:
-        return "component"
-    return "database" if workload.get("stateMode") == "persistent" else "component"
-
-
-def _persistent_workload(workload: dict[str, Any], *, current_style: bool) -> bool:
-    if not current_style:
-        return workload.get("stateMode") == "persistent"
     return any(
         storage.get("persistence") == "persistent" for storage in workload.get("storage") or []
     )

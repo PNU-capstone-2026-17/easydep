@@ -2,7 +2,7 @@ import json
 import shutil
 import subprocess
 
-from app.orchestration.process import run_process_tree
+from app.implementation.runtime.process import run_process_tree
 
 
 def run_trivy_scan(target_dir: str) -> list[str]:

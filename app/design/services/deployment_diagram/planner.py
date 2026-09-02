@@ -40,9 +40,6 @@ from app.design.services.deployment_diagram.planning_facts import (
     planning_inputs_stale,
 )
 from app.design.services.deployment_diagram.planning_primitives import (
-    derivation as _derivation,
-)
-from app.design.services.deployment_diagram.planning_primitives import (
     issue as _issue,
 )
 from app.design.services.deployment_diagram.provider_template import (
@@ -115,18 +112,9 @@ def build_provider_resource_plan(
             "locationPlan": copy.deepcopy(deployment_plan.get("locationPlan") or {}),
             "runtimeUnits": [],
             "bindingSlots": [],
-            "lateBindings": copy.deepcopy(deployment_plan.get("lateBindings") or []),
             "issues": issues,
             "unresolved": [
                 item for item in issues if item.get("classification") in BLOCKING_CLASSES
-            ],
-            "derivations": [
-                *copy.deepcopy(deployment_plan.get("derivations") or []),
-                _derivation(
-                    "explicit-deployment-target",
-                    "Stopped provider projection until CSP and Region are explicit.",
-                    source_refs=["project-policy:explicit-deployment-target"],
-                ),
             ],
         }
         unresolved["structureDigest"] = provider_template_structure_digest(unresolved)

@@ -165,7 +165,17 @@ _DEPLOYMENT = {
                     "sourceRefs": ["api:/orders"],
                 }
             ],
-            "storage": [],
+            "storage": [
+                {
+                    "id": "order-data",
+                    "persistence": "persistent",
+                    "capacityGiB": 20,
+                    "mountPath": "/srv/orders",
+                    "deletionPolicy": "retain",
+                    "replicaSemantics": "singleAttachment",
+                    "sourceRefs": ["class:Order"],
+                }
+            ],
             "configuration": [],
             "resourceRequirements": {},
             "replicationSafety": "singleton",
@@ -452,9 +462,8 @@ def test_no_stage_subgraph_can_loop():
 def test_only_stages_with_rules_are_semantically_checked():
     """의미 검사 노드는 규칙이 있는 스테이지에만 생긴다.
 
-    빈 검사 노드를 다섯 곳에 달면 그래프 그림이 "다 검사한다"고 거짓말을 한다. 지금
-    규칙 지식베이스가 있는 것은 클래스 다이어그램과 ERD 둘이고, 그 사실이 토폴로지에
-    그대로 보여야 한다 — 나머지 셋에 규칙을 채우면 이 테스트를 함께 고친다.
+    빈 검사 노드를 모든 단계에 달면 그래프 그림이 "다 검사한다"고 거짓말을 한다. 현재
+    실제 결함 규칙이 있는 단계만 토폴로지에 검사 노드를 가져야 한다.
 
     **규칙 목록에서 기대값을 뽑는다.** 스테이지 이름을 손으로 적어 두면, 규칙을 추가하고
     배선을 잊었을 때 테스트가 그 사실을 못 잡는다(둘 다 손으로 고쳐야 하므로).
@@ -466,7 +475,13 @@ def test_only_stages_with_rules_are_semantically_checked():
     }
     with_rules = {r.stage for r in rules.RULES if r.severity == rules.DEFECT}
 
-    assert checked == with_rules == {"class_diagram", "erd", "sequence_diagram", "api_spec"}
+    assert checked == with_rules == {
+        "class_diagram",
+        "erd",
+        "sequence_diagram",
+        "api_spec",
+        "deployment_diagram",
+    }
 
     # 생성과 피드백 **양쪽**에 있어야 한다. 피드백에 없으면 사용자 피드백으로 만든 판은
     # 아무도 검사하지 않은 채 저장된다.

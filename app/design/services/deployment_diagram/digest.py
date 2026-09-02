@@ -75,7 +75,7 @@ def deployment_plan_structure_digest(plan: dict[str, Any]) -> str:
     """
 
     structural = copy.deepcopy(plan)
-    for field in ("issues", "derivations", "lateBindings", "structureDigest"):
+    for field in ("issues", "structureDigest"):
         structural.pop(field, None)
     for compute in structural.get("computeUnits") or []:
         compute.pop("vmSku", None)

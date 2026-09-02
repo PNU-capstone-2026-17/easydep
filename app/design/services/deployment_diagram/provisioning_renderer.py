@@ -6,7 +6,6 @@ from collections.abc import Iterable
 from typing import Any, cast
 
 from app.design.services.deployment_diagram.renderer_support import (
-    _DISPLAYABLE_PROVISIONING_RELATIONSHIPS,
     _FOLDED_ASSOCIATION_LABELS,
     _FOLDED_RELATION_KINDS,
     _compact_reference_role,
@@ -32,21 +31,15 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
         ResourcePlan reference와 association만 표시하며 생성 순서를 새로 추론하지 않는다.
     """
 
-    current_style = bundle.get("schemaVersion") == "easydep-deployment-diagram"
     projection = _primary(bundle)
     if projection is None or projection.get("status") not in {
         "completed",
         "needsInput",
     }:
         return _fallback(bundle, "Provisioning dependencies require one resolved provider target.")
-    if current_style:
-        context = _render_context(bundle)
-        plan = dict(context["plan"])
-        render_settings = dict(context["settings"])
-    else:
-        plan = dict(projection.get("resourcePlan") or {})
-        render_settings = dict(projection.get("topology") or {})
-        render_settings["displayCaption"] = render_settings.get("familyId")
+    context = _render_context(bundle)
+    plan = dict(context["plan"])
+    render_settings = dict(context["settings"])
     provider = str(projection.get("provider") or "")
     region = str(projection.get("region") or "")
     display_caption = str(render_settings.get("displayCaption") or "")
@@ -92,10 +85,6 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
         ),
     ]
     provision_aliases: dict[str, list[str]] = {}
-    workload_names = {
-        str(workload.get("id") or ""): _text(workload.get("name") or "Workload")
-        for workload in plan.get("workloads") or []
-    }
     display_name_counts: dict[str, int] = {}
     for node in included.values():
         name = _text(node.get("name"))
@@ -114,11 +103,7 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
                 f"{node_name}\\ndesired capacity: {replica_count}\\nplacement: {_text(placement)}"
             )
         if display_name_counts.get(node_name, 0) > 1:
-            if current_style:
-                role = _text(node.get("displayRole") or node_id)
-            else:
-                logical_ref = str(node.get("logicalRef") or "")
-                role = workload_names.get(logical_ref, "Application")
+            role = _text(node.get("displayRole") or node_id)
             node_name = f"{node_name}\\n{role}"
         minimum_count = int(node.get("minimumCount") or 1)
         if minimum_count > 1:
@@ -169,56 +154,11 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
         source = str(edge.get("from") or "")
         target = str(edge.get("to") or "")
         label = str(edge.get("label") or "depends on")
-        if current_style:
-            relationship = (
-                _compact_reference_role(edge.get("consumerPath"))
-                if endpoint_counts[(source, target)] > 1
-                else ""
-            )
-        else:
-            if label not in _DISPLAYABLE_PROVISIONING_RELATIONSHIPS:
-                continue
-            relationship = {
-                "belongs to": "contains",
-                "attaches": "attachment input for",
-                "binds": "binding input for",
-                "checks with": "health policy for",
-                "contains instance": "add to group",
-                "contains role": "role for",
-                "configures": "configuration input for",
-                "creates instances from": "template for",
-                "depends on": "required by",
-                "evaluates targets with": "health policy for",
-                "forwards to": "default target for",
-                "grants pull access to": "pull principal for",
-                "grants secret read to": "secret principal for",
-                "is attached to": "attachment point for",
-                "is deployed in": "deployment container for",
-                "is placed in": "placement for",
-                "joins": "membership input for",
-                "joins through": "membership input for",
-                "matches": "listener input for",
-                "places instances in": "placement input for",
-                "provides egress for": "egress provider for",
-                "pulls image digest from": "image source for",
-                "registers instance": "instance input for",
-                "registers instances with": "registration target for",
-                "registers with": "registration target for",
-                "routes to": "route target for",
-                "scopes pull access to": "pull scope for",
-                "scopes secret read to": "secret scope for",
-                "serves region of": "regional network for",
-                "selects subnetwork": "subnetwork input for",
-                "uses backend": "backend for",
-                "uses identity": "runtime identity for",
-                "uses image": "boot image for",
-                "uses policy": "policy for",
-                "uses secret identity": "secret identity for",
-                "exposes": "associate address",
-                "addresses": "associate address",
-                "uses": "referenced by",
-                "uses address": "assign address",
-            }.get(label, "required by")
+        relationship = (
+            _compact_reference_role(edge.get("consumerPath"))
+            if endpoint_counts[(source, target)] > 1
+            else ""
+        )
         dependent_aliases = provision_aliases[source]
         prerequisite_aliases = provision_aliases[target]
         if target == "ingress-subnet" and source == "nat-gateway":
@@ -237,13 +177,8 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
                 for prerequisite_alias in prerequisite_aliases
             ]
         for dependent_alias, prerequisite_alias in pairs:
-            if current_style:
-                suffix = f" : {_text(relationship)}" if relationship else ""
-                lines.append(f"{dependent_alias} -[#6f7780,dashed]-> {prerequisite_alias}{suffix}")
-            else:
-                lines.append(
-                    f"{prerequisite_alias} -[#6f7780,dashed]-> {dependent_alias} : {_text(relationship)}"
-                )
+            suffix = f" : {_text(relationship)}" if relationship else ""
+            lines.append(f"{dependent_alias} -[#6f7780,dashed]-> {prerequisite_alias}{suffix}")
     folded_lines: set[tuple[str, str, str]] = set()
     for relation_id, relation_node in sorted(folded.items()):
         neighbors: list[str] = []
@@ -304,11 +239,7 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
     lines.extend(
         [
             "legend bottom",
-            (
-                "  Arrow: dependent -> prerequisite."
-                if current_style
-                else "  Arrow: prerequisite -> dependent."
-            ),
+            "  Arrow: dependent -> prerequisite.",
             "  Arrow labels appear only when duplicate references need disambiguation.",
             "  Undirected line: Terraform association, attachment, permission, or route.",
             "  Shared value: one Terraform local consumed by multiple fields.",

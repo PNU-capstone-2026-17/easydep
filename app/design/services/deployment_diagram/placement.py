@@ -14,9 +14,6 @@ from app.design.services.deployment_diagram.planning_constants import (
     DEPLOYMENT_PLAN_SCHEMA,
 )
 from app.design.services.deployment_diagram.planning_primitives import (
-    derivation as _derivation,
-)
-from app.design.services.deployment_diagram.planning_primitives import (
     issue as _issue,
 )
 from app.design.services.deployment_diagram.planning_primitives import (
@@ -95,7 +92,6 @@ def build_deployment_plan(
 
     context = copy.deepcopy(planning_context_value or {})
     issues = [copy.deepcopy(item) for item in graph.get("issues") or []]
-    derivations = [copy.deepcopy(item) for item in graph.get("derivations") or []]
     policies = _constraints_by_workload(graph)
     workloads = list(graph.get("workloads") or [])
     by_id = {str(item.get("id")): item for item in workloads}
@@ -106,13 +102,6 @@ def build_deployment_plan(
         if minimum_zones > 1 and not policy["zones"]:
             if len(candidate_zones) >= minimum_zones:
                 policy["zones"] = candidate_zones[:minimum_zones]
-                derivations.append(
-                    _derivation(
-                        "required-zone-count-from-candidates",
-                        f"Selected {minimum_zones} candidate zones for {workload_id}.",
-                        source_refs=policy["sourceRefs"],
-                    )
-                )
             else:
                 issues.append(
                     _issue(
@@ -258,9 +247,6 @@ def build_deployment_plan(
             requirements["minVCpu"] = sum(cpu_values)
         if memory_known:
             requirements["minMemoryGiB"] = sum(memory_values)
-        late_fields: list[str] = []
-        if not (cpu_known and memory_known):
-            late_fields.append("vmSku")
         compute_units.append(
             {
                 "id": compute_id,
@@ -290,14 +276,6 @@ def build_deployment_plan(
                     or ["project-policy:default-colocation-and-single-replica"],
                 }
             )
-        rule = "managed-vm-group-selection" if managed else "standalone-vm-default"
-        derivations.append(
-            _derivation(
-                rule,
-                f"Placed {', '.join(workload_ids)} on {compute_id}.",
-                source_refs=compute_units[-1]["sourceRefs"],
-            )
-        )
 
     placement_by_workload = {item["workloadRef"]: item["computeUnitRef"] for item in placements}
     compute_by_id = {item["id"]: item for item in compute_units}
@@ -320,13 +298,6 @@ def build_deployment_plan(
                     "sourceRefs": _refs(storage.get("sourceRefs"))
                     or _refs(workload.get("sourceRefs")),
                 }
-            )
-            derivations.append(
-                _derivation(
-                    "persistent-storage-to-block-disk",
-                    f"Created one block disk binding for {storage.get('id')}.",
-                    source_refs=storage_bindings[-1]["sourceRefs"],
-                )
             )
 
     network_paths: list[dict[str, Any]] = []
@@ -411,7 +382,6 @@ def build_deployment_plan(
                     "mountPath": storage.get("mountPath"),
                     "sourceRefs": _refs(storage.get("sourceRefs"))
                     or _refs(workload.get("sourceRefs")),
-                    "derivationRule": "workload-storage-mount-contract",
                 }
             )
         for configuration in workload.get("configuration") or []:
@@ -431,7 +401,6 @@ def build_deployment_plan(
                         },
                         "sourceRefs": _refs(configuration.get("sourceRefs"))
                         or _refs(workload.get("sourceRefs")),
-                        "derivationRule": "secret-reference-to-runtime-environment",
                     }
                 )
             elif kind == "endpointBinding":
@@ -475,42 +444,10 @@ def build_deployment_plan(
                         or {"binding": "late", "field": "containerPort"},
                         "sourceRefs": _refs(configuration.get("sourceRefs"))
                         or _refs(connection.get("sourceRefs")),
-                        "derivationRule": f"endpoint-{_slug(strategy)}",
                     }
                 )
 
     selected_zones = _refs(zone for compute in compute_units for zone in compute.get("zones") or [])
-    late_bindings: list[dict[str, Any]] = []
-    for compute in compute_units:
-        late_bindings.append(
-            {
-                "id": f"late-vm-sku-{compute['id']}",
-                "field": f"computeUnits.{compute['id']}.vmSku",
-                "kind": "vmSku",
-                "structural": False,
-            }
-        )
-    for workload in workloads:
-        for interface in workload.get("interfaces") or []:
-            if not interface.get("port"):
-                late_bindings.append(
-                    {
-                        "id": f"late-port-{_slug(workload.get('id'))}-{_slug(interface.get('id'))}",
-                        "field": f"workloads.{workload.get('id')}.interfaces.{interface.get('id')}.port",
-                        "kind": "containerPort",
-                        "structural": False,
-                    }
-                )
-        if (workload.get("artifact") or {}).get("kind") == "generatedApplication":
-            late_bindings.append(
-                {
-                    "id": f"late-image-{_slug(workload.get('id'))}",
-                    "field": f"workloads.{workload.get('id')}.artifact.imageDigest",
-                    "kind": "imageDigest",
-                    "structural": False,
-                }
-            )
-
     plan = {
         "schemaVersion": DEPLOYMENT_PLAN_SCHEMA,
         "workloadGraphDigest": graph.get("structureDigest")
@@ -527,9 +464,7 @@ def build_deployment_plan(
             "candidateZones": _refs(context.get("candidateZones")),
             "singleRegion": True,
         },
-        "lateBindings": late_bindings,
         "issues": issues,
-        "derivations": derivations,
     }
     plan["structureDigest"] = deployment_plan_structure_digest(plan)
     return plan

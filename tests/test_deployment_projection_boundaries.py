@@ -297,6 +297,10 @@ def test_selected_resource_plan_has_one_canonical_iac_directory(
     monkeypatch.setattr(
         "app.implementation.delivery.package._format_open_tofu", lambda _directory: None
     )
+    monkeypatch.setattr(
+        "app.implementation.delivery.terraform.check_deployment_package",
+        lambda *_args, **_kwargs: {"gateStatus": "PASS", "issues": []},
+    )
 
     report = render_iac(
         tmp_path / "run",
