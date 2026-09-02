@@ -397,3 +397,24 @@ def interrupt_unfinished() -> int:
             row.completed_at = now()
             changed += 1
     return changed
+
+
+def interrupted_testing_commands() -> list[dict[str, Any]]:
+    """저장된 Testing 작업에 다시 연결할 수 있는 중단 명령을 반환한다.
+
+    Testing 실행 자체는 별도 테이블의 고정 입력과 진행 지점을 사용해 재개된다. Workspace는
+    명령 payload에 저장한 ``testing_job_id``가 있는 경우에만 그 작업을 다시 감시한다. ID가
+    없는 과거 명령을 추측해서 다른 작업에 연결하지 않는다.
+    """
+    with session_scope() as session:
+        rows = session.scalars(
+            select(WorkspaceCommand).where(
+                WorkspaceCommand.stage == "testing",
+                WorkspaceCommand.status == "INTERRUPTED",
+            )
+        ).all()
+        return [
+            command_dict(row)
+            for row in rows
+            if str((row.payload or {}).get("testing_job_id") or "")
+        ]

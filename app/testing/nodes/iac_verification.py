@@ -8,6 +8,19 @@ from app.testing.utils.static_analysis import scan_stage
 def iac_verification_node(state: TestingState) -> dict:
     """Terraform 폴더를 Trivy와 OpenTofu로 함께 검사한다."""
     terraform_dir = Path(state.get("application_dir", "")) / "terraform"
+    expected = state.get("iac_expected")
+    if expected is False and not terraform_dir.is_dir():
+        return {
+            "current_node": "iac_verification",
+            "errors": [],
+            "iac_report": {
+                "status": "SKIPPED",
+                "gateStatus": "NOT_APPLICABLE",
+                "issues": [],
+                "source": {"source": "none", "directory": str(terraform_dir)},
+                "message": "No IaC is required for this application.",
+            },
+        }
     scanned = scan_stage(
         node="iac_verification",
         directory=str(terraform_dir),
@@ -24,13 +37,17 @@ def iac_verification_node(state: TestingState) -> dict:
     issues = [*trivy_issues, *tofu_issues]
     if trivy_issues or tofu["status"] == "FAILED":
         status = "FAILED"
+        gate_status = "FAIL"
     elif tofu["status"] == "UNAVAILABLE":
         status = "UNAVAILABLE"
+        gate_status = "INCONCLUSIVE"
     else:
         status = "PASSED"
+        gate_status = "PASS"
     report.update(
         {
             "status": status,
+            "gateStatus": gate_status,
             "issues": issues,
             "openTofu": tofu,
             "message": (

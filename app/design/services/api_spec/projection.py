@@ -217,6 +217,15 @@ def build_openapi_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         operation_id = str(endpoint.get("operation_id", "")).strip()
         if operation_id:
             operation["operationId"] = operation_id
+        # OpenAPI만 고정해 Testing에 넘겨도 요구사항 → 유스케이스 → endpoint 연결을
+        # 잃지 않도록 표준 vendor extension에 승인된 추적 ID를 함께 싣는다.
+        use_case_ids = [
+            str(value).strip()
+            for value in endpoint.get("use_case_ids", [])
+            if str(value).strip()
+        ]
+        if use_case_ids:
+            operation["x-easydep-use-case-ids"] = use_case_ids
         control_binding = _control_binding(endpoint)
         if control_binding:
             operation["x-easydep-control"] = control_binding

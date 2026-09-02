@@ -9,12 +9,42 @@ from app.testing.utils.docker_trivy import run_trivy_scan
 
 
 def _scan(directory: Path, subject: str) -> dict[str, Any]:
-    issues = run_trivy_scan(str(directory.resolve()))
+    try:
+        issues = run_trivy_scan(str(directory.resolve()))
+    except Exception as error:
+        message = f"Trivy 실행을 시작하지 못했습니다: {error}"
+        return {
+            "status": "UNAVAILABLE",
+            "gateStatus": "INCONCLUSIVE",
+            "issues": [message],
+            "source": {"source": "application", "directory": str(directory)},
+            "message": message,
+        }
+    if issues is None:
+        message = "Trivy가 결과를 반환하지 않았습니다."
+        return {
+            "status": "UNAVAILABLE",
+            "gateStatus": "INCONCLUSIVE",
+            "issues": [message],
+            "source": {"source": "application", "directory": str(directory)},
+            "message": message,
+        }
+    # The legacy helper returns strings. A tool-startup failure is not an application
+    # misconfiguration and must not become a FAIL or a pass.
+    unavailable = any(
+        any(token in str(issue).lower() for token in ("실행 실패", "not found", "no such file", "timed out"))
+        for issue in issues
+    )
     return {
-        "status": "FAILED" if issues else "PASSED",
+        "status": "UNAVAILABLE" if unavailable else "FAILED" if issues else "PASSED",
+        "gateStatus": "INCONCLUSIVE" if unavailable else "FAIL" if issues else "PASS",
         "issues": issues,
         "source": {"source": "application", "directory": str(directory)},
-        "message": f"Found {len(issues)} {subject} misconfigurations via Trivy.",
+        "message": (
+            f"Trivy could not complete the {subject} scan."
+            if unavailable
+            else f"Found {len(issues)} {subject} misconfigurations via Trivy."
+        ),
     }
 
 
@@ -34,6 +64,7 @@ def scan_stage(
             "errors": [message],
             report_key: {
                 "status": "UNAVAILABLE",
+                "gateStatus": "INCONCLUSIVE",
                 "issues": [],
                 "source": {"source": "none", "directory": directory},
                 "message": message,

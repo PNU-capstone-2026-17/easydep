@@ -440,7 +440,7 @@ so create them directly instead of searching for another implementation.
         ],
         source_artifacts=sources,
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        llm=_llm_config(spec),
+        llm=llm_config(spec),
         task_type="use-case",
         depends_on=depends_on,
         requirement_ids=_artifact_ids(requirements),
@@ -809,7 +809,7 @@ Application entry point: `{ir.application_class}`
             and path.is_file()
         },
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        llm=_llm_config(spec),
+        llm=llm_config(spec),
         task_type="wiring",
         # 최종 검증은 이 목록과 유스케이스 작업이 실제로 덮은 목록을 비교한다. 추적이
         # 빠진 유스케이스가 있어도 일부 테스트만 통과해 릴리스되는 일을 막는다.
@@ -989,7 +989,7 @@ Rules:
             "generatedClientContracts": str(contracts_path),
         },
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        llm=_llm_config(spec),
+        llm=llm_config(spec),
         task_type="frontend-implementation",
     )
     (output / "frontend-application.task.json").write_text(
@@ -1028,7 +1028,9 @@ def _prompt_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _llm_config(spec: JobSpec) -> dict[str, object]:
+def llm_config(spec: JobSpec) -> dict[str, object]:
+    """모든 구현 작업이 공유하는 OpenHands LLM 설정을 만든다."""
+
     return {
         "provider": "nvidia-nim",
         "model": spec.agent_model,
