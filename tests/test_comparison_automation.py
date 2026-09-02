@@ -19,6 +19,11 @@ from evaluation.comparison.models import (
 from evaluation.comparison.oracle import run_http_oracle
 from evaluation.comparison.report import add_aggregates, render_markdown, write_reports
 from evaluation.comparison.runner import run_experiment
+from evaluation.comparison.subjects.artifacts import (
+    collect_artifact_evidence,
+    collect_requirement_evidence,
+)
+from evaluation.comparison.suite import load_suite, materialize_manifests
 
 
 def _manifest_data() -> dict[str, object]:
@@ -341,3 +346,55 @@ def test_rendered_report_explains_missing_usage() -> None:
     }
     markdown = render_markdown(report)
     assert "`미수집`은 0이 아니라" in markdown
+
+
+def test_multi_domain_suite_materializes_three_real_arms(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    cases = [
+        repository
+        / "evaluation/baselines/course-registration-cases/e1-course-registration-aws.json",
+        repository
+        / "evaluation/easydep/requirements/inputs/dev_iot_monitoring.json",
+    ]
+    suite_path = _write_json(
+        tmp_path / "suite.json",
+        {
+            "schemaVersion": "easydep-comparison-suite/v1",
+            "suiteId": "test-suite",
+            "repetitions": 2,
+            "outputRoot": str(tmp_path / "output"),
+            "cases": [
+                {"id": f"case-{index}", "input": str(path)}
+                for index, path in enumerate(cases, start=1)
+            ],
+        },
+    )
+    suite = load_suite(suite_path)
+    manifests = materialize_manifests(suite)
+    assert len(manifests) == 2
+    manifest = load_manifest(manifests[0])
+    assert manifest.repetitions == 2
+    assert [arm.framework for arm in manifest.arms] == [
+        "EasyDep",
+        "MetaGPT",
+        "ChatDev",
+    ]
+    assert manifest.arms[1].prompt_profile == "commonArtifacts"
+    assert manifest.arms[2].prompt_profile == "commonArtifacts"
+
+
+def test_artifact_discovery_does_not_treat_metagpt_class_view_as_data_model(
+    tmp_path: Path,
+) -> None:
+    class_view = tmp_path / "resources/data_api_design/class_view.mmd"
+    class_view.parent.mkdir(parents=True)
+    class_view.write_text("class Order %% FR1", encoding="utf-8")
+    (tmp_path / "schema.sql").write_text("-- FR1\ncreate table orders(id int);", encoding="utf-8")
+    artifacts = collect_artifact_evidence(tmp_path)
+    assert "resources/data_api_design/class_view.mmd" in artifacts["classDiagram"]
+    assert artifacts["dataModel"] == ["schema.sql"]
+    evidence = collect_requirement_evidence(tmp_path, ["FR1"], artifacts)
+    assert evidence["FR1"]["design"] == [
+        "resources/data_api_design/class_view.mmd",
+        "schema.sql",
+    ]
