@@ -171,6 +171,14 @@ def build_openapi_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         name = sanitize_schema_name(schema.get("name", ""))
         if not name:
             continue
+        values = [str(value) for value in schema.get("values", []) if str(value)]
+        if values:
+            entry: dict[str, Any] = {"type": "string", "enum": values}
+            description = str(schema.get("description", "")).strip()
+            if description:
+                entry["description"] = description
+            components[name] = entry
+            continue
         properties: dict[str, Any] = {}
         required: list[str] = []
         for field in schema.get("fields", []):

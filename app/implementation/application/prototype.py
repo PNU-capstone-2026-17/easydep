@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.design.schemas.class_model import BCEModel
+from app.design.services.erd.projection import project_logical_model
 
 from ..config import ImplementationSettings
 from ..runtime.linux_runner_transport import (
@@ -34,6 +36,51 @@ _OPENAPI_OPERATIONS = frozenset(
 
 class PrototypeExecutionError(RuntimeError):
     """구현 CLI를 준비하거나 실행하는 과정에서 발생한 오류."""
+
+
+def _prepare_runner_output_directories(run_root: Path) -> None:
+    """Windows bind mount에서 runner가 쓸 source 부모 폴더를 미리 만든다.
+
+    Linux runner의 일반 사용자는 Windows 공유 폴더에 이미 있는 파일은 수정할 수 있어도
+    새 디렉터리를 만드는 과정에서 권한 오류를 받을 수 있다. 실행 계획이 허용한 경로의
+    부모만 호스트에서 준비하면 agent의 편집 범위는 넓히지 않으면서 새 page나 package도
+    검증 후 안전하게 반영할 수 있다.
+    """
+
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    if not manifest_path.is_file():
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    resolved_root = run_root.resolve()
+    for task in manifest.get("implementation_tasks", []):
+        if not isinstance(task, dict):
+            continue
+        directories = [
+            (run_root / str(path)).parent
+            for path in task.get("allowed_write_paths", [])
+            if isinstance(path, str)
+        ]
+        directories.extend(
+            run_root / str(path)
+            for path in task.get("allowed_write_roots", [])
+            if isinstance(path, str)
+        )
+        if task.get("task_type") == "frontend-implementation":
+            # Vite가 만드는 현재 bundle 구조다. source 출력과 마찬가지로 호스트에서
+            # 디렉터리만 준비하고, 검증된 내용은 runner가 아래 파일에 복사한다.
+            directories.extend(
+                [
+                    run_root / "application/frontend/dist",
+                    run_root / "application/frontend/dist/assets",
+                ]
+            )
+        for directory in directories:
+            target = directory.resolve()
+            try:
+                target.relative_to(resolved_root)
+            except ValueError:
+                continue
+            target.mkdir(parents=True, exist_ok=True)
 
 
 def _normalize_openapi_path_parameters(api_spec: Any) -> Any:
@@ -168,7 +215,17 @@ class PrototypeClient:
         write("bceModel", "class-model.json", design.get("extracted_bce_classes"))
         write("sequenceModel", "sequence-model.json", design.get("sequence_diagram_model"))
         write("apiModel", "api-model.json", design.get("api_spec_model"))
-        write("erdBceModel", "erd-class-model.json", design.get("erd_bce_classes"))
+        erd_bce = design.get("erd_bce_classes")
+        write("erdBceModel", "erd-class-model.json", erd_bce)
+        # 구현 단계가 ERD의 가공 전 BCE를 다시 해석하면 대리키·외래키·연결 테이블을
+        # 놓칠 수 있다. ERD 단계에서 다이어그램을 만들 때 검사한 바로 그 논리 모델을
+        # 함께 고정해, 저장소 골격도 같은 테이블과 키를 사용하게 한다.
+        if isinstance(erd_bce, dict) and erd_bce:
+            write(
+                "erdLogicalModel",
+                "erd-logical-model.json",
+                project_logical_model(BCEModel.model_validate(erd_bce)),
+            )
         # 구현 에이전트는 설계 다이어그램만으로 비즈니스 규칙을 추측하면 안 된다.
         # 요구사항 단계가 확정한 문장과 유스케이스의 사전·사후 조건, 기본 흐름, 예외
         # 흐름을 같은 작업 스냅샷에 넣어 테스트와 실제 코드를 같은 근거에서 작성한다.
@@ -200,7 +257,7 @@ class PrototypeClient:
             "openapi",
         ]
         if "erdBceModel" in inputs:
-            required_inputs.append("erdBceModel")
+            required_inputs.extend(["erdBceModel", "erdLogicalModel"])
         job = {
             "name": f"easydep-{app_id[:8]}",
             "appId": app_id,
@@ -289,6 +346,7 @@ class PrototypeClient:
             args.append("--retry-failed")
         runner_image = configured_runner_image()
         if runner_image:
+            _prepare_runner_output_directories(run_root)
             # 설계 snapshot과 실행 상태는 저장소 안에 있으므로 같은 파일을 Linux 경로로만
             # 바꿔 전달한다. 생성·계획은 빠른 호스트 프로세스에서 끝내고, OpenHands와
             # Gradle이 실제로 동작하는 phase만 고정 Linux 환경에서 실행한다.

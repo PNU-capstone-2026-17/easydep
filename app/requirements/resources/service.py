@@ -704,7 +704,10 @@ def normalize_resource_extraction(
         elif len(matches) != 1:
             session.ask("region", cloud_contract.question("region"))
 
-    if found.monthly_budget_amount is not None:
+    if (
+        "monthlyBudgetUSD" not in protected_fields
+        and found.monthly_budget_amount is not None
+    ):
         currency = (found.monthly_budget_currency or "").upper()
         if currency == "USD":
             session.record(
@@ -832,6 +835,39 @@ def normalize_initial_cloud_constraints(
         session.record("monthlyBudgetUSD", usd, str(usd))
 
 
+def normalize_resource_answers(
+    session: ResourceIntakeSession, answers: dict[str, str]
+) -> None:
+    """화면이 질문의 ``field``와 함께 보낸 답변을 초안에 바로 적용한다.
+
+    답변은 어떤 필드에 대한 값인지 이미 알고 있으므로 LLM이 다시 분류할 필요가 없다.
+    특히 이전 자유문장 추출 결과를 재사용하는 재개 실행에서도 답변이 사라지지 않아야 한다.
+    region은 사용자가 장소 이름을 답할 수도 있어 기존 region catalog로 정규화한다.
+    """
+
+    for field, raw_value in answers.items():
+        value = str(raw_value or "").strip()
+        if not value or field not in cloud_contract.schema_fields() or field == "workloads":
+            continue
+        if field == "provider":
+            session.record(field, value.lower(), value)
+            continue
+        if field == "region":
+            session.record("regionAsWritten", value, value)
+            matches = regions.resolve(
+                value,
+                provider=str(session.draft.get("provider") or "") or None,
+            )
+            if len(matches) == 1:
+                match = matches[0]
+                session.saw(f"{match.code} ({match.provider}, {match.display_name})")
+                session.record("region", match.code, match.code)
+            else:
+                session.ask("region", cloud_contract.question("region"))
+            continue
+        session.record(field, value, value)
+
+
 @contract("build_resource_spec", requires=("classified",), produces=("resource_intake",))
 def build_resource_spec(
     state: AgentState,
@@ -856,11 +892,28 @@ def build_resource_spec(
     session = ResourceIntakeSession(haystack)
     initial_cloud_constraints = dict(state.get("initial_cloud_constraints") or {})
     normalize_initial_cloud_constraints(session, initial_cloud_constraints)
-    protected_fields = (
-        frozenset({"provider", "region"})
-        if initial_cloud_constraints.get("targets")
-        else frozenset()
-    )
+    resource_answers = {
+        str(field): str(value)
+        for field, value in (state.get("resource_answers") or {}).items()
+        if str(value or "").strip()
+    }
+    normalize_resource_answers(session, resource_answers)
+    # 화면의 전용 입력 칸에서 받은 값은 자유문장을 읽은 LLM 제안보다 우선한다. 예전에는
+    # 복수 target 형식만 보호해서, 단일 provider/region을 정확히 입력해도 LLM이 같은
+    # 값을 ambiguous로 표시하면 이미 채운 region을 다시 묻는 문제가 있었다.
+    protected = {
+        field
+        for field, source_key in (
+            ("provider", "provider"),
+            ("region", "region"),
+            ("monthlyBudgetUSD", "monthly_budget_amount"),
+        )
+        if initial_cloud_constraints.get(source_key) not in (None, "")
+    }
+    if initial_cloud_constraints.get("targets"):
+        protected.update({"provider", "region"})
+    protected.update(resource_answers)
+    protected_fields = frozenset(protected)
 
     degraded = ""
     cached = state.get("resource_constraint_extraction")

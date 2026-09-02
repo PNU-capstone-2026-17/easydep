@@ -874,6 +874,74 @@ def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def api_executable_schema_fields(model: dict, state: dict) -> list[Finding]:
+    """HTTP에서 실제 사용하는 schema가 구현 가능한 모양인지 확인한다.
+
+    BCE enumeration은 field 대신 values를 가지므로 유효하다. 둘 다 없는 named object와
+    item 타입이 빠진 array/object만 API 단계의 자동 수리 대상으로 돌려보낸다.
+    """
+
+    primitive = {
+        "string", "integer", "number", "boolean", "uuid", "localdate",
+        "localdatetime", "localtime", "instant", "byte",
+    }
+    used: set[str] = set()
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []) or []:
+        if not isinstance(endpoint, dict):
+            continue
+        request_schema = str(endpoint.get("request_schema") or "").strip()
+        if request_schema:
+            used.add(request_schema)
+        used.update(
+            str(response.get("schema_name") or "").strip()
+            for response in endpoint.get("responses", []) or []
+            if isinstance(response, dict)
+            and str(response.get("schema_name") or "").strip()
+            and str(response.get("schema_name") or "").strip().casefold()
+            not in primitive
+        )
+        for parameter in [
+            *(endpoint.get("path_params") or []),
+            *(endpoint.get("query_params") or []),
+        ]:
+            if not isinstance(parameter, dict):
+                continue
+            type_name = str(parameter.get("type") or "").strip()
+            if type_name.casefold() in {"array", "object"}:
+                found.append(Finding(
+                    "api.executable-schema-fields",
+                    f"파라미터 '{parameter.get('name')}'의 '{type_name}'에 구체적인 값 타입이 없음",
+                    _api_location(endpoint),
+                ))
+    schemas = {
+        str(schema.get("name") or "").strip(): schema
+        for schema in model.get("Schemas", []) or []
+        if isinstance(schema, dict) and str(schema.get("name") or "").strip()
+    }
+    for name in sorted(used):
+        schema = schemas.get(name)
+        if schema is None:  # 존재 여부는 api.schema-references-exist가 보고한다.
+            continue
+        if not schema.get("fields") and not schema.get("values"):
+            found.append(Finding(
+                "api.executable-schema-fields",
+                "요청이나 응답 값을 표현할 field 또는 enum value가 없음",
+                name,
+            ))
+            continue
+        for field in schema.get("fields") or []:
+            if isinstance(field, dict) and str(field.get("type") or "").casefold() in {
+                "array", "object",
+            }:
+                found.append(Finding(
+                    "api.executable-schema-fields",
+                    f"field '{field.get('name')}'의 타입에 구체적인 값 타입이 없음",
+                    name,
+                ))
+    return found
+
+
 def _sequence_diagrams_for_api(state: dict) -> list[dict]:
     model = state.get("sequence_diagram_model") or {}
     diagrams = model.get("Diagrams") if isinstance(model, dict) else None
@@ -973,6 +1041,7 @@ API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_operations_present": api_operations_present,
     "api_path_parameters": api_path_parameters,
     "api_schema_references": api_schema_references,
+    "api_executable_schema_fields": api_executable_schema_fields,
     "api_operation_ids": api_operation_ids,
     "api_traceability": api_traceability,
     "api_control_binding": api_control_binding,
@@ -986,6 +1055,7 @@ API_SPEC_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("api.operations-present", api_operations_present),
     CheckSpec("api.path-parameters-match", api_path_parameters),
     CheckSpec("api.schema-references-exist", api_schema_references),
+    CheckSpec("api.executable-schema-fields", api_executable_schema_fields),
     CheckSpec("api.operation-ids-unique", api_operation_ids),
     CheckSpec("api.references-exist", api_traceability),
     CheckSpec("api.control-binding-exists", api_control_binding),

@@ -57,6 +57,7 @@ from .workspace import (
 MAX_AGENT_TURN_ITERATIONS = 32
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
+_RESTRICTED_GREP_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
 
 
@@ -194,6 +195,12 @@ def _render_missing_output_repair_prompt(
 
 
 def _promote_changed_files(sandbox: Path, run_root: Path, changed: set[str]) -> None:
+    """검증된 source 내용만 run으로 옮긴다.
+
+    run 폴더는 Windows host와 Linux toolchain 사이의 공유 경로일 수 있다. ``copy2``는
+    내용 뒤에 Linux 권한과 시간 정보까지 쓰려 하므로 정상적으로 복사한 뒤에도 EPERM을
+    낼 수 있다. 생성 source 계약에는 파일 내용만 필요하므로 metadata를 복사하지 않는다.
+    """
     for relative in sorted(changed):
         source = sandbox / relative
         if not source.is_file():
@@ -204,7 +211,7 @@ def _promote_changed_files(sandbox: Path, run_root: Path, changed: set[str]) -> 
             continue
         target = run_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+        shutil.copyfile(source, target)
 
 
 def _restore_unauthorized_files(sandbox: Path, run_root: Path, unauthorized: list[str]) -> None:
@@ -365,12 +372,26 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         preserve_failed_edits=active_repair is None,
     )
     before = snapshot_files(sandbox)
+    missing_at_start = missing_required_outputs(sandbox, required_paths)
+    # 새 파일 자체가 빠진 경우에는 짧은 오류 문장만으로 구현을 다시 시작할 수 없다.
+    # 원래 작업 설명에는 요구사항, 정확한 Java 계약과 저장소 선언이 들어 있으므로 이를
+    # 다시 제공한다. 이미 존재하는 파일의 compile/test 오류를 고칠 때만 짧은 수리 설명을
+    # 사용해 불필요하게 큰 문맥을 반복하지 않는다.
     prompt_file = (
-        task.get("repair_prompt_file") if active_repair is not None else task.get("prompt_file")
+        task.get("prompt_file")
+        if active_repair is None or missing_at_start
+        else task.get("repair_prompt_file")
     )
     if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
         prompt_file = str(task["prompt_file"])
     prompt = (run_root / prompt_file).read_text(encoding="utf-8")
+    if active_repair is not None and missing_at_start:
+        prompt += (
+            "\n\n## Retry focus\n\n"
+            "A previous round stopped before creating these contracted outputs. "
+            "Create them before optional exploration, then run the focused task check:\n"
+            + "\n".join(f"- `{path}`" for path in missing_at_start)
+        )
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
     read_source_paths = context.get("readSourcePaths", [])
     readable_absolute: list[str] = []
@@ -788,7 +809,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if repair_ledger.attempts:
             failure["repairHistory"] = repair_ledger.model_dump(mode="json")
         write_execution_result(execution_dir, task_id, attempt, failure)
-        shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
+        shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
         raise
     # 실패 뒤 재사용한 임시 작업 공간에는 필수 결과가 이미 존재할 수 있다. 그런 파일은
     # 이번 대화 시작 시점과 비교하면 changed가 아니지만, 실제 run에는 아직 없을 수 있다.
@@ -821,7 +842,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if conversation_warning is not None:
         result["conversationWarning"] = conversation_warning
     write_execution_result(execution_dir, task_id, attempt, result)
-    shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
+    shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
     cleanup_agent_workspace(sandbox)
     return result
 
@@ -883,25 +904,37 @@ def _conversation_finished_with_error(conversation: object) -> bool:
 
 
 def _implementation_repair_history(ledger: RepairLedger) -> str:
-    """최근 구현 검사와 결과만 사람이 읽기 쉬운 형태로 보여 준다."""
+    """현재 진단을 가리지 않을 정도로만 이전 수리 결과를 요약한다.
+
+    compiler와 test 원문은 실행 결과 JSON에 남는다. 대화에는 후보와 결과, 대표 진단만 넣어
+    이미 고친 과거 오류를 다시 추적하거나 같은 긴 로그를 token으로 반복 소비하지 않는다.
+    """
     if not ledger.attempts:
         return "No previous repair attempt."
     lines: list[str] = []
-    first = max(0, len(ledger.attempts) - 5)
-    for index, attempt in enumerate(ledger.attempts[-5:], start=first + 1):
-        targets = ", ".join(attempt.target_ids[:5]) or "current task"
-        if len(attempt.target_ids) > 5:
-            targets += f" and {len(attempt.target_ids) - 5} more"
-        detail = attempt.detail.strip() or ", ".join(attempt.finding_keys_before)
+    first = max(0, len(ledger.attempts) - 3)
+    for index, attempt in enumerate(ledger.attempts[-3:], start=first + 1):
+        detail = _representative_repair_diagnostic(
+            attempt.detail.strip() or ", ".join(attempt.finding_keys_before)
+        )
         lines.append(
-            f"Attempt {index}\n"
-            f"- result: {attempt.outcome}\n"
-            f"- targets: {targets}\n"
-            f"- diagnostic: {detail[:2000]}"
+            f"Attempt {index}: result={attempt.outcome}, "
+            f"candidate={attempt.candidate_digest[:12]}, diagnostic={detail}"
         )
     if first:
         lines.insert(0, f"{first} older attempt(s) omitted.")
-    return "\n\n".join(lines)
+    return "\n".join(lines)
+
+
+def _representative_repair_diagnostic(value: str, limit: int = 320) -> str:
+    """이전 검사 원문에서 다음 시도에 유용한 실패 한 줄만 고른다."""
+    lines = [" ".join(line.split()) for line in value.splitlines() if line.strip()]
+    markers = ("error:", "failed", "failure", "expected:", "violation", "missing")
+    selected = next(
+        (line for line in lines if any(marker in line.lower() for marker in markers)),
+        lines[0] if lines else "no diagnostic",
+    )
+    return selected[:limit]
 
 
 def _extend_conversation_write_files(agent, absolute_paths: list[str]) -> None:
@@ -1142,7 +1175,7 @@ def create_openhands_conversation(
     reasoning_effort: str = "medium",
     system_prompt: str = IMPLEMENTATION_SYSTEM_PROMPT,
 ):
-    global _RESTRICTED_EDITOR_REGISTERED
+    global _RESTRICTED_EDITOR_REGISTERED, _RESTRICTED_GREP_REGISTERED
 
     from openhands.sdk import LLM, Agent, Conversation, Tool, register_tool
     from openhands.sdk.context.condenser import LLMSummarizingCondenser
@@ -1150,7 +1183,8 @@ def create_openhands_conversation(
     from openhands.tools.file_editor.definition import FileEditorObservation
     from openhands.tools.file_editor.exceptions import ToolError
     from openhands.tools.file_editor.impl import FileEditorExecutor
-    from openhands.tools.grep import GrepTool
+    from openhands.tools.grep import GrepObservation, GrepTool
+    from openhands.tools.grep.impl import GrepExecutor
     from pydantic import AliasChoices, Field, SecretStr
 
     _configure_openhands_profile_store()
@@ -1159,7 +1193,10 @@ def create_openhands_conversation(
         """Accept the common file_path spelling without advertising it to the LLM."""
 
         path: str = Field(
-            description="Absolute path to the allowlisted file. Use the argument name path.",
+            description=(
+                "Path inside the assigned workspace. Prefer an absolute path from the "
+                "prompt and use the argument name path."
+            ),
             validation_alias=AliasChoices("path", "file_path"),
             serialization_alias="path",
         )
@@ -1178,6 +1215,7 @@ def create_openhands_conversation(
             self.allowed_edits_files = {Path(path).resolve() for path in allowed_edits_files}
             self.allowed_edit_roots = {Path(path).resolve() for path in allowed_edit_roots}
             self.immutable_edit_paths = {Path(path).resolve() for path in immutable_edit_paths}
+            self.easydep_workspace_root = Path(workspace_root).resolve()
 
         def _can_edit(self, target: Path) -> bool:
             if any(target == path or path in target.parents for path in self.immutable_edit_paths):
@@ -1187,7 +1225,33 @@ def create_openhands_conversation(
             )
 
         def __call__(self, action, conversation=None):
-            target = Path(action.path).resolve()
+            supplied = Path(action.path)
+            target = (
+                supplied.resolve()
+                if supplied.is_absolute()
+                else (self.easydep_workspace_root / supplied).resolve()
+            )
+            try:
+                relative = target.relative_to(self.easydep_workspace_root)
+            except ValueError:
+                return FileEditorObservation.from_text(
+                    text=f"Path is outside the assigned workspace: {target}",
+                    command=action.command,
+                    is_error=True,
+                )
+            if action.command == "view" and any(
+                part in {"build", ".gradle", "node_modules", "dist"}
+                for part in relative.parts
+            ):
+                return FileEditorObservation.from_text(
+                    text=(
+                        "Generated build and dependency outputs are not source context. "
+                        "Use the concise result returned by run_task_check, inspect the "
+                        "named source files, and repair those files instead."
+                    ),
+                    command="view",
+                    is_error=True,
+                )
             if action.command != "view" and not self._can_edit(target):
                 return FileEditorObservation.from_text(
                     text=(
@@ -1226,6 +1290,39 @@ def create_openhands_conversation(
                         "new_content": action.file_text,
                     }
                 )
+
+            # OpenHands 기본 편집기의 binary 판별은 UTF-8 한글 주석이 많은 Java 파일을
+            # binary로 오인할 수 있다. EasyDep이 만든 source는 UTF-8 계약이므로 파일
+            # 조회만 직접 처리한다. 실제 binary나 잘못된 인코딩은 decode 단계에서 그대로
+            # 거절하고, 디렉터리 목록과 편집 명령은 SDK 기본 구현을 계속 사용한다.
+            if action.command == "view" and target.is_file():
+                try:
+                    content = target.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as error:
+                    return FileEditorObservation.from_text(
+                        text=f"Could not read UTF-8 text file: {error}",
+                        command="view",
+                        is_error=True,
+                    )
+                lines = content.splitlines()
+                start = 1
+                end = len(lines)
+                if action.view_range:
+                    start = max(1, int(action.view_range[0]))
+                    requested_end = int(action.view_range[1])
+                    end = len(lines) if requested_end == -1 else min(len(lines), requested_end)
+                numbered = "\n".join(
+                    f"{number:6}\t{lines[number - 1]}"
+                    for number in range(start, end + 1)
+                )
+                return FileEditorObservation.from_text(
+                    text=(
+                        f"Here's the UTF-8 text in {target} "
+                        f"(lines {start}-{end}):\n{numbered}"
+                    ),
+                    command="view",
+                    is_error=False,
+                ).model_copy(update={"path": str(target)})
 
             try:
                 return self.editor(
@@ -1269,8 +1366,104 @@ def create_openhands_conversation(
                             "implementation roots. Read-only generated contract paths are "
                             "always rejected. The view command may inspect the current files "
                             "and directories listed in the prompt; descend into a listed "
-                            "directory when you need a declaration. Use absolute paths from "
-                            "the user prompt. Create may replace an existing editable file."
+                            "directory when you need a declaration. Generated build, Gradle, "
+                            "dependency, and distribution outputs cannot be viewed; use the "
+                            "concise run_task_check result instead. Use absolute paths from the "
+                            "user prompt. Create may replace an existing editable file."
+                        ),
+                    }
+                )
+                for instance in instances
+            ]
+
+    class WorkspaceGrepExecutor(GrepExecutor):
+        """검색 범위를 이 작업의 임시 workspace 안으로 제한한다."""
+
+        def __init__(self, working_dir, missing_output_paths):
+            super().__init__(working_dir=working_dir)
+            self.missing_output_paths = {
+                Path(path).resolve() for path in missing_output_paths
+            }
+
+        def __call__(self, action, conversation=None):
+            search_path = Path(action.path).resolve() if action.path else self.working_dir
+            try:
+                relative = search_path.relative_to(self.working_dir)
+            except ValueError:
+                return GrepObservation.from_text(
+                    text=(
+                        "Search outside the assigned workspace is not allowed. "
+                        "Use the current task prompt and source paths."
+                    ),
+                    matches=[],
+                    pattern=action.pattern,
+                    search_path=str(search_path),
+                    include_pattern=action.include,
+                    is_error=True,
+                )
+            pattern = action.pattern.casefold()
+            missing_target = next(
+                (
+                    path
+                    for path in self.missing_output_paths
+                    if not path.is_file()
+                    and (
+                        path.name.casefold() in pattern
+                        or path.stem.casefold() in pattern
+                    )
+                ),
+                None,
+            )
+            if missing_target is not None:
+                return GrepObservation.from_text(
+                    text=(
+                        f"{missing_target.name} is a contracted output and does not exist "
+                        "yet. Do not search for it. Create it with restricted_file_editor "
+                        "after reading the embedded contracts and named source files."
+                    ),
+                    matches=[],
+                    pattern=action.pattern,
+                    search_path=str(search_path),
+                    include_pattern=action.include,
+                    is_error=True,
+                )
+            if any(
+                part in {"build", ".gradle", "node_modules", "dist"}
+                for part in relative.parts
+            ):
+                return GrepObservation.from_text(
+                    text=(
+                        "Generated build and dependency outputs are not searchable source "
+                        "context. Use the concise run_task_check result instead."
+                    ),
+                    matches=[],
+                    pattern=action.pattern,
+                    search_path=str(search_path),
+                    include_pattern=action.include,
+                    is_error=True,
+                )
+            return super().__call__(action, conversation)
+
+    class RestrictedGrepTool(GrepTool):
+        # registry 이름은 충돌을 피하기 위해 별도 값을 쓰지만, LLM에는 익숙한 ``grep``
+        # 하나만 보인다. 도구 이름을 새로 가르칠 필요가 없어 prompt도 짧게 유지된다.
+        name = "grep"
+
+        @classmethod
+        def create(cls, conv_state, missing_output_paths):
+            instances = super().create(conv_state)
+            return [
+                instance.model_copy(
+                    update={
+                        "executor": WorkspaceGrepExecutor(
+                            working_dir=conv_state.workspace.working_dir,
+                            missing_output_paths=missing_output_paths,
+                        ),
+                        "description": (
+                            "Search source text only inside the assigned workspace. "
+                            "Generated build, Gradle, dependency, and distribution "
+                            "directories are excluded. Use an absolute directory path from "
+                            "the current task prompt."
                         ),
                     }
                 )
@@ -1283,6 +1476,12 @@ def create_openhands_conversation(
             if not _RESTRICTED_EDITOR_REGISTERED:
                 register_tool(registry_name, RestrictedFileEditorTool)
                 _RESTRICTED_EDITOR_REGISTERED = True
+    grep_registry_name = "easydep_restricted_grep"
+    if not _RESTRICTED_GREP_REGISTERED:
+        with _RESTRICTED_EDITOR_REGISTRATION_LOCK:
+            if not _RESTRICTED_GREP_REGISTERED:
+                register_tool(grep_registry_name, RestrictedGrepTool)
+                _RESTRICTED_GREP_REGISTERED = True
     task_check_tool_name = register_task_check_tool()
     model = configured_model(str(llm_config["model"]))
     is_qwen_coder = "qwen3-coder" in model.lower()
@@ -1331,7 +1530,14 @@ def create_openhands_conversation(
                     "immutable_edit_paths": immutable_paths or [],
                 },
             ),
-            Tool(name=GrepTool.name),
+            Tool(
+                name=grep_registry_name,
+                params={
+                    "missing_output_paths": [
+                        path for path in allowed_files if not Path(path).is_file()
+                    ]
+                },
+            ),
             Tool(
                 name=task_check_tool_name,
                 params={

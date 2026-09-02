@@ -64,6 +64,13 @@ Follow the standard BCE roles: Boundary receives actor-facing input, Control
 coordinates the use-case flow, and Entity owns persistent state behavior. Close
 an ordinary request-response flow through return values: the root Boundary
 operation may cover both the actor input and the resulting actor-visible output.
+When a fixed Entity candidate owns durable domain information that this use case
+reads or changes, put at least one such operation on an Entity and let Control
+coordinate it. Read-only retrieval of stored domain information counts. Do not
+replace that Entity responsibility with a Control helper named save, record,
+find, get, or update. A use case that only calculates, formats, or calls an
+external system does not need an Entity operation. Do not invent dummy or no-op
+operations merely to keep a structural class in the diagram.
 Do not add present/show/confirm/notify Boundary operations merely to deliver the
 result of the current request. Add a separate outbound Boundary operation only
 when the scenario explicitly requires an out-of-band push, callback, or later
@@ -1100,6 +1107,28 @@ def _compose(
         retained = {
             class_name(item) for item in result_classes if item.get("operations")
         }
+        # operation이 없는 구조 클래스라도 수락된 class의 field나 signature가 참조하면
+        # 타입 계약의 일부다. 이를 지우면 `RegistrationPeriod.term : AcademicTerm`처럼
+        # 검증을 통과했던 선언이 최종 조립 과정에서 갑자기 미해소 타입이 된다.
+        class_index = {class_name(item): item for item in result_classes}
+        pending = list(retained)
+        while pending:
+            item = class_index[pending.pop()]
+            referenced: set[str] = set()
+            for raw_field in item.get("fields") or []:
+                referenced.update(referenced_type_names(field_type(raw_field)))
+            for operation in item.get("operations") or []:
+                if not isinstance(operation, dict):
+                    continue
+                referenced.update(referenced_type_names(text(operation.get("returnType"))))
+                for parameter in operation.get("parameters") or []:
+                    if isinstance(parameter, dict):
+                        referenced.update(
+                            referenced_type_names(text(parameter.get("type")))
+                        )
+            for name in referenced & class_index.keys() - retained:
+                retained.add(name)
+                pending.append(name)
         result_classes = [item for item in result_classes if class_name(item) in retained]
         relationships = [
             item for item in relationships if isinstance(item, dict)

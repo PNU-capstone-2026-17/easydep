@@ -188,6 +188,27 @@ def _collaboration_contract(
                 "Boundary must delegate each actor entry flow to Control",
                 group.id,
             ))
+    # operation 단계가 이미 "이 흐름은 지속 상태를 사용한다"고 확정한 경우에만
+    # 실제 호출 누락을 잡는다. Entity operation 자체가 없는 계산·외부 연동 흐름에는
+    # 아무 조건도 추가하지 않는다.
+    required_steps = {
+        step_id for group in groups for step_id in group.required_step_ids
+    }
+    entity_operations = {
+        operation_id
+        for operation_id, operation in operations.items()
+        if text(operation.get("stereotype")) == "entity"
+        and required_steps & {text(ref) for ref in operation.get("stepRefs") or []}
+    }
+    called_operations = {
+        text(call.get("receiverOperationId")) for call in calls
+    }
+    if entity_operations and not entity_operations & called_operations:
+        findings.append(Finding(
+            "class.collaboration.contract",
+            "accepted Entity behavior for durable domain information must be called by Control",
+            location,
+        ))
     return findings
 
 

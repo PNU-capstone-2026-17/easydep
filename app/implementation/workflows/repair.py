@@ -216,6 +216,9 @@ def apply_repair_directives(run_root: Path) -> None:
                 "아래 기술 오류를 해결한다. 맡은 파일 안에서는 구현 방법, 테스트 추가와 "
                 "수정 순서를 스스로 결정해도 된다. 관련 없는 기능과 생성된 공개 계약은 "
                 "바꾸지 않는다. 필요한 source는 파일 편집기로 직접 읽는다.\n\n"
+                "먼저 `run_task_check`를 한 번 실행해 현재 source에서도 오류가 재현되는지 "
+                "확인한다. 아래 이력은 이미 바뀐 source에서 나온 참고 기록일 수 있으므로, "
+                "현재 검사와 현재 파일에 없는 이름을 찾느라 시간을 쓰지 않는다.\n\n"
                 f"## 이번 접근 방법\n\n{current.get('strategy', 'focused-fix')}\n\n"
                 f"## 수정 가능한 파일\n\n{editable}\n\n"
                 f"## 읽기 전용 공개 계약\n\n{immutable}\n\n"
@@ -387,8 +390,9 @@ def _recent_execution_history(run_root: Path, task_id: str) -> str:
     """최근 OpenHands 수리 결과를 다음 대화에 짧게 전달한다.
 
     repair plan만 보면 전략 이름은 알 수 있지만 실제로 어느 파일을 바꿨고 어떤 검사가 다시
-    실패했는지는 알 수 없다. 최신 실행 결과의 기존 ``repairHistory``에서 마지막 다섯
-    시도만 재사용하므로 별도 저장 형식이나 무한히 커지는 prompt는 만들지 않는다.
+    실패했는지는 알 수 없다. 다만 과거 compiler 출력을 그대로 반복하면 이미 바뀐 source의
+    class나 test 이름을 현재 오류로 오해할 수 있다. 최신 세 시도의 결과와 대표 진단 한 줄만
+    전달하고, 원문은 JSON 실행 기록에 보존한다.
     """
     result_path = (
         run_root / "reports" / "agent-executions" / f"{task_id}.result.json"
@@ -404,10 +408,10 @@ def _recent_execution_history(run_root: Path, task_id: str) -> str:
         return ""
     attempts = [
         item for item in repair_history.get("attempts", []) if isinstance(item, dict)
-    ][-5:]
+    ][-3:]
     lines: list[str] = []
     for index, attempt in enumerate(attempts, 1):
-        detail = " ".join(str(attempt.get("detail", "")).split())[:1200]
+        detail = _representative_diagnostic(str(attempt.get("detail", "")))
         lines.append(
             f"- 실행 {index}: 전략={attempt.get('strategy_key', '알 수 없음')}, "
             f"결과={attempt.get('outcome', '알 수 없음')}, "
@@ -415,6 +419,17 @@ def _recent_execution_history(run_root: Path, task_id: str) -> str:
             f"근거={detail or '기록 없음'}"
         )
     return "\n".join(lines)
+
+
+def _representative_diagnostic(value: str, limit: int = 320) -> str:
+    """긴 build 출력에서 다음 대화가 구분할 수 있는 대표 실패 한 줄만 고른다."""
+    lines = [" ".join(line.split()) for line in value.splitlines() if line.strip()]
+    markers = ("error:", "failed", "failure", "expected:", "violation", "missing")
+    selected = next(
+        (line for line in lines if any(marker in line.lower() for marker in markers)),
+        lines[0] if lines else "",
+    )
+    return selected[:limit]
 
 
 def _covering_task(
@@ -464,7 +479,7 @@ def _later_task_ids(
     ]
 
 
-def _bounded_evidence(value: str, limit: int = 16000) -> str:
+def _bounded_evidence(value: str, limit: int = 8000) -> str:
     if len(value) <= limit:
         return value
     half = limit // 2

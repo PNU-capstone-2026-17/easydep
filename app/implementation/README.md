@@ -38,6 +38,13 @@ OpenHands는 관련 package 또는 디렉터리 안에서 `조사 → 여러 파
 작성하는 shell이 아니다. EasyDep이 현재 작업에 미리 정한 focused test나 compile만 실행한다.
 OpenHands가 실행한 검사가 성공했고 그 뒤 source가 바뀌지 않았다면 EasyDep은 그 결과를
 재사용한다. 모든 기능이 끝난 시점의 전체 검사는 별도로 한 번 실행한다.
+검사 실패 시 JUnit XML과 Gradle HTML 전체를 에이전트에게 열어 주지 않는다. 검증기가 대표
+실패와 가장 안쪽 원인을 먼저 추출해 ``run_task_check`` 결과로 돌려주며, 원본 보고서는 사람이
+실행 이력을 조사할 때만 사용한다. 이렇게 하면 에이전트가 수십만 자짜리 같은 보고서를 반복해
+읽지 않고 곧바로 관련 source를 고칠 수 있다.
+`grep`도 현재 작업 공간의 source만 검색하며 `build`, `.gradle`, `node_modules`, `dist`와
+다른 작업의 임시 폴더는 보지 못한다. 아직 만들지 않은 필수 출력 파일명을 검색하면 파일이
+없다는 사실을 반복해서 확인하는 대신, 그 파일을 생성하라는 짧은 안내를 반환한다.
 
 한 요청이 너무 오래 멈추지 않도록 요청 시간과 tool turn에는 안전 한도를 둘 수 있지만, 한
 run의 전체 repair 횟수에는 숫자 상한을 두지 않는다. NIM 연결이 끊기거나 한 대화의 안전
@@ -51,8 +58,8 @@ run의 전체 repair 횟수에는 숫자 상한을 두지 않는다. NIM 연결�
 
 구현 작업은 파일 하나가 아니라 기능 경계로 묶는다.
 
-- 공통 기반 작업은 여러 유스케이스가 함께 쓰는 Entity, persistence mapping, Repository와
-  schema를 구현한다.
+- Entity, persistence mapping, Repository와 schema 골격은 생성기가 먼저 만든다. 유스케이스나
+  operation에 연결되지 않은 보조 Entity만을 위해 별도 LLM 작업을 만들지 않는다.
 - 유스케이스 묶음 작업은 같은 Control·Entity를 사용하는 Control, API/Boundary adapter와
   관련 테스트를 함께 구현한다.
 - frontend 작업은 API client, 화면과 사용자 흐름을 함께 구현한다.
@@ -77,6 +84,9 @@ EasyDep은 목표, 관련 설계, 편집 범위, 사용할 도구와 완료 검�
 `sequence[]`는 유스케이스(`use_case_id`), `Participants`, `Messages`를 묶어
 전달하며, 각 message의 `arguments`, `call_id`, `reply_to`, `fragments`를 그대로 보존한다.
 따라서 Control·Boundary·API·Frontend가 같은 호출 인자와 호출/반환 연결을 읽는다.
+각 유스케이스 작업에는 ERD의 table·column·relation 지도도 함께 제공한다. 하나의 Entity
+operation이 여러 Repository를 조합해야 할 때 에이전트는 이 지도에서 후보를 고르고, 필요한
+Java 선언만 조회한다.
 
 배포 실행 정보는 필요한 작업에만 `deployment`로 투영한다. 투영에는 `workloads[].id`,
 `interfaces`, `configuration`, `storage`와 연결된 `connections`만 들어가며, 전체 CSP 계획이나
@@ -142,6 +152,9 @@ HTTP 검사가 통과하면 별도의 wiring LLM 호출은 없다. Bean 충돌�
 확인된 경우에만 수리 전용 wiring 작업이 설정 package 안에서 자율적으로 수정한다.
 정상 실행에서는 쓰지 않는 전체 Java 계약을 wiring prompt로 미리 만들지 않는다. 실제 오류가
 생겼을 때 현재 오류, 관련 파일, 읽기 전용 계약과 최근 실패 방법만 담은 짧은 수리 지시를 만든다.
+새 수리 대화는 현재 source에서 작업 전용 검사를 먼저 실행한다. 과거 검사 원문은 JSON 보고서에
+보존하되 prompt에는 최근 결과와 대표 오류 한 줄만 넣는다. 따라서 이미 고친 test 이름이나 긴
+Gradle 출력에 끌려가지 않으면서도 같은 접근을 반복했는지는 확인할 수 있다.
 
 ## 상태를 읽는 법
 

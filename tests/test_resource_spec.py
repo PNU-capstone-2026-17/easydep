@@ -176,6 +176,76 @@ def test_structured_map_selection_prevents_duplicate_provider_and_region_questio
     }.intersection({"provider", "region"})
 
 
+def test_structured_single_selection_prevents_duplicate_cloud_questions(monkeypatch):
+    """전용 입력 칸의 단일 CSP·리전·예산은 자유문장 제안이 다시 묻지 못한다."""
+
+    monkeypatch.setattr(sr.settings, "resource_agent_llm", False)
+    extracted = CloudConstraintExtraction(
+        provider="aws",
+        provider_evidence="AWS",
+        region_as_written="Seoul",
+        region_evidence="Seoul",
+        monthly_budget_amount=900,
+        monthly_budget_currency="USD",
+        monthly_budget_evidence="900 USD",
+        ambiguous_fields=["provider", "region", "monthlyBudgetUSD"],
+        understanding="The free text contains an ambiguous deployment description.",
+    )
+    result = sr.build_resource_spec(
+        {
+            "classified": [],
+            "resource_constraints_text": "AWS Seoul with a separate free-form budget.",
+            "initial_cloud_constraints": {
+                "provider": "aws",
+                "region": "ap-northeast-2",
+                "monthly_budget_amount": 500,
+                "monthly_budget_currency": "USD",
+            },
+            "resource_constraint_extraction": {
+                "status": "completed",
+                "result": extracted.model_dump(mode="json"),
+            },
+        }
+    )
+
+    assert result["resource_spec"]["provider"] == "aws"
+    assert result["resource_spec"]["region"] == "ap-northeast-2"
+    assert result["resource_spec"]["monthlyBudgetUSD"] == 500
+    assert not {
+        question["field"] for question in result["resource_intake"]["questions"]
+    }.intersection({"provider", "region", "monthlyBudgetUSD"})
+
+
+def test_resource_answer_overrides_cached_ambiguous_region(monkeypatch):
+    """되묻기 답변은 이전 LLM 추출을 재사용해도 즉시 region에 반영된다."""
+
+    monkeypatch.setattr(sr.settings, "resource_agent_llm", False)
+    extracted = CloudConstraintExtraction(
+        region_as_written="somewhere in Asia",
+        region_evidence="somewhere in Asia",
+        ambiguous_fields=["region"],
+        understanding="The original region was ambiguous.",
+    )
+    result = sr.build_resource_spec(
+        {
+            "classified": [],
+            "initial_cloud_constraints": {"provider": "aws"},
+            "resource_answers": {"region": "ap-northeast-2"},
+            "resource_constraint_extraction": {
+                "status": "completed",
+                "result": extracted.model_dump(mode="json"),
+            },
+        }
+    )
+
+    assert result["resource_spec"]["provider"] == "aws"
+    assert result["resource_spec"]["region"] == "ap-northeast-2"
+    assert not any(
+        question["field"] == "region"
+        for question in result["resource_intake"]["questions"]
+    )
+
+
 def test_unsupported_or_ungrounded_values_do_not_enter_the_spec(monkeypatch):
     result = _run(
         monkeypatch,

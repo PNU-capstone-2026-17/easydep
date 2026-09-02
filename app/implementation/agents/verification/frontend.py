@@ -316,9 +316,17 @@ def store_frontend_build(
         return None
     target_dist = run_root / "application" / "frontend" / "dist"
     target_dist.resolve().relative_to((run_root / "application" / "frontend").resolve())
-    if target_dist.is_dir():
-        shutil.rmtree(target_dist)
-    shutil.copytree(source_dist, target_dist)
+    # Windows bind mount에서는 Linux runner가 새 디렉터리의 metadata를 만들지 못할 수
+    # 있다. 실행 전 호스트가 준비한 폴더에 검증된 파일 내용만 복사한다. 해시가 붙은 예전
+    # asset이 남더라도 index.html은 항상 현재 bundle만 참조하며 source digest가 재사용
+    # 가능 여부를 결정한다.
+    target_dist.mkdir(parents=True, exist_ok=True)
+    for source in source_dist.rglob("*"):
+        if not source.is_file():
+            continue
+        target = target_dist / source.relative_to(source_dist)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
     report = {
         "schemaVersion": "easydep-frontend-build/v1alpha1",
         "sourceDigest": frontend_source_digest(run_root),

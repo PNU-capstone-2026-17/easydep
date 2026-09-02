@@ -20,14 +20,10 @@ from tests.class_design_fixtures import typed_class_model_payload
 
 
 def test_initial_job_allows_void_control_with_transport_error_outcomes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     worker = ImplementationWorker(settings(tmp_path))
     worker._plan = lambda *_args, **_kwargs: None
-    monkeypatch.setattr(
-        "app.implementation.application.jobs.design_readiness_report",
-        lambda _design: {"status": "READY", "findings": [], "stages": []},
-    )
     try:
         record = worker.create_job(
             "app-1",
@@ -504,6 +500,26 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
         path.mkdir(parents=True, exist_ok=True)
     job_path.write_text("{}", encoding="utf-8")
     approval_path.write_text("{}", encoding="utf-8")
+    reports = run_root / "reports"
+    reports.mkdir()
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_type": "frontend-implementation",
+                        "allowed_write_paths": [
+                            "application/frontend/src/pages/OverviewPage.tsx"
+                        ],
+                        "allowed_write_roots": [
+                            "application/frontend/src/components"
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     observed: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -534,6 +550,9 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     ]
     assert observed["operation_id"] == "job"
     assert result == {"status": "RUNNING"}
+    assert (run_root / "application/frontend/src/pages").is_dir()
+    assert (run_root / "application/frontend/src/components").is_dir()
+    assert (run_root / "application/frontend/dist/assets").is_dir()
 
 
 def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) -> None:
@@ -721,88 +740,11 @@ def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: P
     assert record["status"] == "NEEDS_INPUT"
     assert record["workflow"]["currentPhase"] == "design-validation"
     assert record["design_validation"]["status"] == "NEEDS_INPUT"
-    assert "api.operations-present" in record["error"]
+    assert "api_spec_model" in record["error"]
     report = (
         tmp_path / ".easydep" / "implementation-runs" / record["job_id"] / "design-readiness.json"
     )
     assert report.is_file()
-
-
-def test_initial_job_blocks_when_rendered_openapi_has_no_operation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    implementation_worker = ImplementationWorker(settings(tmp_path))
-    implementation_worker.client.prepare_job = lambda *_args, **_kwargs: pytest.fail(
-        "An empty rendered OpenAPI document must not reach the prototype process"
-    )
-    monkeypatch.setattr(
-        "app.implementation.application.jobs.design_readiness_report",
-        lambda _design: {"status": "NEEDS_INPUT", "findings": [{"finding": "warning"}]},
-    )
-    try:
-        record = implementation_worker.create_job(
-            "app-1",
-            {
-                "class_diagram_puml": "class Cart",
-                "api_spec": {"openapi": "3.1.0", "paths": {}},
-                "extracted_bce_classes": {"Classes": [{"className": "Cart"}]},
-                "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
-                "api_spec_model": {"Endpoints": [{"path": "/carts"}]},
-            },
-            "com.example",
-            False,
-        )
-    finally:
-        implementation_worker.shutdown()
-
-    assert record["status"] == "NEEDS_INPUT"
-    assert record["design_validation"]["status"] == "NEEDS_INPUT"
-    assert "api.operations-present" in record["error"]
-
-
-def test_initial_job_blocks_lossy_erd_bce_identifier_contract(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    implementation_worker = ImplementationWorker(settings(tmp_path))
-    implementation_worker.client.prepare_job = lambda *_args, **_kwargs: pytest.fail(
-        "A lossy ERD/BCE identifier contract must be resolved before generation"
-    )
-    monkeypatch.setattr(
-        "app.implementation.application.jobs.design_readiness_report",
-        lambda _design: {
-            "status": "NEEDS_INPUT",
-            "findings": [
-                {
-                    "stage": "erd",
-                    "finding": (
-                        "Session: surrogate key replaces sessionId [erd.surrogate-key-collides]"
-                    ),
-                }
-            ],
-        },
-    )
-    try:
-        record = implementation_worker.create_job(
-            "app-1",
-            {
-                "class_diagram_puml": "class Session",
-                "api_spec": {
-                    "openapi": "3.1.0",
-                    "paths": {"/sessions": {"post": {"operationId": "createSession"}}},
-                },
-                "extracted_bce_classes": {"Classes": [{"className": "Session"}]},
-                "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
-                "api_spec_model": {"Endpoints": [{"path": "/sessions"}]},
-            },
-            "com.example",
-            False,
-        )
-    finally:
-        implementation_worker.shutdown()
-
-    assert record["status"] == "NEEDS_INPUT"
-    assert record["workflow"]["currentPhase"] == "design-validation"
-    assert "erd.surrogate-key-collides" in record["error"]
 
 
 def test_planning_keeps_validation_needs_input_outcome_resumable(

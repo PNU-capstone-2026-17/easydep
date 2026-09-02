@@ -1,7 +1,8 @@
 """구현 작업의 생성, 승인, 실행, 결과 저장을 관리한다.
 
-설계 산출물이 구현에 필요한 수준인지 먼저 확인한 뒤 별도 프로세스에서 코드 생성과
-검증을 실행한다. 각 작업의 상태는 ``easydep-job-state.json``에 저장하므로 서버가
+설계 단계가 완료한 산출물의 입력 형태를 확인한 뒤 별도 프로세스에서 코드 생성과 구현 작업을
+실행한다. 설계 의미 검사는 설계 단계가 소유하며 여기서 반복하지 않는다. 각 작업의 상태는
+``easydep-job-state.json``에 저장하므로 서버가
 재시작되어도 승인 정보가 남아 있는 작업은 이어서 실행할 수 있다. 여러 요청이 동시에
 들어올 수 있어 실제 실행은 크기가 제한된 thread pool에 맡긴다.
 """
@@ -42,25 +43,6 @@ from .source_files import (
     read_application_source,
 )
 
-# 일부 설계 finding은 구현을 진행하면서 구체적인 코드와 함께 확인할 수 있다. 그러나
-# 아래 규칙의 오류는 입력 계약 자체를 만들 수 없게 하거나 BCE 필드와 JPA 필드의 대응을
-# 잃게 만든다. 구현기가 임의로 데이터 저장 방식을 정하지 않도록 이 경우만 시작 전에 막는다.
-_API_IMPLEMENTATION_BLOCKING_RULES = frozenset({
-    "api.operations-present",
-    "api.schema-references-exist",
-    "api.control-binding-exists",
-    "api.control-arguments-match",
-    "api.control-outcomes-cover-responses",
-    "api.control-call-in-sequence",
-    "api.executable-schema-fields",
-})
-_IMPLEMENTATION_BLOCKING_DESIGN_RULES = frozenset({
-    *_API_IMPLEMENTATION_BLOCKING_RULES,
-    "erd.surrogate-key-collides",
-})
-_OPENAPI_HTTP_METHODS = frozenset({
-    "delete", "get", "head", "options", "patch", "post", "put", "trace",
-})
 _INCOMPLETE_LEASE_GRACE_SECONDS = 30.0
 
 
@@ -101,150 +83,43 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def _has_implementation_blocking_design_finding(readiness: dict[str, Any]) -> bool:
-    """구현 계약을 안전하게 만들 수 없는 설계 finding이 있는지 확인한다.
+def _upstream_check_summary(design: dict[str, Any]) -> dict[str, Any]:
+    """설계 단계가 남긴 검사 결과를 다시 검사하지 않고 구현 기록에 복사한다.
 
-    필드 이름을 추측하지 않고 검사기가 finding에 넣은 rule ID를 확인한다. 예를 들어 ERD
-    검사기가 자동 생성 surrogate key와 기존 필드의 충돌을 보고했다면, 그대로 진행할 경우
-    BCE 객체를 JPA Entity로 옮기는 mapper가 어느 값을 보존해야 할지 결정할 수 없다.
+    API와 ERD의 의미 검사는 각 설계 작업이 생성 직후 수행한다. 구현 단계가 같은 검사를
+    다시 호출하면 규칙이 두 군데의 진입 조건이 되고, 오래된 설계를 구현 단계가 고치려는
+    흐름까지 생긴다. 여기서는 추적을 위해 이미 계산된 결과만 요약한다.
     """
-    return any(
-        rule_id in str(finding.get("finding") or "")
-        for finding in readiness.get("findings") or []
-        if isinstance(finding, dict)
-        for rule_id in _IMPLEMENTATION_BLOCKING_DESIGN_RULES
-    )
 
-
-def api_implementation_repair_findings(
-    design: dict[str, Any],
-    readiness: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """구현 코드로 추측하지 말고 API 설계에서 고쳐야 할 finding을 반환한다."""
-    readiness = readiness or design_readiness_report(design, stages=["api_spec"])
-    if not _has_rendered_openapi_operation(design.get("api_spec")):
-        readiness = _missing_openapi_operation_report(readiness)
-    findings = [
-        finding
-        for finding in readiness.get("findings") or []
-        if isinstance(finding, dict)
-        and any(
-            rule_id in str(finding.get("finding") or "")
-            for rule_id in _API_IMPLEMENTATION_BLOCKING_RULES
-        )
-    ]
-    findings.extend(_api_schema_field_findings(design.get("api_spec_model")))
-    return findings
-
-
-def _api_schema_field_findings(raw_model: object) -> list[dict[str, Any]]:
-    """요청·응답에서 실제 사용하는 이름 있는 schema가 비어 있는지 확인한다."""
-    try:
-        model = ApiSpecModel.model_validate(raw_model)
-    except (TypeError, ValueError):
-        return []
-    primitive = {
-        "string", "integer", "number", "boolean", "uuid", "localdate",
-        "localdatetime", "localtime", "instant", "byte",
-    }
-    used: set[str] = set()
-    result: list[dict[str, Any]] = []
-    for endpoint in model.Endpoints:
-        if endpoint.request_schema:
-            used.add(endpoint.request_schema)
-        used.update(
-            response.schema_name
-            for response in endpoint.responses
-            if response.schema_name and response.schema_name.casefold() not in primitive
-        )
-        for field in (*endpoint.path_params, *endpoint.query_params):
-            type_name = field.type.strip()
-            lowered = type_name.casefold()
-            if lowered in {"array", "object"}:
-                result.append(
-                    {
-                        "stage": "api_spec",
-                        "finding": (
-                            f"API parameter `{field.name}` 타입 `{type_name}`에 구체적인 값 "
-                            "타입이 없음 [api.executable-schema-fields]"
-                        ),
-                    }
-                )
-                continue
-            item_type = type_name.removesuffix("[]")
-            if item_type and item_type.casefold() not in primitive:
-                used.add(item_type)
-    by_name = {schema.name: schema for schema in model.Schemas}
-    for name in sorted(used):
-        schema = by_name.get(name)
-        if schema is None or not schema.fields:
-            result.append(
-                {
-                    "stage": "api_spec",
-                    "finding": (
-                        f"구현에서 사용하는 API schema `{name}`에 field가 없어 요청이나 "
-                        "응답 값을 표현할 수 없음 [api.executable-schema-fields]"
-                    ),
-                }
-            )
-            continue
-        for field in schema.fields:
-            if field.type.casefold() in {"array", "object"}:
-                result.append(
-                    {
-                        "stage": "api_spec",
-                        "finding": (
-                            f"API schema `{name}`의 field `{field.name}` 타입 `{field.type}`에 "
-                            "구체적인 값 타입이 없음 [api.executable-schema-fields]"
-                        ),
-                    }
-                )
-    return result
-
-
-def _has_rendered_openapi_operation(api_spec: object) -> bool:
-    """중간 endpoint 모델이 아니라 최종 OpenAPI에 HTTP operation이 있는지 확인한다."""
-    if not isinstance(api_spec, dict):
-        return False
-    paths = api_spec.get("paths")
-    return isinstance(paths, dict) and any(
-        isinstance(path_item, dict)
-        and any(
-            str(method).lower() in _OPENAPI_HTTP_METHODS
-            and isinstance(operation, dict)
-            for method, operation in path_item.items()
-        )
-        for path_item in paths.values()
-    )
-
-
-def _missing_openapi_operation_report(readiness: dict[str, Any]) -> dict[str, Any]:
-    """OpenAPI에 operation이 없다는 finding을 구현 준비도 보고서에 추가한다."""
-    finding = (
-        "OpenAPI paths에 구현 가능한 HTTP operation이 없음 — 유스케이스·BCE Control·"
-        "시퀀스 호출에 근거한 endpoint를 생성해야 함 [api.operations-present]"
-    )
-    if any(
-        "api.operations-present" in str(item.get("finding") or "")
-        for item in readiness.get("findings") or []
-        if isinstance(item, dict)
+    stages: list[dict[str, Any]] = []
+    findings: list[dict[str, str]] = []
+    for stage, check_key in (
+        ("class_diagram", "class_diagram_check"),
+        ("sequence_diagram", "sequence_diagram_check"),
+        ("api_spec", "api_spec_check"),
+        ("erd", "erd_check"),
     ):
-        return readiness
-
-    result = {**readiness}
-    findings = list(readiness.get("findings") or [])
-    findings.append({"stage": "api_spec", "finding": finding})
-    result["findings"] = findings
-    stages = [dict(item) for item in readiness.get("stages") or [] if isinstance(item, dict)]
-    api_stage = next((item for item in stages if item.get("stage") == "api_spec"), None)
-    if api_stage is None:
-        stages.append({"stage": "api_spec", "status": "NEEDS_INPUT", "findings": [finding]})
-    else:
-        api_stage["status"] = "NEEDS_INPUT"
-        api_stage["findings"] = [*list(api_stage.get("findings") or []), finding]
-    result["stages"] = stages
-    result["status"] = "NEEDS_INPUT"
-    return result
+        check = design.get(check_key)
+        if not isinstance(check, dict):
+            continue
+        stage_findings = [str(item) for item in check.get("findings") or []]
+        stages.append(
+            {
+                "stage": stage,
+                "status": "READY" if not stage_findings else "BLOCKED",
+                "findings": stage_findings,
+            }
+        )
+        findings.extend(
+            {"stage": stage, "finding": finding}
+            for finding in stage_findings
+        )
+    return {
+        "schemaVersion": "easydep-design-readiness/v1alpha1",
+        "status": "READY" if not findings else "BLOCKED",
+        "stages": stages,
+        "findings": findings,
+    }
 
 
 class JobNotFound(KeyError):
@@ -295,34 +170,11 @@ class ImplementationWorker:
             or not design["erd_bce_classes"]
         ):
             missing_models.append("erd_bce_classes")
-        readiness = design_readiness_report(design)
-        # 중간 모델 누락보다 최종 OpenAPI의 operation 누락을 먼저 알린다. 사용자가 실제
-        # 산출물에서 확인할 수 있고, 두 OpenAPI 생성 경로가 모두 거부하는 직접적인 이유다.
-        if not _has_rendered_openapi_operation(design.get("api_spec")):
-            return self._create_design_blocked_job(
-                app_id,
-                base_package,
-                _missing_openapi_operation_report(readiness),
-            )
-        executable_api_findings = api_implementation_repair_findings(design, readiness)
-        if executable_api_findings:
-            readiness = {**readiness}
-            readiness["status"] = "NEEDS_INPUT"
-            readiness["findings"] = [
-                *list(readiness.get("findings") or []),
-                *[
-                    item
-                    for item in executable_api_findings
-                    if item not in (readiness.get("findings") or [])
-                ],
-            ]
-            return self._create_design_blocked_job(app_id, base_package, readiness)
+        readiness = _upstream_check_summary(design)
         if missing_models:
             return self._create_design_blocked_job(
                 app_id, base_package, self._missing_design_model_report(missing_models)
             )
-        if _has_implementation_blocking_design_finding(readiness):
-            return self._create_design_blocked_job(app_id, base_package, readiness)
         job_id = uuid.uuid4().hex
         job_path = self.client.prepare_job(job_id, app_id, design, base_package, allow_assumptions)
         record = {

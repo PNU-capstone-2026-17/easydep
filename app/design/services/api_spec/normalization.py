@@ -346,16 +346,19 @@ def _domain_schemas(bce_model: BCEModel) -> dict[str, dict[str, Any]]:
     """Entity와 구조 타입의 필드 선언을 API schema로 변환한다."""
 
     declarations = {
-        item.class_name: item.fields
+        item.class_name: {"fields": item.fields, "values": []}
         for item in bce_model.Classes
         if item.stereotype == "Entity"
     }
-    declarations.update({item.name: item.fields for item in bce_model.DataTypes})
+    declarations.update({
+        item.name: {"fields": item.fields, "values": item.values}
+        for item in bce_model.DataTypes
+    })
     schemas: dict[str, dict[str, Any]] = {}
-    for owner, fields in declarations.items():
+    for owner, declaration in declarations.items():
         projected = []
-        for declaration in fields:
-            name, separator, type_name = str(declaration).partition(":")
+        for raw_field in declaration["fields"]:
+            name, separator, type_name = str(raw_field).partition(":")
             if not separator or not name.strip() or not type_name.strip():
                 continue
             optional = _OPTIONAL.fullmatch(type_name.strip())
@@ -371,6 +374,7 @@ def _domain_schemas(bce_model: BCEModel) -> dict[str, dict[str, Any]]:
             "name": owner,
             "description": "",
             "fields": projected,
+            "values": list(declaration["values"]),
             "source_class": owner,
         }
     return schemas

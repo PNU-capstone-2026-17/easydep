@@ -107,6 +107,7 @@ class ApiSchema(ApiSpecRecord):
     name: str
     description: str = Field(default="")
     fields: list[ApiField] = Field(default_factory=list)
+    values: list[str] = Field(default_factory=list)
     source_class: str = Field(default="")
 
 

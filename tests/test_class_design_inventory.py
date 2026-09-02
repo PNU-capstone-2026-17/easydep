@@ -54,6 +54,15 @@ def test_inventory_payload_keeps_execution_evidence_without_full_spec_documents(
     assert set(payload) == {"useCases", "relationships"}
     assert [item["id"] for item in payload["useCases"]] == ["UC1", "UC2"]
     assert payload["useCases"][0]["steps"][0]["stepRef"] == "UC1:main:1"
+    assert payload["useCases"][0]["context"] == {
+        "trigger": "Customer starts an order request.",
+        "preconditions": ["The catalog is available."],
+        "successGuarantee": [{
+            "sentence": "The accepted order remains available after this request.",
+            "covered_req_ids": ["RR1"],
+        }],
+        "minimalGuarantee": [],
+    }
     assert payload["relationships"] == [{
         "kind": "include",
         "baseUseCaseId": "UC1",

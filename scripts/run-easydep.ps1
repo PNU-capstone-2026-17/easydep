@@ -28,6 +28,7 @@ $toolchainHashPath = Join-Path $runRoot "toolchain-build.sha256"
 $environmentPath = Join-Path $repoRoot ".env"
 $environmentExamplePath = Join-Path $repoRoot ".env.example"
 $toolchainImage = "easydep-toolchain:local"
+$memberGradleCacheVolume = "easydep-member-gradle-cache"
 $databaseContainer = "easydep-mysql-dev"
 $databaseVolume = "easydep-mysql-dev-data"
 $databasePassword = "easydep-local"
@@ -255,6 +256,32 @@ function Initialize-Toolchain {
     }
 }
 
+function Repair-ToolchainCacheOwnership {
+    # 예전 툴체인 컨테이너가 root로 만든 named volume을 새 appuser 컨테이너가 이어 쓰면
+    # Gradle의 libnative-platform.so를 읽고 갱신하지 못한다. 서버를 시작할 때 쓰기 권한만
+    # 가볍게 확인하고, 문제가 있는 기존 volume에 한해서 한 번 소유권을 바로잡는다.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & docker run --rm --entrypoint sh `
+        -v "$memberGradleCacheVolume`:/tmp/easydep-gradle-cache" `
+        $toolchainImage `
+        -c "test -w /tmp/easydep-gradle-cache && { test ! -d /tmp/easydep-gradle-cache/native || test -w /tmp/easydep-gradle-cache/native; }" `
+        *> $null
+    $needsRepair = $LASTEXITCODE -ne 0
+    $ErrorActionPreference = $previousPreference
+    if (-not $needsRepair) {
+        return
+    }
+
+    Write-Host "[EasyDep] Repairing ownership of the shared Gradle cache volume."
+    Invoke-Docker -Arguments @(
+        "run", "--rm", "--user", "root", "--entrypoint", "chown",
+        "-v", "$memberGradleCacheVolume`:/tmp/easydep-gradle-cache",
+        $toolchainImage,
+        "-R", "1000:1000", "/tmp/easydep-gradle-cache"
+    )
+}
+
 function Export-FrontendBuild {
     # 프론트엔드는 공용 이미지의 고정 Node/npm으로 이미 빌드됐다. 임시 컨테이너에서 결과만
     # 복사하므로 팀원 PC에 Node.js나 node_modules를 따로 만들 필요가 없다.
@@ -434,6 +461,7 @@ else {
     Initialize-PythonEnvironment
     Initialize-Toolchain
 }
+Repair-ToolchainCacheOwnership
 
 if ($SkipFrontendBuild) {
     if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot "build\index.html"))) {

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.design.services.erd.mapping import build_logical_model
 from app.implementation.agents import execute_openhands_task
 from app.implementation.agents.runtime import create_openhands_conversation
 from app.implementation.agents.task_check import (
@@ -16,7 +17,9 @@ from app.implementation.agents.task_check import (
 )
 from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
+    read_gradle_test_failures,
     task_verification_command,
+    verify_agent_workspace,
     verify_run_workspace,
     verify_use_case_scenarios,
 )
@@ -168,6 +171,30 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
     ) == ["gradlew", "test", "--build-cache"]
 
 
+def test_feature_check_rejects_a_whole_application_test_before_gradle(
+    tmp_path: Path,
+) -> None:
+    """병렬 기능 작업은 아직 없는 다른 기능 Bean 때문에 전체 앱을 띄우지 않는다."""
+    test_path = "application/src/test/java/com/example/FeatureTest.java"
+    source = tmp_path / test_path
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "import org.springframework.boot.test.context.SpringBootTest;\n"
+        "@SpringBootTest\nclass FeatureTest {}\n",
+        encoding="utf-8",
+    )
+
+    with (
+        patch("app.implementation.agents.verification.build.subprocess.run") as run,
+        pytest.raises(WorkspaceVerificationError) as caught,
+    ):
+        verify_agent_workspace(tmp_path, "use-case", [test_path])
+
+    assert caught.value.evidence["command"] == ["feature-test-isolation"]
+    assert "plain unit test or a narrow test slice" in str(caught.value)
+    run.assert_not_called()
+
+
 def test_agent_task_check_returns_real_focused_verification_result(
     tmp_path: Path,
 ) -> None:
@@ -193,8 +220,8 @@ def test_agent_task_check_returns_real_focused_verification_result(
     assert passed is False
     assert "TASK CHECK FAILED" in output
     assert "OrderScenarioTest.placesOrder: assertion failed" in output
-    assert "Full diagnostics" in output
-    assert str(tmp_path / "application/build/test-results/test") in output
+    assert "Full diagnostics" not in output
+    assert str(tmp_path / "application/build/test-results/test") not in output
     verify.assert_called_once_with(
         tmp_path,
         "use-case",
@@ -223,6 +250,31 @@ def test_agent_task_check_compacts_duplicate_framework_traces(tmp_path: Path) ->
     assert passed is False
     assert output.count(root_cause) == 1
     assert len(output) < 8500
+
+
+def test_gradle_failure_summary_prefers_the_deepest_root_cause(tmp_path: Path) -> None:
+    """반복된 Spring context 실패보다 실제 Hibernate 원인을 먼저 전달한다."""
+    result_dir = tmp_path / "application/build/test-results/test"
+    result_dir.mkdir(parents=True)
+    (result_dir / "TEST-example.xml").write_text(
+        """<testsuite tests="2" failures="2">
+<testcase classname="example.FlowTest" name="first">
+  <failure message="Failed to load ApplicationContext">java.lang.IllegalStateException
+Caused by: jakarta.persistence.PersistenceException: session factory failed
+Caused by: org.hibernate.MappingException: Column 'student_id' is duplicated</failure>
+</testcase>
+<testcase classname="example.FlowTest" name="second">
+  <failure message="failure threshold exceeded">ApplicationContext failure threshold exceeded</failure>
+</testcase>
+</testsuite>""",
+        encoding="utf-8",
+    )
+
+    summary = read_gradle_test_failures(tmp_path)
+
+    assert "Column 'student_id' is duplicated" in summary
+    assert summary.index("MappingException") < summary.index("IllegalStateException")
+    assert "Other failing tests: example.FlowTest.second" in summary
 
 
 def test_agent_task_check_requires_a_source_change_before_retry(
@@ -504,6 +556,7 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
     """공식 SDK의 반복 감지와 context condenser를 기본 실행에 연결한다."""
     source = tmp_path / "OrderService.java"
     source.write_text("class OrderService {}", encoding="utf-8")
+    missing_source = tmp_path / "RequiredService.java"
     llm = {
         "model": "openai/gpt-oss-120b",
         "baseUrl": "http://localhost",
@@ -516,7 +569,7 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
 
     conversation, agent = create_openhands_conversation(
         tmp_path,
-        [str(source.resolve())],
+        [str(source.resolve()), str(missing_source.resolve())],
         "approved-key",
         llm,
     )
@@ -525,8 +578,100 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         assert conversation.stuck_detector is not None
         assert agent.condenser.__class__.__name__ == "LLMSummarizingCondenser"
         assert "grep" in agent._tools
+        from openhands.tools.grep import GrepAction
+
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        observation = agent._tools["grep"].executor(
+            GrepAction(pattern="OrderService", path=str(outside.resolve()))
+        )
+        assert observation.is_error is True
+        assert "outside the assigned workspace" in observation.text
+        missing_observation = agent._tools["grep"].executor(
+            GrepAction(pattern="RequiredService", path=str(tmp_path.resolve()))
+        )
+        assert missing_observation.is_error is True
+        assert "contracted output" in missing_observation.text
     finally:
         conversation.close()
+
+
+def test_restricted_editor_reads_utf8_korean_source_as_text(tmp_path: Path) -> None:
+    """한글 주석이 많은 Java source를 binary로 오인하지 않는다."""
+    source = tmp_path / "Offering.java"
+    source.write_text(
+        "// 수강 편성 정보를 나타내는 엔티티다.\nclass Offering {}\n",
+        encoding="utf-8",
+    )
+    llm = {
+        "model": "openai/gpt-oss-120b",
+        "baseUrl": "http://localhost",
+        "temperature": 0.2,
+        "topP": 1.0,
+        "maxOutputTokens": 1024,
+        "reasoningBudget": 0,
+        "chatTemplateKwargs": {},
+    }
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        [str(source.resolve())],
+        "validation-only-key",
+        llm,
+    )
+    try:
+        from openhands.tools.file_editor import FileEditorAction
+
+        conversation.send_message("Initialize tools without running the model.")
+        observation = agent._tools["restricted_file_editor"].executor(
+            FileEditorAction(command="view", path=str(source.resolve()))
+        )
+        relative_observation = agent._tools["restricted_file_editor"].executor(
+            FileEditorAction(command="view", path="Offering.java")
+        )
+    finally:
+        conversation.close()
+
+    assert observation.is_error is False
+    assert "수강 편성 정보" in str(observation)
+    assert relative_observation.is_error is False
+
+
+def test_restricted_editor_rejects_generated_build_reports(tmp_path: Path) -> None:
+    """코딩 에이전트가 큰 Gradle 보고서를 문맥에 다시 싣지 못하게 한다."""
+    report = tmp_path / "application/build/reports/problems/problems-report.html"
+    report.parent.mkdir(parents=True)
+    report.write_text("x" * 100_000, encoding="utf-8")
+    source = tmp_path / "application/src/main/java/example/Service.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Service {}", encoding="utf-8")
+    llm = {
+        "model": "openai/gpt-oss-120b",
+        "baseUrl": "http://localhost",
+        "temperature": 0.2,
+        "topP": 1.0,
+        "maxOutputTokens": 1024,
+        "reasoningBudget": 0,
+        "chatTemplateKwargs": {},
+    }
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        [str(source.resolve())],
+        "validation-only-key",
+        llm,
+    )
+    try:
+        from openhands.tools.file_editor import FileEditorAction
+
+        conversation.send_message("Initialize tools without running the model.")
+        observation = agent._tools["restricted_file_editor"].executor(
+            FileEditorAction(command="view", path=str(report.resolve()))
+        )
+    finally:
+        conversation.close()
+
+    assert observation.is_error is True
+    assert "run_task_check" in str(observation)
+    assert "x" * 100 not in str(observation)
 
 
 def test_completion_audit_rejects_an_unfinished_controller_body(
@@ -667,10 +812,25 @@ class Order <<Entity>> { - id: UUID }
                 "use_case_ids": ["UC2"],
                 "operations": [],
             },
+            {
+                # 유스케이스나 operation이 없는 보조 Entity는 결정론적 골격만으로
+                # 충분하다. 별도의 모호한 OpenHands 작업을 만들면 안 된다.
+                "className": "OrderWindow",
+                "stereotype": "Entity",
+                "use_case_ids": [],
+                "identifier": [],
+                "fields": ["opensAt : LocalDateTime", "closesAt : LocalDateTime"],
+                "operations": [],
+            },
         ]
     )
     class_model = design / "class-model.json"
     class_model.write_text(json.dumps(class_model_payload), encoding="utf-8")
+    erd_logical_model = design / "erd-logical-model.json"
+    erd_logical_model.write_text(
+        json.dumps(build_logical_model(class_model_payload)),
+        encoding="utf-8",
+    )
     sequence_model = design / "sequence-model.json"
     sequence_model.write_text(json.dumps(typed_sequence_model_payload()), encoding="utf-8")
     sequence = design / "sequence.puml"
@@ -781,7 +941,7 @@ class Order <<Entity>> { - id: UUID }
         "void cancelOrder(); }\n",
         encoding="utf-8",
     )
-    for name in ("OrderBoundary", "OrderControl", "CancelControl", "Order"):
+    for name in ("OrderBoundary", "OrderControl", "CancelControl", "Order", "OrderWindow"):
         (package_root / f"bce/{name}.java").write_text(
             f"package com.example.orders.bce; public interface {name} {{}}\n",
             encoding="utf-8",
@@ -801,7 +961,18 @@ class Order <<Entity>> { - id: UUID }
     reports = run / "reports"
     reports.mkdir(parents=True)
     (reports / "run-manifest.json").write_text(
-        json.dumps({"implementation_tasks": []}), encoding="utf-8"
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": "implement-use-cases-stale-common",
+                        "task_type": "use-case",
+                        "allowed_write_paths": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
     )
 
     spec = JobSpec(
@@ -816,6 +987,7 @@ class Order <<Entity>> { - id: UUID }
             "sequenceModel": sequence_model,
             "erd": erd,
             "erdBceModel": class_model,
+            "erdLogicalModel": erd_logical_model,
             "openapi": openapi,
             "apiModel": api_model,
             "refinedRequirements": requirements,
@@ -857,6 +1029,7 @@ class Order <<Entity>> { - id: UUID }
     use_cases = [task for task in tasks if task["task_type"] == "use-case"]
     wiring = next(task for task in tasks if task["task_type"] == "wiring")
     assert len(use_cases) == 2
+    assert not any(task["task_id"] == "implement-use-cases-stale-common" for task in tasks)
     assert set(wiring["use_case_ids"]) == {"UC1", "UC2"}
     assert wiring["repair_only"] is True
     assert wiring["required_output_paths"] == []
@@ -1047,6 +1220,7 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     assert "INITIAL IMPLEMENTATION CONTEXT" not in repair_prompt
     assert "401 Unauthorized" in repair_prompt
     assert "SecurityConfiguration.java를 수정했지만 401이 계속됨" in repair_prompt
+    assert "먼저 `run_task_check`를 한 번 실행" in repair_prompt
     assert "새 진단 가설 2" in repair_prompt
     assert len({item["strategy"] for item in repeated_entries}) == 6
     assert source_path in repair_prompt

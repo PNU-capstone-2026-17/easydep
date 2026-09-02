@@ -249,14 +249,10 @@ def register_task_check_tool() -> str:
 
 
 def _render_check_result(status: str, evidence: dict[str, object]) -> str:
-    """짧은 첫 진단과 필요할 때 열어 볼 원본 경로를 함께 반환한다."""
-    result = f"TASK CHECK {status}\n{compact_verification_evidence(evidence)}"
-    paths = evidence.get("diagnosticPaths")
-    if status == "FAILED" and isinstance(paths, list) and paths:
-        readable_paths = "\n".join(f"- {path}" for path in paths if str(path).strip())
-        if readable_paths:
-            result += (
-                "\nFull diagnostics (use restricted_file_editor view; inspect these "
-                "before guessing):\n" + readable_paths
-            )
-    return result
+    """에이전트가 바로 수정에 사용할 수 있는 짧은 진단만 반환한다.
+
+    원본 Gradle HTML·JUnit XML 경로를 알려 주면 에이전트가 수십만 자 보고서를 반복해서
+    읽으며 작업 횟수와 문맥을 소진한다. 원문은 사용자용 실행 증거로 그대로 보존하되,
+    코딩 대화에는 검증기가 추출한 대표 실패와 가장 안쪽 원인만 전달한다.
+    """
+    return f"TASK CHECK {status}\n{compact_verification_evidence(evidence)}"

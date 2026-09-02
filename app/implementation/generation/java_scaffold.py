@@ -21,7 +21,7 @@ from app.design.schemas.class_model import (
     DataType,
 )
 
-JAVA_SCAFFOLDER_VERSION = "1.3.0"
+JAVA_SCAFFOLDER_VERSION = "1.3.2"
 CONTROLLER_BODY_REQUIRED = "EASYDEP_CONTROLLER_BODY_REQUIRED"
 
 _JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
@@ -88,6 +88,8 @@ _TYPE_ALIASES = {
     "string": "String",
     "integer": "Integer",
     "int": "Integer",
+    "long": "Long",
+    "bigint": "Long",
     "boolean": "Boolean",
     "bool": "Boolean",
     "bigdecimal": "BigDecimal",
@@ -164,7 +166,7 @@ class JavaScaffoldInput(BaseModel):
                 for field in component.fields:
                     _parse_field(field, owner=component.class_name)
                 for operation in component.operations:
-                    _require_identifier(operation.name, "operation name")
+                    _require_identifier_syntax(operation.name, "operation name")
                     for parameter in operation.parameters:
                         _require_identifier(parameter.name, f"parameter in {operation.name}")
         if self.erd_bce_model is not None:
@@ -349,7 +351,7 @@ def render_openapi_controller_scaffold(
         f"package {base_package}.adapter.in.web;\n\n"
         + "\n".join(sorted(imports))
         + "\n\n"
-        + "/** OpenAPI interface 선언을 보존하고 업무 본문만 남긴 Controller 골격이다. */\n"
+        + "/** Controller scaffold that preserves the generated OpenAPI interface contract. */\n"
         + "@RestController\n"
         + f"public class {controller_name} implements {interface_name} {{\n\n"
         + "\n".join(fields)
@@ -466,7 +468,10 @@ def _controller_body(
         target_type = _qualified_bce_type(parameter.type, base_package, declared_types)
         arguments.append(_object_mapper_conversion(expression, target_type))
 
-    call = f"{_field_name(control.class_name)}.{operation.name}({', '.join(arguments)})"
+    call = (
+        f"{_field_name(control.class_name)}."
+        f"{java_method_name(operation.name)}({', '.join(arguments)})"
+    )
     _method_name, return_type, _parameters = _java_method_parts(signature)
     response_type = _response_body_type(return_type)
     if response_type in {None, "Void", "void"}:
@@ -871,7 +876,7 @@ def _render_data_type(package_name: str, data_type: DataType, declared_types: se
         body = ",\n".join(f"    {value}" for value in values)
         return (
             f"package {package_name};\n\n"
-            "/** 클래스 설계에서 생성한 열거형 계약이다. */\n"
+            "/** Enumeration contract generated from the class design. */\n"
             f"public enum {data_type.name} {{\n{body}\n}}\n"
         )
 
@@ -891,7 +896,7 @@ def _render_data_type(package_name: str, data_type: DataType, declared_types: se
         record_body = f"({declarations})"
     return (
         f"package {package_name};\n\n{imports}"
-        "/** 값과 생성자를 함께 고정하는 Java 21 record 계약이다. */\n"
+        "/** Java 21 record contract generated from the designed value type. */\n"
         f"public record {data_type.name}{record_body} {{}}\n"
     )
 
@@ -906,7 +911,7 @@ def _render_component(
             java_type(parameter.type, declared_types=declared_types)
             for parameter in operation.parameters
         )
-        signature = f"{operation.name}({parameter_types})"
+        signature = f"{java_method_name(operation.name)}({parameter_types})"
         if signature in signatures:
             raise ValueError(f"{component.class_name} emits duplicate Java signature: {signature}")
         signatures.add(signature)
@@ -936,12 +941,12 @@ def _render_component(
             interface_methods += "\n"
         return (
             header
-            + f"/** {component.stereotype} 역할의 변경 금지 Java 계약이다. */\n"
+            + f"/** Immutable Java contract for the {component.stereotype} role. */\n"
             + f"public interface {component.class_name} {{\n{interface_methods}}}\n"
         )
 
     lines = [
-        header + "/** Entity의 상태와 설계에 선언된 연산을 보존하는 초기 코드다. */",
+        header + "/** Initial entity source that preserves the designed state and operations. */",
         f"public class {component.class_name} {{",
     ]
     for name, field_type, todo_type in fields:
@@ -970,7 +975,7 @@ def _java_type(design_type: str, *, declared_types: set[str]) -> tuple[str, str 
     """작은 변환표만 적용하고, 모르는 원문은 TODO를 위해 함께 돌려준다."""
     source = re.sub(r"\s+", "", str(design_type))
     if not source:
-        return "Object", "(비어 있는 설계 타입)"
+        return "Object", "(empty design type)"
     if source.casefold() in _BINARY_TYPE_NAMES:
         return "byte[]", None
     if source == "void":
@@ -1000,7 +1005,7 @@ def _method_declaration(
     operation: ClassOperation, declared_types: set[str]
 ) -> tuple[str, str, str | None]:
     """operation의 Java 선언과 TODO가 필요한 원래 타입을 만든다."""
-    _require_identifier(operation.name, "operation name")
+    method_name = java_method_name(operation.name)
     parameters: list[str] = []
     todo_types: list[str] = []
     for parameter in operation.parameters:
@@ -1013,7 +1018,7 @@ def _method_declaration(
     if todo_type:
         todo_types.append(todo_type)
     return (
-        f"{return_type} {operation.name}({', '.join(parameters)})",
+        f"{return_type} {method_name}({', '.join(parameters)})",
         return_type,
         ", ".join(dict.fromkeys(todo_types)) or None,
     )
@@ -1052,11 +1057,33 @@ def _render_imports(types: Any) -> str:
 def _todo(design_type: str | None, *, indent: str) -> str:
     if not design_type:
         return ""
-    return f"{indent}// TODO(EasyDep): 설계 타입 `{design_type}`에 맞는 Java 타입으로 교체한다.\n"
+    return (
+        f"{indent}// TODO(EasyDep): Replace Object with the Java type that matches "
+        f"the design type `{design_type}`.\n"
+    )
 
 
 def _valid_identifier(value: str) -> bool:
     return bool(_JAVA_IDENTIFIER.fullmatch(value)) and value not in _JAVA_KEYWORDS
+
+
+def _require_identifier_syntax(value: str, label: str) -> None:
+    """설계 이름이 Java 이름으로 안전하게 옮길 수 있는 문자 형태인지 확인한다."""
+
+    if not _JAVA_IDENTIFIER.fullmatch(value):
+        raise ValueError(f"{label} is not a valid Java identifier: {value}")
+
+
+def java_method_name(design_name: str) -> str:
+    """설계 operation 이름을 의미를 보존한 Java method 이름으로 바꾼다.
+
+    ``record``처럼 업무 동작으로 자연스럽지만 Java 21에서는 예약어인 이름만 ``Action``
+    접미사를 붙인다. 일반 operation 이름은 그대로 두므로 설계와 코드의 대응을 쉽게 찾을 수
+    있다. 같은 변환은 BCE interface와 HTTP Controller 호출에 모두 적용한다.
+    """
+
+    _require_identifier_syntax(design_name, "operation name")
+    return f"{design_name}Action" if design_name in _JAVA_KEYWORDS else design_name
 
 
 def _require_identifier(value: str, label: str) -> None:

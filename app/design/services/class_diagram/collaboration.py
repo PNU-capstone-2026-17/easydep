@@ -55,6 +55,10 @@ with other Entities, but do not call a Control or Boundary directly. The Boundar
 class used by a root must not appear again inside that root. Cover all
 required steps inside the matching actor entry. The same operation may be used
 in more than one root. Do not return ids, step refs, values, or bindings.
+If the supplied operations contain Entity behavior for durable domain information
+used by this execution, call that Entity behavior from Control. Read-only stored
+data is still Entity behavior. When no Entity operation is supplied for the
+execution, do not invent one in the call plan.
 """.strip()
 
 BINDING_PROMPT = """

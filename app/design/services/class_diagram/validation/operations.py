@@ -150,9 +150,39 @@ def _operation_coverage(
     ] if missing else []
 
 
+def _operation_state_ownership(
+    fragment: dict[str, Any], context: OperationContext,
+) -> list[Finding]:
+    """inventory가 직접 상태 사용을 표시한 UC만 Entity operation을 요구한다."""
+
+    candidates = {
+        class_name(item)
+        for item in context.inventory.get("Classes") or []
+        if isinstance(item, dict)
+        and text(item.get("stereotype")) == "Entity"
+        and context.use_case.id in set(item.get("useCaseIds") or [])
+    }
+    if not candidates:
+        return []
+    selected = {
+        operation["className"]
+        for operation in _fragment_operations(fragment, context.inventory)
+        if operation["stereotype"] == "Entity"
+    }
+    if candidates & selected:
+        return []
+    return [Finding(
+        "class.operation.state-ownership",
+        "inventory identifies durable domain information for this use case; "
+        "at least one scoped Entity operation must own its read or change",
+        context.use_case.id,
+    )]
+
+
 OPERATION_CHECKS = (
     CheckSpec("class.operation.data-types", _operation_data_types),
     CheckSpec("class.operation.references", _operation_references),
+    CheckSpec("class.operation.state-ownership", _operation_state_ownership),
     CheckSpec("class.operation.coverage", _operation_coverage),
 )
 
