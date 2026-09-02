@@ -6,9 +6,21 @@ FROM eclipse-temurin:21-jdk-jammy AS jdk
 # 별도 이미지를 받지 않고 이 단계에서 실행 파일만 공용 이미지로 복사한다.
 FROM gradle:8.14.2-jdk21 AS gradle-runtime
 FROM ghcr.io/opentofu/opentofu:1.12.6-minimal AS opentofu-runtime
+# 생성하는 IaC가 사용하는 세 provider를 이미지 빌드 때 한 번 받는다. Testing이 실행될
+# 때마다 registry에 접속하지 않으며, 아래 버전은 ResourcePlan renderer의 고정 버전과 같다.
+FROM alpine:3.22 AS opentofu-providers
+RUN apk add --no-cache ca-certificates
+COPY --from=opentofu-runtime /usr/local/bin/tofu /usr/local/bin/tofu
+WORKDIR /provider-bootstrap
+COPY toolchain/opentofu/providers.tf ./providers.tf
+RUN tofu providers mirror -platform=linux_amd64 /provider-mirror
+
 FROM aquasec/trivy:0.74.0 AS trivy-runtime
 FROM docker:27.5.1-cli AS docker-runtime
 FROM node:22-bookworm-slim AS node-runtime
+# 생성한 PowerShell 배포 script도 Linux 툴체인 안에서 같은 parser로 검사한다. SDK 전체는
+# 최종 이미지에 넣지 않고 PowerShell runtime만 복사한다.
+FROM mcr.microsoft.com/powershell:7.4-debian-12 AS powershell-runtime
 
 # 런타임과 같은 Node/npm을 사용한다. 별도 Alpine 이미지를 쓰면 도구 버전이 달라지고
 # npm 자체 오류가 나도 로컬 실행 환경과 비교하기 어렵다.
@@ -38,22 +50,30 @@ FROM python:3.13-slim-bookworm
 COPY --from=jdk /opt/java/openjdk /opt/java/openjdk
 COPY --from=gradle-runtime /opt/gradle /opt/gradle
 COPY --from=opentofu-runtime /usr/local/bin/tofu /usr/local/bin/tofu
+COPY --from=opentofu-providers /provider-mirror /opt/easydep/provider-mirror
+COPY toolchain/opentofu/tofurc /opt/easydep/tofurc
 COPY --from=trivy-runtime /usr/local/bin/trivy /usr/local/bin/trivy
 COPY --from=docker-runtime /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-runtime /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=powershell-runtime /opt/microsoft/powershell /opt/microsoft/powershell
 ENV JAVA_HOME=/opt/java/openjdk
 ENV PATH="${JAVA_HOME}/bin:/opt/gradle/bin:${PATH}"
 ENV GRADLE_USER_HOME=/app/.gradle-cache
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+ENV POWERSHELL_TELEMETRY_OPTOUT=1
+ENV TF_CLI_CONFIG_FILE=/opt/easydep/tofurc
 
 WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        curl graphviz fonts-dejavu-core fonts-noto-cjk ripgrep \
+        cloud-init curl graphviz fonts-dejavu-core fonts-noto-cjk ripgrep shellcheck \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && ln -s /opt/microsoft/powershell/7/pwsh /usr/local/bin/pwsh
 
 # API process와 수명이 같은 PicoWeb renderer를 띄운다. 이전처럼 이미지 요청마다 Docker
 # container를 새로 만들지 않으며, 위의 Java와 Graphviz/font package가 이 JAR를 실행한다.
@@ -80,6 +100,12 @@ RUN mkdir -p /opt/easydep \
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
+
+# 동적 테스트는 실행할 때 패키지나 browser를 내려받지 않는다. EasyDep가 생성한 신뢰 가능한
+# 앱만 검사하며 appuser도 읽을 수 있도록 browser를 공용 경로에 한 번 설치한다.
+RUN python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/ms-playwright \
+    && rm -rf /var/lib/apt/lists/*
 
 # 애플리케이션 코드 복사 (server.py가 두 에이전트를 함께 서빙하고, frontend/는 설계 UI)
 COPY app ./app

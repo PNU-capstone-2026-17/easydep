@@ -64,3 +64,8 @@ ddgs>=9.14.4
 # --- 동적 테스트(Testing Agent) ---
 sqlalchemy>=2.0.25
 alembic>=1.13.1
+pytest>=8.3,<9
+pytest-json-report>=1.5,<2
+requests>=2.32,<3
+# 브라우저와 Python package 버전이 다르면 Playwright가 실행 파일을 찾지 못하므로 고정한다.
+playwright==1.62.0
