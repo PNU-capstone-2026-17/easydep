@@ -16,6 +16,7 @@ from typing import Any, cast
 from pydantic import BaseModel, Field, field_validator
 
 from app.artifacts_api import to_web_response
+from app.db.models import ORIGIN_FEEDBACK_REVISED
 from app.design.cascade import UnknownTarget, persist_cascade, revise_and_cascade
 from app.design.graphs.design_graph import (
     StageNotReached,
@@ -31,6 +32,14 @@ from app.design.graphs.design_graph import (
 )
 from app.design.graphs.subgraphs import DESIGN_STAGES
 from app.design.schemas.architecture_state import ArchitectureState
+from app.design.services.deployment_diagram.bundle import (
+    hydrate_deployment_diagram_bundle,
+    select_deployment_target,
+)
+from app.design.services.deployment_diagram.provider_plantuml import (
+    deployment_bundle_provisioning_puml,
+    deployment_bundle_runtime_puml,
+)
 from app.design.validation import design_readiness_report
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import AppNotFound
@@ -105,6 +114,42 @@ def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
         return resume_design(app_id, feedback)
     except Exception as error:
         raise RuntimeError(f"Design pipeline failed: {error}") from error
+
+
+def select_deployment_target_session(app_id: str, target_id: str) -> dict[str, Any]:
+    """복수 배포 후보 중 사용자가 고른 하나를 LLM 호출 없이 확정한다.
+
+    후보 ID는 저장된 bundle이 만든 값만 받는다. 선택 결과를 DB와 LangGraph 체크포인트에
+    함께 반영한 뒤, 마지막 deployment gate를 통과시켜 설계 세션을 완료한다.
+    """
+
+    _validate_app_id(app_id)
+    state = _load_app(app_id)
+    bundle = state.get("deployment_diagram_bundle")
+    if not isinstance(bundle, dict) or not bundle:
+        raise ValueError("A deployment bundle must exist before selecting a target.")
+    selected = select_deployment_target(bundle, target_id)
+    hydrated = hydrate_deployment_diagram_bundle(selected)
+    state.update(hydrated)
+    state["deployment_diagram_puml"] = deployment_bundle_runtime_puml(selected)
+    state["deployment_diagram_provisioning_puml"] = (
+        deployment_bundle_provisioning_puml(selected)
+    )
+    artifact_repository.save_stage(
+        app_id,
+        "deployment_diagram",
+        state,
+        origin=ORIGIN_FEEDBACK_REVISED,
+    )
+
+    # load_state가 현재 검증 결과를 다시 계산한다. 저장 모델과 checkpoint를 이 값으로
+    # 맞춰야 다음 resume이 선택 전 needsInput 상태로 되돌아가지 않는다.
+    current = _load_app(app_id)
+    sync_design_state(app_id, dict(current))
+    status = session_status(app_id)
+    if status.get("active") and status.get("stage") == "deployment_diagram":
+        return resume_design_session(app_id)
+    return {"app_id": app_id, **to_web_response(current), "status": "completed"}
 
 
 def retry_design_session(app_id: str) -> dict[str, Any]:

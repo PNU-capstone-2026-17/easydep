@@ -428,21 +428,52 @@ def validate_workload_graph(
         for item in workloads
         if str((item.get("artifact") or {}).get("kind") or "") == "generatedApplication"
     }
+    external_dependencies = {
+        str(item.get("id") or "")
+        for item in model.get("externalDependencies") or []
+        if isinstance(item, dict)
+    }
     for connection in model.get("connections") or []:
         connection_id = str(connection.get("id") or "")
         source_ref = str(connection.get("sourceRef") or "")
         bindings = endpoint_bindings_by_connection.get(connection_id, [])
         if source_ref not in generated_workloads:
             continue
-        projections = [str(binding.get("projection") or "") for _, binding in bindings]
-        valid_shape = projections == ["url"] or (
-            len(projections) == 2 and set(projections) == {"host", "port"}
-        )
+        if source_ref == str(connection.get("targetRef") or ""):
+            continue
+        bound_values = [binding for _, binding in bindings]
+        valid_shape = _endpoint_binding_shape(bound_values)
         if not valid_shape:
             issues.append(
                 _issue(
                     f"connections.{connection_id}.endpointBinding",
                     "A generated source connection requires one URL binding or a host/port binding pair.",
+                    source_refs=_refs(connection.get("sourceRefs")),
+                )
+            )
+            continue
+        if str(connection.get("targetRef") or "") not in external_dependencies:
+            continue
+        # 외부 시스템의 endpoint는 implementation이나 provider template로 유도할 수
+        # 없다. binding의 모양만 갖춘 상태와 실제 배포 입력이 준비된 상태를 구분한다.
+        values_by_projection = {
+            str(binding.get("projection") or ""): binding.get("value")
+            for binding in bound_values
+        }
+        external_value_known = (
+            isinstance(values_by_projection.get("url"), str)
+            and bool(str(values_by_projection["url"]).strip())
+        ) or (
+            isinstance(values_by_projection.get("host"), str)
+            and bool(str(values_by_projection["host"]).strip())
+            and values_by_projection.get("port") not in {None, ""}
+        )
+        if not external_value_known:
+            issues.append(
+                _issue(
+                    f"connections.{connection_id}.endpoint",
+                    "An external dependency endpoint must be supplied before deployment planning.",
+                    classification="needsInput",
                     source_refs=_refs(connection.get("sourceRefs")),
                 )
             )
@@ -506,6 +537,199 @@ def _upsert_by_id(items: list[dict[str, Any]], value: dict[str, Any]) -> None:
         items.append(value)
     else:
         current.update(value)
+
+
+def _endpoint_binding_shape(bindings: list[dict[str, Any]]) -> bool:
+    """연결에 필요한 endpoint 환경변수 형식인지 검사한다."""
+
+    projections = [str(item.get("projection") or "") for item in bindings]
+    return projections == ["url"] or (
+        len(projections) == 2 and set(projections) == {"host", "port"}
+    )
+
+
+def _automatic_endpoint_bindings(graph: dict[str, Any]) -> None:
+    """같은 배포 graph 안의 연결은 endpoint 계약을 결정론적으로 채운다.
+
+    generated workload 사이와 EasyDep가 직접 배치할 prebuilt workload는 provider
+    ResourcePlan이 DNS, private IP 또는 internal load balancer를 정한다. 이 경우
+    endpoint 환경변수 이름을 LLM이 빠뜨렸다고 사용자에게 주소를 다시 물을 이유가
+    없다. 반대로 ``externalDependencies``는 실제 주소를 graph만으로 알 수 없으므로
+    여기서 값을 만들지 않는다.
+    """
+
+    workloads = [
+        item for item in graph.get("workloads") or [] if isinstance(item, dict)
+    ]
+    workload_by_id = {str(item.get("id") or ""): item for item in workloads}
+    for connection in graph.get("connections") or []:
+        if not isinstance(connection, dict):
+            continue
+        connection_id = str(connection.get("id") or "")
+        source_id = str(connection.get("sourceRef") or "")
+        target_id = str(connection.get("targetRef") or "")
+        source = workload_by_id.get(source_id)
+        if not connection_id or source is None:
+            continue
+        if str((source.get("artifact") or {}).get("kind") or "") != "generatedApplication":
+            continue
+
+        configurations = source.setdefault("configuration", [])
+        existing = [
+            item
+            for item in configurations
+            if isinstance(item, dict)
+            and str(item.get("kind") or "") == "endpointBinding"
+            and str(item.get("connectionRef") or "") == connection_id
+        ]
+        if source_id == target_id:
+            # A same-process call does not cross a deployment boundary.  Keeping
+            # an endpoint variable here would turn an implementation detail into
+            # a fake workload dependency and an unnecessary user input.
+            configurations[:] = [item for item in configurations if item not in existing]
+            decision = f"Kept {connection_id} inside workload {source_id}; no endpoint binding is needed."
+            if not any(
+                item.get("rule") == "same-process-connection"
+                and item.get("decision") == decision
+                for item in graph.get("derivations") or []
+                if isinstance(item, dict)
+            ):
+                graph.setdefault("derivations", []).append(
+                    _derivation(
+                        "same-process-connection",
+                        decision,
+                        source_refs=_refs(connection.get("sourceRefs")),
+                    )
+                )
+            continue
+        if target_id not in workload_by_id or _endpoint_binding_shape(existing):
+            continue
+
+        # A malformed partial binding is less useful than the complete binding
+        # the planner can derive.  Preserve unrelated configuration items only.
+        configurations[:] = [item for item in configurations if item not in existing]
+        target_name = re.sub(r"[^A-Z0-9]+", "_", target_id.upper()).strip("_")
+        base_id = f"{_slug(target_id)}-url"
+        used_ids = {str(item.get("id") or "") for item in configurations if isinstance(item, dict)}
+        binding_id = base_id
+        suffix = 2
+        while binding_id in used_ids:
+            binding_id = f"{base_id}-{suffix}"
+            suffix += 1
+        used_names = {str(item.get("name") or "") for item in configurations if isinstance(item, dict)}
+        name = f"{target_name}_URL"
+        if name in used_names:
+            name = f"{target_name}_{_slug(connection_id).upper()}_URL"
+        _upsert_by_id(
+            configurations,
+            {
+                "id": binding_id,
+                "name": name,
+                "kind": "endpointBinding",
+                "connectionRef": connection_id,
+                "projection": "url",
+                "sensitive": False,
+                "sourceRefs": _refs(connection.get("sourceRefs"))
+                or _refs(source.get("sourceRefs")),
+            },
+        )
+        graph.setdefault("derivations", []).append(
+            _derivation(
+                "known-workload-endpoint-binding",
+                f"Derived {name} from internal connection {connection_id}.",
+                source_refs=_refs(connection.get("sourceRefs")),
+            )
+        )
+
+
+def _single_vm_default_storage(
+    graph: dict[str, Any], planning_facts: dict[str, Any] | None
+) -> None:
+    """논리 ERD만 있는 단일 Docker-on-VM 앱의 최소 영속 disk를 정한다.
+
+    이는 database engine을 추측하는 규칙이 아니다. ``workloads=["vm"]``으로
+    Docker-on-VM이 명시되고, 하나의 generated application이 기본 single replica로
+    배치될 때만 workload-owned block disk를 선택한다. scale-out, 여러 workload,
+    이미 선택된 storage는 계속 명시 설계가 필요하다.
+    """
+
+    facts = [
+        item for item in (planning_facts or {}).get("facts") or [] if isinstance(item, dict)
+    ]
+    if not any(item.get("kind") == "persistentDataRequirement" for item in facts):
+        return
+    vm_scope = any(
+        item.get("kind") == "planningContext"
+        and (item.get("value") or {}).get("field") == "workloads"
+        and (item.get("value") or {}).get("value") == ["vm"]
+        for item in facts
+    )
+    workloads = [
+        item for item in graph.get("workloads") or [] if isinstance(item, dict)
+    ]
+    generated = [
+        item
+        for item in workloads
+        if str((item.get("artifact") or {}).get("kind") or "") == "generatedApplication"
+    ]
+    if len(generated) != 1 or any(item.get("storage") for item in workloads):
+        return
+    workload = generated[0]
+    workload_id = str(workload.get("id") or "")
+    persistent_derivation = next(
+        (
+            item
+            for item in graph.get("derivations") or []
+            if isinstance(item, dict)
+            and str(item.get("type") or "") == "persistentStorage"
+            and str(item.get("workloadId") or "") == workload_id
+            and isinstance(item.get("mountPath"), str)
+            and str(item.get("mountPath")).startswith("/")
+        ),
+        None,
+    )
+    if not vm_scope and persistent_derivation is None:
+        return
+    replica_count = next(
+        (
+            _constraint_value(item, 1)
+            for item in graph.get("constraints") or []
+            if item.get("kind") == "replicaCount"
+            and workload_id in {str(ref) for ref in item.get("workloadRefs") or []}
+        ),
+        1,
+    )
+    if not isinstance(replica_count, int) or isinstance(replica_count, bool) or replica_count != 1:
+        return
+    workload.setdefault("storage", []).append(
+        {
+            "id": "workload-data",
+            "persistence": "persistent",
+            "capacityGiB": 10,
+            "mountPath": (
+                str(persistent_derivation["mountPath"])
+                if persistent_derivation is not None
+                else "/var/lib/easydep/data"
+            ),
+            "deletionPolicy": "retain",
+            "replicaSemantics": "singleAttachment",
+            "sourceRefs": _refs(
+                ["erdModel", "resourceSpec:workloads"]
+                + (
+                    list(persistent_derivation.get("sourceRefs") or [])
+                    if persistent_derivation is not None
+                    else []
+                )
+            ),
+        }
+    )
+    graph.setdefault("derivations", []).append(
+        _derivation(
+            "single-vm-workload-owned-persistent-disk",
+            "Selected the default retained workload data disk for a single-replica Docker-on-VM application.",
+            source_refs=["erdModel", "resourceSpec:workloads"],
+        )
+    )
 
 
 def _apply_explicit_contract_facts(
@@ -777,6 +1001,8 @@ def normalize_workload_graph(
     graph.setdefault("constraints", [])
     graph.setdefault("derivations", [])
     _apply_explicit_contract_facts(graph, planning_facts)
+    _single_vm_default_storage(graph, planning_facts)
+    _automatic_endpoint_bindings(graph)
     for workload in graph.get("workloads") or []:
         for configuration in workload.get("configuration") or []:
             if not configuration.get("id") and configuration.get("name"):
@@ -801,6 +1027,10 @@ def normalize_workload_graph(
                 }
             )
             existing_constraint_ids.add(constraint_id)
+    # Persisted graphs can contain a previous normalization's needsInput issue.
+    # Re-evaluate it after deterministic bindings/defaults instead of carrying a
+    # stale blocker into an otherwise complete projection.
+    graph["issues"] = []
     graph["issues"] = validate_workload_graph(graph, planning_facts=planning_facts)
     if planning_facts:
         graph["inputArtifacts"] = copy.deepcopy(planning_facts.get("inputArtifacts") or [])

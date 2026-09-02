@@ -103,6 +103,7 @@ def extract_planning_facts(
 
     spec = dict(resource_spec or {})
     for field in (
+        "workloads",
         "provider",
         "region",
         "candidateZones",
@@ -233,6 +234,7 @@ def planning_context(resource_spec: dict[str, Any] | None) -> dict[str, Any]:
     targets = [dict(item) for item in spec.get("deploymentTargets") or [] if isinstance(item, dict)]
     return {
         "schemaVersion": "easydep-planning-context",
+        "workloads": copy.deepcopy(spec.get("workloads")),
         "provider": spec.get("provider"),
         "region": spec.get("region"),
         "candidateZones": list(spec.get("candidateZones") or spec.get("selectedZones") or []),
