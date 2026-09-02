@@ -50,14 +50,24 @@ def workload_graph_structure_digest(graph: dict[str, Any]) -> str:
     for field in ("issues", "derivations", "inputArtifacts", "inputDigest", "structureDigest"):
         structural.pop(field, None)
     for workload in structural.get("workloads") or []:
+        # 사람이 읽는 이름은 같은 배포 구조의 표시 값이다. 이름 피드백만으로
+        # DeploymentPlan이나 IaC가 다른 구조로 판정되면 안 된다.
+        workload.pop("name", None)
         artifact = workload.get("artifact") or {}
         artifact.pop("imageDigest", None)
         for interface in workload.get("interfaces") or []:
+            interface.pop("name", None)
             interface.pop("port", None)
             interface.pop("healthPath", None)
         for configuration in workload.get("configuration") or []:
             configuration.pop("value", None)
             configuration.pop("secretRef", None)
+    for dependency in structural.get("externalDependencies") or []:
+        dependency.pop("name", None)
+        for interface in dependency.get("interfaces") or []:
+            interface.pop("name", None)
+            interface.pop("port", None)
+            interface.pop("healthPath", None)
     return _canonical_digest(structural)
 
 

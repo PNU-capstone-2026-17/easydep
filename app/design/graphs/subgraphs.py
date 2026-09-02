@@ -154,11 +154,9 @@ def _deployment_planning_inputs(state: ArchitectureState) -> dict[str, Any]:
 def _deployment_model_findings(
     model: dict[str, Any], state: ArchitectureState
 ) -> list[ArtifactFinding]:
-    """정규화 뒤에도 남은 WorkloadGraph 문제를 자동 수리 입력으로 바꾼다.
+    """템플릿 입력에서 해결되지 않은 문제를 사용자 입력 항목으로 바꾼다.
 
-    ``needsInput``은 LLM이 주소·용량·보존 정책을 지어내면 안 되는 자리다. 이 경우에는
-    지적을 화면에 남기되 자동 수리 대상에서 제외한다. 나머지는 현재 모델의 구조 오류라
-    기존 설계 수리 루프가 전체 WorkloadGraph를 다시 제안할 수 있다.
+    배포 LLM은 이름만 바꿀 수 있으므로 구조 문제를 자동 수리 대상으로 보내지 않는다.
     """
 
     facts = extract_planning_facts(
@@ -171,7 +169,7 @@ def _deployment_model_findings(
             "deployment.workload-graph-valid",
             str(issue.get("reason") or "Deployment workload graph is incomplete."),
             str(issue.get("field") or "deployment"),
-            requires_user_input=str(issue.get("classification") or "") == "needsInput",
+            requires_user_input=True,
         )
         for issue in normalized.get("issues") or []
         if isinstance(issue, dict)
@@ -629,6 +627,7 @@ def _extract_deployment_state(state: ArchitectureState) -> dict[str, Any]:
         refined_requirements=state.get("refined_requirements") or [],
         capability_contract=dict(state.get("capability_contract") or {}),
         resource_intake=dict(state.get("resource_intake") or {}),
+        resource_spec=dict(state.get("resource_spec") or {}),
         class_model=state.get("extracted_bce_classes") or {},
         sequence_model=state.get("sequence_diagram_model") or {},
         erd_model=state.get("erd_bce_classes") or {},

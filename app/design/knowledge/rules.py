@@ -1312,8 +1312,8 @@ RULES: tuple[Rule, ...] = (
             "runtime contracts, and all deployment inputs that cannot be derived later."
         ),
         citation=(
-            "app/design/services/deployment_diagram/normalization.py "
-            "(validate_workload_graph)"
+            "app/design/services/deployment_diagram/template_topology.py and "
+            "normalization.py (validate_workload_graph)"
         ),
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,

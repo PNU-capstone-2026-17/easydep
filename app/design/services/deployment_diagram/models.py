@@ -1,14 +1,39 @@
-"""LLM 제안과 저장 JSON이 공유하는 typed WorkloadGraph 계약이다.
+"""코드가 만드는 WorkloadGraph와 LLM 이름 응답의 typed 계약이다.
 
-기존 Pydantic extra 수용 범위와 field alias·default를 바꾸지 않는다. canonical 이름은
-WorkloadGraph이며 기존 schema/telemetry operation 이름을 위해 실제 class 이름
-WorkloadGraphProposal과 DeploymentModel alias를 함께 유지한다.
+WorkloadGraph는 템플릿과 planner가 사용하며 LLM 응답으로 사용하지 않는다. LLM은 별도의
+작은 ``DeploymentComponentLabels``만 반환한다.
 """
 from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class DeploymentComponentLabel(BaseModel):
+    """LLM이 제안할 수 있는 배포 컴포넌트의 표시 이름 하나다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=80)
+
+
+class DeploymentComponentLabels(BaseModel):
+    """구조 변경 권한 없이 기존 컴포넌트의 이름만 받는 LLM 응답이다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    components: list[DeploymentComponentLabel] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def component_ids_are_unique(self) -> DeploymentComponentLabels:
+        """한 응답에서 같은 컴포넌트 이름을 두 번 제안하지 못하게 한다."""
+
+        identifiers = [item.id for item in self.components]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("deployment component label ids must be unique")
+        return self
 
 
 class WorkloadArtifact(BaseModel):

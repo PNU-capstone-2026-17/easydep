@@ -3,10 +3,11 @@
 이 문서는 현재 코드가 배포 다이어그램을 만드는 방법과 그 산출물이 요구사항·설계·구현·IaC
 단계에 연결되는 방식을 설명한다. 목표 설계안이 아니라 현재 실행 경로를 기준으로 한다.
 
-배포 다이어그램의 구조화 원본은 PlantUML이나 고정 topology template이 아니다.
-원본은 `WorkloadGraph`이며, `DeploymentPlan`과 CSP별 `ResourcePlan`은 이를 입력으로
-결정론적으로 생성된다. runtime 다이어그램, provisioning 다이어그램과 OpenTofu는 같은
-구조화 계획을 서로 다르게 투영한 결과다.
+배포 다이어그램의 구조는 코드의 Docker-on-VM 템플릿이 소유한다. 일반 프로젝트는 단일
+생성 애플리케이션 템플릿으로 시작하고, 승인된 배포 계약과 사용자의 sizing 선택에 따라
+기존 경우를 조합한다. LLM은 이미 선택된 컴포넌트의 표시 이름만 제안한다.
+`DeploymentPlan`과 CSP별 `ResourcePlan`은 이 `WorkloadGraph`를 입력으로 결정론적으로
+생성되며, runtime 다이어그램, provisioning 다이어그램과 OpenTofu는 같은 계획을 사용한다.
 
 ```text
 요구사항 분석
@@ -19,8 +20,9 @@ class model → sequence model → API model → ERD model
                     │
                     ▼
 deployment_diagram 설계 스테이지
-  LLM: WorkloadGraph 후보만 제안
-  코드: PlanningFact 추출·명시 계약 overlay·graph 검증
+  코드: 기본 템플릿·명시 계약으로 WorkloadGraph 구조 선택
+  LLM: 기존 컴포넌트의 영어 표시 이름만 제안
+  코드: PlanningFact 추출·graph 검증
   코드: DeploymentPlan → provider ResourcePlan → 두 PlantUML view
                     │
              저장·사용자 피드백
@@ -35,7 +37,8 @@ CloudDesignAdapter → 구현/테스트 → runtime contract 관찰
 | 책임 | 코드 |
 |---|---|
 | 설계 스테이지 배선 | [`app/design/graphs/subgraphs.py`](../app/design/graphs/subgraphs.py), [`app/design/graphs/design_graph.py`](../app/design/graphs/design_graph.py) |
-| WorkloadGraph 구조화 출력 | [`app/design/services/deployment_diagram/extractor.py`](../app/design/services/deployment_diagram/extractor.py) |
+| 템플릿 WorkloadGraph 구조 | [`app/design/services/deployment_diagram/template_topology.py`](../app/design/services/deployment_diagram/template_topology.py) |
+| 표시 이름 제안 | [`app/design/services/deployment_diagram/service.py`](../app/design/services/deployment_diagram/service.py) |
 | facts·배치·runtime binding | [`app/design/services/deployment_diagram/planner.py`](../app/design/services/deployment_diagram/planner.py) |
 | bundle 조립 | [`app/design/services/deployment_diagram/bundle.py`](../app/design/services/deployment_diagram/bundle.py) |
 | CSP 리소스 폐쇄성 | [`app/design/services/deployment_diagram/provider_template.py`](../app/design/services/deployment_diagram/provider_template.py) |
@@ -56,7 +59,7 @@ CloudDesignAdapter → 구현/테스트 → runtime contract 관찰
 | runtime binding 결과 | `easydep-runtime-binding` | 구현 관찰의 값 binding 또는 설계 재생성 요구 |
 
 ```text
-PlanningFact + LLM proposal
+PlanningFact + 코드 템플릿 + LLM 표시 이름
   → WorkloadGraph
   → DeploymentPlan
   → ResourcePlan
@@ -97,7 +100,7 @@ class_diagram → sequence_diagram → api_spec → erd → deployment_diagram
 
 | 입력 | 사용하는 방법 | 자동으로 하지 않는 일 |
 |---|---|---|
-| 요구사항 | source reference와 LLM grounding | 자연어를 ResourcePlan에 복사 |
+| 요구사항 | source reference와 이름 문맥 | 자연어를 ResourcePlan에 복사 |
 | CapabilityContract | capability fact와 typed constraint | `needsQuestion`을 기본값으로 해소 |
 | resource intake/spec | planningContext와 provenance fact | topology 선택 |
 | 유스케이스 | 진입점·외부 시스템 후보 판단 | actor를 workload로 변환 |
@@ -119,9 +122,10 @@ class_diagram → sequence_diagram → api_spec → erd → deployment_diagram
 - `constraintContract`: 구조 제약
 - capability의 `typedConstraints`: WorkloadGraph constraint
 
-명시 계약은 LLM이 정확히 복사하기를 기대하지 않는다. 명시 계약 계열이 존재하면 source
-reference가 없거나 accepted fact가 허용하지 않은 구조 제약은 후보에서 제거하고 이유를
-`derivations[]`에 남긴다.
+명시 계약은 LLM에 전달해 다시 해석하지 않고 코드가 직접 템플릿에 적용한다. 승인된
+`persistent-block-storage`와 `load-balanced-ingress` capability도 각각 기존 block storage와
+managed VM group 경우를 선택한다. 명시 계약 계열이 존재하면 source reference가 없거나
+accepted fact가 허용하지 않은 구조 제약은 후보에서 제거하고 이유를 `derivations[]`에 남긴다.
 
 ## 3. deployment_diagram 서브그래프
 
@@ -133,15 +137,16 @@ extract_deployment_diagram
   → render_deployment_diagram
 ```
 
-1. extract는 LLM에 구조화된 상류 context를 주고 `WorkloadGraphProposal`만 받는다.
+1. extract는 코드로 WorkloadGraph 구조를 만든 뒤 LLM에서 `DeploymentComponentLabels`만
+   받아 기존 컴포넌트 이름에 적용한다.
 2. finalize는 PlanningFact, 정규화 WorkloadGraph, DeploymentPlan과 각 target의
    ResourcePlan을 bundle로 조립한다.
 3. render는 bundle의 runtime PUML을 만들고 PlantUML 문법을 검사한다. provisioning PUML은
    finalize 결과에 함께 저장된다.
 
-LLM 응답 스키마에는 VM, VM group, subnet, disk, Public IP, LB, NAT, firewall, Registry와
-CSP IAM primitive가 없다. LLM은 workload, interface, workload 소유 storage/configuration,
-external dependency, connection과 constraint 후보만 제안한다.
+LLM 응답 스키마에는 `components[].id`와 `components[].name`만 있다. VM, VM group, subnet,
+disk, Public IP, LB, NAT, firewall, Registry뿐 아니라 workload, interface, storage,
+connection과 constraint도 제안할 수 없다.
 
 피드백 경로는 다음과 같다.
 
@@ -152,7 +157,8 @@ revise_deployment_diagram
   → persist → 같은 gate
 ```
 
-reviser는 WorkloadGraph만 수정하고 하위 계획을 전부 다시 만든다. 배포 스테이지에는 별도
+reviser는 기존 workload와 external dependency의 표시 이름만 수정한다. 구조 관련 피드백은
+요구사항의 배포 입력에서 승인해야 한다. 이름 변경 뒤 하위 계획은 다시 투영된다. 배포 스테이지에는 별도
 `check_deployment_diagram` 노드가 없다. planner/provider validator가 `issues`와
 `unresolved`를 만들며, PlantUML 문법 통과와 배포 결정 완료는 서로 다른 판정이다.
 
@@ -222,7 +228,7 @@ endpoint 환경변수의 주소 전략은 배치 결과에 따라 정한다.
 | 다른 managed group | `internalLoadBalancer` | 내부 L4 endpoint |
 | external dependency | `externalInput` | 실제 배포 입력 |
 
-환경변수 이름은 설계 계약이므로 LLM 또는 명시 contract가 정할 수 있다. endpoint 값과 Secret
+환경변수 이름은 코드 템플릿 또는 명시 contract가 정한다. endpoint 값과 Secret
 값은 설계 단계에서 만들지 않는다.
 
 ## 6. CSP ResourcePlan으로 닫는 과정
@@ -299,9 +305,11 @@ provisioning view는 OpenTofu field 참조를 보여 준다.
 저장 원본은 `deployment_diagram_bundle` 하나다. 저장소는 bundle을 읽을 때 WorkloadGraph,
 단일 DeploymentPlan/ResourcePlan을 hydrate하고 두 PUML을 다시 렌더한다.
 
-설계 그래프는 `generate/revise → persist → gate` 순으로 동작한다. 사용자가 보는 버전과
-저장된 버전이 일치하며 feedback마다 새 artifact version이 생긴다. 앞선 설계 단계로
-rewind하면 그 지점부터 앞으로 다시 실행되어 낡은 배포 bundle을 재사용하지 않는다.
+설계 그래프는 `generate/revise → persist → gate` 순으로 동작한다. 배포 단계의 revise는
+표시 이름만 바꾸며 구조 변경 요청을 LLM에 맡기지 않는다. 구조 선택은 요구사항의 승인된
+배포 입력 또는 sizing 선택을 바꾼 뒤 다시 투영한다. 사용자가 보는 버전과 저장된 버전은
+일치하며, 앞선 설계 단계로 rewind하면 그 지점부터 다시 실행되어 낡은 bundle을 재사용하지
+않는다.
 
 bundle import API는 `schemaVersion=easydep-deployment-diagram`만 받는다. 두 view는 다음
 endpoint에서 SVG/PNG로 렌더한다.

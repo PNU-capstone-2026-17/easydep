@@ -17,9 +17,7 @@ from app.design.services.deployment_diagram.models import (
     WorkloadInterface,
     WorkloadStorage,
 )
-from app.design.services.deployment_diagram.prompts import (
-    WORKLOAD_GRAPH_EXTRACTION_SYSTEM_PROMPT,
-)
+from app.design.services.deployment_diagram.prompts import DEPLOYMENT_LABEL_SYSTEM_PROMPT
 from app.design.services.deployment_diagram.service import propose_workload_graph
 
 
@@ -33,12 +31,13 @@ def extract_deployment_model(
     refined_requirements: Any = None,
     capability_contract: dict[str, Any] | None = None,
     resource_intake: dict[str, Any] | None = None,
+    resource_spec: dict[str, Any] | None = None,
     class_model: Any = None,
     sequence_model: Any = None,
     erd_model: Any = None,
     deployment_planning_facts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """기존 입력 우선순위와 dict 반환 shape로 WorkloadGraph를 제안한다."""
+    """기존 입력 형식을 템플릿 구조와 이름 제안 서비스에 연결한다."""
 
     if not scenario_text:
         return {}
@@ -46,6 +45,7 @@ def extract_deployment_model(
         "refinedRequirements": refined_requirements or [],
         "capabilityContract": capability_contract or {},
         "resourceIntake": resource_intake or {},
+        "resourceSpec": resource_spec or {},
         "useCaseSpecification": scenario_text,
         "apiSpec": api_spec,
         "deploymentPlanningFacts": deployment_planning_facts or [],
@@ -66,7 +66,7 @@ def extract_deployment_model(
 
 
 __all__ = [
-    "WORKLOAD_GRAPH_EXTRACTION_SYSTEM_PROMPT",
+    "DEPLOYMENT_LABEL_SYSTEM_PROMPT",
     "DeploymentModel",
     "ExternalDependency",
     "ResourceRequirements",

@@ -1,4 +1,4 @@
-"""typed WorkloadGraph 생성·수정과 결정론적 deployment projection의 public 경계다."""
+"""템플릿 WorkloadGraph, 이름 수정, 결정론적 deployment projection의 공개 경계다."""
 
 from app.design.services.deployment_diagram.models import WorkloadGraph
 from app.design.services.deployment_diagram.service import (

@@ -31,7 +31,7 @@ class ArchitectureState(TypedDict, total=False):
     usecase_diagram_syntax_errors: list[str]
     resource_spec: dict[str, Any]
     # 배포 단계에서만 사용하는 명시적인 사실 목록이다. 애플리케이션 설계 산출물에는
-    # 섞지 않고 WorkloadGraph를 제안하고 검사할 때만 사용한다.
+    # 섞지 않고 코드가 WorkloadGraph 템플릿을 선택하고 검사할 때만 사용한다.
     deployment_planning_facts: list[dict[str, Any]]
 
     # 설계 stage는 LLM이 만들고 수정하는 구조화 모델(*_model / *_bce_classes)을 저장한다.

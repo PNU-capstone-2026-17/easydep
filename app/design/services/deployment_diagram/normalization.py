@@ -747,8 +747,11 @@ def _apply_explicit_contract_facts(
         item
         for item in (planning_facts or {}).get("facts") or []
         if isinstance(item, dict)
-        and item.get("authority") == "explicit"
         and item.get("status") == "accepted"
+        and (
+            item.get("authority") == "explicit"
+            or item.get("kind") == "capability"
+        )
     ]
     allowed_constraint_kinds: dict[str, set[str]] = {}
     for fact in facts:
@@ -759,6 +762,9 @@ def _apply_explicit_contract_facts(
         if fact.get("kind") == "constraintContract" and value.get("kind"):
             authorized.add(str(value["kind"]))
         if fact.get("kind") == "capability":
+            dependencies = set(value.get("dependencyCapabilityIds") or [])
+            if "load-balanced-ingress" in dependencies:
+                authorized.add("managedReplacement")
             authorized.update(
                 str(item.get("kind"))
                 for item in value.get("typedConstraints") or []
@@ -983,7 +989,7 @@ def normalize_workload_graph(
     """후보 WorkloadGraph에 승인 fact와 canonical digest를 적용한다.
 
     Args:
-        candidate: LLM 또는 체크포인트에서 받은 WorkloadGraph JSON이다.
+        candidate: 코드 템플릿 또는 직접 호출자가 만든 WorkloadGraph JSON이다.
         planning_facts: 적용할 승인 PlanningFact 문서다.
 
     Returns:

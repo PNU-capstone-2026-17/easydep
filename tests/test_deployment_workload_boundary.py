@@ -1,4 +1,4 @@
-"""배포 WorkloadGraph의 typed LLM 경계와 하류 호환 계약을 검증한다."""
+"""배포 템플릿 구조와 이름 전용 LLM 경계를 검증한다."""
 
 from __future__ import annotations
 
@@ -16,7 +16,11 @@ from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
     hydrate_deployment_diagram_bundle,
 )
-from app.design.services.deployment_diagram.models import WorkloadGraph
+from app.design.services.deployment_diagram.digest import workload_graph_structure_digest
+from app.design.services.deployment_diagram.models import (
+    DeploymentComponentLabels,
+    WorkloadGraph,
+)
 from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
@@ -71,14 +75,14 @@ def _resource_spec() -> dict[str, Any]:
     }
 
 
-def test_generate_workload_graph_uses_one_structured_proposal() -> None:
+def test_generate_workload_graph_uses_one_name_only_proposal() -> None:
     calls: list[tuple[list[dict[str, str]], type[BaseModel]]] = []
 
     def propose(
         messages: list[dict[str, str]], schema: type[BaseModel]
     ) -> dict[str, Any]:
         calls.append((messages, schema))
-        return _workload_graph_payload()
+        return {"components": [{"id": "application", "name": "Order Service"}]}
 
     generated = generate_workload_graph(
         "UC1: 고객이 주문 목록을 조회한다.",
@@ -94,25 +98,116 @@ def test_generate_workload_graph_uses_one_structured_proposal() -> None:
     )
 
     assert isinstance(generated, WorkloadGraph)
-    assert generated.model_dump() == WorkloadGraph.model_validate(
-        _workload_graph_payload()
-    ).model_dump()
+    assert generated.workloads[0].id == "application"
+    assert generated.workloads[0].name == "Order Service"
+    assert generated.workloads[0].interfaces[0].exposure == "public"
+    assert generated.connections == []
+    assert generated.constraints == []
     assert len(calls) == 1
     messages, schema = calls[0]
-    assert schema is WorkloadGraph
-    assert schema.__name__ == "WorkloadGraphProposal"
+    assert schema is DeploymentComponentLabels
     serialized = json.loads(messages[-1]["content"])
     assert serialized == {
-        "refinedRequirements": [{"id": "R1"}],
-        "capabilityContract": {"capabilities": []},
-        "resourceIntake": {"provider": "aws"},
-        "useCaseSpecification": "UC1: 고객이 주문 목록을 조회한다.",
-        "apiSpec": {"openapi": "3.1.0", "paths": {"/orders": {}}},
-        "deploymentPlanningFacts": [{"id": "fact-1"}],
-        "classModel": {"Classes": []},
-        "sequenceModel": {"Diagrams": []},
-        "erdModel": {"Classes": []},
+        "components": [{"id": "application", "name": "Application"}],
+        "context": {
+            "useCaseSummary": "UC1: 고객이 주문 목록을 조회한다.",
+        },
     }
+
+
+def test_explicit_contracts_choose_template_structure_before_llm() -> None:
+    """LLM은 이미 정해진 두 workload의 이름만 받아야 한다."""
+
+    observed: dict[str, Any] = {}
+
+    def propose(
+        messages: list[dict[str, str]], schema: type[BaseModel]
+    ) -> dict[str, Any]:
+        observed.update(json.loads(messages[-1]["content"]))
+        assert schema is DeploymentComponentLabels
+        return {
+            "components": [
+                {"id": "course-app", "name": "Course Registration"},
+                {"id": "course-db", "name": "Course Database"},
+            ]
+        }
+
+    contracts = [
+        {
+            "id": "app",
+            "kind": "workloadContract",
+            "value": {
+                "workloadId": "course-app",
+                "artifactKind": "generatedApplication",
+                "interface": {"protocol": "http", "exposure": "public"},
+                "replicaCount": 1,
+            },
+            "sourceRefs": ["requirement:R1"],
+            "authority": "explicit",
+            "status": "accepted",
+        },
+        {
+            "id": "db",
+            "kind": "workloadContract",
+            "value": {
+                "workloadId": "course-db",
+                "artifactKind": "prebuiltImage",
+                "image": "postgres:16",
+                "engine": "postgresql",
+                "deploymentMode": "container",
+                "runtimeCatalogRef": "docker-on-vm/prebuilt-image",
+                "interface": {
+                    "protocol": "tcp",
+                    "exposure": "internal",
+                    "port": 5432,
+                },
+            },
+            "sourceRefs": ["requirement:R2"],
+            "authority": "explicit",
+            "status": "accepted",
+        },
+        {
+            "id": "connection",
+            "kind": "connectionContract",
+            "value": {
+                "sourceWorkloadRef": "course-app",
+                "targetWorkloadRef": "course-db",
+                "protocol": "tcp",
+            },
+            "sourceRefs": ["sequence:UC1"],
+            "authority": "explicit",
+            "status": "accepted",
+        },
+    ]
+    graph = generate_workload_graph(
+        "UC1: Student registers for a course.",
+        {"paths": {"/registrations": {"post": {}}}},
+        deployment_planning_facts=contracts,
+        proposal_call=propose,
+    )
+
+    assert observed["components"] == [
+        {"id": "course-app", "name": "course-app"},
+        {"id": "course-db", "name": "course-db"},
+    ]
+    assert [item.name for item in graph.workloads] == [
+        "Course Registration",
+        "Course Database",
+    ]
+    assert [(item.sourceRef, item.targetRef) for item in graph.connections] == [
+        ("course-app", "course-db")
+    ]
+    bundle = build_deployment_diagram_bundle(
+        graph.model_dump(),
+        _resource_spec(),
+        planning_inputs={
+            "api_spec": {"paths": {"/registrations": {"post": {}}}},
+            "additional_planning_facts": contracts,
+        },
+    )
+    assert bundle["status"] == "completed"
+    assert "Course Registration" in deployment_bundle_runtime_puml(bundle)
+    assert render_open_tofu(bundle["projections"][0]["resourcePlan"])
 
 
 def test_empty_generation_and_feedback_do_not_call_llm() -> None:
@@ -135,7 +230,39 @@ def test_empty_generation_and_feedback_do_not_call_llm() -> None:
     assert calls == 0
 
 
-def test_revision_is_one_typed_proposal_without_service_repair_loop() -> None:
+def test_accepted_capabilities_select_existing_storage_and_lb_templates() -> None:
+    def propose(
+        _messages: list[dict[str, str]], _schema: type[BaseModel]
+    ) -> dict[str, Any]:
+        return {"components": [{"id": "application", "name": "Student Portal"}]}
+
+    graph = generate_workload_graph(
+        "Students use the portal.",
+        {"paths": {"/courses": {"get": {}}}},
+        capability_contract={
+            "capabilities": [
+                {
+                    "id": "durable-and-balanced",
+                    "decision": "accepted",
+                    "requirementIds": ["R1", "R2"],
+                    "dependencyCapabilityIds": [
+                        "persistent-block-storage",
+                        "load-balanced-ingress",
+                    ],
+                }
+            ]
+        },
+        proposal_call=propose,
+    )
+
+    assert graph.workloads[0].storage[0].mountPath == "/var/lib/easydep/data"
+    assert [item.kind for item in graph.constraints] == ["managedReplacement"]
+    bundle = build_deployment_diagram_bundle(graph.model_dump(), _resource_spec())
+    compute = bundle["projections"][0]["deploymentPlan"]["computeUnits"][0]
+    assert compute["kind"] == "managedVmGroup"
+
+
+def test_revision_can_change_only_existing_component_names() -> None:
     current = WorkloadGraph.model_validate(_workload_graph_payload())
     before = current.model_dump()
     calls: list[type[BaseModel]] = []
@@ -145,9 +272,13 @@ def test_revision_is_one_typed_proposal_without_service_repair_loop() -> None:
     ) -> dict[str, Any]:
         assert messages
         calls.append(schema)
-        revised = json.loads(json.dumps(before))
-        revised["workloads"][0]["name"] = "Order Web"
-        return revised
+        assert schema is DeploymentComponentLabels
+        return {
+            "components": [
+                {"id": "web", "name": "Order Web"},
+                {"id": "invented", "name": "Ignored Component"},
+            ]
+        }
 
     revised = revise_workload_graph(
         current,
@@ -157,23 +288,26 @@ def test_revision_is_one_typed_proposal_without_service_repair_loop() -> None:
         proposal_call=propose,
     )
 
-    assert calls == [WorkloadGraph]
+    assert calls == [DeploymentComponentLabels]
     assert isinstance(revised, WorkloadGraph)
     assert revised.workloads[0].name == "Order Web"
+    assert revised.model_dump(exclude={"workloads": {0: {"name"}}}) == (
+        current.model_dump(exclude={"workloads": {0: {"name"}}})
+    )
     assert current.model_dump() == before
+    assert workload_graph_structure_digest(revised.model_dump()) == (
+        workload_graph_structure_digest(current.model_dump())
+    )
 
 
 def test_invalid_proposal_fails_after_one_service_call() -> None:
     calls = 0
-    invalid = _workload_graph_payload()
-    invalid["externalDependencies"] = [
-        {
-            "id": "web",
-            "name": "Duplicate",
-            "interfaces": [],
-            "sourceRefs": ["requirement:R2"],
-        }
-    ]
+    invalid = {
+        "components": [
+            {"id": "application", "name": "First"},
+            {"id": "application", "name": "Duplicate"},
+        ]
+    }
 
     def propose(
         messages: list[dict[str, str]], schema: type[BaseModel]
@@ -183,8 +317,10 @@ def test_invalid_proposal_fails_after_one_service_call() -> None:
         calls += 1
         return invalid
 
-    with pytest.raises(ValidationError, match="globally unique"):
-        generate_workload_graph("UC1", {}, proposal_call=propose)
+    with pytest.raises(ValidationError, match="label ids must be unique"):
+        generate_workload_graph(
+            "UC1", {"paths": {"/orders": {"get": {}}}}, proposal_call=propose
+        )
 
     assert calls == 1
 
@@ -274,6 +410,7 @@ def test_public_graph_spec_validates_and_dumps_typed_workload_graph(
         "refined_requirements": state["refined_requirements"],
         "capability_contract": state["capability_contract"],
         "resource_intake": state["resource_intake"],
+        "resource_spec": {},
         "class_model": state["extracted_bce_classes"],
         "sequence_model": state["sequence_diagram_model"],
         "erd_model": state["erd_bce_classes"],

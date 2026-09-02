@@ -1,25 +1,28 @@
-"""typed WorkloadGraph의 LLM 생성·수정 경계를 조율한다.
+"""코드가 배포 구조를 만들고 LLM에는 표시 이름만 맡기는 서비스 경계다."""
 
-이 서비스는 WorkloadGraph만 제안·수정하며 placement, VM, provider resource를 만들지 않는다.
-graph state·repository·requirements 내부 state를 import하지 않고 전달받은 구조화 산출물만
-prompt payload로 조립한다.
-"""
 from __future__ import annotations
 
+import copy
 from typing import Any, Protocol
 
 from pydantic import BaseModel
 
 from app.design.services.common.structured import parse_structured, revision_messages
-from app.design.services.deployment_diagram.models import WorkloadGraph
+from app.design.services.deployment_diagram.models import (
+    DeploymentComponentLabels,
+    WorkloadGraph,
+)
 from app.design.services.deployment_diagram.prompts import (
-    DEPLOYMENT_REVISION_SYSTEM_PROMPT,
+    DEPLOYMENT_LABEL_REVISION_SYSTEM_PROMPT,
     generation_messages,
+)
+from app.design.services.deployment_diagram.template_topology import (
+    build_template_workload_graph,
 )
 
 
-class WorkloadGraphProposalCall(Protocol):
-    """공통 structured LLM adapter와 테스트 대역의 호출 계약이다."""
+class DeploymentLabelProposalCall(Protocol):
+    """공통 structured LLM adapter와 테스트 대역의 이름 제안 계약이다."""
 
     def __call__(
         self,
@@ -28,28 +31,76 @@ class WorkloadGraphProposalCall(Protocol):
     ) -> dict[str, Any]: ...
 
 
+def _components(graph: WorkloadGraph) -> list[dict[str, str]]:
+    """LLM에 노출할 수 있는 ID와 현재 표시 이름만 추린다."""
+
+    return [
+        *[{"id": item.id, "name": item.name} for item in graph.workloads],
+        *[
+            {"id": item.id, "name": item.name}
+            for item in graph.externalDependencies
+        ],
+    ]
+
+
+def _naming_context(structured_inputs: dict[str, Any]) -> dict[str, Any]:
+    """도메인 이름을 판단하는 데 필요한 작은 문맥만 남긴다."""
+
+    classes = structured_inputs.get("classModel")
+    class_items = classes.get("Classes") if isinstance(classes, dict) else None
+    class_names = [
+        str(item.get("className"))
+        for item in class_items or []
+        if isinstance(item, dict) and item.get("className")
+    ]
+    if class_names:
+        return {"classNames": class_names}
+    # 정상 설계 흐름에서는 classModel이 항상 있다. 직접 호출처럼 클래스가 없는 경우만
+    # 유스케이스 앞부분을 보조 문맥으로 사용해 이름 하나를 짓는 데 전체 명세를 보내지 않는다.
+    scenario = str(structured_inputs.get("useCaseSpecification") or "")
+    return {"useCaseSummary": scenario[:2000]}
+
+
+def _apply_labels(
+    graph: WorkloadGraph,
+    proposal: DeploymentComponentLabels,
+) -> WorkloadGraph:
+    """기존 ID와 일치하는 이름만 복사하고 나머지 구조는 그대로 보존한다."""
+
+    names = {
+        item.id: item.name.strip()
+        for item in proposal.components
+        if item.name.strip()
+    }
+    payload = copy.deepcopy(graph.model_dump())
+    for key in ("workloads", "externalDependencies"):
+        for component in payload.get(key) or []:
+            component_id = str(component.get("id") or "")
+            if component_id in names:
+                component["name"] = names[component_id]
+    return WorkloadGraph.model_validate(payload)
+
+
 def propose_workload_graph(
     structured_inputs: dict[str, Any],
-    proposal_call: WorkloadGraphProposalCall | None = None,
+    proposal_call: DeploymentLabelProposalCall | None = None,
 ) -> WorkloadGraph:
-    """호환 adapter가 조립한 구조화 입력을 한 번 제안하고 typed graph로 검증한다.
+    """결정론적 템플릿 구조에 LLM의 표시 이름만 적용한다."""
 
-    Args:
-        structured_inputs: canonical 또는 legacy adapter가 조립한 입력 payload다.
-        proposal_call: 테스트에서 주입할 선택적 structured LLM 호출이다.
-
-    Returns:
-        schema 검증을 통과한 ``WorkloadGraph``다.
-
-    Notes:
-        prompt와 schema repair는 공통 structured 경계가 소유하며 이 함수는 추가 loop를
-        만들지 않는다.
-    """
-
+    graph = build_template_workload_graph(structured_inputs)
+    components = _components(graph)
+    if not components:
+        return graph
     propose = proposal_call or parse_structured
-    return WorkloadGraph.model_validate(
-        propose(generation_messages(structured_inputs), WorkloadGraph)
+    labels = DeploymentComponentLabels.model_validate(
+        propose(
+            generation_messages(
+                {"components": components, "context": _naming_context(structured_inputs)}
+            ),
+            DeploymentComponentLabels,
+        )
     )
+    return _apply_labels(graph, labels)
 
 
 def generate_workload_graph(
@@ -59,33 +110,14 @@ def generate_workload_graph(
     refined_requirements: Any = None,
     capability_contract: dict[str, Any] | None = None,
     resource_intake: dict[str, Any] | None = None,
+    resource_spec: dict[str, Any] | None = None,
     class_model: Any = None,
     sequence_model: Any = None,
     erd_model: Any = None,
     deployment_planning_facts: list[dict[str, Any]] | None = None,
-    proposal_call: WorkloadGraphProposalCall | None = None,
+    proposal_call: DeploymentLabelProposalCall | None = None,
 ) -> WorkloadGraph:
-    """구조화된 설계 산출물에서 typed WorkloadGraph를 한 번 제안한다.
-
-    Args:
-        scenario_text: workload 행위 근거인 유스케이스 명세다.
-        api_spec: 현재 결정론적으로 렌더된 API 계약이다.
-        refined_requirements: 정제된 요구사항의 외부 JSON 값이다.
-        capability_contract: 승인 capability 계약이다.
-        resource_intake: resource 입력과 provenance 계약이다.
-        class_model: 승인된 typed BCE model의 JSON 값이다.
-        sequence_model: 결정론적 typed sequence model의 JSON 값이다.
-        erd_model: 승인된 ERD BCE model의 JSON 값이다.
-        deployment_planning_facts: 승인된 deployment-only fact 목록이다.
-        proposal_call: 테스트·adapter가 주입할 선택적 structured proposal 호출이다.
-
-    Returns:
-        schema 검증이 끝난 ``WorkloadGraph``다.
-
-    Notes:
-        빈 scenario면 LLM을 호출하지 않는다. 그 밖에는 기존 prompt field 순서, schema class
-        이름 ``WorkloadGraphProposal``과 공통 schema repair 범위를 그대로 사용한다.
-    """
+    """승인 입력으로 구조를 만들고 한 번의 이름 제안만 수행한다."""
 
     if not scenario_text:
         return WorkloadGraph()
@@ -93,6 +125,7 @@ def generate_workload_graph(
         "refinedRequirements": refined_requirements or [],
         "capabilityContract": capability_contract or {},
         "resourceIntake": resource_intake or {},
+        "resourceSpec": resource_spec or {},
         "useCaseSpecification": scenario_text,
         "apiSpec": api_spec,
         "deploymentPlanningFacts": deployment_planning_facts or [],
@@ -112,38 +145,28 @@ def revise_workload_graph(
     context_text: str = "",
     targets: set[str] | None = None,
     *,
-    proposal_call: WorkloadGraphProposalCall | None = None,
+    proposal_call: DeploymentLabelProposalCall | None = None,
 ) -> WorkloadGraph:
-    """현재 typed WorkloadGraph에 피드백을 한 번 적용한다.
-
-    Args:
-        current_model: 현재 저장된 WorkloadGraph candidate다.
-        feedback: 사용자 또는 기존 검증 경계의 제한된 수정 지시다.
-        context_text: 기존 graph adapter가 조립한 설계 artifact 문맥이다.
-        targets: graph가 정한 선택적 workload element 대상이다.
-        proposal_call: 테스트·adapter가 주입할 선택적 structured proposal 호출이다.
-
-    Returns:
-        전체 수정 결과를 담은 schema 검증 WorkloadGraph다.
-
-    Notes:
-        빈 feedback이면 같은 객체를 반환한다. 그 밖에는 기존 revision envelope와 schema
-        ``WorkloadGraphProposal``을 사용해 한 번 호출하며 별도 repair loop를 추가하지 않는다.
-    """
+    """피드백에서 기존 컴포넌트의 표시 이름만 수정한다."""
 
     if not feedback:
         return current_model
+    components = _components(current_model)
+    if not components:
+        return current_model
     propose = proposal_call or parse_structured
-    revised = propose(
-        revision_messages(
-            DEPLOYMENT_REVISION_SYSTEM_PROMPT,
-            "Design Artifacts",
-            context_text,
-            "Current WorkloadGraph",
-            current_model.model_dump(),
-            feedback,
-            targets,
-        ),
-        WorkloadGraph,
+    labels = DeploymentComponentLabels.model_validate(
+        propose(
+            revision_messages(
+                DEPLOYMENT_LABEL_REVISION_SYSTEM_PROMPT,
+                "Design Context",
+                context_text,
+                "Current Components",
+                {"components": components},
+                feedback,
+                targets,
+            ),
+            DeploymentComponentLabels,
+        )
     )
-    return WorkloadGraph.model_validate(revised)
+    return _apply_labels(current_model, labels)
