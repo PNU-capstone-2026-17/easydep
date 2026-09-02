@@ -9,6 +9,7 @@ from typing import Any
 
 MANIFEST_SCHEMA = "easydep-comparison-manifest/v1"
 SUBJECT_RESULT_SCHEMA = "easydep-comparison-subject-result/v1"
+PROMPT_PROFILES = {"requirementsOnly", "commonArtifacts"}
 
 
 def _object(value: Any, label: str) -> dict[str, Any]:
@@ -53,6 +54,20 @@ class GateSpec:
 
 
 @dataclass(frozen=True)
+class ArtifactSpec:
+    id: str
+    title: str
+    description: str
+
+
+@dataclass(frozen=True)
+class PromptProtocol:
+    task_preamble: str
+    artifact_contract_preamble: str
+    artifact_contract: tuple[ArtifactSpec, ...]
+
+
+@dataclass(frozen=True)
 class ArmSpec:
     id: str
     framework: str
@@ -62,6 +77,7 @@ class ArmSpec:
     cwd: str = "{repository}"
     timeout_seconds: float = 7200.0
     env: dict[str, str] = field(default_factory=dict)
+    prompt_profile: str = "requirementsOnly"
 
 
 @dataclass(frozen=True)
@@ -74,6 +90,7 @@ class Manifest:
     constraints: tuple[ConstraintSpec, ...]
     gates: tuple[GateSpec, ...]
     arms: tuple[ArmSpec, ...]
+    prompt_protocol: PromptProtocol | None = None
 
     @property
     def directory(self) -> Path:
@@ -108,6 +125,7 @@ class SubjectResult:
     workspace: Path
     usage: TokenUsage
     requirement_evidence: dict[str, dict[str, tuple[str, ...]]]
+    artifact_evidence: dict[str, tuple[str, ...]]
     metadata: dict[str, Any]
 
 
@@ -172,6 +190,49 @@ def load_manifest(path: str | Path) -> Manifest:
             )
         )
 
+    prompt_protocol: PromptProtocol | None = None
+    raw_prompt_protocol = data.get("promptProtocol")
+    if raw_prompt_protocol is not None:
+        prompt = _object(raw_prompt_protocol, "promptProtocol")
+        raw_artifacts = prompt.get("artifactContract", [])
+        if not isinstance(raw_artifacts, list) or not raw_artifacts:
+            raise ValueError("promptProtocol.artifactContract에는 하나 이상의 산출물이 필요합니다.")
+        artifacts: list[ArtifactSpec] = []
+        for index, raw in enumerate(raw_artifacts):
+            item = _object(raw, f"promptProtocol.artifactContract[{index}]")
+            artifacts.append(
+                ArtifactSpec(
+                    id=_non_empty_string(
+                        item.get("id"), f"promptProtocol.artifactContract[{index}].id"
+                    ),
+                    title=_non_empty_string(
+                        item.get("title"), f"promptProtocol.artifactContract[{index}].title"
+                    ),
+                    description=_non_empty_string(
+                        item.get("description"),
+                        f"promptProtocol.artifactContract[{index}].description",
+                    ),
+                )
+            )
+        _unique_ids(artifacts, "공통 산출물")
+        prompt_protocol = PromptProtocol(
+            task_preamble=str(
+                prompt.get(
+                    "taskPreamble",
+                    "Develop a complete, executable application for the following requirements.",
+                )
+            ).strip(),
+            artifact_contract_preamble=str(
+                prompt.get(
+                    "artifactContractPreamble",
+                    "Produce the following design, implementation, test, and deployment deliverables.",
+                )
+            ).strip(),
+            artifact_contract=tuple(artifacts),
+        )
+        if not prompt_protocol.task_preamble or not prompt_protocol.artifact_contract_preamble:
+            raise ValueError("promptProtocol의 preamble은 비어 있을 수 없습니다.")
+
     arms: list[ArmSpec] = []
     raw_arms = data.get("arms", [])
     if not isinstance(raw_arms, list) or not raw_arms:
@@ -187,6 +248,15 @@ def load_manifest(path: str | Path) -> Manifest:
         command = _string_list(item.get("command"), f"arms[{index}].command")
         if not command:
             raise ValueError(f"arms[{index}].command는 비어 있을 수 없습니다.")
+        prompt_profile = str(item.get("promptProfile", "requirementsOnly"))
+        if prompt_profile not in PROMPT_PROFILES:
+            raise ValueError(
+                f"arms[{index}].promptProfile은 requirementsOnly 또는 commonArtifacts여야 합니다."
+            )
+        if prompt_profile == "commonArtifacts" and prompt_protocol is None:
+            raise ValueError(
+                f"arms[{index}]가 commonArtifacts를 사용하지만 promptProtocol이 없습니다."
+            )
         arms.append(
             ArmSpec(
                 id=_non_empty_string(item.get("id"), f"arms[{index}].id"),
@@ -197,6 +267,7 @@ def load_manifest(path: str | Path) -> Manifest:
                 cwd=str(item.get("cwd", "{repository}")),
                 timeout_seconds=timeout,
                 env=dict(raw_env),
+                prompt_profile=prompt_profile,
             )
         )
 
@@ -223,6 +294,7 @@ def load_manifest(path: str | Path) -> Manifest:
         constraints=tuple(constraints),
         gates=tuple(gates),
         arms=tuple(arms),
+        prompt_protocol=prompt_protocol,
     )
 
 
@@ -266,6 +338,11 @@ def load_subject_result(path: str | Path, *, run_directory: Path) -> SubjectResu
             str(stage): _string_list(paths, f"requirementEvidence.{requirement_id}.{stage}")
             for stage, paths in stages.items()
         }
+    raw_artifact_evidence = _object(data.get("artifactEvidence", {}), "artifactEvidence")
+    artifact_evidence = {
+        str(artifact_id): _string_list(paths, f"artifactEvidence.{artifact_id}")
+        for artifact_id, paths in raw_artifact_evidence.items()
+    }
     return SubjectResult(
         framework=_non_empty_string(data.get("framework"), "framework"),
         framework_version=str(data.get("frameworkVersion", "unknown")),
@@ -273,5 +350,6 @@ def load_subject_result(path: str | Path, *, run_directory: Path) -> SubjectResu
         workspace=workspace,
         usage=usage,
         requirement_evidence=evidence,
+        artifact_evidence=artifact_evidence,
         metadata=_object(data.get("metadata", {}), "metadata"),
     )

@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .common import load_evidence, write_subject_result
+from .common import load_artifact_evidence, load_evidence, write_subject_result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -16,6 +16,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--usage", type=Path, help="LangSmith 등에서 내보낸 공통 usage JSON")
     parser.add_argument("--evidence", type=Path)
+    parser.add_argument("--artifact-evidence", type=Path)
     parser.add_argument("--framework-version", default="current")
     args = parser.parse_args(argv)
     product = json.loads(args.product_result.read_text(encoding="utf-8"))
@@ -42,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         missing_usage_calls=int(usage.get("missingUsageCalls", 0)),
         source=str(usage.get("source", "not-reported")),
         evidence=load_evidence(args.evidence),
+        artifact_evidence=load_artifact_evidence(args.artifact_evidence),
         metadata=metadata,
     )
     return 0

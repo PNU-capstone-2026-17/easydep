@@ -25,7 +25,19 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     manifest = load_manifest(args.manifest)
     if args.command == "validate":
-        print(f"유효한 manifest: {manifest.experiment_id} ({len(manifest.arms)}개 대상, {manifest.repetitions}회 반복)")
+        profiles = ", ".join(
+            f"{arm.id}={arm.prompt_profile}" for arm in manifest.arms
+        )
+        artifact_count = (
+            len(manifest.prompt_protocol.artifact_contract)
+            if manifest.prompt_protocol is not None
+            else 0
+        )
+        print(
+            f"유효한 manifest: {manifest.experiment_id} "
+            f"({len(manifest.arms)}개 대상, {manifest.repetitions}회 반복, "
+            f"공통 산출물 {artifact_count}개; {profiles})"
+        )
         return 0
     output_root = args.output_root
     report = run_experiment(manifest, output_root=output_root)

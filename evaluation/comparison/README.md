@@ -5,6 +5,19 @@
 검증 게이트, 추적성을 각각 `충족 개수 / 전체 개수`로 보여주고 토큰·시간·LLM 호출 수는
 별도의 원시 수치로 남깁니다.
 
+기본 실험군은 다음과 같습니다.
+
+| 실험군 | 프롬프트 프로필 | 입력 |
+|---|---|---|
+| EasyDep | `requirementsOnly` | 동일 요구사항과 제약조건만 전달 |
+| MetaGPT | `commonArtifacts` | 동일 요구사항과 공통 산출물 계약 전달 |
+| ChatDev | `commonArtifacts` | MetaGPT와 바이트 단위로 같은 프롬프트 전달 |
+
+EasyDep은 제품 파이프라인 자체가 설계·구현·시험·배포 산출물을 생성하므로 산출물 계약을
+추가 프롬프트로 주지 않습니다. MetaGPT와 ChatDev에는 클래스·시퀀스·API·데이터 모델 등
+동일한 의미 범주의 산출물을 요청합니다. 표기법과 파일 구조는 각 프레임워크의 기본 방식을
+허용하고, 실행 후 어댑터가 공통 산출물 ID와 실제 파일 경로를 연결합니다.
+
 ## 가장 빠른 확인
 
 저장소 루트에서 다음 명령을 실행합니다. 이 예제는 외부 API를 호출하지 않습니다.
@@ -30,6 +43,7 @@
 | 구현 요구사항 | 연결된 게이트가 모두 통과한 요구사항 수 | 전체 필수 요구사항 수 | 게이트가 없으면 구현으로 간주하지 않음 |
 | 충족 제약조건 | 연결된 게이트가 모두 통과한 제약조건 수 | 전체 제약조건 수 | 리전·예산·금지 서비스 등을 독립 검증 |
 | 통과 필수 게이트 | 통과한 필수 게이트 수 | 전체 필수 게이트 수 | 빌드, API, 동시성, 영속성 등 |
+| 공통 산출물 커버리지 | 실제 파일이 확인된 공통 산출물 수 | 계약에 선언한 산출물 수 | 동일 파일 형식이 아닌 동일 의미 범주를 확인 |
 | 완전 추적성 | 필수 증거 단계가 모두 연결된 요구사항 수 | 전체 요구사항 수 | 연결된 파일이 실제로 존재해야 함 |
 | 성공 실행 | 완료되고 모든 필수 게이트를 통과한 실행 수 | 계획한 전체 반복 수 | 실패·시간 초과 포함 |
 
@@ -45,10 +59,12 @@
 
 1. 동일한 요구사항 입력과 클라우드 제약을 고정합니다.
 2. 모든 대상에서 모델, API 엔드포인트, 온도, 최대 토큰, 시간 제한, 반복 횟수를 같게 맞춥니다.
-3. 각 대상용 래퍼가 실행 후 `subject-result.json`을 만들도록 합니다.
-4. 요구사항과 제약조건을 독립 게이트에 연결합니다.
-5. manifest를 `validate`한 뒤 `run`합니다.
-6. `comparison.md`의 비율과 실패 상세를 먼저 보고, 토큰·시간은 같은 성공 수준끼리 비교합니다.
+3. `promptProtocol.artifactContract`에 공통 산출물 범주를 선언합니다.
+4. EasyDep arm은 `requirementsOnly`, MetaGPT·ChatDev arm은 `commonArtifacts`로 지정합니다.
+5. 각 대상용 래퍼가 `{prompt_file}`을 입력받고 실행 후 `subject-result.json`을 만들도록 합니다.
+6. 요구사항과 제약조건을 독립 게이트에 연결합니다.
+7. manifest를 `validate`한 뒤 `run`합니다.
+8. `comparison.md`의 비율과 실패 상세를 먼저 보고, 토큰·시간은 같은 성공 수준끼리 비교합니다.
 
 MetaGPT와 ChatDev는 현재 고정 설치 스크립트를 사용할 수 있습니다.
 
@@ -69,6 +85,22 @@ MetaGPT와 ChatDev는 현재 고정 설치 스크립트를 사용할 수 있습�
   "experimentId": "course-registration-v1",
   "repetitions": 3,
   "outputRoot": "artifacts/comparison",
+  "promptProtocol": {
+    "taskPreamble": "Develop a complete, executable application for the following requirements.",
+    "artifactContractPreamble": "Produce the following framework-neutral deliverables.",
+    "artifactContract": [
+      {
+        "id": "classDiagram",
+        "title": "Class diagram",
+        "description": "Classes, operations, and relationships. Native notation is allowed."
+      },
+      {
+        "id": "sequenceDiagram",
+        "title": "Sequence diagrams",
+        "description": "Participants and messages for the major use cases."
+      }
+    ]
+  },
   "requirements": [
     {
       "id": "FR-01",
@@ -156,15 +188,31 @@ manifest의 프레임워크 이름과 고정 버전이 결과 파일의 값과 �
   "id": "chatdev",
   "framework": "ChatDev",
   "frameworkVersion": "1.1.6-bcab157",
-  "command": ["{python}", "-X", "utf8", "scripts/run_chatdev_arm.py", "--run-dir", "{run_dir}"],
+  "promptProfile": "commonArtifacts",
+  "command": [
+    "{python}", "-X", "utf8", "scripts/run_chatdev_arm.py",
+    "--run-dir", "{run_dir}", "--prompt-file", "{prompt_file}"
+  ],
   "resultPath": "{run_dir}/subject-result.json",
   "timeoutSeconds": 7200
 }
 ```
 
 사용 가능한 템플릿 변수는 `{python}`, `{repository}`, `{manifest_dir}`, `{run_dir}`,
-`{arm_id}`, `{experiment_id}`, `{repetition}`입니다. 게이트에는 추가로 `{workspace}`와
+`{arm_id}`, `{experiment_id}`, `{repetition}`, `{task_input_file}`,
+`{artifact_contract_file}`, `{prompt_file}`, `{prompt_metadata_file}`,
+`{prompt_profile}`, `{prompt_sha256}`입니다. 게이트에는 추가로 `{workspace}`와
 `subject-result.json`의 단순 `metadata` 값이 제공됩니다.
+
+각 실행 디렉터리에는 다음 입력이 고정됩니다.
+
+- `task-input.txt`: 모든 실험군에 공통인 요구사항과 제약조건
+- `common-artifact-contract.txt`: MetaGPT·ChatDev에 추가할 공통 산출물 계약
+- `arm-prompt.txt`: 해당 실험군이 실제로 받을 최종 프롬프트
+- `prompt-metadata.json`: 프롬프트 프로필과 세 파일의 SHA-256
+
+따라서 MetaGPT와 ChatDev의 `arm-prompt.txt` 및 해시는 같아야 하며, EasyDep의
+`arm-prompt.txt`에는 공통 산출물 계약이 포함되지 않습니다.
 
 ## 비교 대상이 남겨야 하는 결과
 
@@ -193,12 +241,23 @@ manifest의 프레임워크 이름과 고정 버전이 결과 파일의 값과 �
       "test": ["tests/course-api.http"]
     }
   },
+  "artifactEvidence": {
+    "classDiagram": ["docs/class-diagram.mmd"],
+    "sequenceDiagram": ["docs/sequence-enroll.mmd"],
+    "apiSpecification": ["openapi.json"],
+    "dataModel": ["docs/erd.mmd"],
+    "sourceCode": ["src/CourseController.java"],
+    "tests": ["tests/course-api.http"],
+    "container": ["Dockerfile"],
+    "infrastructure": ["main.tf"]
+  },
   "metadata": {"baseUrl": "http://127.0.0.1:18080"}
 }
 ```
 
 증거 경로는 `workspace` 기준 상대 경로 또는 절대 경로입니다. 문자열만 적는 것으로 끝나지
-않고 평가 시 파일 존재를 확인합니다.
+않고 평가 시 파일 존재를 확인합니다. `artifactEvidence`는 표기 형식을 강제하지 않습니다.
+예를 들어 MetaGPT의 Mermaid와 EasyDep의 PlantUML을 모두 `classDiagram`에 연결할 수 있습니다.
 
 ## 토큰 어댑터 사용
 
@@ -209,6 +268,7 @@ ChatDev 실행 로그 변환:
   --log C:/temp/chatdev.log `
   --workspace C:/generated/chatdev-app `
   --evidence C:/temp/chatdev-evidence.json `
+  --artifact-evidence C:/temp/chatdev-artifact-evidence.json `
   --output C:/temp/run/subject-result.json
 ```
 
@@ -219,6 +279,7 @@ MetaGPT는 실행 종료 시 저장한 CostManager JSON을 우선 사용합니�
   --cost-manager-json C:/temp/metagpt-cost.json `
   --workspace C:/generated/metagpt-app `
   --evidence C:/temp/metagpt-evidence.json `
+  --artifact-evidence C:/temp/metagpt-artifact-evidence.json `
   --output C:/temp/run/subject-result.json
 ```
 
@@ -234,16 +295,20 @@ EasyDep 공개 제품 실행 결과 변환:
   --usage C:/temp/easydep-langsmith-usage.json `
   --workspace C:/generated/easydep-app `
   --evidence C:/temp/easydep-evidence.json `
+  --artifact-evidence C:/temp/easydep-artifact-evidence.json `
   --output C:/temp/run/subject-result.json
 ```
 
-실제 arm 래퍼는 다음 세 단계를 한 프로세스 안에서 수행하면 됩니다: 프레임워크 실행,
+실제 arm 래퍼는 `{prompt_file}`을 읽은 뒤 다음 세 단계를 한 프로세스 안에서 수행하면 됩니다: 프레임워크 실행,
 사용량·증거 변환, 생성 앱 기동과 `metadata.baseUrl` 기록. 비교 실행기는 그 다음 동일한
-게이트를 적용합니다. API 키나 원문 프롬프트는 결과 파일과 로그에 기록하지 마세요.
+게이트를 적용합니다. 고정 프롬프트 원문은 실행 디렉터리의 `arm-prompt.txt`에만 보존하고,
+API 키나 비밀 값은 프롬프트·결과 파일·로그에 기록하지 마세요.
 
 ## 공정한 비교 체크리스트
 
 - 동일 요구사항 원문과 클라우드 제약을 사용했는가
+- MetaGPT와 ChatDev의 `armPromptSha256`이 같은가
+- EasyDep에는 공통 산출물 계약이 추가 프롬프트로 전달되지 않았는가
 - 동일 모델·엔드포인트·온도·토큰 한도·시간 한도를 사용했는가
 - 동일한 독립 게이트를 사후 적용했는가
 - 실패·시간 초과·사용량 미수집을 결과에서 제거하지 않았는가
