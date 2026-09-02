@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "easydep-comparison-manifest/v1",
+  "experimentId": "comparison-smoke-test",
+  "repetitions": 2,
+  "outputRoot": "artifacts/comparison",
+  "requirements": [
+    {
+      "id": "REQ-01",
+      "text": "실행 가능한 애플리케이션 파일을 생성한다.",
+      "verificationGates": ["app-file", "python-check"],
+      "evidenceStages": ["code"]
+    },
+    {
+      "id": "REQ-02",
+      "text": "필수 설정 파일을 생성한다.",
+      "verificationGates": ["config-file"],
+      "evidenceStages": ["code"]
+    }
+  ],
+  "constraints": [],
+  "gates": [
+    {
+      "id": "app-file",
+      "kind": "fileExists",
+      "paths": ["{workspace}/app.py"]
+    },
+    {
+      "id": "config-file",
+      "kind": "fileExists",
+      "paths": ["{workspace}/required-config.json"]
+    },
+    {
+      "id": "python-check",
+      "kind": "command",
+      "command": [
+        "{python}", "-c",
+        "from pathlib import Path; raise SystemExit(0 if Path('app.py').is_file() else 1)"
+      ],
+      "cwd": "{workspace}",
+      "timeoutSeconds": 30
+    }
+  ],
+  "arms": [
+    {
+      "id": "easydep-demo",
+      "framework": "EasyDep",
+      "frameworkVersion": "smoke-test",
+      "command": [
+        "{python}", "-X", "utf8", "-m", "evaluation.comparison.examples.fake_subject",
+        "--run-dir", "{run_dir}", "--framework", "EasyDep", "--tokens", "100"
+      ]
+    },
+    {
+      "id": "metagpt-demo",
+      "framework": "MetaGPT",
+      "frameworkVersion": "smoke-test",
+      "command": [
+        "{python}", "-X", "utf8", "-m", "evaluation.comparison.examples.fake_subject",
+        "--run-dir", "{run_dir}", "--framework", "MetaGPT", "--tokens", "150"
+      ]
+    }
+  ]
+}

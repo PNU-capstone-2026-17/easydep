@@ -2,11 +2,13 @@
 
 > 갱신일: 2026-08-14  
 > 범위: AWS·Azure·GCP의 Docker-on-VM 개발 지원  
-> 상태: 과거 비교실험 기록. 비교 평가기는 현재 보류했으며 제품 실행 기준으로 사용하지 않는다.
+> 상태: 실험 설계 기록. 공통 실행·비율 평가기는 구현됐으며 실제 비교 결과는 아직 없다.
 
-현재 반복 실행은 `evaluation.easydep.product`가 프론트엔드와 같은 Workspace API를
-호출하는 방식만 유지한다. 아래의 기준선·평가 항목과 결과는 새 평가기를 구현하겠다는
-뜻이 아니라, 당시 실험의 의도와 한계를 보존하는 기록이다.
+EasyDep 제품 실행은 `evaluation.easydep.product`가 프론트엔드와 같은 Workspace API를
+호출한다. 프레임워크 간 반복 실행, 공통 게이트, 토큰 수집과 비율 보고는
+[`evaluation/comparison/README.md`](../evaluation/comparison/README.md)의 독립 비교 도구가
+담당한다. 아래의 과거 결과는 새 도구로 다시 측정한 결과가 아니며, 당시 실험의 의도와
+한계를 보존하는 기록이다.
 
 ## 1. 무엇을 비교하는가
 
