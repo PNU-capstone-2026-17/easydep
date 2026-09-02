@@ -2,6 +2,7 @@
 param(
     [switch]$Stop,
     [switch]$OpenBrowser,
+    [switch]$ProductionLike,
     [switch]$SkipFrontendBuild,
     [switch]$ForceFrontendBuild,
     [switch]$ResetDatabaseSchema,
@@ -9,7 +10,9 @@ param(
     [switch]$ForceToolchainBuild,
     [switch]$ResetDatabase,
     [ValidateRange(1024, 65535)]
-    [int]$Port = 8000,
+    [int]$Port = 8100,
+    [ValidateRange(1024, 65535)]
+    [int]$FrontendPort = 5173,
     [ValidateRange(1024, 65535)]
     [int]$DatabasePort = 33060,
     [string]$DatabaseImage = "mysql:8.4"
@@ -22,12 +25,16 @@ $runRoot = Join-Path $repoRoot ".easydep\dev"
 $pidPath = Join-Path $runRoot "server.json"
 $stdoutPath = Join-Path $runRoot "server.stdout.log"
 $stderrPath = Join-Path $runRoot "server.stderr.log"
+$frontendStdoutPath = Join-Path $runRoot "frontend.stdout.log"
+$frontendStderrPath = Join-Path $runRoot "frontend.stderr.log"
 $frontendBuildHashPath = Join-Path $runRoot "frontend-build.sha256"
+$frontendDependenciesHashPath = Join-Path $runRoot "frontend-dependencies.sha256"
 $requirementsHashPath = Join-Path $runRoot "requirements.sha256"
 $toolchainHashPath = Join-Path $runRoot "toolchain-build.sha256"
 $environmentPath = Join-Path $repoRoot ".env"
 $environmentExamplePath = Join-Path $repoRoot ".env.example"
 $toolchainImage = "easydep-toolchain:local"
+$testingToolchainImage = "easydep-testing-toolchain:local"
 $memberGradleCacheVolume = "easydep-member-gradle-cache"
 $databaseContainer = "easydep-mysql-dev"
 $databaseVolume = "easydep-mysql-dev-data"
@@ -107,6 +114,13 @@ function Get-FrontendBuildHash {
     }
 }
 
+function Get-FrontendDependenciesHash {
+    $files = @("package.json", "package-lock.json") | ForEach-Object {
+        Get-Item -LiteralPath (Join-Path $frontendRoot $_)
+    }
+    return Get-CombinedFileHash -Files $files
+}
+
 function Read-ServerRecord {
     if (-not (Test-Path -LiteralPath $pidPath)) {
         return $null
@@ -143,41 +157,82 @@ function Get-OwnedServerProcesses {
         return @()
     }
     $owned = @()
-    if ($record.listenerPid -and $record.listenerStartedAt) {
-        $listener = Get-MatchingProcess `
-            -ProcessId ([int]$record.listenerPid) `
-            -StartedAt ([string]$record.listenerStartedAt)
-        if ($null -ne $listener) {
-            $owned += $listener
-        }
-    }
-    elseif ($record.port) {
-        # Backward-compatible recovery for records written before listenerPid existed.
-        $expected = [datetime]::Parse([string]$record.startedAt).ToUniversalTime()
-        $connections = Get-NetTCPConnection -State Listen -LocalPort ([int]$record.port) -ErrorAction SilentlyContinue
-        foreach ($connection in $connections) {
-            $candidate = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue
-            if ($null -ne $candidate -and [math]::Abs(($candidate.StartTime.ToUniversalTime() - $expected).TotalSeconds) -le 30) {
-                $owned += $candidate
-            }
-        }
-    }
     $launcher = Get-MatchingProcess `
         -ProcessId ([int]$record.pid) `
         -StartedAt ([string]$record.startedAt)
     if ($null -ne $launcher) {
         $owned += $launcher
     }
+    if ($record.frontendPid -and $record.frontendStartedAt) {
+        $frontend = Get-MatchingProcess `
+            -ProcessId ([int]$record.frontendPid) `
+            -StartedAt ([string]$record.frontendStartedAt)
+        if ($null -ne $frontend) {
+            $owned += $frontend
+        }
+    }
     return @($owned | Sort-Object Id -Unique)
 }
 
 function Stop-OwnedServer {
     foreach ($process in @(Get-OwnedServerProcesses)) {
-        Write-Host "[EasyDep] Stopping backend process $($process.Id)."
-        Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+        Write-Host "[EasyDep] Stopping owned development process $($process.Id)."
+        # 개발 모드의 Uvicorn과 Vite는 변경 감시용 자식 프로세스를 만든다.
+        # 부모만 종료하면 자식이 포트를 계속 점유할 수 있으므로 Windows가 제공하는
+        # taskkill의 트리 종료를 사용한다. 위에서 PID와 시작 시각을 함께 확인했기
+        # 때문에 같은 PID를 나중에 사용한 다른 프로그램을 잘못 종료하지 않는다.
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & taskkill.exe /PID $process.Id /T /F *> $null
+        $taskkillExitCode = $LASTEXITCODE
+        $ErrorActionPreference = $previousPreference
+        if ($taskkillExitCode -ne 0) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
         $process.WaitForExit(15000) | Out-Null
     }
     Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue
+}
+
+function Assert-LoopbackPortAvailable {
+    param(
+        [Parameter(Mandatory = $true)][int]$CandidatePort,
+        [Parameter(Mandatory = $true)][string]$Purpose
+    )
+    # 포트를 공유하도록 완화하면 이전 개발 서버가 남아 있어도 새 서버가 겹쳐 뜰 수 있다.
+    # 배타적으로 bind해, 실제 서버가 안전하게 단독 사용 가능한 포트인지 확인한다.
+    $deadline = [datetime]::UtcNow.AddSeconds(3)
+    $lastError = "unknown socket error"
+    do {
+        $socket = [System.Net.Sockets.Socket]::new(
+            [System.Net.Sockets.AddressFamily]::InterNetwork,
+            [System.Net.Sockets.SocketType]::Stream,
+            [System.Net.Sockets.ProtocolType]::Tcp
+        )
+        try {
+            $socket.ExclusiveAddressUse = $true
+            $socket.Bind(
+                [System.Net.IPEndPoint]::new(
+                    [System.Net.IPAddress]::Loopback,
+                    $CandidatePort
+                )
+            )
+            $socket.Listen(1)
+            return
+        }
+        catch {
+            $lastError = $_.Exception.Message
+        }
+        finally {
+            $socket.Dispose()
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([datetime]::UtcNow -lt $deadline)
+    throw (
+        "$Purpose port $CandidatePort cannot be opened on 127.0.0.1. " +
+        "It may be in use or reserved by Windows. Choose another port. " +
+        "Original error: $lastError"
+    )
 }
 
 function Invoke-Docker {
@@ -224,10 +279,26 @@ function Initialize-PythonEnvironment {
     }
 
     $requirementsPath = Join-Path $repoRoot "requirements.txt"
-    $requirementsHash = (Get-FileHash -LiteralPath $requirementsPath -Algorithm SHA256).Hash
+    $requirementsFiles = @(
+        Get-Item -LiteralPath $requirementsPath
+        Get-Item -LiteralPath (Join-Path $repoRoot "requirements-common.txt")
+        Get-Item -LiteralPath (Join-Path $repoRoot "requirements-bert.txt")
+    )
+    $requirementsHash = Get-CombinedFileHash -Files $requirementsFiles
+    $uv = Join-Path $repoRoot ".venv\Scripts\uv.exe"
+    if (-not (Test-Path -LiteralPath $uv)) {
+        Write-Host "[EasyDep] Installing the uv package installer."
+        & $python -X utf8 -m pip install --disable-pip-version-check "uv==0.8.22"
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $uv)) {
+            throw "uv installation failed."
+        }
+    }
     if ($createdEnvironment -or $requirementsHash -ne (Read-HashRecord -Path $requirementsHashPath)) {
-        Write-Host "[EasyDep] Installing Python packages from requirements.txt."
-        & $python -X utf8 -m pip install -r $requirementsPath
+        Write-Host "[EasyDep] Synchronizing Python packages with uv."
+        & $uv pip install `
+            --python $python `
+            --index-strategy unsafe-best-match `
+            --requirements $requirementsPath
         if ($LASTEXITCODE -ne 0) {
             throw "Python package installation failed."
         }
@@ -238,21 +309,78 @@ function Initialize-PythonEnvironment {
     }
 }
 
+function Initialize-FrontendEnvironment {
+    $node = Get-Command "node" -ErrorAction SilentlyContinue
+    $npm = Get-Command "npm.cmd" -ErrorAction SilentlyContinue
+    if ($null -eq $npm) {
+        $npm = Get-Command "npm" -ErrorAction SilentlyContinue
+    }
+    if ($null -eq $node -or $null -eq $npm) {
+        throw (
+            "Fast frontend development requires Node.js 22 and npm. " +
+            "Install Node.js or use -ProductionLike."
+        )
+    }
+    & $node.Source -e "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fast frontend development requires Node.js 22 or newer."
+    }
+
+    $dependencyHash = Get-FrontendDependenciesHash
+    $viteEntry = Join-Path $frontendRoot "node_modules\vite\bin\vite.js"
+    if (
+        -not (Test-Path -LiteralPath $viteEntry) -or
+        $dependencyHash -ne (Read-HashRecord -Path $frontendDependenciesHashPath)
+    ) {
+        Write-Host "[EasyDep] Installing frontend packages from package-lock.json."
+        & $npm.Source ci --no-audit --no-fund --prefix $frontendRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "Frontend package installation failed."
+        }
+        Set-Content `
+            -LiteralPath $frontendDependenciesHashPath `
+            -Value $dependencyHash `
+            -Encoding UTF8
+    }
+    else {
+        Write-Host "[EasyDep] Frontend dependencies are unchanged."
+    }
+}
+
 function Initialize-Toolchain {
     $toolchainHash = Get-ToolchainBuildHash
     $imageExists = Test-DockerImage -Image $toolchainImage
+    $testingImageExists = Test-DockerImage -Image $testingToolchainImage
     $recordedHash = Read-HashRecord -Path $toolchainHashPath
-    if ($ForceToolchainBuild -or -not $imageExists -or $toolchainHash -ne $recordedHash) {
-        Write-Host "[EasyDep] Building the shared implementation and testing toolchain."
-        Invoke-Docker -Arguments @("build", "-t", $toolchainImage, $repoRoot)
+    if (
+        $ForceToolchainBuild -or
+        -not $imageExists -or
+        -not $testingImageExists -or
+        $toolchainHash -ne $recordedHash
+    ) {
+        Write-Host "[EasyDep] Building the implementation toolchain."
+        Invoke-Docker -Arguments @(
+            "build", "--target", "toolchain", "-t", $toolchainImage, $repoRoot
+        )
         Invoke-Docker -Arguments @(
             "run", "--rm", "--entrypoint", "sh", $toolchainImage,
             "./scripts/bootstrap-implementation-tools.sh"
         )
+        Write-Host "[EasyDep] Building the browser E2E extension for Testing."
+        Invoke-Docker -Arguments @(
+            "build", "--target", "testing-toolchain", "-t", $testingToolchainImage, $repoRoot
+        )
+        Invoke-Docker -Arguments @(
+            "run", "--rm", "--entrypoint", "sh", $testingToolchainImage,
+            "./scripts/bootstrap-testing-tools.sh"
+        )
         Set-Content -LiteralPath $toolchainHashPath -Value $toolchainHash -Encoding UTF8
     }
     else {
-        Write-Host "[EasyDep] Toolchain inputs are unchanged; reusing $toolchainImage."
+        Write-Host (
+            "[EasyDep] Toolchain inputs are unchanged; reusing " +
+            "$toolchainImage and $testingToolchainImage."
+        )
     }
 }
 
@@ -282,26 +410,17 @@ function Repair-ToolchainCacheOwnership {
     )
 }
 
-function Export-FrontendBuild {
-    # 프론트엔드는 공용 이미지의 고정 Node/npm으로 이미 빌드됐다. 임시 컨테이너에서 결과만
-    # 복사하므로 팀원 PC에 Node.js나 node_modules를 따로 만들 필요가 없다.
-    $containerId = (& docker create $toolchainImage).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($containerId)) {
-        throw "Could not create a temporary container for the frontend build."
+function Build-Frontend {
+    $npm = Get-Command "npm.cmd" -ErrorAction SilentlyContinue
+    if ($null -eq $npm) {
+        $npm = Get-Command "npm" -ErrorAction SilentlyContinue
     }
-    $buildRoot = Join-Path $frontendRoot "build"
-    try {
-        if (Test-Path -LiteralPath $buildRoot) {
-            Remove-Item -LiteralPath $buildRoot -Recurse -Force
-        }
-        New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
-        & docker cp "$containerId`:/app/frontend/build/." $buildRoot
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not copy the frontend build from $toolchainImage."
-        }
+    if ($null -eq $npm) {
+        throw "Production-like frontend build requires Node.js 22 and npm."
     }
-    finally {
-        & docker rm -f $containerId *> $null
+    & $npm.Source run build --prefix $frontendRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Frontend build failed."
     }
 }
 
@@ -321,36 +440,25 @@ function Wait-ForDatabase {
 }
 
 function Get-ToolchainBuildHash {
-    # Dockerfile이 실제로 복사하는 입력만 추적한다. 거대한 BERT 조각은 manifest가 각 조각의
-    # SHA-256을 이미 기록하므로 시작할 때마다 400MB를 다시 읽지 않는다. 새 이미지 빌드에서는
-    # model_assets.py가 조각 자체를 검증하므로 손상된 파일이 이미지에 들어갈 수 없다.
+    # 로컬 runner target이 실제로 사용하는 파일만 추적한다. API·프런트엔드·BERT 변경은
+    # host 개발 서버에 즉시 반영되며 도구 이미지를 다시 만들 이유가 없다.
     $files = @()
     foreach ($relativePath in @(
         ".dockerignore",
         "Dockerfile",
-        "requirements.txt",
-        "server.py",
+        "requirements-common.txt",
+        "requirements-browser-testing.txt",
         "scripts/bootstrap-implementation-tools.sh",
-        "materials/BERT_FR_NFR_Classifier/bert_model/config.json",
-        "materials/BERT_FR_NFR_Classifier/bert_model/tokenizer.json",
-        "materials/BERT_FR_NFR_Classifier/bert_model/tokenizer_config.json",
-        "materials/BERT_FR_NFR_Classifier/bert_model/training_args.bin",
-        "materials/BERT_FR_NFR_Classifier/bert_model/weights/manifest.json"
+        "scripts/bootstrap-testing-tools.sh",
+        "toolchain/opentofu/providers.tf",
+        "toolchain/opentofu/tofurc"
     )) {
         $path = Join-Path $repoRoot $relativePath
         if (Test-Path -LiteralPath $path) {
             $files += Get-Item -LiteralPath $path
         }
     }
-    $appRoot = Join-Path $repoRoot "app"
-    $files += Get-ChildItem -LiteralPath $appRoot -Recurse -File | Where-Object {
-        $relativePath = $_.FullName.Substring($appRoot.Length).Replace("\", "/")
-        $relativePath -notmatch "/(__pycache__|\.cache|output|tests)/" -and
-            $_.Extension -notin @(".pyc", ".pyo")
-    }
-    return Get-CombinedFileHash -Files $files -ExtraRecords @(
-        "frontend=$(Get-FrontendBuildHash)"
-    )
+    return Get-CombinedFileHash -Files $files
 }
 
 function Read-DotEnvValue {
@@ -424,6 +532,20 @@ if ($LASTEXITCODE -ne 0) {
     throw "Docker Desktop is not running."
 }
 
+if (-not $ProductionLike -and ($SkipFrontendBuild -or $ForceFrontendBuild)) {
+    throw "-SkipFrontendBuild and -ForceFrontendBuild require -ProductionLike."
+}
+if (-not $ProductionLike -and $Port -eq $FrontendPort) {
+    throw "Backend and frontend development ports must be different."
+}
+
+# 예약된 8000번처럼 열 수 없는 포트는 이미지와 BERT를 준비하기 전에 바로 알려준다.
+Stop-OwnedServer
+Assert-LoopbackPortAvailable -CandidatePort $Port -Purpose "Backend"
+if (-not $ProductionLike) {
+    Assert-LoopbackPortAvailable -CandidatePort $FrontendPort -Purpose "Frontend"
+}
+
 if ($ResetDatabase) {
     # 개발 DB 구조가 현재 코드와 맞지 않을 때만 사용한다. 컨테이너와 그 전용 volume을
     # 함께 지우므로, 기존 앱과 checkpoint도 모두 삭제된다는 사실을 출력해 둔다.
@@ -450,39 +572,52 @@ $configuredToolchainImage = Read-DotEnvValue -Path $environmentPath -Name "EASYD
 if (-not [string]::IsNullOrWhiteSpace($configuredToolchainImage)) {
     $toolchainImage = $configuredToolchainImage
 }
+$configuredTestingToolchainImage = Read-DotEnvValue -Path $environmentPath -Name "EASYDEP_TESTING_TOOLCHAIN_IMAGE"
+if (-not [string]::IsNullOrWhiteSpace($configuredTestingToolchainImage)) {
+    $testingToolchainImage = $configuredTestingToolchainImage
+}
 
 if ($SkipBootstrap) {
-    Write-Host "[EasyDep] Skipping Python and toolchain bootstrap by explicit request."
+    Write-Host "[EasyDep] Skipping dependency and toolchain bootstrap by explicit request."
     if (-not (Test-DockerImage -Image $toolchainImage)) {
         throw "-SkipBootstrap requires the existing Docker image: $toolchainImage"
+    }
+    if (-not (Test-DockerImage -Image $testingToolchainImage)) {
+        throw "-SkipBootstrap requires the existing Docker image: $testingToolchainImage"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot "node_modules\vite\bin\vite.js"))) {
+        throw "-SkipBootstrap requires existing frontend node_modules."
     }
 }
 else {
     Initialize-PythonEnvironment
+    Initialize-FrontendEnvironment
     Initialize-Toolchain
 }
 Repair-ToolchainCacheOwnership
 
-if ($SkipFrontendBuild) {
-    if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot "build\index.html"))) {
-        throw "-SkipFrontendBuild requires an existing frontend/build/index.html."
-    }
-    Write-Host "[EasyDep] Reusing the frontend build by explicit request."
-}
-else {
-    $buildHash = Get-FrontendBuildHash
-    $builtHash = Read-HashRecord -Path $frontendBuildHashPath
-    $buildIndex = Join-Path $frontendRoot "build\index.html"
-    if (-not $ForceFrontendBuild -and (Test-Path -LiteralPath $buildIndex) -and $buildHash -eq $builtHash) {
-        Write-Host "[EasyDep] Frontend inputs are unchanged; reusing the existing build."
+if ($ProductionLike) {
+    if ($SkipFrontendBuild) {
+        if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot "build\index.html"))) {
+            throw "-SkipFrontendBuild requires an existing frontend/build/index.html."
+        }
+        Write-Host "[EasyDep] Reusing the frontend build by explicit request."
     }
     else {
-        Write-Host "[EasyDep] Exporting the SvelteKit build from $toolchainImage."
-        Export-FrontendBuild
-        if (-not (Test-Path -LiteralPath $buildIndex)) {
-            throw "The toolchain image did not contain frontend/build/index.html."
+        $buildHash = Get-FrontendBuildHash
+        $builtHash = Read-HashRecord -Path $frontendBuildHashPath
+        $buildIndex = Join-Path $frontendRoot "build\index.html"
+        if (-not $ForceFrontendBuild -and (Test-Path -LiteralPath $buildIndex) -and $buildHash -eq $builtHash) {
+            Write-Host "[EasyDep] Frontend inputs are unchanged; reusing the existing build."
         }
-        Set-Content -LiteralPath $frontendBuildHashPath -Value $buildHash -Encoding UTF8
+        else {
+            Write-Host "[EasyDep] Building the production-like SvelteKit frontend."
+            Build-Frontend
+            if (-not (Test-Path -LiteralPath $buildIndex)) {
+                throw "Frontend build did not produce frontend/build/index.html."
+            }
+            Set-Content -LiteralPath $frontendBuildHashPath -Value $buildHash -Encoding UTF8
+        }
     }
 }
 
@@ -535,7 +670,6 @@ if (-not (Test-Path -LiteralPath $python)) {
     throw ".venv is missing. Create it and install requirements.txt first."
 }
 
-Stop-OwnedServer
 $env:DB_HOST = "127.0.0.1"
 $env:DB_PORT = [string]$DatabasePort
 $env:DB_USER = "root"
@@ -544,21 +678,30 @@ $env:DB_NAME = "easydep"
 $env:DB_SCHEMA_RESET_ON_START = if ($ResetDatabaseSchema) { "true" } else { "false" }
 
 Write-Host "[EasyDep] Starting the FastAPI backend. Logs: $runRoot"
+$backendArguments = @(
+    "-X", "utf8", "-m", "uvicorn", "server:app",
+    "--host", "127.0.0.1", "--port", [string]$Port
+)
+if (-not $ProductionLike) {
+    $backendArguments += "--reload"
+}
 $server = Start-Process `
     -FilePath $python `
-    -ArgumentList @("-X", "utf8", "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", [string]$Port) `
+    -ArgumentList $backendArguments `
     -WorkingDirectory $repoRoot `
     -WindowStyle Hidden `
     -RedirectStandardOutput $stdoutPath `
     -RedirectStandardError $stderrPath `
     -PassThru
 
-@{
+$serverRecord = @{
     pid = $server.Id
     startedAt = $server.StartTime.ToUniversalTime().ToString("O")
     repoRoot = $repoRoot
     port = $Port
-} | ConvertTo-Json | Set-Content -LiteralPath $pidPath -Encoding UTF8
+    mode = if ($ProductionLike) { "production-like" } else { "development" }
+}
+$serverRecord | ConvertTo-Json | Set-Content -LiteralPath $pidPath -Encoding UTF8
 
 $healthUri = "http://127.0.0.1:$Port/api/health"
 $deadline = [datetime]::UtcNow.AddSeconds(600)
@@ -566,7 +709,7 @@ do {
     $server.Refresh()
     if ($server.HasExited) {
         $tail = if (Test-Path -LiteralPath $stderrPath) {
-            (Get-Content -LiteralPath $stderrPath -Tail 80) -join [Environment]::NewLine
+            (Get-Content -LiteralPath $stderrPath -Tail 80 -Encoding UTF8) -join [Environment]::NewLine
         } else {
             "No backend error log is available."
         }
@@ -584,28 +727,64 @@ if (-not (Test-HttpEndpoint $healthUri)) {
     throw "The backend was not ready within 600 seconds. See $stderrPath"
 }
 
-$listenerConnection = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop |
-    Where-Object { $_.LocalAddress -eq "127.0.0.1" } |
-    Select-Object -First 1
-if ($null -eq $listenerConnection) {
-    Stop-OwnedServer
-    throw "The backend is healthy but its listener process could not be identified."
+$workspaceUri = "http://127.0.0.1:$Port/"
+if (-not $ProductionLike) {
+    $node = Get-Command "node" -ErrorAction Stop
+    $viteEntry = Join-Path $frontendRoot "node_modules\vite\bin\vite.js"
+    $env:EASYDEP_API_ORIGIN = "http://127.0.0.1:$Port"
+    Write-Host "[EasyDep] Starting the Vite frontend with hot reload."
+    $frontend = Start-Process `
+        -FilePath $node.Source `
+        -ArgumentList @(
+            $viteEntry, "--host", "127.0.0.1", "--port", [string]$FrontendPort, "--strictPort"
+        ) `
+        -WorkingDirectory $frontendRoot `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $frontendStdoutPath `
+        -RedirectStandardError $frontendStderrPath `
+        -PassThru
+    $serverRecord["frontendPid"] = $frontend.Id
+    $serverRecord["frontendStartedAt"] = $frontend.StartTime.ToUniversalTime().ToString("O")
+    $serverRecord["frontendPort"] = $FrontendPort
+    $serverRecord | ConvertTo-Json | Set-Content -LiteralPath $pidPath -Encoding UTF8
+
+    $frontendUri = "http://127.0.0.1:$FrontendPort/"
+    $frontendDeadline = [datetime]::UtcNow.AddSeconds(120)
+    do {
+        $frontend.Refresh()
+        if ($frontend.HasExited) {
+            $tail = if (Test-Path -LiteralPath $frontendStderrPath) {
+                (Get-Content -LiteralPath $frontendStderrPath -Tail 80 -Encoding UTF8) -join [Environment]::NewLine
+            } else {
+                "No frontend error log is available."
+            }
+            Stop-OwnedServer
+            throw "The frontend exited before becoming ready.`n$tail"
+        }
+        if (Test-HttpEndpoint $frontendUri) {
+            break
+        }
+        Start-Sleep -Seconds 1
+    } while ([datetime]::UtcNow -lt $frontendDeadline)
+    if (-not (Test-HttpEndpoint $frontendUri)) {
+        Stop-OwnedServer
+        throw "The frontend was not ready within 120 seconds. See $frontendStderrPath"
+    }
+    $workspaceUri = $frontendUri
 }
-$listenerProcess = Get-Process -Id $listenerConnection.OwningProcess -ErrorAction Stop
-@{
-    pid = $server.Id
-    startedAt = $server.StartTime.ToUniversalTime().ToString("O")
-    listenerPid = $listenerProcess.Id
-    listenerStartedAt = $listenerProcess.StartTime.ToUniversalTime().ToString("O")
-    repoRoot = $repoRoot
-    port = $Port
-} | ConvertTo-Json | Set-Content -LiteralPath $pidPath -Encoding UTF8
 
 $checks = @(
-    "http://127.0.0.1:$Port/",
-    "http://127.0.0.1:$Port/workspace/",
     "http://127.0.0.1:$Port/api/workspace/apps?limit=1"
 )
+if ($ProductionLike) {
+    $checks += @(
+        "http://127.0.0.1:$Port/",
+        "http://127.0.0.1:$Port/workspace/"
+    )
+}
+else {
+    $checks += $workspaceUri
+}
 foreach ($uri in $checks) {
     if (-not (Test-HttpEndpoint $uri)) {
         Stop-OwnedServer
@@ -613,11 +792,11 @@ foreach ($uri in $checks) {
     }
 }
 
-$workspaceUri = "http://127.0.0.1:$Port/"
 Write-Host ""
 Write-Host "[EasyDep] Ready" -ForegroundColor Green
 Write-Host "  UI:   $workspaceUri"
 Write-Host "  API:  http://127.0.0.1:$Port/docs"
+Write-Host "  Mode: $(if ($ProductionLike) { 'production-like' } else { 'development (hot reload)' })"
 Write-Host "  Logs: $runRoot"
 Write-Host "  Stop: powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -Stop"
 

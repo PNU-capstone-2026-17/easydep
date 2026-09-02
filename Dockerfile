@@ -1,6 +1,8 @@
 FROM plantuml/plantuml@sha256:47870c1f76cfb3747bc7090bfe83013a4e3105b5a0bb1515e2baf5d3e2b3ee9d AS plantuml-runtime
+FROM ghcr.io/astral-sh/uv:0.8.22 AS uv-runtime
 
 FROM eclipse-temurin:21-jdk-jammy AS jdk
+FROM eclipse-temurin:21-jre-jammy AS jre-runtime
 
 # API, 구현 작업, Testing 작업이 모두 같은 도구 버전을 사용한다. 각 도구를 실행할 때마다
 # 별도 이미지를 받지 않고 이 단계에서 실행 파일만 공용 이미지로 복사한다.
@@ -45,7 +47,31 @@ COPY materials/BERT_FR_NFR_Classifier/bert_model ./materials/BERT_FR_NFR_Classif
 COPY app/requirements/model_assets.py ./app/requirements/model_assets.py
 RUN python app/requirements/model_assets.py --dest /opt/bert_model
 
-FROM python:3.13-slim-bookworm
+FROM python:3.13-slim-bookworm AS python-common-dependencies
+
+# API와 runner가 함께 import하는 Python 패키지는 이 단계에서 한 번 설치한다. BERT와
+# 브라우저는 사용하는 대상에만 추가해 구현 툴체인이 큰 실행 파일을 떠안지 않게 한다.
+COPY --from=uv-runtime /uv /usr/local/bin/uv
+COPY requirements-common.txt /tmp/easydep-requirements-common.txt
+ENV UV_LINK_MODE=copy
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system \
+      --requirements /tmp/easydep-requirements-common.txt
+
+# 요구사항 분류기가 필요한 runtime만 BERT Python 패키지를 가진다. 공통 layer 위에
+# 추가하므로 runtime과 toolchain이 나뉘어도 나머지 패키지는 Docker가 한 번만 저장한다.
+FROM python-common-dependencies AS python-runtime-dependencies
+COPY requirements-bert.txt /tmp/easydep-requirements-bert.txt
+# PyPI와 PyTorch CPU 저장소가 함께 선언돼 있다. uv의 기본 first-index 정책을 쓰면
+# PyTorch 저장소에 우연히 있는 일반 패키지만 볼 수 있어 두 공식 저장소를 함께 탐색한다.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --index-strategy unsafe-best-match \
+      --requirements /tmp/easydep-requirements-bert.txt
+
+
+# 구현과 Testing이 짧게 실행하는 고정 Linux 환경이다. API, 프런트엔드, BERT 모델은
+# host 개발 서버나 runtime image가 담당하므로 이 대상에는 넣지 않는다.
+FROM python-common-dependencies AS toolchain
 
 COPY --from=jdk /opt/java/openjdk /opt/java/openjdk
 COPY --from=gradle-runtime /opt/gradle /opt/gradle
@@ -61,7 +87,6 @@ COPY --from=powershell-runtime /opt/microsoft/powershell /opt/microsoft/powershe
 ENV JAVA_HOME=/opt/java/openjdk
 ENV PATH="${JAVA_HOME}/bin:/opt/gradle/bin:${PATH}"
 ENV GRADLE_USER_HOME=/app/.gradle-cache
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 ENV POWERSHELL_TELEMETRY_OPTOUT=1
 ENV TF_CLI_CONFIG_FILE=/opt/easydep/tofurc
 
@@ -69,52 +94,24 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        cloud-init curl graphviz fonts-dejavu-core fonts-noto-cjk ripgrep shellcheck \
+        cloud-init curl libicu72 ripgrep shellcheck \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
     && ln -s /opt/microsoft/powershell/7/pwsh /usr/local/bin/pwsh
 
-# API process와 수명이 같은 PicoWeb renderer를 띄운다. 이전처럼 이미지 요청마다 Docker
-# container를 새로 만들지 않으며, 위의 Java와 Graphviz/font package가 이 JAR를 실행한다.
-COPY --from=plantuml-runtime /opt/plantuml.jar /opt/plantuml/plantuml.jar
-ENV PLANTUML_JAR=/opt/plantuml/plantuml.jar
-
-# OpenAPI Generator도 툴체인 안에서 직접 실행한다. 이전 버전 입력을 재개할 때만 7.14.0을
-# 사용하며, 새 구현은 7.24.0으로 고정한다. 내려받은 파일은 공개 SHA-256으로 확인한다.
+# OpenAPI Generator도 툴체인 안에서 직접 실행한다. 아직 운영 checkpoint가 없으므로
+# 현재 생성 경로가 사용하는 7.24.0만 보관한다.
 RUN mkdir -p /opt/easydep \
     && curl --fail --location --retry 3 \
       https://repo1.maven.org/maven2/org/openapitools/openapi-generator-cli/7.24.0/openapi-generator-cli-7.24.0.jar \
       --output /opt/easydep/openapi-generator-7.24.0.jar \
     && printf '%s  %s\n' \
       4b83ccc6fd43056c8c631cd0195e5100bd0550912502527bab09ac76152dab0c \
-      /opt/easydep/openapi-generator-7.24.0.jar | sha256sum --check --status \
-    && curl --fail --location --retry 3 \
-      https://repo1.maven.org/maven2/org/openapitools/openapi-generator-cli/7.14.0/openapi-generator-cli-7.14.0.jar \
-      --output /opt/easydep/openapi-generator-7.14.0.jar \
-    && printf '%s  %s\n' \
-      e03186835022ca02da4aa95e3967b6a3b6d44c2e5f7606e6d5c22466f519c757 \
-      /opt/easydep/openapi-generator-7.14.0.jar | sha256sum --check --status
+      /opt/easydep/openapi-generator-7.24.0.jar | sha256sum --check --status
 
-# 의존성 먼저 설치해 레이어 캐시 활용 (torch CPU 휠 포함)
-COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
-
-# 동적 테스트는 실행할 때 패키지나 browser를 내려받지 않는다. EasyDep가 생성한 신뢰 가능한
-# 앱만 검사하며 appuser도 읽을 수 있도록 browser를 공용 경로에 한 번 설치한다.
-RUN python -m playwright install --with-deps chromium \
-    && chmod -R a+rX /opt/ms-playwright \
-    && rm -rf /var/lib/apt/lists/*
-
-# 애플리케이션 코드 복사 (server.py가 두 에이전트를 함께 서빙하고, frontend/는 설계 UI)
-COPY app ./app
-COPY server.py ./server.py
-COPY --from=frontend-build /src/build ./frontend/build
 COPY scripts/bootstrap-implementation-tools.sh ./scripts/bootstrap-implementation-tools.sh
 RUN sh ./scripts/bootstrap-implementation-tools.sh
-
-EXPOSE 8000
 
 # 비루트 사용자로 실행
 RUN useradd -m appuser
@@ -122,18 +119,65 @@ RUN mkdir -p /app/.easydep /app/.gradle-cache /app/.cache/opentofu /tmp/easydep-
     && chown -R appuser:appuser \
       /app/.easydep /app/.gradle-cache /app/.cache /tmp/easydep-gradle-cache
 
-# weights stage에서 되살린 BERT 체크포인트(약 +417MB). chown -R 뒤에 복사해야
-# 417MB가 통째로 한 레이어 더 쌓이지 않는다. 읽기 전용이라 root 소유로 둬도 된다.
-# 경량 이미지가 필요하면 아래 두 줄을 지우고 ENABLE_BERT_VERIFY=false 로 배포하면
-# 이미 FR/NFR로 분류된 체크포인트만 실행할 수 있다.
+USER appuser
+ENV LITELLM_LOCAL_MODEL_COST_MAP=true
+ENV OPENHANDS_SUPPRESS_BANNER=1
+CMD ["python", "--version"]
+
+
+# Testing 단계의 거시적인 DOM·JavaScript E2E만 실제 브라우저 엔진을 사용한다. 구현
+# 단계는 이 대상을 사용하지 않으므로 평소 코드 생성과 단위 테스트가 브라우저 용량을
+# 부담하지 않는다. 화면 이미지 비교용 전체 Chromium 대신 headless shell만 설치한다.
+FROM toolchain AS testing-toolchain
+
+USER root
+COPY requirements-browser-testing.txt /tmp/easydep-requirements-browser-testing.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system \
+      --requirements /tmp/easydep-requirements-browser-testing.txt
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN python -m playwright install --with-deps --only-shell chromium \
+    && chmod -R a+rX /opt/ms-playwright \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/bootstrap-testing-tools.sh ./scripts/bootstrap-testing-tools.sh
+RUN sh ./scripts/bootstrap-testing-tools.sh
+USER appuser
+CMD ["python", "--version"]
+
+
+# 원격 배포에서 FastAPI와 프런트엔드를 제공하는 대상이다. 빌드·테스트 도구는 위의
+# toolchain image로 실행하므로 여기에는 PlantUML용 JRE와 Docker CLI만 추가한다.
+FROM python-runtime-dependencies AS runtime
+
+COPY --from=jre-runtime /opt/java/openjdk /opt/java/openjdk
+COPY --from=docker-runtime /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-runtime /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+ENV JAVA_HOME=/opt/java/openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+ENV LITELLM_LOCAL_MODEL_COST_MAP=true
+ENV OPENHANDS_SUPPRESS_BANNER=1
+
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends graphviz fonts-dejavu-core fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=plantuml-runtime /opt/plantuml.jar /opt/plantuml/plantuml.jar
+ENV PLANTUML_JAR=/opt/plantuml/plantuml.jar
+
+COPY app ./app
+COPY server.py ./server.py
+COPY --from=frontend-build /src/build ./frontend/build
+
+EXPOSE 8000
+RUN useradd -m appuser \
+    && mkdir -p /app/.easydep \
+    && chown -R appuser:appuser /app/.easydep
+
+# runtime만 BERT를 소유한다. toolchain preflight에서는 요구하지 않는다.
 ENV BERT_MODEL_CACHE_DIR=/app/.easydep/models/bert_fr_nfr
 COPY --from=weights /opt/bert_model /app/.easydep/models/bert_fr_nfr
 
 USER appuser
-
-# OpenHands가 시작될 때 LiteLLM 가격표를 받느라 네트워크 제한 시간까지 기다리지 않는다.
-# 패키지에 함께 들어 있는 같은 형식의 가격표를 바로 사용하고 작업 로그의 배너도 숨긴다.
-ENV LITELLM_LOCAL_MODEL_COST_MAP=true
-ENV OPENHANDS_SUPPRESS_BANNER=1
 
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]

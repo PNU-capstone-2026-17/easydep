@@ -1,9 +1,9 @@
 """구현 결과를 검사하고 실패 이력에 따라 다시 실행한다.
 
-완료된 구현 작업의 로컬 workspace를 받아 unit test, 정적 검사와 실행 검증을 차례로
-수행한다. 실패 후 다시 실행할 때는 이전 finding과 repair 이력을 넘겨 같은 결과를 반복했는지
-판단한다. 실행 상태의 저장과 서버 재시작 복구는 이 서비스를 호출하는 Workspace가 담당한다.
-Testing은 고정 입력과 이전 체크포인트를 받아 검사 결과만 반환한다.
+완료된 구현 작업의 고정 snapshot을 받아 여러 구성 요소를 함께 실행하는 통합 검사와 E2E를
+수행한다. 단위 테스트, 작은 통합 테스트와 frontend build는 구현 에이전트가 각 작업 안에서
+이미 수행하므로 여기서 반복하지 않는다. Testing은 고정 입력과 이전 체크포인트를 받아 전체
+흐름 검사 결과만 반환한다.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from app.db.models import TYPE_IAC_CODE
 from app.implementation.application.jobs import JobNotFound
 from app.implementation.application.jobs import worker as implementation_worker
 from app.metrics import langsmith as langsmith_metrics
-from app.testing.runtime.adapter import TestingAdapter
 from app.testing.runtime.verification import run_verification_graph
 from app.testing.schemas.testing_input import TestingInput
 from app.testing.utils.artifact_source import (
@@ -33,11 +32,14 @@ TestingProgress = Callable[[dict[str, Any]], None]
 def _finding_keys(report: dict[str, Any]) -> tuple[str, ...]:
     """형태가 다른 테스트 보고서를 비교 가능한 finding key 목록으로 정리한다."""
     findings: list[str] = []
-    unit_passed = report.get("unitPassed")
-    if unit_passed is None:
-        unit_passed = (report.get("unitTests") or {}).get("passed", report.get("passed"))
-    if not bool(unit_passed):
-        findings.append("testing.unit-tests")
+    # 이전 결과를 읽을 때만 남아 있을 수 있는 항목이다. 새 Testing 실행은 구현 단계가
+    # 이미 통과시킨 단위 테스트와 frontend build를 다시 실행하거나 판정하지 않는다.
+    if "unitPassed" in report or "unitTests" in report:
+        unit_passed = report.get("unitPassed")
+        if unit_passed is None:
+            unit_passed = (report.get("unitTests") or {}).get("passed")
+        if not bool(unit_passed):
+            findings.append("testing.unit-tests")
     frontend = report.get("frontendBuild") or {}
     if frontend and frontend.get("status") not in {"passed", "not_applicable"}:
         findings.append("testing.frontend-build")
@@ -95,7 +97,6 @@ def _run_test(
     run_id: str,
     testing_input: TestingInput,
     *,
-    resume_node: str | None = None,
     repair_history: dict[str, Any] | None = None,
     previous_findings: tuple[str, ...] = (),
     partial_result: dict[str, Any] | None = None,
@@ -103,9 +104,8 @@ def _run_test(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """고정된 구현 snapshot으로 검사를 실행하고 결과와 수리 이력을 반환한다.
 
-    서버가 ``verification``에서 중단된 작업을 복구하면 이미 통과한 애플리케이션 테스트
-    보고서를 재사용한다. 복원한 파일의 digest 검사는 다시 수행하므로, 저장 이후 파일이
-    바뀐 작업을 잘못 이어서 실행하지 않는다.
+    복원한 파일의 digest를 확인한 뒤 정적 검사, 실행 통합 검사와 E2E를 수행한다. 구현
+    단계에서 끝난 단위 테스트와 작은 통합 테스트는 이 서비스의 입력으로 믿고 반복하지 않는다.
     """
     ledger = RepairLedger.model_validate(repair_history or {})
     partial_result = dict(partial_result or {})
@@ -114,9 +114,8 @@ def _run_test(
     def execute_snapshot() -> tuple[dict[str, Any], dict[str, Any]]:
         """복원한 한 snapshot 안에서 모든 검사를 끝낸다."""
 
-        execution_result = partial_result
-        # 구현 작업이 고정한 파일 묶음을 새 임시 폴더에 한 번만 복원한다. 단위·정적·IaC·
-        # 동적 검사는 아래 context가 끝날 때까지 이 폴더를 함께 사용한다.
+        # 구현 작업이 고정한 파일 묶음을 새 임시 폴더에 한 번만 복원한다. 정적·IaC·동적
+        # 검사는 아래 context가 끝날 때까지 이 폴더를 함께 사용한다.
         with (
             materialized_testing_application(testing_input) as run_root,
             langsmith_metrics.trace_metadata(
@@ -126,29 +125,17 @@ def _run_test(
                 }
             ),
         ):
-            saved_application_report = execution_result.get("applicationReport")
-            if resume_node == "verification" and isinstance(saved_application_report, dict):
-                report = dict(saved_application_report)
-            else:
-                if progress is not None:
-                    progress({"current_node": "application_tests", "result": execution_result})
-                report = TestingAdapter().run(implementation_result={"run_root": str(run_root)})
-                unit_status = (report.get("unitTests") or {}).get("status")
-                unit_passed = (
-                    bool(report.get("passed")) if unit_status is None else unit_status == "passed"
+            if progress is not None:
+                progress(
+                    {
+                        "current_node": "verification",
+                        "result": (
+                            {"preservedCandidateCode": preserved_test_code}
+                            if preserved_test_code
+                            else {}
+                        ),
+                    }
                 )
-                report["unitPassed"] = unit_passed
-                execution_result = {
-                    "applicationReport": report,
-                    **(
-                        {"preservedCandidateCode": preserved_test_code}
-                        if preserved_test_code
-                        else {}
-                    ),
-                }
-                if progress is not None:
-                    progress({"current_node": "verification", "result": execution_result})
-            static_passed = bool(report.get("passed"))
 
             verification = run_verification_graph(
                 run_id=run_id,
@@ -156,7 +143,7 @@ def _run_test(
                 application_dir=str(run_root / "application"),
                 repair_history=ledger.model_dump(mode="json"),
                 implementation_job_id=testing_input.implementation_job_id,
-                run_dynamic=static_passed,
+                run_dynamic=True,
                 testing_input=testing_input.model_dump(mode="json"),
                 iac_expected=TYPE_IAC_CODE in testing_input.artifact_version_ids,
                 # DEPLOYMENT_FILE에는 Dockerfile도 들어간다. 실제 package 필요 여부는
@@ -164,34 +151,16 @@ def _run_test(
                 deployment_package_expected=None,
                 fixed_test_code=preserved_test_code or None,
             )
-            report["verification"] = verification
-            application_gate = {
-                "gateStatus": (
-                    "PASS"
-                    if static_passed
-                    else "INCONCLUSIVE"
-                    if any(
-                        str(item.get("defectClass") or "") == "ENVIRONMENT_DEFECT"
-                        for item in report.get("diagnostics") or []
-                        if isinstance(item, dict)
-                    )
-                    else "FAIL"
-                )
+            aggregate = aggregate_gate_report({"verification": verification})
+            report = {
+                "status": "completed",
+                "verification": verification,
+                "passed": aggregate["passed"],
+                "gateStatus": aggregate["status"],
+                "gateCounts": aggregate["counts"],
+                "diagnostics": list(verification["diagnostics"]),
+                "testingInput": testing_input.model_dump(mode="json"),
             }
-            aggregate = aggregate_gate_report(
-                {
-                    "applicationTests": application_gate,
-                    "verification": verification,
-                }
-            )
-            report["passed"] = aggregate["passed"]
-            report["gateStatus"] = aggregate["status"]
-            report["gateCounts"] = aggregate["counts"]
-            report["diagnostics"] = [
-                *(report.get("diagnostics") or []),
-                *verification["diagnostics"],
-            ]
-            report["testingInput"] = testing_input.model_dump(mode="json")
         findings = _finding_keys(report)
         dynamic = (verification.get("reports") or {}).get("dynamicFunctional") or {}
         candidate_digest = str(dynamic.get("candidateDigest") or stable_digest(report))
@@ -322,7 +291,6 @@ def run_testing(
     repair_history: dict[str, Any] = RepairLedger().model_dump(mode="json")
     previous_findings: tuple[str, ...] = ()
     partial_result: dict[str, Any] = {}
-    resume_node: str | None = None
 
     if checkpoint is not None:
         # 재시작 뒤 최신 DB 값을 다시 조합하지 않는다. command가 시작할 때 저장한 입력이
@@ -335,10 +303,6 @@ def run_testing(
         repair_history = dict(checkpoint.get("repair_history") or repair_history)
         previous_findings = tuple(checkpoint.get("previous_findings") or ())
         partial_result = dict(checkpoint.get("result") or {})
-        if checkpoint.get("current_node") == "verification" and isinstance(
-            partial_result.get("applicationReport"), dict
-        ):
-            resume_node = "verification"
     else:
         try:
             implementation = implementation_worker.get_testing_input(implementation_job_id)
@@ -417,7 +381,6 @@ def run_testing(
     report, completed_history = _run_test(
         run_id,
         testing_input,
-        resume_node=resume_node,
         repair_history=repair_history,
         previous_findings=previous_findings,
         partial_result=partial_result,

@@ -7,8 +7,9 @@
 
 | 스크립트 | 용도 |
 |---|---|
-| `run-easydep.ps1` | Python 환경, 공용 툴체인, 프론트엔드, 개발 MySQL과 FastAPI를 한 번에 준비·실행 |
-| `bootstrap-implementation-tools.sh` | 공용 이미지 빌드 중 구현 도구 설치 상태 확인 |
+| `run-easydep.ps1` | Python·프론트엔드 환경, 구현/Testing 툴체인, 개발 MySQL과 서버를 한 번에 준비·실행 |
+| `bootstrap-implementation-tools.sh` | 구현 이미지의 컴파일·단위 테스트·IaC 검사 도구 확인 |
+| `bootstrap-testing-tools.sh` | Testing 이미지의 Playwright headless shell 추가 확인 |
 | `deploy.ps1` | 검증된 배포 산출물 적용 흐름 |
 | `provision.ps1` | 인프라 사전 준비 작업 |
 | `teardown.ps1` | 이 스크립트가 만든 배포 자원 정리 |

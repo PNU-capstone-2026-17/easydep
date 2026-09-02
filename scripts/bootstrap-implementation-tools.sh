@@ -4,7 +4,7 @@ set -eu
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export GRADLE_USER_HOME="$repository_root/.easydep/gradle-cache"
 
-for command in node npm java gradle tofu trivy cloud-init shellcheck pwsh playwright pytest; do
+for command in node npm java gradle tofu trivy cloud-init shellcheck pwsh pytest; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "Required command is not installed: $command" >&2
     exit 1
@@ -25,6 +25,5 @@ docker compose version
 cloud-init --version
 shellcheck --version
 pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
-playwright --version
 pytest --version
 echo "EasyDep implementation tools are ready."

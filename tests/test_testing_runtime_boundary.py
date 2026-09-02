@@ -11,7 +11,7 @@ from app.testing.runtime.container_runner import (
     configured_runner_image,
     runner_command,
 )
-from app.testing.utils.test_runner import configured_toolchain_image
+from app.testing.utils.test_runner import DEFAULT_TOOLCHAIN_IMAGE, configured_toolchain_image
 
 
 def test_testing_image_selection_uses_env_then_settings_without_remote_default(monkeypatch):
@@ -23,7 +23,9 @@ def test_testing_image_selection_uses_env_then_settings_without_remote_default(m
     assert configured_runner_image({}) == "settings:image"
     assert configured_runner_image({"EASYDEP_TOOLCHAIN_IMAGE": "env:image"}) == "env:image"
     assert configured_toolchain_image({"EASYDEP_TESTING_TOOLCHAIN_IMAGE": "testing:image"}) == "testing:image"
+    assert configured_toolchain_image({}) == "easydep-testing-toolchain:local"
     assert DEFAULT_RUNNER_IMAGE == "easydep-toolchain:local"
+    assert DEFAULT_TOOLCHAIN_IMAGE == "easydep-testing-toolchain:local"
 
 
 def test_testing_runner_uses_its_own_container_entrypoint(tmp_path: Path):

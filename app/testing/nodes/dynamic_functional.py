@@ -19,7 +19,9 @@ from app.testing.utils.test_runner import run_dynamic_test
 from app.validation import RepairLedger, stable_digest
 
 SYSTEM_PROMPT = """You are an expert QA automation engineer.
-Write one small Python pytest script using synchronous Playwright and/or httpx.
+Write one small Python pytest script. Use httpx for API flows and synchronous
+Playwright only when an end-user DOM, JavaScript, event, or routing flow must be
+exercised in a browser engine. Do not use screenshots or visual pixel assertions.
 The target application is available at TARGET_URL. Only test the supplied
 requirement candidates and fixed OpenAPI operations. Every test must contain a
 real assertion; never use pass as an assertion or silently skip a candidate.

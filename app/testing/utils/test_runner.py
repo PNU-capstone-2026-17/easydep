@@ -10,20 +10,21 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from app.testing.runtime.container_runner import (
-    DEFAULT_RUNNER_IMAGE,
-    configured_runner_image,
-)
 from app.testing.runtime.process import run_process_tree
 
 TOOLCHAIN_IMAGE_ENV = "EASYDEP_TESTING_TOOLCHAIN_IMAGE"
-DEFAULT_TOOLCHAIN_IMAGE = DEFAULT_RUNNER_IMAGE
+DEFAULT_TOOLCHAIN_IMAGE = "easydep-testing-toolchain:local"
 
 
 def configured_toolchain_image(environment: dict[str, str] | None = None) -> str:
     source = os.environ if environment is None else environment
     testing_image = str(source.get(TOOLCHAIN_IMAGE_ENV) or "").strip()
-    return testing_image or configured_runner_image(environment)
+    if testing_image:
+        return testing_image
+    # 명시적으로 기존 단일 이미지를 지정한 환경은 그대로 지원한다. 기본 개발 환경만
+    # 브라우저가 분리된 Testing 전용 이미지를 선택한다.
+    configured_shared = str(source.get("EASYDEP_TOOLCHAIN_IMAGE") or "").strip()
+    return configured_shared or DEFAULT_TOOLCHAIN_IMAGE
 
 
 def _network_name(target_url: str) -> str:

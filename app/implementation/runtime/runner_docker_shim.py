@@ -17,9 +17,6 @@ OPENAPI_JARS = {
     "openapitools/openapi-generator-cli:v7.24.0": PurePosixPath(
         "/opt/easydep/openapi-generator-7.24.0.jar"
     ),
-    "openapitools/openapi-generator-cli:v7.14.0": PurePosixPath(
-        "/opt/easydep/openapi-generator-7.14.0.jar"
-    ),
 }
 GRADLE_IMAGES = {"gradle:8.14.2-jdk21"}
 

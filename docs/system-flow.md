@@ -722,13 +722,15 @@ class TestingInput(BaseModel):
 ### 6.2 실제 검사 순서
 
 1. 지정된 산출물 버전들을 임시 폴더에 한 번 복원한다.
-2. `TestingAdapter`가 생성 프로젝트의 build 도구로 compile과 unit test를 실행한다.
-3. 같은 복원 폴더에서 배포 파일과 IaC 정적 검사를 최대 2개 병렬로 실행한다.
-4. 생성 애플리케이션을 컨테이너로 실행한다. 호출자가 `target_url`을 주었다면 기존 앱을 쓴다.
-5. 요구사항 산출물을 근거로 동적 기능 테스트를 만들고 업무 API를 호출한다.
-6. 동적 NFR 노드를 실행한다. 현재 구현은 부하·스트레스 검사를 하지 않고 `SKIPPED` 보고서를
-   반환하는 placeholder이다.
-7. 모든 결과를 하나의 testing report로 합친다.
+2. 같은 복원 폴더에서 배포 파일과 IaC 정적 검사를 최대 2개 병렬로 실행한다.
+3. 생성 애플리케이션을 컨테이너로 실행한다. 호출자가 `target_url`을 주었다면 기존 앱을 쓴다.
+4. 요구사항과 고정 OpenAPI를 근거로 전체 흐름 테스트를 만들고 업무 API를 호출한다.
+5. 사용자 DOM·JavaScript·event·routing 확인이 필요한 흐름만 Playwright headless shell에서
+   실행한다. 화면 screenshot이나 픽셀 비교는 하지 않는다.
+6. 모든 결과를 하나의 testing report로 합친다.
+
+compile, 단위 테스트, 작은 통합 테스트와 frontend build는 구현 에이전트가 각 코드 작업 직후
+실행하고 같은 대화에서 수리한다. Testing 단계는 이 검사를 반복하지 않는다.
 
 ```python
 class TestingState(TypedDict):
@@ -745,9 +747,8 @@ class TestingState(TypedDict):
     iac_report: dict | None
 ```
 
-현재 전체 성공 판정은 unit test 성공과 동적 기능 검사 성공을 필수로 본다. 배포·IaC 정적
-문제는 diagnostics에 남지만 그 자체만으로 전체 `passed=false`가 되지는 않는다. 앱 실행에
-실패하면 동적 검사를 할 수 없으므로 전체 실패이다.
+현재 전체 성공 판정은 배포 정적 검사와 동적 기능 검사를 필수로 보며, IaC 산출물이 있는
+애플리케이션은 IaC 검사도 필수다. 앱 실행에 실패하면 동적 검사를 할 수 없으므로 전체 실패다.
 
 ### 6.3 테스트 수리
 
@@ -763,8 +764,7 @@ class TestingState(TypedDict):
 
 별도 Testing 작업 registry나 테이블은 두지 않는다. Workspace가 `TestingInput`, 현재 검사와
 부분 결과를 현재 `workspace_commands.payload.testing_checkpoint`에 저장한다. 서버가 재시작되면
-같은 command가 체크포인트를 읽어 애플리케이션 검사를 다시 실행하거나, 이미 끝난 경우
-verification부터 이어 간다.
+같은 command가 체크포인트를 읽어 고정 입력과 수리 이력을 유지한 채 전체 흐름 검사를 재개한다.
 
 ## 7. 자동 수리의 실제 동작
 

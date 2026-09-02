@@ -68,13 +68,13 @@ def test_run_testing_freezes_input_before_running(monkeypatch) -> None:
     assert checkpoints[-1]["current_node"] == "verification"
 
 
-def test_checkpoint_reuses_saved_input_and_application_report(monkeypatch) -> None:
+def test_checkpoint_reuses_saved_input_without_reloading_implementation(monkeypatch) -> None:
     fixed_input = _input("implementation-1")
     checkpoint = {
         "implementation_job_id": "implementation-1",
         "testing_input": fixed_input.model_dump(mode="json"),
         "current_node": "verification",
-        "result": {"applicationReport": {"passed": True}},
+        "result": {"preservedCandidateCode": "def test_saved():\n    assert True\n"},
         "repair_history": {},
         "previous_findings": [],
     }
@@ -86,7 +86,6 @@ def test_checkpoint_reuses_saved_input_and_application_report(monkeypatch) -> No
 
     def run(_run_id, received_input, **kwargs):
         assert received_input == fixed_input
-        assert kwargs["resume_node"] == "verification"
         assert kwargs["partial_result"] == checkpoint["result"]
         return {"passed": True}, {"status": "COMPLETED"}
 

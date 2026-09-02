@@ -13,11 +13,14 @@ use-case, OpenAPI, 최종 배포 bundle의 version/digest를 고정한다. bundl
 ```text
 고정된 TestingInput
   → 산출물 전체를 한 번 복원
-  → backend unit test / frontend production build
   → deployment·IaC·deployment package 정적 gate
-  → 고정 OpenAPI로 좁힌 dynamic test candidate 생성·검증
+  → 실행된 앱을 대상으로 통합·E2E candidate 생성·검증
   → 실행된 테스트만 requirement coverage에 기록
 ```
+
+backend 단위 테스트, 작은 통합 테스트와 frontend build는 Implementation이 코드를 작성하는
+작업 안에서 실행하고 즉시 수리한다. Testing은 이를 반복하지 않고 여러 구성 요소를 함께 띄워야
+확인할 수 있는 API 흐름과 사용자 DOM·JavaScript 흐름에 집중한다.
 
 정적·동적 단계는 동일한 복원 폴더를 사용한다. `TestingInput`, `current_node`와 완료된 report는
 현재 `workspace_commands.payload`에 함께 기록한다. 서버가 재시작되면 Workspace가 같은 command를
@@ -75,9 +78,11 @@ coverage는 pytest JSON report에서 실제로 수집·실행된 테스트의 re
 
 ## Runtime 격리
 
-Dynamic runner는 `EASYDEP_TESTING_TOOLCHAIN_IMAGE`로 지정한 고정 toolchain image를
-사용한다. image에는 pytest, pytest-json-report, httpx, Playwright와 정적 검사 도구가
-미리 들어 있어 실행 중 `pip install`을 하지 않는다.
+Dynamic runner는 `EASYDEP_TESTING_TOOLCHAIN_IMAGE`로 지정한 고정
+`easydep-testing-toolchain` 이미지를 사용한다. 기본 구현 이미지와 layer를 공유하되 이
+이미지에만 Playwright와 Chromium headless shell이 들어 있다. API 흐름은 httpx로 검사하고,
+실제 DOM·JavaScript·event·routing이 필요한 E2E만 Playwright를 사용한다. screenshot이나
+픽셀 비교는 수행하지 않으며 실행 중 `pip install`도 하지 않는다.
 
 복원한 애플리케이션은 `/easydep-app:ro`로, 결과만 별도 임시 폴더에 `rw`로 mount한다.
 실행마다 고유 Docker network를 만들고 `--read-only`, CPU·memory·process 수 제한과
