@@ -170,6 +170,15 @@ def test_manifest_rejects_unknown_gate_reference(tmp_path: Path) -> None:
         load_manifest(_write_json(tmp_path / "manifest.json", data))
 
 
+def test_manifest_rejects_common_artifact_profile_without_protocol(
+    tmp_path: Path,
+) -> None:
+    data = _manifest_data()
+    data["arms"][0]["promptProfile"] = "commonArtifacts"  # type: ignore[index]
+    with pytest.raises(ValueError, match="promptProtocol이 없습니다"):
+        load_manifest(_write_json(tmp_path / "manifest.json", data))
+
+
 def test_usage_parsers_keep_provider_token_counts() -> None:
     chatdev = parse_chatdev_usage(
         "prompt_tokens: 10, completion_tokens: 4, total_tokens: 14\n"
@@ -249,17 +258,39 @@ def test_full_runner_and_reports(tmp_path: Path) -> None:
         repository / "evaluation/comparison/examples/smoke-manifest.json"
     )
     report = run_experiment(manifest, output_root=tmp_path)
-    assert len(report["runs"]) == 4
+    assert len(report["runs"]) == 6
     assert all(
         run["implementedRequirements"]["display"] == "1/2 (50.0%)"
         for run in report["runs"]
     )
+    assert all(
+        run["commonArtifactCoverage"]["display"] == "9/9 (100.0%)"
+        for run in report["runs"]
+    )
+    prompts_by_arm = {
+        run["armId"]: Path(run["prompt"]["armPromptPath"]).read_text(
+            encoding="utf-8"
+        )
+        for run in report["runs"]
+        if run["repetition"] == 1
+    }
+    assert "Required deliverables:" not in prompts_by_arm["easydep-demo"]
+    assert "Required deliverables:" in prompts_by_arm["metagpt-demo"]
+    assert prompts_by_arm["metagpt-demo"] == prompts_by_arm["chatdev-demo"]
+    baseline_hashes = {
+        run["prompt"]["armPromptSha256"]
+        for run in report["runs"]
+        if run["armId"] in {"metagpt-demo", "chatdev-demo"}
+    }
+    assert len(baseline_hashes) == 1
     json_path, markdown_path = write_reports(
         report, tmp_path / manifest.experiment_id
     )
     assert json_path.is_file()
     markdown = markdown_path.read_text(encoding="utf-8")
     assert "1/2 (50.0%)" in markdown
+    assert "9/9 (100.0%)" in markdown
+    assert "commonArtifacts" in markdown
     assert "총 토큰 중앙값 (전체/성공)" in markdown
 
 

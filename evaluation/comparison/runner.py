@@ -14,6 +14,7 @@ from typing import Any
 from .evaluate import evaluate_run
 from .models import ArmSpec, Manifest, SubjectResult, TokenUsage, load_subject_result
 from .oracle import run_http_oracle
+from .prompts import materialize_prompt_files
 
 
 def _render(value: str, variables: dict[str, Any]) -> str:
@@ -84,6 +85,7 @@ def _subject_failure(arm: ArmSpec, run_directory: Path, status: str) -> SubjectR
         workspace=run_directory,
         usage=TokenUsage(),
         requirement_evidence={},
+        artifact_evidence={},
         metadata={},
     )
 
@@ -164,6 +166,9 @@ def run_experiment(manifest: Manifest, *, output_root: Path | None = None) -> di
         for repetition in range(1, manifest.repetitions + 1):
             run_directory = root / manifest.experiment_id / arm.id / f"run-{repetition:03d}"
             run_directory.mkdir(parents=True, exist_ok=True)
+            prompt_metadata = materialize_prompt_files(
+                manifest, arm, run_directory
+            )
             variables = {
                 "repository": repository,
                 "manifest_dir": manifest.directory,
@@ -172,6 +177,12 @@ def run_experiment(manifest: Manifest, *, output_root: Path | None = None) -> di
                 "experiment_id": manifest.experiment_id,
                 "repetition": repetition,
                 "python": sys.executable,
+                "task_input_file": prompt_metadata["taskInputPath"],
+                "artifact_contract_file": prompt_metadata["artifactContractPath"],
+                "prompt_file": prompt_metadata["armPromptPath"],
+                "prompt_metadata_file": prompt_metadata["metadataPath"],
+                "prompt_profile": prompt_metadata["promptProfile"],
+                "prompt_sha256": prompt_metadata["armPromptSha256"],
             }
             command = [_render(item, variables) for item in arm.command]
             cwd = Path(_render(arm.cwd, variables))
@@ -232,9 +243,28 @@ def run_experiment(manifest: Manifest, *, output_root: Path | None = None) -> di
                 "runDirectory": str(run_directory),
                 "command": command,
                 "execution": {key: value for key, value in execution.items() if key not in {"stdout", "stderr"}},
+                "prompt": prompt_metadata,
                 "resultLoadError": load_error,
                 **evaluation,
             }
             (run_directory / "evaluation.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
             runs.append(run)
-    return {"schemaVersion": "easydep-comparison-report/v1", "experimentId": manifest.experiment_id, "repetitions": manifest.repetitions, "runs": runs}
+    prompt_protocol = None
+    if manifest.prompt_protocol is not None:
+        prompt_protocol = {
+            "artifactContract": [
+                {
+                    "id": artifact.id,
+                    "title": artifact.title,
+                    "description": artifact.description,
+                }
+                for artifact in manifest.prompt_protocol.artifact_contract
+            ]
+        }
+    return {
+        "schemaVersion": "easydep-comparison-report/v1",
+        "experimentId": manifest.experiment_id,
+        "repetitions": manifest.repetitions,
+        "promptProtocol": prompt_protocol,
+        "runs": runs,
+    }

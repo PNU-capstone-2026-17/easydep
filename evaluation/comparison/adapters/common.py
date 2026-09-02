@@ -16,6 +16,15 @@ def load_evidence(path: Path | None) -> dict[str, Any]:
     return value
 
 
+def load_artifact_evidence(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("artifact evidence JSON은 산출물 ID를 키로 갖는 객체여야 합니다.")
+    return value
+
+
 def write_subject_result(
     output: Path,
     *,
@@ -30,6 +39,7 @@ def write_subject_result(
     missing_usage_calls: int,
     source: str,
     evidence: dict[str, Any],
+    artifact_evidence: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +60,7 @@ def write_subject_result(
                     "source": source,
                 },
                 "requirementEvidence": evidence,
+                "artifactEvidence": artifact_evidence or {},
                 "metadata": metadata or {},
             },
             ensure_ascii=False,

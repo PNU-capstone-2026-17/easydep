@@ -3,6 +3,21 @@
   "experimentId": "comparison-smoke-test",
   "repetitions": 2,
   "outputRoot": "artifacts/comparison",
+  "promptProtocol": {
+    "taskPreamble": "Develop a complete, executable application for the following requirements.",
+    "artifactContractPreamble": "Produce the same semantic deliverables for framework-neutral comparison. Native diagram notation is allowed.",
+    "artifactContract": [
+      {"id": "requirements", "title": "Requirements specification", "description": "Traceable functional and non-functional requirements."},
+      {"id": "classDiagram", "title": "Class diagram", "description": "Classes, responsibilities, attributes, operations, and relationships."},
+      {"id": "sequenceDiagram", "title": "Sequence diagrams", "description": "Major use-case interactions with participants and messages."},
+      {"id": "apiSpecification", "title": "API specification", "description": "Operations, requests, responses, and data schemas."},
+      {"id": "dataModel", "title": "Data model", "description": "Persistent entities, keys, fields, and relationships."},
+      {"id": "sourceCode", "title": "Source code", "description": "Executable application implementation."},
+      {"id": "tests", "title": "Tests", "description": "Automated unit or integration tests."},
+      {"id": "container", "title": "Container configuration", "description": "A reproducible container build definition."},
+      {"id": "infrastructure", "title": "Infrastructure as code", "description": "Terraform deployment configuration satisfying the cloud constraints."}
+    ]
+  },
   "requirements": [
     {
       "id": "REQ-01",
@@ -45,18 +60,33 @@
       "id": "easydep-demo",
       "framework": "EasyDep",
       "frameworkVersion": "smoke-test",
+      "promptProfile": "requirementsOnly",
       "command": [
         "{python}", "-X", "utf8", "-m", "evaluation.comparison.examples.fake_subject",
-        "--run-dir", "{run_dir}", "--framework", "EasyDep", "--tokens", "100"
+        "--run-dir", "{run_dir}", "--framework", "EasyDep", "--tokens", "100",
+        "--prompt-file", "{prompt_file}"
       ]
     },
     {
       "id": "metagpt-demo",
       "framework": "MetaGPT",
       "frameworkVersion": "smoke-test",
+      "promptProfile": "commonArtifacts",
       "command": [
         "{python}", "-X", "utf8", "-m", "evaluation.comparison.examples.fake_subject",
-        "--run-dir", "{run_dir}", "--framework", "MetaGPT", "--tokens", "150"
+        "--run-dir", "{run_dir}", "--framework", "MetaGPT", "--tokens", "150",
+        "--prompt-file", "{prompt_file}"
+      ]
+    },
+    {
+      "id": "chatdev-demo",
+      "framework": "ChatDev",
+      "frameworkVersion": "smoke-test",
+      "promptProfile": "commonArtifacts",
+      "command": [
+        "{python}", "-X", "utf8", "-m", "evaluation.comparison.examples.fake_subject",
+        "--run-dir", "{run_dir}", "--framework", "ChatDev", "--tokens", "160",
+        "--prompt-file", "{prompt_file}"
       ]
     }
   ]

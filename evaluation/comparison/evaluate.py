@@ -91,6 +91,33 @@ def _traceability(manifest: Manifest, subject: SubjectResult) -> dict[str, Any]:
     }
 
 
+def _artifact_coverage(manifest: Manifest, subject: SubjectResult) -> dict[str, Any]:
+    protocol = manifest.prompt_protocol
+    if protocol is None:
+        return {
+            **fraction(0, 0),
+            "presentIds": [],
+            "missingIds": [],
+            "missingPaths": {},
+        }
+    present: list[str] = []
+    missing: list[str] = []
+    missing_paths: dict[str, list[str]] = {}
+    for artifact in protocol.artifact_contract:
+        paths = subject.artifact_evidence.get(artifact.id, ())
+        if any(_evidence_exists(subject.workspace, path) for path in paths):
+            present.append(artifact.id)
+        else:
+            missing.append(artifact.id)
+            missing_paths[artifact.id] = list(paths)
+    return {
+        **fraction(len(present), len(protocol.artifact_contract)),
+        "presentIds": present,
+        "missingIds": missing,
+        "missingPaths": missing_paths,
+    }
+
+
 def evaluate_run(
     manifest: Manifest,
     subject: SubjectResult,
@@ -117,6 +144,7 @@ def evaluate_run(
             "failedIds": [gate.id for gate in required_gates if gates_by_id.get(gate.id, {}).get("status") != "passed"],
         },
         "traceability": _traceability(manifest, subject),
+        "commonArtifactCoverage": _artifact_coverage(manifest, subject),
         "usage": subject.usage.as_dict(),
         "tokensPerImplementedRequirement": tokens_per_implemented,
         "wallSeconds": round(wall_seconds, 3),

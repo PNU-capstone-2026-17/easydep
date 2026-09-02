@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .common import load_evidence, write_subject_result
+from .common import load_artifact_evidence, load_evidence, write_subject_result
 
 PROMPT = re.compile(r"\bprompt_tokens\s*[:=]\s*(\d+)", re.IGNORECASE)
 COMPLETION = re.compile(r"\bcompletion_tokens\s*[:=]\s*(\d+)", re.IGNORECASE)
@@ -63,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--framework-version", default="0.8.2")
     parser.add_argument("--status", choices=["completed", "failed", "timeout"], default="completed")
     parser.add_argument("--evidence", type=Path)
+    parser.add_argument("--artifact-evidence", type=Path)
     args = parser.parse_args(argv)
     if args.cost_manager_json:
         raw = json.loads(args.cost_manager_json.read_text(encoding="utf-8"))
@@ -84,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         missing_usage_calls=int(usage["missingUsageCalls"]),
         source=str(usage["source"]),
         evidence=load_evidence(args.evidence),
+        artifact_evidence=load_artifact_evidence(args.artifact_evidence),
     )
     return 0
 
