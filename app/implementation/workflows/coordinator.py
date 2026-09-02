@@ -589,7 +589,7 @@ def _execute_task_batch(
             task = tasks[next_index]
             next_index += 1
             mark_started(task)
-            active[pool.submit(run, task)] = task
+            active[pool.submit(langsmith_metrics.bind_context(run), task)] = task
 
         with ThreadPoolExecutor(
             max_workers=workers, thread_name_prefix="easydep-implementation-task"

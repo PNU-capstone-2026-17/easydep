@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from langgraph.graph import END, START, StateGraph
 
+from app.metrics import langsmith as langsmith_metrics
 from app.testing.nodes.dynamic_functional import dynamic_functional_node
 from app.testing.nodes.iac_verification import iac_verification_node
 from app.testing.nodes.static_verification import static_verification_node
@@ -18,8 +19,12 @@ def parallel_static_verification_node(state: TestingState) -> dict:
         max_workers=2,
         thread_name_prefix="easydep-static-verification",
     ) as pool:
-        deployment_future = pool.submit(static_verification_node, state)
-        iac_future = pool.submit(iac_verification_node, state)
+        deployment_future = pool.submit(
+            langsmith_metrics.bind_context(static_verification_node), state
+        )
+        iac_future = pool.submit(
+            langsmith_metrics.bind_context(iac_verification_node), state
+        )
         deployment = deployment_future.result()
         iac = iac_future.result()
 

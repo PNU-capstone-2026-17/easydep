@@ -674,14 +674,10 @@ def test_stopped_job_retries_the_same_approved_checkpoint(
     assert retried["checkpoint_retryable"] is False
     assert persisted["checkpoint_retry_count"] == 1
     assert "error" not in persisted
-    assert submitted == [
-        (
-            implementation_worker._run,
-            job_id,
-            str(job_dir / "approval.json"),
-            True,
-        )
-    ]
+    assert len(submitted) == 1
+    submitted_call, *submitted_args = submitted[0]
+    assert getattr(submitted_call, "__wrapped__", None) == implementation_worker._run
+    assert submitted_args == [job_id, str(job_dir / "approval.json"), True]
 
 
 def test_failed_job_without_approved_checkpoint_requires_a_fresh_run(

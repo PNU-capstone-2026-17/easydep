@@ -9,12 +9,16 @@
   변수를 사용한다.
 - `langsmith.trace_scope`와 `trace_metadata`는 trace 이름, 비민감 metadata 및
   provider가 보고한 token 수를 받는다.
+- `app_id`가 있는 metadata에는 같은 값의 LangSmith `thread_id`를 자동으로 보강하고,
+  `bind_context`는 이 metadata와 부모 trace를 worker thread에 전달한다.
 
 ## 출력
 
 - stall probe는 호출자가 완료를 알릴 `threading.Event`와 시작·종료 JSON event를 낸다.
 - tracing 경계는 선택적 `TraceRun`을 제공하며, 비활성 또는 초기화 실패 시 같은
   context-manager 계약의 no-op 결과를 낸다.
+- Workspace의 여러 명령 trace는 `thread_id = app_id`로 묶여 요구사항 입력 한 건의
+  Requirements·Design·Implementation·Testing 이력을 이룬다.
 
 ## 부수효과
 

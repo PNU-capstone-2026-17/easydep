@@ -303,7 +303,11 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
     }
     with _testing_jobs_lock:
         _testing_jobs[job_id] = record
-    threading.Thread(target=_run_test, args=(job_id, testing_input), daemon=True).start()
+    threading.Thread(
+        target=langsmith_metrics.bind_context(_run_test),
+        args=(job_id, testing_input),
+        daemon=True,
+    ).start()
     return record
 
 
