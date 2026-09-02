@@ -69,7 +69,6 @@ flowchart LR
     F --> P[PlantUML PicoWeb JVM]
     F --> D[Docker Desktop]
     D --> IT[easydep-toolchain]
-    D --> TT[easydep-testing-toolchain]
 ```
 
 | 주소·포트 | 기본값 | 설명 |
@@ -298,21 +297,20 @@ PlantUML의 SVG와 PNG를 즉시 렌더링해 메모리 cache에 넣는다. 화�
 
 ## 8. Docker 이미지와 도구
 
-Dockerfile은 용도에 따라 세 대상을 만든다.
+Dockerfile은 실행 위치에 따라 두 최종 대상을 만든다.
 
 | 대상 | 포함하는 주요 도구 | 사용 위치 |
 |---|---|---|
-| `toolchain` | JDK 21, Gradle, Node/npm, OpenAPI Generator, OpenTofu, AWS·Azure·GCP provider mirror, Trivy, cloud-init, ShellCheck, PowerShell, Docker CLI | 구현 compile·test와 배포 파일 검사 |
-| `testing-toolchain` | `toolchain` 전체 + Playwright + Chromium headless shell | 거시적 DOM·JavaScript E2E |
+| `toolchain` | JDK 21, Gradle, Node/npm, OpenAPI Generator, OpenTofu, AWS·Azure·GCP provider mirror, Trivy, cloud-init, ShellCheck, PowerShell, Docker CLI, Playwright, Chromium headless shell | 구현 compile·test, 배포 파일 검사와 거시적 DOM·JavaScript E2E |
 | `runtime` | FastAPI Python 환경, BERT, PlantUML JRE/JAR, 빌드된 SvelteKit UI | 배포용 EasyDep 서버 |
 
-BERT와 Playwright를 공용 구현 이미지에서 분리했기 때문에 일반 코드 생성이 큰 모델이나
-브라우저 파일을 매번 부담하지 않는다. `toolchain`과 `testing-toolchain`은 Docker layer를
-공유한다. Python 패키지는 `uv`, 프론트엔드 패키지는 변경된 경우에만 `npm ci`로 준비한다.
+BERT와 PlantUML은 API runtime에만 둔다. 구현과 Testing은 하나의 툴체인을 공유하되,
+구현 작업은 Playwright를 실행하지 않는다. Python 패키지는 `uv`, 프론트엔드 패키지는
+변경된 경우에만 `npm ci`로 준비한다.
 
 Playwright는 단순 HTML 문자열 검사 때문에 넣은 것이 아니다. 브라우저에서 실제로 실행되는
-JavaScript, event, client routing과 DOM 변경을 확인하려면 브라우저 엔진이 필요하므로 Testing
-이미지에만 유지한다.
+JavaScript, event, client routing과 DOM 변경을 확인하려면 브라우저 엔진이 필요하므로 공용
+툴체인에 유지하고 Testing 진입점에서만 실행한다.
 
 ## 9. 클라우드와 배포 범위
 

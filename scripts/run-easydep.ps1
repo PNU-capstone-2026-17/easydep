@@ -34,7 +34,6 @@ $toolchainHashPath = Join-Path $runRoot "toolchain-build.sha256"
 $environmentPath = Join-Path $repoRoot ".env"
 $environmentExamplePath = Join-Path $repoRoot ".env.example"
 $toolchainImage = "easydep-toolchain:local"
-$testingToolchainImage = "easydep-testing-toolchain:local"
 $memberGradleCacheVolume = "easydep-member-gradle-cache"
 $databaseContainer = "easydep-mysql-dev"
 $databaseVolume = "easydep-mysql-dev-data"
@@ -350,15 +349,13 @@ function Initialize-FrontendEnvironment {
 function Initialize-Toolchain {
     $toolchainHash = Get-ToolchainBuildHash
     $imageExists = Test-DockerImage -Image $toolchainImage
-    $testingImageExists = Test-DockerImage -Image $testingToolchainImage
     $recordedHash = Read-HashRecord -Path $toolchainHashPath
     if (
         $ForceToolchainBuild -or
         -not $imageExists -or
-        -not $testingImageExists -or
         $toolchainHash -ne $recordedHash
     ) {
-        Write-Host "[EasyDep] Building the implementation toolchain."
+        Write-Host "[EasyDep] Building the shared implementation and Testing toolchain."
         Invoke-Docker -Arguments @(
             "build", "--target", "toolchain", "-t", $toolchainImage, $repoRoot
         )
@@ -366,21 +363,14 @@ function Initialize-Toolchain {
             "run", "--rm", "--entrypoint", "sh", $toolchainImage,
             "./scripts/bootstrap-implementation-tools.sh"
         )
-        Write-Host "[EasyDep] Building the browser E2E extension for Testing."
         Invoke-Docker -Arguments @(
-            "build", "--target", "testing-toolchain", "-t", $testingToolchainImage, $repoRoot
-        )
-        Invoke-Docker -Arguments @(
-            "run", "--rm", "--entrypoint", "sh", $testingToolchainImage,
+            "run", "--rm", "--entrypoint", "sh", $toolchainImage,
             "./scripts/bootstrap-testing-tools.sh"
         )
         Set-Content -LiteralPath $toolchainHashPath -Value $toolchainHash -Encoding UTF8
     }
     else {
-        Write-Host (
-            "[EasyDep] Toolchain inputs are unchanged; reusing " +
-            "$toolchainImage and $testingToolchainImage."
-        )
+        Write-Host "[EasyDep] Toolchain inputs are unchanged; reusing $toolchainImage."
     }
 }
 
@@ -572,18 +562,10 @@ $configuredToolchainImage = Read-DotEnvValue -Path $environmentPath -Name "EASYD
 if (-not [string]::IsNullOrWhiteSpace($configuredToolchainImage)) {
     $toolchainImage = $configuredToolchainImage
 }
-$configuredTestingToolchainImage = Read-DotEnvValue -Path $environmentPath -Name "EASYDEP_TESTING_TOOLCHAIN_IMAGE"
-if (-not [string]::IsNullOrWhiteSpace($configuredTestingToolchainImage)) {
-    $testingToolchainImage = $configuredTestingToolchainImage
-}
-
 if ($SkipBootstrap) {
     Write-Host "[EasyDep] Skipping dependency and toolchain bootstrap by explicit request."
     if (-not (Test-DockerImage -Image $toolchainImage)) {
         throw "-SkipBootstrap requires the existing Docker image: $toolchainImage"
-    }
-    if (-not (Test-DockerImage -Image $testingToolchainImage)) {
-        throw "-SkipBootstrap requires the existing Docker image: $testingToolchainImage"
     }
     if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot "node_modules\vite\bin\vite.js"))) {
         throw "-SkipBootstrap requires existing frontend node_modules."

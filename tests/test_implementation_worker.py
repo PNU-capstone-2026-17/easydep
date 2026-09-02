@@ -313,6 +313,30 @@ def test_feedback_target_candidate_is_confirmed_against_the_rtm() -> None:
     ]
 
 
+def test_confirmed_testing_target_does_not_call_the_feedback_selector() -> None:
+    rtm = {
+        "mappings": [
+            {
+                "target_file": "application/src/RegistrationService.java",
+                "sourceRefs": ["api:registerForOffering"],
+            }
+        ]
+    }
+
+    result = resolve_feedback_targets(
+        "The evidence contains requirement_ids but does not request a contract change.",
+        rtm,
+        confirmed_refs=["api:registerForOffering", "api:not-in-the-rtm"],
+        proposal_call=lambda *_args: pytest.fail("confirmed targets must not call the LLM"),
+    )
+
+    assert result == {
+        "source": "confirmed",
+        "confirmedTargetRefs": ["api:registerForOffering"],
+        "relatedFiles": ["application/src/RegistrationService.java"],
+    }
+
+
 def test_feedback_job_restores_frontend_snapshot_under_frontend_directory(
     monkeypatch, tmp_path: Path
 ) -> None:

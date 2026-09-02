@@ -34,6 +34,13 @@ _JSON_TYPES = {
     "localdatetime": "string",
     "instant": "string",
 }
+_WIRE_FORMATS = {
+    "uuid": "uuid",
+    "localdate": "date",
+    "localdatetime": "date-time",
+    "instant": "date-time",
+    "offsetdatetime": "date-time",
+}
 _COMPONENT_SCHEMA_PREFIX = "#/components/schemas/"
 _COLLECTION = re.compile(
     r"(?:java\.util\.)?(?:List|Set|Collection|Iterable|Array)<(.+)>",
@@ -161,6 +168,20 @@ def api_input_type_for_control(type_name: str) -> str:
     return f"{normalized}[]" if is_array else normalized
 
 
+def _api_contract_type_for_control(type_name: str) -> str:
+    """JSON primitive로 줄이기 전에 BCE의 문자열 형식을 보존한다.
+
+    UUID와 날짜는 JSON에서 모두 문자열이지만 아무 문자열이나 받을 수 있는 값은 아니다.
+    내부 API 모델에 이 차이를 남겨야 OpenAPI가 ``format``을 기록하고 Testing도 올바른
+    예시값을 만들 수 있다. 그 밖의 타입 변환은 기존 규칙을 그대로 사용한다.
+    """
+
+    item, is_array = _type_parts(type_name)
+    lowered = item.casefold().removeprefix("java.time.")
+    normalized = _WIRE_FORMATS.get(lowered, api_input_type_for_control(item))
+    return f"{normalized}[]" if is_array else normalized
+
+
 def _canonical_schema_name(value: str) -> str:
     """OpenAPI component ref를 compact proposal의 schema 이름으로 바꾼다.
 
@@ -183,7 +204,7 @@ def response_contract_for_control(return_type: str) -> tuple[str, bool]:
     item, is_array = _type_parts(return_type)
     if not item or item.casefold() == "void":
         return "", False
-    return api_input_type_for_control(item), is_array
+    return _api_contract_type_for_control(item), is_array
 
 
 def normalize_api_spec_model(
@@ -279,7 +300,7 @@ def _materialize_endpoint(
             "fields": [
                 {
                     "name": name,
-                    "type": api_input_type_for_control(type_name),
+                    "type": _api_contract_type_for_control(type_name),
                     "required": True,
                     "description": "",
                 }
@@ -364,7 +385,7 @@ def _domain_schemas(bce_model: BCEModel) -> dict[str, dict[str, Any]]:
             optional = _OPTIONAL.fullmatch(type_name.strip())
             projected.append({
                 "name": name.strip(),
-                "type": api_input_type_for_control(
+                "type": _api_contract_type_for_control(
                     optional.group(1) if optional else type_name
                 ),
                 "required": optional is None,
@@ -402,7 +423,7 @@ def _align_request_types(
     for field in fields:
         name = str(field.get("name") or "").strip()
         if name in expected:
-            field["type"] = api_input_type_for_control(expected[name])
+            field["type"] = _api_contract_type_for_control(expected[name])
 
 
 def _control_arguments(

@@ -72,6 +72,7 @@ def test_reconcile_implementation_command_closes_stale_running_command(
     command = {
         "command_id": "command-1",
         "action": "approve_implementation",
+        "stage": "implementation",
         "status": "RUNNING",
         "payload": {"job_id": "job-1"},
     }
@@ -106,6 +107,7 @@ def test_reconcile_implementation_command_restores_progress_after_restart(
     command = {
         "command_id": "command-1",
         "action": "approve_implementation",
+        "stage": "implementation",
         "status": "RUNNING",
         "payload": {"job_id": "job-1"},
     }
@@ -145,6 +147,33 @@ def test_reconcile_implementation_command_restores_progress_after_restart(
     assert result == command
     assert events[0]["metadata"]["step"] == "phase-backend"
     assert events[0]["metadata"]["progress_status"] == "running"
+
+
+def test_reconcile_does_not_finish_testing_command_with_completed_repair_job(
+    monkeypatch,
+) -> None:
+    """구현 수리가 끝나도 Testing 명령은 남은 기능 검사를 직접 끝내야 한다."""
+    command = {
+        "command_id": "command-1",
+        "action": "retry_implementation",
+        "stage": "testing",
+        "status": "RUNNING",
+        "payload": {"job_id": "repair-job-1"},
+    }
+    monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: pytest.fail("Testing 명령을 구현 작업으로 조회하면 안 된다."),
+    )
+
+    service = WorkspaceService()
+    try:
+        result = service.reconcile_implementation_command("app-1")
+    finally:
+        service.shutdown()
+
+    assert result == command
 
 
 @pytest.mark.parametrize(
@@ -1586,13 +1615,19 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     observed: dict[str, object] = {}
     monkeypatch.setattr(repository, "get_command", lambda _command_id: prior)
     monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda _command_id, **changes: observed.update(changes) or changes,
+    )
+    monkeypatch.setattr(
         artifact_repository,
         "load_state",
         lambda _app_id: {"class_diagram_puml": "A", "api_spec": {"paths": {}}},
     )
 
-    def create_feedback(*args):
+    def create_feedback(*args, **kwargs):
         observed["feedback"] = args[2]
+        observed["confirmed_target_refs"] = kwargs.get("confirmed_target_refs")
         return {"job_id": "implementation-2", "app_id": "app-1"}
 
     monkeypatch.setattr(
@@ -1650,6 +1685,11 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     assert "api:submitRegistration" in str(observed["feedback"])
     assert "RegistrationService.java" in str(observed["feedback"])
     assert '"statusCode": 500' in str(observed["feedback"])
+    assert observed["confirmed_target_refs"] == [
+        "api:submitRegistration",
+        "test:plan-digest:UC1",
+    ]
+    assert observed["payload"]["job_id"] == "implementation-2"
     assert observed["implementation_job_id"] == "implementation-2"
     assert observed["previous_job"] == prior["result"]["job"]
     assert observed["preserve_test"] is True
@@ -1969,3 +2009,100 @@ def test_retry_implementation_resumes_the_failed_job_checkpoint(monkeypatch) -> 
     assert result["job"]["job_id"] == "failed-job"
     assert result["command_id"] == "retry-command"
     assert events[0]["metadata"]["status"] == "CHECKPOINT_RETRY_STARTED"
+
+
+def test_retry_testing_repair_resumes_the_same_plan(monkeypatch) -> None:
+    """Testing 중 끊긴 구현 수리는 같은 job과 기능 계획에서 이어 간다."""
+    previous_job = {
+        "job_id": "testing-run",
+        "app_id": "app-1",
+        "implementation_job_id": "implementation-1",
+        "status": "COMPLETED",
+        "result": {"passed": False},
+    }
+    original_testing = {
+        "command_id": "testing-command",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "status": "AWAITING_INPUT",
+        "payload": {},
+        "result": {
+            "job": previous_job,
+            "blocking_findings": [
+                {"candidate_plan": {"cases": [{"case_id": "UC1"}]}}
+            ],
+        },
+    }
+    failed_repair = {
+        "command_id": "failed-repair",
+        "app_id": "app-1",
+        "action": "delegate_repair",
+        "stage": "testing",
+        "status": "FAILED",
+        "payload": {
+            "action_id": "testing-command",
+            "job_id": "implementation-2",
+        },
+    }
+
+    def get_command(command_id):
+        return {
+            "testing-command": original_testing,
+            "failed-repair": failed_repair,
+        }.get(command_id)
+
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(repository, "get_command", get_command)
+    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {
+            "job_id": "implementation-2",
+            "app_id": "app-1",
+            "status": "COMPLETED",
+        },
+    )
+
+    def run_testing_command(
+        _self,
+        _command,
+        implementation_job_id,
+        *,
+        previous_job=None,
+        preserve_test=False,
+    ):
+        observed["implementation_job_id"] = implementation_job_id
+        observed["previous_job"] = previous_job
+        observed["preserve_test"] = preserve_test
+        return {"job": {"job_id": "retested"}}
+
+    monkeypatch.setattr(WorkspaceService, "_run_testing_command", run_testing_command)
+
+    service = WorkspaceService()
+    try:
+        payload = {
+            "action_id": "failed-repair",
+            "job_id": "implementation-2",
+        }
+        service._validate_action_reference("app-1", "retry_implementation", payload)
+        assert service.infer_stage("app-1", "retry_implementation", payload) == "testing"
+        result = service._dispatch(
+            {
+                "action": "retry_implementation",
+                "app_id": "app-1",
+                "command_id": "retry-command",
+                "stage": "testing",
+                "payload": payload,
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert observed == {
+        "implementation_job_id": "implementation-2",
+        "previous_job": previous_job,
+        "preserve_test": True,
+    }
+    assert result["job"]["job_id"] == "retested"

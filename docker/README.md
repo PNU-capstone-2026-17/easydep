@@ -1,9 +1,9 @@
 # EasyDep 공용 툴체인
 
-루트 `Dockerfile` 하나가 API와 작업 Runner가 함께 사용하는 `easydep-toolchain` 이미지를
-만든다. PlantUML, FR/NFR 분류 모델, JDK 21, Gradle, Node/npm, OpenAPI Generator,
-Trivy와 OpenTofu 버전이 한 이미지에 고정된다. 따라서 각 작업이 도구 이미지를 따로 받지
-않고 로컬 실행 파일을 사용한다.
+루트 `Dockerfile`은 구현과 Testing 작업이 함께 사용하는 `easydep-toolchain` 이미지와
+API 서버용 `runtime` 이미지를 만든다. 툴체인에는 JDK 21, Gradle, Node/npm, OpenAPI
+Generator, Trivy, OpenTofu, Playwright와 Chromium headless shell 버전이 고정된다.
+PlantUML과 FR/NFR 분류 모델은 API runtime에만 둔다.
 
 개발 환경에서는 통합 실행 스크립트가 이미지 존재 여부와 빌드 입력의 SHA-256을 확인하여
 필요할 때만 자동으로 빌드한다.
@@ -12,7 +12,8 @@ Trivy와 OpenTofu 버전이 한 이미지에 고정된다. 따라서 각 작업�
 powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1
 ```
 
-이미지만 직접 만들고 싶을 때에는 `docker build -t easydep-toolchain:local .`을 실행한다.
+툴체인만 직접 만들고 싶을 때에는
+`docker build --target toolchain -t easydep-toolchain:local .`을 실행한다.
 
 같은 이미지를 API 서버로 실행할 수 있고, 구현·Testing 작업은 코드가 Python 진입점을
 바꿔 별도 컨테이너로 실행한다. `.env`의

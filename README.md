@@ -55,8 +55,8 @@ Docker-on-VM 애플리케이션이다.
 
 필수 환경은 Python 3.11 이상, Node.js 22 이상과 Docker Desktop이다. 개발 서버는 호스트에서
 hot reload로 실행하고 MySQL만 Docker 컨테이너로 준비한다. 생성 코드의 컴파일·단위 테스트는
-`easydep-toolchain`, 실제 브라우저 엔진이 필요한 DOM·JavaScript E2E는
-`easydep-testing-toolchain`을 사용한다. 큰 BERT 모델과 PlantUML은 서버 runtime에만 둔다.
+물론 실제 브라우저 엔진이 필요한 DOM·JavaScript E2E도 하나의 `easydep-toolchain`을
+사용한다. 각 작업은 필요한 도구만 실행하며, 큰 BERT 모델과 PlantUML은 서버 runtime에만 둔다.
 
 ### 통합 실행 스크립트
 

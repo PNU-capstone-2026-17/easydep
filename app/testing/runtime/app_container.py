@@ -15,10 +15,13 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
+from app.testing.runtime.container_runner import (
+    GRADLE_CACHE_VOLUME,
+    configured_runner_image,
+)
 from app.testing.runtime.process import run_process_tree
 
-DEFAULT_BUILD_TIMEOUT_SECONDS = 1800
-DEFAULT_START_TIMEOUT_SECONDS = 180
+DEFAULT_START_TIMEOUT_SECONDS = 360
 _EXPOSE = re.compile(r"(?mi)^\s*EXPOSE\s+(?P<port>\d+)")
 _FALLBACK_CONTAINER_PORT = 8080
 _ENVIRONMENT_BUILD_FAILURE_MARKERS = (
@@ -132,14 +135,19 @@ def _wait_until_ready(name: str, url: str, timeout: int) -> None:
             return
         running = _docker(["inspect", "-f", "{{.State.Running}}", name], timeout=30)
         if running.returncode != 0 or "true" not in (running.stdout or "").lower():
+            logs = _container_logs(name)
             raise ApplicationLaunchError(
                 "생성된 애플리케이션이 요청을 받기 전에 종료됐습니다:\n"
-                f"{_log_excerpt(_container_logs(name))}"
+                f"{_log_excerpt(logs)}",
+                defect_class=_build_failure_defect_class(logs),
             )
         time.sleep(2)
     raise ApplicationLaunchError(
         f"생성된 애플리케이션이 {timeout}초 안에 {url}에 응답하지 않았습니다:\n"
-        f"{_log_excerpt(_container_logs(name))}"
+        f"{_log_excerpt(_container_logs(name))}",
+        # 준비 시간 초과만으로 source 결함을 확정할 수 없다. 첫 Gradle 실행이나 Windows
+        # bind mount가 느린 경우 코드를 고쳐도 달라지지 않으므로 환경 문제로 재실행한다.
+        defect_class="ENVIRONMENT_DEFECT",
     )
 
 
@@ -150,34 +158,26 @@ def running_application(
     *,
     launch_id: str | None = None,
     health_path: str = "/healthz",
-    build_timeout_seconds: int = DEFAULT_BUILD_TIMEOUT_SECONDS,
     start_timeout_seconds: int = DEFAULT_START_TIMEOUT_SECONDS,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
-    """이미 복원된 폴더를 build·실행하고 접속 URL을 반환한다."""
+    """공용 툴체인에서 복원된 backend를 실행하고 접속 URL을 반환한다.
+
+    배포용 Dockerfile은 frontend까지 포함한 최종 image를 만드는 산출물이다. API 기능
+    테스트마다 그 image를 다시 만들면 npm 설치와 Gradle dependency 다운로드가 반복된다.
+    구현 단계가 이미 단위·작은 통합 테스트와 frontend build를 통과시켰으므로 여기서는
+    고정 툴체인과 공유 Gradle cache로 Spring Boot backend만 실행한다.
+    """
     context = Path(application_dir)
     container_port = exposed_port(context)
-    tag, name = runtime_identity(app_id, launch_id)
+    _, name = runtime_identity(app_id, launch_id)
     network = runtime_network_name(name)
     host_port = free_port()
-
-    built = _docker(
-        ["build", "-t", tag, "-f", str(context / "Dockerfile"), str(context)],
-        timeout=build_timeout_seconds,
-        cwd=context,
-    )
-    if built.returncode != 0:
-        build_output = (built.stdout or "") + (built.stderr or "")
-        raise ApplicationLaunchError(
-            "생성된 애플리케이션 image를 build하지 못했습니다:\n"
-            + _log_excerpt(build_output),
-            defect_class=_build_failure_defect_class(build_output),
-        )
+    runner_image = configured_runner_image()
 
     # 같은 실행 ID의 이전 비정상 종료가 남겼을 수 있는 container만 정리한다.
     _docker(["rm", "-f", name], timeout=60)
     created_network = _docker(["network", "create", network], timeout=60)
     if created_network.returncode != 0:
-        _docker(["rmi", "-f", tag], timeout=120)
         raise ApplicationLaunchError(
             "Testing용 Docker network를 만들지 못했습니다:\n"
             + (created_network.stderr or created_network.stdout or "")[-2000:],
@@ -191,6 +191,16 @@ def running_application(
             name,
             "--network",
             network,
+            "--label",
+            "easydep.owner=testing-application",
+            "-v",
+            f"{context.resolve()}:/easydep-application:rw",
+            "-v",
+            f"{GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache",
+            "-w",
+            "/easydep-application",
+            "-e",
+            "GRADLE_USER_HOME=/tmp/easydep-gradle-cache",
             # Testing은 아직 CSP의 실제 DB를 provision하지 않는다. 생성 애플리케이션이
             # 외부 DB 주소 때문에 실패하지 않도록 함께 생성된 test profile과 임시 H2를 쓴다.
             "-e",
@@ -211,15 +221,19 @@ def running_application(
             "SPRING_SECURITY_USER_ROLES=USER",
             "-p",
             f"127.0.0.1:{host_port}:{container_port}",
-            tag,
+            "--entrypoint",
+            "gradle",
+            runner_image,
+            "bootRun",
+            "--no-daemon",
+            "--build-cache",
         ],
         timeout=120,
     )
     if started.returncode != 0:
         _docker(["network", "rm", network], timeout=120)
-        _docker(["rmi", "-f", tag], timeout=120)
         raise ApplicationLaunchError(
-            "생성된 애플리케이션 container를 시작하지 못했습니다:\n"
+            "공용 툴체인에서 생성된 애플리케이션을 시작하지 못했습니다:\n"
             + (started.stderr or started.stdout or "")[-2000:],
             defect_class="ENVIRONMENT_DEFECT",
         )
@@ -230,7 +244,7 @@ def running_application(
         _wait_until_ready(name, f"{base_url}{normalized_health}", start_timeout_seconds)
         yield base_url, {
             "source": "application",
-            "image": tag,
+            "image": runner_image,
             "container": name,
             "network": network,
             "containerPort": container_port,
@@ -239,5 +253,4 @@ def running_application(
         }
     finally:
         _docker(["rm", "-f", name], timeout=120)
-        _docker(["rmi", "-f", tag], timeout=300)
         _docker(["network", "rm", network], timeout=120)

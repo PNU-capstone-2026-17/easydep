@@ -318,6 +318,11 @@ class WorkspaceService:
             "FAILED",
         }:
             return command
+        # 같은 ``retry_implementation`` 이름을 Testing의 자동 수리도 사용한다. 이 메서드는
+        # 구현 화면을 새로 열었을 때 끊긴 구현 명령만 맞추는 용도이므로, Testing 명령을
+        # 구현 작업 완료와 동시에 끝내면 안 된다. Testing은 이어서 동적 기능 검사를 해야 한다.
+        if command.get("stage") != "implementation":
+            return command
         if command.get("action") not in {
             "start_implementation",
             "retry_implementation",
@@ -598,9 +603,15 @@ class WorkspaceService:
                 )
             return
         if action == "retry_implementation":
+            testing_repair = (
+                prior.get("action") == "delegate_repair"
+                and prior.get("stage") == "testing"
+                and str((prior.get("payload") or {}).get("job_id") or "")
+                == str(payload.get("job_id") or "")
+            )
             if (
                 prior["status"] not in {"FAILED", "INTERRUPTED"}
-                or prior["stage"] != "implementation"
+                or (prior["stage"] != "implementation" and not testing_repair)
             ):
                 raise ValueError(
                     "Only a failed or interrupted implementation command can be retried "
@@ -621,6 +632,17 @@ class WorkspaceService:
             return "requirements"
         if action in {"start_design", "retry_design"}:
             return "design"
+        if action == "retry_implementation":
+            # Testing이 자동으로 만든 구현 수리도 같은 구현 checkpoint다. 이 경우 재개
+            # 명령을 Testing 단계에 두면 구현 수리가 끝난 뒤 보존한 기능 계획을 바로 다시
+            # 실행할 수 있고, 서버가 중간에 재시작돼도 아래 Testing checkpoint로 이어진다.
+            prior = repository.get_command(str(payload.get("action_id") or ""))
+            if (
+                prior is not None
+                and prior.get("action") == "delegate_repair"
+                and prior.get("stage") == "testing"
+            ):
+                return "testing"
         if action in {
             "start_implementation",
             "retry_implementation",
@@ -867,6 +889,13 @@ class WorkspaceService:
                     )
                     original_implementation = implementation_worker.get(implementation_job_id)
                     feedback = self._testing_implementation_feedback(result, blockers)
+                    confirmed_target_refs = list(dict.fromkeys(
+                        str(target)
+                        for blocker in blockers
+                        if isinstance(blocker, dict)
+                        for target in blocker.get("target_ids") or []
+                        if isinstance(target, str) and target
+                    ))
                     repair_job = implementation_worker.create_feedback_job(
                         str(command["app_id"]),
                         cast(
@@ -876,6 +905,21 @@ class WorkspaceService:
                         feedback,
                         str(original_implementation.get("base_package") or "com.easydep.app"),
                         True,
+                        confirmed_target_refs=confirmed_target_refs,
+                    )
+                    repair_job_id = str(repair_job.get("job_id") or "")
+                    if not repair_job_id:
+                        raise RuntimeError("Automatic implementation repair returned no job ID.")
+                    # 구현 worker가 실패하거나 서버가 재시작돼도 같은 checkpoint를 다시 찾을
+                    # 수 있도록 LLM 실행 전에 job ID를 command에 저장한다.
+                    repair_payload = {
+                        **dict(command.get("payload") or {}),
+                        "job_id": repair_job_id,
+                    }
+                    command["payload"] = repair_payload
+                    repository.update_command(
+                        str(command["command_id"]),
+                        payload=repair_payload,
                     )
                     repaired = self._monitor_implementation(
                         repair_job,
@@ -982,6 +1026,14 @@ class WorkspaceService:
             current_job = implementation_worker.get(str(payload["job_id"]))
             if str(current_job.get("app_id") or "") != str(command["app_id"]):
                 raise ValueError("The implementation checkpoint does not belong to this app.")
+            # 일반 구현 재시도는 이미 job ID만으로 충분하다. Testing이 만든 구현 수리만
+            # 이전 Testing 결과와 고정 기능 계획을 찾아야 하므로 그때만 명령을 조회한다.
+            testing_repair = command.get("stage") == "testing"
+            prior = (
+                repository.get_command(str(payload.get("action_id") or "")) or {}
+                if testing_repair
+                else {}
+            )
             repository.append_event(
                 str(command["app_id"]),
                 command_id=str(command["command_id"]),
@@ -994,10 +1046,40 @@ class WorkspaceService:
                     "job_id": str(payload["job_id"]),
                 },
             )
-            job = implementation_worker.retry_failed(str(payload["job_id"]))
-            return self._monitor_implementation(
-                job,
-                command_id=str(command["command_id"]),
+            if current_job.get("status") == "COMPLETED" and testing_repair:
+                # 구현 저장까지 끝난 직후 Workspace 명령만 끊긴 경우에는 이미 통과한 구현
+                # 테스트를 다시 돌리지 않고 아래 기능 회귀 검사부터 이어 간다.
+                repaired = {"job_id": str(payload["job_id"]), "job": current_job}
+            else:
+                job = implementation_worker.retry_failed(str(payload["job_id"]))
+                repaired = self._monitor_implementation(
+                    job,
+                    command_id=str(command["command_id"]),
+                )
+            if not testing_repair:
+                return repaired
+
+            original = repository.get_command(
+                str((prior.get("payload") or {}).get("action_id") or "")
+            ) or {}
+            original_result = original.get("result") or {}
+            previous_job = original_result.get("job") or {}
+            blockers = original_result.get("blocking_findings") or []
+            preserve_test = any(
+                isinstance(blocker, dict)
+                and isinstance(blocker.get("candidate_plan"), dict)
+                and bool(blocker.get("candidate_plan"))
+                for blocker in blockers
+            )
+            repaired_job = repaired.get("job") or {}
+            repaired_job_id = str(
+                repaired.get("job_id") or repaired_job.get("job_id") or payload["job_id"]
+            )
+            return self._run_testing_command(
+                command,
+                repaired_job_id,
+                previous_job=previous_job,
+                preserve_test=preserve_test,
             )
         if action in {"approve_implementation", "reject_implementation"}:
             payload = command["payload"]
@@ -2321,10 +2403,21 @@ class WorkspaceService:
             if not candidate_plan and isinstance(blocker.get("candidate_plan"), dict):
                 candidate_plan = dict(blocker["candidate_plan"])
         history = dict(result.get("repair_state") or {})
+        needs_fixture = any(
+            item.get("code") == "TEST_PROFILE_DATA_UNAVAILABLE"
+            for item in execution_evidence
+        )
         parts = [
-            "The generated application failed a preserved functional test. Repair only "
-            "the production implementation. Keep the existing contracts and test "
-            "acceptance conditions unchanged.",
+            (
+                "The generated application's test profile lacks prerequisite data for a "
+                "preserved functional flow. Add the smallest test-profile-only fixture or "
+                "startup setup that makes the documented success path executable. Do not "
+                "change production behavior, API contracts, or test acceptance conditions."
+                if needs_fixture
+                else "The generated application failed a preserved functional test. Repair only "
+                "the production implementation. Keep the existing contracts and test "
+                "acceptance conditions unchanged."
+            ),
             "Failure evidence:\n- " + "\n- ".join(evidence or ["Testing gate failed."]),
         ]
         if target_ids:

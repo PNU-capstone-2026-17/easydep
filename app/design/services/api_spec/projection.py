@@ -8,6 +8,7 @@ from app.design.contracts.api_spec import ApiSpecModel
 
 OPENAPI_VERSION = "3.1.0"
 _PRIMITIVES = {"string", "integer", "number", "boolean", "array", "object"}
+_STRING_FORMATS = {"uuid": "uuid", "date": "date", "date-time": "date-time"}
 
 
 def sanitize_schema_name(name: str) -> str:
@@ -33,7 +34,9 @@ def _field_schema(field: dict[str, Any], known: set[str]) -> dict[str, Any]:
         item = _field_schema({"type": raw[:-2]}, known)
         return {"type": "array", "items": item}
     lowered = raw.lower()
-    if lowered in _PRIMITIVES:
+    if lowered in _STRING_FORMATS:
+        schema = {"type": "string", "format": _STRING_FORMATS[lowered]}
+    elif lowered in _PRIMITIVES:
         schema: dict[str, Any] = {"type": lowered}
         if lowered == "array":
             schema["items"] = {}
@@ -51,7 +54,9 @@ def _body_schema(name: str, known: set[str], is_array: bool = False) -> dict[str
     ref_name = sanitize_schema_name(name)
     primitive = ref_name.lower()
     inner: dict[str, Any] = (
-        {"type": primitive}
+        {"type": "string", "format": _STRING_FORMATS[primitive]}
+        if primitive in _STRING_FORMATS
+        else {"type": primitive}
         if primitive in _PRIMITIVES - {"array", "object"}
         else (
             {"$ref": f"#/components/schemas/{ref_name}"}

@@ -259,7 +259,7 @@ def test_parallel_testing_jobs_use_different_docker_names():
 
 
 def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp_path, monkeypatch):
-    """실패 로그를 읽기 전에 Docker가 컨테이너를 자동 삭제하지 않는다."""
+    """API 검사는 공용 툴체인과 cache로 backend만 실행한다."""
     from app.testing.runtime import app_container
 
     (tmp_path / "Dockerfile").write_text("FROM scratch\nEXPOSE 8000\n", encoding="utf-8")
@@ -271,12 +271,17 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
 
     monkeypatch.setattr(app_container, "_docker", docker)
     monkeypatch.setattr(app_container, "_wait_until_ready", lambda *_args: None)
+    monkeypatch.setattr(app_container, "configured_runner_image", lambda: "toolchain:test")
 
     with app_container.running_application("app-1", tmp_path, launch_id="run-1") as (_, info):
         assert info["healthPath"] == "/healthz"
 
     start = next(command for command in commands if command[:2] == ["run", "-d"])
     assert "--rm" not in start
+    assert not any(command[0] == "build" for command in commands)
+    assert "toolchain:test" in start
+    assert "bootRun" in start
+    assert f"{app_container.GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache" in start
     assert "SPRING_PROFILES_ACTIVE=test" in start
     assert any(value.startswith("SPRING_DATASOURCE_URL=jdbc:h2:mem:") for value in start)
     assert "SPRING_SECURITY_USER_NAME=easydep-test" in start
@@ -284,12 +289,11 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
     assert any(command[:2] == ["rm", "-f"] for command in commands)
 
 
-def test_running_application_classifies_missing_frontend_build_as_product_defect(
+def test_running_application_does_not_rebuild_frontend_for_api_checks(
     tmp_path, monkeypatch
 ):
-    """Dockerfile이 없는 frontend 산출물을 참조하면 구현 단계가 고쳐야 한다."""
+    """배포 Dockerfile의 frontend COPY는 API 기능 검사 실행 경로와 무관하다."""
     from app.testing.runtime import app_container
-    from app.testing.runtime.app_container import ApplicationLaunchError
 
     (tmp_path / "Dockerfile").write_text(
         "FROM gradle:8.14.2-jdk21\nCOPY frontend/dist/ src/main/resources/static/\n",
@@ -297,26 +301,30 @@ def test_running_application_classifies_missing_frontend_build_as_product_defect
     )
 
     def docker(arguments, **_kwargs):
-        assert arguments[0] == "build"
-        return type(
-            "Completed",
-            (),
-            {
-                "returncode": 1,
-                "stdout": "",
-                "stderr": 'failed to calculate checksum: "/frontend/dist": not found',
-            },
-        )()
+        assert arguments[0] != "build"
+        return type("Completed", (), {"returncode": 0, "stdout": "id\n", "stderr": ""})()
 
     monkeypatch.setattr(app_container, "_docker", docker)
-    with (
-        pytest.raises(ApplicationLaunchError) as raised,
-        app_container.running_application("app-1", tmp_path),
-    ):
+    monkeypatch.setattr(app_container, "_wait_until_ready", lambda *_args: None)
+    monkeypatch.setattr(app_container, "configured_runner_image", lambda: "toolchain:test")
+
+    with app_container.running_application("app-1", tmp_path):
         pass
 
-    assert raised.value.defect_class == "SUT_DEFECT"
-    assert "/frontend/dist" in str(raised.value)
+
+def test_application_start_timeout_does_not_trigger_source_repair(monkeypatch):
+    """준비 시간 초과만으로 생성 source가 잘못됐다고 단정하지 않는다."""
+    from app.testing.runtime import app_container
+    from app.testing.runtime.app_container import ApplicationLaunchError
+
+    clock = iter((0.0, 2.0))
+    monkeypatch.setattr(app_container.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(app_container, "_container_logs", lambda _name: "Spring is starting")
+
+    with pytest.raises(ApplicationLaunchError) as raised:
+        app_container._wait_until_ready("app", "http://localhost/healthz", 1)
+
+    assert raised.value.defect_class == "ENVIRONMENT_DEFECT"
 
 
 def test_dynamic_testing_uses_the_shared_llm_model(monkeypatch):

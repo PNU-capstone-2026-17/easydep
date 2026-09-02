@@ -74,6 +74,30 @@ def test_final_workspace_verification_publishes_success_report(
     assert report["verification"] == verification
 
 
+def test_feedback_regression_succeeds_when_http_scenarios_are_deferred(
+    tmp_path: Path,
+) -> None:
+    """구현 테스트가 통과하면 HTTP 검사를 Testing에 맡기고 수리를 끝낸다."""
+    run = tmp_path / "generated" / "runs" / "run_feedback"
+    source = run / "application" / "src" / "Main.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Main {}", encoding="utf-8")
+
+    with patch(
+        "app.implementation.agents.verification.build.verify_agent_workspace",
+        return_value={"exitCode": 0, "testResults": ""},
+    ):
+        result = verify_run_workspace(
+            run,
+            "feedback-regression.json",
+            verify_frontend=False,
+            verify_end_to_end=False,
+        )
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["scenarioVerification"]["status"] == "NOT_CHECKED"
+
+
 def test_one_scenario_method_can_cover_multiple_use_cases(tmp_path: Path) -> None:
     """한 흐름으로 여러 유스케이스를 검사한 테스트를 개수 부족으로 거절하지 않는다."""
     run = tmp_path / "run"

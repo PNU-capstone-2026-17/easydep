@@ -124,7 +124,7 @@ def _upstream_check_summary(design: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _testing_contracts(design: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def build_testing_contracts(design: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """구현이 실제로 사용한 요구사항·설계 입력을 Testing용으로 고정한다.
 
     DB ID는 원본 산출물과의 연결을 증명하고, content는 구현 시작 시점에 이미 수화된 표현을
@@ -226,7 +226,7 @@ class ImplementationWorker:
             "job_path": str(job_path), "run_root": None, "workflow": None,
             # 시작을 막지 않는 설계 finding도 구현 보고서에서 확인할 수 있도록 함께 넘긴다.
             "design_validation": readiness,
-            "testing_contracts": _testing_contracts(design),
+            "testing_contracts": build_testing_contracts(design),
             "transmission_request": None, "error": None, "created_at": _now(), "updated_at": _now(),
         }
         self._write(record)
@@ -302,6 +302,8 @@ class ImplementationWorker:
         feedback: str,
         base_package: str,
         allow_assumptions: bool,
+        *,
+        confirmed_target_refs: list[str] | None = None,
     ) -> dict[str, Any]:
         """저장된 구현 파일에 사용자 피드백을 적용하는 새 작업을 만든다.
 
@@ -322,11 +324,20 @@ class ImplementationWorker:
             if isinstance(metadata, dict)
             else None
         )
-        eligibility = assess_feedback_eligibility(
-            feedback,
-            design,
-            implementation_rtm if isinstance(implementation_rtm, dict) else None,
-        )
+        if confirmed_target_refs is None:
+            eligibility = assess_feedback_eligibility(
+                feedback,
+                design,
+                implementation_rtm if isinstance(implementation_rtm, dict) else None,
+            )
+        else:
+            # Testing은 이미 실패 operation을 RTM ref로 확정했다. 긴 실행 증거 안의
+            # ``requirement_ids`` 같은 단어를 사용자 설계 변경 요청으로 다시 해석하지 않는다.
+            eligibility = {
+                "status": "ELIGIBLE",
+                "source": "confirmed_testing_failure",
+                "rtmValidated": True,
+            }
         job_id = uuid.uuid4().hex
         if eligibility["status"] == "UNSUITABLE":
             report_path = self.settings.work_root / job_id / "feedback-eligibility.json"
@@ -361,6 +372,7 @@ class ImplementationWorker:
             targeting = resolve_feedback_targets(
                 feedback,
                 implementation_rtm if isinstance(implementation_rtm, dict) else None,
+                confirmed_refs=confirmed_target_refs,
             )
         except Exception as error:
             # 대상 해석은 OpenHands의 조사 범위를 좁히는 힌트다. provider가 잠시 끊겨도
@@ -430,7 +442,7 @@ class ImplementationWorker:
             "feedback": feedback,
             "feedback_eligibility": eligibility,
             "feedback_targeting": targeting,
-            "testing_contracts": _testing_contracts(design),
+            "testing_contracts": build_testing_contracts(design),
             "job_path": str(job_path),
             "run_root": None,
             "workflow": None,

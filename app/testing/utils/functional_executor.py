@@ -236,7 +236,7 @@ def _leaves(
         return [
             leaf
             for name, child, required in _fields(document, resolved)
-            if required or isinstance(value, dict) and name in value
+            if required or (isinstance(value, dict) and name in value)
             for leaf in _leaves(
                 document,
                 child,
@@ -450,14 +450,29 @@ def execute_functional_plan(
             "inputSources": sources,
         }
         if not 200 <= response.status_code < 300:
+            generated_inputs = sorted(
+                location for location, source in sources.items() if source == _EXAMPLE
+            )
+            needs_fixture = 400 <= response.status_code < 500 and bool(generated_inputs)
+            message = (
+                f"{operation.method} {operation.path} could not reach its success path with "
+                "schema-generated values; the test profile needs valid prerequisite data."
+                if needs_fixture
+                else f"{operation.method} {operation.path} returned HTTP "
+                f"{response.status_code}; 2xx success was required."
+            )
             finding = _finding(
                 step.step_id,
                 step.operation_id,
-                "HTTP_STATUS_NOT_SUCCESS",
-                f"{operation.method} {operation.path} returned HTTP {response.status_code}; 2xx success was required.",
+                "TEST_PROFILE_DATA_UNAVAILABLE"
+                if needs_fixture
+                else "HTTP_STATUS_NOT_SUCCESS",
+                message,
                 status=response.status_code,
                 body=response.text,
             )
+            if needs_fixture:
+                finding["generatedInputs"] = generated_inputs
             return {
                 "status": "failed",
                 "gateStatus": "FAIL",
@@ -499,7 +514,10 @@ def execute_functional_plan(
                 "finding": finding,
             }
         for name, kind, value, _path in _leaves(openapi, schema, payload):
-            previous.setdefault((name, kind), []).append(value)
+            # 빈 배열이나 빠진 선택 필드는 다음 호출에 전달할 실제 값이 아니다. None을
+            # 하나뿐인 응답 값으로 취급하면 올바른 예시값보다 먼저 선택된다.
+            if value is not None:
+                previous.setdefault((name, kind), []).append(value)
         reports.append(report)
     return {
         "status": "passed",

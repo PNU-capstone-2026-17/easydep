@@ -69,9 +69,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       --requirements /tmp/easydep-requirements-bert.txt
 
 
-# 구현과 Testing이 짧게 실행하는 고정 Linux 환경이다. API, 프런트엔드, BERT 모델은
-# host 개발 서버나 runtime image가 담당하므로 이 대상에는 넣지 않는다.
-FROM python-common-dependencies AS toolchain
+# 구현과 Testing이 공유하는 고정 Linux 환경의 공통 부분이다. 아래 최종 toolchain이
+# 브라우저 검사 도구만 더한다. 중간 단계에는 별도 tag를 만들지 않아 사용자가 어느
+# 툴체인을 골라야 하는지 고민하거나 사용하지 않는 image를 함께 보관하지 않게 한다.
+FROM python-common-dependencies AS toolchain-core
 
 COPY --from=jdk /opt/java/openjdk /opt/java/openjdk
 COPY --from=gradle-runtime /opt/gradle /opt/gradle
@@ -125,10 +126,11 @@ ENV OPENHANDS_SUPPRESS_BANNER=1
 CMD ["python", "--version"]
 
 
-# Testing 단계의 거시적인 DOM·JavaScript E2E만 실제 브라우저 엔진을 사용한다. 구현
-# 단계는 이 대상을 사용하지 않으므로 평소 코드 생성과 단위 테스트가 브라우저 용량을
-# 부담하지 않는다. 화면 이미지 비교용 전체 Chromium 대신 headless shell만 설치한다.
-FROM toolchain AS testing-toolchain
+# 구현과 Testing이 함께 사용하는 유일한 툴체인이다. 구현 작업은 Java·Node·IaC 도구만
+# 실행하고, Testing의 DOM·JavaScript E2E만 아래 Playwright를 사용한다. 실행 진입점으로
+# 역할을 나누므로 도구 집합이 같은 image를 별도 이름으로 두 개 만들 필요가 없다.
+# 화면 이미지 비교용 전체 Chromium 대신 headless shell만 설치한다.
+FROM toolchain-core AS toolchain
 
 USER root
 COPY requirements-browser-testing.txt /tmp/easydep-requirements-browser-testing.txt

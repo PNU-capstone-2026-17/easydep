@@ -8,6 +8,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+from app.testing.nodes.dynamic_functional import build_functional_cases
 from app.testing.schemas.functional_plan import (
     FunctionalTestCase,
     FunctionalTestPlan,
@@ -45,6 +46,48 @@ def test_functional_plan_rejects_duplicate_step_ids() -> None:
 
     with pytest.raises(ValidationError):
         FunctionalTestCase.model_validate(value)
+
+
+def test_functional_cases_follow_realization_edges_and_skip_unscoped_policy() -> None:
+    requirements = [
+        {"id": "FR-1", "type": "FR"},
+        {"id": "FR-2", "type": "FR"},
+        {"id": "FR-POLICY", "type": "FR"},
+    ]
+    use_cases = {
+        "use_case_specs": [{"use_case_id": "UC-1", "requirement_ids": ["FR-1"]}],
+        "traceability": {
+            "requirements": {
+                "FR-1": {"use_cases": ["UC-1"], "modeled_as_constraint": False},
+                "FR-2": {
+                    "realized_by_use_cases": ["UC-1"],
+                    "modeled_as_constraint": False,
+                },
+                "FR-POLICY": {"modeled_as_constraint": True},
+            }
+        },
+    }
+    openapi = {
+        "paths": {
+            "/orders": {
+                "get": {
+                    "operationId": "listOrders",
+                    "x-easydep-use-case-ids": ["UC-1"],
+                    "responses": {
+                        "200": {
+                            "content": {
+                                "application/json": {"schema": {"type": "boolean"}}
+                            }
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+    cases = build_functional_cases(requirements, use_cases, openapi)
+
+    assert cases[0]["requirement_ids"] == ["FR-1", "FR-2"]
 
 
 def test_operation_id_resolves_to_exact_path_and_method() -> None:
@@ -201,6 +244,56 @@ def test_executor_builds_schema_requests_and_passes_only_unique_previous_field(
     assert result["steps"][1]["inputSources"]["body.orderId"] == "previous-response"
 
 
+def test_schema_generated_4xx_requests_test_profile_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = {
+        "paths": {
+            "/orders/{orderId}": {
+                "get": {
+                    "operationId": "getOrder",
+                    "x-easydep-use-case-ids": ["UC-1"],
+                    "parameters": [
+                        {
+                            "name": "orderId",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "content": {
+                                "application/json": {"schema": {"type": "boolean"}}
+                            }
+                        }
+                    },
+                }
+            }
+        }
+    }
+    monkeypatch.setattr(
+        httpx,
+        "request",
+        lambda *_args, **_kwargs: httpx.Response(404, json={"message": "not found"}),
+    )
+
+    result = execute_functional_plan(
+        FunctionalTestCase.model_validate(
+            {
+                **_case(operation_id="getOrder"),
+                "use_case_id": "UC-1",
+            }
+        ),
+        openapi=document,
+        target_url="http://app.test",
+    )
+
+    assert result["defectClass"] == "SUT_DEFECT"
+    assert result["finding"]["code"] == "TEST_PROFILE_DATA_UNAVAILABLE"
+    assert result["finding"]["generatedInputs"] == ["path.orderId"]
+
+
 def test_one_failed_case_is_reported_without_rerunning_another_case(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -239,7 +332,10 @@ def test_one_failed_case_is_reported_without_rerunning_another_case(
                 "case_id": "UC-2",
                 "requirement_ids": ["FR-1"],
                 "use_case_id": "UC-2",
-                "steps": [{"step_id": "two", "operation_id": "runTwo"}],
+                "steps": [
+                    {"step_id": "two", "operation_id": "runTwo"},
+                    {"step_id": "two-again", "operation_id": "runTwo"},
+                ],
             },
         ]
     }
@@ -282,7 +378,9 @@ def test_one_failed_case_is_reported_without_rerunning_another_case(
 
     report = result["dynamic_functional_report"]
     assert calls == ["UC-1", "UC-2"]
+    assert report["caseId"] == "UC-1"
     assert [item["caseId"] for item in report["cases"]] == ["UC-1", "UC-2"]
+    assert len(report["candidatePlan"]["cases"][1]["steps"]) == 1
     assert report["gateStatus"] == "FAIL"
     assert report["cases"][0]["result"]["reason"] == "broken app"
 

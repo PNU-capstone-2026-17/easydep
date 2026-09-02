@@ -23,7 +23,7 @@ from app.validation import stable_digest
 
 PLAN_SYSTEM_PROMPT = """Create one strict JSON FunctionalTestCase for this use case.
 Keep case_id, requirement_ids, and use_case_id exactly as supplied. Choose only
-listed operationId values in the needed order. Every step has a unique short
+listed operationId values in the needed order, at most once each. Every step has a unique short
 step_id and operation_id. Do not add paths, methods, auth, status, values,
 assertions, Python, or prose."""
 _NON_FUNCTIONAL = frozenset(
@@ -78,8 +78,14 @@ def _frozen(state: TestingState) -> dict[str, Any]:
     }
 
 
-def _functional_requirements(value: Any) -> set[str]:
-    """고정 requirements list에서 동적 실행 대상 ID만 고른다."""
+def _functional_requirements(value: Any, requirement_trace: dict[str, Any]) -> set[str]:
+    """고정 요구사항에서 유스케이스로 실행할 수 있는 기능 ID만 고른다.
+
+    FR/NFR은 문장의 분류이고, 실제 유스케이스 동작인지 정책인지는 RTM의 관계가
+    알려 준다. 따라서 적용 대상 유스케이스가 없는 전역 정책은 HTTP 흐름으로 억지로
+    시험하지 않는다. 반대로 일반 기능 요구사항의 연결이 빠졌다면 아래 coverage
+    검사에서 상류 명세 오류로 그대로 보고한다.
+    """
     if not isinstance(value, list):
         raise UpstreamAmbiguity("TestingContracts.requirements content가 list가 아닙니다.")
     result = set()
@@ -88,8 +94,19 @@ def _functional_requirements(value: Any) -> set[str]:
             continue
         identifier = str(item.get("id") or "").strip()
         kind = str(item.get("type") or "").strip().upper()
-        if identifier and not identifier.upper().startswith("NFR") and kind not in _NON_FUNCTIONAL:
-            result.add(identifier)
+        if not identifier or identifier.upper().startswith("NFR") or kind in _NON_FUNCTIONAL:
+            continue
+        trace = requirement_trace.get(identifier)
+        if isinstance(trace, dict) and trace.get("modeled_as_constraint") is True:
+            linked_use_cases = [
+                use_case_id
+                for key in ("use_cases", "realized_by_use_cases", "constrains_use_cases")
+                for use_case_id in trace.get(key) or []
+                if isinstance(use_case_id, str) and use_case_id.strip()
+            ]
+            if not linked_use_cases:
+                continue
+        result.add(identifier)
     return result
 
 
@@ -125,9 +142,6 @@ def _operation_ids(openapi: dict[str, Any], use_case_id: str) -> list[str]:
 
 def build_functional_cases(requirements: Any, use_cases: Any, openapi: Any) -> list[dict[str, Any]]:
     """canonical requirement/spec/OpenAPI 직접 연결만 LLM 입력으로 만든다."""
-    requirement_ids = _functional_requirements(requirements)
-    if not requirement_ids:
-        return []
     specs = use_cases.get("use_case_specs") if isinstance(use_cases, dict) else None
     if not isinstance(specs, list):
         raise UpstreamAmbiguity("TestingContracts.use_cases에 use_case_specs가 없습니다.")
@@ -135,6 +149,9 @@ def build_functional_cases(requirements: Any, use_cases: Any, openapi: Any) -> l
     requirement_trace = traceability.get("requirements") if isinstance(traceability, dict) else {}
     if not isinstance(requirement_trace, dict):
         raise UpstreamAmbiguity("TestingContracts.use_cases의 requirement trace가 잘못되었습니다.")
+    requirement_ids = _functional_requirements(requirements, requirement_trace)
+    if not requirement_ids:
+        return []
     if not isinstance(openapi, dict):
         raise UpstreamAmbiguity("TestingContracts.openapi content가 object가 아닙니다.")
     cases: list[dict[str, Any]] = []
@@ -161,7 +178,7 @@ def build_functional_cases(requirements: Any, use_cases: Any, openapi: Any) -> l
                 continue
             traced_cases = [
                 case_id
-                for key in ("use_cases", "constrains_use_cases")
+                for key in ("use_cases", "realized_by_use_cases", "constrains_use_cases")
                 for case_id in trace.get(key) or []
                 if isinstance(case_id, str)
             ]
@@ -230,6 +247,24 @@ def _validate(case: FunctionalTestCase, candidate: dict[str, Any]) -> None:
         raise ValueError("Generated plan selected an untraced operationId.")
 
 
+def _without_repeated_operations(case: FunctionalTestCase) -> FunctionalTestCase:
+    """같은 입력으로 같은 endpoint를 되풀이하는 의미 없는 단계를 한 번만 남긴다.
+
+    현재 계획에는 호출별 입력값이나 다른 의도가 없다. 따라서 같은 operationId를 여러 번
+    적어도 실행은 완전히 같으며 테스트 범위는 늘지 않는다. 입력 구분이 필요해지는 날에는
+    먼저 계획 계약에 그 의미를 명시해야 한다.
+    """
+
+    seen: set[str] = set()
+    steps = []
+    for step in case.steps:
+        if step.operation_id in seen:
+            continue
+        seen.add(step.operation_id)
+        steps.append(step)
+    return case if len(steps) == len(case.steps) else case.model_copy(update={"steps": steps})
+
+
 def _generate(client: OpenAI, candidate: dict[str, Any]) -> FunctionalTestCase:
     response = client.chat.completions.create(
         model=configured_model("openai/gpt-oss-120b"),
@@ -237,8 +272,10 @@ def _generate(client: OpenAI, candidate: dict[str, Any]) -> FunctionalTestCase:
         messages=[{"role": "user", "content": _prompt(candidate)}],
         response_format=_response_format(),
     )
-    case = FunctionalTestCase.model_validate_json(
-        (response.choices[0].message.content if response.choices else "") or ""
+    case = _without_repeated_operations(
+        FunctionalTestCase.model_validate_json(
+            (response.choices[0].message.content if response.choices else "") or ""
+        )
     )
     _validate(case, candidate)
     return case
@@ -249,6 +286,9 @@ def _preserved(value: Any, candidates: list[dict[str, Any]]) -> FunctionalTestPl
     expected = {candidate["case_id"]: candidate for candidate in candidates}
     if set(expected) != {case.case_id for case in plan.cases}:
         raise ValueError("Preserved plan cases do not match the frozen trace scope.")
+    plan = plan.model_copy(
+        update={"cases": [_without_repeated_operations(case) for case in plan.cases]}
+    )
     for case in plan.cases:
         _validate(case, expected[case.case_id])
     return plan
@@ -387,6 +427,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     reused_case_ids: list[str] = []
     first_failure: dict[str, Any] | None = None
+    first_failure_case_id = ""
     for case in plan.cases:
         previous = previous_results.get(case.case_id)
         if previous is not None and previous.get("plan") == case.model_dump(mode="json"):
@@ -402,11 +443,13 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         results.append(_case_result(case, result))
         if first_failure is None and str(result.get("gateStatus") or "").upper() != "PASS":
             first_failure = result
+            first_failure_case_id = case.case_id
     if first_failure is not None:
         report = {
             **first_failure,
             "candidatePlan": candidate_plan,
             "candidateDigest": stable_digest(candidate_plan),
+            "caseId": first_failure_case_id,
             "cases": results,
             "reusedCaseIds": reused_case_ids,
             "requirements": _requirements(results),

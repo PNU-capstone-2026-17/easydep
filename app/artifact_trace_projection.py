@@ -378,7 +378,6 @@ def _testing(nodes: list[TraceNode], result: Mapping[str, Any]) -> None:
         report = _map(_map(result.get("verification")).get("reports")).get("dynamicFunctional")
     report = _map(report) if report else result
     digest = _id(report, "candidateDigest") or "unversioned"
-    test_refs: list[TraceRef] = []
     for case in _records(_map(report.get("candidatePlan")).get("cases")):
         case_id = _id(case, "case_id")
         if not case_id:
@@ -394,7 +393,6 @@ def _testing(nodes: list[TraceNode], result: Mapping[str, Any]) -> None:
         )
         test_ref = TraceRef("test", f"{digest}:{case_id}")
         _add(nodes, test_ref, sources)
-        test_refs.append(test_ref)
 
     for case_result in _records(report.get("cases")):
         case_id = _id(case_result, "caseId")
@@ -407,7 +405,17 @@ def _testing(nodes: list[TraceNode], result: Mapping[str, Any]) -> None:
     for item in _records(result.get("blocking_findings")):
         finding_id = _id(item, "code") or _id(item, "id")
         if finding_id:
-            _add(nodes, TraceRef("finding", finding_id), test_refs)
+            exact_tests: list[TraceRef] = []
+            for value in item.get("target_ids") or []:
+                if not isinstance(value, str):
+                    continue
+                try:
+                    ref = TraceRef.parse(value)
+                except ValueError:
+                    continue
+                if ref.kind == "test":
+                    exact_tests.append(ref)
+            _add(nodes, TraceRef("finding", finding_id), exact_tests)
 
 
 def _add(nodes: list[TraceNode], ref: TraceRef, sources: Iterable[TraceRef]) -> None:

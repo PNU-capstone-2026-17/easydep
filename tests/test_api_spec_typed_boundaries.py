@@ -226,6 +226,33 @@ def test_typed_normalization_uses_exact_bce_contract_without_plantuml() -> None:
     assert proposal.Endpoints[0].query_params[0].type == "CourseFilter"
 
 
+def test_openapi_preserves_bce_string_formats() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    payload["Classes"][2]["fields"] = [
+        "courseId : UUID",
+        "startsOn : LocalDate",
+    ]
+    payload["DataTypes"][0]["fields"] = ["requestedAt : LocalDateTime"]
+
+    openapi = build_openapi_from_model(
+        normalize_api_spec_model(_proposal(), BCEModel.model_validate(payload))
+    )
+
+    schemas = openapi["components"]["schemas"]
+    assert schemas["Course"]["properties"]["courseId"] == {
+        "type": "string",
+        "format": "uuid",
+    }
+    assert schemas["Course"]["properties"]["startsOn"] == {
+        "type": "string",
+        "format": "date",
+    }
+    assert schemas["CourseFilter"]["properties"]["requestedAt"] == {
+        "type": "string",
+        "format": "date-time",
+    }
+
+
 def test_bce_enumeration_is_an_executable_openapi_schema() -> None:
     payload = _bce_model().model_dump(by_alias=True)
     for class_payload in payload["Classes"][:2]:

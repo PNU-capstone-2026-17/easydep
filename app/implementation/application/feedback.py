@@ -40,6 +40,7 @@ def resolve_feedback_targets(
     rtm_map: dict[str, Any] | None,
     *,
     proposal_call: FeedbackProposalCall | None = None,
+    confirmed_refs: list[str] | None = None,
 ) -> dict[str, object]:
     """LLM 후보를 RTM의 실제 ref와 파일로 확인한다.
 
@@ -55,7 +56,10 @@ def resolve_feedback_targets(
         if isinstance(ref, str)
     }
     explicit = sorted(ref for ref in available if ref in feedback)
-    if explicit:
+    if confirmed_refs is not None:
+        proposed = confirmed_refs
+        source = "confirmed"
+    elif explicit:
         proposed = explicit
         source = "explicit"
     elif candidates:

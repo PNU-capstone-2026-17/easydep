@@ -38,21 +38,15 @@ TestingProgress = Callable[[dict[str, Any]], None]
 
 
 def _dynamic_target_ids(report: dict[str, Any]) -> list[str]:
-    """실패한 case들과 보고서가 가리킨 operation을 저장된 ID로 가리킨다."""
+    """첫 차단 실패의 case와 operation만 저장된 ID로 가리킨다."""
     finding = report.get("finding")
     finding = finding if isinstance(finding, dict) else {}
     operation_id = str(finding.get("operationId") or "").strip()
     digest = str(report.get("candidateDigest") or "").strip()
-    failed_case_ids = [
-        case_id
-        for item in report.get("cases") or []
-        if isinstance(item, dict)
-        and str((item.get("result") or {}).get("gateStatus") or "").upper() != "PASS"
-        if (case_id := str(item.get("caseId") or "").strip())
-    ]
+    case_id = str(report.get("caseId") or "").strip()
     return [
         *([f"api:{operation_id}"] if operation_id else []),
-        *(f"test:{digest}:{case_id}" for case_id in failed_case_ids if digest),
+        *([f"test:{digest}:{case_id}"] if digest and case_id else []),
     ]
 
 

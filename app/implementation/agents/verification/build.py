@@ -98,7 +98,12 @@ def verify_run_workspace(
         result = {
             "status": (
                 "SUCCEEDED"
-                if scenario_verification.get("status") in {"PASSED", "NOT_APPLICABLE"}
+                # 피드백 수정 직후에는 구현 단계의 단위·작은 통합 테스트만 다시 실행한다.
+                # 이 호출에서는 HTTP 시나리오를 일부러 다음 Testing 단계에 맡기므로
+                # NOT_CHECKED도 정상 결과다. 이를 실패로 보면 성공한 source를 다시 OpenHands에
+                # 보내는 의미 없는 수리 루프가 생긴다.
+                if scenario_verification.get("status")
+                in {"PASSED", "NOT_APPLICABLE", "NOT_CHECKED"}
                 else "FAILED"
             ),
             "verification": verification,
