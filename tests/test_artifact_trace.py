@@ -94,9 +94,7 @@ def test_projection_links_requirement_to_spec_step_bce_operation_and_exact_api_b
                 "use_case_specs": [
                     {
                         "use_case_id": "UC-1",
-                        "main_scenario": [
-                            {"step_number": 1, "covered_req_ids": ["REQ-1"]}
-                        ],
+                        "main_scenario": [{"step_number": 1, "covered_req_ids": ["REQ-1"]}],
                     }
                 ],
             },
@@ -138,9 +136,15 @@ def test_projection_links_requirement_to_spec_step_bce_operation_and_exact_api_b
     operation = TraceRef("operation", "OP-1")
     api = TraceRef("api", "createOrder")
 
-    assert set(trace.downstream(requirement)) == {use_case, spec, step, operation, api,
-                                                   TraceRef("class", "OrderControl"),
-                                                   TraceRef("operation", "OP-2")}
+    assert set(trace.downstream(requirement)) == {
+        use_case,
+        spec,
+        step,
+        operation,
+        api,
+        TraceRef("class", "OrderControl"),
+        TraceRef("operation", "OP-2"),
+    }
     assert trace.sources(api) == (operation,)
     assert {requirement} <= set(trace.sources(use_case))
     assert {spec, requirement} <= set(trace.sources(step))
@@ -153,14 +157,12 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
     resource = TraceRef("resource", "aws:us-east-1:nodes:orders")
     task = TraceRef("task", "TASK-1")
     file_ref = TraceRef("file", "src/orders.py")
-    test = TraceRef("test", "digest-1")
+    test = TraceRef("test", "digest-1:UC-1")
     finding = TraceRef("finding", "testing.unit-tests")
     trace = project_artifact_trace(
         {
             "refined_requirements": {
-                "requirements": [
-                    {"id": "REQ-1", "sourceRefs": ["raw:RAW-1"]}
-                ]
+                "requirements": [{"id": "REQ-1", "sourceRefs": ["raw:RAW-1"]}]
             },
             "deployment_diagram_bundle": {
                 "workloadGraph": {
@@ -201,7 +203,21 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
         testing_result={
             "dynamic_functional_report": {
                 "candidateDigest": "digest-1",
-                "requirements": {"ids": ["REQ-1"]},
+                "candidatePlan": {
+                    "cases": [
+                        {
+                            "case_id": "UC-1",
+                            "requirement_ids": ["REQ-1"],
+                            "use_case_id": "UC-1",
+                            "steps": [
+                                {
+                                    "step_id": "run",
+                                    "operation_id": "createOrder",
+                                }
+                            ],
+                        }
+                    ]
+                },
             },
             "blocking_findings": [{"code": "testing.unit-tests"}],
         },
@@ -219,5 +235,9 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
     assert {requirement, workload} <= set(trace.sources(resource))
     assert {requirement, workload, resource} <= set(trace.sources(task))
     assert trace.sources(file_ref) == (task,)
-    assert trace.sources(test) == (requirement,)
-    assert set(trace.sources(finding)) == {requirement, test}
+    assert set(trace.sources(test)) == {
+        requirement,
+        TraceRef("use_case", "UC-1"),
+        TraceRef("api", "createOrder"),
+    }
+    assert trace.sources(finding) == (test,)

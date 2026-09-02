@@ -29,6 +29,25 @@ def _completed_implementation(implementation_job_id: str) -> dict[str, Any]:
     }
 
 
+def _functional_plan() -> dict[str, Any]:
+    return {
+        "cases": [
+            {
+                "case_id": "UC-1",
+                "requirement_ids": ["FR-1"],
+                "use_case_id": "UC-1",
+                "steps": [{"step_id": "run", "operation_id": "runFirst"}],
+            },
+            {
+                "case_id": "UC-2",
+                "requirement_ids": ["FR-2"],
+                "use_case_id": "UC-2",
+                "steps": [{"step_id": "run", "operation_id": "runSecond"}],
+            },
+        ]
+    }
+
+
 def test_run_testing_freezes_input_before_running(monkeypatch) -> None:
     fixed_input = _input("implementation-1")
     checkpoints: list[dict[str, Any]] = []
@@ -74,7 +93,7 @@ def test_checkpoint_reuses_saved_input_without_reloading_implementation(monkeypa
         "implementation_job_id": "implementation-1",
         "testing_input": fixed_input.model_dump(mode="json"),
         "current_node": "verification",
-        "result": {"preservedCandidateCode": "def test_saved():\n    assert True\n"},
+        "result": {"preservedCandidatePlan": _functional_plan()},
         "repair_history": {},
         "previous_findings": [],
     }
@@ -101,7 +120,7 @@ def test_checkpoint_reuses_saved_input_without_reloading_implementation(monkeypa
     assert job["status"] == "COMPLETED"
 
 
-def test_implementation_repair_preserves_the_failing_test(monkeypatch) -> None:
+def test_implementation_repair_preserves_plan_but_reruns_passed_cases(monkeypatch) -> None:
     fixed_input = _input("implementation-2")
     previous = {
         "job_id": "command-1",
@@ -114,7 +133,23 @@ def test_implementation_repair_preserves_the_failing_test(monkeypatch) -> None:
             "passed": False,
             "verification": {
                 "reports": {
-                    "dynamicFunctional": {"candidateCode": "def test_saved():\n    assert 1 == 2\n"}
+                    "dynamicFunctional": {
+                        "gateStatus": "FAIL",
+                        "reason": "UC-2 failed",
+                        "candidatePlan": _functional_plan(),
+                        "cases": [
+                            {
+                                "caseId": "UC-1",
+                                "plan": _functional_plan()["cases"][0],
+                                "result": {"gateStatus": "PASS"},
+                            },
+                            {
+                                "caseId": "UC-2",
+                                "plan": _functional_plan()["cases"][1],
+                                "result": {"gateStatus": "FAIL"},
+                            },
+                        ],
+                    }
                 }
             },
         },
@@ -131,7 +166,10 @@ def test_implementation_repair_preserves_the_failing_test(monkeypatch) -> None:
     )
 
     def run(_run_id, _testing_input, **kwargs):
-        assert "test_saved" in kwargs["partial_result"]["preservedCandidateCode"]
+        partial = kwargs["partial_result"]
+        assert partial["preservedCandidatePlan"] == _functional_plan()
+        # 구현 job ID가 바뀌었으므로 이전 통과도 회귀 검증을 위해 다시 실행한다.
+        assert partial["preservedCaseResults"] == []
         return {"passed": True}, {"status": "COMPLETED"}
 
     monkeypatch.setattr(testing_service, "_run_test", run)

@@ -668,9 +668,7 @@ def test_workspace_command_trace_uses_app_as_langsmith_thread(monkeypatch) -> No
     monkeypatch.setattr(
         service,
         "_execute_command",
-        lambda command_id, value: captured.update(
-            {"command_id": command_id, "command": value}
-        ),
+        lambda command_id, value: captured.update({"command_id": command_id, "command": value}),
     )
     try:
         service._execute("command-1")
@@ -1536,7 +1534,21 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(monkeypatch
                     "message": "FR1 failed",
                     "repairable": True,
                     "defect_class": "SUT_DEFECT",
-                    "candidate_code": "def test_fr1(): assert False",
+                    "candidate_plan": {
+                        "cases": [
+                            {
+                                "case_id": "UC1",
+                                "requirement_ids": ["FR1"],
+                                "use_case_id": "UC1",
+                                "steps": [
+                                    {
+                                        "step_id": "submit",
+                                        "operation_id": "submitRegistration",
+                                    }
+                                ],
+                            }
+                        ]
+                    },
                 }
             ],
             "repair_state": {"attempt_count": 1},
@@ -1605,7 +1617,7 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(monkeypatch
         service.shutdown()
 
     assert observed["auto_approve"] is True
-    assert "Preserved executable test" in str(observed["feedback"])
+    assert "Preserved functional test plan" in str(observed["feedback"])
     assert observed["implementation_job_id"] == "implementation-2"
     assert observed["previous_job"] == prior["result"]["job"]
     assert observed["preserve_test"] is True

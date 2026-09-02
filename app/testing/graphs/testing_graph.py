@@ -22,9 +22,7 @@ def parallel_static_verification_node(state: TestingState) -> dict:
         deployment_future = pool.submit(
             langsmith_metrics.bind_context(static_verification_node), state
         )
-        iac_future = pool.submit(
-            langsmith_metrics.bind_context(iac_verification_node), state
-        )
+        iac_future = pool.submit(langsmith_metrics.bind_context(iac_verification_node), state)
         deployment = deployment_future.result()
         iac = iac_future.result()
 
@@ -36,6 +34,7 @@ def parallel_static_verification_node(state: TestingState) -> dict:
         ),
         "errors": [*(deployment.get("errors") or []), *(iac.get("errors") or [])],
     }
+
 
 def create_testing_graph():
     """Testing 에이전트의 검사 순서를 만들고 실행 가능한 graph로 변환한다."""
@@ -62,7 +61,8 @@ def initial_state(
     application_network: str | None = None,
     application_dir: str = "",
     repair_history: dict | None = None,
-    fixed_test_code: str | None = None,
+    fixed_test_plan: dict | None = None,
+    preserved_case_results: list[dict] | None = None,
     testing_input: dict | None = None,
     iac_expected: bool | None = None,
     deployment_package_expected: bool | None = None,
@@ -76,7 +76,8 @@ def initial_state(
         "target_url": target_url,
         "application_network": application_network,
         "repair_history": repair_history or {},
-        "fixed_test_code": fixed_test_code,
+        "fixed_test_plan": fixed_test_plan,
+        "preserved_case_results": preserved_case_results or [],
         "iac_expected": iac_expected,
         "deployment_package_expected": deployment_package_expected,
         "current_node": "",

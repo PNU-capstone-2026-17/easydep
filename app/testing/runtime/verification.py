@@ -44,7 +44,8 @@ def run_verification_graph(
     target_url: str = "",
     application_dir: str = "",
     repair_history: dict[str, Any] | None = None,
-    fixed_test_code: str | None = None,
+    fixed_test_plan: dict[str, Any] | None = None,
+    preserved_case_results: list[dict[str, Any]] | None = None,
     implementation_job_id: str | None = None,
     run_dynamic: bool = True,
     testing_input: dict[str, Any] | None = None,
@@ -68,7 +69,8 @@ def run_verification_graph(
             target_url=target_url,
             application_dir=application_dir,
             repair_history=repair_history,
-            fixed_test_code=fixed_test_code,
+            fixed_test_plan=fixed_test_plan,
+            preserved_case_results=preserved_case_results,
             implementation_job_id=implementation_job_id,
             run_dynamic=run_dynamic,
             testing_input=testing_input,
@@ -85,7 +87,8 @@ def _run_verification_graph(
     target_url: str = "",
     application_dir: str = "",
     repair_history: dict[str, Any] | None = None,
-    fixed_test_code: str | None = None,
+    fixed_test_plan: dict[str, Any] | None = None,
+    preserved_case_results: list[dict[str, Any]] | None = None,
     implementation_job_id: str | None = None,
     run_dynamic: bool = True,
     testing_input: dict[str, Any] | None = None,
@@ -113,7 +116,8 @@ def _run_verification_graph(
                 app_id=app_id,
                 application_dir=application_dir,
                 repair_history=repair_history,
-                fixed_test_code=fixed_test_code,
+                fixed_test_plan=fixed_test_plan,
+                preserved_case_results=preserved_case_results,
                 testing_input=testing_input,
                 iac_expected=iac_expected,
                 deployment_package_expected=deployment_package_expected,
@@ -135,7 +139,8 @@ def _run_verification_graph(
                         target_url=url,
                         application_dir=application_dir,
                         repair_history=repair_history,
-                        fixed_test_code=fixed_test_code,
+                        fixed_test_plan=fixed_test_plan,
+                        preserved_case_results=preserved_case_results,
                         testing_input=testing_input,
                         iac_expected=iac_expected,
                         deployment_package_expected=deployment_package_expected,
@@ -151,7 +156,8 @@ def _run_verification_graph(
                     app_id=app_id,
                     application_dir=application_dir,
                     repair_history=repair_history,
-                    fixed_test_code=fixed_test_code,
+                    fixed_test_plan=fixed_test_plan,
+                    preserved_case_results=preserved_case_results,
                     testing_input=testing_input,
                     iac_expected=iac_expected,
                     deployment_package_expected=deployment_package_expected,
@@ -235,9 +241,7 @@ def blocking_reason(reports: dict[str, Any]) -> str | None:
     report = reports.get("dynamicFunctional") or {}
     if gate_status(report) == "FAIL":
         return str(
-            report.get("reason")
-            or report.get("stderr")
-            or "동적 기능 테스트에 실패했습니다."
+            report.get("reason") or report.get("stderr") or "동적 기능 테스트에 실패했습니다."
         )[-2000:]
     return None
 

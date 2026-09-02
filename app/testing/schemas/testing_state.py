@@ -6,6 +6,7 @@ class TestingState(TypedDict):
     """
     LangGraph state for the Testing Agent.
     """
+
     # Inputs
     run_id: str
     # 검사 대상 앱. 정적분석이 읽을 배포/IaC 스냅샷과 동적 검사가 읽을 기능
@@ -17,14 +18,17 @@ class TestingState(TypedDict):
     # Testing 작업을 시작할 때 한 번 복원한 애플리케이션 폴더다. 모든 정적·동적
     # 검사는 이 폴더를 함께 사용하며 검사 도중 DB에서 파일을 다시 읽지 않는다.
     application_dir: str
-    target_url: str # Target URL for dynamic testing, defaults to localhost:8080
+    target_url: str  # Target URL for dynamic testing, defaults to localhost:8080
     application_network: str | None
     # 사용자가 선택한 이전 수리 이력. 동적 테스트 생성기는 같은 실패와 후보를
     # 반복하지 않도록 이 값을 프롬프트 문맥으로만 사용한다.
     repair_history: dict[str, Any]
-    # 구현 수리 뒤에는 이전 실패를 발견한 테스트 코드를 그대로 실행한다. 값이 없을 때만
-    # 동적 테스트 노드가 NIM으로 새 후보를 만든다.
-    fixed_test_code: str | None
+    # 구현 수리 뒤에는 이전 실패를 발견한 작은 테스트 계획을 그대로 실행한다. 값이 없을
+    # 때만 동적 테스트 노드가 NIM으로 새 계획을 만든다.
+    fixed_test_plan: dict[str, Any] | None
+    # 같은 계획에서 이미 통과한 case 결과다. 구현 수리 뒤 실패 case만 다시 실행하도록
+    # 보존하며, 계획 header가 달라지면 동적 노드가 재사용하지 않는다.
+    preserved_case_results: list[dict[str, Any]]
     iac_expected: bool | None
     deployment_package_expected: bool | None
 

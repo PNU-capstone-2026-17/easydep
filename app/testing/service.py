@@ -116,7 +116,14 @@ def _run_test(
     """
     ledger = RepairLedger.model_validate(repair_history or {})
     partial_result = dict(partial_result or {})
-    preserved_test_code = str(partial_result.get("preservedCandidateCode") or "")
+    raw_preserved_plan = partial_result.get("preservedCandidatePlan")
+    preserved_test_plan = dict(raw_preserved_plan) if isinstance(raw_preserved_plan, dict) else None
+    raw_case_results = partial_result.get("preservedCaseResults")
+    preserved_case_results = (
+        [dict(item) for item in raw_case_results if isinstance(item, dict)]
+        if isinstance(raw_case_results, list)
+        else []
+    )
 
     def execute_snapshot() -> tuple[dict[str, Any], dict[str, Any]]:
         """복원한 한 snapshot 안에서 모든 검사를 끝낸다."""
@@ -137,8 +144,11 @@ def _run_test(
                     {
                         "current_node": "verification",
                         "result": (
-                            {"preservedCandidateCode": preserved_test_code}
-                            if preserved_test_code
+                            {
+                                "preservedCandidatePlan": preserved_test_plan,
+                                "preservedCaseResults": preserved_case_results,
+                            }
+                            if preserved_test_plan
                             else {}
                         ),
                     }
@@ -156,7 +166,8 @@ def _run_test(
                 # DEPLOYMENT_FILE에는 Dockerfile도 들어간다. 실제 package 필요 여부는
                 # static node가 고정된 ResourcePlan과 복원 디렉터리를 보고 판단한다.
                 deployment_package_expected=None,
-                fixed_test_code=preserved_test_code or None,
+                fixed_test_plan=preserved_test_plan,
+                preserved_case_results=preserved_case_results,
             )
             aggregate = aggregate_gate_report({"verification": verification})
             report = {
@@ -269,7 +280,7 @@ def _run_test(
                     "repair_owner": inferred_owner,
                     "preserve_tests": preserve_tests if is_dynamic else True,
                     "candidate_digest": dynamic.get("candidateDigest") if is_dynamic else None,
-                    "candidate_code": dynamic.get("candidateCode") if is_dynamic else None,
+                    "candidate_plan": dynamic.get("candidatePlan") if is_dynamic else None,
                 }
             )
         report["repair_state"] = _repair_state(ledger, passed=bool(report["passed"]))
@@ -293,7 +304,8 @@ def run_testing(
     ``checkpoint``가 있으면 그 안의 고정 입력과 애플리케이션 검사 결과를 사용한다. 없으면
     구현 작업이 실제로 사용한 산출물을 한 번 고정한다. 이전 실패를 고치는 경우에는
     ``previous_job``의 수리 이력을 이어받으며, 구현 수리 뒤에는 ``preserve_test``로 기존
-    동적 테스트 코드를 그대로 실행할 수 있다.
+    기능 테스트 계획을 보존한다. 다만 구현물이 바뀌었다면 이전 통과 결과는 재사용하지 않고
+    모든 사례를 다시 실행한다.
     """
     repair_history: dict[str, Any] = RepairLedger().model_dump(mode="json")
     previous_findings: tuple[str, ...] = ()
@@ -338,9 +350,7 @@ def run_testing(
                 or previous_result.get("passed") is not False
             ):
                 raise ValueError("Only a completed failing Testing result can be repaired.")
-            same_implementation = (
-                previous_job.get("implementation_job_id") == implementation_job_id
-            )
+            same_implementation = previous_job.get("implementation_job_id") == implementation_job_id
             repair_history = dict(previous_job.get("repair_history") or repair_history)
             previous_findings = _finding_keys(previous_result)
             previous_input = previous_job.get("testing_input")
@@ -357,8 +367,7 @@ def run_testing(
                 if (
                     not same_implementation
                     and previous_contracts
-                    and fixed_previous_input.contract_artifacts
-                    != testing_input.contract_artifacts
+                    and fixed_previous_input.contract_artifacts != testing_input.contract_artifacts
                 ):
                     raise ValueError(
                         "An implementation repair must preserve requirements and design contracts."
@@ -374,12 +383,24 @@ def run_testing(
                 dynamic = ((previous_result.get("verification") or {}).get("reports") or {}).get(
                     "dynamicFunctional"
                 ) or {}
-                preserved_code = str(dynamic.get("candidateCode") or "").strip()
-                if not preserved_code:
-                    raise ValueError(
-                        "The previous Testing result has no executable test candidate."
-                    )
-                partial_result["preservedCandidateCode"] = preserved_code
+                preserved_plan = dynamic.get("candidatePlan")
+                if not isinstance(preserved_plan, dict) or not preserved_plan:
+                    raise ValueError("The previous Testing result has no executable test plan.")
+                partial_result["preservedCandidatePlan"] = dict(preserved_plan)
+                cases = dynamic.get("cases")
+                # 구현 산출물 ID가 바뀌면 이전 통과도 회귀 검증 대상이다. 같은 구현을
+                # 중단 지점부터 재개할 때만 이미 통과한 case를 건너뛴다.
+                partial_result["preservedCaseResults"] = (
+                    [
+                        dict(item)
+                        for item in cases
+                        if isinstance(item, dict)
+                        and str((item.get("result") or {}).get("gateStatus") or "").upper()
+                        == "PASS"
+                    ]
+                    if same_implementation and isinstance(cases, list)
+                    else []
+                )
 
     def save_progress(state: dict[str, Any]) -> None:
         if progress is None:

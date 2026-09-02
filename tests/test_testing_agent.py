@@ -19,14 +19,6 @@ from app.db.models import (
     TYPE_IAC_CODE,
 )
 from app.testing.graphs.testing_graph import create_testing_graph
-from app.testing.nodes.dynamic_functional import (
-    build_test_candidates,
-    dynamic_functional_node,
-)
-from app.testing.utils.requirements_source import (
-    RequirementsUnavailable,
-    functional_requirements,
-)
 
 
 def _snapshot(files: dict[str, str], version_no: int = 3) -> dict:
@@ -85,34 +77,6 @@ def _opentofu_succeeds_without_starting_a_real_provider_download():
 
 
 # ---------------------------------------------------------------------------
-# Requirements
-# ---------------------------------------------------------------------------
-
-
-def test_functional_requirements_reads_stored_classified_list():
-    """The requirements agent stores a bare list, not a {"requirements": …} object."""
-    stored = [
-        {"id": "FR1", "text": "A user can register.", "type": "FR"},
-        {"id": "NFR1", "text": "Login responds within 200ms.", "type": "NFR"},
-        {"id": "FR2", "text": "A user can log in.", "type": "FR"},
-    ]
-    with patch(
-        "app.testing.utils.requirements_source.load_state",
-        return_value={"refined_requirements": stored},
-    ):
-        items = functional_requirements("app-1")
-
-    assert [item["id"] for item in items] == ["FR1", "FR2"]
-
-
-def test_functional_requirements_without_analysis():
-    with patch(
-        "app.testing.utils.requirements_source.load_state", return_value={}
-    ), pytest.raises(RequirementsUnavailable):
-        functional_requirements("app-1")
-
-
-# ---------------------------------------------------------------------------
 # Graph
 # ---------------------------------------------------------------------------
 
@@ -123,7 +87,7 @@ def _initial_state(**overrides) -> dict:
         "app_id": "app-1",
         "manifests_dir": "",
         "iac_dir": "",
-        "target_url": "http://localhost:8080",
+        "target_url": "",
         "current_node": "",
         "errors": [],
         "static_report": None,
@@ -142,9 +106,7 @@ def test_static_stages_scan_the_same_application_folder(tmp_path):
     (tmp_path / "k8s/deployment.yaml").write_text(
         K8S_FILES["k8s/deployment.yaml"], encoding="utf-8"
     )
-    (tmp_path / "terraform/main.tf").write_text(
-        IAC_FILES["terraform/main.tf"], encoding="utf-8"
-    )
+    (tmp_path / "terraform/main.tf").write_text(IAC_FILES["terraform/main.tf"], encoding="utf-8")
     scanned: list[list[str]] = []
 
     def fake_scan(target_dir):
@@ -159,15 +121,8 @@ def test_static_stages_scan_the_same_application_folder(tmp_path):
         )
         return [f"[{scanned[-1][0]}] Something (HIGH): ..."]
 
-    with patch(
-        "app.testing.utils.static_analysis.run_trivy_scan", side_effect=fake_scan
-    ), patch(
-        "app.testing.utils.requirements_source.load_state",
-        return_value={"refined_requirements": []},
-    ):
-        result = create_testing_graph().invoke(
-            _initial_state(application_dir=str(tmp_path))
-        )
+    with patch("app.testing.utils.static_analysis.run_trivy_scan", side_effect=fake_scan):
+        result = create_testing_graph().invoke(_initial_state(application_dir=str(tmp_path)))
 
     assert sorted(scanned) == sorted(
         [
@@ -201,18 +156,22 @@ def test_static_stages_overlap_and_merge_results_in_stage_order():
 
         return run
 
-    with patch(
-        "app.testing.graphs.testing_graph.static_verification_node",
-        scan("static_verification", "static_report"),
-    ), patch(
-        "app.testing.graphs.testing_graph.iac_verification_node",
-        scan("iac_verification", "iac_report"),
-    ), patch(
-        "app.testing.graphs.testing_graph.dynamic_functional_node",
-        return_value={
-            "current_node": "dynamic_functional",
-            "dynamic_functional_report": {"status": "SKIPPED"},
-        },
+    with (
+        patch(
+            "app.testing.graphs.testing_graph.static_verification_node",
+            scan("static_verification", "static_report"),
+        ),
+        patch(
+            "app.testing.graphs.testing_graph.iac_verification_node",
+            scan("iac_verification", "iac_report"),
+        ),
+        patch(
+            "app.testing.graphs.testing_graph.dynamic_functional_node",
+            return_value={
+                "current_node": "dynamic_functional",
+                "dynamic_functional_report": {"status": "SKIPPED"},
+            },
+        ),
     ):
         result = create_testing_graph().invoke(_initial_state())
 
@@ -226,17 +185,11 @@ def test_static_stage_reports_a_missing_iac_folder(tmp_path):
     manifests.mkdir()
     (manifests / "deployment.yaml").write_text("kind: Deployment\n", encoding="utf-8")
 
-    with patch(
-        "app.testing.utils.artifact_source.load_file_snapshot", return_value=None
-    ), patch(
-        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
-    ), patch(
-        "app.testing.utils.requirements_source.load_state",
-        return_value={"refined_requirements": []},
+    with (
+        patch("app.testing.utils.artifact_source.load_file_snapshot", return_value=None),
+        patch("app.testing.utils.static_analysis.run_trivy_scan", return_value=[]),
     ):
-        result = create_testing_graph().invoke(
-            _initial_state(application_dir=str(tmp_path))
-        )
+        result = create_testing_graph().invoke(_initial_state(application_dir=str(tmp_path)))
 
     assert result["static_report"]["status"] == "PASSED"
     assert result["static_report"]["source"]["source"] == "application"
@@ -278,272 +231,6 @@ def test_opentofu_plan_is_dry_run_and_never_apply(tmp_path, monkeypatch):
     assert source.read_text(encoding="utf-8").endswith("\n")
 
 
-def test_dynamic_functional_generates_from_stored_requirements(stored_artifacts):
-    stored = [
-        {"id": "FR1", "text": "A user can register.", "type": "FR"},
-        {"id": "NFR1", "text": "Login responds within 200ms.", "type": "NFR"},
-    ]
-    captured: dict = {}
-
-    def fake_generate(code, target_url, repository_root):
-        captured["code"] = code
-        return {"status": "passed", "exit_code": 0, "stdout": "", "stderr": "", "report": {}}
-
-    with patch(
-        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
-    ), patch(
-        "app.testing.utils.requirements_source.load_state",
-        return_value={"refined_requirements": stored},
-    ), patch(
-        "app.testing.nodes.dynamic_functional.configured_api_key", return_value="key"
-    ), patch(
-        "app.testing.nodes.dynamic_functional.run_dynamic_test", side_effect=fake_generate
-    ), patch(
-        "app.testing.nodes.dynamic_functional.OpenAI"
-    ) as mock_openai:
-        completion = mock_openai.return_value.chat.completions.create.return_value
-        completion.choices[0].message.content = "def test_fr1(page): pass"
-        result = create_testing_graph().invoke(_initial_state())
-
-    report = result["dynamic_functional_report"]
-    assert report["status"] == "passed"
-    assert report["requirements"] == {
-        "source": "db",
-        "artifact_type": "REFINE_REQ",
-        "count": 1,
-        "ids": ["FR1"],
-    }
-
-    # The prompt carries the stored FR text and leaves the NFR to the NFR stage.
-    prompt = mock_openai.return_value.chat.completions.create.call_args.kwargs[
-        "messages"
-    ][0]["content"]
-    assert "A user can register." in prompt
-    assert "Login responds within 200ms." not in prompt
-
-
-def test_dynamic_functional_prompt_includes_accumulated_repair_history(stored_artifacts):
-    from app.validation import RepairAttempt, RepairLedger
-
-    ledger = RepairLedger(episode_id="testing-episode")
-    ledger.record(
-        RepairAttempt(
-            stage="testing.dynamic-functional",
-            strategy_key="first-attempt",
-            input_digest="input-1",
-            candidate_digest="rejected-candidate",
-            finding_keys_before=("FR1 failed",),
-            finding_keys_after=("FR1 failed",),
-            outcome="no_improvement",
-        )
-    )
-    with patch(
-        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
-    ), patch(
-        "app.testing.utils.requirements_source.load_state",
-        return_value={
-            "refined_requirements": [
-                {"id": "FR1", "text": "A user can register.", "type": "FR"}
-            ]
-        },
-    ), patch(
-        "app.testing.nodes.dynamic_functional.configured_api_key", return_value="key"
-    ), patch(
-        "app.testing.nodes.dynamic_functional.run_dynamic_test",
-        return_value={"status": "passed"},
-    ), patch("app.testing.nodes.dynamic_functional.OpenAI") as mock_openai:
-        mock_openai.return_value.chat.completions.create.return_value.choices[
-            0
-        ].message.content = "def test_fr1(page): pass"
-        create_testing_graph().invoke(
-            _initial_state(repair_history=ledger.model_dump(mode="json"))
-        )
-
-    prompt = mock_openai.return_value.chat.completions.create.call_args.kwargs[
-        "messages"
-    ][0]["content"]
-    assert "rejected-candidate" in prompt
-    assert "FR1 failed" in prompt
-
-
-def test_dynamic_functional_without_app_id_does_not_silently_pass():
-    with patch(
-        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
-    ), patch("app.testing.utils.artifact_source.load_file_snapshot", return_value=None):
-        result = create_testing_graph().invoke(_initial_state(app_id=""))
-
-    assert result["dynamic_functional_report"]["status"] == "FAILED"
-    assert result["dynamic_functional_report"]["reason"] == "Missing app_id"
-
-
-def test_dynamic_candidates_follow_use_case_trace_from_openapi() -> None:
-    """BCE operationId에 요구사항 ID를 억지로 넣지 않고 저장된 추적 관계를 따른다."""
-
-    candidates = build_test_candidates(
-        [
-            {"id": "RR3", "text": "Register for an offering.", "type": "FR"},
-            {"id": "RR14", "text": "Authorize protected operations.", "type": "FR"},
-            {"id": "RR16", "text": "Keep registration concurrency safe.", "type": "FR"},
-        ],
-        {
-            "use_cases": [{"id": "UC2", "requirement_ids": ["RR3"]}],
-            "traceability": {
-                "requirements": {
-                    "RR14": {"modeled_as_constraint": True, "use_cases": []},
-                    "RR16": {
-                        "modeled_as_constraint": True,
-                        "constrains_use_cases": ["UC2"],
-                    },
-                }
-            },
-        },
-        {
-            "paths": {
-                "/registrations": {
-                    "post": {
-                        "operationId": "RegistrationControl::processRegistration",
-                        "x-easydep-use-case-ids": ["UC2"],
-                    }
-                }
-            }
-        },
-    )
-
-    assert [candidate["requirementId"] for candidate in candidates] == ["RR3", "RR16"]
-    assert all(candidate["ambiguity"] is False for candidate in candidates)
-    assert all(candidate["allowedPaths"] == ["/registrations"] for candidate in candidates)
-
-
-def test_dynamic_functional_uses_frozen_contract_without_reading_latest_requirements(tmp_path):
-    """실행 중 DB의 최신 요구사항으로 coverage가 바뀌지 않는다."""
-    frozen_input = {
-        "app_id": "app-1",
-        "implementation_job_id": "job-1",
-        "artifact_version_ids": {
-            "SOURCE_CODE": 1,
-            "DEPLOYMENT_FILE": 2,
-        },
-        "contract_artifacts": {
-            "requirements": {
-                "version_id": 11,
-                "digest": "requirements-v11",
-                "content": [{"id": "FR1", "text": "Register.", "type": "FR"}],
-            },
-            "use_cases": {"version_id": 12, "digest": "use-cases-v12", "content": {"use_cases": []}},
-            "openapi": {
-                "version_id": 13,
-                "digest": "openapi-v13",
-                "content": {"paths": {"/register": {"post": {"operationId": "FR1_register"}}}},
-            },
-            "deployment": {"version_id": 14, "digest": "deployment-v14", "content": {}},
-        },
-    }
-    with patch("app.testing.utils.static_analysis.run_trivy_scan", return_value=[]), patch(
-        "app.testing.nodes.dynamic_functional.functional_requirements",
-        side_effect=AssertionError("latest DB must not be read"),
-    ), patch(
-        "app.testing.nodes.dynamic_functional.configured_api_key", return_value="key"
-    ), patch("app.testing.nodes.dynamic_functional.OpenAI") as mock_openai, patch(
-        "app.testing.nodes.dynamic_functional.run_dynamic_test",
-        return_value={
-            "status": "passed",
-            "report": {
-                "tests": [
-                    {"nodeid": "test_dynamic.py::test_fr1_register", "outcome": "passed"}
-                ]
-            },
-        },
-    ):
-        mock_openai.return_value.chat.completions.create.return_value.choices[0].message.content = (
-            "def test_fr1_register():\n    assert True"
-        )
-        result = create_testing_graph().invoke(
-            _initial_state(
-                application_dir=str(tmp_path),
-                testing_input=frozen_input,
-                iac_expected=False,
-            )
-        )
-
-    report = result["dynamic_functional_report"]
-    assert report["gateStatus"] == "PASS"
-    assert report["requirements"]["ids"] == ["FR1"]
-    prompt = mock_openai.return_value.chat.completions.create.call_args.kwargs["messages"][0]["content"]
-    assert "/register" in prompt
-
-
-def test_dynamic_functional_reuses_preserved_candidate_without_llm(tmp_path):
-    """제품 코드 수리 뒤에는 같은 테스트를 실행하고 NIM 후보를 바꾸지 않는다."""
-    frozen_input = {
-        "app_id": "app-1",
-        "implementation_job_id": "job-2",
-        "artifact_version_ids": {"SOURCE_CODE": 3, "DEPLOYMENT_FILE": 4},
-        "contract_artifacts": {
-            "requirements": {
-                "digest": "requirements-v1",
-                "content": [{"id": "FR1", "text": "Register.", "type": "FR"}],
-            },
-            "use_cases": {"digest": "use-cases-v1", "content": {"use_cases": []}},
-            "openapi": {
-                "digest": "openapi-v1",
-                "content": {
-                    "paths": {
-                        "/register": {
-                            "post": {"operationId": "FR1_register"}
-                        }
-                    }
-                },
-            },
-            "deployment": {"digest": "deployment-v1", "content": {}},
-        },
-    }
-    candidate = (
-        "def test_fr1_register():\n"
-        "    response = requests.post('/register')\n"
-        "    assert response.status_code == 201"
-    )
-    with patch(
-        "app.testing.nodes.dynamic_functional.OpenAI"
-    ) as mock_openai, patch(
-        "app.testing.nodes.dynamic_functional.run_dynamic_test",
-        return_value={
-            "status": "passed",
-            "gateStatus": "PASS",
-            "report": {
-                "tests": [
-                    {"nodeid": "test_dynamic.py::test_fr1_register", "outcome": "passed"}
-                ]
-            },
-        },
-    ):
-        result = dynamic_functional_node(
-            _initial_state(
-                application_dir=str(tmp_path),
-                testing_input=frozen_input,
-                fixed_test_code=candidate,
-            )
-        )
-
-    mock_openai.assert_not_called()
-    assert result["dynamic_functional_report"]["candidateCode"] == candidate
-    assert result["dynamic_functional_report"]["gateStatus"] == "PASS"
-
-
-def test_dynamic_candidate_rejects_assertionless_and_unknown_endpoint():
-    from app.testing.nodes.dynamic_functional import validate_test_candidate
-
-    report = validate_test_candidate(
-        "def test_fr1_register():\n    requests.post('/missing')",
-        openapi={"paths": {"/register": {"post": {}}}},
-        requirement_ids={"FR1"},
-    )
-
-    assert report["valid"] is False
-    assert report["defectClass"] == "TEST_DEFECT"
-    assert any("assertion" in issue.lower() for issue in report["issues"])
-    assert any("OpenAPI path" in issue for issue in report["issues"])
-
-
 # ---------------------------------------------------------------------------
 # Bringing the generated application up for the dynamic stages
 # ---------------------------------------------------------------------------
@@ -553,7 +240,7 @@ def test_exposed_port_is_read_from_the_generated_dockerfile(tmp_path):
     from app.testing.runtime.app_container import exposed_port
 
     (tmp_path / "Dockerfile").write_text(
-        "FROM eclipse-temurin:21-jre\nEXPOSE 9090\nENTRYPOINT [\"java\"]\n",
+        'FROM eclipse-temurin:21-jre\nEXPOSE 9090\nENTRYPOINT ["java"]\n',
         encoding="utf-8",
     )
     assert exposed_port(tmp_path) == 9090
@@ -571,9 +258,7 @@ def test_parallel_testing_jobs_use_different_docker_names():
     assert all("app-1" not in value for value in first)
 
 
-def test_running_application_uses_test_database_and_keeps_container_for_logs(
-    tmp_path, monkeypatch
-):
+def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp_path, monkeypatch):
     """실패 로그를 읽기 전에 Docker가 컨테이너를 자동 삭제하지 않는다."""
     from app.testing.runtime import app_container
 
@@ -624,8 +309,9 @@ def test_running_application_classifies_missing_frontend_build_as_product_defect
         )()
 
     monkeypatch.setattr(app_container, "_docker", docker)
-    with pytest.raises(ApplicationLaunchError) as raised, app_container.running_application(
-        "app-1", tmp_path
+    with (
+        pytest.raises(ApplicationLaunchError) as raised,
+        app_container.running_application("app-1", tmp_path),
     ):
         pass
 
@@ -671,27 +357,22 @@ def test_verification_runs_dynamic_tests_against_the_launched_app(tmp_path):
 
     captured: dict = {}
 
-    def fake_run(code, target_url, repository_root):
-        captured["target_url"] = target_url
-        return {"status": "passed", "exit_code": 0, "stdout": "", "stderr": "", "report": {}}
+    def fake_dynamic(state):
+        captured["target_url"] = state["target_url"]
+        return {
+            "current_node": "dynamic_functional",
+            "dynamic_functional_report": {
+                "status": "passed",
+                "gateStatus": "PASS",
+                "targetUrl": state["target_url"],
+            },
+        }
 
-    with patch(
-        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
-    ), patch(
-        "app.testing.runtime.verification.running_application", _fake_launch
-    ), patch(
-        "app.testing.utils.requirements_source.load_state",
-        return_value={"refined_requirements": [{"id": "FR1", "text": "Register.", "type": "FR"}]},
-    ), patch(
-        "app.testing.nodes.dynamic_functional.configured_api_key", return_value="key"
-    ), patch(
-        "app.testing.nodes.dynamic_functional.run_dynamic_test", side_effect=fake_run
-    ), patch(
-        "app.testing.nodes.dynamic_functional.OpenAI"
-    ) as mock_openai:
-        mock_openai.return_value.chat.completions.create.return_value.choices[
-            0
-        ].message.content = "def test_fr1(page): pass"
+    with (
+        patch("app.testing.utils.static_analysis.run_trivy_scan", return_value=[]),
+        patch("app.testing.runtime.verification.running_application", _fake_launch),
+        patch("app.testing.graphs.testing_graph.dynamic_functional_node", fake_dynamic),
+    ):
         result = verification.run_verification_graph(
             run_id="r1", app_id="app-1", application_dir=str(tmp_path)
         )
@@ -714,19 +395,17 @@ def test_verification_still_scans_when_the_app_cannot_be_launched(tmp_path):
         raise ApplicationLaunchError("docker build failed")
         yield  # pragma: no cover
 
-    with patch(
-        "app.testing.utils.static_analysis.run_trivy_scan",
-        return_value=["[k8s/deployment.yaml] No resource limits (HIGH): ..."],
-    ), patch(
-        "app.testing.runtime.verification.running_application", failing_launch
-    ), patch(
-        "app.testing.nodes.dynamic_functional.run_dynamic_test"
-    ) as never_run:
+    with (
+        patch(
+            "app.testing.utils.static_analysis.run_trivy_scan",
+            return_value=["[k8s/deployment.yaml] No resource limits (HIGH): ..."],
+        ),
+        patch("app.testing.runtime.verification.running_application", failing_launch),
+    ):
         result = verification.run_verification_graph(
             run_id="r1", app_id="app-1", application_dir=str(tmp_path)
         )
 
-    never_run.assert_not_called()
     assert result["applicationLaunchError"] == "docker build failed"
     assert result["reports"]["static"]["status"] == "FAILED"
     assert result["reports"]["dynamicFunctional"]["status"] == "FAILED"
@@ -744,13 +423,9 @@ def test_verification_still_scans_when_the_app_cannot_be_launched(tmp_path):
 def test_verification_reuses_a_caller_supplied_url(stored_artifacts):
     from app.testing.runtime import verification
 
-    with patch(
-        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
-    ), patch(
-        "app.testing.runtime.verification.running_application"
-    ) as launcher, patch(
-        "app.testing.utils.requirements_source.load_state",
-        return_value={"refined_requirements": []},
+    with (
+        patch("app.testing.utils.static_analysis.run_trivy_scan", return_value=[]),
+        patch("app.testing.runtime.verification.running_application") as launcher,
     ):
         result = verification.run_verification_graph(
             run_id="r1", app_id="app-1", target_url="http://staging.example:8080"

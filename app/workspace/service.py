@@ -844,11 +844,12 @@ class WorkspaceService:
                     )
                     return shaped
                 if "SUT_DEFECT" in defect_classes:
-                    # 동적 테스트까지 실행된 실패라면 그 테스트를 그대로 보존한다. 반대로
-                    # 컴파일·단위 테스트처럼 후보 코드가 생기기 전에 실패한 경우에는 보존할
+                    # 동적 테스트까지 실행된 실패라면 그 계획을 그대로 보존한다. 반대로
+                    # 앱 실행처럼 계획이 생기기 전에 실패한 경우에는 보존할
                     # 대상이 없으므로, 고친 구현을 새 Testing 작업으로 검사해야 한다.
                     has_preserved_candidate = any(
-                        bool(str(blocker.get("candidate_code") or "").strip())
+                        isinstance(blocker.get("candidate_plan"), dict)
+                        and bool(blocker.get("candidate_plan"))
                         for blocker in blockers
                     )
                     original_implementation = implementation_worker.get(implementation_job_id)
@@ -2264,15 +2265,15 @@ class WorkspaceService:
     def _testing_implementation_feedback(
         result: dict[str, Any], blockers: list[dict[str, Any]]
     ) -> str:
-        """제품 수리 에이전트에 실패 증거와 고정 테스트를 읽기 쉽게 전달한다."""
+        """제품 수리 에이전트에 실패 증거와 고정 테스트 계획을 전달한다."""
         evidence = []
-        candidate_code = ""
+        candidate_plan: dict[str, Any] = {}
         for blocker in blockers:
             message = str(blocker.get("message") or "").strip()
             if message:
                 evidence.append(message)
-            if not candidate_code:
-                candidate_code = str(blocker.get("candidate_code") or "").strip()
+            if not candidate_plan and isinstance(blocker.get("candidate_plan"), dict):
+                candidate_plan = dict(blocker["candidate_plan"])
         history = dict(result.get("repair_state") or {})
         parts = [
             "The generated application failed a preserved functional test. Repair only "
@@ -2280,8 +2281,11 @@ class WorkspaceService:
             "acceptance conditions unchanged.",
             "Failure evidence:\n- " + "\n- ".join(evidence or ["Testing gate failed."]),
         ]
-        if candidate_code:
-            parts.append("Preserved executable test:\n```python\n" + candidate_code + "\n```")
+        if candidate_plan:
+            parts.append(
+                "Preserved functional test plan:\n"
+                + json.dumps(candidate_plan, ensure_ascii=False, sort_keys=True)
+            )
         if history:
             parts.append(
                 "Previous repair history:\n"

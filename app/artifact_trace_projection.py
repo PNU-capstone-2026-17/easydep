@@ -3,6 +3,7 @@
 DB·repository·stage service를 호출하지 않는다. 저장 JSON의 확정 ID와 ``sourceRefs``만
 사용하며, 이름 유사성이나 부분 문자열로 산출물을 연결하지 않는다.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -30,9 +31,7 @@ def project_artifact_trace(
     _sequence(nodes, _map(state.get("sequence_diagram_model")))
     _api(nodes, _map(state.get("api_spec_model")), operations)
     _erd(nodes, _map(state.get("erd_bce_classes")))
-    resources_by_workload = _deployment(
-        nodes, _map(state.get("deployment_diagram_bundle"))
-    )
+    resources_by_workload = _deployment(nodes, _map(state.get("deployment_diagram_bundle")))
     _implementation(
         nodes,
         implementation_rtm or state.get("implementation_rtm"),
@@ -106,7 +105,11 @@ def _use_cases(nodes: list[TraceNode], specification: Mapping[str, Any]) -> None
 
     traceability = _map(specification.get("traceability"))
     for requirement_id, item in _map(traceability.get("requirements")).items():
-        if not isinstance(requirement_id, str) or not requirement_id or not isinstance(item, Mapping):
+        if (
+            not isinstance(requirement_id, str)
+            or not requirement_id
+            or not isinstance(item, Mapping)
+        ):
             continue
         for use_case_id in _strings(
             item.get("use_cases"),
@@ -265,9 +268,7 @@ def _erd(nodes: list[TraceNode], model: Mapping[str, Any]) -> None:
             )
 
 
-def _deployment(
-    nodes: list[TraceNode], bundle: Mapping[str, Any]
-) -> dict[TraceRef, set[TraceRef]]:
+def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> dict[TraceRef, set[TraceRef]]:
     """WorkloadGraph와 각 projection ResourcePlan의 식별 가능한 sourceRefs를 읽는다."""
 
     resources_by_workload: dict[TraceRef, set[TraceRef]] = {}
@@ -325,27 +326,21 @@ def _deployment(
             for item in _records(value):
                 identifier = _id(item, "id") or _id(item, "ruleId")
                 if identifier:
-                    source_tokens = set(
-                        _strings(item.get("sourceRefs"), item.get("source_refs"))
-                    )
+                    source_tokens = set(_strings(item.get("sourceRefs"), item.get("source_refs")))
                     linked_workloads = {
                         workload_ref
                         for workload_id, workload_ref in workload_refs.items()
                         if workload_id == item.get("workloadRef")
                         or bool(source_tokens & workload_tokens[workload_id])
                     }
-                    resource_ref = TraceRef(
-                        "resource", f"{target_id}:{collection}:{identifier}"
-                    )
+                    resource_ref = TraceRef("resource", f"{target_id}:{collection}:{identifier}")
                     _add(
                         nodes,
                         resource_ref,
                         [*_source_refs(item, fact_refs), *linked_workloads],
                     )
                     for workload_ref in linked_workloads:
-                        resources_by_workload.setdefault(workload_ref, set()).add(
-                            resource_ref
-                        )
+                        resources_by_workload.setdefault(workload_ref, set()).add(resource_ref)
     return resources_by_workload
 
 
@@ -376,28 +371,43 @@ def _implementation(
 
 
 def _testing(nodes: list[TraceNode], result: Mapping[str, Any]) -> None:
-    """동적 report의 candidateDigest/실행 requirement/blocking finding을 보존한다."""
+    """작은 테스트 계획을 requirement/use case/API와 실행 evidence에 잇는다."""
 
     report = _map(result.get("dynamic_functional_report"))
     if not report:
         report = _map(_map(result.get("verification")).get("reports")).get("dynamicFunctional")
     report = _map(report) if report else result
-    digest = _id(report, "candidateDigest")
-    requirement_refs = [
-        TraceRef("requirement", value)
-        for value in _strings(_map(report.get("requirements")).get("ids"))
-    ]
-    test_ref = TraceRef("test", digest) if digest else None
-    if test_ref:
-        _add(nodes, test_ref, requirement_refs)
+    digest = _id(report, "candidateDigest") or "unversioned"
+    test_refs: list[TraceRef] = []
+    for case in _records(_map(report.get("candidatePlan")).get("cases")):
+        case_id = _id(case, "case_id")
+        if not case_id:
+            continue
+        sources = [
+            *_refs(case, "requirement", "requirement_ids"),
+            *_refs(case, "use_case", "use_case_id"),
+        ]
+        sources.extend(
+            TraceRef("api", operation_id)
+            for step in _records(case.get("steps"))
+            if (operation_id := _id(step, "operation_id"))
+        )
+        test_ref = TraceRef("test", f"{digest}:{case_id}")
+        _add(nodes, test_ref, sources)
+        test_refs.append(test_ref)
+
+    for case_result in _records(report.get("cases")):
+        case_id = _id(case_result, "caseId")
+        finding = _map(_map(case_result.get("result")).get("finding"))
+        finding_id = _id(finding, "code")
+        if case_id and finding_id:
+            source = TraceRef("test", f"{digest}:{case_id}")
+            _add(nodes, TraceRef("finding", f"{case_id}:{finding_id}"), [source])
+
     for item in _records(result.get("blocking_findings")):
         finding_id = _id(item, "code") or _id(item, "id")
         if finding_id:
-            _add(
-                nodes,
-                TraceRef("finding", finding_id),
-                [*requirement_refs, *([test_ref] if test_ref else [])],
-            )
+            _add(nodes, TraceRef("finding", finding_id), test_refs)
 
 
 def _add(nodes: list[TraceNode], ref: TraceRef, sources: Iterable[TraceRef]) -> None:
