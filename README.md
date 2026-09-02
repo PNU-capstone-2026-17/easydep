@@ -4,7 +4,7 @@ EasyDep은 자연어 요구사항에서 소프트웨어 설계, 구현, 테스�
 멀티 AI 에이전트 기반 개발 지원 시스템이다. 현재 지원 범위는 AWS·Azure·GCP의
 Docker-on-VM 애플리케이션이다.
 
-현재 구현 수준과 알려진 한계는 [현재 시스템 상태](docs/current-system-status.md)를 기준으로 한다.
+현재 구현 수준과 알려진 한계는 [현재 시스템 구성](docs/current-system-status.md)을 기준으로 한다.
 문서 전체의 역할은 [문서 안내](docs/README.md)에서 확인할 수 있다.
 코드를 처음 읽는다면 [초보자용 코드 탐색 순서](docs/code-reading-guide.md)와
 [백엔드 코드 길잡이](app/README.md)부터 보는 것을 권장한다.
@@ -95,7 +95,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 | `-FrontendPort 5174` | 개발 UI 포트를 변경한다. 기본값은 `5173`이다. |
 | `-DatabasePort 33061` | 호스트의 개발용 MySQL 포트를 변경한다. 기본값은 `33060`이다. |
 | `-DatabaseImage mysql:8.4` | 최초 컨테이너 생성에 사용할 MySQL 이미지를 지정한다. |
-| `-Stop` | 이 스크립트가 시작한 백엔드와 개발용 MySQL을 중지한다. |
+| `-Stop` | 이 스크립트가 시작한 백엔드·Vite와 개발용 MySQL을 중지한다. |
 
 의존성과 툴체인 준비가 끝난 뒤 빠르게 재시작하는 예시는 다음과 같다.
 
@@ -151,7 +151,7 @@ python -m pytest
 
 ## 주요 문서
 
-- [현재 시스템 상태](docs/current-system-status.md): 구현 범위, 검증 결과, 부족한 점
+- [현재 시스템 구성](docs/current-system-status.md): 실행 프로세스, 단계별 책임, 저장·툴체인과 현재 한계
 - [문서 안내](docs/README.md): 활성 문서와 이력 문서 구분
 - [HTTP API](docs/api.md): 요구사항·설계·구현 API 계약
 - [초보자용 코드 탐색 순서](docs/code-reading-guide.md): UI 요청부터 단계 서비스까지 따라가는 방법

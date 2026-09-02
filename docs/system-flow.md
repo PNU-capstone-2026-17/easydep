@@ -1,6 +1,6 @@
 # EasyDep 전체 실행 흐름과 데이터 계약
 
-> 기준일: 2026-08-29  
+> 기준일: 2026-09-02
 > 대상: `dev` 브랜치의 현재 코드  
 > 목적: 기능을 줄이거나 고치기 전에, 사용자의 입력이 어떤 API와 LLM을 거쳐 어떤 산출물이 되는지 한 문서에서 확인한다.
 
@@ -141,7 +141,7 @@ type WorkspaceCommand = {
 message, advance, delegate_repair,
 confirm_change, dismiss_change,
 start_design, retry_requirements, retry_design,
-start_implementation, rerun_implementation,
+  start_implementation, retry_implementation, rerun_implementation,
 approve_implementation, reject_implementation, cancel_implementation,
 start_testing, apply_deployment_preferences
 ```
@@ -896,7 +896,7 @@ checkpoint 본문, 각 상태 채널의 값, 아직 반영되지 않은 쓰기�
 | 클래스 accepted-unit cache | 프로세스 메모리 | 사라짐 |
 | 구현 작업 | 구현 work root의 `easydep-job-state.json` | 승인 파일이 있으면 실행 재개, 없으면 실패 처리 |
 | 구현 생성 run | 구현 work root의 immutable run directory | 완료된 run 재사용 가능 |
-| 테스트 작업 | 프로세스 메모리 | 사라짐, 구현 작업에서 새 테스트 필요 |
+| 테스트 진행 위치와 고정 입력 | `workspace_commands.payload.testing_checkpoint` | 같은 명령에서 재개 가능 |
 
 Workspace 명령이 `INTERRUPTED`가 되었다고 요구사항·설계 체크포인트가 삭제되는 것은 아니다.
 사용자는 해당 단계의 retry 명령으로 실패 지점부터 다시 실행할 수 있다.
@@ -924,8 +924,10 @@ class_diagram, sequence_diagram, api_spec, erd, deployment_diagram
 ```
 
 요구사항 JSON은 그대로 저장한다. 설계 다섯 단계는 JSON 원본을 저장하고 PlantUML/OpenAPI를
-다시 만든다. 이미지 URL에는 버전 번호가 없으므로 매번 현재 모델에서 렌더하고 `no-store`로
-응답한다. 시퀀스는 유스케이스별 그림도 조회할 수 있다.
+코드로 만든다. PlantUML 산출물은 저장 직후 SVG·PNG로 렌더링해 프로세스 메모리에 보관한다.
+이미지 API는 정상 흐름에서 이 cache만 읽으며, 서버 재시작 뒤 cache가 비었을 때에만 현재
+모델을 복원해 한 번 다시 렌더링한다. URL에는 버전 번호가 없으므로 HTTP 응답은 `no-store`를
+유지한다. 시퀀스는 유스케이스별 그림도 조회할 수 있다.
 
 ## 10. 현재 LLM 설정과 동시 실행 수
 

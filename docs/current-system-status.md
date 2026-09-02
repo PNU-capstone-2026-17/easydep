@@ -1,347 +1,384 @@
-# EasyDep 현재 구조와 부족한 점
+# EasyDep 현재 시스템 구성
 
-> 기준일: 2026-08-15
-> 시스템 목표: **멀티 AI 에이전트를 활용한 클라우드 네이티브 애플리케이션 개발 지원**
+> 기준일: 2026-09-02
+>
+> 기준 커밋: `41912c5`
+> 목적: 계획이나 과거 실험이 아니라, 현재 코드가 실제로 어떻게 연결되어 있는지 빠르게 이해한다.
 
-> 이 문서는 위 기준일의 구현 범위와 검증 근거를 기록한다. 이후 바뀐 프론트엔드 API,
-> 실제 입출력 타입, MySQL·체크포인트와 수리 흐름은
-> [전체 실행 흐름과 데이터 계약](system-flow.md)을 현재 기준으로 삼는다.
+필드별 JSON 타입과 단계 내부의 세부 순서는
+[전체 실행 흐름과 데이터 계약](system-flow.md)에 있다. 이 문서는 시스템 전체의 구성과 각
+부분의 책임을 설명한다.
 
-## 한눈에 보기
+## 1. 한눈에 보는 구조
 
-| 영역 | 현재 상태 | 판정 | 핵심 부족 사항 |
-|---|---|---:|---|
-| 4단계 파이프라인 | 요구사항 → 설계 → 구현 → 테스팅 연결 | ✅ | 멤버 workflow의 미구현 planner 공백은 임시 LLM으로 제한 보완 |
-| 요구사항 분석 | 소프트웨어 요구사항과 클라우드 제약 구조화 | ✅ | 용량 산정에 필요한 트래픽·최소 사양이 자주 미확정 |
-| 설계 | 기존 설계 산출물 + 논리 토폴로지·CSP ResourcePlan | ⚠️ | 3사 정적 Plan·중립 앱 runtime 통과. 생성 앱은 AWS 1회만 harness 보정 후 통과 |
-| 구현 | 멤버 workflow 호출과 임시 공백 provider 연결 | ⚠️ | BCE·OpenAPI·Gradle 생성기는 Docker 도구와 `/workspace` 경로 계약을 사용 |
-| 테스팅 | Gradle 테스트 및 테스트 0개 성공 방지 | ✅ | 더 넓은 운영 품질·보안 검사는 아직 제품 범위 밖 |
-| DepKB | AWS·Azure·GCP의 VM 자원 의존성 제공 | ⚠️ | 고정입력 절제 완료, 생성·기능 성공의 소규모 비교가 남음 |
-| VM 선택 | 용량 필터 후 가격·성능 추천 및 IaC 반영 gate | ✅ | 실제 처리량·전체 비용과 provider validate는 별도 증거 필요 |
-| 여러 입력 실행 | 프론트엔드와 같은 Workspace API 실행기 | ⚠️ | 입력 묶음과 사람용 성공 기준은 정리 작업 뒤 확정 |
-| 종단 검증 | 중립 앱 E1·E2 3사 및 수강신청 생성 앱 AWS 기능 검증 | ⚠️ | AWS 생성 앱은 harness 보정 포함. 순수 생성과 Azure·GCP 생성 앱은 미확인 |
-
-범례: ✅ 동작 검증, ⚠️ 구조는 있으나 근거 또는 범위 부족, ❌ 미구현
-
-## 현재 시스템 구조
-
-클라우드 네이티브 기능은 별도 5단계가 아니라 기존 네 단계의 하위 작업으로 들어간다.
+EasyDep은 사용자의 자연어 요구사항을 받아 요구사항 분석, 설계, 구현, 테스트를 순서대로
+실행한다. 단계 순서는 코드가 정하며, LLM은 각 단계 안에서 자연어 해석이나 코드 작성을
+담당한다.
 
 ```mermaid
 flowchart LR
-    U[사용자 입력] --> R[1. 요구사항]
+    U[사용자] --> UI[SvelteKit 작업대]
+    UI -->|Workspace API| API[FastAPI]
+    API --> W[Workspace 조정 계층]
+
+    W --> R[1. 요구사항]
     R --> D[2. 설계]
     D --> I[3. 구현]
-    I --> T[4. 테스팅]
+    I --> T[4. Testing]
 
-    R1[소프트웨어 요구사항 분석] --> R
-    R2[CSP·리전·예산 + 후속 용량 하한] --> R
+    R --> LLM[NVIDIA NIM<br/>OpenAI 호환 API]
+    D --> LLM
+    I --> LLM
+    T --> LLM
 
-    D --> D1[멤버 설계 에이전트]
-    K[DepKB] --> D2[VM 자원 의존성 보강]
-    D1 --> D2
+    W --> DB[(MySQL)]
+    R --> DB
+    D --> DB
+    I --> DB
 
-    D2 --> I1[구현 골격]
-    I1 --> I2[수용 테스트 생성]
-    I2 --> I3[업무 로직 완성]
-    C[용량·가격·성능 KB] --> I4[VM 후보 선택]
-    I3 --> I4
-    I4 --> I5[Docker + Terraform]
-
-    I5 --> T1[Gradle 테스트]
-    T --> T1[단위·정적·동적 검사 결과]
+    D --> PUML[상시 PlantUML 렌더러]
+    I --> TOOL[구현 툴체인]
+    T --> BROWSER[Testing 툴체인<br/>Playwright headless]
 ```
 
-### 단계별 provider
+핵심 구성 요소는 다음과 같다.
 
-| 단계 | 하위 작업 | 현재 기본/실험 provider |
+| 구성 요소 | 위치 | 책임 |
 |---|---|---|
-| 요구사항 | 자연어 분석 및 클라우드 제약 구조화 | 멤버 에이전트 |
-| 설계 | 소프트웨어 설계 | 멤버 에이전트 |
-| 설계 | VM 자원 의존성 보강 | 내장 DepKB adapter |
-| 구현 | 애플리케이션 골격 | 기본: 멤버 / 현재 비교실험: 명시적 LLM |
-| 구현 | 수정 불가능한 수용 테스트 | LLM |
-| 구현 | 업무 로직 완성 | LLM |
-| 구현 | VM 후보 선택 | 결정론적 선택기 |
-| 구현 | Docker 및 VM Terraform | LLM |
-| 테스팅 | 생성 애플리케이션 테스트 | 내장 Gradle adapter |
+| 작업대 UI | `frontend/` | 앱 생성, 대화, 단계 진행, 산출물·진행 중 소스 조회 |
+| FastAPI 진입점 | `server.py` | DB·BERT·PlantUML·worker 준비와 HTTP router 조립 |
+| Workspace | `app/workspace/` | 화면 명령을 단계 호출로 바꾸고 상태·이벤트·자동 진행을 관리 |
+| 요구사항 | `app/requirements/` | 요구사항 정제, FR/NFR 분류, 액터·유스케이스·상세 명세 생성 |
+| 설계 | `app/design/` | 클래스·시퀀스·API·ERD·배포 모델 생성 |
+| 구현 | `app/implementation/` | 설계를 소스, 테스트, Docker와 OpenTofu 파일로 변환 |
+| Testing | `app/testing/` | 완성된 앱의 배포 정적 검사와 거시적 통합·E2E 검사 |
+| 저장소 | `app/repositories/`, `app/db/` | 앱·명령·산출물 버전·체크포인트를 MySQL에 저장 |
+| 클라우드 지식 | `app/cloudkb/` | CSP 리전, VM 가격·성능, 리소스 연결 규칙 제공 |
+| 공통 계측 | `app/metrics/` | LLM 호출 시간, 토큰, 실패 위치 기록 |
 
-선택한 provider가 실패하면 다른 provider로 자동 전환하지 않는다. 실행 manifest에 실제
-provider가 기록되므로 임시 LLM 구현과 멤버 구현 결과를 구분할 수 있다.
+## 2. 개발 환경에서 실행되는 프로세스
 
-## 데이터와 산출물 흐름
-
-```mermaid
-flowchart TD
-    Q[자연어 요구사항] --> RS[구조화 요구사항]
-    RS --> DN[Deployment Needs]
-    RS --> SD[소프트웨어 설계]
-    DN --> CD[클라우드 설계]
-    KB[DepKB claims] --> CD
-    SD --> SRC[소스코드]
-    CD --> IAC[VM Terraform]
-    RS --> AT[수용 테스트]
-    SRC --> TEST[Gradle 테스트]
-    AT --> TEST
-    TEST --> RESULT[Workspace 테스트 결과]
-    IAC --> RESULT
-```
-
-프론트엔드에서 시작한 실행은 MySQL의 `apps`, `workspace_commands`, 산출물·공용 checkpoint
-테이블에 저장한다. 화면용 진행 이벤트는 bounded 메모리 버퍼를 통해 SSE로 보내며 재시작 뒤
-복구하지 않는다. 구현 단계는 동시에 하나만 실행하며 timeout 시 하위 프로세스 트리도 종료한다.
-
-## 요구사항 입력 경계
-
-최초 요청에서 받는 값은 다음으로 제한한다.
-
-- 사용자가 만들려는 앱의 기능·품질 요구사항 문장
-- CSP
-- Region 또는 지역 표현
-- 월 예산과 통화
-
-최소 vCPU와 메모리는 최초 화면에서 받지 않는다. VM 선택에 용량 하한이 필요한 시점의
-요구사항 피드백에서 둘 중 하나 이상을 임시로 받는다. 서비스 목적·배포 목적·주요 사용자라는
-별도 설문은 두지 않으며, 필요한 내용은 기능 요구사항 자체에서만 분석한다.
-
-고가용성 여부, Zone 수, VM 수, 자동 복구 사용 여부를 선호도 설문으로 받지 않는다. 요구사항에
-단일 VM 또는 단일 Zone 장애 중 업무 지속 같은 필수 목표가 있으면 CSP 관리형 VM 그룹·서로
-다른 Zone 둘 이상·로드밸런서로 내리고, 근거가 없으면 단일 VM 최소 후보를 선택한다. 단순
-다중 Zone 배치와 Zone 장애 생존은 구분한다. 다중 Region 요구는 Region별 그룹과 전역
-라우팅·데이터 복구 계약이 없으므로 현재 단일 Region으로 축소하지 않고 `unsupported`로 남긴다.
-
-## 클라우드 범위
-
-### 포함
-
-- AWS, Azure, GCP
-- Docker-on-VM 배포
-- VM, 부트 디스크, NIC, 네트워크, 서브넷, 공인 IP, 방화벽
-- 필수 장애 허용 요구가 있을 때 단일 Region의 CSP 관리형 VM 그룹·다중 Zone 배치·자동 복구·로드밸런서 적용
-- 영속 데이터 디스크는 요구될 때만 추가
-- HTTP 진입점, health endpoint, 애플리케이션 포트
-- VM 용량·가격·성능 후보 선택
-
-### 제외
-
-- Kubernetes 기반 배포
-- VPN
-- 서버리스 및 관리형 애플리케이션 플랫폼
-- 다중 Region 생성·전역 ingress·Region 간 데이터 복제와 failover
-- 영속 Workload HA와 관리형 데이터베이스
-- HTTPS/TLS, 인증서, 도메인 검증과 TLS reverse proxy
-- 모든 CSP 리소스를 포괄하는 범용 지식베이스
-
-이 제한은 학부 졸업과제에서 검증 가능한 범위를 확보하기 위한 의도적 결정이다.
-
-## 현재 검증된 것
-
-P1-GCP 무상태 변환 API 사례에서 다음 로컬·정적 결과를 확인했다.
-
-| 항목 | 결과 |
-|---|---:|
-| 4단계 완료 | 통과 |
-| Gradle 수용 테스트 | 통과 |
-| Docker build 및 health | 통과 |
-| 업무 API acceptance | 2/2 통과 |
-| OpenTofu 검증 | 통과 |
-| IaC 의미 검증 | 12/12 통과 |
-| 불필요한 영속 데이터 디스크 | 없음 |
-| 순환복잡도 | 평균 2.36, 최대 6, 10 초과 함수 0개 |
-| 실험 적격성 | `experimentEligible=true` |
-
-이 결과는 **종단 실행 가능성**은 보여주지만 시스템의 일반적 우수성을 입증하지는 않는다.
-
-추가로 도메인 중립 App–State 앱은 AWS·Azure·GCP에서 다음 경로를 각 1회 완료했다.
-
-- E1: 사설 PostgreSQL 연결, CSP traffic filter 개입·복원, 별도 data disk, State VM 재기동 뒤 보존
-- E2: 과거 AWS ALB–ASG, Azure Standard LB–VMSS, GCP Application LB Backend Service–MIG의 App 장애 감지·관리형 복구
-- E3: State VM 교체, 기존 data disk 재연결, 새 사설 endpoint 주입, App image 재빌드 없이 기존 값 조회
-- 모든 실행: `apply → ready → 업무 probe → fault/restart → 재확인 → cleanup 잔여 0`
-
-현재 ResourcePlan은 AWS Network Load Balancer, Azure Load Balancer, GCP Regional External
-Passthrough Network Load Balancer를 선택한다. 2026-08-17에 같은 중립 최소 앱과 동일 판정 규칙으로
-세 경로를 각각 1회 검증했다. TCP 전달, HTTP readiness, 두 backend 도달, backend 프로세스 장애
-제외·운영자 복원, 실행 소유 잔여 0은 `observed`다. SLA, 성능, 관리형 VM 자동교체는 여전히
-`notMeasured`다.
-
-수강신청 생성 앱의 과거 검증은 AWS에서 HTTPS health, 업무·동시성 13/13, DB 중지 시 503/DOWN,
-DB VM 재기동 뒤 영속성 2/2와 실행 소유 잔여 0을 확인했다. 다만 순수 생성 IaC의 EBS
-bootstrap 오류를 실험 harness로 보정했으므로 시스템 단독 종단 성공으로 세지 않는다.
-
-## 목표 대비 핵심 부족 사항
+`scripts/run-easydep.ps1`은 개발에 필요한 구성 요소를 한 번에 준비한다.
 
 ```mermaid
 flowchart LR
-    G[시스템 목표] --> G1[멀티 에이전트 협업]
-    G --> G2[클라우드 지식의 효용]
-    G --> G3[일반화된 생성 품질]
-    G --> G4[정량적 비교 근거]
-
-    G1 --> X1[멤버 구현기 미완성]
-    G2 --> X2[DepKB ablation 결과 없음]
-    G3 --> X3[생성 앱의 순수 IaC·3사 반복 근거 부족]
-    G4 --> X4[CoT·MetaGPT 전체 실험 미실행]
+    B[브라우저] -->|5173| V[Vite 개발 서버]
+    V -->|/api proxy| F[FastAPI :8100]
+    F -->|33060| M[(MySQL 8.4 컨테이너)]
+    F --> N[NVIDIA NIM]
+    F --> P[PlantUML PicoWeb JVM]
+    F --> D[Docker Desktop]
+    D --> IT[easydep-toolchain]
+    D --> TT[easydep-testing-toolchain]
 ```
 
-### 1. 정식 구현 경로
+| 주소·포트 | 기본값 | 설명 |
+|---|---:|---|
+| 개발 UI | `http://127.0.0.1:5173/` | Vite hot reload 서버 |
+| 백엔드 API | `http://127.0.0.1:8100/` | FastAPI와 `/docs` |
+| 개발 MySQL | `127.0.0.1:33060` | 컨테이너 내부 3306을 호스트에 공개 |
+| 배포용 runtime | 컨테이너 8000 | 빌드된 UI와 API를 FastAPI 한 프로세스가 제공 |
 
-비교실험은 멤버 구현 provider를 기본으로 사용한다. 명시적인 외부 전송 승인 아래 멤버의
-생성·계획·OpenHands 작업·내부 검증을 실행한다. 멤버 workflow가 `COMPLETE`이면 임시
-acceptance/logic LLM은 호출하지 않는다. 구현된 planner를 모두 수행한 뒤
-`NEEDS_PLANNER`로 남은 공백에만 임시 LLM 경로를 사용하며, 실제 `FAILED`와
-`NEEDS_INPUT`은 fallback으로 숨기지 않는다.
+개발 UI는 백엔드 주소를 직접 하드코딩하지 않는다. 브라우저는 같은 origin의 `/api`를
+호출하고, Vite가 `EASYDEP_API_ORIGIN`으로 받은 FastAPI 주소에 전달한다. 백엔드 포트를
+바꾸어 실행해도 스크립트가 이 값을 함께 바꾼다.
 
-### 2. 요구사항 추적성
+첫 실행 또는 서버 재시작 직후에는 DB 준비와 BERT 모델 로딩 때문에 UI가 즉시 열리지 않을
+수 있다. 실행 스크립트는 FastAPI의 `/api/health`가 준비된 다음 Vite를 시작하고, UI와
+Workspace API가 모두 응답한 뒤 `Ready`를 출력한다.
 
-RTM의 역할은 남아 있지만 다음 연결을 정량적으로 평가하지 않는다.
+개발 중에는 Python과 Vite가 호스트에서 실행되므로 백엔드·프론트엔드 파일을 수정하면 hot
+reload로 바로 확인할 수 있다. MySQL과 생성물 검사 도구만 Docker를 사용한다.
+
+## 3. 사용자가 보는 실행 흐름
+
+프론트엔드의 공식 실행 경로는 `/api/workspace`이다. 단계별 내부 함수를 브라우저가 직접
+호출하지 않는다.
 
 ```text
-요구사항 ID → 설계 결정 → 소스/IaC 요소 → 테스트 결과
+앱 생성
+  → 요구사항 분석 명령
+  → 요구사항 검토·질문
+  → 설계 시작
+  → 설계 산출물별 검토
+  → 구현 시작과 외부 전송 승인
+  → 구현 진행 중 소스 조회
+  → 구현 완료
+  → Testing 시작
+  → 결과와 실패 위치 확인
 ```
 
-최종 산출물 평가와 별도로, 클라우드 제약이 실제 자원으로 반영됐는지 추적하는 지표가
-필요하다.
+Workspace는 한 번의 사용자 행동을 `workspace_commands` 행으로 저장한다. 백그라운드 worker가
+명령을 선점해 해당 단계의 공개 함수를 호출하고, 진행 내용은 SSE(Server-Sent Events)로
+브라우저에 전달한다. 한 앱에서는 실행 중인 명령을 동시에 두 개 만들지 않는다.
 
-### 3. 용량 입력과 질문
+주요 API는 다음과 같다.
 
-VM 선택기는 최소 vCPU·메모리 같은 용량 하한이 없으면 추천을 보류한다. 이는 임의 추천을
-막는 올바른 동작이다. 현재 자연어에서 용량 하한이 빠지면 최소 vCPU 또는 메모리를 질문하고,
-답변 뒤 제약 구조화 작업만 재개해 선택기에 전달한다. 앱 부하에서 하한을 자동 추정하지 않는다.
-최초 요청에서는 CSP·리전·월 예산을 구조화 입력으로 받고, vCPU·메모리는 요구사항 피드백에서
-둘 중 하나 이상을 받는다. 고가용성 선호나 Zone 수를 사전 질문하지 않고, 요구사항의 장애
-허용 목표에서 필요한 가용성 구성을 도출한다.
-
-### 4. DepKB 효과 입증
-
-DepKB는 설계에 사용되며 저장된 동일 LLM 출력의 `full/no-depkb` 고정입력 절제로 9/9 provider
-cell의 입력 동일성과 projection 처치 충실도를 확인했다. 다만 다음 생성·기능 비교 결과는 아직 없다.
-
-- EasyDep full과 cloud-KB 미사용 버전의 자원 누락률
-- 의존성 edge 정확도와 불필요 자원 수
-- IaC 의미 검증 통과율
-- CSP별 필수 생성 관계 누락률과 호환성 위반률
-
-P1~P3은 DepKB의 실험군이 아니라 과거 구성요소·smoke 회귀 과제다. 현재의 EasyDep·CoT·MetaGPT·ChatDev
-비교는 시스템 전체의 실용 성능을 비교할 수 있지만, 구조·프롬프트·도구·검증·KB가 함께
-달라 DepKB 또는 멀티 에이전트 구조의 단독 인과효과를 입증하지 못한다. 이를 위해 같은
-EasyDep 실행 경로에서 `no-depkb`, `no-verification` 처치와 단일 클라우드 조건 쌍을 별도로
-실행해야 한다.
-
-### 5. 앱과 CSP 일반화
-
-현재 P1-GCP·P1-AWS·P1-Azure에서 동일한 무상태 앱 기능 oracle과 CSP별 정적 의존성 oracle을
-통과했다. 또한 중립 E1·E2 앱은 세 CSP의 실제 cloud 경로를 각 1회 통과했고, 수강신청 생성 앱은
-AWS에서 harness 보정 뒤 기능·영속성 gate를 통과했다. 이는 개발 관찰이며 반복 비교 결과나
-순수 생성 IaC의 3사 성공이 아니다.
-다음 과거 사례는 회귀 근거로 보존하되 새 주 비교로 확대하지 않는다.
-
-- P1 무상태 앱: AWS, Azure, GCP
-- P2 영속 데이터 앱: AWS, Azure, GCP
-- P3 고가용성 앱: AWS, Azure, GCP
-- 새 주 비교: E1 단일 앱+영속 상태, E2 CSP 관리형 앱 VM 그룹+LB+같은 상태 Workload
-- 용어 전이: D1 제한 수량 예약
-
-### 6. 비교실험 결과
-
-EasyDep, LLM CoT, MetaGPT, ChatDev 실행기는 준비됐다. 그러나 공통 의미 adapter와 반복 실험 결과가
-통계가 없으므로 현재는 효용성 주장을 할 수 없다.
-
-핵심 지표는 다음으로 제한한다.
-
-- 종단 성공률과 기능 요구사항 만족률
-- IaC 의미 검증 및 의존성 정확도
-- 불필요·금지 자원 생성률
-- Docker·health·업무 API 통과율
-- 순환복잡도 분포
-- 실행 시간, LLM 호출 수, 실패율
-
-### 7. 문서 일관성
-
-루트 `README.md`와 문서 색인은 현재 4단계 구조를 기준으로 정리했다. 초기 MySQL 인수인계,
-minikube·AKS 요구사항 배포, Kubernetes manifest 생성 및 완료된 병합 계획은 `docs/archive/`로
-이동했다. 활성 문서는 이 문서의 상태 요약을 중복하지 않고 연결해서 사용한다.
-
-## 다음 진행 순서
-
-| 우선순위 | 작업 | 완료 기준 |
-|---:|---|---|
-| 1 | 최소 ResourcePlan·구조도·IaC 공동 생성 | 완료: 3사 구조도·IaC 입력 공유와 HCL·Plan JSON 정적 대조 통과 |
-| 2 | E1 종단 | 완료: 중립 앱 3사 cloud 1회, 수강신청 AWS 업무·동시성·영속성 통과. 생성 IaC harness 보정 한계 기록 |
-| 3 | E2 App 계층 장애 대응 | 완료: AWS ASG 교체, Azure VMSS 교체, GCP MIG 동일 VM 재기동을 각 1회 관찰. 단일 State VM이라 종단 HA는 아님 |
-| 4 | 코드 정리 | 실제 Workspace 경로 밖의 중복 실행기·API·테스트 제거 |
-| 5 | 여러 요구사항 실행 | 같은 Workspace API로 입력 묶음을 실행하고 실패 위치와 원시 응답 기록 |
-
-과거 비교실험용 평가 프레임워크는 현재 제품 흐름과 다른 경로를 만들었기 때문에 보류했다.
-코드 정리를 먼저 끝낸 뒤, 프론트엔드와 같은 공개 API로 여러 요구사항을 실행한다.
-
-## 실행 시간과 병목 계측
-
-Workspace가 조율하는 각 단계는 UTC 시작·종료 시각과 단조 시계 기반 경과 시간을 기록한다.
-요구사항과 설계 단계는 구조화 LLM 호출별 작업명·경과 시간·성공 여부·폴백 여부를,
-IaC 단계는 생성·수정·HCL 사전 검사·공급자 초기화·공급자 검증 시간을 각각 기록한다.
-실패한 실행도 실패 직전까지의 하위 작업 시간을 보존한다. 따라서 단계 총시간만 비교하지
-않고 LLM 대기, 로컬 파싱, 공급자 플러그인 초기화 중 어디에서 시간이 소모됐는지 구분한다.
-
-2026-08-08 P1-Azure 개발 실행(`easydep-full-p1-azure-20260808T040802Z-ae3abb`)에서
-관측한 단계 시간은 요구사항 158.68초, 설계 113.83초, 구현 골격 13.73초,
-인수 테스트 생성 10.50초, 업무 로직 5.73초, VM 전달 163.71초였다. VM 전달 중 기록된
-LLM 생성·수정은 35.66초뿐이어서 나머지 약 128초가 공급자 초기화·검증 경계에 있음을
-확인했다. 이후 실행부터 해당 명령도 개별 계측하므로 이 추정치를 직접 관측값으로 대체한다.
-이 수치는 개발 병목 탐색 자료이며 아직 방식 간 성능 우열의 근거로 사용하지 않는다.
-
-## 구현 경계와 사용 인터페이스
-
-프론트엔드의 새 종단 실행은 `app/workspace/`의 HTTP API를 기준으로 한다. 구현 단계는 다음
-순서다.
-
-```text
-소프트웨어·클라우드 설계
-→ 애플리케이션 골격
-→ 수정 불가능한 수용 테스트
-→ 업무 로직
-→ VM 후보
-→ Dockerfile·Terraform
-```
-
-| 위치 | 역할 |
+| API | 역할 |
 |---|---|
-| `app/workspace/` | 프론트엔드 명령, 4단계 전환, 진행 이벤트와 실행 상태 |
-| `app/repositories/`, `app/db/` | 산출물·명령·이벤트와 단계별 checkpoint 저장 |
-| `app/implementation/` | 구현 IR, 품질 gate, Docker·IaC renderer |
-| `app/cloudkb/` | 리소스 의존성·VM 가격·성능 근거 |
-| `evaluation/easydep/` | Workspace 공개 API로 요구사항 한 건을 실행하고 원시 응답 저장 |
-
-Workspace API가 프론트엔드의 공식 경로이며, 구현·테스팅 job API는 Workspace 서비스가 단계
-내부에서 사용한다. 정확한 요청·응답 스키마는 실행 중인 FastAPI `/docs`와 route 구현을 현재
-API의 기준으로 사용한다.
-
-| 메서드와 경로 | 역할 |
-|---|---|
-| `POST /api/workspace/apps` | 앱 생성과 첫 요구사항 분석 시작 |
-| `GET /api/workspace/apps/{app_id}` | 현재 단계, 명령, 이벤트와 산출물 상태 복원 |
-| `POST /api/workspace/apps/{app_id}/commands` | 메시지·수리·승인·테스트 명령 제출 |
+| `POST /api/workspace/apps` | 앱을 만들고 최초 요구사항 분석 시작 |
+| `GET /api/workspace/apps/{app_id}` | 현재 단계, 명령, 선택지와 산출물 상태 복원 |
+| `POST /api/workspace/apps/{app_id}/commands` | 메시지, 진행, 수리, 구현 승인, Testing 시작 |
 | `GET /api/workspace/apps/{app_id}/events` | 진행 이벤트를 SSE로 조회 |
+| `GET /api/apps/{app_id}` | 저장된 요구사항·설계 산출물 조회 |
+| `GET /api/implementation/apps/{app_id}/jobs/{job_id}/live` | 구현 중 파일 목록 조회 |
+| `GET /api/implementation/apps/{app_id}/download` | 최종 구현 파일 ZIP 다운로드 |
 
-필요 도구는 Python 의존성, JDK 21과 Gradle wrapper, Node.js/npm, OpenAPI Generator,
-Docker와 OpenTofu다. 생성·검증 도구의 고정 버전과 실제 provider는 run manifest에 남긴다.
+## 4. 네 단계의 책임
 
-## 유지되는 실행 문서
+### 4.1 요구사항
 
-- `app/workspace/README.md`: 프론트엔드 명령과 단계 전환 계약
-- `evaluation/easydep/README.md`: 프론트엔드와 같은 공개 API 실행 방법
-- FastAPI `/docs`: 현재 HTTP 계약
+입력은 애플리케이션 설명과 선택적인 CSP·리전·예산·추가 제약이다. 내부에서는 다음 작업을
+순서대로 수행한다.
 
-## 2026-08-15 도메인 중립·수강신청 cloud 확인
+```text
+원문 확장·정제
+  → FR/NFR 분류
+  → 클라우드 입력 분석
+  → 액터와 유스케이스
+  → 유스케이스 상세 명세
+  → include·extend 관계
+  → 유스케이스 다이어그램
+```
 
-아래는 현재 HTTP 전용 범위 결정 전 수행한 TLS 연구 기록이며 생성 범위의 근거로 사용하지 않는다.
-직접 TLS는 로컬 중립 앱에서 terminator 제거·복원
-개입을 확인했고, 관리형 HTTPS는 AWS ALB 1회, Azure Application Gateway 1회, GCP External
-Application Load Balancer 3회에서 backend binding 제거 시 실패와 복원 후 회복을 관찰했다.
-DNS 소유권·공개 CA 신뢰·SLA는 측정하지 않았다.
+- LLM은 자연어 정제, 액터·유스케이스·시나리오와 관계 제안을 담당한다.
+- BERT는 FR/NFR 분류를 보조한다.
+- 일반 코드는 ID 연결, 요구사항 누락, 단계 번호, 관계 대상과 리소스 입력을 검사한다.
+- 실행 순서는 `app/requirements/stage_registry.py`의 `PIPELINE`이 기준이다.
+- LangGraph 체크포인트를 MySQL에 저장하므로 같은 앱에서 실패 지점부터 재개할 수 있다.
 
-기존 생성 수강신청 E1 앱은 AWS·Azure·GCP 모두에서 동일한 13단계 업무·동시성 오라클,
-DB 중단 시 503/DOWN, State VM 재기동 뒤 영속성 2/2를 통과했다. 모든 실행의 소유 잔여는
-0이다. AWS는 기존 harness 보정 결과를 재사용했고 Azure·GCP는 의존성 검증 harness가 직접
-배포했으므로, 이를 자동 생성 IaC의 세 CSP 종단 성공으로 해석하지 않는다. 상세 근거는
-`evaluation/dependency_audit/domain-neutral-and-course-cloud-results-20260815.md`에 있다.
+주요 산출물은 구조화 요구사항, capability contract, resource intake, resource spec,
+use-case specification과 use-case PlantUML이다.
+
+### 4.2 설계
+
+설계는 다음 다섯 산출물을 고정된 순서로 만든다.
+
+| 순서 | 산출물 | LLM과 일반 코드의 역할 |
+|---:|---|---|
+| 1 | 클래스 | LLM이 BCE 클래스·operation·호출 관계를 제안하고 코드가 타입과 일반 규칙을 검사 |
+| 2 | 시퀀스 | 클래스의 collaboration을 코드가 유스케이스별 호출 순서로 변환 |
+| 3 | API | LLM이 HTTP 계약을 제안하고 코드가 Control 연결·타입을 정리해 OpenAPI 생성 |
+| 4 | ERD | 클래스의 Entity를 코드가 논리 테이블·관계로 변환; 피드백 수정에만 LLM 사용 가능 |
+| 5 | 배포 | LLM이 WorkloadGraph를 제안하고 코드가 ResourcePlan과 CSP별 구조를 생성 |
+
+LLM에게 PlantUML이나 OpenAPI 전체 문자열을 기준 데이터로 맡기지 않는다. 편집 가능한 Pydantic
+모델을 저장하고, 같은 모델에서 PlantUML·OpenAPI를 코드로 만든다. 각 산출물은 저장 후 검토
+지점을 거치며 설계 체크포인트도 MySQL에 저장된다.
+
+클래스 생성은 하나의 큰 응답으로 끝내지 않는다. 전체 구조, 실행 묶음별 operation과 호출
+계획, 작은 선택 작업으로 나누며 독립 작업은 설정된 범위에서 병렬 실행한다. 통과한 단위는
+프로세스 메모리 cache에 보관해 같은 실행에서 중복 LLM 호출을 줄인다.
+
+### 4.3 구현
+
+구현은 설계 JSON을 읽어 실행 가능한 애플리케이션을 만든다.
+
+```text
+설계 준비 상태 검사
+  → 자체 Python scaffolder로 Java·persistence 골격 생성
+  → OpenAPI client와 프론트엔드 골격 생성
+  → 기능 단위 작업 계획
+  → OpenHands 코딩 작업
+  → 작업별 compile·단위·작은 통합 테스트
+  → 최종 연결·container·schema 검사
+  → Docker·cloud-init·OpenTofu 파일 생성
+  → MySQL에 파일 snapshot 저장
+```
+
+`puml2code-bce`는 사용하지 않는다. 클래스·ERD의 typed 모델을 Python 코드 생성기가 직접
+읽으므로 BCE 골격 생성 때문에 Node.js가 필요하지 않다. 다만 EasyDep UI와 생성 앱의 React
+프론트엔드를 빌드하기 위해 Node.js는 계속 사용한다.
+
+LLM 코딩 작업은 파일 하나가 아니라 같은 기능을 구성하는 Control, Boundary/API, Entity와
+테스트를 함께 다룬다. OpenHands가 관련 코드를 조사하고 수정한 뒤, EasyDep이 정한
+`run_task_check`로 필요한 compile·test를 실행한다. 실패하면 같은 작업 공간과 수리 이력을
+유지한 채 다시 수정한다.
+
+구현 중인 텍스트 파일은 읽기 전용 Monaco viewer에서 볼 수 있다. `.env`, private key,
+binary, build 결과와 큰 파일은 노출하지 않는다.
+
+최종 파일은 다음 다섯 종류로 저장된다.
+
+- `SOURCE_CODE`
+- `FRONTEND_SOURCE_CODE`
+- `TEST_CODE`
+- `DEPLOYMENT_FILE`
+- `IAC_CODE`
+
+### 4.4 Testing
+
+`app/testing`은 EasyDep 저장소 자체의 pytest가 아니라, EasyDep이 생성한 애플리케이션을
+검사하는 제품 단계다.
+
+Implementation이 작업별로 수행한 compile, 단위 테스트, 작은 통합 테스트와 frontend build를
+반복하지 않는다. Testing은 여러 구성 요소를 함께 실행해야 확인할 수 있는 항목을 담당한다.
+
+```text
+구현 산출물 version ID 고정
+  → 한 임시 폴더에 파일 복원·digest 확인
+  → 배포 package와 IaC 정적 검사
+  → 생성 앱 실행
+  → API 통합 흐름 검사
+  → 필요한 경우 실제 DOM·JavaScript E2E
+  → 하나의 gate report로 집계
+```
+
+API 검사는 `httpx`를 우선 사용한다. 실제 DOM, JavaScript, click event와 client routing이
+필요할 때만 Playwright의 Chromium headless shell을 사용한다. screenshot이나 픽셀 비교는
+하지 않는다.
+
+OpenTofu는 `fmt`, `init -backend=false`, `validate`를 수행한다. 자격 증명을 명시하고
+`TESTING_IAC_PLAN=true`로 설정한 경우에만 제한된 plan을 추가할 수 있다. EasyDep은
+`tofu apply`를 실행하거나 클라우드 자원을 직접 만들지 않는다.
+
+Testing 입력과 중간 결과는 별도 테이블을 만들지 않고 해당 Workspace command의
+`payload.testing_checkpoint`에 저장한다. 따라서 서버가 재시작되어도 같은 명령의 고정된
+산출물 버전과 검사 경계에서 재개할 수 있다.
+
+## 5. AI 에이전트와 일반 코드의 관계
+
+현재 시스템은 모든 결정을 하나의 총괄 LLM에게 맡기는 구조가 아니다.
+
+- Workspace가 사용자의 명령과 현재 상태를 보고 다음 실행 단계를 결정한다.
+- 요구사항·설계 LLM은 Pydantic 모델에 맞는 제안을 만든다.
+- 일반 코드는 타입, ID 연결, 정렬, OpenAPI·PlantUML 투영과 클라우드 규칙을 검사한다.
+- 구현의 OpenHands 작업자가 실제 여러 파일을 읽고 코드와 테스트를 수정한다.
+- Testing LLM은 요구사항과 OpenAPI에서 거시적 테스트 후보를 만들고, 고정 runner가 실행한다.
+
+즉, **단계 선택은 예측 가능한 코드가 담당하고 각 단계 안의 해석·작성은 전문 작업자가
+담당한다.** 현재 가장 일반적인 코딩 에이전트에 가까운 부분은 구현 단계다. 요구사항과 설계는
+구조화된 결과를 만드는 전문 LLM 서비스에 더 가깝다.
+
+자동 모드는 별도 파이프라인이 아니다. 백엔드가 현재 상태에서 허용한 일반 선택지 중 다음
+행동을 UI가 대신 누른다. 기술 오류는 모드와 관계없이 백엔드가 자동 수리로 이어 간다.
+
+수리 횟수에 시스템 전체의 숫자 상한을 두지는 않는다. 대신 실패 내용, 사용한 전략과 결과
+digest를 누적해 같은 후보와 같은 실패를 반복하지 않도록 한다. 한 번의 HTTP 요청, LLM 대화,
+도구 실행에는 timeout과 출력 크기 같은 안전 제한이 있다. 요구사항의 뜻, 배포 선택,
+자격 증명처럼 코드가 결정하면 안 되는 문제만 사용자에게 묻는다.
+
+## 6. 저장 구조
+
+MySQL은 7개 테이블만 사용한다.
+
+| 테이블 | 저장 내용 |
+|---|---|
+| `apps` | 앱 ID, 원문 요구사항, 현재 단계, 배포 선택 |
+| `artifact_versions` | 요구사항·설계·구현 산출물의 변경 불가능한 버전 |
+| `artifact_files` | 구현 산출물 버전에 속한 파일 경로·내용·SHA-256 |
+| `workspace_commands` | 사용자 명령, 입력, 현재 상태, 결과와 오류 |
+| `agent_checkpoints` | 요구사항·설계 그래프 체크포인트 본문 |
+| `agent_checkpoint_blobs` | 체크포인트 상태 값 |
+| `agent_checkpoint_writes` | 아직 반영되지 않은 체크포인트 쓰기 |
+
+과거 스키마 migration은 현재 지원하지 않는다. 구조가 바뀌면 개발 DB를 삭제하고 현재 ORM으로
+다시 만든다. 자세한 필드와 인덱스는 [MySQL 구조 문서](mysql-architecture.md)에 있다.
+
+MySQL 밖에 남는 상태도 있다.
+
+| 상태 | 위치 | 서버 재시작 뒤 |
+|---|---|---|
+| Workspace 진행 이벤트 | 프로세스 메모리, 앱당 최대 1,000개 | 사라짐 |
+| 클래스 생성 중 preview와 accepted-unit cache | 프로세스 메모리 | 사라짐 |
+| 구현 작업 공간과 상태 | `.easydep/implementation-runs/` | 저장된 상태를 확인해 재개 가능 |
+| Testing 중간 상태 | `workspace_commands.payload` | 같은 command에서 재개 가능 |
+| 최종 산출물 | MySQL | 유지 |
+
+## 7. 다이어그램 렌더링
+
+FastAPI가 시작될 때 PlantUML PicoWeb JVM 하나를 계속 실행한다. 산출물이 저장되면 해당
+PlantUML의 SVG와 PNG를 즉시 렌더링해 메모리 cache에 넣는다. 화면의 이미지 요청은 정상
+흐름에서 DB나 JVM을 다시 거치지 않고 cache의 bytes를 반환한다.
+
+서버를 재시작하면 이미지 cache는 사라지지만 원본 설계 모델과 PlantUML은 MySQL에 남는다.
+기존 산출물을 처음 조회할 때 한 번 다시 렌더링하고 이후 요청부터 cache를 사용한다.
+클래스 생성 중 preview도 revision별 SVG를 cache하지만 정식 산출물과 달리 서버 재시작 후에는
+복원하지 않는다.
+
+## 8. Docker 이미지와 도구
+
+Dockerfile은 용도에 따라 세 대상을 만든다.
+
+| 대상 | 포함하는 주요 도구 | 사용 위치 |
+|---|---|---|
+| `toolchain` | JDK 21, Gradle, Node/npm, OpenAPI Generator, OpenTofu, AWS·Azure·GCP provider mirror, Trivy, cloud-init, ShellCheck, PowerShell, Docker CLI | 구현 compile·test와 배포 파일 검사 |
+| `testing-toolchain` | `toolchain` 전체 + Playwright + Chromium headless shell | 거시적 DOM·JavaScript E2E |
+| `runtime` | FastAPI Python 환경, BERT, PlantUML JRE/JAR, 빌드된 SvelteKit UI | 배포용 EasyDep 서버 |
+
+BERT와 Playwright를 공용 구현 이미지에서 분리했기 때문에 일반 코드 생성이 큰 모델이나
+브라우저 파일을 매번 부담하지 않는다. `toolchain`과 `testing-toolchain`은 Docker layer를
+공유한다. Python 패키지는 `uv`, 프론트엔드 패키지는 변경된 경우에만 `npm ci`로 준비한다.
+
+Playwright는 단순 HTML 문자열 검사 때문에 넣은 것이 아니다. 브라우저에서 실제로 실행되는
+JavaScript, event, client routing과 DOM 변경을 확인하려면 브라우저 엔진이 필요하므로 Testing
+이미지에만 유지한다.
+
+## 9. 클라우드와 배포 범위
+
+현재 목표는 AWS·Azure·GCP에 배포할 수 있는 Docker-on-VM 산출물을 만드는 것이다.
+
+포함하는 범위:
+
+- VM, 부트 디스크, 네트워크, 서브넷, NIC, 방화벽과 공인 IP
+- 요구사항에 근거가 있을 때의 영속 디스크, 관리형 VM 그룹과 로드밸런서
+- 애플리케이션 port, health endpoint, 환경변수, 사설 연결과 mount 정보
+- Dockerfile, compose, cloud-init, OpenTofu와 사용자용 실행·정리 스크립트
+- VM 용량·가격·성능 후보 선택
+
+현재 제외하는 범위:
+
+- Kubernetes
+- 서버리스와 관리형 애플리케이션 플랫폼
+- VPN과 다중 Region failover
+- HTTPS 인증서 발급·갱신과 도메인 관리
+- EasyDep이 사용자의 CSP에 직접 `apply`하는 기능
+
+EasyDep은 배포 파일을 생성하고 정적으로 검사한다. 실제 자격 증명을 사용한 배포는 사용자가
+생성된 스크립트와 문서를 검토한 뒤 실행한다.
+
+## 10. 현재 알려진 한계
+
+- LLM 출력은 같은 입력과 seed를 사용해도 완전히 같지 않다.
+- 최초 서버 시작은 BERT 로딩 때문에 수십 초 걸릴 수 있다.
+- 요구사항·설계의 기술 수리는 자동화되어 있지만 의미 선택이나 검토 지점에서는 멈출 수 있다.
+- 기존 DB·체크포인트를 새 스키마로 옮기는 migration은 지원하지 않는다.
+- 이미지·진행 이벤트·클래스 단위 cache는 메모리 기반이라 서버 재시작 후 다시 만든다.
+- Testing은 실제 cloud apply를 하지 않으므로 클라우드 권한·quota·런타임 장애까지 모두
+  증명하지 않는다.
+- 여러 도메인과 CSP에서의 반복 완주율은 계속 측정해야 하며, 일부 성공 사례만으로 일반적인
+  성공을 주장하지 않는다.
+
+## 11. 처음 코드를 읽는 순서
+
+1. `server.py`에서 서버 시작과 router 조립을 본다.
+2. `frontend/src/lib/api.ts`에서 화면이 호출하는 API를 본다.
+3. `app/workspace/api.py`와 `app/workspace/service.py`에서 명령이 단계로 연결되는 과정을 본다.
+4. `app/requirements/stage_registry.py`에서 요구사항 순서를 본다.
+5. `app/design/graphs/design_graph.py`와 `subgraphs.py`에서 설계 순서를 본다.
+6. `app/implementation/README.md`와 `app/implementation/workflows/`에서 구현 작업과 수리를 본다.
+7. `app/testing/service.py`와 `app/testing/runtime/`에서 최종 검사 흐름을 본다.
+8. `app/db/models.py`와 `app/repositories/`에서 저장 방식을 본다.
+
+## 12. 실행 명령
+
+개발 환경 전체를 시작한다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
+```
+
+준비가 끝나면 다음 주소를 사용한다.
+
+- UI: `http://127.0.0.1:5173/`
+- API 문서: `http://127.0.0.1:8100/docs`
+
+종료할 때에는 다음 명령을 사용한다. MySQL 데이터 볼륨은 삭제하지 않는다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -Stop
+```
+
+문제가 생기면 `.easydep/dev/server.stderr.log`, 최신 Workspace command의 `error`, 해당 단계의
+마지막 report 순서로 확인한다. 이미 정상 저장된 산출물이 있으면 전체를 처음부터 실행하지
+말고 실패한 단계부터 재개한다.
