@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import pytest
 
+from app.db.models import TYPE_API_SPEC, TYPE_CLASS, TYPE_REFINE_REQ
 from app.design.graphs.subgraphs import DEPLOYMENT_DIAGRAM_SPEC
 from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
@@ -648,6 +649,23 @@ def test_deployment_subgraph_finalizer_carries_structured_upstream_models() -> N
             "sequence_diagram_model": {"Diagrams": []},
             "api_spec": {"paths": {"/health": {"get": {}}}},
             "erd_bce_classes": {},
+            "artifact_versions": {
+                TYPE_REFINE_REQ: {
+                    "version_id": 11,
+                    "version_no": 3,
+                    "stored_digest": "a" * 64,
+                },
+                TYPE_CLASS: {
+                    "version_id": 12,
+                    "version_no": 4,
+                    "stored_digest": "b" * 64,
+                },
+                TYPE_API_SPEC: {
+                    "version_id": 13,
+                    "version_no": 2,
+                    "stored_digest": "c" * 64,
+                },
+            },
         }
     )
 
@@ -662,3 +680,8 @@ def test_deployment_subgraph_finalizer_carries_structured_upstream_models() -> N
         "apiSpec",
         "erdModel",
     }
+    inputs = {item["artifact"]: item for item in facts["inputArtifacts"]}
+    assert inputs["refinedRequirements"]["versionId"] == 11
+    assert inputs["refinedRequirements"]["version"] == 3
+    assert inputs["classModel"]["storedDigest"] == "b" * 64
+    assert inputs["apiSpec"]["versionId"] == 13

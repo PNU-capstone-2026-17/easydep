@@ -20,6 +20,18 @@ from app.design.services.deployment_diagram.planning_primitives import (
 )
 
 
+def _version_fields(value: Any) -> dict[str, Any]:
+    """저장소 version metadata와 기존 정수 입력을 같은 출력으로 정리한다."""
+
+    if not isinstance(value, dict):
+        return {"version": value}
+    return {
+        "version": value.get("version_no"),
+        "versionId": value.get("version_id"),
+        "storedDigest": value.get("stored_digest"),
+    }
+
+
 def extract_planning_facts(
     *,
     refined_requirements: Any = None,
@@ -72,7 +84,7 @@ def extract_planning_facts(
     inputs = [
         {
             "artifact": name,
-            "version": (artifact_versions or {}).get(name),
+            **_version_fields((artifact_versions or {}).get(name)),
             "digest": _canonical_digest(value),
         }
         for name, value in artifacts.items()

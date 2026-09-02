@@ -27,6 +27,17 @@ from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
 
+from app.db.models import (
+    TYPE_API_SPEC,
+    TYPE_CAPABILITY_CONTRACT,
+    TYPE_CLASS,
+    TYPE_ERD,
+    TYPE_REFINE_REQ,
+    TYPE_RESOURCE_INTAKE,
+    TYPE_RESOURCE_SPEC,
+    TYPE_SEQUENCE,
+    TYPE_USECASE_SPEC,
+)
 from app.design.contracts.api_spec import ApiSpecModel
 from app.design.knowledge.detectors import (
     Finding as ArtifactFinding,
@@ -93,6 +104,31 @@ DESIGN_STAGES: tuple[str, ...] = (
     "erd",
     "deployment_diagram",
 )
+
+# 저장소는 DB artifact type을 key로 사용하고, 배포 계획 문서는 사람이 읽는 model 이름을
+# 사용한다. 경계에서 한 번만 바꿔 주어 PlanningFact가 실제 저장 버전을 놓치지 않게 한다.
+_PLANNING_VERSION_TYPES = {
+    "refinedRequirements": TYPE_REFINE_REQ,
+    "capabilityContract": TYPE_CAPABILITY_CONTRACT,
+    "resourceIntake": TYPE_RESOURCE_INTAKE,
+    "resourceSpec": TYPE_RESOURCE_SPEC,
+    "usecaseSpec": TYPE_USECASE_SPEC,
+    "classModel": TYPE_CLASS,
+    "sequenceModel": TYPE_SEQUENCE,
+    "apiSpec": TYPE_API_SPEC,
+    "erdModel": TYPE_ERD,
+}
+
+
+def _planning_artifact_versions(state: ArchitectureState) -> dict[str, Any]:
+    """저장소의 artifact type key를 배포 planning 입력 이름으로 바꾼다."""
+
+    stored = state.get("artifact_versions") or {}
+    return {
+        planning_name: stored[artifact_type]
+        for planning_name, artifact_type in _PLANNING_VERSION_TYPES.items()
+        if artifact_type in stored
+    }
 
 # 수락 단위 cache는 process에만 존재한다. graph state와 checkpoint에는 기록하지 않는다.
 _CLASS_DESIGN_ACCEPTED_UNIT_CACHE = ProcessLocalAcceptedUnitCache(capacity=256)
@@ -561,7 +597,7 @@ def _finalize_deployment_diagram(state: ArchitectureState) -> dict[str, Any]:
             "sequence_model": state.get("sequence_diagram_model") or {},
             "api_spec": state.get("api_spec") or {},
             "erd_model": state.get("erd_bce_classes") or state.get("erd_puml") or {},
-            "artifact_versions": dict(state.get("artifact_versions") or {}),
+            "artifact_versions": _planning_artifact_versions(state),
             "additional_planning_facts": list(
                 state.get("deployment_planning_facts") or []
             ),
