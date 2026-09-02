@@ -1082,6 +1082,9 @@ class Order <<Entity>> { - id: UUID }
         for task in use_cases
     )
     uc1_task = next(task for task in use_cases if task["use_case_ids"] == ["UC1"])
+    assert {"api:placeOrder", "operation:stale-control-id"} <= set(
+        uc1_task["source_refs"]
+    )
     uc1_prompt = (run / uc1_task["prompt_file"]).read_text(encoding="utf-8")
     assert "The customer can place an order." in uc1_prompt
     assert '"call_id"' in uc1_prompt

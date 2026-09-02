@@ -837,11 +837,27 @@ class ImplementationWorker:
             "base_versions": record.get("base_versions", {}),
             "feedback": record.get("feedback"),
         }
+        trace_path = Path(record["run_root"]) / "reports" / "rtm-traceability-map.json"
+        implementation_trace = (
+            json.loads(trace_path.read_text(encoding="utf-8"))
+            if trace_path.is_file()
+            else None
+        )
         version_ids = {}
         for artifact_type, files in groups.items():
             if files:
+                snapshot_metadata = dict(metadata)
+                # 추적표는 여러 파일 snapshot에 반복 저장하지 않는다. 모든 구현 실행에
+                # 존재하는 backend source snapshot 한 곳에 두고, Testing과 산출물 API가
+                # 해당 버전을 기준으로 task→파일 연결을 재사용한다.
+                if artifact_type == TYPE_SOURCE_CODE and isinstance(
+                    implementation_trace, dict
+                ):
+                    snapshot_metadata["implementation_traceability"] = (
+                        implementation_trace
+                    )
                 version_ids[artifact_type] = artifact_repository.save_file_snapshot(
-                    record["app_id"], artifact_type, files, metadata=metadata
+                    record["app_id"], artifact_type, files, metadata=snapshot_metadata
                 )
         # ``save_file_snapshot``이 반환한 DB 식별자만 Testing API에 넘긴다. Testing은
         # 이 ID가 가리키는 파일 묶음을 한 번 복원하고 모든 검사를 같은 폴더에서 실행한다.

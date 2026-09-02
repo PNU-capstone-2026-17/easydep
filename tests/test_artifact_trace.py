@@ -194,6 +194,7 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
                     "taskId": "TASK-1",
                     "target_file": "src/orders.py",
                     "requirementIds": ["REQ-1"],
+                    "sourceRefs": ["workload:orders-worker"],
                 }
             ]
         },
@@ -215,7 +216,8 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
         finding,
     }
     assert trace.sources(workload) == (requirement,)
-    assert trace.sources(resource) == (requirement,)
+    assert {requirement, workload} <= set(trace.sources(resource))
+    assert {requirement, workload, resource} <= set(trace.sources(task))
     assert trace.sources(file_ref) == (task,)
     assert trace.sources(test) == (requirement,)
     assert set(trace.sources(finding)) == {requirement, test}

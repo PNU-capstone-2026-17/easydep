@@ -30,8 +30,14 @@ def project_artifact_trace(
     _sequence(nodes, _map(state.get("sequence_diagram_model")))
     _api(nodes, _map(state.get("api_spec_model")), operations)
     _erd(nodes, _map(state.get("erd_bce_classes")))
-    _deployment(nodes, _map(state.get("deployment_diagram_bundle")))
-    _implementation(nodes, implementation_rtm or state.get("implementation_rtm"))
+    resources_by_workload = _deployment(
+        nodes, _map(state.get("deployment_diagram_bundle"))
+    )
+    _implementation(
+        nodes,
+        implementation_rtm or state.get("implementation_rtm"),
+        resources_by_workload,
+    )
     _testing(nodes, testing_result or _map(state.get("testing_result")))
     return ArtifactTrace(nodes)
 
@@ -259,9 +265,12 @@ def _erd(nodes: list[TraceNode], model: Mapping[str, Any]) -> None:
             )
 
 
-def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> None:
+def _deployment(
+    nodes: list[TraceNode], bundle: Mapping[str, Any]
+) -> dict[TraceRef, set[TraceRef]]:
     """WorkloadGraph와 각 projection ResourcePlan의 식별 가능한 sourceRefs를 읽는다."""
 
+    resources_by_workload: dict[TraceRef, set[TraceRef]] = {}
     fact_refs: dict[str, TraceRef] = {}
     for fact in _records(_map(bundle.get("planningFacts")).get("facts")):
         identifier = _id(fact, "id")
@@ -275,8 +284,21 @@ def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> None:
             )
 
     graph = _map(bundle.get("workloadGraph"))
+    workload_refs: dict[str, TraceRef] = {}
+    workload_tokens: dict[str, set[str]] = {}
+    for item in _records(graph.get("workloads")):
+        identifier = _id(item, "id")
+        if not identifier:
+            continue
+        workload_ref = TraceRef("workload", identifier)
+        workload_refs[identifier] = workload_ref
+        workload_tokens[identifier] = {
+            identifier,
+            *_strings(item.get("sourceRefs"), item.get("source_refs")),
+        }
+        _add(nodes, workload_ref, _source_refs(item, fact_refs))
+
     for collection, kind in (
-        ("workloads", "workload"),
         ("externalDependencies", "external_dependency"),
         ("connections", "connection"),
         ("constraints", "constraint"),
@@ -303,14 +325,35 @@ def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> None:
             for item in _records(value):
                 identifier = _id(item, "id") or _id(item, "ruleId")
                 if identifier:
+                    source_tokens = set(
+                        _strings(item.get("sourceRefs"), item.get("source_refs"))
+                    )
+                    linked_workloads = {
+                        workload_ref
+                        for workload_id, workload_ref in workload_refs.items()
+                        if workload_id == item.get("workloadRef")
+                        or bool(source_tokens & workload_tokens[workload_id])
+                    }
+                    resource_ref = TraceRef(
+                        "resource", f"{target_id}:{collection}:{identifier}"
+                    )
                     _add(
                         nodes,
-                        TraceRef("resource", f"{target_id}:{collection}:{identifier}"),
-                        _source_refs(item, fact_refs),
+                        resource_ref,
+                        [*_source_refs(item, fact_refs), *linked_workloads],
                     )
+                    for workload_ref in linked_workloads:
+                        resources_by_workload.setdefault(workload_ref, set()).add(
+                            resource_ref
+                        )
+    return resources_by_workload
 
 
-def _implementation(nodes: list[TraceNode], value: Any) -> None:
+def _implementation(
+    nodes: list[TraceNode],
+    value: Any,
+    resources_by_workload: Mapping[TraceRef, set[TraceRef]],
+) -> None:
     """implementation RTM의 taskId→target_file 근거를 requirement/use case와 잇는다."""
 
     for item in _records(value, "mappings"):
@@ -318,7 +361,13 @@ def _implementation(nodes: list[TraceNode], value: Any) -> None:
         sources = [
             *_refs(item, "requirement", "requirementIds"),
             *_refs(item, "use_case", "useCaseIds"),
+            *_source_refs(item),
         ]
+        sources.extend(
+            resource_ref
+            for source in tuple(sources)
+            for resource_ref in resources_by_workload.get(source, set())
+        )
         task_ref = TraceRef("task", task_id) if task_id else None
         if task_ref:
             _add(nodes, task_ref, sources)

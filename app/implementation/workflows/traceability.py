@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "implementation-rtm-traceability/v1alpha1"
+SCHEMA_VERSION = "implementation-rtm-traceability/v1alpha2"
 
 
 def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
@@ -166,32 +166,47 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         if manifest_path.is_file()
         else {}
     )
-    mapped_targets = {str(mapping["target_file"]) for mapping in mappings}
-    for task in manifest.get("implementation_tasks", []):
-        if not isinstance(task, dict):
+    tasks = [
+        task
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict)
+    ]
+    tasks_by_target = _tasks_by_target(tasks)
+
+    # 먼저 만든 설계 기반 mapping도 task가 실제로 맡은 파일이면 같은 행에서 task 근거를
+    # 보여 줘야 한다. 같은 파일을 두 task가 함께 편집할 수 있으므로 SQL join처럼 행을
+    # 하나씩 복제한다. 이렇게 해야 어느 task의 UC와 테스트가 파일에 연결됐는지 잃지 않는다.
+    joined: list[dict[str, Any]] = []
+    existing_targets = {str(mapping["target_file"]) for mapping in mappings}
+    for mapping in mappings:
+        matching_tasks = tasks_by_target.get(str(mapping["target_file"]), [])
+        if matching_tasks:
+            joined.extend(
+                {**mapping, **_task_trace_fields(task)}
+                for task in matching_tasks
+            )
+        else:
+            joined.append(mapping)
+
+    # OpenHands의 파일 목록은 작업을 시작할 위치를 알려 주는 힌트다. 설계 mapping에 아직
+    # 없는 힌트도 버리지 않고 task 산출물 행으로 추가하되, 기존 행을 제한하거나 지우지 않는다.
+    for target, matching_tasks in tasks_by_target.items():
+        if target in existing_targets:
             continue
-        task_sources = [
-            str(name)
-            for name in task.get("source_artifacts", {})
-            if str(name) in spec.inputs
-            and spec.inputs[str(name)].is_file()
-        ]
-        for relative in task.get("allowed_write_paths", []):
-            relative = str(relative).replace("\\", "/")
-            if relative in mapped_targets:
-                continue
-            mappings.append({
-                "target_file": relative,
-                "element_name": Path(relative).stem,
+        for task in matching_tasks:
+            task_sources = _task_source_names(task, spec)
+            joined.append({
+                "target_file": target,
+                "element_name": Path(target).stem,
                 "origin_artifact": task_sources[0] if task_sources else "generated-contracts",
                 "originArtifacts": task_sources,
                 "origin_element": f"implementation task {task.get('task_id')}",
                 "contract_level": "IMPLEMENTATION_INTERNAL",
                 "allowed_edits": ["TASK_ALLOWLIST"],
                 "description": f"Output of {task.get('task_id')}",
-                "taskId": task.get("task_id"),
+                **_task_trace_fields(task),
             })
-            mapped_targets.add(relative)
+    mappings = joined
 
     for mapping in mappings:
         target = run_root / str(mapping["target_file"])
@@ -231,6 +246,64 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         json.dumps(rtm_map, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return rtm_map
+
+
+def _tasks_by_target(
+    tasks: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """필수 산출물 소유자를 우선하고, 단독 편집 힌트만 fallback으로 쓴다."""
+
+    owners: dict[str, list[dict[str, Any]]] = {}
+    hints: dict[str, list[dict[str, Any]]] = {}
+    for task in tasks:
+        for path in _string_list(task.get("required_output_paths")):
+            owners.setdefault(path.replace("\\", "/"), []).append(task)
+        for path in _string_list(task.get("allowed_write_paths")):
+            hints.setdefault(path.replace("\\", "/"), []).append(task)
+
+    result: dict[str, list[dict[str, Any]]] = {}
+    for target in owners.keys() | hints.keys():
+        if target in owners:
+            result[target] = owners[target]
+        elif len(hints[target]) == 1:
+            # 여러 task의 allowed 목록에 있는 파일은 단순 수리 후보일 수 있다. 소유자를
+            # 임의로 고르지 않고, 한 task만 가리킨 경우에만 시작 힌트를 사용한다.
+            result[target] = hints[target]
+    return result
+
+
+def _task_trace_fields(task: dict[str, Any]) -> dict[str, Any]:
+    """manifest의 snake_case TaskSpec 값을 RTM의 현재 공개 키로 옮긴다."""
+
+    sources = task.get("source_artifacts", {})
+    return {
+        "taskId": task.get("task_id"),
+        "requirementIds": _string_list(task.get("requirement_ids")),
+        "useCaseIds": _string_list(task.get("use_case_ids")),
+        "requiredTestPaths": [
+            value.replace("\\", "/")
+            for value in _string_list(task.get("required_test_paths"))
+        ],
+        "sourceArtifacts": dict(sources) if isinstance(sources, dict) else {},
+        "sourceRefs": sorted(set(_string_list(task.get("source_refs")))),
+    }
+
+
+def _task_source_names(task: dict[str, Any], spec: Any) -> list[str]:
+    sources = task.get("source_artifacts", {})
+    if not isinstance(sources, dict):
+        return []
+    return [
+        str(name)
+        for name in sources
+        if str(name) in spec.inputs and spec.inputs[str(name)].is_file()
+    ]
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
 
 
 def _sha256_file(path: Path) -> str:

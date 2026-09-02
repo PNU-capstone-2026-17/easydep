@@ -6,6 +6,8 @@ import re
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
+from app.artifact_trace import TraceRef
+from app.artifact_trace_projection import project_artifact_trace
 from app.config import settings
 
 from ..domain.implementation_ir import (
@@ -45,6 +47,8 @@ class TaskSpec:
     requirement_ids: list[str] = field(default_factory=list)
     use_case_ids: list[str] = field(default_factory=list)
     required_test_paths: list[str] = field(default_factory=list)
+    # task가 직접 소비하는 설계 주소다. RTM은 이 값을 다시 추측하지 않고 그대로 옮긴다.
+    source_refs: list[str] = field(default_factory=list)
     # Spring 설정은 정상 경로에서 코드가 만든다. 이 작업은 최종 build나 HTTP 검사에서
     # 실제 연결 문제가 발견됐을 때만 OpenHands에게 넘기는 수리용 작업이다.
     repair_only: bool = False
@@ -446,6 +450,10 @@ so create them directly instead of searching for another implementation.
         requirement_ids=_artifact_ids(requirements),
         use_case_ids=list(bundle.use_case_ids),
         required_test_paths=[test_path],
+        source_refs=[
+            *_operation_source_refs(spec, set(bundle.use_case_ids)),
+            *_workload_source_refs(deployment_context),
+        ],
     )
     (output / f"{task_id}.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -750,12 +758,13 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         spec, {spec.name, ir.application_class, *(item.name for item in ir.components)}
     )
     _requirements, use_cases, requirement_sources = _all_requirement_artifacts(spec)
+    use_case_ids = _artifact_ids(use_cases)
     context = {
         "schemaVersion": "implementation-context/v1alpha1",
         "taskId": task_id,
         "taskType": "wiring",
         "applicationClass": ir.application_class,
-        "useCaseIds": _artifact_ids(use_cases),
+        "useCaseIds": use_case_ids,
     }
     if deployment_context:
         context["deployment"] = deployment_context
@@ -813,8 +822,12 @@ Application entry point: `{ir.application_class}`
         task_type="wiring",
         # 최종 검증은 이 목록과 유스케이스 작업이 실제로 덮은 목록을 비교한다. 추적이
         # 빠진 유스케이스가 있어도 일부 테스트만 통과해 릴리스되는 일을 막는다.
-        use_case_ids=_artifact_ids(use_cases),
+        use_case_ids=use_case_ids,
         required_test_paths=[],
+        source_refs=[
+            *_operation_source_refs(spec, set(use_case_ids)),
+            *_workload_source_refs(deployment_context),
+        ],
         repair_only=True,
     )
     (output / "application-wiring.task.json").write_text(
@@ -991,6 +1004,10 @@ Rules:
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         llm=llm_config(spec),
         task_type="frontend-implementation",
+        source_refs=[
+            *(f"api:{operation_id}" for operation_id in operations),
+            *_workload_source_refs(deployment_context),
+        ],
     )
     (output / "frontend-application.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1137,10 +1154,11 @@ def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
     """구현 대상과 연결된 generatedApplication 실행 조건만 작게 전달한다.
 
     배포 bundle 전체에는 CSP 계획처럼 코드 task가 소비하지 않는 정보가 많다.
-    sourceRefs가 대상 이름을 가리키는 workload를 우선 고르고, 단일 앱인 경우만
-    안전하게 fallback하여 interface/configuration/storage/connection 계약을 남긴다.
+    ArtifactTrace의 typed class→workload 경로가 정확히 있는 workload를 고르고, 연결이
+    하나도 없을 때에는 단일 앱인 경우만 fallback하여 실행 계약을 남긴다.
     """
-    graph = _read_json(spec.inputs.get("deploymentBundle")).get("workloadGraph")
+    bundle = _read_json(spec.inputs.get("deploymentBundle"))
+    graph = bundle.get("workloadGraph")
     if not isinstance(graph, dict):
         return {}
     generated = [
@@ -1149,14 +1167,25 @@ def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
         if isinstance(item, dict)
         and str((item.get("artifact") or {}).get("kind") or "") == "generatedApplication"
     ]
-    matched = [
-        item
-        for item in generated
-        if any(
-            name.lower() in json.dumps(item.get("sourceRefs") or [], ensure_ascii=False).lower()
-            for name in names
-        )
-    ]
+    trace = project_artifact_trace(
+        {
+            "extracted_bce_classes": _read_json(spec.inputs.get("bceModel")),
+            "sequence_diagram_model": _read_json(spec.inputs.get("sequenceModel")),
+            "api_spec_model": _read_json(spec.inputs.get("apiModel")),
+            "erd_bce_classes": _read_json(spec.inputs.get("erdBceModel")),
+            "deployment_diagram_bundle": bundle,
+        }
+    )
+    # 이름을 sourceRefs 문자열에서 찾지 않는다. class kind와 정확한 ID로 출발한 뒤
+    # projection이 보존한 edge를 따라가 workload kind에 도착한 경우만 연결로 인정한다.
+    matched_ids = {
+        ref.id
+        for name in names
+        if name
+        for ref in trace.downstream(TraceRef("class", name))
+        if ref.kind == "workload"
+    }
+    matched = [item for item in generated if str(item.get("id") or "") in matched_ids]
     workloads = matched or (generated if len(generated) == 1 else [])
     if not workloads:
         return {}
@@ -1202,6 +1231,70 @@ def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
             & workload_ids
         ],
     }
+
+
+def _operation_source_refs(spec: JobSpec, use_case_ids: set[str]) -> list[str]:
+    """명시된 UC ID가 정확히 연결된 API/BCE operation 주소만 만든다."""
+
+    refs: set[str] = set()
+    endpoints = _read_json(spec.inputs.get("apiModel")).get("Endpoints", [])
+    if isinstance(endpoints, list):
+        for endpoint in endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_use_cases = set(_string_ids(endpoint.get("use_case_ids")))
+            operation_id = endpoint.get("operation_id") or endpoint.get("operationId")
+            if (
+                endpoint_use_cases & use_case_ids
+                and isinstance(operation_id, str)
+                and operation_id
+            ):
+                refs.add(f"api:{operation_id}")
+
+    classes = _read_json(spec.inputs.get("bceModel")).get("Classes", [])
+    if not isinstance(classes, list):
+        return sorted(refs)
+    for class_item in classes:
+        if not isinstance(class_item, dict):
+            continue
+        operations = class_item.get("operations", [])
+        if not isinstance(operations, list):
+            continue
+        for operation in operations:
+            if not isinstance(operation, dict):
+                continue
+            step_use_cases = {
+                step_ref.partition(":")[0]
+                for step_ref in _string_ids(operation.get("stepRefs"))
+                if ":" in step_ref
+            }
+            operation_id = operation.get("operationId")
+            if (
+                step_use_cases & use_case_ids
+                and isinstance(operation_id, str)
+                and operation_id
+            ):
+                refs.add(f"operation:{operation_id}")
+    return sorted(refs)
+
+
+def _workload_source_refs(deployment: dict[str, object]) -> list[str]:
+    """exact projection이 고른 workload의 typed 주소만 task에 보존한다."""
+
+    workloads = deployment.get("workloads", [])
+    if not isinstance(workloads, list):
+        return []
+    return [
+        f"workload:{item['id']}"
+        for item in workloads
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]
+    ]
+
+
+def _string_ids(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
 
 
 def _read(path: Path | None) -> str:

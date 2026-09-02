@@ -27,7 +27,9 @@
   기능만 사용하는 package에서는 OpenHands가 helper 파일을 추가할 수 있고, 여러 기능이
   공유하는 package에서는 계획에 기록된 파일만 수정한다.
 - 각 task JSON에는 `requirement_ids`, `use_case_ids`, `required_test_paths`, 편집 파일과
-  새 파일을 만들 수 있는 전용 package를 함께 남긴다.
+  새 파일을 만들 수 있는 전용 package를 함께 남긴다. `source_refs`에는 이 작업이 직접
+  사용하는 API operation, BCE operation, workload의 정확한 ID만 기록한다. RTM은 prompt를
+  다시 읽거나 이름을 추측하지 않고 이 주소를 그대로 사용한다.
 - 각 작업 context에는 관련 요구사항, use-case artifact, typed sequence scenario를
   넣는다. 요구사항·유스케이스의 설계 수리 이력과 내부 진행 상태는 제외하고, 구현에 필요한
   본문·흐름·완료 조건과 시퀀스 호출·인자·반환 연결만 전달한다. 해당 선택 입력이 없으면 빈
