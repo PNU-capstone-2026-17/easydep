@@ -3,6 +3,7 @@
 여기 있는 것은 세 에이전트가 함께 쓰는 것들이다:
 
   GET  /api/apps/{app_id}                     저장된 산출물 전부
+  GET  /api/apps/{app_id}/trace?ref=kind:id   산출물 직접·상하류 관계
   GET  /api/apps/{app_id}/stages/{s}/versions 버전 이력
   GET  /api/apps/{app_id}/stages/{s}/versions/{no}
   GET  /api/apps/{app_id}/stages/{s}/image.{ext}   PlantUML → 이미지
@@ -36,6 +37,7 @@ from app.artifact_images import (
     sequence_view,
     warm_artifact_images,
 )
+from app.artifact_trace_service import UnknownTraceRef, artifact_trace_response
 from app.db.models import FORMAT_JSON
 from app.design.schemas.architecture_state import ArchitectureState
 from app.repositories import artifact_repository
@@ -200,6 +202,21 @@ def get_app(app_id: str) -> JSONResponse:
     """
     validate_app_id(app_id)
     return JSONResponse(content={"app_id": app_id, **to_web_response(require_app(app_id))})
+
+
+@router.get("/api/apps/{app_id}/trace")
+def get_artifact_trace(app_id: str, ref: str | None = None) -> JSONResponse:
+    """선택 산출물 주소의 직접·상하류 관계를 읽기 전용으로 반환한다."""
+
+    validate_app_id(app_id)
+    try:
+        return JSONResponse(content=artifact_trace_response(app_id, ref))
+    except AppNotFound as error:
+        raise HTTPException(status_code=404, detail="Unknown app id.") from error
+    except UnknownTraceRef as error:
+        raise HTTPException(status_code=404, detail=f"Unknown artifact trace ref: {error}") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=f"Invalid artifact trace ref: {error}") from error
 
 
 @router.get("/api/apps/{app_id}/stages/{stage}/versions")

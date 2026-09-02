@@ -11,7 +11,8 @@ import type {
   SequenceDiagramSummary,
   LiveDiagramPreview,
   LiveSourceSnapshot,
-  LlmTimingPage
+  LlmTimingPage,
+  ArtifactTraceResponse
 } from '$lib/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -118,6 +119,12 @@ export function getArtifactFile(appId: string, artifactType: string, path: strin
       .split('/')
       .map(encodeURIComponent)
       .join('/')}`
+  );
+}
+
+export function getArtifactTrace(appId: string, ref: string) {
+  return request<ArtifactTraceResponse>(
+    `/api/apps/${encodeURIComponent(appId)}/trace?ref=${encodeURIComponent(ref)}`
   );
 }
 

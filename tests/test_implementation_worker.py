@@ -10,7 +10,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.implementation.application.feedback import assess_feedback_eligibility
+from app.implementation.application.feedback import (
+    FeedbackTargetProposal,
+    assess_feedback_eligibility,
+    resolve_feedback_targets,
+)
 from app.implementation.application.jobs import ImplementationWorker
 from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
 from app.implementation.config import ImplementationSettings
@@ -280,6 +284,33 @@ def test_feedback_eligibility_accepts_existing_contract_behavior_change() -> Non
     )
 
     assert result["status"] == "ELIGIBLE"
+
+
+def test_feedback_target_candidate_is_confirmed_against_the_rtm() -> None:
+    """LLM이 없는 ref를 제안해도 RTM에 있는 대상과 파일만 수리 힌트가 된다."""
+    rtm = {
+        "mappings": [
+            {
+                "target_file": "application/src/RegistrationService.java",
+                "element_name": "RegistrationService",
+                "taskId": "implement-registration",
+                "sourceRefs": ["api:registerForOffering"],
+            }
+        ]
+    }
+
+    result = resolve_feedback_targets(
+        "수강 신청 충돌 처리를 고쳐줘",
+        rtm,
+        proposal_call=lambda _feedback, _candidates: FeedbackTargetProposal(
+            target_refs=["api:registerForOffering", "api:invented"]
+        ),
+    )
+
+    assert result["confirmedTargetRefs"] == ["api:registerForOffering"]
+    assert result["relatedFiles"] == [
+        "application/src/RegistrationService.java"
+    ]
 
 
 def test_feedback_job_restores_frontend_snapshot_under_frontend_directory(

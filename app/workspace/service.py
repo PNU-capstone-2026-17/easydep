@@ -312,7 +312,11 @@ class WorkspaceService:
     def reconcile_implementation_command(self, app_id: str) -> dict[str, Any] | None:
         """구현 작업은 끝났지만 Workspace 명령만 남은 경우 완료 상태를 맞춘다."""
         command = repository.latest_command(app_id)
-        if not command or command.get("status") not in {"RUNNING", "INTERRUPTED", "FAILED"}:
+        if not command or command.get("status") not in {
+            "RUNNING",
+            "INTERRUPTED",
+            "FAILED",
+        }:
             return command
         if command.get("action") not in {
             "start_implementation",
@@ -389,7 +393,11 @@ class WorkspaceService:
             if step:
                 previous_updates[step] = "|".join(
                     str(metadata.get(field) or "")
-                    for field in ("progress_status", "progress_step_label", "progress_detail")
+                    for field in (
+                        "progress_status",
+                        "progress_step_label",
+                        "progress_detail",
+                    )
                 )
         progress = self._implementation_progress_snapshot(job)
         for update in progress.get("updates", []) if progress else []:
@@ -783,7 +791,12 @@ class WorkspaceService:
             if not implementation_job_id:
                 raise ValueError("The Testing checkpoint has no implementation job ID.")
             return self._run_testing_command(command, implementation_job_id)
-        if action in {"message", "advance", "apply_deployment_preferences", "start_design"}:
+        if action in {
+            "message",
+            "advance",
+            "apply_deployment_preferences",
+            "start_design",
+        }:
             return self._stage_message(command, advance=action in {"advance", "start_design"})
         if action == "delegate_repair":
             action_id = str(command["payload"].get("action_id") or "")
@@ -1732,7 +1745,10 @@ class WorkspaceService:
             result.get("status") == "completed" or result.get("finished") or session.get("finished")
         )
         if finished:
-            return {"message": "Design artifact generation completed.", "design": result}
+            return {
+                "message": "Design artifact generation completed.",
+                "design": result,
+            }
         stage = (
             session.get("current_stage")
             or session.get("stage")
@@ -1971,7 +1987,12 @@ class WorkspaceService:
             "VERIFYING",
             "PLANNING",
         }:
-            add_update("prepare-job", "구현 작업 준비", "running", "구현 작업을 준비하고 있습니다.")
+            add_update(
+                "prepare-job",
+                "구현 작업 준비",
+                "running",
+                "구현 작업을 준비하고 있습니다.",
+            )
         else:
             # The job leaves the queue before its first generator checkpoint.
             # Explicitly close this UI-only milestone so it cannot look like a
@@ -2267,11 +2288,36 @@ class WorkspaceService:
     ) -> str:
         """제품 수리 에이전트에 실패 증거와 고정 테스트 계획을 전달한다."""
         evidence = []
+        target_ids: list[str] = []
+        file_hints: list[str] = []
+        trace_refs: list[str] = []
+        execution_evidence: list[dict[str, Any]] = []
+        candidate_digests: list[str] = []
         candidate_plan: dict[str, Any] = {}
         for blocker in blockers:
             message = str(blocker.get("message") or "").strip()
             if message:
                 evidence.append(message)
+            target_ids.extend(
+                str(item)
+                for item in blocker.get("target_ids") or []
+                if isinstance(item, str) and item
+            )
+            file_hints.extend(
+                str(item)
+                for item in blocker.get("file_hints") or []
+                if isinstance(item, str) and item
+            )
+            trace_refs.extend(
+                str(item)
+                for item in blocker.get("trace_refs") or []
+                if isinstance(item, str) and item
+            )
+            if isinstance(blocker.get("evidence"), dict) and blocker["evidence"]:
+                execution_evidence.append(dict(blocker["evidence"]))
+            digest = str(blocker.get("candidate_digest") or "").strip()
+            if digest:
+                candidate_digests.append(digest)
             if not candidate_plan and isinstance(blocker.get("candidate_plan"), dict):
                 candidate_plan = dict(blocker["candidate_plan"])
         history = dict(result.get("repair_state") or {})
@@ -2281,6 +2327,19 @@ class WorkspaceService:
             "acceptance conditions unchanged.",
             "Failure evidence:\n- " + "\n- ".join(evidence or ["Testing gate failed."]),
         ]
+        if target_ids:
+            parts.append("Confirmed artifact targets:\n- " + "\n- ".join(dict.fromkeys(target_ids)))
+        if trace_refs:
+            parts.append("Related artifact references:\n- " + "\n- ".join(dict.fromkeys(trace_refs)))
+        if file_hints:
+            parts.append("Start investigation with these trace-linked files:\n- " + "\n- ".join(dict.fromkeys(file_hints)))
+        if candidate_digests:
+            parts.append("Preserved test plan digest: " + ", ".join(dict.fromkeys(candidate_digests)))
+        if execution_evidence:
+            parts.append(
+                "Exact failing HTTP evidence:\n"
+                + json.dumps(execution_evidence, ensure_ascii=False, sort_keys=True)
+            )
         if candidate_plan:
             parts.append(
                 "Preserved functional test plan:\n"

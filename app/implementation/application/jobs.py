@@ -36,7 +36,7 @@ from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
 
 from ..config import ImplementationSettings
-from .feedback import assess_feedback_eligibility
+from .feedback import assess_feedback_eligibility, resolve_feedback_targets
 from .prototype import PrototypeClient
 from .source_files import (
     classify_source_path,
@@ -316,7 +316,17 @@ class ImplementationWorker:
                 "No generated source snapshot is available for feedback"
             )
 
-        eligibility = assess_feedback_eligibility(feedback, design)
+        metadata = source_snapshot.get("metadata", {})
+        implementation_rtm = (
+            metadata.get("implementation_traceability")
+            if isinstance(metadata, dict)
+            else None
+        )
+        eligibility = assess_feedback_eligibility(
+            feedback,
+            design,
+            implementation_rtm if isinstance(implementation_rtm, dict) else None,
+        )
         job_id = uuid.uuid4().hex
         if eligibility["status"] == "UNSUITABLE":
             report_path = self.settings.work_root / job_id / "feedback-eligibility.json"
@@ -346,6 +356,32 @@ class ImplementationWorker:
             }
             self._write(record)
             return self.public_record(record)
+
+        try:
+            targeting = resolve_feedback_targets(
+                feedback,
+                implementation_rtm if isinstance(implementation_rtm, dict) else None,
+            )
+        except Exception as error:
+            # 대상 해석은 OpenHands의 조사 범위를 좁히는 힌트다. provider가 잠시 끊겨도
+            # 이미 적격으로 확인된 피드백 자체를 잃지 않고 전체 구현 snapshot에서 진행한다.
+            targeting = {
+                "source": "unavailable",
+                "confirmedTargetRefs": [],
+                "relatedFiles": [],
+                "error": f"{error.__class__.__name__}: {error}",
+            }
+        confirmed_refs = list(targeting.get("confirmedTargetRefs") or [])
+        related_files = list(targeting.get("relatedFiles") or [])
+        execution_feedback = feedback
+        if confirmed_refs or related_files:
+            execution_feedback += (
+                "\n\n## RTM-confirmed repair scope\n"
+                "Confirmed refs:\n"
+                + "\n".join(f"- {item}" for item in confirmed_refs)
+                + "\nRelated files (investigation hints, not a write restriction):\n"
+                + "\n".join(f"- {item}" for item in related_files)
+            )
 
         snapshots = {
             path: item["content"]
@@ -379,11 +415,10 @@ class ImplementationWorker:
             app_id,
             design,
             snapshots,
-            feedback,
+            execution_feedback,
             base_package,
             allow_assumptions,
         )
-        metadata = source_snapshot.get("metadata", {})
         record = {
             "job_id": job_id,
             "job_type": "FEEDBACK_REVISION",
@@ -394,6 +429,7 @@ class ImplementationWorker:
             "base_versions": base_versions,
             "feedback": feedback,
             "feedback_eligibility": eligibility,
+            "feedback_targeting": targeting,
             "testing_contracts": _testing_contracts(design),
             "job_path": str(job_path),
             "run_root": None,

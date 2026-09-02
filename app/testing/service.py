@@ -11,10 +11,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from app.db.models import TYPE_IAC_CODE
+from app.artifact_trace import TraceRef
+from app.artifact_trace_projection import project_artifact_trace
+from app.db.models import TYPE_IAC_CODE, TYPE_SOURCE_CODE
 from app.implementation.application.jobs import JobNotFound
 from app.implementation.application.jobs import worker as implementation_worker
 from app.metrics import langsmith as langsmith_metrics
+from app.repositories.artifact_repository import load_file_snapshot
 from app.testing.runtime.verification import run_verification_graph
 from app.testing.schemas.testing_input import TestingInput
 from app.testing.utils.artifact_source import (
@@ -24,9 +27,79 @@ from app.testing.utils.artifact_source import (
     materialized_testing_application,
 )
 from app.testing.utils.gates import aggregate_gate_report, gate_status
-from app.validation import RepairAttempt, RepairLedger, repair_makes_progress, stable_digest
+from app.validation import (
+    RepairAttempt,
+    RepairLedger,
+    repair_makes_progress,
+    stable_digest,
+)
 
 TestingProgress = Callable[[dict[str, Any]], None]
+
+
+def _dynamic_target_ids(report: dict[str, Any]) -> list[str]:
+    """실패한 case들과 보고서가 가리킨 operation을 저장된 ID로 가리킨다."""
+    finding = report.get("finding")
+    finding = finding if isinstance(finding, dict) else {}
+    operation_id = str(finding.get("operationId") or "").strip()
+    digest = str(report.get("candidateDigest") or "").strip()
+    failed_case_ids = [
+        case_id
+        for item in report.get("cases") or []
+        if isinstance(item, dict)
+        and str((item.get("result") or {}).get("gateStatus") or "").upper() != "PASS"
+        if (case_id := str(item.get("caseId") or "").strip())
+    ]
+    return [
+        *([f"api:{operation_id}"] if operation_id else []),
+        *(f"test:{digest}:{case_id}" for case_id in failed_case_ids if digest),
+    ]
+
+
+def _trace_hints(
+    testing_input: TestingInput,
+    dynamic: dict[str, Any],
+    target_ids: list[str],
+) -> tuple[list[str], list[str]]:
+    """고정 구현 snapshot의 RTM에서 실패 target과 연결된 파일을 찾는다."""
+    version_id = testing_input.artifact_version_ids.get(TYPE_SOURCE_CODE)
+    if version_id is None:
+        return [], []
+    snapshot = load_file_snapshot(
+        testing_input.app_id,
+        TYPE_SOURCE_CODE,
+        version_id=version_id,
+    )
+    metadata = snapshot.get("metadata") if isinstance(snapshot, dict) else None
+    implementation_rtm = (
+        metadata.get("implementation_traceability")
+        if isinstance(metadata, dict)
+        else None
+    )
+    if not isinstance(implementation_rtm, dict):
+        return [], []
+
+    trace = project_artifact_trace(
+        {},
+        implementation_rtm=implementation_rtm,
+        testing_result={"dynamic_functional_report": dynamic},
+    )
+    files: set[str] = set()
+    related: set[str] = set()
+    for value in target_ids:
+        try:
+            ref = TraceRef.parse(value)
+        except ValueError:
+            continue
+        # API ref는 구현 task와 테스트 양쪽의 출처일 수 있다. 그 자체가 별도 node로
+        # 저장되지 않았더라도 consumer 관계는 유효하므로 known-node 검사로 버리지 않는다.
+        files.update(item.id for item in trace.files(ref))
+        related.update(
+            item.format()
+            for item in trace.upstream(ref)
+            if item.kind in {"requirement", "use_case", "class", "operation", "api", "task"}
+        )
+    return sorted(files), sorted(related)
 
 
 def _finding_keys(report: dict[str, Any]) -> tuple[str, ...]:
@@ -181,7 +254,15 @@ def _run_test(
             }
         findings = _finding_keys(report)
         dynamic = (verification.get("reports") or {}).get("dynamicFunctional") or {}
-        candidate_digest = str(dynamic.get("candidateDigest") or stable_digest(report))
+        plan_digest = str(dynamic.get("candidateDigest") or stable_digest(report))
+        # 같은 plan을 새 구현물에 실행하는 것이 정상적인 회귀 흐름이다. plan digest만
+        # 비교하면 실제 코드가 바뀌었어도 "같은 후보 반복"으로 오인하므로 둘을 함께 식별한다.
+        execution_digest = stable_digest(
+            {
+                "plan": plan_digest,
+                "implementation": testing_input.implementation_job_id,
+            }
+        )
         # 최초 실패는 이후 repair와 비교할 기준으로 기록한다. 재시도라면 결과 digest와
         # finding 집합을 이전 이력과 비교해 같은 후보 반복, 개선, 악화를 구분한다.
         if findings and not previous_findings:
@@ -190,7 +271,7 @@ def _run_test(
                     stage="testing.dynamic-functional",
                     strategy_key="initial_generation",
                     input_digest=stable_digest({"run": run_id, "findings": findings}),
-                    candidate_digest=candidate_digest,
+                    candidate_digest=execution_digest,
                     finding_keys_after=findings,
                     outcome="no_improvement",
                     detail="Initial testing run established the repair baseline.",
@@ -198,7 +279,7 @@ def _run_test(
             )
         elif previous_findings:
             repeated = any(
-                attempt.candidate_digest == candidate_digest
+                attempt.candidate_digest == execution_digest
                 for attempt in ledger.attempts
                 if attempt.candidate_digest
             )
@@ -213,7 +294,7 @@ def _run_test(
                             "history": ledger.prompt_context(),
                         }
                     ),
-                    candidate_digest=candidate_digest,
+                    candidate_digest=execution_digest,
                     finding_keys_before=previous_findings,
                     finding_keys_after=findings,
                     outcome=(
@@ -250,6 +331,15 @@ def _run_test(
         repair_owner = dynamic_defect.get("route") or defect_route.get(defect_class, "testing")
         preserve_tests = dynamic_defect.get("preserveTests", defect_class != "TEST_DEFECT")
         report["blocking_findings"] = []
+        dynamic_target_ids = _dynamic_target_ids(dynamic)
+        file_hints, related_refs = _trace_hints(
+            testing_input,
+            dynamic,
+            dynamic_target_ids,
+        )
+        dynamic_evidence = dynamic.get("finding")
+        if not isinstance(dynamic_evidence, dict):
+            dynamic_evidence = {}
         for key in findings:
             is_dynamic = key.startswith("testing.dynamicFunctional:")
             is_verification = key.startswith(("testing.static:", "testing.iac:"))
@@ -272,7 +362,7 @@ def _run_test(
                 {
                     "code": key.split(":", 1)[0],
                     "stage": "testing",
-                    "target_ids": [],
+                    "target_ids": dynamic_target_ids if is_dynamic else [],
                     "message": key.split(":", 1)[-1].replace("testing.", ""),
                     "severity": "error",
                     "repairable": inferred_class != "ENVIRONMENT_DEFECT",
@@ -281,6 +371,9 @@ def _run_test(
                     "preserve_tests": preserve_tests if is_dynamic else True,
                     "candidate_digest": dynamic.get("candidateDigest") if is_dynamic else None,
                     "candidate_plan": dynamic.get("candidatePlan") if is_dynamic else None,
+                    "file_hints": file_hints if is_dynamic else [],
+                    "trace_refs": related_refs if is_dynamic else [],
+                    "evidence": dict(dynamic_evidence) if is_dynamic else {},
                 }
             )
         report["repair_state"] = _repair_state(ledger, passed=bool(report["passed"]))
@@ -338,7 +431,11 @@ def run_testing(
                 artifact_version_ids=implementation.get("artifact_version_ids"),
                 contract_artifacts=implementation.get("contract_artifacts") or {},
             )
-        except (ArtifactSourceUnavailable, ArtifactSnapshotMismatch, ValueError) as error:
+        except (
+            ArtifactSourceUnavailable,
+            ArtifactSnapshotMismatch,
+            ValueError,
+        ) as error:
             raise ValueError(f"Implementation artifacts are unavailable: {error}") from error
 
         if previous_job is not None:

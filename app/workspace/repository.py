@@ -167,12 +167,22 @@ def get_command(command_id: str) -> dict[str, Any] | None:
         return command_dict(row) if row is not None else None
 
 
-def latest_command(app_id: str, *, exclude_command_id: str | None = None) -> dict[str, Any] | None:
-    """앱의 가장 최근 command를 조회하되 필요하면 현재 command 한 건을 제외한다."""
+def latest_command(
+    app_id: str,
+    *,
+    exclude_command_id: str | None = None,
+    stage: str | None = None,
+) -> dict[str, Any] | None:
+    """앱의 가장 최근 command를 조회한다.
+
+    ``stage``를 지정하면 이후 단계가 실행됐더라도 해당 단계의 마지막 결과를 찾는다.
+    """
     with session_scope() as session:
         query = select(WorkspaceCommand).where(WorkspaceCommand.app_id == app_id)
         if exclude_command_id:
             query = query.where(WorkspaceCommand.command_id != exclude_command_id)
+        if stage:
+            query = query.where(WorkspaceCommand.stage == stage)
         row = session.scalar(query.order_by(WorkspaceCommand.created_at.desc()).limit(1))
         return command_dict(row) if row is not None else None
 

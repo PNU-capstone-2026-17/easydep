@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Braces, Check, CheckCircle2, Clock3, Copy, FileText, Image, Layers3, LoaderCircle, Maximize2, ShieldCheck, X } from '@lucide/svelte';
   import { Dialog } from 'bits-ui';
-  import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
-  import { getArtifactFile, getFileArtifactVersions, getLiveImplementationFile, getSequenceDiagrams, getVersions } from '$lib/api';
+  import type { ArtifactDocument, ArtifactTraceResponse, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
+  import { getArtifactFile, getArtifactTrace, getFileArtifactVersions, getLiveImplementationFile, getSequenceDiagrams, getVersions } from '$lib/api';
   import { errorMessage } from '$lib/utils';
   import ArtifactVisualization from '$lib/components/ArtifactVisualization.svelte';
   import ArtifactNavigator from '$lib/components/ArtifactNavigator.svelte';
@@ -71,6 +71,10 @@
   let sequenceImageEpoch = $state(0);
   let sequenceFeedbackTargetIds = $state<string[]>([]);
   let sequenceFeedbackDrafts = $state<Record<string, string>>({});
+  let trace = $state<ArtifactTraceResponse | null>(null);
+  let traceError = $state('');
+  let traceLoading = $state(false);
+  let traceRequestVersion = 0;
   let previouslySelected = '';
   let content = $derived(document?.artifacts?.[selected]);
   let liveClassPreview = $derived(
@@ -90,6 +94,30 @@
   // the UC summary list keeps the same IDs.  Track it separately so images
   // receive a new URL and cannot retain a previous revision in the DOM/cache.
   let sequenceArtifactSource = $derived(document?.artifacts?.sequence_diagram ?? '');
+  // 저장 snapshot은 application 폴더를 생략하고, frontend snapshot은 frontend도
+  // 생략한다. RTM은 실제 구현 작업 폴더 기준 경로를 쓰므로 조회 직전에만 되붙인다.
+  // 단계 전체를 선택했을 때는 어느 설계 요소인지 추측하지 않고 파일 선택만 조회한다.
+  let selectedTraceRef = $derived.by(() => {
+    if (!fileArtifact || !selectedFile) return '';
+    if (selected === 'FRONTEND_SOURCE_CODE') {
+      return `file:application/frontend/${selectedFile}`;
+    }
+    return `file:application/${selectedFile}`;
+  });
+  let traceGroups = $derived([
+    { label: 'Direct sources', values: trace?.sources ?? [] },
+    { label: 'Direct consumers', values: trace?.consumers ?? [] },
+    { label: 'Upstream', values: trace?.upstream ?? [] },
+    { label: 'Downstream', values: trace?.downstream ?? [] },
+    { label: 'Files', values: trace?.files ?? [] },
+    { label: 'Evidence', values: trace?.evidence ?? [] }
+  ]);
+  let relatedEvents = $derived(
+    events
+      .filter((event) => event.stage === (fileArtifact ? 'implementation' : requirementsArtifactTypes.has(selected) ? 'requirements' : 'design'))
+      .slice()
+      .reverse()
+  );
 
   let availableStages = $derived(
     Object.keys(document?.artifacts ?? {})
@@ -153,6 +181,31 @@
       })
       .finally(() => {
         if (loadVersion === sequenceLoadVersion) sequenceLoading = false;
+      });
+  });
+
+  $effect(() => {
+    const currentAppId = appId;
+    const currentRef = selectedTraceRef;
+    const requestVersion = ++traceRequestVersion;
+    trace = null;
+    traceError = '';
+    traceLoading = false;
+
+    if (tab !== 'evidence' || !currentAppId || !currentRef) return;
+
+    traceLoading = true;
+    getArtifactTrace(currentAppId, currentRef)
+      .then((result) => {
+        if (requestVersion !== traceRequestVersion) return;
+        trace = result;
+      })
+      .catch((error) => {
+        if (requestVersion !== traceRequestVersion) return;
+        traceError = errorMessage(error);
+      })
+      .finally(() => {
+        if (requestVersion === traceRequestVersion) traceLoading = false;
       });
   });
 
@@ -618,16 +671,55 @@
         {/each}
       </div>
     {:else}
-      <div class="divide-y divide-[#e1e1db]">
-        {#each events.filter((event) => event.stage === (fileArtifact ? 'implementation' : requirementsArtifactTypes.has(selected) ? 'requirements' : 'design')).slice().reverse() as event}
-          <div class="bg-white p-3">
-            <div class="flex items-center gap-2 text-[11px] font-semibold"><Clock3 size={12} />{event.kind}</div>
-            <p class="mt-2 text-xs leading-5 text-[#66685f]">{event.text}</p>
+      {#if selectedTraceRef && traceLoading}
+        <div class="mt-16 text-center text-xs text-[#85877e]" role="status">Loading linked trace…</div>
+      {:else if selectedTraceRef && trace}
+        <div class="divide-y divide-[#e1e1db]">
+          <div class="bg-[#f5fbf7] px-3 py-2.5 text-xs text-[#24553d]">
+            <span class="text-[10px] font-bold uppercase tracking-[.12em]">Selected trace</span>
+            <code class="mt-1 block break-all font-mono text-[11px]">{trace.ref || selectedTraceRef}</code>
           </div>
-        {:else}
-          <p class="mt-12 text-center text-xs text-[#898b83]">No related execution evidence is available.</p>
-        {/each}
-      </div>
+          {#each traceGroups as group}
+            <section class="bg-white p-3" aria-label={group.label}>
+              <h3 class="text-[11px] font-semibold text-[#454940]">{group.label}</h3>
+              {#if group.values.length}
+                <ul class="mt-2 space-y-1.5">
+                  {#each group.values as value}
+                    <li class="break-all rounded-md bg-[#f8f8f5] px-2 py-1.5 font-mono text-[10px] text-[#656960]">{value}</li>
+                  {/each}
+                </ul>
+              {:else}
+                <p class="mt-1.5 text-[11px] text-[#898b83]">None linked.</p>
+              {/if}
+            </section>
+          {/each}
+        </div>
+      {:else if selectedTraceRef && traceError}
+        <div class="border-b border-[#e3c2bd] bg-[#fff5f3] px-3 py-2 text-xs text-[#8b3d36]" role="status">
+          Could not load the linked trace: {traceError}
+        </div>
+        <div class="divide-y divide-[#e1e1db]">
+          {#each relatedEvents as event}
+            <div class="bg-white p-3">
+              <div class="flex items-center gap-2 text-[11px] font-semibold"><Clock3 size={12} />{event.kind}</div>
+              <p class="mt-2 text-xs leading-5 text-[#66685f]">{event.text}</p>
+            </div>
+          {:else}
+            <p class="mt-12 text-center text-xs text-[#898b83]">No related execution evidence is available.</p>
+          {/each}
+        </div>
+      {:else}
+        <div class="divide-y divide-[#e1e1db]">
+          {#each relatedEvents as event}
+            <div class="bg-white p-3">
+              <div class="flex items-center gap-2 text-[11px] font-semibold"><Clock3 size={12} />{event.kind}</div>
+              <p class="mt-2 text-xs leading-5 text-[#66685f]">{event.text}</p>
+            </div>
+          {:else}
+            <p class="mt-12 text-center text-xs text-[#898b83]">No related execution evidence is available.</p>
+          {/each}
+        </div>
+      {/if}
     {/if}
     </div>
   </div>

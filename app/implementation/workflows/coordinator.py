@@ -16,7 +16,7 @@ from app.design.contracts import bind_runtime_contract, build_provider_resource_
 from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import execute_openhands_task
-from ..agents.verification.build import WorkspaceVerificationError
+from ..agents.verification.build import WorkspaceVerificationError, verify_run_workspace
 from ..delivery.container import render_deployment, render_local_container
 from ..delivery.terraform import render_iac
 from ..domain.implementation_ir import (
@@ -64,6 +64,7 @@ PHASE_LABELS = {
     "frontend": "Frontend",
 }
 
+
 def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     """Idempotently plan implemented phases and persist a resumable checkpoint."""
     run_root = run_root.resolve()
@@ -76,9 +77,7 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     bce_entities = set(ir.entities)
     contract = assess_bce_erd_entity_contract(erd_model, bce_entities)
     if bce_entities and not contract.erd_entities:
-        raise ValueError(
-            "erdBceModel must contain Entity definitions matching bceModel"
-        )
+        raise ValueError("erdBceModel must contain Entity definitions matching bceModel")
     unexpected_erd_entities = set(contract.unexpected_erd_entities)
     missing_erd_entities = set(contract.missing_bce_entities)
     if missing_erd_entities or unexpected_erd_entities:
@@ -114,8 +113,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
     state_path = run_root / "reports" / "workflow-state.json"
     previous = _read_json(state_path) if state_path.is_file() else {}
     previous_tasks = {
-        item.get("task_id"): item for item in previous.get("tasks", [])
-        if isinstance(item, dict)
+        item.get("task_id"): item for item in previous.get("tasks", []) if isinstance(item, dict)
     }
     repaired_tasks = repair_task_ids(run_root)
     tasks: list[dict[str, object]] = []
@@ -124,9 +122,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         prompt_sha = str(task.get("prompt_sha256", ""))
         phase = phase_for_task(str(task.get("task_type", "control")))
         old = previous_tasks.get(task_id, {})
-        result_path = (
-            run_root / "reports" / "agent-executions" / f"{task_id}.result.json"
-        )
+        result_path = run_root / "reports" / "agent-executions" / f"{task_id}.result.json"
         result = _read_json(result_path) if result_path.is_file() else {}
         required_outputs = task.get("required_output_paths", task.get("allowed_write_paths", []))
         output_hashes = _output_hashes(run_root, required_outputs)
@@ -141,8 +137,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             and result.get("promptSha256", prompt_sha) == prompt_sha
         )
         repair_replay_required = (
-            task_id in repaired_tasks
-            and result.get("promptSha256") != prompt_sha
+            task_id in repaired_tasks and result.get("promptSha256") != prompt_sha
         )
         repair_only = bool(task.get("repair_only", False))
         if repair_only and task_id not in repaired_tasks:
@@ -158,9 +153,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                 else "INTERRUPTED"
             )
         elif (
-            old.get("status") == "SUCCEEDED"
-            and complete_outputs
-            and not repair_replay_required
+            old.get("status") == "SUCCEEDED" and complete_outputs and not repair_replay_required
         ) or (result_matches and not old):
             status = "SUCCEEDED"
         elif (
@@ -179,22 +172,16 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                 # 고칠 수 있다. planner가 남긴 순서와 편집 범위를 실행 상태에도 보존해야
                 # coordinator가 충돌하는 작업을 동시에 실행하지 않는다.
                 "dependsOn": [
-                    str(item)
-                    for item in task.get("depends_on", task.get("dependsOn", []))
+                    str(item) for item in task.get("depends_on", task.get("dependsOn", []))
                 ],
-                "allowedWritePaths": [
-                    str(item) for item in task.get("allowed_write_paths", [])
-                ],
-                "allowedWriteRoots": [
-                    str(item) for item in task.get("allowed_write_roots", [])
-                ],
+                "allowedWritePaths": [str(item) for item in task.get("allowed_write_paths", [])],
+                "allowedWriteRoots": [str(item) for item in task.get("allowed_write_roots", [])],
                 "status": status,
                 "promptSha256": prompt_sha,
                 "outputHashes": output_hashes,
                 "attempts": int(old.get("attempts", 0)),
                 "resultFile": (
-                    result_path.relative_to(run_root).as_posix()
-                    if result_path.is_file() else None
+                    result_path.relative_to(run_root).as_posix() if result_path.is_file() else None
                 ),
                 "lastError": result.get("error") if result.get("status") == "FAILED" else None,
             }
@@ -203,7 +190,8 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
     phases = _phase_states(tasks)
     current = next(
         (
-            phase["phaseId"] for phase in phases
+            phase["phaseId"]
+            for phase in phases
             if phase["status"] in {"PENDING", "RUNNING", "FAILED"}
         ),
         next(
@@ -213,7 +201,8 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
     )
     pending = [task for task in tasks if task["status"] != "SUCCEEDED"]
     status = (
-        "FAILED" if any(task["status"] == "FAILED" for task in pending)
+        "FAILED"
+        if any(task["status"] == "FAILED" for task in pending)
         else ("READY" if pending else "READY_TO_FINALIZE")
     )
     state: dict[str, object] = {
@@ -231,9 +220,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
     }
     _write_json_atomic(state_path, state)
     request = write_transmission_request(run_root, state)
-    state["transmissionRequest"] = request[
-        "requestFile"
-    ] if request else None
+    state["transmissionRequest"] = request["requestFile"] if request else None
     _write_json_atomic(state_path, state)
     return state
 
@@ -282,14 +269,15 @@ def _run_workflow(
     state = plan_workflow(run_root, spec)
     runnable = list(state.get("nextRunnableTasks", []))
     failed_runnable = [
-        task_id for task_id in runnable
+        task_id
+        for task_id in runnable
         if next(task for task in state["tasks"] if task["task_id"] == task_id)["status"] == "FAILED"
     ]
     if failed_runnable and not retry_failed:
         raise RuntimeError(
             "Workflow has failed tasks; inspect evidence and use --retry-failed: "
             + ", ".join(failed_runnable)
-    )
+        )
     if not runnable:
         return _finalize_workflow(
             run_root,
@@ -298,15 +286,9 @@ def _run_workflow(
             auditor=auditor,
         )
 
-    request = _read_json(
-        run_root / "reports" / "external-transmission-request.json"
-    )
-    approval = validate_workflow_approval(
-        approval_path, request, state, run_root
-    )
-    approval["authorizedTaskIds"] = sorted(
-        str(item["taskId"]) for item in request.get("tasks", [])
-    )
+    request = _read_json(run_root / "reports" / "external-transmission-request.json")
+    approval = validate_workflow_approval(approval_path, request, state, run_root)
+    approval["authorizedTaskIds"] = sorted(str(item["taskId"]) for item in request.get("tasks", []))
     authorized_task_ids = set(approval["authorizedTaskIds"])
     state["approval"] = approval
     state["status"] = "RUNNING"
@@ -317,7 +299,8 @@ def _run_workflow(
         runnable_tasks: list[dict[str, object]] = []
         for phase_id, _dependencies, _types in PHASES:
             phase_tasks = [
-                task for task in state["tasks"]
+                task
+                for task in state["tasks"]
                 if task["phase"] == phase_id
                 and task["task_id"] in authorized_task_ids
                 and (
@@ -363,9 +346,9 @@ def _run_workflow(
                         return repaired_state
                 raise error
         for phase_id in runnable_phases:
-            next(
-                phase for phase in state["phases"] if phase["phaseId"] == phase_id
-            )["status"] = "SUCCEEDED"
+            next(phase for phase in state["phases"] if phase["phaseId"] == phase_id)["status"] = (
+                "SUCCEEDED"
+            )
         state["updatedAt"] = _now()
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
     state.pop("currentPhases", None)
@@ -401,8 +384,9 @@ def _finalize_workflow(
     """작업 완결성과 설계 계약을 확인하고 Testing에 넘길 파일을 만든다.
 
     작업별 compile·관련 테스트는 각 코딩 에이전트가 이미 통과했다. 전체 Gradle 테스트,
-    frontend build와 실제 container 실행은 저장된 동일 산출물을 사용하는 Testing 단계가
-    담당한다. 구현 단계에서 이를 반복하지 않아 사용자가 구현 결과를 더 빨리 확인할 수 있다.
+    frontend build와 실제 container 실행은 저장된 동일 산출물을 사용하는 Testing 단계가 담당한다.
+    단, 기존 코드를 고친 피드백 작업은 영향 범위가 여러 작업에 걸칠 수 있으므로 backend 테스트를
+    한 번 다시 통과한 뒤 Testing으로 넘긴다.
     """
     state["status"] = "FINALIZING"
     state["blockingReason"] = None
@@ -425,9 +409,7 @@ def _finalize_workflow(
         if repaired is not None:
             return repaired
         state["status"] = "NEEDS_PLANNER"
-        state["blockingReason"] = (
-            "The audit contains work for which no implementation task exists."
-        )
+        state["blockingReason"] = "The audit contains work for which no implementation task exists."
         state.pop("currentActivity", None)
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         return state
@@ -440,6 +422,30 @@ def _finalize_workflow(
             return repaired
         _record_workflow_failure(run_root, state, error)
         raise
+
+    if spec.job_type == "FEEDBACK_REVISION":
+        state["currentActivity"] = {
+            "id": "feedback-regression",
+            "label": "수정 후 단위 테스트",
+            "status": "RUNNING",
+            "detail": "수정된 코드가 기존 단위·작은 통합 테스트를 깨뜨리지 않았는지 확인합니다.",
+        }
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+        try:
+            verify_run_workspace(
+                run_root,
+                "feedback-regression.json",
+                verify_frontend=False,
+                verify_end_to_end=False,
+            )
+        except WorkspaceVerificationError as error:
+            repaired = _continue_after_feedback_regression_failure(run_root, spec, error)
+            if repaired is not None:
+                return repaired
+            _record_workflow_failure(run_root, state, error)
+            raise
+        state["feedbackRegression"] = "reports/feedback-regression.json"
+
     _complete_implementation(run_root, spec, state, conformance)
     state["blockingReason"] = None
     state["currentActivity"] = {
@@ -471,8 +477,7 @@ def _phase_task_batches(
             task
             for task_id, task in remaining.items()
             if all(
-                str(dependency) not in remaining
-                or str(dependency) in completed_in_phase
+                str(dependency) not in remaining or str(dependency) in completed_in_phase
                 for dependency in task.get("dependsOn", [])
             )
         ]
@@ -533,9 +538,7 @@ def _execute_task_batch(
     def run(task: dict[str, object]) -> dict[str, object]:
         result = executor(run_root, str(task["task_id"]))
         if result.get("status") != "SUCCEEDED":
-            raise RuntimeError(
-                f"Task returned non-success status: {task['task_id']}"
-            )
+            raise RuntimeError(f"Task returned non-success status: {task['task_id']}")
         return result
 
     def mark_started(task: dict[str, object]) -> None:
@@ -546,9 +549,7 @@ def _execute_task_batch(
 
     failures: list[tuple[dict[str, object], Exception]] = []
 
-    def record_completion(
-        task: dict[str, object], future: Future[dict[str, object]]
-    ) -> None:
+    def record_completion(task: dict[str, object], future: Future[dict[str, object]]) -> None:
         try:
             future.result()
         except Exception as error:
@@ -557,12 +558,8 @@ def _execute_task_batch(
             failures.append((task, error))
         else:
             task["status"] = "SUCCEEDED"
-            task["resultFile"] = (
-                f"reports/agent-executions/{task['task_id']}.result.json"
-            )
-            task["outputHashes"] = _task_output_hashes(
-                run_root, str(task["task_id"])
-            )
+            task["resultFile"] = f"reports/agent-executions/{task['task_id']}.result.json"
+            task["outputHashes"] = _task_output_hashes(run_root, str(task["task_id"]))
             task["lastError"] = None
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
@@ -628,9 +625,7 @@ def _execute_task_batch(
     return blocking_failures
 
 
-def _record_workflow_failure(
-    run_root: Path, state: dict[str, object], error: Exception
-) -> None:
+def _record_workflow_failure(run_root: Path, state: dict[str, object], error: Exception) -> None:
     """완료 감사나 산출물 생성 실패를 workflow checkpoint에 기록한다."""
     activity = state.get("currentActivity")
     failed_activity = dict(activity) if isinstance(activity, dict) else {}
@@ -657,6 +652,7 @@ def _record_workflow_failure(
     state["blockingReason"] = failed_activity["detail"]
     state["updatedAt"] = _now()
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+
 
 def _continue_after_incomplete_audit(
     run_root: Path,
@@ -760,9 +756,7 @@ def run_workflow_to_completion(
                 _write_json_atomic(approval_path, approval)
             execution_approval = approval_path
         elif state.get("status") != "READY_TO_FINALIZE":
-            raise PermissionError(
-                "No external transmission request is available to approve"
-            )
+            raise PermissionError("No external transmission request is available to approve")
         state = run_workflow(
             run_root,
             spec,
@@ -772,9 +766,7 @@ def run_workflow_to_completion(
         status = str(state.get("status", ""))
         if status == "COMPLETE":
             if approval_path.is_file():
-                state["oneTimeApproval"] = approval_path.relative_to(
-                    run_root
-                ).as_posix()
+                state["oneTimeApproval"] = approval_path.relative_to(run_root).as_posix()
             _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
             return state
         if status in {"FAILED", "NEEDS_INPUT", "NEEDS_PLANNER"}:
@@ -782,9 +774,7 @@ def run_workflow_to_completion(
                 f"Run-to-completion stopped in {status}: {state.get('blockingReason')}"
             )
         if max_cycles is not None and cycle >= max_cycles:
-            raise RuntimeError(
-                f"Run-to-completion exceeded {max_cycles} workflow cycles"
-            )
+            raise RuntimeError(f"Run-to-completion exceeded {max_cycles} workflow cycles")
 
 
 def _bind_deployment_runtime(run_root: Path, spec: JobSpec) -> Path | None:
@@ -931,12 +921,13 @@ def _render_deployment_if_configured(
     # 예전 Kubernetes cloud inference를 함께 실행하지 않는다.
     if not has_bundle and ((intent and intent.is_file()) or (cloud and cloud.is_file())):
         deployment_report = render_deployment(run_root, spec)
-    elif deployment and deployment.is_file() and not (
-        deployment_bundle and deployment_bundle.is_file()
+    elif (
+        deployment
+        and deployment.is_file()
+        and not (deployment_bundle and deployment_bundle.is_file())
     ):
         raise ValueError(
-            "Deployment rendering requires deploymentIntent or a cloud resource "
-            "specification"
+            "Deployment rendering requires deploymentIntent or a cloud resource specification"
         )
     else:
         deployment_report = None
@@ -991,6 +982,27 @@ def _continue_after_conformance_failure(
     return state
 
 
+def _continue_after_feedback_regression_failure(
+    run_root: Path,
+    spec: JobSpec,
+    error: WorkspaceVerificationError,
+) -> dict[str, object] | None:
+    """피드백 수리 뒤 깨진 단위 테스트를 같은 OpenHands 작업으로 되돌린다."""
+    repair = schedule_cross_phase_repair(
+        run_root,
+        "apply-source-feedback",
+        error.evidence,
+    )
+    if repair is None:
+        return None
+    state = plan_workflow(run_root, spec)
+    state["repairPlan"] = "reports/repair-plan.json"
+    state["blockingReason"] = None
+    state.pop("currentActivity", None)
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+    return state
+
+
 def write_transmission_request(
     run_root: Path, state: dict[str, object]
 ) -> dict[str, object] | None:
@@ -999,7 +1011,8 @@ def write_transmission_request(
         pending_ids = sorted(str(task_id) for task_id in next_runnable)
     else:
         pending_ids = sorted(
-            str(task["task_id"]) for task in state["tasks"]
+            str(task["task_id"])
+            for task in state["tasks"]
             if task["status"] in {"PENDING", "INTERRUPTED", "FAILED"}
         )
     if not pending_ids:
@@ -1012,9 +1025,7 @@ def write_transmission_request(
                 _write_json_atomic(request_path, previous)
         return None
     manifest = _read_json(run_root / "reports" / "run-manifest.json")
-    task_by_id = {
-        item["task_id"]: item for item in manifest.get("implementation_tasks", [])
-    }
+    task_by_id = {item["task_id"]: item for item in manifest.get("implementation_tasks", [])}
     payload = _transmission_payload(task_by_id, pending_ids)
     request_id = _transmission_request_id(payload)
     request = {
@@ -1031,9 +1042,7 @@ def write_transmission_request(
         "tasks": payload,
         "requestFile": "reports/external-transmission-request.json",
     }
-    _write_json_atomic(
-        run_root / "reports" / "external-transmission-request.json", request
-    )
+    _write_json_atomic(run_root / "reports" / "external-transmission-request.json", request)
     return request
 
 
@@ -1106,9 +1115,7 @@ def validate_workflow_approval(
             if result.get("promptSha256") == task.get("promptSha256"):
                 candidate_ids.add(str(task["task_id"]))
         manifest = _read_json(run_root / "reports" / "run-manifest.json")
-        task_by_id = {
-            item["task_id"]: item for item in manifest.get("implementation_tasks", [])
-        }
+        task_by_id = {item["task_id"]: item for item in manifest.get("implementation_tasks", [])}
         payload = _transmission_payload(task_by_id, sorted(candidate_ids))
         if (
             current_ids
@@ -1127,7 +1134,10 @@ def validate_workflow_approval(
 
 
 def _valid_delegated_execution_approval(
-    approval: dict[str, object], request: dict[str, object], state: dict[str, object], run_root: Path
+    approval: dict[str, object],
+    request: dict[str, object],
+    state: dict[str, object],
+    run_root: Path,
 ) -> bool:
     if approval.get("delegatedRepairApprovals") is not True:
         return False
@@ -1143,14 +1153,17 @@ def _valid_delegated_execution_approval(
         return False
     planned_ids = {
         str(task_id)
-        for entry in plan.get("entries", []) if isinstance(entry, dict)
-        for task_id in [*entry.get("ownerTaskIds", []), *entry.get("revalidationTaskIds", [])]
+        for entry in plan.get("entries", [])
+        if isinstance(entry, dict)
+        for task_id in [
+            *entry.get("ownerTaskIds", []),
+            *entry.get("revalidationTaskIds", []),
+        ]
     }
     current_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
     initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
     return bool(current_ids) and (
-        current_ids.issubset(initial_ids)
-        or current_ids.issubset(planned_ids)
+        current_ids.issubset(initial_ids) or current_ids.issubset(planned_ids)
     )
 
 
@@ -1168,21 +1181,24 @@ def _transmission_payload(
     for task_id in sorted(task_ids):
         task = task_by_id[task_id]
         sources = task.get("source_artifacts", {})
-        source_hashes = {
-            str(name): _file_sha256(Path(str(path)))
-            for name, path in sources.items()
-        } if isinstance(sources, dict) else {}
-        payload.append({
-            "taskId": task_id,
-            "taskType": task.get("task_type"),
-            "promptSha256": task.get("prompt_sha256"),
-            "sourceArtifacts": sources,
-            "sourceArtifactHashes": source_hashes,
-            "allowedWritePaths": task.get("allowed_write_paths", []),
-            "requiredOutputPaths": task.get(
-                "required_output_paths", task.get("allowed_write_paths", [])
-            ),
-        })
+        source_hashes = (
+            {str(name): _file_sha256(Path(str(path))) for name, path in sources.items()}
+            if isinstance(sources, dict)
+            else {}
+        )
+        payload.append(
+            {
+                "taskId": task_id,
+                "taskType": task.get("task_type"),
+                "promptSha256": task.get("prompt_sha256"),
+                "sourceArtifacts": sources,
+                "sourceArtifactHashes": source_hashes,
+                "allowedWritePaths": task.get("allowed_write_paths", []),
+                "requiredOutputPaths": task.get(
+                    "required_output_paths", task.get("allowed_write_paths", [])
+                ),
+            }
+        )
     return payload
 
 
@@ -1234,9 +1250,9 @@ def _next_runnable_tasks(
     runnable: list[str] = []
     for phase_id, dependencies, _ in PHASES:
         candidates = [
-            str(task["task_id"]) for task in tasks
-            if task["phase"] == phase_id
-            and task["status"] in {"PENDING", "INTERRUPTED", "FAILED"}
+            str(task["task_id"])
+            for task in tasks
+            if task["phase"] == phase_id and task["status"] in {"PENDING", "INTERRUPTED", "FAILED"}
         ]
         if candidates and all(
             phase_by_id[dependency]["status"] in {"SUCCEEDED", "UNPLANNED"}
@@ -1249,17 +1265,13 @@ def _next_runnable_tasks(
 def _dependencies_succeeded(state: dict[str, object], phase_id: str) -> bool:
     phase_by_id = {phase["phaseId"]: phase for phase in state["phases"]}
     dependencies = next(item[1] for item in PHASES if item[0] == phase_id)
-    return all(
-        phase_by_id[item]["status"] in {"SUCCEEDED", "UNPLANNED"}
-        for item in dependencies
-    )
+    return all(phase_by_id[item]["status"] in {"SUCCEEDED", "UNPLANNED"} for item in dependencies)
 
 
 def _task_output_hashes(run_root: Path, task_id: str) -> dict[str, str]:
     manifest = _read_json(run_root / "reports" / "run-manifest.json")
     task = next(
-        item for item in manifest.get("implementation_tasks", [])
-        if item.get("task_id") == task_id
+        item for item in manifest.get("implementation_tasks", []) if item.get("task_id") == task_id
     )
     return _output_hashes(
         run_root,

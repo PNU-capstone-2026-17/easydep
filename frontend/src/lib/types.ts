@@ -185,3 +185,13 @@ export interface LiveSourceSnapshot {
   revision: string;
   files: LiveSourceFile[];
 }
+
+export interface ArtifactTraceResponse {
+  ref: string;
+  sources: string[];
+  consumers: string[];
+  upstream: string[];
+  downstream: string[];
+  files: string[];
+  evidence: string[];
+}

@@ -65,7 +65,11 @@ def verify_run_workspace(
     verify_frontend: bool = True,
     verify_end_to_end: bool = True,
 ) -> dict[str, object]:
-    """현재 run의 backend와 필요한 경우 frontend를 한 번에 검증한다."""
+    """현재 run의 backend와 필요한 경우 frontend를 한 번에 검증한다.
+
+    ``verify_end_to_end=False``는 HTTP 시나리오만 생략한다. 피드백 수리 뒤에는
+    compile만으로 회귀를 확인할 수 없으므로 backend의 단위·작은 통합 테스트는 모두 실행한다.
+    """
     cached_frontend = reuse_frontend_build(run_root) if verify_frontend else None
     sandbox = prepare_agent_workspace(
         run_root,
@@ -78,7 +82,7 @@ def verify_run_workspace(
     try:
         verification = verify_agent_workspace(
             sandbox,
-            "" if verify_end_to_end else "compile-only",
+            "" if verify_end_to_end else "wiring",
             None if verify_end_to_end else [],
         )
         scenario_verification = (
@@ -87,10 +91,7 @@ def verify_run_workspace(
             else {"status": "NOT_CHECKED", "tasks": []}
         )
         frontend_verification = None
-        if (
-            verify_frontend
-            and (sandbox / "application" / "frontend" / "package.json").is_file()
-        ):
+        if verify_frontend and (sandbox / "application" / "frontend" / "package.json").is_file():
             frontend_verification = cached_frontend or verify_frontend_workspace(sandbox)
             if cached_frontend is None:
                 store_frontend_build(run_root, sandbox, frontend_verification)
@@ -276,8 +277,7 @@ def task_verification_command(
             {
                 Path(path).stem
                 for path in allowed_write_paths or []
-                if "/src/test/" in "/" + path.replace("\\", "/")
-                and path.endswith(".java")
+                if "/src/test/" in "/" + path.replace("\\", "/") and path.endswith(".java")
             }
         )
         command = [*executable]
@@ -375,9 +375,7 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
             class_name = str(case.get("classname") or "").rsplit(".", 1)[-1]
             if not class_name:
                 continue
-            counts = executed.setdefault(
-                class_name, {"passed": 0, "failed": 0, "skipped": 0}
-            )
+            counts = executed.setdefault(class_name, {"passed": 0, "failed": 0, "skipped": 0})
             if case.find("failure") is not None or case.find("error") is not None:
                 counts["failed"] += 1
             elif case.find("skipped") is not None:
@@ -395,13 +393,10 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
                 "required_test_paths",
                 task.get("required_output_paths", task.get("allowed_write_paths", [])),
             )
-            if "/src/test/" in "/" + str(path).replace("\\", "/")
-            and str(path).endswith(".java")
+            if "/src/test/" in "/" + str(path).replace("\\", "/") and str(path).endswith(".java")
         ]
         use_case_ids = [
-            str(item)
-            for item in task.get("use_case_ids", task.get("useCaseIds", []))
-            if str(item)
+            str(item) for item in task.get("use_case_ids", task.get("useCaseIds", [])) if str(item)
         ]
         covered_use_cases.update(use_case_ids)
         classes = [Path(path).stem for path in test_paths]
@@ -503,9 +498,7 @@ def compact_verification_evidence(
 
     command = evidence.get("command") or []
     command_text = (
-        " ".join(str(part) for part in command)
-        if isinstance(command, list)
-        else str(command)
+        " ".join(str(part) for part in command) if isinstance(command, list) else str(command)
     )
     lines = [
         f"Command: {command_text or '(not available)'}",

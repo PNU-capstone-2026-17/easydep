@@ -66,7 +66,9 @@ def test_workspace_event_summary_omits_large_llm_contents() -> None:
     assert len(row.event_data["llm_timing_events"]) == 2
 
 
-def test_reconcile_implementation_command_closes_stale_running_command(monkeypatch) -> None:
+def test_reconcile_implementation_command_closes_stale_running_command(
+    monkeypatch,
+) -> None:
     command = {
         "command_id": "command-1",
         "action": "approve_implementation",
@@ -98,7 +100,9 @@ def test_reconcile_implementation_command_closes_stale_running_command(monkeypat
     assert events[0]["metadata"]["status"] == "COMPLETED"
 
 
-def test_reconcile_implementation_command_restores_progress_after_restart(monkeypatch) -> None:
+def test_reconcile_implementation_command_restores_progress_after_restart(
+    monkeypatch,
+) -> None:
     command = {
         "command_id": "command-1",
         "action": "approve_implementation",
@@ -274,7 +278,9 @@ def test_cross_stage_feedback_waits_before_mutating_artifacts(monkeypatch) -> No
     assert events[-1]["kind"] == "action_required"
 
 
-def test_requirement_reply_uses_the_waiting_command_as_continuation(monkeypatch) -> None:
+def test_requirement_reply_uses_the_waiting_command_as_continuation(
+    monkeypatch,
+) -> None:
     captured = {}
     monkeypatch.setattr(
         repository,
@@ -450,7 +456,9 @@ def test_initial_workspace_request_accepts_provider_and_region_without_budget(
     assert constraints.monthly_budget_amount is None
 
 
-def test_initial_workspace_request_can_start_before_cloud_selection(monkeypatch) -> None:
+def test_initial_workspace_request_can_start_before_cloud_selection(
+    monkeypatch,
+) -> None:
     captured = {}
 
     def analyze(request):
@@ -565,7 +573,9 @@ def test_saved_coordinates_do_not_answer_a_later_budget_question(monkeypatch) ->
         service.shutdown()
 
 
-def test_initial_workspace_request_forwards_structured_monthly_budget(monkeypatch) -> None:
+def test_initial_workspace_request_forwards_structured_monthly_budget(
+    monkeypatch,
+) -> None:
     captured = {}
 
     def analyze(request):
@@ -880,7 +890,9 @@ def test_live_preview_store_isolates_commands_and_invalidates_cached_svg() -> No
     assert store.get("app-1", "command-2", "class_diagram").revision == 1
 
 
-def test_class_preview_endpoints_return_and_cache_the_latest_snapshot(monkeypatch) -> None:
+def test_class_preview_endpoints_return_and_cache_the_latest_snapshot(
+    monkeypatch,
+) -> None:
     app_id = "11111111-1111-4111-8111-111111111111"
     live_previews.clear()
     preview = live_previews.publish(
@@ -929,7 +941,9 @@ def test_class_preview_endpoints_return_and_cache_the_latest_snapshot(monkeypatc
     assert renders == [("@startuml\nclass Course\n@enduml", "svg")]
 
 
-def test_design_operation_marks_a_generated_draft_as_needing_review(monkeypatch) -> None:
+def test_design_operation_marks_a_generated_draft_as_needing_review(
+    monkeypatch,
+) -> None:
     events = []
     monkeypatch.setattr(
         repository,
@@ -1102,7 +1116,9 @@ def test_retry_design_accepts_only_a_failed_design_command(monkeypatch) -> None:
         service.shutdown()
 
 
-def test_requirements_progress_tracks_only_active_use_case_spec_tasks(monkeypatch) -> None:
+def test_requirements_progress_tracks_only_active_use_case_spec_tasks(
+    monkeypatch,
+) -> None:
     events = []
     monkeypatch.setattr(
         repository,
@@ -1518,7 +1534,9 @@ def test_interrupted_testing_command_reuses_saved_checkpoint(monkeypatch) -> Non
     assert result["job"]["job_id"] == "command-1"
 
 
-def test_sut_failure_repairs_implementation_and_reuses_the_same_test(monkeypatch) -> None:
+def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
+    monkeypatch,
+) -> None:
     """제품 수리 뒤에 새 테스트를 만들지 않고 실패를 발견한 후보를 다시 쓴다."""
     prior = {
         "stage": "testing",
@@ -1534,6 +1552,17 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(monkeypatch
                     "message": "FR1 failed",
                     "repairable": True,
                     "defect_class": "SUT_DEFECT",
+                    "target_ids": [
+                        "api:submitRegistration",
+                        "test:plan-digest:UC1",
+                    ],
+                    "file_hints": ["application/src/RegistrationService.java"],
+                    "trace_refs": ["task:implement-registration"],
+                    "candidate_digest": "plan-digest",
+                    "evidence": {
+                        "operationId": "submitRegistration",
+                        "statusCode": 500,
+                    },
                     "candidate_plan": {
                         "cases": [
                             {
@@ -1618,6 +1647,9 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(monkeypatch
 
     assert observed["auto_approve"] is True
     assert "Preserved functional test plan" in str(observed["feedback"])
+    assert "api:submitRegistration" in str(observed["feedback"])
+    assert "RegistrationService.java" in str(observed["feedback"])
+    assert '"statusCode": 500' in str(observed["feedback"])
     assert observed["implementation_job_id"] == "implementation-2"
     assert observed["previous_job"] == prior["result"]["job"]
     assert observed["preserve_test"] is True
@@ -1848,7 +1880,10 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
         workspace_module,
         "artifact_repository",
         SimpleNamespace(
-            load_state=lambda _app_id: {"class_diagram_puml": "A", "api_spec": {"paths": {}}}
+            load_state=lambda _app_id: {
+                "class_diagram_puml": "A",
+                "api_spec": {"paths": {}},
+            }
         ),
     )
     monkeypatch.setattr(
@@ -1865,7 +1900,10 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
                 "app_id": "app-1",
                 "command_id": "cmd-1",
                 "stage": "implementation",
-                "payload": {"base_package": "com.example.app", "allow_assumptions": True},
+                "payload": {
+                    "base_package": "com.example.app",
+                    "allow_assumptions": True,
+                },
             }
         )
     finally:

@@ -1,5 +1,12 @@
 """Public contracts for the artifact trace projection."""
 
+from collections.abc import Iterator
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app import artifacts_api
 from app.artifact_trace import (
     ArtifactTrace,
     TraceNode,
@@ -8,6 +15,14 @@ from app.artifact_trace import (
     parse_ref,
 )
 from app.artifact_trace_projection import project_artifact_trace
+
+
+@pytest.fixture
+def trace_client() -> Iterator[TestClient]:
+    application = FastAPI()
+    application.include_router(artifacts_api.router)
+    with TestClient(application) as client:
+        yield client
 
 
 def test_refs_preserve_ids_after_the_first_colon():
@@ -241,3 +256,94 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
         TraceRef("api", "createOrder"),
     }
     assert trace.sources(finding) == (test,)
+
+
+def test_trace_endpoint_uses_source_snapshot_rtm_and_latest_testing_result(
+    trace_client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    app_id = "11111111-1111-4111-8111-111111111111"
+    state = {
+        "refined_requirements": {"requirements": [{"id": "REQ-1"}]},
+        "usecase_spec": {"use_cases": [{"id": "UC-1", "requirement_ids": ["REQ-1"]}]},
+        "api_spec_model": {
+            "Endpoints": [{"operation_id": "createOrder", "use_case_ids": ["UC-1"]}]
+        },
+    }
+    snapshot = {
+        "version_id": 8,
+        "version_no": 2,
+        "snapshot_digest": "source-digest",
+        "created_at": "2026-09-02T00:00:00+00:00",
+        "metadata": {
+            "implementation_traceability": {
+                "mappings": [
+                    {
+                        "taskId": "implement-orders",
+                        "target_file": "application/src/orders/OrderService.java",
+                        "sourceRefs": ["api:createOrder"],
+                    }
+                ]
+            }
+        },
+    }
+    testing_result = {
+        "passed": False,
+        "gateStatus": "FAIL",
+        "verification": {
+            "reports": {
+                "dynamicFunctional": {
+                    "candidateDigest": "plan-digest",
+                    "candidatePlan": {
+                        "cases": [
+                            {
+                                "case_id": "UC-1",
+                                "requirement_ids": ["REQ-1"],
+                                "use_case_id": "UC-1",
+                                "steps": [{"step_id": "create", "operation_id": "createOrder"}],
+                            }
+                        ]
+                    },
+                    "cases": [
+                        {
+                            "caseId": "UC-1",
+                            "result": {"finding": {"code": "HTTP_STATUS_NOT_SUCCESS"}},
+                        }
+                    ],
+                }
+            }
+        },
+    }
+    monkeypatch.setattr(
+        "app.artifact_trace_service.artifact_repository.load_state",
+        lambda received_app_id: state if received_app_id == app_id else None,
+    )
+    monkeypatch.setattr(
+        "app.artifact_trace_service.artifact_repository.load_file_snapshot",
+        lambda received_app_id, _kind: snapshot if received_app_id == app_id else None,
+    )
+    monkeypatch.setattr(
+        "app.artifact_trace_service.workspace_repository.latest_command",
+        lambda received_app_id, *, stage: {
+            "command_id": "testing-command",
+            "stage": "testing",
+            "status": "COMPLETED",
+            "result": {"job": {"result": testing_result}},
+        }
+        if received_app_id == app_id and stage == "testing"
+        else None,
+    )
+
+    response = trace_client.get(f"/api/apps/{app_id}/trace?ref=api:createOrder")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ref"] == "api:createOrder"
+    assert payload["files"] == ["file:application/src/orders/OrderService.java"]
+    assert "test:plan-digest:UC-1" in payload["evidence"]
+    assert payload["source_snapshot"]["snapshot_digest"] == "source-digest"
+    assert payload["testing"] == {
+        "command_id": "testing-command",
+        "status": "COMPLETED",
+        "passed": False,
+        "gate_status": "FAIL",
+    }

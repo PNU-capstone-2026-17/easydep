@@ -136,10 +136,7 @@ def test_agent_workspace_refresh_preserves_ignored_build_outputs(
         return_value=str(tmp_path / "temp"),
     ):
         sandbox = prepare_agent_workspace(run, task)
-        build_output = (
-            sandbox
-            / "application/build/test-results/test/binary/output.bin"
-        )
+        build_output = sandbox / "application/build/test-results/test/binary/output.bin"
         build_output.parent.mkdir(parents=True)
         build_output.write_bytes(b"test output")
         stale_source = sandbox / "application/src/Stale.java"
@@ -303,7 +300,9 @@ def test_agent_task_check_requires_a_source_change_before_retry(
     verify.assert_called_once()
 
 
-def test_successful_agent_check_is_reused_only_for_the_same_source(tmp_path: Path) -> None:
+def test_successful_agent_check_is_reused_only_for_the_same_source(
+    tmp_path: Path,
+) -> None:
     """에이전트가 통과시킨 동일 검사를 대화 종료 직후 다시 실행하지 않는다."""
     source = tmp_path / "application/src/main/java/com/example/OrderService.java"
     source.parent.mkdir(parents=True)
@@ -456,7 +455,10 @@ def test_verification_failure_continues_the_same_openhands_conversation(
         ) as create,
         patch(
             "app.implementation.agents.runtime.verify_agent_workspace",
-            side_effect=[failure, {"command": ["gradlew", "compileJava"], "exitCode": 0}],
+            side_effect=[
+                failure,
+                {"command": ["gradlew", "compileJava"], "exitCode": 0},
+            ],
         ),
     ):
         result = execute_openhands_task(run, task_id)
@@ -537,7 +539,10 @@ def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(
         ),
         patch(
             "app.implementation.agents.runtime.verify_agent_workspace",
-            side_effect=[failure, {"command": ["gradlew", "compileJava"], "exitCode": 0}],
+            side_effect=[
+                failure,
+                {"command": ["gradlew", "compileJava"], "exitCode": 0},
+            ],
         ),
     ):
         result = execute_openhands_task(run, task_id)
@@ -941,7 +946,13 @@ class Order <<Entity>> { - id: UUID }
         "void cancelOrder(); }\n",
         encoding="utf-8",
     )
-    for name in ("OrderBoundary", "OrderControl", "CancelControl", "Order", "OrderWindow"):
+    for name in (
+        "OrderBoundary",
+        "OrderControl",
+        "CancelControl",
+        "Order",
+        "OrderWindow",
+    ):
         (package_root / f"bce/{name}.java").write_text(
             f"package com.example.orders.bce; public interface {name} {{}}\n",
             encoding="utf-8",
@@ -1077,14 +1088,9 @@ class Order <<Entity>> { - id: UUID }
         not set(task["allowed_write_paths"]).intersection(immutable_bce) for task in use_cases
     )
     assert use_cases[0]["allowed_write_roots"]
-    assert all(
-        "application/src/main/java" not in task["allowed_write_roots"]
-        for task in use_cases
-    )
+    assert all("application/src/main/java" not in task["allowed_write_roots"] for task in use_cases)
     uc1_task = next(task for task in use_cases if task["use_case_ids"] == ["UC1"])
-    assert {"api:placeOrder", "operation:stale-control-id"} <= set(
-        uc1_task["source_refs"]
-    )
+    assert {"api:placeOrder", "operation:stale-control-id"} <= set(uc1_task["source_refs"])
     uc1_prompt = (run / uc1_task["prompt_file"]).read_text(encoding="utf-8")
     assert "The customer can place an order." in uc1_prompt
     assert '"call_id"' in uc1_prompt
@@ -1132,7 +1138,11 @@ def test_completed_workflow_hands_full_verification_to_testing(
 
     result = run_workflow(
         run,
-        SimpleNamespace(app_id="app-1", inputs={}),
+        SimpleNamespace(
+            app_id="app-1",
+            inputs={},
+            job_type="INITIAL_IMPLEMENTATION",
+        ),
         None,
         auditor=lambda _run: {"status": "COMPLETE"},
     )
@@ -1142,6 +1152,144 @@ def test_completed_workflow_hands_full_verification_to_testing(
     assert (run / "application/Dockerfile").is_file()
     assert not (reports / "final-verification.json").exists()
     assert not (reports / "container-runtime-smoke.json").exists()
+
+
+def test_feedback_revision_runs_one_full_backend_test_gate_before_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """피드백 수리는 최종 backend test를 한 번 거친 뒤에만 완료한다."""
+    run = tmp_path / "feedback-run"
+    (run / "reports").mkdir(parents=True)
+    state = {
+        "status": "READY_TO_FINALIZE",
+        "tasks": [],
+        "phases": [],
+        "nextRunnableTasks": [],
+    }
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_workflow",
+        lambda *_args: dict(state),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_source_design_conformance",
+        lambda *_args: {"status": "PASSED"},
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator._render_deployment_if_configured",
+        lambda *_args: (None, None),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.build_rtm_traceability_map",
+        lambda *_args: {"summary": {"missing": 0}},
+    )
+    calls: list[tuple[Path, str, bool, bool]] = []
+
+    def full_backend_gate(
+        run_root: Path,
+        report_name: str,
+        *,
+        verify_frontend: bool,
+        verify_end_to_end: bool,
+    ) -> dict[str, object]:
+        calls.append((run_root, report_name, verify_frontend, verify_end_to_end))
+        return {
+            "status": "SUCCEEDED",
+            "verification": {"command": ["gradlew", "test", "--build-cache"]},
+        }
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_run_workspace",
+        full_backend_gate,
+    )
+
+    result = run_workflow(
+        run,
+        SimpleNamespace(job_type="FEEDBACK_REVISION", app_id="app-1", inputs={}),
+        None,
+        auditor=lambda _run: {"status": "COMPLETE"},
+    )
+
+    assert result["status"] == "COMPLETE"
+    assert calls == [(run.resolve(), "feedback-regression.json", False, False)]
+    assert result["feedbackRegression"] == "reports/feedback-regression.json"
+
+
+def test_feedback_revision_test_gate_failure_returns_to_source_feedback_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """피드백 후 전체 test 실패는 자동 apply-source-feedback 수리 상태로 돌아간다."""
+    run = tmp_path / "feedback-run"
+    (run / "reports").mkdir(parents=True)
+    initial_state = {
+        "status": "READY_TO_FINALIZE",
+        "tasks": [],
+        "phases": [],
+        "nextRunnableTasks": [],
+    }
+    repaired_state = {
+        "status": "READY",
+        "tasks": [],
+        "phases": [],
+        "nextRunnableTasks": ["apply-source-feedback"],
+    }
+    plan_calls = 0
+
+    def plan(_run: Path, _spec: object) -> dict[str, object]:
+        nonlocal plan_calls
+        plan_calls += 1
+        return dict(initial_state if plan_calls == 1 else repaired_state)
+
+    monkeypatch.setattr("app.implementation.workflows.coordinator.plan_workflow", plan)
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_source_design_conformance",
+        lambda *_args: {"status": "PASSED"},
+    )
+    failure = WorkspaceVerificationError(
+        {
+            "command": ["gradlew", "test", "--build-cache"],
+            "exitCode": 1,
+            "stderr": "OrderServiceTest failed",
+        }
+    )
+    gate_calls: list[tuple[Path, str]] = []
+
+    def failed_backend_gate(run_root: Path, report_name: str, **_kwargs: object) -> None:
+        gate_calls.append((run_root, report_name))
+        raise failure
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_run_workspace",
+        failed_backend_gate,
+    )
+    repair_calls: list[tuple[Path, str, dict[str, object]]] = []
+
+    def schedule_repair(
+        run_root: Path,
+        task_id: str,
+        evidence: dict[str, object],
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        repair_calls.append((run_root, task_id, evidence))
+        return {"taskId": "apply-source-feedback"}
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.schedule_cross_phase_repair",
+        schedule_repair,
+    )
+
+    result = run_workflow(
+        run,
+        SimpleNamespace(job_type="FEEDBACK_REVISION", app_id="app-1", inputs={}),
+        None,
+        auditor=lambda _run: {"status": "COMPLETE"},
+    )
+
+    assert result["status"] == "READY"
+    assert result["repairPlan"] == "reports/repair-plan.json"
+    assert gate_calls == [(run.resolve(), "feedback-regression.json")]
+    assert repair_calls == [(run.resolve(), "apply-source-feedback", failure.evidence)]
 
 
 def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
