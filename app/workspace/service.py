@@ -49,7 +49,7 @@ from app.requirements.orchestration.service import (
 )
 from app.requirements.resources.capability_contract import capability_resource_questions
 from app.requirements.runtime import telemetry as requirements_telemetry
-from app.testing.service import CreateTestingJobRequest, create_testing_job, get_testing_job
+from app.testing.service import run_testing
 from app.validation import RepairAttempt, RepairOutcome, stable_digest
 
 from . import repository
@@ -298,9 +298,9 @@ class WorkspaceService:
 
     def startup(self) -> int:
         interrupted = repository.interrupt_unfinished()
-        # Testing worker는 DB의 고정 입력으로 자체 재개된다. Workspace 쪽에서는 같은
-        # command를 다시 실행해 저장된 testing_job_id를 감시한다. _dispatch는 이 ID가
-        # 있으면 새 Testing 작업을 만들지 않는다.
+        # Testing command는 payload에 고정 입력과 마지막 검사 경계를 저장한다. 별도 작업
+        # 표나 worker를 복구하지 않고 같은 command를 다시 실행하면 Testing 서비스가 그
+        # 체크포인트에서 이어 간다.
         for command in repository.interrupted_testing_commands():
             self._executor.submit(self._execute, str(command["command_id"]))
         return interrupted
@@ -747,14 +747,14 @@ class WorkspaceService:
 
     def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         action = str(command["action"])
-        # 서버 재시작 전 새 Testing 작업의 ID를 command에 먼저 기록한다. 재시작 뒤에는
-        # 구현 수리나 테스트 생성을 반복하지 않고 이미 저장된 작업만 다시 감시한다.
-        resumed_testing_job_id = str(command["payload"].get("testing_job_id") or "")
-        if command.get("stage") == "testing" and resumed_testing_job_id:
-            resumed = get_testing_job(resumed_testing_job_id)
-            if str(resumed.get("app_id") or "") != str(command["app_id"]):
-                raise ValueError("The Testing checkpoint does not belong to this app.")
-            return self._monitor_testing(resumed)
+        # 파일 복원이나 검사 도중 서버가 재시작되었다면 구현 수리부터 반복하지 않는다.
+        # 현재 command에 저장한 Testing 체크포인트를 그대로 실행 서비스에 돌려준다.
+        checkpoint = command["payload"].get("testing_checkpoint")
+        if command.get("stage") == "testing" and isinstance(checkpoint, dict):
+            implementation_job_id = str(checkpoint.get("implementation_job_id") or "")
+            if not implementation_job_id:
+                raise ValueError("The Testing checkpoint has no implementation job ID.")
+            return self._run_testing_command(command, implementation_job_id)
         if action in {"message", "advance", "apply_deployment_preferences", "start_design"}:
             return self._stage_message(command, advance=action in {"advance", "start_design"})
         if action == "delegate_repair":
@@ -776,8 +776,8 @@ class WorkspaceService:
                     or prior.get("payload", {}).get("implementation_job_id")
                     or ""
                 )
-                testing_job_id = str(result.get("job_id") or previous_job.get("job_id") or "")
-                if not implementation_job_id or not testing_job_id:
+                previous_run_id = str(result.get("job_id") or previous_job.get("job_id") or "")
+                if not implementation_job_id or not previous_run_id:
                     raise ValueError("The failing testing run cannot be resumed.")
                 defect_classes = {
                     str(blocker.get("defect_class") or "SUT_DEFECT")
@@ -801,7 +801,7 @@ class WorkspaceService:
                             **dict(result.get("repair_state") or {}),
                             "status": "WAITING_EXTERNAL",
                         },
-                        "job_id": testing_job_id,
+                        "job_id": previous_run_id,
                         "job": previous_job,
                     }
                 if "UPSTREAM_AMBIGUITY" in defect_classes:
@@ -846,24 +846,17 @@ class WorkspaceService:
                     )
                     if not repaired_job_id:
                         raise RuntimeError("Automatic implementation repair returned no job ID.")
-                    job = create_testing_job(
-                        str(command["app_id"]),
-                        CreateTestingJobRequest(
-                            implementation_job_id=repaired_job_id,
-                            preserve_testing_job_id=(
-                                testing_job_id if has_preserved_candidate else None
-                            ),
-                        ),
+                    return self._run_testing_command(
+                        command,
+                        repaired_job_id,
+                        previous_job=previous_job,
+                        preserve_test=has_preserved_candidate,
                     )
-                    return self._monitor_new_testing_job(command, job)
-                job = create_testing_job(
-                    str(command["app_id"]),
-                    CreateTestingJobRequest(
-                        implementation_job_id=implementation_job_id,
-                        repair_testing_job_id=testing_job_id,
-                    ),
+                return self._run_testing_command(
+                    command,
+                    implementation_job_id,
+                    previous_job=previous_job,
                 )
-                return self._monitor_new_testing_job(command, job)
             history = dict(result.get("repair_state") or {})
             repair_stage = str(
                 result.get("current_stage") or result.get("phase") or prior.get("stage")
@@ -994,13 +987,10 @@ class WorkspaceService:
             job = implementation_worker.cancel(str(command["payload"]["job_id"]))
             return {"message": "Cancelled the implementation job.", "job": job}
         if action == "start_testing":
-            job = create_testing_job(
-                str(command["app_id"]),
-                CreateTestingJobRequest(
-                    implementation_job_id=str(command["payload"]["implementation_job_id"])
-                ),
+            return self._run_testing_command(
+                command,
+                str(command["payload"]["implementation_job_id"]),
             )
-            return self._monitor_new_testing_job(command, job)
         raise ValueError(f"Unsupported workspace command: {action}")
 
     def _stage_message(self, command: dict[str, Any], *, advance: bool) -> dict[str, Any]:
@@ -2397,70 +2387,87 @@ class WorkspaceService:
                 }
             time.sleep(1)
 
-    def _monitor_testing(self, job: dict[str, Any]) -> dict[str, Any]:
-        job_id = str(job["job_id"])
-        while True:
-            current = get_testing_job(job_id)
-            status = str(current.get("status") or "")
-            if status in {"COMPLETED", "FAILED"}:
-                if status == "FAILED":
-                    raise RuntimeError(str(current.get("error") or "The testing job failed."))
-                report = current.get("result") or {}
-                if report.get("passed") is False:
-                    blockers = list(report.get("blocking_findings") or [])
-                    repairable = any(
-                        blocker.get("repairable") is not False
-                        for blocker in blockers
-                        if isinstance(blocker, dict)
-                    )
-                    return {
-                        "awaiting_input": True,
-                        "kind": "action_required",
-                        "message": (
-                            f"Testing found {len(blockers)} blocking failure(s). "
-                            + (
-                                "EasyDep classified the failures and will continue the "
-                                "matching automatic repair path."
-                                if repairable
-                                else "The runtime environment must be restored before the "
-                                "same checks can continue."
-                            )
-                        ),
-                        "requires_revision": True,
-                        "blocking_findings": blockers,
-                        "repair_state": report.get("repair_state")
-                        or {
-                            "status": "ACTIVE",
-                            "attempt_count": 0,
-                            "accepted_count": 0,
-                            "recent_attempts": [],
-                        },
-                        "can_delegate_repair": repairable,
-                        "job_id": job_id,
-                        "job": current,
-                    }
-                return {
-                    "message": "Testing completed.",
-                    "job_id": job_id,
-                    "job": current,
-                }
-            time.sleep(1)
-
-    def _monitor_new_testing_job(
-        self, command: dict[str, Any], job: dict[str, Any]
+    def _run_testing_command(
+        self,
+        command: dict[str, Any],
+        implementation_job_id: str,
+        *,
+        previous_job: dict[str, Any] | None = None,
+        preserve_test: bool = False,
     ) -> dict[str, Any]:
-        """새 Testing ID를 Workspace에 저장한 뒤 완료 상태를 감시한다.
+        """Testing을 실행하고 재시작에 필요한 최소 상태를 현재 command에 저장한다."""
 
-        작업 thread가 매우 빨리 끝나거나 서버가 바로 재시작되더라도 ID를 잃지 않도록,
-        감시 loop에 들어가기 전에 command를 갱신한다.
-        """
+        command_id = str(command["command_id"])
+
+        def save_checkpoint(checkpoint: dict[str, Any]) -> None:
+            # 긴 Docker 검사 중에도 command row는 존재한다. 최신 payload를 다시 읽어 다른
+            # 실행 정보는 보존하고 Testing 전용 값 하나만 교체한다.
+            latest = repository.get_command(command_id)
+            if latest is None:
+                raise RuntimeError("The Workspace command disappeared during Testing.")
+            payload = {
+                **dict(latest.get("payload") or {}),
+                "testing_checkpoint": checkpoint,
+            }
+            command["payload"] = payload
+            repository.update_command(command_id, payload=payload)
+
+        checkpoint = command.get("payload", {}).get("testing_checkpoint")
+        job = run_testing(
+            str(command["app_id"]),
+            implementation_job_id,
+            run_id=command_id,
+            previous_job=previous_job,
+            preserve_test=preserve_test,
+            checkpoint=checkpoint if isinstance(checkpoint, dict) else None,
+            progress=save_checkpoint,
+        )
+        return self._testing_result(job)
+
+    @staticmethod
+    def _testing_result(job: dict[str, Any]) -> dict[str, Any]:
+        """동기 실행 결과를 기존 Workspace 응답 모양으로 바꾼다."""
+
+        report = job.get("result") or {}
         job_id = str(job.get("job_id") or "")
-        if not job_id:
-            raise RuntimeError("Testing did not return a job ID.")
-        payload = {**dict(command.get("payload") or {}), "testing_job_id": job_id}
-        command["payload"] = payload
-        repository.update_command(str(command["command_id"]), payload=payload)
-        return self._monitor_testing(job)
+        if report.get("passed") is False:
+            blockers = list(report.get("blocking_findings") or [])
+            repairable = any(
+                blocker.get("repairable") is not False
+                for blocker in blockers
+                if isinstance(blocker, dict)
+            )
+            return {
+                "awaiting_input": True,
+                "kind": "action_required",
+                "message": (
+                    f"Testing found {len(blockers)} blocking failure(s). "
+                    + (
+                        "EasyDep classified the failures and will continue the "
+                        "matching automatic repair path."
+                        if repairable
+                        else "The runtime environment must be restored before the "
+                        "same checks can continue."
+                    )
+                ),
+                "requires_revision": True,
+                "blocking_findings": blockers,
+                "repair_state": report.get("repair_state")
+                or {
+                    "status": "ACTIVE",
+                    "attempt_count": 0,
+                    "accepted_count": 0,
+                    "recent_attempts": [],
+                },
+                "can_delegate_repair": repairable,
+                "job_id": job_id,
+                "job": job,
+            }
+        return {
+            "message": "Testing completed.",
+            "job_id": job_id,
+            "job": job,
+        }
 
     @staticmethod
     def _error_text(error: Exception) -> str:

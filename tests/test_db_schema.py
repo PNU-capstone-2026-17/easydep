@@ -13,9 +13,6 @@ from app.db.models import (
     Base,
     WorkspaceCommand,
 )
-from app.db.models import (
-    TestingJob as DbTestingJob,
-)
 
 
 def _index_names(model: type) -> set[str]:
@@ -26,13 +23,12 @@ def _constraint_names(model: type) -> set[str]:
     return {str(constraint.name) for constraint in model.__table__.constraints if constraint.name}
 
 
-def test_only_eight_clear_persistence_tables_are_registered() -> None:
+def test_only_seven_clear_persistence_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
         "apps",
         "artifact_versions",
         "artifact_files",
         "workspace_commands",
-        "testing_jobs",
         "agent_checkpoints",
         "agent_checkpoint_blobs",
         "agent_checkpoint_writes",
@@ -65,25 +61,6 @@ def test_app_holds_single_row_configuration_and_workspace_indexes() -> None:
         "ix_workspace_commands_app_status",
         "ix_workspace_commands_status",
     } <= _index_names(WorkspaceCommand)
-
-
-def test_testing_jobs_keep_resume_fields_and_lookup_indexes() -> None:
-    assert {
-        "job_id",
-        "app_id",
-        "implementation_job_id",
-        "status",
-        "current_node",
-        "testing_input",
-        "result",
-        "repair_history",
-        "previous_findings",
-    } <= {column.name for column in DbTestingJob.__table__.columns}
-    assert {
-        "ix_testing_jobs_app_created",
-        "ix_testing_jobs_implementation",
-        "ix_testing_jobs_status",
-    } <= _index_names(DbTestingJob)
 
 
 def test_agent_tables_share_a_graph_scoped_keyspace() -> None:

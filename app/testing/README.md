@@ -19,9 +19,10 @@ use-case, OpenAPI, 최종 배포 bundle의 version/digest를 고정한다. bundl
   → 실행된 테스트만 requirement coverage에 기록
 ```
 
-정적·동적 단계는 동일한 복원 폴더를 사용한다. `current_node`와 완료된 report는
-작업 record에 함께 기록할 수 있어 서버 재시작 후 저장소 adapter가 단계별 진행을
-복원할 수 있다.
+정적·동적 단계는 동일한 복원 폴더를 사용한다. `TestingInput`, `current_node`와 완료된 report는
+현재 `workspace_commands.payload`에 함께 기록한다. 서버가 재시작되면 Workspace가 같은 command를
+다시 실행하고 Testing은 저장된 검사 경계부터 이어 간다. 별도 Testing 작업 표나 내부 polling
+thread는 사용하지 않는다.
 
 ## Gate 판정
 

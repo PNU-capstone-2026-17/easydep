@@ -20,7 +20,6 @@ from app.design.services.common.plantuml import plantuml_renderer
 from app.implementation.application.jobs import worker as implementation_worker
 from app.implementation.interfaces.http import router as implementation_router
 from app.requirements.classifier import warmup_or_raise
-from app.testing.service import startup_testing_jobs
 from app.workspace.api import router as workspace_router
 from app.workspace.service import workspace_service
 
@@ -61,7 +60,6 @@ async def lifespan(_app: FastAPI):
         # workspace_service.startup()은 저장된 command를 읽으므로 필요한 table을 먼저 만든다.
         init_db()
         interrupted = workspace_service.startup()
-        resumed_testing = startup_testing_jobs()
 
         # BERT classifier는 첫 요구사항 요청의 지연을 줄이기 위해 미리 읽는다. 모델을 사용할 수
         # 없는 환경에서는 warmup_or_raise()의 설정 정책에 따라 건너뛸 수 있다.
@@ -69,8 +67,7 @@ async def lifespan(_app: FastAPI):
         print(
             "[startup] BERT classifier preloaded: "
             f"{'yes' if loaded else 'skipped or unavailable'}; "
-            f"interrupted workspace commands: {interrupted}; "
-            f"resumed testing jobs: {resumed_testing}"
+            f"interrupted workspace commands: {interrupted}"
         )
         yield
     finally:

@@ -70,31 +70,6 @@ CREATE TABLE IF NOT EXISTS workspace_commands (
     REFERENCES apps (app_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS testing_jobs (
-  job_id                VARCHAR(36) NOT NULL,
-  app_id                VARCHAR(36) NOT NULL,
-  implementation_job_id VARCHAR(36) NOT NULL,
-  status                VARCHAR(24) NOT NULL,
-  current_node          VARCHAR(64) NULL,
-  testing_input         JSON        NOT NULL,
-  result                JSON        NULL,
-  error                 LONGTEXT    NULL,
-  repair_of_job_id      VARCHAR(36) NULL,
-  repair_history        JSON        NOT NULL,
-  previous_findings     JSON        NOT NULL,
-  created_at            DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  started_at            DATETIME(6) NULL,
-  completed_at          DATETIME(6) NULL,
-  updated_at            DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-    ON UPDATE CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (job_id),
-  KEY ix_testing_jobs_app_created (app_id, created_at),
-  KEY ix_testing_jobs_implementation (implementation_job_id),
-  KEY ix_testing_jobs_status (status),
-  CONSTRAINT fk_testing_jobs_app FOREIGN KEY (app_id)
-    REFERENCES apps (app_id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 CREATE TABLE IF NOT EXISTS agent_checkpoints (
   graph_type            VARCHAR(16)  NOT NULL,
   thread_id             VARCHAR(128) NOT NULL,

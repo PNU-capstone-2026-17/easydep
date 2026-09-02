@@ -4,10 +4,10 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    CHAR,
     JSON,
     BigInteger,
     Boolean,
-    CHAR,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -74,9 +74,7 @@ class App(Base):
     # and cannot be turned back into it, and because regenerating REFINE_REQ
     # after feedback needs the original wording.
     requirements_text: Mapped[str | None] = mapped_column(_MediumText, nullable=True)
-    resource_constraints_text: Mapped[str | None] = mapped_column(
-        _MediumText, nullable=True
-    )
+    resource_constraints_text: Mapped[str | None] = mapped_column(_MediumText, nullable=True)
     # 개발 진행 상태: the stage whose artifact was written most recently.
     current_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # 앱당 하나뿐이고 독립 검색·이력이 없는 요구사항 단계의 최신 배포 선택이다.
@@ -162,9 +160,7 @@ class ArtifactFile(Base):
         nullable=False,
     )
     content: Mapped[str] = mapped_column(_LongText, nullable=False)
-    sha256: Mapped[str] = mapped_column(
-        CHAR(64, collation="ascii_bin"), nullable=False
-    )
+    sha256: Mapped[str] = mapped_column(CHAR(64, collation="ascii_bin"), nullable=False)
 
     artifact_version: Mapped[ArtifactVersion] = relationship(back_populates="files")
 
@@ -204,51 +200,6 @@ class WorkspaceCommand(Base):
         Index("ix_workspace_commands_app_created", "app_id", "created_at"),
         Index("ix_workspace_commands_app_status", "app_id", "status"),
         Index("ix_workspace_commands_status", "status"),
-    )
-
-
-class TestingJob(Base):
-    """Testing 단계의 고정 입력, 진행 위치와 결과를 저장한다.
-
-    Testing은 Docker 실행처럼 API 요청보다 오래 걸리는 작업을 포함한다. 프로세스 메모리에만
-    작업을 두면 서버가 재시작될 때 어떤 구현 산출물을 검사했는지조차 잃게 되므로, 재개에 필요한
-    작은 상태만 별도 행으로 보존한다. 생성한 테스트 파일 자체는 기존 artifact table에 저장한다.
-    """
-
-    __tablename__ = "testing_jobs"
-
-    job_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    app_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("apps.app_id", name="fk_testing_jobs_app", ondelete="CASCADE"),
-        nullable=False,
-    )
-    implementation_job_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    status: Mapped[str] = mapped_column(String(24), nullable=False)
-    current_node: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    testing_input: Mapped[Any] = mapped_column(JSON, nullable=False)
-    result: Mapped[Any | None] = mapped_column(JSON, nullable=True)
-    error: Mapped[str | None] = mapped_column(_LongText, nullable=True)
-    repair_of_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    repair_history: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
-    previous_findings: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
-    created_at: Mapped[datetime] = mapped_column(
-        DATETIME(fsp=6), nullable=False, server_default=func.now(6)
-    )
-    started_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=6), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=6), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(
-        DATETIME(fsp=6),
-        nullable=False,
-        server_default=func.now(6),
-        server_onupdate=func.now(6),
-        onupdate=func.now(6),
-    )
-
-    __table_args__ = (
-        Index("ix_testing_jobs_app_created", "app_id", "created_at"),
-        Index("ix_testing_jobs_implementation", "implementation_job_id"),
-        Index("ix_testing_jobs_status", "status"),
     )
 
 

@@ -9,7 +9,7 @@
 | 파일 | 역할 |
 |---|---|
 | `session.py` | 환경 설정으로 SQLAlchemy Engine과 transaction 단위인 Session을 만든다. |
-| `models.py` | 앱, 산출물 버전·파일, 워크스페이스 명령, Testing 작업과 공용 checkpoint ORM을 선언한다. |
+| `models.py` | 앱, 산출물 버전·파일, 워크스페이스 명령과 공용 checkpoint ORM을 선언한다. |
 | `checkpointer.py` | 요구사항·설계 LangGraph checkpoint를 공용 3개 표에 저장한다. |
 | `schema.sql` | 운영자가 현재 데이터베이스 schema를 빠르게 확인할 수 있는 SQL 기준본이다. |
 
@@ -35,10 +35,10 @@ MySQL을 직접 쓸 때에는 `DB_PORT=3306`을 사용한다. `run-easydep.ps1 -
 직접 닫거나 중간 commit을 섞지 않는다. 긴 LLM 호출 동안 연결이 끊길 수 있으므로 Engine은
 사용 전에 연결 상태를 확인하고 오래된 연결을 교체하도록 설정되어 있다.
 
-`init_db()`는 기본적으로 ORM을 기준으로 없는 표만 만든다. Testing 작업은 `testing_jobs`에
-고정 입력, 현재 검사, 결과와 수리 이력을 저장하므로 서버를 다시 시작해도 같은 입력으로 실패
-지점부터 재개할 수 있다. `DB_SCHEMA_RESET_ON_START=true`면
-접속 대상 `DB_NAME` 전체를 삭제·재생성한 뒤 현재 8개 표를 만든다. 이는 ORM에서 이미 제거된
+`init_db()`는 기본적으로 ORM을 기준으로 없는 표만 만든다. Testing의 고정 입력과 현재 검사
+위치는 해당 `workspace_commands.payload`에 저장하므로 별도 작업 표가 필요하지 않다.
+`DB_SCHEMA_RESET_ON_START=true`면 접속 대상 `DB_NAME` 전체를 삭제·재생성한 뒤 현재 7개 표를
+만든다. 이는 ORM에서 이미 제거된
 옛 표도 없애기 위한 개발 전용 옵션이다. MySQL 시스템 schema 이름과 안전하지 않은 이름은
 거부하며, 기본값은 `false`다. 한 번 초기화한 뒤에는 반드시 옵션을 다시 끈다. 운영 데이터
 보존이 필요해지는 시점에는 이 옵션 대신 migration·backup·rollback 절차를 도입해야 한다.
