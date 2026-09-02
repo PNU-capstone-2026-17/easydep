@@ -15,6 +15,8 @@ from app.artifact_trace import (
     parse_ref,
 )
 from app.artifact_trace_projection import project_artifact_trace
+from app.db.models import TYPE_CLASS, TYPE_DEPLOYMENT_FILE, TYPE_SOURCE_CODE
+from app.testing.schemas.testing_input import TestingInput as FrozenTestingInput
 
 
 @pytest.fixture
@@ -184,8 +186,12 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
                     "workloads": [
                         {
                             "id": "orders-worker",
-                            "sourceRefs": ["requirement:REQ-1"],
-                        }
+                            "sourceRefs": ["REQ-1"],
+                        },
+                        {
+                            "id": "unknown-worker",
+                            "sourceRefs": ["RR-UNKNOWN"],
+                        },
                     ]
                 },
                 "projections": [
@@ -197,7 +203,7 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
                             "nodes": [
                                 {
                                     "id": "orders",
-                                    "sourceRefs": ["requirement:REQ-1"],
+                                    "sourceRefs": ["REQ-1"],
                                 }
                             ]
                         },
@@ -241,6 +247,17 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
                 }
             ],
         },
+        implementation_verification=[
+            {
+                "jobId": "implementation-1",
+                "report": "reports/final-verification.json",
+                "taskIds": ["TASK-1"],
+            }
+        ],
+    )
+
+    implementation_evidence = TraceRef(
+        "evidence", "implementation:implementation-1:verification"
     )
 
     assert set(trace.downstream(requirement)) == {
@@ -250,6 +267,7 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
         file_ref,
         test,
         finding,
+        implementation_evidence,
     }
     assert trace.sources(workload) == (requirement,)
     assert {requirement, workload} <= set(trace.sources(resource))
@@ -261,9 +279,12 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
         TraceRef("api", "createOrder"),
     }
     assert trace.sources(finding) == (test,)
+    assert trace.sources(TraceRef("workload", "unknown-worker")) == (
+        TraceRef("opaque", "RR-UNKNOWN"),
+    )
 
 
-def test_trace_endpoint_uses_source_snapshot_rtm_and_latest_testing_result(
+def test_trace_endpoint_keeps_source_rtm_but_excludes_unversioned_testing_result(
     trace_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):
     app_id = "11111111-1111-4111-8111-111111111111"
@@ -344,11 +365,92 @@ def test_trace_endpoint_uses_source_snapshot_rtm_and_latest_testing_result(
     payload = response.json()
     assert payload["ref"] == "api:createOrder"
     assert payload["files"] == ["file:application/src/orders/OrderService.java"]
-    assert "test:plan-digest:UC-1" in payload["evidence"]
+    assert payload["evidence"] == []
     assert payload["source_snapshot"]["snapshot_digest"] == "source-digest"
     assert payload["testing"] == {
         "command_id": "testing-command",
         "status": "COMPLETED",
         "passed": False,
         "gate_status": "FAIL",
+        "evidence_included": False,
     }
+    assert payload["trace_scope"] == "latest-unverified"
+
+
+@pytest.mark.parametrize(("snapshot_version", "contracts_match"), [(101, True), (999, False)])
+def test_trace_uses_frozen_testing_input_and_excludes_mismatched_evidence(
+    trace_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    snapshot_version: int,
+    contracts_match: bool,
+) -> None:
+    app_id = "22222222-2222-4222-8222-222222222222"
+    testing_input = FrozenTestingInput(
+        app_id=app_id,
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 101, TYPE_DEPLOYMENT_FILE: 102},
+        contract_artifacts={
+            "requirements": {"content": {"requirements": [{"id": "REQ-FROZEN"}]}},
+            "use_cases": {"content": {"use_cases": [{"id": "UC-FROZEN", "requirement_ids": ["REQ-FROZEN"]}]}},
+            "openapi": {"content": {"paths": {"/frozen": {"post": {
+                "operationId": "createFrozen", "x-easydep-use-case-ids": ["UC-FROZEN"]
+            }}}}},
+        },
+    )
+    frozen_contracts = testing_input.contract_artifacts.model_dump(mode="json", exclude_none=True)
+    snapshot = {
+        "version_id": snapshot_version,
+        "version_no": 7,
+        "snapshot_digest": "source-frozen",
+        "created_at": "2026-09-03T00:00:00+00:00",
+        "metadata": {
+            "implementation_job_id": "implementation-1",
+            "trace_artifact_versions": {TYPE_CLASS: 301},
+            "testing_contracts": frozen_contracts if contracts_match else {
+                "requirements": {"content": {"requirements": [{"id": "REQ-OTHER"}]}}
+            },
+        },
+    }
+    calls: list[tuple[str, int | None]] = []
+
+    def load_snapshot(_app: str, kind: str, **selectors: int) -> dict:
+        calls.append((kind, selectors.get("version_id")))
+        return snapshot
+
+    monkeypatch.setattr("app.artifact_trace_service.artifact_repository.load_file_snapshot", load_snapshot)
+    monkeypatch.setattr(
+        "app.artifact_trace_service.artifact_repository.load_state",
+        lambda _app: {
+            "artifact_versions": {
+                TYPE_CLASS: {"version_id": 301 if contracts_match else 999}
+            },
+            "refined_requirements": {"requirements": [{"id": "REQ-LATEST"}]},
+            "extracted_bce_classes": {"Classes": [{"className": "FrozenControl"}]},
+        },
+    )
+    monkeypatch.setattr(
+        "app.artifact_trace_service.workspace_repository.latest_command",
+        lambda _app, *, stage: {
+            "command_id": "testing-command", "stage": stage, "status": "COMPLETED",
+            "result": {"job": {"testing_input": testing_input.model_dump(mode="json"), "result": {
+                "passed": True, "gateStatus": "PASS", "dynamic_functional_report": {
+                    "candidateDigest": "plan-frozen", "candidatePlan": {"cases": [{
+                        "case_id": "UC-FROZEN", "requirement_ids": ["REQ-FROZEN"],
+                        "use_case_id": "UC-FROZEN", "steps": [{"step_id": "create", "operation_id": "createFrozen"}]
+                    }]}
+                }
+            }}}
+        },
+    )
+
+    response = trace_client.get(f"/api/apps/{app_id}/trace")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert calls == [(TYPE_SOURCE_CODE, 101)]
+    assert payload["source_snapshot"]["version_id"] == snapshot_version
+    assert {"requirement:REQ-FROZEN", "api:createFrozen"} <= set(payload["refs"])
+    assert "requirement:REQ-LATEST" not in payload["refs"]
+    assert ("class:FrozenControl" in payload["refs"]) is contracts_match
+    assert ("test:plan-frozen:UC-FROZEN" in payload["refs"]) is contracts_match
+    assert payload["testing"]["evidence_included"] is contracts_match

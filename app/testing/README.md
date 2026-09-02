@@ -43,6 +43,11 @@ case의 requirement ID만 `requirements.ids`에 기록한다. 전역 인증 정�
 앱 실행·Docker·필수 산출물 문제로 판정할 수 없으면 성공으로 표시하지 않는다. Testing은
 `tofu plan -refresh=false`만 사용하며 실제 `apply`는 하지 않는다.
 
+산출물 화면의 추적 정보도 같은 `TestingInput`이 가리킨 SOURCE_CODE 버전과 계약을 사용한다.
+최신 설계나 최신 소스와 따로 섞지 않으며, 버전이 맞지 않으면 실행 결과를 연결하지 않고
+`evidence_included=false`로 표시한다. 구현 파일이 바뀔 때에는 이전 RTM의 직접 출처를 같은
+파일에 이어 붙이고, 전체 표준 출력 대신 명령·종료 코드·실행 시간·보고서 경로만 근거로 남긴다.
+
 ## 코드 경계
 
 Implementation은 코드를 만든 직후 compile, 단위 테스트, 작은 통합 테스트와 frontend build를

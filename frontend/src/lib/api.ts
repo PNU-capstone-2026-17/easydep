@@ -122,9 +122,10 @@ export function getArtifactFile(appId: string, artifactType: string, path: strin
   );
 }
 
-export function getArtifactTrace(appId: string, ref: string) {
+export function getArtifactTrace(appId: string, ref = '') {
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
   return request<ArtifactTraceResponse>(
-    `/api/apps/${encodeURIComponent(appId)}/trace?ref=${encodeURIComponent(ref)}`
+    `/api/apps/${encodeURIComponent(appId)}/trace${query}`
   );
 }
 

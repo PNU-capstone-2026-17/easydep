@@ -187,11 +187,17 @@ export interface LiveSourceSnapshot {
 }
 
 export interface ArtifactTraceResponse {
-  ref: string;
+  app_id: string;
+  ref: string | null;
+  refs: string[];
+  unknown_source_refs: string[];
   sources: string[];
   consumers: string[];
   upstream: string[];
   downstream: string[];
   files: string[];
   evidence: string[];
+  trace_scope?: string;
+  source_snapshot?: Record<string, unknown> | null;
+  testing?: Record<string, unknown> | null;
 }

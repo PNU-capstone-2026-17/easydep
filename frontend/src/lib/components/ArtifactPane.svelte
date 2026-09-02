@@ -72,6 +72,8 @@
   let sequenceFeedbackTargetIds = $state<string[]>([]);
   let sequenceFeedbackDrafts = $state<Record<string, string>>({});
   let trace = $state<ArtifactTraceResponse | null>(null);
+  let traceRefs = $state<string[]>([]);
+  let selectedArtifactTraceRef = $state('');
   let traceError = $state('');
   let traceLoading = $state(false);
   let traceRequestVersion = 0;
@@ -96,13 +98,16 @@
   let sequenceArtifactSource = $derived(document?.artifacts?.sequence_diagram ?? '');
   // 저장 snapshot은 application 폴더를 생략하고, frontend snapshot은 frontend도
   // 생략한다. RTM은 실제 구현 작업 폴더 기준 경로를 쓰므로 조회 직전에만 되붙인다.
-  // 단계 전체를 선택했을 때는 어느 설계 요소인지 추측하지 않고 파일 선택만 조회한다.
+  // 설계 산출물은 한 문서 안에 여러 항목이 있으므로, 아래 목록에서 사용자가 고른
+  // 정확한 ref를 사용한다. 화면이 이름을 보고 임의의 대상을 추측하지 않는다.
   let selectedTraceRef = $derived.by(() => {
-    if (!fileArtifact || !selectedFile) return '';
-    if (selected === 'FRONTEND_SOURCE_CODE') {
-      return `file:application/frontend/${selectedFile}`;
+    if (fileArtifact && selectedFile) {
+      if (selected === 'FRONTEND_SOURCE_CODE') {
+        return `file:application/frontend/${selectedFile}`;
+      }
+      return `file:application/${selectedFile}`;
     }
-    return `file:application/${selectedFile}`;
+    return selectedArtifactTraceRef;
   });
   let traceGroups = $derived([
     { label: 'Direct sources', values: trace?.sources ?? [] },
@@ -138,7 +143,52 @@
       deploymentView = 'runtime';
       expandedSequence = null;
       indexOpen = false;
+      traceRefs = [];
+      selectedArtifactTraceRef = '';
     }
+  });
+
+  $effect(() => {
+    const currentAppId = appId;
+    const currentSelection = selected;
+    const hasFileSelection = Boolean(fileArtifact);
+    if (tab !== 'evidence' || !currentAppId || hasFileSelection) return;
+
+    // 전체 ref 목록은 작은 문자열 목록이다. 문서 종류에 해당하는 prefix만 남겨
+    // 사용자가 클래스·operation·API·resource 같은 실제 항목을 직접 고르게 한다.
+    const prefixesByArtifact: Record<string, string[]> = {
+      refined_requirements: ['requirement:'],
+      usecase_spec: ['use_case:', 'use_case_spec:', 'step:'],
+      usecase_diagram: ['use_case:'],
+      class_diagram: ['class:', 'operation:', 'collaboration:', 'call:', 'data_type:'],
+      sequence_diagram: ['sequence:', 'message:'],
+      api_spec: ['api:', 'schema:'],
+      erd: ['entity:'],
+      deployment_diagram: [
+        'planning_fact:',
+        'workload:',
+        'resource:',
+        'external_dependency:',
+        'connection:',
+        'constraint:'
+      ]
+    };
+    const prefixes = prefixesByArtifact[currentSelection] ?? [];
+    getArtifactTrace(currentAppId)
+      .then((result) => {
+        if (currentAppId !== appId || currentSelection !== selected || tab !== 'evidence') return;
+        const candidates = result.refs.filter((ref) => prefixes.some((prefix) => ref.startsWith(prefix)));
+        traceRefs = candidates;
+        if (!candidates.includes(selectedArtifactTraceRef)) {
+          selectedArtifactTraceRef = candidates[0] ?? '';
+        }
+      })
+      .catch((error) => {
+        if (currentAppId !== appId || currentSelection !== selected || tab !== 'evidence') return;
+        traceRefs = [];
+        selectedArtifactTraceRef = '';
+        traceError = errorMessage(error);
+      });
   });
 
   $effect(() => {
@@ -424,11 +474,10 @@
       ['evidence', 'Evidence']
     ] as item}
       <button
-        class="focus-ring flex-1 border-b-2 px-1 py-2.5 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 {tab === item[0]
+        class="focus-ring flex-1 border-b-2 px-1 py-2.5 text-[11px] font-semibold {tab === item[0]
           ? 'border-[#1f5d45] text-[#1f5d45]'
           : 'border-transparent text-[#7c7e75]'}"
         onclick={() => (tab = item[0] as typeof tab)}
-        disabled={(classGenerating || Boolean(liveClassPreview)) && item[0] !== 'artifact'}
       >{item[1]}</button>
     {/each}
   </div>
@@ -671,6 +720,19 @@
         {/each}
       </div>
     {:else}
+      {#if !fileArtifact && traceRefs.length}
+        <label class="block border-b border-[#e1e1db] bg-white p-3 text-[11px] font-semibold text-[#454940]">
+          Traced artifact item
+          <select
+            class="focus-ring mt-2 w-full rounded-md border border-[#dfe1da] bg-white px-2 py-2 font-mono text-[10px] font-normal text-[#555a52]"
+            bind:value={selectedArtifactTraceRef}
+          >
+            {#each traceRefs as ref}
+              <option value={ref}>{ref}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
       {#if selectedTraceRef && traceLoading}
         <div class="mt-16 text-center text-xs text-[#85877e]" role="status">Loading linked trace…</div>
       {:else if selectedTraceRef && trace}

@@ -23,11 +23,14 @@ from typing import Any
 
 from app.db.models import (
     TYPE_API_SPEC,
+    TYPE_CLASS,
     TYPE_DEPLOYMENT,
     TYPE_DEPLOYMENT_FILE,
+    TYPE_ERD,
     TYPE_FRONTEND_SOURCE_CODE,
     TYPE_IAC_CODE,
     TYPE_REFINE_REQ,
+    TYPE_SEQUENCE,
     TYPE_SOURCE_CODE,
     TYPE_TEST_CODE,
     TYPE_USECASE_SPEC,
@@ -166,6 +169,149 @@ def build_testing_contracts(design: dict[str, Any]) -> dict[str, dict[str, Any]]
     return contracts
 
 
+def _trace_artifact_versions(design: dict[str, Any]) -> dict[str, int]:
+    """구현이 읽은 설계 버전 중 trace projection에 필요한 ID만 고정한다."""
+    versions = design.get("artifact_versions")
+    if not isinstance(versions, dict):
+        return {}
+    wanted = {
+        TYPE_REFINE_REQ,
+        TYPE_USECASE_SPEC,
+        TYPE_CLASS,
+        TYPE_SEQUENCE,
+        TYPE_API_SPEC,
+        TYPE_ERD,
+        TYPE_DEPLOYMENT,
+    }
+    return {
+        artifact_type: int(ref["version_id"])
+        for artifact_type, ref in versions.items()
+        if artifact_type in wanted
+        and isinstance(ref, dict)
+        and isinstance(ref.get("version_id"), int)
+        and not isinstance(ref.get("version_id"), bool)
+    }
+
+
+def _preserve_feedback_traceability(
+    traceability: dict[str, Any] | None,
+    previous_snapshot: dict[str, Any] | None,
+    confirmed_refs: list[str],
+) -> dict[str, Any] | None:
+    """Feedback가 같은 파일을 다시 쓸 때만 이전 RTM 출처를 보존한다."""
+    if not isinstance(traceability, dict):
+        return traceability
+    mappings = traceability.get("mappings")
+    if not isinstance(mappings, list):
+        return traceability
+    metadata = previous_snapshot.get("metadata") if isinstance(previous_snapshot, dict) else None
+    previous = (
+        metadata.get("implementation_traceability")
+        if isinstance(metadata, dict)
+        else None
+    )
+    prior_by_file: dict[str, dict[str, list[str]]] = {}
+    for item in (previous.get("mappings") if isinstance(previous, dict) else []) or []:
+        if not isinstance(item, dict) or not isinstance(item.get("target_file"), str):
+            continue
+        bucket = prior_by_file.setdefault(item["target_file"], {})
+        for key in ("requirementIds", "useCaseIds", "sourceRefs"):
+            values = item.get(key)
+            if isinstance(values, list):
+                bucket[key] = sorted(
+                    {*bucket.get(key, []), *(str(value) for value in values if value)}
+                )
+    safe_confirmed = sorted({item for item in confirmed_refs if isinstance(item, str) and item})
+    merged: list[Any] = []
+    for item in mappings:
+        if not isinstance(item, dict):
+            merged.append(item)
+            continue
+        updated = dict(item)
+        prior = prior_by_file.get(updated.get("target_file"))
+        if isinstance(prior, dict):
+            # 새 행에 없는 필드만 같은 파일의 이전 확정 값을 옮긴다.
+            for key in ("requirementIds", "useCaseIds", "sourceRefs"):
+                if not updated.get(key) and prior.get(key):
+                    updated[key] = prior[key]
+        elif not updated.get("sourceRefs") and safe_confirmed:
+            # 새 파일은 파일명이나 내용으로 연결하지 않는다. Testing이 확정한 ref만 쓴다.
+            updated["sourceRefs"] = safe_confirmed
+        merged.append(updated)
+    return {**traceability, "mappings": merged}
+
+
+def _compact_implementation_verification(
+    run_root: Path,
+    job_id: str,
+    traceability: dict[str, Any] | None,
+    confirmed_refs: list[str],
+) -> list[dict[str, Any]]:
+    """큰 검증 보고서에서 trace에 필요한 실행 근거만 고른다."""
+    confirmed = {item for item in confirmed_refs if isinstance(item, str) and item}
+    trace_tasks = {
+        str(mapping.get("taskId"))
+        for mapping in (traceability.get("mappings") if isinstance(traceability, dict) else [])
+        or []
+        if isinstance(mapping, dict) and isinstance(mapping.get("taskId"), str)
+    }
+    fallback_tasks = {
+        str(mapping["taskId"])
+        for mapping in (traceability.get("mappings") if isinstance(traceability, dict) else []) or []
+        if isinstance(mapping, dict)
+        and isinstance(mapping.get("taskId"), str)
+        and confirmed.intersection(
+            item for item in mapping.get("sourceRefs", []) if isinstance(item, str)
+        )
+    }
+    compact: list[dict[str, Any]] = []
+    for name in ("feedback-regression.json", "final-verification.json"):
+        path = run_root / "reports" / name
+        if not path.is_file():
+            continue
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(report, dict):
+            continue
+        verification = report.get("verification")
+        verification = verification if isinstance(verification, dict) else {}
+        item: dict[str, Any] = {
+            "jobId": job_id,
+            "status": report.get("status"),
+            "report": f"reports/{name}",
+        }
+        command = verification.get("command")
+        if isinstance(command, str):
+            item["command"] = command[:1000]
+        elif isinstance(command, list):
+            item["command"] = [
+                str(part)[:200]
+                for part in command[:20]
+                if isinstance(part, (str, int, float)) and not isinstance(part, bool)
+            ]
+        for key in ("exitCode", "durationMs"):
+            value = verification.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                item[key] = value
+        scenario = report.get("scenarioVerification")
+        verified_tasks = {
+            str(task.get("taskId"))
+            for task in (scenario.get("tasks") if isinstance(scenario, dict) else []) or []
+            if isinstance(task, dict)
+            and task.get("status") in {"PASSED", "SUCCEEDED"}
+            and isinstance(task.get("taskId"), str)
+        }
+        # scenario가 task별 결과를 주지 않는 전체 build 보고서도 그 job의 RTM task를
+        # 검증한 근거다. 요구사항 통과로 바꾸지 않고 task의 evidence로만 연결한다.
+        task_ids = sorted(verified_tasks or fallback_tasks or trace_tasks)
+        if task_ids:
+            item["taskIds"] = task_ids
+        compact.append(item)
+    return compact
+
+
 class JobNotFound(KeyError):
     """요청한 구현 작업 ID의 상태 파일이 없을 때 발생한다."""
 
@@ -227,6 +373,7 @@ class ImplementationWorker:
             # 시작을 막지 않는 설계 finding도 구현 보고서에서 확인할 수 있도록 함께 넘긴다.
             "design_validation": readiness,
             "testing_contracts": build_testing_contracts(design),
+            "trace_artifact_versions": _trace_artifact_versions(design),
             "transmission_request": None, "error": None, "created_at": _now(), "updated_at": _now(),
         }
         self._write(record)
@@ -443,6 +590,7 @@ class ImplementationWorker:
             "feedback_eligibility": eligibility,
             "feedback_targeting": targeting,
             "testing_contracts": build_testing_contracts(design),
+            "trace_artifact_versions": _trace_artifact_versions(design),
             "job_path": str(job_path),
             "run_root": None,
             "workflow": None,
@@ -891,6 +1039,39 @@ class ImplementationWorker:
             if trace_path.is_file()
             else None
         )
+        confirmed_refs: list[str] = []
+        if record.get("job_type") == "FEEDBACK_REVISION":
+            base_versions = record.get("base_versions")
+            base_version = (
+                base_versions.get(TYPE_SOURCE_CODE)
+                if isinstance(base_versions, dict)
+                else None
+            )
+            previous_snapshot = (
+                artifact_repository.load_file_snapshot(
+                    record["app_id"], TYPE_SOURCE_CODE, version_no=base_version
+                )
+                if isinstance(base_version, int)
+                else None
+            )
+            targeting = record.get("feedback_targeting")
+            confirmed_refs = (
+                targeting.get("confirmedTargetRefs")
+                if isinstance(targeting, dict)
+                else []
+            )
+            confirmed_refs = confirmed_refs if isinstance(confirmed_refs, list) else []
+            implementation_trace = _preserve_feedback_traceability(
+                implementation_trace if isinstance(implementation_trace, dict) else None,
+                previous_snapshot,
+                confirmed_refs,
+            )
+        implementation_verification = _compact_implementation_verification(
+            Path(record["run_root"]),
+            str(record["job_id"]),
+            implementation_trace if isinstance(implementation_trace, dict) else None,
+            confirmed_refs,
+        )
         version_ids = {}
         for artifact_type, files in groups.items():
             if files:
@@ -903,6 +1084,24 @@ class ImplementationWorker:
                 ):
                     snapshot_metadata["implementation_traceability"] = (
                         implementation_trace
+                    )
+                if artifact_type == TYPE_SOURCE_CODE and isinstance(
+                    record.get("testing_contracts"), dict
+                ):
+                    # 이 source가 구현될 때 실제로 읽은 계약이다. 나중 Testing 결과를
+                    # 다른 최신 설계와 섞지 않고 trace로 되살릴 수 있게 함께 고정한다.
+                    snapshot_metadata["testing_contracts"] = dict(
+                        record["testing_contracts"]
+                    )
+                if artifact_type == TYPE_SOURCE_CODE and isinstance(
+                    record.get("trace_artifact_versions"), dict
+                ):
+                    snapshot_metadata["trace_artifact_versions"] = dict(
+                        record["trace_artifact_versions"]
+                    )
+                if artifact_type == TYPE_SOURCE_CODE and implementation_verification:
+                    snapshot_metadata["implementation_verification"] = (
+                        implementation_verification
                     )
                 version_ids[artifact_type] = artifact_repository.save_file_snapshot(
                     record["app_id"], artifact_type, files, metadata=snapshot_metadata

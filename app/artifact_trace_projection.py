@@ -12,10 +12,32 @@ from typing import Any
 from app.artifact_trace import ArtifactTrace, TraceNode, TraceRef
 
 
+def projection_state_from_testing_contracts(
+    contracts: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """고정 Testing 계약을 trace projection이 읽는 최소 state로 바꾼다."""
+    frozen = _map(contracts)
+
+    def content(name: str) -> Any:
+        return _map(frozen.get(name)).get("content")
+
+    return {
+        key: value
+        for key, value in {
+            "refined_requirements": content("requirements"),
+            "usecase_spec": content("use_cases"),
+            "openapi": content("openapi"),
+            "deployment_diagram_bundle": content("deployment"),
+        }.items()
+        if value is not None
+    }
+
+
 def project_artifact_trace(
     state: Mapping[str, Any] | None,
     implementation_rtm: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None = None,
     testing_result: Mapping[str, Any] | None = None,
+    implementation_verification: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None = None,
 ) -> ArtifactTrace:
     """한 snapshot에서 requirement→설계→배포→파일/테스트 근거를 투영한다.
 
@@ -24,30 +46,40 @@ def project_artifact_trace(
 
     state = state if isinstance(state, Mapping) else {}
     nodes: list[TraceNode] = []
-    _requirements(nodes, state.get("refined_requirements"))
+    requirement_refs = _requirements(nodes, state.get("refined_requirements"))
     specification = _map(state.get("usecase_spec"))
     _use_cases(nodes, specification)
     operations = _bce(nodes, _map(state.get("extracted_bce_classes")))
     _sequence(nodes, _map(state.get("sequence_diagram_model")))
     _api(nodes, _map(state.get("api_spec_model")), operations)
+    _openapi(nodes, _map(state.get("openapi")))
     _erd(nodes, _map(state.get("erd_bce_classes")))
-    resources_by_workload = _deployment(nodes, _map(state.get("deployment_diagram_bundle")))
+    resources_by_workload = _deployment(
+        nodes,
+        _map(state.get("deployment_diagram_bundle")),
+        requirement_refs,
+    )
     _implementation(
         nodes,
         implementation_rtm or state.get("implementation_rtm"),
         resources_by_workload,
     )
+    _implementation_evidence(nodes, implementation_verification)
     _testing(nodes, testing_result or _map(state.get("testing_result")))
     return ArtifactTrace(nodes)
 
 
-def _requirements(nodes: list[TraceNode], value: Any) -> None:
+def _requirements(nodes: list[TraceNode], value: Any) -> dict[str, TraceRef]:
     """refined requirement의 ID와 원문 source_refs를 있는 그대로 보존한다."""
 
+    refs: dict[str, TraceRef] = {}
     for item in _records(value, "requirements"):
         requirement_id = _id(item, "id")
         if requirement_id:
-            _add(nodes, TraceRef("requirement", requirement_id), _source_refs(item))
+            ref = TraceRef("requirement", requirement_id)
+            refs[requirement_id] = ref
+            _add(nodes, ref, _source_refs(item))
+    return refs
 
 
 def _use_cases(nodes: list[TraceNode], specification: Mapping[str, Any]) -> None:
@@ -251,6 +283,31 @@ def _api(
             )
 
 
+def _openapi(nodes: list[TraceNode], document: Mapping[str, Any]) -> None:
+    """고정 OpenAPI의 operationId와 명시된 UC extension만 읽는다."""
+    methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+    for path_item in _map(document.get("paths")).values():
+        if not isinstance(path_item, Mapping):
+            continue
+        for method, operation in path_item.items():
+            if str(method).lower() not in methods or not isinstance(operation, Mapping):
+                continue
+            operation_id = _id(operation, "operationId")
+            if operation_id:
+                _add(
+                    nodes,
+                    TraceRef("api", operation_id),
+                    [
+                        *_source_refs(operation),
+                        *_refs(
+                            operation,
+                            "use_case",
+                            "x-easydep-use-case-ids",
+                        ),
+                    ],
+                )
+
+
 def _erd(nodes: list[TraceNode], model: Mapping[str, Any]) -> None:
     """ERD Entity는 동명 BCE Entity의 결정론적 투영으로만 연결한다."""
 
@@ -268,7 +325,11 @@ def _erd(nodes: list[TraceNode], model: Mapping[str, Any]) -> None:
             )
 
 
-def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> dict[TraceRef, set[TraceRef]]:
+def _deployment(
+    nodes: list[TraceNode],
+    bundle: Mapping[str, Any],
+    requirement_refs: Mapping[str, TraceRef],
+) -> dict[TraceRef, set[TraceRef]]:
     """WorkloadGraph와 각 projection ResourcePlan의 식별 가능한 sourceRefs를 읽는다."""
 
     resources_by_workload: dict[TraceRef, set[TraceRef]] = {}
@@ -281,10 +342,11 @@ def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> dict[Trace
             _add(
                 nodes,
                 fact_ref,
-                _source_refs(fact),
+                _source_refs(fact, requirement_refs),
             )
 
     graph = _map(bundle.get("workloadGraph"))
+    exact_refs = {**fact_refs, **requirement_refs}
     workload_refs: dict[str, TraceRef] = {}
     workload_tokens: dict[str, set[str]] = {}
     for item in _records(graph.get("workloads")):
@@ -297,7 +359,7 @@ def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> dict[Trace
             identifier,
             *_strings(item.get("sourceRefs"), item.get("source_refs")),
         }
-        _add(nodes, workload_ref, _source_refs(item, fact_refs))
+        _add(nodes, workload_ref, _source_refs(item, exact_refs))
 
     for collection, kind in (
         ("externalDependencies", "external_dependency"),
@@ -310,7 +372,7 @@ def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> dict[Trace
                 _add(
                     nodes,
                     TraceRef(kind, identifier),
-                    _source_refs(item, fact_refs),
+                    _source_refs(item, exact_refs),
                 )
 
     for projection in _records(bundle.get("projections")):
@@ -337,7 +399,7 @@ def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> dict[Trace
                     _add(
                         nodes,
                         resource_ref,
-                        [*_source_refs(item, fact_refs), *linked_workloads],
+                        [*_source_refs(item, exact_refs), *linked_workloads],
                     )
                     for workload_ref in linked_workloads:
                         resources_by_workload.setdefault(workload_ref, set()).add(resource_ref)
@@ -368,6 +430,20 @@ def _implementation(
             _add(nodes, task_ref, sources)
         if target_file:
             _add(nodes, TraceRef("file", target_file), [task_ref] if task_ref else sources)
+
+
+def _implementation_evidence(nodes: list[TraceNode], value: Any) -> None:
+    """구현 단계가 남긴 작은 검증 요약을 정확한 task에만 연결한다."""
+    for item in _records(value):
+        job_id = _id(item, "jobId")
+        report = _id(item, "report")
+        if not job_id or not report:
+            continue
+        _add(
+            nodes,
+            TraceRef("evidence", f"implementation:{job_id}:verification"),
+            _refs(item, "task", "taskIds"),
+        )
 
 
 def _testing(nodes: list[TraceNode], result: Mapping[str, Any]) -> None:
@@ -470,4 +546,4 @@ def _source_refs(
     return refs
 
 
-__all__ = ["project_artifact_trace"]
+__all__ = ["project_artifact_trace", "projection_state_from_testing_contracts"]

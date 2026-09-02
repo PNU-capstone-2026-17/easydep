@@ -12,7 +12,10 @@ from collections.abc import Callable
 from typing import Any
 
 from app.artifact_trace import TraceRef
-from app.artifact_trace_projection import project_artifact_trace
+from app.artifact_trace_projection import (
+    project_artifact_trace,
+    projection_state_from_testing_contracts,
+)
 from app.db.models import TYPE_IAC_CODE, TYPE_SOURCE_CODE
 from app.implementation.application.jobs import JobNotFound
 from app.implementation.application.jobs import worker as implementation_worker
@@ -55,7 +58,7 @@ def _trace_hints(
     dynamic: dict[str, Any],
     target_ids: list[str],
 ) -> tuple[list[str], list[str]]:
-    """고정 구현 snapshot의 RTM에서 실패 target과 연결된 파일을 찾는다."""
+    """같은 Testing 입력의 계약·source RTM에서만 수리 힌트를 찾는다."""
     version_id = testing_input.artifact_version_ids.get(TYPE_SOURCE_CODE)
     if version_id is None:
         return [], []
@@ -65,6 +68,8 @@ def _trace_hints(
         version_id=version_id,
     )
     metadata = snapshot.get("metadata") if isinstance(snapshot, dict) else None
+    if not isinstance(snapshot, dict) or snapshot.get("version_id") != version_id:
+        return [], []
     implementation_rtm = (
         metadata.get("implementation_traceability")
         if isinstance(metadata, dict)
@@ -73,8 +78,19 @@ def _trace_hints(
     if not isinstance(implementation_rtm, dict):
         return [], []
 
+    frozen_contracts = testing_input.contract_artifacts.model_dump(
+        mode="json", exclude_none=True
+    )
+    source_contracts = (
+        metadata.get("testing_contracts") if isinstance(metadata, dict) else None
+    )
+    # 새 snapshot에는 구현 시점 계약도 저장한다. 둘이 다르면 같은 파일 버전이라도
+    # Testing 결과를 그 구현 trace에 붙일 근거가 없으므로 수리 범위를 제시하지 않는다.
+    if isinstance(source_contracts, dict) and source_contracts != frozen_contracts:
+        return [], []
+
     trace = project_artifact_trace(
-        {},
+        projection_state_from_testing_contracts(frozen_contracts),
         implementation_rtm=implementation_rtm,
         testing_result={"dynamic_functional_report": dynamic},
     )
@@ -85,14 +101,22 @@ def _trace_hints(
             ref = TraceRef.parse(value)
         except ValueError:
             continue
-        # API ref는 구현 task와 테스트 양쪽의 출처일 수 있다. 그 자체가 별도 node로
-        # 저장되지 않았더라도 consumer 관계는 유효하므로 known-node 검사로 버리지 않는다.
-        files.update(item.id for item in trace.files(ref))
+        if ref not in trace.refs:
+            continue
         related.update(
             item.format()
             for item in trace.upstream(ref)
             if item.kind in {"requirement", "use_case", "class", "operation", "api", "task"}
         )
+        # UC처럼 넓은 중간 노드를 경유하면 sibling API와 모든 테스트까지 퍼질 수 있다.
+        # 따라서 실패 API를 ``sourceRefs``로 직접 든 task와 그 파일만 수리 힌트로 쓴다.
+        for task in trace.consumers(ref):
+            if task.kind != "task":
+                continue
+            related.add(task.format())
+            files.update(
+                item.id for item in trace.consumers(task) if item.kind == "file"
+            )
     return sorted(files), sorted(related)
 
 
