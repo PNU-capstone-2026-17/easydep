@@ -35,6 +35,7 @@ evaluation/
 docker/
 scripts/*
 !scripts/bootstrap-implementation-tools.sh
+!scripts/bootstrap-testing-tools.sh
 
 # FR/NFR 실행에는 학습 결과만 필요하다. 원본 학습 데이터는 이미지에 포함하지 않는다.
 materials/*

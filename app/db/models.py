@@ -4,10 +4,10 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    CHAR,
     JSON,
     BigInteger,
     Boolean,
-    CHAR,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -74,9 +74,7 @@ class App(Base):
     # and cannot be turned back into it, and because regenerating REFINE_REQ
     # after feedback needs the original wording.
     requirements_text: Mapped[str | None] = mapped_column(_MediumText, nullable=True)
-    resource_constraints_text: Mapped[str | None] = mapped_column(
-        _MediumText, nullable=True
-    )
+    resource_constraints_text: Mapped[str | None] = mapped_column(_MediumText, nullable=True)
     # 개발 진행 상태: the stage whose artifact was written most recently.
     current_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # 앱당 하나뿐이고 독립 검색·이력이 없는 요구사항 단계의 최신 배포 선택이다.
@@ -162,9 +160,7 @@ class ArtifactFile(Base):
         nullable=False,
     )
     content: Mapped[str] = mapped_column(_LongText, nullable=False)
-    sha256: Mapped[str] = mapped_column(
-        CHAR(64, collation="ascii_bin"), nullable=False
-    )
+    sha256: Mapped[str] = mapped_column(CHAR(64, collation="ascii_bin"), nullable=False)
 
     artifact_version: Mapped[ArtifactVersion] = relationship(back_populates="files")
 

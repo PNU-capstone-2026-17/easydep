@@ -6,7 +6,7 @@
 | 순서 | 기준 문서 | 내용 |
 |---:|---|---|
 | 1 | [전체 실행 흐름과 데이터 계약](system-flow.md) | 실제 프론트엔드 경로, 사용자·LLM 입출력 타입, 검증·수리, 산출물과 저장·재개 |
-| 2 | [현재 시스템 상태](current-system-status.md) | 4단계 구조, 구현됨·미구현, 실행 경계와 다음 작업 |
+| 2 | [현재 시스템 구성](current-system-status.md) | 실행 프로세스, 4단계 책임, AI·일반 코드의 역할, 저장·툴체인·현재 한계 |
 | 3 | [배포 다이어그램과 리소스 의존성 통합 기준](logical-deployment-topology-decisions.md) | 범위, 토폴로지, ResourcePlan, 멀티 AZ·VM 그룹·LB, CSP 생성 의존성, 앱·guest 바인딩, 셋업과 검증 |
 | 4 | [비교평가 계획과 과거 결과](comparison-experiment-plan.md) | 보류한 비교실험의 배경과 과거 측정 기록 |
 

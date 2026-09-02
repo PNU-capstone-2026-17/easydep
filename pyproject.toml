@@ -6,7 +6,7 @@
 # 범위를 넓히려면 그 코드 담당자와 합의한 뒤 아래 include/files에 추가한다.
 #
 # 패키징 테이블([project]/[build-system])은 두지 않는다. 설치 경로는
-# requirements.txt 그대로이고 Dockerfile·bootstrap 스크립트·k8s 이미지가 그 경로를
+# requirements*.txt 파일들이고 Dockerfile·bootstrap 스크립트·k8s 이미지가 그 경로를
 # 쓴다. pytest 설정도 저장소 공용이라 루트 pytest.ini에 그대로 둔다.
 
 [tool.ruff]

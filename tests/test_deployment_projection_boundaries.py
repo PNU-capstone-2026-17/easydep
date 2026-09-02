@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import ast
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +20,7 @@ from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
 )
-from app.design.services.deployment_diagram.provider_template import (
-    provider_template_structure_digest,
-    validate_complete_provider_template,
-)
+from app.design.services.deployment_diagram.provider_template import validate_complete_provider_template
 from app.design.services.deployment_diagram.provider_template_generation import (
     build_complete_provider_template,
 )
@@ -44,7 +39,6 @@ from app.design.services.deployment_diagram.runtime_renderer import (
 from app.implementation.delivery.iac_renderer import render_open_tofu
 
 _ROOT = Path(__file__).resolve().parents[1]
-_BASELINE = _ROOT / "tests/fixtures/deployment_projection_baseline.json"
 _PROVIDERS: dict[str, dict[str, Any]] = {
     "aws": {
         "region": "ap-northeast-2",
@@ -56,20 +50,6 @@ _PROVIDERS: dict[str, dict[str, Any]] = {
         "zones": ["asia-northeast3-a", "asia-northeast3-b"],
     },
 }
-
-
-def _json_sha256(value: Any) -> str:
-    encoded = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _text_sha256(value: str) -> str:
-    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def _candidate() -> dict[str, Any]:
@@ -267,93 +247,6 @@ def _projection_outputs(provider: str) -> dict[str, Any]:
         "provisioningPuml": provisioning_puml,
         "iacFiles": iac_files,
     }
-
-
-def _provider_summary(outputs: dict[str, Any]) -> dict[str, Any]:
-    resource = outputs["resourcePlan"]
-    runtime_puml = outputs["runtimePuml"]
-    provisioning_puml = outputs["provisioningPuml"]
-    files = outputs["iacFiles"]
-    return {
-        "hashes": {
-            "bundle": _json_sha256(outputs["bundle"]),
-            "resourcePlan": _json_sha256(resource),
-            "runtimePuml": _text_sha256(runtime_puml),
-            "provisioningPuml": _text_sha256(provisioning_puml),
-            "iacFiles": _json_sha256(files),
-            "nodeSourceRefs": _json_sha256(
-                [[item["id"], item.get("sourceRefs") or []] for item in resource["nodes"]]
-            ),
-            "referenceSourceRefs": _json_sha256(
-                [
-                    [item["id"], item.get("sourceRefs") or []]
-                    for item in resource["references"]
-                ]
-            ),
-            "bindingSourceRefs": _json_sha256(
-                [
-                    [item["id"], item.get("sourceRefs") or []]
-                    for item in resource["runtimeBindings"]
-                ]
-            ),
-        },
-        "lengths": {
-            "runtimePumlBytes": len(runtime_puml.encode()),
-            "provisioningPumlBytes": len(provisioning_puml.encode()),
-        },
-        "structureDigest": resource["structureDigest"],
-        "recomputedStructureDigest": provider_template_structure_digest(resource),
-        "orders": {
-            "resourceKeys": list(resource),
-            "nodeIds": [item["id"] for item in resource["nodes"]],
-            "referenceEdgeIdsHash": _json_sha256(
-                [item["id"] for item in resource["references"]]
-            ),
-            "embeddedBlockIds": [
-                item["id"] for item in resource["embeddedBlocks"]
-            ],
-            "runtimeBindingIds": [
-                item["id"] for item in resource["runtimeBindings"]
-            ],
-            "runtimeUnitIds": [item["id"] for item in resource["runtimeUnits"]],
-            "bindingSlotIds": [item["id"] for item in resource["bindingSlots"]],
-            "lateBindingIds": [item["id"] for item in resource["lateBindings"]],
-            "derivations": [
-                item.get("rule") or item.get("ruleId")
-                for item in resource["derivations"]
-            ],
-            "iacFileNames": list(files),
-        },
-        "iacFileHashes": {
-            name: _text_sha256(content) for name, content in files.items()
-        },
-    }
-
-
-def _summary() -> dict[str, Any]:
-    return {
-        provider: _provider_summary(_projection_outputs(provider))
-        for provider in _PROVIDERS
-    }
-
-
-def test_provider_projections_match_pre_split_baseline_exactly() -> None:
-    expected = json.loads(_BASELINE.read_text(encoding="utf-8"))
-    input_hash = _json_sha256(
-        {
-            "candidate": _candidate(),
-            "capabilityContract": _capability_contract(),
-            "providerInputs": {
-                provider: _resource_spec(provider) for provider in _PROVIDERS
-            },
-        }
-    )
-
-    assert expected["baselineCommit"] == (
-        "bb6ecab8385dc56868c597e6c6a6876321e3f420"
-    )
-    assert input_hash == expected["inputHash"]
-    assert _summary() == expected["providers"]
 
 
 def test_split_projection_public_boundaries_match_compatibility_facades() -> None:

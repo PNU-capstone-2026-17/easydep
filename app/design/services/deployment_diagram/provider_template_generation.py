@@ -922,6 +922,8 @@ def _add_network_and_compute(
                 rule=f"{provider}.compute-traffic-filter",
             )
         compute_node = compute_id
+        selected_sku = compute.get("vmSku")
+        sku_attributes = {"vmSku": selected_sku} if isinstance(selected_sku, str) and selected_sku.strip() else {}
         if managed:
             template_id = f"compute-template-{compute_id}"
             if provider != "azure":
@@ -929,7 +931,7 @@ def _add_network_and_compute(
                     template_id,
                     _provider_kind(provider, "template"),
                     logical_ref=compute_id,
-                    attributes={"zones": zones},
+                    attributes={"zones": zones, **sku_attributes},
                     source_refs=refs,
                     rule=f"{provider}.managed-compute-template",
                 )
@@ -941,6 +943,7 @@ def _add_network_and_compute(
                     "replicaCount": compute.get("replicaCount"),
                     "zones": zones,
                     "managedReplacement": True,
+                    **sku_attributes,
                 },
                 source_refs=refs,
                 rule=f"{provider}.managed-compute-group",
@@ -999,6 +1002,7 @@ def _add_network_and_compute(
                 attributes={
                     "replicaCount": 1,
                     "zone": zones[0] if zones else "",
+                    **sku_attributes,
                     "privateIp": str(
                         ipaddress.ip_network(
                             template.nodes[subnet_ids[0]]["attributes"]["cidr"]
@@ -1139,13 +1143,14 @@ def _add_network_and_compute(
                 cardinality="many" if provider == "azure" else "one",
                 rule=f"{provider}.compute-registry-identity",
             )
-        template.binding(
-            f"vm-sku-{compute_id}",
-            field=f"computeUnits.{compute_id}.vmSku",
-            kind="vmSku",
-            phase="deployment",
-            source_refs=refs,
-        )
+        if not isinstance(compute.get("vmSku"), str) or not str(compute.get("vmSku")).strip():
+            template.binding(
+                f"vm-sku-{compute_id}",
+                field=f"computeUnits.{compute_id}.vmSku",
+                kind="vmSku",
+                phase="deployment",
+                source_refs=refs,
+            )
         details[compute_id] = {
             "compute": compute_node,
             "template": (

@@ -15,9 +15,9 @@ from typing import Any
 
 from app.metrics import langsmith as langsmith_metrics
 from app.testing.runtime.container_runner import (
+    CONTAINER_RUN_ROOT,
     configured_runner_image,
     runner_command,
-    to_container_path,
 )
 from app.testing.runtime.process import run_process_tree
 from app.testing.runtime.runtime_contract import test_environment
@@ -247,6 +247,7 @@ class TestingAdapter:
         if not test_files:
             return {
                 "status": "failed",
+                "gateStatus": "FAIL",
                 "reason": "No Java or Kotlin acceptance tests were generated below src/test.",
                 "testFiles": [],
             }
@@ -264,7 +265,7 @@ class TestingAdapter:
 
                     command = [*gradle_command(), "test", "--no-daemon"]
                 except RuntimeError as error:
-                    return {"status": "unavailable", "reason": str(error)}
+                    return {"status": "unavailable", "gateStatus": "INCONCLUSIVE", "reason": str(error)}
         with tempfile.TemporaryDirectory(prefix=".easydep-test-", dir=repository) as temporary:
             environment = test_environment(runtime_contract, Path(temporary)) or None
             result = _run(command, repository, self.timeout_seconds, environment)
@@ -272,21 +273,28 @@ class TestingAdapter:
         # 남겨 두면 다음 Trivy 검사가 build 산출물까지 훑고 임시 디스크도 커진다.
         shutil.rmtree(repository / "build", ignore_errors=True)
         result["testFiles"] = [str(path.relative_to(repository)) for path in test_files]
+        result["gateStatus"] = {
+            "passed": "PASS",
+            "failed": "FAIL",
+            "timeout": "INCONCLUSIVE",
+            "unavailable": "INCONCLUSIVE",
+        }.get(str(result.get("status")), "INCONCLUSIVE")
         return result
 
     def _frontend_build(self, repository: Path) -> dict[str, Any]:
         """프런트엔드가 있으면 고정 lock 파일로 설치하고 production build를 확인한다."""
         frontend = repository / "frontend"
         if not (frontend / "package.json").is_file():
-            return {"status": "not_applicable", "reason": "No frontend package was generated."}
+            return {"status": "not_applicable", "gateStatus": "NOT_APPLICABLE", "reason": "No frontend package was generated."}
         if not (frontend / "package-lock.json").is_file():
             return {
                 "status": "failed",
+                "gateStatus": "FAIL",
                 "reason": "frontend/package-lock.json is required for a repeatable build.",
             }
         npm = shutil.which("npm")
         if not npm:
-            return {"status": "unavailable", "reason": "npm is not installed."}
+            return {"status": "unavailable", "gateStatus": "INCONCLUSIVE", "reason": "npm is not installed."}
 
         install = _run(
             [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
@@ -295,7 +303,11 @@ class TestingAdapter:
         )
         if install.get("status") != "passed":
             shutil.rmtree(frontend / "node_modules", ignore_errors=True)
-            return {"status": install.get("status", "failed"), "install": install}
+            return {
+                "status": install.get("status", "failed"),
+                "gateStatus": "INCONCLUSIVE" if install.get("status") in {"timeout", "unavailable"} else "FAIL",
+                "install": install,
+            }
         try:
             build = _run([npm, "run", "build"], frontend, self.timeout_seconds)
         finally:
@@ -304,6 +316,7 @@ class TestingAdapter:
             shutil.rmtree(frontend / "node_modules", ignore_errors=True)
         return {
             "status": build.get("status", "failed"),
+            "gateStatus": {"passed": "PASS", "failed": "FAIL", "timeout": "INCONCLUSIVE", "unavailable": "INCONCLUSIVE"}.get(str(build.get("status")), "INCONCLUSIVE"),
             "install": install,
             "build": build,
         }
@@ -372,9 +385,9 @@ class TestingAdapter:
     ) -> dict[str, Any]:
         repository = self._repository(implementation_result)
         run_root = repository.parent.resolve()
-        project_root = Path(__file__).resolve().parents[4]
+        project_root = Path(__file__).resolve().parents[3]
         request_result = dict(implementation_result)
-        request_result["run_root"] = str(to_container_path(run_root, project_root))
+        request_result["run_root"] = CONTAINER_RUN_ROOT.as_posix()
         request_path = run_root / "reports" / "outer-test-request.json"
         request_path.parent.mkdir(parents=True, exist_ok=True)
         request_path.write_text(
@@ -394,8 +407,11 @@ class TestingAdapter:
             image=image,
             repository_root=project_root,
             operation="test",
-            arguments=[str(to_container_path(request_path, project_root))],
+            arguments=[
+                str(CONTAINER_RUN_ROOT / "reports" / "outer-test-request.json")
+            ],
             environment=environment,
+            run_root=run_root,
         )
         completed = run_process_tree(
             command,
@@ -444,6 +460,13 @@ class TestingAdapter:
     ) -> list[dict[str, Any]]:
         if unit_tests.get("status") == "passed":
             return []
+        if unit_tests.get("status") in {"unavailable", "timeout"}:
+            return [{
+                "code": "TESTING_TOOL_UNAVAILABLE",
+                "message": "Required application test tooling could not run.",
+                "defectClass": "ENVIRONMENT_DEFECT",
+                "repairOwner": "environment",
+            }]
         if implementation_result is not None and repository is not None:
             ownership = _compile_owner_diagnostic(
                 unit_tests, implementation_result, repository

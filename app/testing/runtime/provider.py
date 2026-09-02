@@ -15,6 +15,9 @@ class _TestingProviderSettings(BaseSettings):
     base_url: str | None = None
     openhands_model: str | None = None
     llm_model: str | None = None
+    # 동적 테스트 후보 한 묶음이 provider 기본 timeout에 무기한 기대지 않게 한다.
+    # retry는 호출부에서 0으로 고정하므로 실패 시 같은 후보를 조용히 중복 생성하지 않는다.
+    llm_timeout_seconds: float = 300.0
 
 
 settings = _TestingProviderSettings()

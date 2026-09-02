@@ -66,9 +66,9 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -Stop
 ```
 
-스크립트는 `easydep-mysql-dev` 컨테이너와 `.easydep/dev/` 아래의 PID·로그 파일만 관리한다. 실행 중이던 다른 Python·Docker 프로세스를 이름만 보고 종료하지 않는다. 기본 DB 포트는 호스트의 `33060`, 화면 포트는 `8000`이며 각각 `-DatabasePort`, `-Port`로 바꿀 수 있다.
+스크립트는 `easydep-mysql-dev` 컨테이너와 `.easydep/dev/` 아래의 PID·로그 파일만 관리한다. 실행 중이던 다른 Python·Docker 프로세스를 이름만 보고 종료하지 않는다. 기본 DB 포트는 `33060`, FastAPI는 `8100`, Vite 화면은 `5173`이며 각각 `-DatabasePort`, `-Port`, `-FrontendPort`로 바꿀 수 있다.
 
-프론트엔드 의존성은 `package-lock.json`이 바뀐 경우에만 다시 설치한다. 프론트 소스·정적 파일·빌드 설정·환경 파일의 내용이 마지막 성공 빌드와 같으면 `frontend/build`도 자동으로 재사용한다. 입력이 바뀌거나 빌드 결과가 없으면 다시 빌드하며, 빌드 실패 시 캐시 기록을 갱신하지 않는다. 강제로 다시 빌드하려면 `-ForceFrontendBuild`, 입력 검사를 생략하고 기존 결과를 쓰려면 `-SkipFrontendBuild`를 지정한다.
+프론트엔드 의존성은 `package-lock.json`이 바뀐 경우에만 다시 설치한다. 기본 개발 모드는 Vite hot reload를 사용하므로 소스 수정 뒤 Docker image나 정적 프론트엔드를 다시 만들지 않는다. 배포와 비슷한 정적 제공을 확인할 때만 `-ProductionLike`를 사용하며, 이때 `-ForceFrontendBuild` 또는 `-SkipFrontendBuild`를 함께 지정할 수 있다.
 
 첫 백엔드 기동은 로컬 분석 모델을 메모리에 올리느라 수십 초 걸릴 수 있으며, 준비 제한은 10분이다. 진행이 멈춘 것처럼 보이면 `.easydep/dev/server.stderr.log`에서 Uvicorn 시작 과정을 확인할 수 있다.
 
@@ -81,10 +81,10 @@ npm run check
 npm run build
 
 cd ..
-python -m uvicorn server:app --reload
+python -m uvicorn server:app --reload --port 8100
 ```
 
-개발 중에는 `frontend`에서 `npm run dev`를 실행하면 `/api` 요청을 `127.0.0.1:8000`으로 전달한다. 배포 이미지는 Node 22 빌드 단계에서 SvelteKit 정적 결과를 만들고, 최종 Python 이미지에는 `frontend/build`만 복사한다.
+개발 중에는 `frontend`에서 `npm run dev`를 실행하면 `/api` 요청을 기본적으로 `127.0.0.1:8100`으로 전달한다. 다른 포트를 쓸 때에는 `EASYDEP_API_ORIGIN`을 지정한다. 배포 이미지는 Node 22 빌드 단계에서 SvelteKit 정적 결과를 만들고, 최종 Python 이미지에는 `frontend/build`만 복사한다.
 
 ## 현재 경계
 

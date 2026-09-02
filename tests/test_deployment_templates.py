@@ -628,12 +628,13 @@ def test_separated_workloads_receive_distinct_bootstrap_contracts() -> None:
         "bootstrap_compute_1.sh.tftpl",
         "bootstrap_compute_2.sh.tftpl",
     }
-    assert '--name "web"' in bootstraps["bootstrap_compute_1.sh.tftpl"]
-    assert '--name "worker"' not in bootstraps["bootstrap_compute_1.sh.tftpl"]
-    assert '--name "worker"' in bootstraps["bootstrap_compute_2.sh.tftpl"]
-    assert '--name "web"' not in bootstraps["bootstrap_compute_2.sh.tftpl"]
-    assert "bootstrap_compute_1.sh.tftpl" in files["main.tf"]
-    assert "bootstrap_compute_2.sh.tftpl" in files["main.tf"]
+    assert "services:\n  web:" in bootstraps["bootstrap_compute_1.sh.tftpl"]
+    assert "services:\n  worker:" not in bootstraps["bootstrap_compute_1.sh.tftpl"]
+    assert "services:\n  worker:" in bootstraps["bootstrap_compute_2.sh.tftpl"]
+    assert "services:\n  web:" not in bootstraps["bootstrap_compute_2.sh.tftpl"]
+    assert "compose --env-file /opt/easydep/runtime/.env" in bootstraps["bootstrap_compute_1.sh.tftpl"]
+    assert "cloud-init_compute_1.yaml.tftpl" in files["main.tf"]
+    assert "cloud-init_compute_2.yaml.tftpl" in files["main.tf"]
 
 
 @pytest.mark.parametrize(
@@ -791,7 +792,9 @@ def test_internal_managed_endpoint_preserves_declared_interface_port(
     assert port_values == {9191}
     assert "9191" in files["main.tf"]
     bootstrap = files["bootstrap_compute_2.sh.tftpl"]
-    assert "-p 9191:9191" in bootstrap
+    assert 'services:\n  state:' in bootstrap
+    assert '      - "9191:9191"' in bootstrap
+    assert "compose --env-file /opt/easydep/runtime/.env" in bootstrap
     assert 'mountpoint -q "/mnt/easydep/state_volume"' in bootstrap
     assert 'mkdir -p "/mnt/easydep/state_volume/data"' in bootstrap
     assert 'chown 10001:10001 "/mnt/easydep/state_volume/data"' in bootstrap
@@ -831,7 +834,8 @@ def test_secret_binding_has_permission_and_identity_based_runtime_fetch(
 
     assert permission_type in rendered_resource_types(files)
     assert fetch_marker in bootstrap
-    assert "-e API_TOKEN" in bootstrap
+    assert "environment:\n      - API_TOKEN" in bootstrap
+    assert "compose --env-file /opt/easydep/runtime/.env" in bootstrap
     assert "secret_ref_web_api_token" in bootstrap
     assert 'variable "secret_reference_web_api_token"' in files["variables.tf"]
 
@@ -1020,6 +1024,7 @@ def test_ordinary_and_external_endpoint_configuration_are_injected_without_secre
             "kind": "endpointBinding",
             "connectionRef": "web-to-payments",
             "projection": "url",
+            "value": "https://payments.example.test",
             "sourceRefs": ["sequence:PAY"],
         },
     ]
@@ -1032,5 +1037,7 @@ def test_ordinary_and_external_endpoint_configuration_are_injected_without_secre
     assert 'export APP_MODE="production"' in bootstrap
     assert 'export PAYMENTS_URL="${endpoint_web_payments_url}"' in bootstrap
     assert 'variable "external_endpoint_web_to_payments"' in files["variables.tf"]
-    assert "-e APP_MODE" in bootstrap
-    assert "-e PAYMENTS_URL" in bootstrap
+    assert "    environment:" in bootstrap
+    assert "      - APP_MODE" in bootstrap
+    assert "      - PAYMENTS_URL" in bootstrap
+    assert "compose --env-file /opt/easydep/runtime/.env" in bootstrap

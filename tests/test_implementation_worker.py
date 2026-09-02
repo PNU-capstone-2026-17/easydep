@@ -61,11 +61,15 @@ def test_initial_job_allows_void_control_with_transport_error_outcomes(
             "com.example",
             False,
         )
+        testing_input = worker.get_testing_input(str(record["job_id"]))
     finally:
         worker.shutdown()
 
     assert record["status"] == "QUEUED"
     assert record["design_validation"]["findings"] == []
+    assert testing_input["contract_artifacts"]["openapi"]["content"] == record[
+        "testing_contracts"
+    ]["openapi"]["content"]
 
 
 def test_needs_input_workflow_exposes_the_design_blocker_in_job_error(tmp_path: Path) -> None:
@@ -276,6 +280,52 @@ def test_feedback_eligibility_accepts_existing_contract_behavior_change() -> Non
     )
 
     assert result["status"] == "ELIGIBLE"
+
+
+def test_feedback_job_restores_frontend_snapshot_under_frontend_directory(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """피드백 실행도 최초 구현과 같은 애플리케이션 디렉터리 모양을 사용한다."""
+
+    snapshots = {
+        "SOURCE_CODE": {
+            "version_no": 1,
+            "metadata": {"implementation_job_id": "original-job"},
+            "files": {"build.gradle": {"content": "plugins {}"}},
+        },
+        "FRONTEND_SOURCE_CODE": {
+            "version_no": 2,
+            "files": {"package.json": {"content": "{}"}},
+        },
+    }
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.artifact_repository.load_file_snapshot",
+        lambda _app_id, artifact_type: snapshots.get(artifact_type),
+    )
+    worker = ImplementationWorker(settings(tmp_path))
+    captured: dict[str, str] = {}
+
+    def prepare(_job_id, _app_id, _design, files, *_args):
+        captured.update(files)
+        return tmp_path / "feedback-job.json"
+
+    worker.client.prepare_feedback_job = prepare
+    worker.executor.submit = lambda *_args, **_kwargs: None
+    try:
+        record = worker.create_feedback_job(
+            "app-1",
+            {},
+            "배송이 시작된 주문은 취소 요청을 거절해줘",
+            "com.example",
+            False,
+        )
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "QUEUED"
+    assert captured["build.gradle"] == "plugins {}"
+    assert captured["frontend/package.json"] == "{}"
+    assert "package.json" not in captured
 
 
 def test_unsuitable_feedback_does_not_create_an_execution_run(monkeypatch, tmp_path: Path) -> None:
@@ -849,9 +899,15 @@ def test_feedback_orchestrator_restores_snapshot_without_generation_tools(
     manifest = json.loads((output / "reports/run-manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "SUCCEEDED"
     assert (output / "reports/generated-source-contracts.json").is_file()
+    assert (
+        output
+        / "reports/implementation-tasks/apply-source-feedback.task.json"
+    ).is_file()
     assert [task["task_id"] for task in manifest["implementation_tasks"]] == [
         "apply-source-feedback"
     ]
+    feedback_task = manifest["implementation_tasks"][0]
+    assert feedback_task["llm"]["chatTemplateKwargs"]["enable_thinking"] is True
 
 
 def test_prepare_job_rejects_work_root_outside_repository(tmp_path: Path) -> None:
@@ -939,6 +995,9 @@ def test_live_source_api_reads_only_safe_files_for_the_matching_job(
     source.write_text("class App {}", encoding="utf-8")
     frontend.write_text("<main>Hello</main>", encoding="utf-8")
     (application_root / ".env").write_text("TOKEN=secret", encoding="utf-8")
+    env_example = application_root / "deployment/runtime/.env.example"
+    env_example.parent.mkdir(parents=True)
+    env_example.write_text("TOKEN=\n", encoding="utf-8")
     build_file = application_root / "build/generated.txt"
     build_file.parent.mkdir(parents=True)
     build_file.write_text("generated", encoding="utf-8")
@@ -993,12 +1052,14 @@ def test_live_source_api_reads_only_safe_files_for_the_matching_job(
     assert listing.status_code == 200
     files = {item["path"]: item for item in listing.json()["files"]}
     assert set(files) == {
+        "deployment/runtime/.env.example",
         "frontend/src/App.svelte",
         "src/main/java/com/example/App.java",
         "src/test/java/com/example/AppTest.java",
     }
     assert files["src/main/java/com/example/App.java"]["status"] == "writing"
     assert files["src/test/java/com/example/AppTest.java"]["exists"] is False
+    assert files["deployment/runtime/.env.example"]["artifact_type"] == "DEPLOYMENT_FILE"
     assert content.json()["content"] == "class App {}"
     assert wrong_app.status_code == 404
     assert secret.status_code == 404

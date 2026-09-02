@@ -32,6 +32,7 @@ from ..planning.design_context import (
     generate_api_adapter_tasks,
     generate_frontend_tasks,
     generate_wiring_tasks,
+    llm_config,
 )
 from ..workflows.conformance import capture_generated_contracts
 from .frontend import generate_frontend_project
@@ -368,12 +369,16 @@ class PrototypeOrchestrator:
             immutable_paths=immutable,
             source_artifacts={"baseSnapshot": str(snapshot_path)},
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            llm={
-                "mode": self.spec.agent_mode,
-                "model": self.spec.agent_model,
-                "baseUrl": self.spec.agent_base_url,
-            },
+            # 피드백 작업도 최초 구현과 같은 실행 설정을 사용한다. 일부 값만 복사하면
+            # OpenHands가 대화를 시작하기 전에 필수 설정을 찾지 못해 실패할 수 있다.
+            llm=llm_config(self.spec),
             task_type="control",
+        )
+        # OpenHands runtime은 실행 계획뿐 아니라 task별 JSON 계약에서 prompt와 쓰기 범위를
+        # 읽는다. 피드백 task도 일반 구현 task와 같은 위치와 이름으로 저장해야 한다.
+        (task_dir / f"{task.task_id}.task.json").write_text(
+            json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
         self.manifest.implementation_tasks = [task.to_dict()]
         self.manifest.agent_execution = write_execution_plan(

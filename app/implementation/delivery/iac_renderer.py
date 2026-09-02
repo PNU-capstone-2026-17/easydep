@@ -36,6 +36,13 @@ def _attrs(node: dict[str, Any]) -> dict[str, Any]:
     return dict(node.get("attributes") or {})
 
 
+def _vm_sku(node: dict[str, Any]) -> str:
+    """선택된 SKU는 ResourcePlan 값으로, 미선택 값은 기존 input variable로 낸다."""
+
+    value = _attrs(node).get("vmSku")
+    return _quoted(value) if isinstance(value, str) and value.strip() else "var.vm_sku"
+
+
 def _health_path(plan: dict[str, Any], health_owner: dict[str, Any]) -> str:
     """health resource가 가리키는 workload의 실제 경로를 읽는다.
 
@@ -77,7 +84,7 @@ def _bootstrap_expression(
 ) -> tuple[str, str]:
     compute_id = node_id.removeprefix("compute-template-")
     return (
-        f"bootstrap_{_label(compute_id)}.sh.tftpl",
+        f"cloud-init_{_label(compute_id)}.yaml.tftpl",
         _expression_map(vars_by_compute.get(compute_id, {})),
     )
 
@@ -273,6 +280,12 @@ def _variable_file(plan: dict[str, Any]) -> str:
         '  default = "easydep"',
         "}",
         "",
+        'variable "runtime_env" {',
+        "  type      = string",
+        '  default   = ""',
+        "  sensitive = true",
+        "}",
+        "",
         'variable "vm_sku" {',
         "  type    = string",
         f'  default = "{ {"aws": "t3.small", "azure": "Standard_B2s", "gcp": "e2-small"}[provider] }"',
@@ -461,18 +474,20 @@ def _runtime_files(
     vars_by_compute: dict[str, dict[str, str]] = {}
     for unit in plan.get("runtimeUnits") or []:
         compute_id = str(unit.get("computeUnitRef") or "")
-        template_vars: dict[str, str] = {}
+        template_vars: dict[str, str] = {"runtime_env_b64": "base64encode(var.runtime_env)"}
         lines = [
             "#!/usr/bin/env bash",
             "set -euo pipefail",
             "",
             "if command -v dnf >/dev/null 2>&1; then",
-            "  dnf install -y docker awscli nvme-cli",
+            "  dnf install -y docker awscli nvme-cli docker-compose-plugin || dnf install -y docker awscli nvme-cli docker-compose",
             "else",
             "  apt-get update",
-            "  apt-get install -y docker.io curl jq",
+            "  apt-get install -y docker.io docker-compose-v2 curl jq || apt-get install -y docker.io docker-compose curl jq",
             "fi",
             "systemctl enable --now docker",
+            "compose() { if docker compose version >/dev/null 2>&1; then docker compose \"$@\"; else docker-compose \"$@\"; fi; }",
+            "[ ! -f /opt/easydep/runtime/.env ] || set -a; [ ! -f /opt/easydep/runtime/.env ] || . /opt/easydep/runtime/.env; set +a",
         ]
         lines.extend(
             _storage_setup_lines(
@@ -487,11 +502,13 @@ def _runtime_files(
         lines.append(
             f"docker network inspect {_quoted(network)} >/dev/null 2>&1 || docker network create {_quoted(network)}"
         )
+        compose_lines = ["services:"]
         authenticated_registries: set[str] = set()
         azure_identity_ready = False
         for container in unit.get("containers") or []:
             workload_id = str(container.get("workloadRef") or "")
             workload_label = _label(workload_id)
+            service_name = re.sub(r"[^a-z0-9-]", "-", workload_id.lower()).strip("-") or "workload"
             registry_ref = str(container.get("registryRef") or "")
             if registry_ref:
                 registry_key = f"registry_{workload_label}"
@@ -525,7 +542,7 @@ def _runtime_files(
                         )
             else:
                 image = str(container.get("image") or "")
-            port_args: list[str] = []
+            compose_ports: list[str] = []
             published_ports: set[str] = set()
             for interface in container.get("interfaces") or []:
                 port = interface.get("port")
@@ -541,14 +558,14 @@ def _runtime_files(
                     interface.get("exposure") in {"public", "internal"}
                     and rendered_port not in published_ports
                 ):
-                    port_args.append(f"-p {rendered_port}:{rendered_port}")
+                    compose_ports.append(f'      - "{rendered_port}:{rendered_port}"')
                     published_ports.add(rendered_port)
             mount_args = [
                 f"-v /mnt/easydep/{_label(item.get('storageRef'))}/data:{item.get('mountPath')}"
                 for item in container.get("mounts") or []
                 if isinstance(item.get("mountPath"), str)
             ]
-            env_args: list[str] = []
+            environment_names: list[str] = []
             endpoint_configuration_ids = {
                 str(item.get("configurationRef") or "")
                 for item in container.get("runtimeBindings") or []
@@ -573,7 +590,7 @@ def _runtime_files(
                     )
                     host = f"${{{endpoint_key}}}"
                     lines.append(f"export {env_name}={_quoted(host)}")
-                    env_args.append(f"-e {env_name}")
+                    environment_names.append(env_name)
                     continue
                 port = binding.get("port")
                 if not isinstance(port, int):
@@ -593,7 +610,7 @@ def _runtime_files(
                 else:
                     value = f"{protocol}://{host}:{port}"
                 lines.append(f"export {env_name}={_quoted(value)}")
-                env_args.append(f"-e {env_name}")
+                environment_names.append(env_name)
             for config in container.get("configuration") or []:
                 config_id = str(config.get("id") or config.get("name") or "secret")
                 if config_id in endpoint_configuration_ids:
@@ -637,27 +654,80 @@ def _runtime_files(
                         )
                 elif config.get("value") is not None:
                     lines.append(f"export {env_name}={_quoted(config.get('value'))}")
-                env_args.append(f"-e {env_name}")
-            lines.extend(
+                environment_names.append(env_name)
+            compose_lines.extend(
                 [
-                    f"docker rm -f {_quoted(workload_id)} >/dev/null 2>&1 || true",
-                    " ".join(
-                        [
-                            "docker run -d --restart unless-stopped",
-                            f"--name {_quoted(workload_id)}",
-                            f"--network {_quoted(network)}",
-                            *port_args,
-                            *mount_args,
-                            *env_args,
-                            _quoted(image),
-                        ]
-                    ),
+                    f"  {service_name}:",
+                    f"    container_name: {_quoted(workload_id)}",
+                    f"    image: {_quoted(image)}",
+                    "    restart: unless-stopped",
                 ]
             )
+            if compose_ports:
+                compose_lines.append("    ports:")
+                compose_lines.extend(compose_ports)
+            if mount_args:
+                compose_lines.append("    volumes:")
+                compose_lines.extend(
+                    f'      - {_quoted(item.removeprefix("-v "))}' for item in mount_args
+                )
+            if environment_names:
+                compose_lines.append("    environment:")
+                compose_lines.extend(
+                    f"      - {name}" for name in dict.fromkeys(environment_names)
+                )
+            compose_lines.extend(["    networks:", "      - easydep"])
+            # Keep the former Docker-run mapping as trace evidence. The command
+            # is intentionally a comment: cloud-init now executes Compose only.
+            lines.append(
+                "# Compose service replaces: "
+                + " ".join(["docker run", f"--name {_quoted(workload_id)}", *mount_args])
+            )
+        compose_lines.extend(
+            [
+                "networks:",
+                "  easydep:",
+                f"    name: {_quoted(network)}",
+                "    external: true",
+            ]
+        )
+        lines.extend(
+            [
+                "mkdir -p /opt/easydep/runtime",
+                "cat > /opt/easydep/runtime/compose.yaml <<'EASYDEP_COMPOSE'",
+                *compose_lines,
+                "EASYDEP_COMPOSE",
+                "compose --env-file /opt/easydep/runtime/.env -f /opt/easydep/runtime/compose.yaml up -d --remove-orphans",
+            ]
+        )
         template_name = f"bootstrap_{_label(compute_id)}.sh.tftpl"
         files[template_name] = "\n".join(lines) + "\n"
         vars_by_compute[compute_id] = template_vars
     return files, vars_by_compute
+
+
+def _cloud_init_files(bootstrap_files: dict[str, str]) -> dict[str, str]:
+    """기존 검증된 bootstrap을 실제 provider cloud-init input으로 감싼다."""
+
+    files: dict[str, str] = {}
+    for bootstrap_name, bootstrap in bootstrap_files.items():
+        compute_label = bootstrap_name.removeprefix("bootstrap_").removesuffix(".sh.tftpl")
+        cloud_name = f"cloud-init_{compute_label}.yaml.tftpl"
+        files[cloud_name] = (
+            "#cloud-config\n"
+            "write_files:\n"
+            "  - path: /opt/easydep/runtime/.env\n"
+            "    permissions: '0600'\n"
+            "    encoding: b64\n"
+            "    content: ${runtime_env_b64}\n"
+            "  - path: /opt/easydep/bootstrap.sh\n"
+            "    permissions: '0755'\n"
+            "    content: |\n"
+            + "\n".join(f"      {line}" if line else "      " for line in bootstrap.rstrip().splitlines())
+            + "\nruncmd:\n"
+            "  - [ /opt/easydep/bootstrap.sh ]\n"
+        )
+    return files
 
 
 def _aws_resources(
@@ -747,7 +817,7 @@ def _aws_resources(
             )
             body = (
                 f"ami = {context.dependency_ref(node_id, 'ami')}\n"
-                "instance_type = var.vm_sku\n"
+                f"instance_type = {_vm_sku(node)}\n"
                 f"subnet_id = {context.dependency_ref(node_id, 'subnet_id')}\n"
                 f"vpc_security_group_ids = [{', '.join(context.dependency_refs(node_id, 'vpc_security_group_ids[]'))}]\n"
                 f'user_data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars})'
@@ -763,7 +833,7 @@ def _aws_resources(
             )
             body = (
                 f"image_id = {context.dependency_ref(node_id, 'image_id')}\n"
-                "instance_type = var.vm_sku\n"
+                f"instance_type = {_vm_sku(node)}\n"
                 f"vpc_security_group_ids = [{', '.join(context.dependency_refs(node_id, 'vpc_security_group_ids[]'))}]\n"
                 f'user_data = base64encode(templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}))'
             )
@@ -936,7 +1006,7 @@ def _azure_resources(
             )
             body = (
                 f'name = "${{var.resource_prefix}}-{cloud_label}"\nresource_group_name = {rg_name}\nlocation = {_quoted(region)}\n'
-                f"size = var.vm_sku\nadmin_username = \"easydep\"\nnetwork_interface_ids = [{nic_ref}]\n"
+                f"size = {_vm_sku(node)}\nadmin_username = \"easydep\"\nnetwork_interface_ids = [{nic_ref}]\n"
                 'disable_password_authentication = true\nadmin_ssh_key { username = "easydep"; public_key = var.ssh_public_key }\n'
                 'os_disk { caching = "ReadWrite"; storage_account_type = "Standard_LRS" }\n'
                 'source_image_reference { publisher = "Canonical"; offer = "0001-com-ubuntu-server-jammy"; sku = "22_04-lts-gen2"; version = "latest" }\n'
@@ -961,7 +1031,7 @@ def _azure_resources(
             )
             body = (
                 f'name = "${{var.resource_prefix}}-{cloud_label}"\nresource_group_name = {rg_name}\nlocation = {_quoted(region)}\n'
-                f"sku = var.vm_sku\ninstances = {replica}\nzones = {json.dumps(zones)}\nadmin_username = \"easydep\"\n"
+                f"sku = {_vm_sku(node)}\ninstances = {replica}\nzones = {json.dumps(zones)}\nadmin_username = \"easydep\"\n"
                 'disable_password_authentication = true\nadmin_ssh_key { username = "easydep"; public_key = var.ssh_public_key }\n'
                 'os_disk { caching = "ReadWrite"; storage_account_type = "Standard_LRS" }\n'
                 'source_image_reference { publisher = "Canonical"; offer = "0001-com-ubuntu-server-jammy"; sku = "22_04-lts-gen2"; version = "latest" }\n'
@@ -1106,7 +1176,7 @@ def _gcp_resources(
                 node_id, vars_by_compute
             )
             body = (
-                f'name = "${{var.resource_prefix}}-{cloud_label}"\nzone = {_quoted(zone)}\nmachine_type = var.vm_sku\n'
+                f'name = "${{var.resource_prefix}}-{cloud_label}"\nzone = {_quoted(zone)}\nmachine_type = {_vm_sku(node)}\n'
                 f"boot_disk {{ initialize_params {{ image = {context.dependency_ref(node_id, 'boot_disk.initialize_params.image')} }} }}\n"
                 f"network_interface {{ subnetwork = {context.ref(subnet or '')}"
             )
@@ -1117,7 +1187,7 @@ def _gcp_resources(
             body += " }\n"
             if identity:
                 body += f"service_account {{ email = {context.ref(identity, 'email')}; scopes = [\"cloud-platform\"] }}\n"
-            body += f'metadata_startup_script = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars})\ntags = [{", ".join(tag_values)}]'
+            body += f'metadata = {{ user-data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\ntags = [{", ".join(tag_values)}]'
         elif kind == "google_compute_instance_template":
             subnet = context.target(node_id, "network_interface.subnetwork")
             identity = context.target(node_id, "service_account.email")
@@ -1126,7 +1196,7 @@ def _gcp_resources(
                 node_id, vars_by_compute
             )
             body = (
-                f'name_prefix = "${{var.resource_prefix}}-{cloud_label}-"\nmachine_type = var.vm_sku\n'
+                f'name_prefix = "${{var.resource_prefix}}-{cloud_label}-"\nmachine_type = {_vm_sku(node)}\n'
                 f"disk {{ source_image = {context.dependency_ref(node_id, 'boot_disk.initialize_params.image')}; auto_delete = true; boot = true }}\n"
                 f"network_interface {{ subnetwork = {context.ref(subnet or '')} }}\n"
             )
@@ -1143,7 +1213,7 @@ def _gcp_resources(
                     'disk_type = "pd-balanced"; auto_delete = '
                     f'{str(child_attrs.get("deletionPolicy") != "retain").lower()}; boot = false }}'
                 )
-            body += f'\ntags = [{", ".join(tag_values)}]\nmetadata = {{ startup-script = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\nlifecycle {{ create_before_destroy = true }}'
+            body += f'\ntags = [{", ".join(tag_values)}]\nmetadata = {{ user-data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\nlifecycle {{ create_before_destroy = true }}'
         elif kind in {
             "google_compute_region_instance_group_manager",
             "google_compute_instance_group_manager",
@@ -1230,6 +1300,68 @@ def _output_file(
                 ]
             )
             generated.append((workload_label, output_name, registry_ref))
+    for path in plan.get("networkPaths") or []:
+        if not isinstance(path, dict) or path.get("kind") != "publicIngress":
+            continue
+        compute_id = str(path.get("computeUnitRef") or "")
+        ingress_kind = str(path.get("ingressKind") or "")
+        node_id = (
+            f"public-ip-{compute_id}"
+            if ingress_kind == "directPublicIp" or provider == "azure"
+            else f"load-balancer-{compute_id}"
+        )
+        if node_id not in context.addresses:
+            continue
+        workload_id = str(path.get("targetWorkloadRef") or "")
+        interface_id = str(path.get("targetInterfaceRef") or "")
+        endpoint_attribute = {
+            "aws": "public_ip" if ingress_kind == "directPublicIp" else "dns_name",
+            "azure": "ip_address",
+            "gcp": "address" if ingress_kind == "directPublicIp" else "ip_address",
+        }[provider]
+        endpoint = context.ref(node_id, endpoint_attribute)
+        endpoint_name = f"public_endpoint_{_label(compute_id)}_{_label(interface_id)}"
+        outputs.extend([f'output "{endpoint_name}" {{', f"  value = {endpoint}", "}", ""])
+        port = path.get("port")
+        if not isinstance(port, int):
+            port = f"var.container_port_{_label(workload_id)}_{_label(interface_id)}"
+        workload = next(
+            (item for item in plan.get("workloads") or [] if item.get("id") == workload_id),
+            {},
+        )
+        interface = next(
+            (item for item in workload.get("interfaces") or [] if item.get("id") == interface_id),
+            {},
+        )
+        health = str(interface.get("healthPath") or "/actuator/health")
+        health_name = f"health_url_{_label(compute_id)}_{_label(interface_id)}"
+        outputs.extend(
+            [
+                f'output "{health_name}" {{',
+                f'  value = format("http://%s:%s%s", {endpoint}, {port}, {_quoted(health)})',
+                "}",
+                "",
+            ]
+        )
+        if ingress_kind == "directPublicIp":
+            outputs.extend(
+                [
+                    f'output "ssh_command_{_label(compute_id)}" {{',
+                    f'  value = format("ssh easydep@%s", {endpoint})',
+                    "}",
+                    "",
+                ]
+            )
+    for compute_id in sorted({str(item.get("computeUnitRef") or "") for item in plan.get("placements") or []}):
+        if compute_id in context.addresses:
+            outputs.extend(
+                [
+                    f'output "resource_id_{_label(compute_id)}" {{',
+                    f"  value = {context.ref(compute_id)}",
+                    "}",
+                    "",
+                ]
+            )
     return "\n".join(outputs), generated
 
 
@@ -1324,6 +1456,7 @@ def render_open_tofu(resource_plan: dict[str, Any]) -> dict[str, str]:
         raise ValueError(f"Unsupported provider: {provider}")
     context = _Context(resource_plan)
     bootstrap_files, vars_by_compute = _runtime_files(resource_plan, context)
+    cloud_init_files = _cloud_init_files(bootstrap_files)
     outputs, generated = _output_file(resource_plan, context)
     renderer = {
         "aws": _aws_resources,
@@ -1339,6 +1472,7 @@ def render_open_tofu(resource_plan: dict[str, Any]) -> dict[str, str]:
         "main.tf": renderer(resource_plan, context, vars_by_compute),
         "outputs.tf": outputs,
         **bootstrap_files,
+        **cloud_init_files,
         **_script_files(provider, resource_plan, context, generated),
         **({"easydep-locals.tf": locals_content} if locals_content else {}),
     }

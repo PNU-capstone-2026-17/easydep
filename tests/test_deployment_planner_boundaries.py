@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import ast
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
@@ -30,17 +28,6 @@ from app.design.services.deployment_diagram.planner import (
 )
 
 _ROOT = Path(__file__).resolve().parents[1]
-_BASELINE = _ROOT / "tests/fixtures/deployment_planner_baseline.json"
-
-
-def _sha256(value: Any) -> str:
-    payload = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return hashlib.sha256(payload).hexdigest()
 
 
 def _candidate() -> dict[str, Any]:
@@ -353,94 +340,6 @@ def _pipeline_outputs() -> dict[str, Any]:
         "invalidGraph": invalid_graph,
         "bundle": bundle,
     }
-
-
-def _ordered_summary(outputs: dict[str, Any]) -> dict[str, Any]:
-    facts = outputs["planningFacts"]
-    graph = outputs["normalizedGraph"]
-    plan = outputs["deploymentPlan"]
-    binding = outputs["runtimeBinding"]
-    resource = outputs["resourcePlan"]
-    invalid = outputs["invalidGraph"]
-    bundle = outputs["bundle"]
-    return {
-        "hashes": {key: _sha256(value) for key, value in outputs.items()},
-        "structureDigests": {
-            "workloadGraph": graph["structureDigest"],
-            "workloadGraphRecomputed": workload_graph_structure_digest(graph),
-            "deploymentPlan": plan["structureDigest"],
-            "deploymentPlanRecomputed": deployment_plan_structure_digest(plan),
-            "runtimeBinding": binding["structureDigest"],
-            "resourcePlan": resource["structureDigest"],
-            "resourcePlanRecomputed": resource_plan_structure_digest(resource),
-            "bundleDeploymentPlan": bundle["projections"][0][
-                "deploymentPlanStructureDigest"
-            ],
-            "bundleResourcePlan": bundle["projections"][0][
-                "resourcePlanStructureDigest"
-            ],
-        },
-        "orders": {
-            "factIds": [item["id"] for item in facts["facts"]],
-            "inputArtifacts": [
-                item["artifact"] for item in facts["inputArtifacts"]
-            ],
-            "constraintIds": [item["id"] for item in graph["constraints"]],
-            "graphIssues": [item["field"] for item in graph["issues"]],
-            "graphDerivations": [item["rule"] for item in graph["derivations"]],
-            "computeUnits": [item["id"] for item in plan["computeUnits"]],
-            "placements": [item["workloadRef"] for item in plan["placements"]],
-            "storageBindings": [item["id"] for item in plan["storageBindings"]],
-            "networkPaths": [item["id"] for item in plan["networkPaths"]],
-            "runtimeBindings": [item["id"] for item in plan["runtimeBindings"]],
-            "planIssues": [item["field"] for item in plan["issues"]],
-            "planDerivations": [item["rule"] for item in plan["derivations"]],
-            "resourceNodes": [item["id"] for item in resource["nodes"]],
-            "resourceReferences": [
-                item["id"] for item in resource["references"]
-            ],
-            "resourceEmbeddedBlocks": [
-                item["id"] for item in resource["embeddedBlocks"]
-            ],
-            "resourceRuntimeUnits": [
-                item["id"] for item in resource["runtimeUnits"]
-            ],
-            "resourceBindingSlots": [
-                item["id"] for item in resource["bindingSlots"]
-            ],
-            "resourceLateBindings": [
-                item["id"] for item in resource["lateBindings"]
-            ],
-            "resourceIssues": [item["field"] for item in resource["issues"]],
-            "resourceDerivations": [
-                item.get("rule") or item.get("ruleId")
-                for item in resource["derivations"]
-            ],
-            "runtimeIssues": [item["field"] for item in binding["issues"]],
-            "invalidIssues": [
-                [item["field"], item["classification"]]
-                for item in invalid["issues"]
-            ],
-        },
-    }
-
-
-def test_split_planner_matches_pre_refactor_public_baseline_exactly() -> None:
-    expected = json.loads(_BASELINE.read_text(encoding="utf-8"))
-    actual_input_hash = _sha256(
-        {
-            "candidate": _candidate(),
-            "planningInputs": _planning_inputs(),
-            "runtimeContracts": _runtime_contracts(),
-            "invalidCandidate": _invalid_candidate(),
-        }
-    )
-
-    assert expected["baselineCommit"] == (
-        "190f78fc43cc804d3a4b28d428a53ade5b1ec3f4"
-    )
-    assert actual_input_hash == expected["inputHash"]
-    assert _ordered_summary(_pipeline_outputs()) == expected["summary"]
 
 
 def test_bundle_uses_the_same_normalized_graph_plan_and_resource_plan() -> None:

@@ -52,6 +52,7 @@ def capture_testing_input(
     implementation_job_id: str,
     *,
     artifact_version_ids: Mapping[str, int] | None,
+    contract_artifacts: Mapping[str, Any] | None = None,
 ) -> TestingInput:
     """구현 작업 기록의 파일 묶음 ID를 Testing 입력으로 고정한다."""
     if artifact_version_ids is None:
@@ -63,6 +64,7 @@ def capture_testing_input(
             app_id=app_id,
             implementation_job_id=implementation_job_id,
             artifact_version_ids=dict(artifact_version_ids),
+            contract_artifacts=dict(contract_artifacts or {}),
         )
     except ValueError as error:
         raise ArtifactSourceUnavailable(str(error)) from error

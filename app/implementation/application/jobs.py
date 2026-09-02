@@ -22,14 +22,16 @@ from pathlib import Path
 from typing import Any
 
 from app.db.models import (
+    TYPE_API_SPEC,
+    TYPE_DEPLOYMENT,
     TYPE_DEPLOYMENT_FILE,
     TYPE_FRONTEND_SOURCE_CODE,
     TYPE_IAC_CODE,
+    TYPE_REFINE_REQ,
     TYPE_SOURCE_CODE,
     TYPE_TEST_CODE,
+    TYPE_USECASE_SPEC,
 )
-from app.design.contracts.api_spec import ApiSpecModel
-from app.design.validation import design_readiness_report
 from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
 
@@ -122,6 +124,48 @@ def _upstream_check_summary(design: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _testing_contracts(design: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """구현이 실제로 사용한 요구사항·설계 입력을 Testing용으로 고정한다.
+
+    DB ID는 원본 산출물과의 연결을 증명하고, content는 구현 시작 시점에 이미 수화된 표현을
+    그대로 보존한다. 특히 OpenAPI는 저장된 proposal model에서 결정론적으로 만든 문서이므로
+    Testing이 최신 class/API model을 섞어 다시 만들지 않는다.
+    """
+
+    sources = {
+        "requirements": (TYPE_REFINE_REQ, design.get("refined_requirements")),
+        "use_cases": (TYPE_USECASE_SPEC, design.get("usecase_spec")),
+        "openapi": (TYPE_API_SPEC, design.get("api_spec")),
+        "deployment": (TYPE_DEPLOYMENT, design.get("deployment_diagram_bundle")),
+    }
+    refs = design.get("artifact_versions") or {}
+    contracts: dict[str, dict[str, Any]] = {}
+    for name, (artifact_type, content) in sources.items():
+        ref = refs.get(artifact_type)
+        if content in (None, "", {}, []):
+            # 저장소를 거친 정상 실행에는 네 입력이 모두 있다. 다만 오래된 구현 작업이나
+            # 작은 단위 테스트가 API만 넘긴 경우까지 구현 시작을 막지는 않는다. Testing은
+            # 받은 입력만 고정하고, 필수 계약이 빠졌다면 자신의 입력 검사에서 정확히 알린다.
+            continue
+        encoded = json.dumps(
+            content,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        contract = {
+            "digest": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            "content": content,
+        }
+        # 정상 HTTP 흐름에서는 load_state가 DB version_id를 제공한다. 단위 테스트처럼 저장소를
+        # 거치지 않은 입력도 content와 digest로 고정할 수 있어야 구현 코드가 DB 조회에 묶이지
+        # 않는다.
+        if isinstance(ref, dict) and ref.get("version_id") is not None:
+            contract["version_id"] = int(ref["version_id"])
+        contracts[name] = contract
+    return contracts
+
+
 class JobNotFound(KeyError):
     """요청한 구현 작업 ID의 상태 파일이 없을 때 발생한다."""
 
@@ -182,6 +226,7 @@ class ImplementationWorker:
             "job_path": str(job_path), "run_root": None, "workflow": None,
             # 시작을 막지 않는 설계 finding도 구현 보고서에서 확인할 수 있도록 함께 넘긴다.
             "design_validation": readiness,
+            "testing_contracts": _testing_contracts(design),
             "transmission_request": None, "error": None, "created_at": _now(), "updated_at": _now(),
         }
         self._write(record)
@@ -317,12 +362,16 @@ class ImplementationWorker:
         ):
             snapshot = artifact_repository.load_file_snapshot(app_id, artifact_type)
             if snapshot:
-                snapshots.update(
-                    {
-                        path: item["content"]
-                        for path, item in snapshot.get("files", {}).items()
-                    }
-                )
+                for path, item in snapshot.get("files", {}).items():
+                    # Frontend snapshot은 저장할 때 ``frontend/`` 접두사를 제거한다. 피드백
+                    # workspace를 만들 때 이를 되살리지 않으면 package.json과 src가 백엔드
+                    # 루트에 섞여 원래 애플리케이션과 다른 프로젝트가 된다.
+                    restored_path = (
+                        f"frontend/{path}"
+                        if artifact_type == TYPE_FRONTEND_SOURCE_CODE
+                        else path
+                    )
+                    snapshots[restored_path] = item["content"]
                 base_versions[artifact_type] = snapshot["version_no"]
 
         job_path = self.client.prepare_feedback_job(
@@ -345,6 +394,7 @@ class ImplementationWorker:
             "base_versions": base_versions,
             "feedback": feedback,
             "feedback_eligibility": eligibility,
+            "testing_contracts": _testing_contracts(design),
             "job_path": str(job_path),
             "run_root": None,
             "workflow": None,
@@ -549,6 +599,10 @@ class ImplementationWorker:
             "app_id": record["app_id"],
             "status": record["status"],
             "artifact_version_ids": dict(record.get("artifact_version_ids") or {}),
+            # 내부 작업 파일의 이름은 기존 ``testing_contracts``를 유지하지만, TestingInput이
+            # 사용하는 공개 이름으로 넘긴다. 양쪽 이름을 동시에 노출해 소비자가 임의로
+            # fallback하는 구조를 만들지 않는다.
+            "contract_artifacts": dict(record.get("testing_contracts") or {}),
         }
 
     def cancel(self, job_id: str) -> dict[str, Any]:

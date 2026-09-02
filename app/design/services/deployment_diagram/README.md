@@ -90,6 +90,16 @@ graph adapter만 raw checkpoint JSON을 `WorkloadGraph.model_validate`로 읽고
 `deployment_diagram_model`, `deployment_workload_graph`, `deployment_plan`,
 `deployment_resource_plan` 키도 바뀌지 않는다.
 
+단일 projection은 `selectedTarget`으로 자동 선택한다. 여러 projection은 선택 전에는
+`needsInput`이며, 명시 선택 뒤 해당 projection만 다시 계산한다. 같은 graph 안의 workload
+endpoint와 same-process 호출은 정규화가 결정하지만, 실제 주소를 알 수 없는 external dependency는
+입력으로 남긴다. ERD의 영속 요구는 database engine을 추측하지 않으며, 단일 VM과 명시된
+persistent-storage derivation이 함께 있을 때만 workload-owned disk를 선택한다.
+
+`sizing.py`는 기존 cloud catalog의 provider·region 일치 SKU만 읽어 compute-only 월 예상치를
+만든다. scale-out은 WorkloadGraph의 `replicationSafety`를 다시 확인하고, 선택된 SKU와 replica는
+ResourcePlan에 투영된다.
+
 ## LLM 호출과 repair 범위
 
 - scenario가 있는 생성 한 번은 structured proposal 한 번이다.

@@ -37,8 +37,9 @@ Grounding and boundaries:
 - Actors and browsers are not workloads. Systems EasyDep will not build are
   externalDependencies only when an artifact explicitly identifies them.
 - An ERD proves a logical persistent-data need. It does NOT select PostgreSQL, a
-  database container, an engine, a disk, a port, or a mount path. Do not create a
-  DB workload or storage from the ERD alone.
+  database container, an engine, a port, or a mount path. Do not create a DB
+  workload from the ERD alone. The deterministic planner may add its documented
+  retained workload data disk only for one single-replica Docker-on-VM application.
 - A prebuiltImage workload is legal only when the inputs explicitly select its
   image, engine, container deployment mode, and runtimeCatalogRef
   docker-on-vm/prebuilt-image. Never choose these values yourself.
@@ -52,11 +53,13 @@ Grounding and boundaries:
   design contract whenever explicit persistent storage is selected. The generated
   source code will implement that path. Do not invent a mount path for a prebuilt
   image unless its explicit runtime catalog contract supplies it.
-- Every generated application that calls another workload or external dependency
-  needs either one URL endpointBinding or a host/port endpointBinding pair. Each
-  entry has a stable id, a unique UPPER_SNAKE_CASE environment-variable name,
-  connectionRef, and projection. You may choose clear environment-variable names
-  because they are design outputs consumed by implementation. Do not guess values.
+- For an external dependency, declare either one URL endpointBinding or a
+  host/port endpointBinding pair. Include its explicit address only when the
+  inputs provide it; otherwise leave that address for user input. Each entry has
+  a stable id, a unique UPPER_SNAKE_CASE environment-variable name,
+  connectionRef, and projection. Internal workload and planned-resource
+  endpoints are completed deterministically by the planner, so do not duplicate
+  them or invent their values.
 - Secret inputs use kind=secretBinding and an UPPER_SNAKE_CASE environment-variable
   name. Never include a secret value or provider credential.
 - Configuration ids and names must be unique within a workload. Ordinary
@@ -77,14 +80,16 @@ return the complete graph.
   balancers, public IPs, NAT, firewall resources, or any CSP resource.
 - Keep every workload, external dependency, connection, interface, storage item,
   configuration item, and typed constraint grounded with sourceRefs.
-- Never create a database workload, engine, image, or storage from an ERD alone.
+- Never create a database workload, engine, or image from an ERD alone. The
+  deterministic planner may add its documented retained workload data disk only
+  for one single-replica Docker-on-VM application.
 - Actors and browsers are not workloads.
 - Do not guess exposure, protocol, port, retention, replica safety, data execution
   mode, or prebuilt image details. Keep ambiguity for deterministic validation.
 - Every connection endpoint and referenced interface must exist in the full graph.
-- Every generated source workload connection has either one URL endpointBinding
-  or a host/port endpointBinding pair. Use stable ids and unique UPPER_SNAKE_CASE
-  environment names; never guess endpoint values.
+- Keep endpoint bindings only for external dependencies. Internal workload and
+  planned-resource endpoints are completed by the planner. Use stable ids and
+  unique UPPER_SNAKE_CASE environment names; never guess external endpoint values.
 - A generated application's persistent storage has a design-selected absolute
   POSIX mountPath. Secret bindings have environment names but never secret values.
 

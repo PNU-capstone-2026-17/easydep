@@ -35,6 +35,7 @@ _SYSTEM_ENVIRONMENT = {
     "SSL_CERT_FILE",
     "SYSTEMROOT",
     "TEMP",
+    "TF_CLI_CONFIG_FILE",
     "TMP",
     "USERPROFILE",
     "WINDIR",
@@ -112,6 +113,7 @@ def run_opentofu_checks(terraform_dir: Path, *, timeout_seconds: int = 300) -> d
         message = "OpenTofu 실행 파일을 찾을 수 없습니다."
         return {
             "status": "UNAVAILABLE",
+            "gateStatus": "INCONCLUSIVE",
             "issues": [message],
             "commands": [],
             "planEnabled": plan_enabled,
@@ -169,6 +171,7 @@ def run_opentofu_checks(terraform_dir: Path, *, timeout_seconds: int = 300) -> d
                 message = f"OpenTofu {name} 실행 실패: {error}"
                 return {
                     "status": "FAILED",
+                    "gateStatus": "INCONCLUSIVE",
                     "issues": [message],
                     "commands": executed,
                     "planEnabled": plan_enabled,
@@ -186,6 +189,7 @@ def run_opentofu_checks(terraform_dir: Path, *, timeout_seconds: int = 300) -> d
                 message = f"OpenTofu {name} 검사 실패: {output or '출력이 없습니다.'}"
                 return {
                     "status": "FAILED",
+                    "gateStatus": "FAIL",
                     "issues": [message],
                     "commands": executed,
                     "planEnabled": plan_enabled,
@@ -195,6 +199,7 @@ def run_opentofu_checks(terraform_dir: Path, *, timeout_seconds: int = 300) -> d
     names = ", ".join(item["name"] for item in executed)
     return {
         "status": "PASSED",
+        "gateStatus": "PASS",
         "issues": [],
         "commands": executed,
         "planEnabled": plan_enabled,

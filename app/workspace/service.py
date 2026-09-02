@@ -25,11 +25,11 @@ from app.design.service import (
     revise_design_element,
     revise_design_elements,
     rewind_design_session,
+    select_deployment_target_session,
     start_design_session,
 )
 from app.design.services.common.plantuml import render_plantuml
 from app.design.services.common.structured import capture_llm_timings
-from app.design.validation import design_readiness_report
 from app.implementation.application.jobs import (
     worker as implementation_worker,
 )
@@ -50,7 +50,7 @@ from app.requirements.orchestration.service import (
 )
 from app.requirements.resources.capability_contract import capability_resource_questions
 from app.requirements.runtime import telemetry as requirements_telemetry
-from app.testing.service import CreateTestingJobRequest, create_testing_job, get_testing_job
+from app.testing.service import run_testing
 from app.validation import RepairAttempt, RepairOutcome, stable_digest
 
 from . import repository
@@ -94,9 +94,7 @@ def _implementation_agent_results(run_path: Path) -> list[dict[str, Any]]:
             continue
         results.append(
             {
-                "task_id": str(
-                    payload.get("taskId") or path.name.removesuffix(".result.json")
-                ),
+                "task_id": str(payload.get("taskId") or path.name.removesuffix(".result.json")),
                 "task_type": str(payload.get("taskType") or ""),
                 "status": str(payload.get("status") or ""),
                 "raw_response": str(payload.get("rawResponse") or ""),
@@ -134,9 +132,7 @@ def _resource_questions(
     return questions, selected
 
 
-def _with_capability_handoff_questions(
-    app_id: str, result: dict[str, Any]
-) -> dict[str, Any]:
+def _with_capability_handoff_questions(app_id: str, result: dict[str, Any]) -> dict[str, Any]:
     """Backfill choice cards for checkpoints saved before capability UI support.
 
     Workspace command results are persisted snapshots. Merely deploying the new
@@ -153,8 +149,7 @@ def _with_capability_handoff_questions(
         return result
     blockers = result.get("blocking_findings") or []
     if not any(
-        isinstance(blocker, dict)
-        and blocker.get("code") == "requirements.capability-contract"
+        isinstance(blocker, dict) and blocker.get("code") == "requirements.capability-contract"
         for blocker in blockers
     ):
         return result
@@ -166,8 +161,7 @@ def _with_capability_handoff_questions(
     enriched["resource_question"] = questions[0]
     enriched["resource_questions"] = questions
     enriched["message"] = (
-        "A deployment decision is required before design can start. "
-        f"{questions[0]['question']}"
+        f"A deployment decision is required before design can start. {questions[0]['question']}"
     )
     return enriched
 
@@ -246,13 +240,9 @@ def _merge_delegated_repair_state(
     }
     if outcome not in {"improved", "clean"}:
         rejected.add(candidate_digest)
-    status = (
-        "COMPLETED"
-        if not after
-        else "ACTIVE"
-        if outcome == "improved"
-        else "STALLED"
-    )
+    # 같은 결과가 다시 나와도 자동 수리를 닫지 않는다. 거절된 후보 digest와 이미 사용한
+    # strategy를 계속 전달하므로 다음 시도는 다른 접근을 요구받으며, 횟수 상한은 없다.
+    status = "COMPLETED" if not after else "ACTIVE"
     return {
         "status": status,
         "attempt_count": int(old.get("attempt_count") or 0)
@@ -265,32 +255,8 @@ def _merge_delegated_repair_state(
         "tried_strategies": sorted(tried),
         "rejected_candidate_digests": sorted(rejected),
         "finding_digest": candidate_digest,
-        "stall_reason": (
-            "The delegated repair repeated the same unresolved blocker set."
-            if repeated
-            else "The delegated repair introduced additional blockers."
-            if outcome == "regressed"
-            else "The delegated repair did not reduce the blocker set."
-            if outcome == "no_improvement"
-            else str(new.get("stall_reason") or "")
-        ),
+        "stall_reason": "",
     }
-
-
-def _close_stalled_delegated_repair(result: dict[str, Any]) -> None:
-    """Expose an exhausted delegated-repair episode as a manual revision gate."""
-
-    result["can_delegate_repair"] = False
-    result["message"] = (
-        "Automatic repair could not reduce the remaining blockers. Review them and "
-        "enter a specific revision request before continuing."
-    )
-    result["blocking_findings"] = [
-        {**blocker, "repairable": False}
-        if isinstance(blocker, dict)
-        else blocker
-        for blocker in result.get("blocking_findings") or []
-    ]
 
 
 # The implementation worker has two distinct parts: initial deterministic
@@ -332,7 +298,13 @@ class WorkspaceService:
         self._submission_lock = Lock()
 
     def startup(self) -> int:
-        return repository.interrupt_unfinished()
+        interrupted = repository.interrupt_unfinished()
+        # Testing command는 payload에 고정 입력과 마지막 검사 경계를 저장한다. 별도 작업
+        # 표나 worker를 복구하지 않고 같은 command를 다시 실행하면 Testing 서비스가 그
+        # 체크포인트에서 이어 간다.
+        for command in repository.interrupted_testing_commands():
+            self._executor.submit(self._execute, str(command["command_id"]))
+        return interrupted
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
@@ -568,9 +540,7 @@ class WorkspaceService:
             # A concurrent caller may already have queued the same resume operation.
             return None
 
-    def present_command(
-        self, app_id: str, command: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def present_command(self, app_id: str, command: dict[str, Any] | None) -> dict[str, Any] | None:
         """Return a display-ready command without mutating its stored snapshot."""
 
         if command is None:
@@ -703,7 +673,13 @@ class WorkspaceService:
 
         app_id = str(command["app_id"])
         stage = str(command["stage"])
-        repository.update_command(command_id, status="RUNNING", started_at=repository.now())
+        repository.update_command(
+            command_id,
+            status="RUNNING",
+            started_at=repository.now(),
+            completed_at=None,
+            error=None,
+        )
         repository.append_event(
             app_id,
             command_id=command_id,
@@ -799,6 +775,14 @@ class WorkspaceService:
 
     def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         action = str(command["action"])
+        # 파일 복원이나 검사 도중 서버가 재시작되었다면 구현 수리부터 반복하지 않는다.
+        # 현재 command에 저장한 Testing 체크포인트를 그대로 실행 서비스에 돌려준다.
+        checkpoint = command["payload"].get("testing_checkpoint")
+        if command.get("stage") == "testing" and isinstance(checkpoint, dict):
+            implementation_job_id = str(checkpoint.get("implementation_job_id") or "")
+            if not implementation_job_id:
+                raise ValueError("The Testing checkpoint has no implementation job ID.")
+            return self._run_testing_command(command, implementation_job_id)
         if action in {"message", "advance", "apply_deployment_preferences", "start_design"}:
             return self._stage_message(command, advance=action in {"advance", "start_design"})
         if action == "delegate_repair":
@@ -820,17 +804,87 @@ class WorkspaceService:
                     or prior.get("payload", {}).get("implementation_job_id")
                     or ""
                 )
-                testing_job_id = str(result.get("job_id") or previous_job.get("job_id") or "")
-                if not implementation_job_id or not testing_job_id:
+                previous_run_id = str(result.get("job_id") or previous_job.get("job_id") or "")
+                if not implementation_job_id or not previous_run_id:
                     raise ValueError("The failing testing run cannot be resumed.")
-                job = create_testing_job(
-                    str(command["app_id"]),
-                    CreateTestingJobRequest(
-                        implementation_job_id=implementation_job_id,
-                        repair_testing_job_id=testing_job_id,
-                    ),
+                defect_classes = {
+                    str(blocker.get("defect_class") or "SUT_DEFECT")
+                    for blocker in blockers
+                    if isinstance(blocker, dict)
+                }
+                if "ENVIRONMENT_DEFECT" in defect_classes:
+                    return {
+                        "awaiting_input": True,
+                        "kind": "external_action",
+                        "message": (
+                            "Testing could not reach a conclusion because its runtime or "
+                            "required tool is unavailable. Restore that environment and run "
+                            "the same Testing job again; EasyDep will not change product code "
+                            "to hide an environment failure."
+                        ),
+                        "requires_revision": False,
+                        "can_delegate_repair": False,
+                        "blocking_findings": blockers,
+                        "repair_state": {
+                            **dict(result.get("repair_state") or {}),
+                            "status": "WAITING_EXTERNAL",
+                        },
+                        "job_id": previous_run_id,
+                        "job": previous_job,
+                    }
+                if "UPSTREAM_AMBIGUITY" in defect_classes:
+                    # 이 분류는 고정 요구사항과 OpenAPI 사이에 추적 가능한 endpoint가 없을
+                    # 때만 나온다. 가장 가까운 생산자인 API 명세부터 다시 만들고, 이후
+                    # 설계 단계는 기존 그래프 순서대로 이어서 진행한다.
+                    revised = rewind_design_session(str(command["app_id"]), "api_spec")
+                    shaped = self._design_result(revised)
+                    shaped["message"] = (
+                        "Testing found an ambiguous requirements-to-API mapping, so EasyDep "
+                        "regenerated the API specification from the preserved sequence design."
+                    )
+                    return shaped
+                if "SUT_DEFECT" in defect_classes:
+                    # 동적 테스트까지 실행된 실패라면 그 테스트를 그대로 보존한다. 반대로
+                    # 컴파일·단위 테스트처럼 후보 코드가 생기기 전에 실패한 경우에는 보존할
+                    # 대상이 없으므로, 고친 구현을 새 Testing 작업으로 검사해야 한다.
+                    has_preserved_candidate = any(
+                        bool(str(blocker.get("candidate_code") or "").strip())
+                        for blocker in blockers
+                    )
+                    original_implementation = implementation_worker.get(implementation_job_id)
+                    feedback = self._testing_implementation_feedback(result, blockers)
+                    repair_job = implementation_worker.create_feedback_job(
+                        str(command["app_id"]),
+                        cast(
+                            dict[str, Any],
+                            artifact_repository.load_state(str(command["app_id"])),
+                        ),
+                        feedback,
+                        str(original_implementation.get("base_package") or "com.easydep.app"),
+                        True,
+                    )
+                    repaired = self._monitor_implementation(
+                        repair_job,
+                        command_id=str(command["command_id"]),
+                        auto_approve=True,
+                    )
+                    repaired_job = repaired.get("job") or {}
+                    repaired_job_id = str(
+                        repaired.get("job_id") or repaired_job.get("job_id") or ""
+                    )
+                    if not repaired_job_id:
+                        raise RuntimeError("Automatic implementation repair returned no job ID.")
+                    return self._run_testing_command(
+                        command,
+                        repaired_job_id,
+                        previous_job=previous_job,
+                        preserve_test=has_preserved_candidate,
+                    )
+                return self._run_testing_command(
+                    command,
+                    implementation_job_id,
+                    previous_job=previous_job,
                 )
-                return self._monitor_testing(job)
             history = dict(result.get("repair_state") or {})
             repair_stage = str(
                 result.get("current_stage") or result.get("phase") or prior.get("stage")
@@ -913,9 +967,7 @@ class WorkspaceService:
             payload = command["payload"]
             current_job = implementation_worker.get(str(payload["job_id"]))
             if str(current_job.get("app_id") or "") != str(command["app_id"]):
-                raise ValueError(
-                    "The implementation checkpoint does not belong to this app."
-                )
+                raise ValueError("The implementation checkpoint does not belong to this app.")
             repository.append_event(
                 str(command["app_id"]),
                 command_id=str(command["command_id"]),
@@ -963,13 +1015,10 @@ class WorkspaceService:
             job = implementation_worker.cancel(str(command["payload"]["job_id"]))
             return {"message": "Cancelled the implementation job.", "job": job}
         if action == "start_testing":
-            job = create_testing_job(
-                str(command["app_id"]),
-                CreateTestingJobRequest(
-                    implementation_job_id=str(command["payload"]["implementation_job_id"])
-                ),
+            return self._run_testing_command(
+                command,
+                str(command["payload"]["implementation_job_id"]),
             )
-            return self._monitor_testing(job)
         raise ValueError(f"Unsupported workspace command: {action}")
 
     def _stage_message(self, command: dict[str, Any], *, advance: bool) -> dict[str, Any]:
@@ -1012,8 +1061,7 @@ class WorkspaceService:
                     previous_result
                 )
                 resource_question = (
-                    previous_result.get("resource_question")
-                    or selected_resource_question
+                    previous_result.get("resource_question") or selected_resource_question
                 )
                 resource_field = str((resource_question or {}).get("field") or "")
                 if text and resource_field:
@@ -1096,8 +1144,6 @@ class WorkspaceService:
                     strategy_key=str(payload.get("_repair_strategy_key") or "delegate"),
                 )
                 shaped["repair_state"] = merged_repair_state
-                if merged_repair_state.get("status") == "STALLED":
-                    _close_stalled_delegated_repair(shaped)
             return shaped
 
         if stage == "design":
@@ -1109,6 +1155,19 @@ class WorkspaceService:
                     "starting or advancing the design pipeline."
                 )
             context = payload.get("context") or {}
+            action_id = str(payload.get("action_id") or "")
+            previous = repository.get_command(action_id) if action_id else None
+            previous_result = (previous or {}).get("result") or {}
+            resource_question = previous_result.get("resource_question") or {}
+            if text and resource_question.get("field") == "deployment.selectedTarget":
+                allowed = {
+                    str(choice.get("value") or "")
+                    for choice in resource_question.get("choices") or []
+                    if isinstance(choice, dict)
+                }
+                if text not in allowed:
+                    raise ValueError("Choose one of the stored deployment targets.")
+                return self._design_result(select_deployment_target_session(app_id, text))
             target_feedbacks = self._sequence_target_feedbacks(context)
             revised: dict[str, Any] | None = None
             if target_feedbacks:
@@ -1202,8 +1261,6 @@ class WorkspaceService:
                     strategy_key=str(payload.get("_repair_strategy_key") or "delegate"),
                 )
                 shaped["repair_state"] = merged_repair_state
-                if merged_repair_state.get("status") == "STALLED":
-                    _close_stalled_delegated_repair(shaped)
             return shaped
 
         if stage != "implementation":
@@ -1681,6 +1738,42 @@ class WorkspaceService:
             or result.get("current_stage")
             or result.get("stage")
         )
+        deployment_meta = (result.get("artifact_metadata") or {}).get("deployment_diagram") or {}
+        target_choices = [
+            {
+                "value": str(target.get("id") or ""),
+                "label": (
+                    f"{str(target.get('provider') or '').upper()} {target.get('region') or ''!s}"
+                ).strip(),
+                "description": (
+                    "Zones: " + ", ".join(str(zone) for zone in target.get("zones") or [])
+                    if target.get("zones")
+                    else "Use this completed deployment projection."
+                ),
+            }
+            for target in deployment_meta.get("targets") or []
+            if isinstance(target, dict) and target.get("status") == "completed" and target.get("id")
+        ]
+        if (
+            stage == "deployment_diagram"
+            and (deployment_meta.get("selection") or {}).get("status") == "needsInput"
+            and target_choices
+        ):
+            question = {
+                "field": "deployment.selectedTarget",
+                "kind": "required",
+                "question": "Choose the deployment target to use for the final package.",
+                "choices": target_choices,
+            }
+            return {
+                "awaiting_input": True,
+                "kind": "question",
+                "message": question["question"],
+                "current_stage": stage,
+                "resource_question": question,
+                "resource_questions": [question],
+                "design": result,
+            }
         stage_validation = (result.get("validation") or {}).get(stage) or {}
         findings = [
             *list(stage_validation.get("errors") or []),
@@ -1819,9 +1912,7 @@ class WorkspaceService:
             except Exception:  # Progress reporting must not interrupt a job.
                 private_job = job
 
-        run_root = str(
-            private_job.get("run_root") or job.get("run_root") or ""
-        ).strip()
+        run_root = str(private_job.get("run_root") or job.get("run_root") or "").strip()
         workflow = private_job.get("workflow") or job.get("workflow")
         run_path = Path(run_root) if run_root else None
         if run_path is not None:
@@ -1999,8 +2090,7 @@ class WorkspaceService:
                         if current_phase and task_phase != current_phase:
                             continue
                         statuses = {
-                            str(task.get("status") or "PENDING").lower()
-                            for task in phase_tasks
+                            str(task.get("status") or "PENDING").lower() for task in phase_tasks
                         }
                         if statuses & {"failed", "timeout", "needs_review"}:
                             task_status = next(
@@ -2032,8 +2122,7 @@ class WorkspaceService:
                         )
 
             workflow_complete = workflow_status == "COMPLETE" or (
-                workflow_status == "READY"
-                and implementation_worker._workflow_is_complete(workflow)
+                workflow_status == "READY" and implementation_worker._workflow_is_complete(workflow)
             )
             activity = workflow.get("currentActivity")
             if (
@@ -2059,9 +2148,7 @@ class WorkspaceService:
                         ("implementation", "Backend 구현", frozenset()),
                     )
                 activity_prefix = (
-                    "빌드 및 Unit Test"
-                    if activity_id.startswith("verify-")
-                    else "구현 결과 확인"
+                    "빌드 및 Unit Test" if activity_id.startswith("verify-") else "구현 결과 확인"
                 )
                 activity_label = f"{display_label} {activity_prefix}"
                 if display_label.endswith(" 구현") and activity_prefix.startswith("구현 "):
@@ -2092,7 +2179,10 @@ class WorkspaceService:
             latest_path: Path | None = None
             for candidate in sorted(events_dir.glob("*.events.jsonl")):
                 try:
-                    if latest_path is None or candidate.stat().st_mtime >= latest_path.stat().st_mtime:
+                    if (
+                        latest_path is None
+                        or candidate.stat().st_mtime >= latest_path.stat().st_mtime
+                    ):
                         latest_path = candidate
                 except OSError:
                     continue
@@ -2133,17 +2223,15 @@ class WorkspaceService:
                     )
                     if not isinstance(path_value, str) or not path_value.strip():
                         continue
-                    if (
-                        "file_editor" not in tool_name
-                        and tool_name not in {"restricted_file_editor", "file_editor"}
-                    ):
+                    if "file_editor" not in tool_name and tool_name not in {
+                        "restricted_file_editor",
+                        "file_editor",
+                    }:
                         continue
                     current_file = path_value.strip().replace("\\", "/")
                     application_marker = "/application/"
                     if application_marker in current_file:
-                        current_file = "application/" + current_file.split(
-                            application_marker, 1
-                        )[1]
+                        current_file = "application/" + current_file.split(application_marker, 1)[1]
 
         if current_file:
             file_name = Path(current_file).name
@@ -2172,8 +2260,41 @@ class WorkspaceService:
             snapshot["agent_results"] = agent_results
         return snapshot
 
+    @staticmethod
+    def _testing_implementation_feedback(
+        result: dict[str, Any], blockers: list[dict[str, Any]]
+    ) -> str:
+        """제품 수리 에이전트에 실패 증거와 고정 테스트를 읽기 쉽게 전달한다."""
+        evidence = []
+        candidate_code = ""
+        for blocker in blockers:
+            message = str(blocker.get("message") or "").strip()
+            if message:
+                evidence.append(message)
+            if not candidate_code:
+                candidate_code = str(blocker.get("candidate_code") or "").strip()
+        history = dict(result.get("repair_state") or {})
+        parts = [
+            "The generated application failed a preserved functional test. Repair only "
+            "the production implementation. Keep the existing contracts and test "
+            "acceptance conditions unchanged.",
+            "Failure evidence:\n- " + "\n- ".join(evidence or ["Testing gate failed."]),
+        ]
+        if candidate_code:
+            parts.append("Preserved executable test:\n```python\n" + candidate_code + "\n```")
+        if history:
+            parts.append(
+                "Previous repair history:\n"
+                + json.dumps(history, ensure_ascii=False, sort_keys=True)
+            )
+        return "\n\n".join(parts)
+
     def _monitor_implementation(
-        self, job: dict[str, Any], *, command_id: str | None = None
+        self,
+        job: dict[str, Any],
+        *,
+        command_id: str | None = None,
+        auto_approve: bool = False,
     ) -> dict[str, Any]:
         job_id = str(job["job_id"])
         app_id = str(job.get("app_id") or "")
@@ -2260,6 +2381,21 @@ class WorkspaceService:
                     last_agent_results[task_id] = fingerprint
             if status == "AWAITING_APPROVAL":
                 request = current.get("transmission_request") or {}
+                if auto_approve:
+                    request_id = str(request.get("requestId") or "")
+                    if not request_id:
+                        raise RuntimeError(
+                            "Automatic implementation repair has no transmission request ID."
+                        )
+                    implementation_worker.approve(
+                        job_id,
+                        request_id,
+                        True,
+                        "EasyDep automatic Testing repair",
+                        True,
+                        True,
+                    )
+                    continue
                 return {
                     "awaiting_input": True,
                     "kind": "action_required",
@@ -2279,48 +2415,87 @@ class WorkspaceService:
                 }
             time.sleep(1)
 
-    def _monitor_testing(self, job: dict[str, Any]) -> dict[str, Any]:
-        job_id = str(job["job_id"])
-        while True:
-            current = get_testing_job(job_id)
-            status = str(current.get("status") or "")
-            if status in {"COMPLETED", "FAILED"}:
-                if status == "FAILED":
-                    raise RuntimeError(str(current.get("error") or "The testing job failed."))
-                report = current.get("result") or {}
-                if report.get("passed") is False:
-                    blockers = list(report.get("blocking_findings") or [])
-                    return {
-                        "awaiting_input": True,
-                        "kind": "action_required",
-                        "message": (
-                            f"Testing found {len(blockers)} blocking failure(s). "
-                            "Review them, provide feedback, or delegate another repair "
-                            "attempt to the LLM."
-                        ),
-                        "requires_revision": True,
-                        "blocking_findings": blockers,
-                        "repair_state": report.get("repair_state")
-                        or {
-                            "status": "ACTIVE",
-                            "attempt_count": 0,
-                            "accepted_count": 0,
-                            "recent_attempts": [],
-                        },
-                        "can_delegate_repair": any(
-                            blocker.get("repairable") is not False
-                            for blocker in blockers
-                            if isinstance(blocker, dict)
-                        ),
-                        "job_id": job_id,
-                        "job": current,
-                    }
-                return {
-                    "message": "Testing completed.",
-                    "job_id": job_id,
-                    "job": current,
-                }
-            time.sleep(1)
+    def _run_testing_command(
+        self,
+        command: dict[str, Any],
+        implementation_job_id: str,
+        *,
+        previous_job: dict[str, Any] | None = None,
+        preserve_test: bool = False,
+    ) -> dict[str, Any]:
+        """Testing을 실행하고 재시작에 필요한 최소 상태를 현재 command에 저장한다."""
+
+        command_id = str(command["command_id"])
+
+        def save_checkpoint(checkpoint: dict[str, Any]) -> None:
+            # 긴 Docker 검사 중에도 command row는 존재한다. 최신 payload를 다시 읽어 다른
+            # 실행 정보는 보존하고 Testing 전용 값 하나만 교체한다.
+            latest = repository.get_command(command_id)
+            if latest is None:
+                raise RuntimeError("The Workspace command disappeared during Testing.")
+            payload = {
+                **dict(latest.get("payload") or {}),
+                "testing_checkpoint": checkpoint,
+            }
+            command["payload"] = payload
+            repository.update_command(command_id, payload=payload)
+
+        checkpoint = command.get("payload", {}).get("testing_checkpoint")
+        job = run_testing(
+            str(command["app_id"]),
+            implementation_job_id,
+            run_id=command_id,
+            previous_job=previous_job,
+            preserve_test=preserve_test,
+            checkpoint=checkpoint if isinstance(checkpoint, dict) else None,
+            progress=save_checkpoint,
+        )
+        return self._testing_result(job)
+
+    @staticmethod
+    def _testing_result(job: dict[str, Any]) -> dict[str, Any]:
+        """동기 실행 결과를 기존 Workspace 응답 모양으로 바꾼다."""
+
+        report = job.get("result") or {}
+        job_id = str(job.get("job_id") or "")
+        if report.get("passed") is False:
+            blockers = list(report.get("blocking_findings") or [])
+            repairable = any(
+                blocker.get("repairable") is not False
+                for blocker in blockers
+                if isinstance(blocker, dict)
+            )
+            return {
+                "awaiting_input": True,
+                "kind": "action_required",
+                "message": (
+                    f"Testing found {len(blockers)} blocking failure(s). "
+                    + (
+                        "EasyDep classified the failures and will continue the "
+                        "matching automatic repair path."
+                        if repairable
+                        else "The runtime environment must be restored before the "
+                        "same checks can continue."
+                    )
+                ),
+                "requires_revision": True,
+                "blocking_findings": blockers,
+                "repair_state": report.get("repair_state")
+                or {
+                    "status": "ACTIVE",
+                    "attempt_count": 0,
+                    "accepted_count": 0,
+                    "recent_attempts": [],
+                },
+                "can_delegate_repair": repairable,
+                "job_id": job_id,
+                "job": job,
+            }
+        return {
+            "message": "Testing completed.",
+            "job_id": job_id,
+            "job": job,
+        }
 
     @staticmethod
     def _error_text(error: Exception) -> str:

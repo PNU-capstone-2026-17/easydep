@@ -40,9 +40,7 @@ _EVENT_LIMIT_PER_APP = 1_000
 # restart cannot hide newly emitted in-memory events behind a reset-to-one cursor.
 _event_ids = count(int(datetime.now(UTC).timestamp() * 1_000_000))
 _event_lock = RLock()
-_events: dict[str, deque[dict[str, Any]]] = defaultdict(
-    lambda: deque(maxlen=_EVENT_LIMIT_PER_APP)
-)
+_events: dict[str, deque[dict[str, Any]]] = defaultdict(lambda: deque(maxlen=_EVENT_LIMIT_PER_APP))
 
 
 def now() -> datetime:
@@ -89,9 +87,7 @@ def command_dict(row: WorkspaceCommand) -> dict[str, Any]:
     }
 
 
-def event_dict(
-    row: Any, *, include_llm_timings: bool = True
-) -> dict[str, Any]:
+def event_dict(row: Any, *, include_llm_timings: bool = True) -> dict[str, Any]:
     """이전 ORM 형식의 event 객체를 현재 API 형식으로 바꾼다.
 
     원격 DB 정리 이후 새 event는 메모리에 저장하지만, 기존 호출부와 단위 테스트가 넘기는
@@ -114,9 +110,7 @@ def event_dict(
     }
 
 
-def _event_metadata(
-    metadata: dict[str, Any], *, include_llm_timings: bool
-) -> dict[str, Any]:
+def _event_metadata(metadata: dict[str, Any], *, include_llm_timings: bool) -> dict[str, Any]:
     """목록 응답에서는 큰 LLM 원문 대신 개수만 남긴다."""
     result = dict(metadata)
     if not include_llm_timings and result.get("progress_event") == "designLlmMetrics":
@@ -140,16 +134,16 @@ def create_command(
     with session_scope() as session:
         # SELECT 후 INSERT만 하면 두 요청이 동시에 "활성 command 없음"을 보고 둘 다
         # 저장할 수 있다. 항상 존재하는 부모 app 행을 잠가 앱별 생성 절차를 직렬화한다.
-        app = session.scalar(
-            select(App).where(App.app_id == app_id).with_for_update()
-        )
+        app = session.scalar(select(App).where(App.app_id == app_id).with_for_update())
         if app is None:
             raise KeyError(app_id)
         active = session.scalar(
-            select(WorkspaceCommand).where(
+            select(WorkspaceCommand)
+            .where(
                 WorkspaceCommand.app_id == app_id,
                 WorkspaceCommand.status.in_(ACTIVE_STATUSES),
-            ).limit(1)
+            )
+            .limit(1)
         )
         if active is not None:
             raise RuntimeError(f"An active workspace command already exists: {active.command_id}")
@@ -173,17 +167,13 @@ def get_command(command_id: str) -> dict[str, Any] | None:
         return command_dict(row) if row is not None else None
 
 
-def latest_command(
-    app_id: str, *, exclude_command_id: str | None = None
-) -> dict[str, Any] | None:
+def latest_command(app_id: str, *, exclude_command_id: str | None = None) -> dict[str, Any] | None:
     """앱의 가장 최근 command를 조회하되 필요하면 현재 command 한 건을 제외한다."""
     with session_scope() as session:
         query = select(WorkspaceCommand).where(WorkspaceCommand.app_id == app_id)
         if exclude_command_id:
             query = query.where(WorkspaceCommand.command_id != exclude_command_id)
-        row = session.scalar(
-            query.order_by(WorkspaceCommand.created_at.desc()).limit(1)
-        )
+        row = session.scalar(query.order_by(WorkspaceCommand.created_at.desc()).limit(1))
         return command_dict(row) if row is not None else None
 
 
@@ -247,9 +237,7 @@ def list_events(
     """
     with _event_lock:
         events = [
-            dict(event)
-            for event in _events.get(app_id, ())
-            if int(event["event_id"]) > after
+            dict(event) for event in _events.get(app_id, ()) if int(event["event_id"]) > after
         ][:limit]
     for event in events:
         event["metadata"] = _event_metadata(
@@ -265,20 +253,14 @@ def get_event_llm_timings(
     """메모리에 남아 있는 설계 LLM 원문을 작은 page 단위로 반환한다."""
     with _event_lock:
         event = next(
-            (
-                item
-                for item in _events.get(app_id, ())
-                if int(item["event_id"]) == event_id
-            ),
+            (item for item in _events.get(app_id, ()) if int(item["event_id"]) == event_id),
             None,
         )
         if event is None:
             raise KeyError(event_id)
         metadata = event.get("metadata", {})
         timings = metadata.get("llm_timing_events")
-        if metadata.get("progress_event") != "designLlmMetrics" or not isinstance(
-            timings, list
-        ):
+        if metadata.get("progress_event") != "designLlmMetrics" or not isinstance(timings, list):
             raise ValueError("The event does not contain design LLM timings.")
         page = list(timings[offset : offset + limit])
         total = len(timings)
@@ -365,9 +347,7 @@ def list_workspace_apps(limit: int = 50) -> list[dict[str, Any]]:
                     "app_id": app.app_id,
                     "title": first_line[:72] or f"EasyDep app {app.app_id[:8]}",
                     "current_stage": (
-                        command.stage
-                        if command is not None
-                        else workflow_stage(app.current_stage)
+                        command.stage if command is not None else workflow_stage(app.current_stage)
                     ),
                     "created_at": app.created_at.isoformat() if app.created_at else None,
                     "command": command_dict(command) if command is not None else None,
@@ -397,3 +377,19 @@ def interrupt_unfinished() -> int:
             row.completed_at = now()
             changed += 1
     return changed
+
+
+def interrupted_testing_commands() -> list[dict[str, Any]]:
+    """고정 입력이 저장되어 있어 안전하게 다시 실행할 수 있는 Testing 명령을 반환한다."""
+    with session_scope() as session:
+        rows = session.scalars(
+            select(WorkspaceCommand).where(
+                WorkspaceCommand.stage == "testing",
+                WorkspaceCommand.status == "INTERRUPTED",
+            )
+        ).all()
+        return [
+            command_dict(row)
+            for row in rows
+            if isinstance((row.payload or {}).get("testing_checkpoint"), dict)
+        ]

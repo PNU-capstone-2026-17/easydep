@@ -284,6 +284,19 @@ def load_state(app_id: str) -> ArchitectureState:
             .where(ArtifactVersion.app_id == app_id)
         ).all()
 
+        # 구현과 Testing에는 실제로 읽은 산출물 버전을 함께 넘긴다. 구현이 시작된 뒤
+        # 설계가 수정되더라도 Testing이 새 버전을 섞어 읽지 않게 하기 위한 정보다.
+        state["artifact_versions"] = {
+            version.artifact_type: {
+                "version_id": version.id,
+                "version_no": version.version_no,
+                "stored_digest": hashlib.sha256(
+                    version.content.encode("utf-8")
+                ).hexdigest(),
+            }
+            for version in artifact_rows
+        }
+
         for version in artifact_rows:
             stage = STAGE_BY_ARTIFACT_TYPE.get(version.artifact_type)
             if stage is None:

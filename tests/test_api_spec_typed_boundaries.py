@@ -476,6 +476,7 @@ def test_accepted_model_round_trips_existing_json_and_openapi_contract() -> None
         "arguments": {"filter": "$query.filter"},
         "outcomes": {"200": "ok"},
     }
+    assert operation["x-easydep-use-case-ids"] == ["UC1"]
     validate_openapi(openapi)
 
 

@@ -1,6 +1,6 @@
 # EasyDep 전체 실행 흐름과 데이터 계약
 
-> 기준일: 2026-08-29  
+> 기준일: 2026-09-02
 > 대상: `dev` 브랜치의 현재 코드  
 > 목적: 기능을 줄이거나 고치기 전에, 사용자의 입력이 어떤 API와 LLM을 거쳐 어떤 산출물이 되는지 한 문서에서 확인한다.
 
@@ -141,7 +141,7 @@ type WorkspaceCommand = {
 message, advance, delegate_repair,
 confirm_change, dismiss_change,
 start_design, retry_requirements, retry_design,
-start_implementation, rerun_implementation,
+  start_implementation, retry_implementation, rerun_implementation,
 approve_implementation, reject_implementation, cancel_implementation,
 start_testing, apply_deployment_preferences
 ```
@@ -194,18 +194,19 @@ class AnalyzeRequest(BaseModel):
     feedback_gates: bool | None
     app_id: str | None
 
+
 class InitialCloudConstraints(BaseModel):
     provider: Literal["aws", "azure", "gcp"]
     region: str
     monthly_budget_amount: float | None
     monthly_budget_currency: str
 
+
 class FeedbackEdit(BaseModel):
     stage: Literal["actors", "use_cases", "specs", "relationships"]
     scope: Literal["local", "broad"]
     target_ids: list[str]
     instruction: str
-
 ```
 
 `InitialCloudConstraints` 객체를 보낼 때에는 provider와 region이 둘 다 있어야 한다. 앱 생성
@@ -262,6 +263,7 @@ class MainScenarioStep(BaseModel):
     step_number: int
     sentence: str
     covered_req_ids: list[str]
+
 
 class Extension(BaseModel):
     label: str
@@ -419,6 +421,7 @@ class SequenceCollection(BaseModel):
     class_diagram_hash: str
     MethodProposals: list[dict]
 
+
 class UseCaseSequence(BaseModel):
     use_case_id: str
     use_case_name: str
@@ -426,6 +429,7 @@ class UseCaseSequence(BaseModel):
     Messages: list[SequenceMessage]
     UnresolvedSteps: list[dict]
     NarrativeSteps: list[dict]
+
 
 class SequenceMessage(BaseModel):
     source: str
@@ -450,10 +454,12 @@ class SequenceMessage(BaseModel):
 ```python
 class ApiSpecProposal(BaseModel):
     """LLM이 답하는 HTTP 계약. 실행 연결과 추적 정보는 없다."""
+
     title: str
     version: str
     Endpoints: list[ApiEndpointProposal]
     Schemas: list[ApiSchemaProposal]
+
 
 class ApiEndpointProposal(BaseModel):
     interaction_id: str
@@ -465,11 +471,13 @@ class ApiEndpointProposal(BaseModel):
     request_schema: str
     responses: list[ApiResponse]
 
+
 class ApiSpecModel(BaseModel):
     title: str
     version: str
     Endpoints: list[ApiEndpoint]
     Schemas: list[ApiSchema]
+
 
 class ApiEndpoint(BaseModel):
     interaction_id: str
@@ -484,6 +492,7 @@ class ApiEndpoint(BaseModel):
     source_classes: list[str]
     use_case_ids: list[str]
     control_binding: ApiControlBinding | None
+
 
 class ApiControlBinding(BaseModel):
     control: str
@@ -528,6 +537,7 @@ class WorkloadGraphProposal(BaseModel):
     constraints: list[WorkloadConstraint]
     derivations: list[dict]
 
+
 class Workload(BaseModel):
     id: str
     name: str
@@ -552,16 +562,18 @@ type DeploymentBundle = {
     "planningFacts": dict,
     "workloadGraph": WorkloadGraphProposal,
     "resourceSpec": dict,
-    "projections": list[{
-        "provider": str,
-        "region": str,
-        "planningContext": dict,
-        "deploymentPlan": dict,
-        "deploymentPlanStructureDigest": str,
-        "resourcePlan": dict,
-        "resourcePlanStructureDigest": str,
-        "issues": list,
-    }],
+    "projections": list[
+        {
+            "provider": str,
+            "region": str,
+            "planningContext": dict,
+            "deploymentPlan": dict,
+            "deploymentPlanStructureDigest": str,
+            "resourcePlan": dict,
+            "resourcePlanStructureDigest": str,
+            "issues": list,
+        }
+    ],
 }
 ```
 
@@ -592,8 +604,9 @@ class CreateImplementationJobRequest(BaseModel):
     base_package: str = "com.example.generated"
     allow_assumptions: bool = True
 
+
 class ApprovalRequest(BaseModel):
-    request_id: str               # SHA-256 길이의 64자 ID
+    request_id: str  # SHA-256 길이의 64자 ID
     approved: bool
     approved_by: str = "EasyDep user"
     retry_failed: bool = False
@@ -695,14 +708,11 @@ class ImplementationIR:
 ### 6.1 입력 타입
 
 ```python
-class CreateTestingJobRequest(BaseModel):
-    implementation_job_id: str
-    repair_testing_job_id: str | None = None
-
 class TestingInput(BaseModel):
     app_id: str
     implementation_job_id: str
     artifact_version_ids: dict[str, int]
+    contract_artifacts: TestingContracts
 ```
 
 허용하는 파일 종류는 구현 산출물 다섯 가지이다. 최소한 `SOURCE_CODE`와
@@ -712,13 +722,15 @@ class TestingInput(BaseModel):
 ### 6.2 실제 검사 순서
 
 1. 지정된 산출물 버전들을 임시 폴더에 한 번 복원한다.
-2. `TestingAdapter`가 생성 프로젝트의 build 도구로 compile과 unit test를 실행한다.
-3. 같은 복원 폴더에서 배포 파일과 IaC 정적 검사를 최대 2개 병렬로 실행한다.
-4. 생성 애플리케이션을 컨테이너로 실행한다. 호출자가 `target_url`을 주었다면 기존 앱을 쓴다.
-5. 요구사항 산출물을 근거로 동적 기능 테스트를 만들고 업무 API를 호출한다.
-6. 동적 NFR 노드를 실행한다. 현재 구현은 부하·스트레스 검사를 하지 않고 `SKIPPED` 보고서를
-   반환하는 placeholder이다.
-7. 모든 결과를 하나의 testing report로 합친다.
+2. 같은 복원 폴더에서 배포 파일과 IaC 정적 검사를 최대 2개 병렬로 실행한다.
+3. 생성 애플리케이션을 컨테이너로 실행한다. 호출자가 `target_url`을 주었다면 기존 앱을 쓴다.
+4. 요구사항과 고정 OpenAPI를 근거로 전체 흐름 테스트를 만들고 업무 API를 호출한다.
+5. 사용자 DOM·JavaScript·event·routing 확인이 필요한 흐름만 Playwright headless shell에서
+   실행한다. 화면 screenshot이나 픽셀 비교는 하지 않는다.
+6. 모든 결과를 하나의 testing report로 합친다.
+
+compile, 단위 테스트, 작은 통합 테스트와 frontend build는 구현 에이전트가 각 코드 작업 직후
+실행하고 같은 대화에서 수리한다. Testing 단계는 이 검사를 반복하지 않는다.
 
 ```python
 class TestingState(TypedDict):
@@ -735,24 +747,24 @@ class TestingState(TypedDict):
     iac_report: dict | None
 ```
 
-현재 전체 성공 판정은 unit test 성공과 동적 기능 검사 성공을 필수로 본다. 배포·IaC 정적
-문제는 diagnostics에 남지만 그 자체만으로 전체 `passed=false`가 되지는 않는다. 앱 실행에
-실패하면 동적 검사를 할 수 없으므로 전체 실패이다.
+현재 전체 성공 판정은 배포 정적 검사와 동적 기능 검사를 필수로 보며, IaC 산출물이 있는
+애플리케이션은 IaC 검사도 필수다. 앱 실행에 실패하면 동적 검사를 할 수 없으므로 전체 실패다.
 
 ### 6.3 테스트 수리
 
-실패한 테스트 작업 ID를 `repair_testing_job_id`로 넘기면 다음 조건을 확인한다.
+자동 수리 command는 바로 전 Testing command의 결과를 넘기며 다음 조건을 확인한다.
 
 - 이전 작업과 새 작업의 앱 ID와 구현 작업 ID가 같은가
 - 이전 작업이 완료되었고 실제로 실패했는가
 - 두 작업의 `TestingInput`, 즉 파일 버전 묶음이 같은가
 
-조건이 맞으면 이전 지적과 수리 이력을 동적 테스트 생성 입력에 포함한다. 같은 후보나 같은
-실패를 반복하면 `STALLED`로 표시한다. 테스트 수리는 구현 source를 자동 수정하는 기능이 아니라
-같은 구현을 대상으로 테스트 후보를 다시 만드는 경로이다.
+조건이 맞으면 이전 지적과 수리 이력을 동적 테스트 생성 입력에 포함한다. 테스트 자체의 문제는
+같은 구현에서 후보를 다시 만들고, 구현 문제는 실패를 발견한 테스트를 보존한 채 구현 수리 뒤
+다시 실행한다.
 
-테스트 작업 registry는 프로세스 메모리에 있다. 서버가 재시작되면 테스트 작업 ID로 조회하거나
-재개할 수 없으며, 완료된 구현 작업에서 새 테스트를 시작해야 한다.
+별도 Testing 작업 registry나 테이블은 두지 않는다. Workspace가 `TestingInput`, 현재 검사와
+부분 결과를 현재 `workspace_commands.payload.testing_checkpoint`에 저장한다. 서버가 재시작되면
+같은 command가 체크포인트를 읽어 고정 입력과 수리 이력을 유지한 채 전체 흐름 검사를 재개한다.
 
 ## 7. 자동 수리의 실제 동작
 
@@ -769,17 +781,22 @@ class RepairAttempt(BaseModel):
     finding_keys_before: tuple[str, ...]
     finding_keys_after: tuple[str, ...]
     outcome: Literal[
-        "improved", "clean", "repeated_candidate", "no_improvement",
-        "regressed", "waiting_external", "error"
+        "improved",
+        "clean",
+        "repeated_candidate",
+        "no_improvement",
+        "regressed",
+        "waiting_external",
+        "error",
     ]
     prompt_tokens: int | None
     completion_tokens: int | None
     elapsed_ms: float | None
 
+
 class RepairStateSummary(BaseModel):
     status: Literal[
-        "ACTIVE", "WAITING_EXTERNAL", "STALLED", "NEEDS_INPUT",
-        "COMPLETED", "CANCELLED"
+        "ACTIVE", "WAITING_EXTERNAL", "STALLED", "NEEDS_INPUT", "COMPLETED", "CANCELLED"
     ]
     attempt_count: int
     accepted_count: int
@@ -879,7 +896,7 @@ checkpoint 본문, 각 상태 채널의 값, 아직 반영되지 않은 쓰기�
 | 클래스 accepted-unit cache | 프로세스 메모리 | 사라짐 |
 | 구현 작업 | 구현 work root의 `easydep-job-state.json` | 승인 파일이 있으면 실행 재개, 없으면 실패 처리 |
 | 구현 생성 run | 구현 work root의 immutable run directory | 완료된 run 재사용 가능 |
-| 테스트 작업 | 프로세스 메모리 | 사라짐, 구현 작업에서 새 테스트 필요 |
+| 테스트 진행 위치와 고정 입력 | `workspace_commands.payload.testing_checkpoint` | 같은 명령에서 재개 가능 |
 
 Workspace 명령이 `INTERRUPTED`가 되었다고 요구사항·설계 체크포인트가 삭제되는 것은 아니다.
 사용자는 해당 단계의 retry 명령으로 실패 지점부터 다시 실행할 수 있다.
@@ -907,8 +924,10 @@ class_diagram, sequence_diagram, api_spec, erd, deployment_diagram
 ```
 
 요구사항 JSON은 그대로 저장한다. 설계 다섯 단계는 JSON 원본을 저장하고 PlantUML/OpenAPI를
-다시 만든다. 이미지 URL에는 버전 번호가 없으므로 매번 현재 모델에서 렌더하고 `no-store`로
-응답한다. 시퀀스는 유스케이스별 그림도 조회할 수 있다.
+코드로 만든다. PlantUML 산출물은 저장 직후 SVG·PNG로 렌더링해 프로세스 메모리에 보관한다.
+이미지 API는 정상 흐름에서 이 cache만 읽으며, 서버 재시작 뒤 cache가 비었을 때에만 현재
+모델을 복원해 한 번 다시 렌더링한다. URL에는 버전 번호가 없으므로 HTTP 응답은 `no-store`를
+유지한다. 시퀀스는 유스케이스별 그림도 조회할 수 있다.
 
 ## 10. 현재 LLM 설정과 동시 실행 수
 

@@ -20,11 +20,7 @@ def _index_names(model: type) -> set[str]:
 
 
 def _constraint_names(model: type) -> set[str]:
-    return {
-        str(constraint.name)
-        for constraint in model.__table__.constraints
-        if constraint.name
-    }
+    return {str(constraint.name) for constraint in model.__table__.constraints if constraint.name}
 
 
 def test_only_seven_clear_persistence_tables_are_registered() -> None:
@@ -68,13 +64,11 @@ def test_app_holds_single_row_configuration_and_workspace_indexes() -> None:
 
 
 def test_agent_tables_share_a_graph_scoped_keyspace() -> None:
-    assert [column.name for column in AgentCheckpoint.__table__.primary_key][0] == (
+    assert next(column.name for column in AgentCheckpoint.__table__.primary_key) == "graph_type"
+    assert next(column.name for column in AgentCheckpointBlob.__table__.primary_key) == (
         "graph_type"
     )
-    assert [column.name for column in AgentCheckpointBlob.__table__.primary_key][0] == (
-        "graph_type"
-    )
-    assert [column.name for column in AgentCheckpointWrite.__table__.primary_key][0] == (
+    assert next(column.name for column in AgentCheckpointWrite.__table__.primary_key) == (
         "graph_type"
     )
     assert "ix_agent_checkpoints_graph_checkpoint" in _index_names(AgentCheckpoint)

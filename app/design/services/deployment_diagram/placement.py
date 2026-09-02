@@ -31,6 +31,7 @@ def _constraints_by_workload(graph: dict[str, Any]) -> dict[str, dict[str, Any]]
     policies: dict[str, dict[str, Any]] = {
         str(item.get("id")): {
             "replicaCount": 1,
+            "replicationConfirmed": False,
             "zones": [],
             "minimumZones": 1,
             "managedReplacement": False,
@@ -53,6 +54,8 @@ def _constraints_by_workload(graph: dict[str, Any]) -> dict[str, dict[str, Any]]
                 value = _constraint_value(constraint, 1)
                 if isinstance(value, int) and not isinstance(value, bool):
                     policy["replicaCount"] = value
+            elif kind == "replicationConfirmation":
+                policy["replicationConfirmed"] = _constraint_value(constraint, False) is True
             elif kind in {"zoneSpread", "zonePlacement"}:
                 value = _constraint_value(constraint, [])
                 if isinstance(value, list):
@@ -151,11 +154,11 @@ def build_deployment_plan(
             policy["replicaCount"] = 1
             count = 1
         safety = str(by_id[workload_id].get("replicationSafety") or "unknown")
-        if count > 1 and safety != "interchangeable":
+        if count > 1 and safety != "interchangeable" and not policy["replicationConfirmed"]:
             issues.append(
                 _issue(
                     f"workloads.{workload_id}.replicationSafety",
-                    "Multiple replicas require explicit interchangeable replication safety.",
+                    "Multiple replicas require explicit interchangeable replication safety or a confirmed user decision.",
                     source_refs=policy["sourceRefs"] or _refs(by_id[workload_id].get("sourceRefs")),
                 )
             )

@@ -4,7 +4,7 @@ EasyDep은 자연어 요구사항에서 소프트웨어 설계, 구현, 테스�
 멀티 AI 에이전트 기반 개발 지원 시스템이다. 현재 지원 범위는 AWS·Azure·GCP의
 Docker-on-VM 애플리케이션이다.
 
-현재 구현 수준과 알려진 한계는 [현재 시스템 상태](docs/current-system-status.md)를 기준으로 한다.
+현재 구현 수준과 알려진 한계는 [현재 시스템 구성](docs/current-system-status.md)을 기준으로 한다.
 문서 전체의 역할은 [문서 안내](docs/README.md)에서 확인할 수 있다.
 코드를 처음 읽는다면 [초보자용 코드 탐색 순서](docs/code-reading-guide.md)와
 [백엔드 코드 길잡이](app/README.md)부터 보는 것을 권장한다.
@@ -53,10 +53,10 @@ Docker-on-VM 애플리케이션이다.
 
 ## 실행
 
-필수 환경은 Python 3.11 이상과 Docker Desktop이다. 원격 배포와 고정 Linux 실행에는
-PlantUML, FR/NFR 분류 모델, JDK, Gradle, Node/npm, OpenAPI Generator, Trivy, OpenTofu를
-담은 공용 `easydep-toolchain` 이미지를 사용한다. 개발용 MySQL은 통합 실행 스크립트가 Docker
-컨테이너로 준비한다.
+필수 환경은 Python 3.11 이상, Node.js 22 이상과 Docker Desktop이다. 개발 서버는 호스트에서
+hot reload로 실행하고 MySQL만 Docker 컨테이너로 준비한다. 생성 코드의 컴파일·단위 테스트는
+`easydep-toolchain`, 실제 브라우저 엔진이 필요한 DOM·JavaScript E2E는
+`easydep-testing-toolchain`을 사용한다. 큰 BERT 모델과 PlantUML은 서버 runtime에만 둔다.
 
 ### 통합 실행 스크립트
 
@@ -72,34 +72,35 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 
 이 스크립트는 다음 작업을 한 번에 수행한다.
 
-1. `.venv`를 만들고 `requirements.txt`가 바뀐 경우에만 Python 패키지를 설치한다.
-2. Docker 빌드 입력이 바뀐 경우에만 `easydep-toolchain:local` 이미지를 빌드·검증한다.
-3. 이미지의 고정 Node/npm으로 만든 SvelteKit 결과를 `frontend/build`에 복사한다.
+1. `.venv`를 만들고 의존성이 바뀐 경우에만 `uv`로 Python 패키지를 동기화한다.
+2. `package-lock.json`이 바뀐 경우에만 `npm ci`를 실행한다.
+3. Docker 입력이 바뀐 경우에만 구현용 이미지와 브라우저 E2E 확장 이미지를 빌드·검증한다.
 4. `easydep-mysql-dev` 컨테이너를 생성하거나 재사용하고 준비 완료까지 기다린다.
-5. FastAPI 백엔드를 시작하고 UI·워크스페이스 API의 종단 연결을 확인한다.
+5. FastAPI와 Vite를 hot reload로 시작하고 UI·워크스페이스 API 연결을 확인한다.
 
-정상적으로 준비되면 기본 UI는 `http://127.0.0.1:8000/`, API 문서는
-`http://127.0.0.1:8000/docs`에서 볼 수 있다. 실행 상태와 로그는 `.easydep/dev/`에 저장된다.
+정상적으로 준비되면 기본 UI는 `http://127.0.0.1:5173/`, API 문서는
+`http://127.0.0.1:8100/docs`에서 볼 수 있다. 실행 상태와 로그는 `.easydep/dev/`에 저장된다.
 
 | 옵션 | 용도 |
 |---|---|
 | `-OpenBrowser` | 준비 완료 후 기본 브라우저에서 UI를 연다. |
-| `-SkipFrontendBuild` | 기존 `frontend/build/index.html`을 그대로 사용한다. 빌드가 없으면 실패한다. |
-| `-ForceFrontendBuild` | 입력 해시가 같아도 프론트엔드 결과를 이미지에서 다시 복사한다. |
+| `-ProductionLike` | Vite 대신 `frontend/build`을 FastAPI에서 제공해 배포와 비슷하게 실행한다. |
+| `-SkipFrontendBuild` | `-ProductionLike`에서 기존 정적 빌드를 재사용한다. |
+| `-ForceFrontendBuild` | `-ProductionLike`에서 정적 프론트엔드를 강제로 다시 빌드한다. |
 | `-SkipBootstrap` | 기존 Python 환경과 툴체인 이미지를 신뢰하고 준비 작업을 생략한다. |
 | `-ForceToolchainBuild` | 입력 해시가 같아도 Docker 빌드를 다시 실행한다. Docker layer cache는 재사용한다. |
 | `-ResetDatabase` | 현재 코드와 DB 구조가 맞지 않을 때 개발 DB와 저장된 앱을 지우고 새로 만든다. |
-| `-ForceFrontendBuild` | 입력 해시가 같아도 프론트엔드를 다시 빌드한다. |
 | `-ResetDatabaseSchema` | 시작 시 `easydep` DB의 기존 구조·데이터를 삭제하고 현재 7개 테이블로 재생성한다. |
-| `-Port 8010` | 백엔드 포트를 변경한다. 기본값은 `8000`이다. |
+| `-Port 8110` | 백엔드 포트를 변경한다. 기본값은 `8100`이다. |
+| `-FrontendPort 5174` | 개발 UI 포트를 변경한다. 기본값은 `5173`이다. |
 | `-DatabasePort 33061` | 호스트의 개발용 MySQL 포트를 변경한다. 기본값은 `33060`이다. |
 | `-DatabaseImage mysql:8.4` | 최초 컨테이너 생성에 사용할 MySQL 이미지를 지정한다. |
-| `-Stop` | 이 스크립트가 시작한 백엔드와 개발용 MySQL을 중지한다. |
+| `-Stop` | 이 스크립트가 시작한 백엔드·Vite와 개발용 MySQL을 중지한다. |
 
-프론트엔드가 이미 빌드되어 있을 때 빠르게 재시작하거나 전체를 중지하는 예시는 다음과 같다.
+의존성과 툴체인 준비가 끝난 뒤 빠르게 재시작하는 예시는 다음과 같다.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -SkipFrontendBuild
+powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -SkipBootstrap
 ```
 
 스키마가 바뀌었고 기존 개발 데이터를 보존할 필요가 없을 때에는 한 번만 다음처럼 실행한다.
@@ -150,7 +151,7 @@ python -m pytest
 
 ## 주요 문서
 
-- [현재 시스템 상태](docs/current-system-status.md): 구현 범위, 검증 결과, 부족한 점
+- [현재 시스템 구성](docs/current-system-status.md): 실행 프로세스, 단계별 책임, 저장·툴체인과 현재 한계
 - [문서 안내](docs/README.md): 활성 문서와 이력 문서 구분
 - [HTTP API](docs/api.md): 요구사항·설계·구현 API 계약
 - [초보자용 코드 탐색 순서](docs/code-reading-guide.md): UI 요청부터 단계 서비스까지 따라가는 방법

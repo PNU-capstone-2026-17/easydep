@@ -77,7 +77,9 @@ def test_reconcile_implementation_command_closes_stale_running_command(monkeypat
     updated = {**command, "status": "COMPLETED"}
     events: list[dict] = []
     monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
-    monkeypatch.setattr(workspace_module.implementation_worker, "get", lambda _job_id: completed_job)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker, "get", lambda _job_id: completed_job
+    )
     monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: updated)
     monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
     monkeypatch.setattr(
@@ -410,9 +412,7 @@ def test_legacy_handoff_checkpoint_backfills_and_routes_a_capability_choice(
         service.shutdown()
 
     assert presented["result"]["resource_question"] == question
-    assert captured["request"].resource_answers == {
-        "capability:persistent_storage": "accepted"
-    }
+    assert captured["request"].resource_answers == {"capability:persistent_storage": "accepted"}
     assert captured["request"].answer is None
 
 
@@ -603,15 +603,12 @@ def test_workspace_cloud_options_include_supported_default_regions() -> None:
 
     options = cloud_options()
     codes = {
-        provider: {item["code"] for item in rows}
-        for provider, rows in options["regions"].items()
+        provider: {item["code"] for item in rows} for provider, rows in options["regions"].items()
     }
     assert "ap-northeast-2" in codes["aws"]
     assert "koreacentral" in codes["azure"]
     assert "asia-northeast3" in codes["gcp"]
-    seoul = next(
-        item for item in options["regions"]["aws"] if item["code"] == "ap-northeast-2"
-    )
+    seoul = next(item for item in options["regions"]["aws"] if item["code"] == "ap-northeast-2")
     assert isinstance(seoul["latitude"], float)
     assert isinstance(seoul["longitude"], float)
     assert seoul["zones"]
@@ -787,22 +784,14 @@ def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> Non
     )
 
     metrics = next(
-        event
-        for event in events
-        if event["metadata"].get("progress_event") == "designLlmMetrics"
+        event for event in events if event["metadata"].get("progress_event") == "designLlmMetrics"
     )
-    assert metrics["metadata"]["llm_timing_events"][0]["operation"] == (
-        "ClassInventory"
-    )
+    assert metrics["metadata"]["llm_timing_events"][0]["operation"] == ("ClassInventory")
     assert metrics["metadata"]["llm_timing_events"][0]["cacheStatus"] == "hit"
-    assert metrics["metadata"]["llm_timing_events"][0]["failureContentSha256"] == (
-        "safe-digest"
-    )
+    assert metrics["metadata"]["llm_timing_events"][0]["failureContentSha256"] == ("safe-digest")
     assert "failureContentPrefix" not in metrics["metadata"]["llm_timing_events"][0]
     assert "failureContentSuffix" not in metrics["metadata"]["llm_timing_events"][0]
-    assert metrics["metadata"]["llm_timing_events"][0]["responseContent"] == (
-        '{"Classes": []}'
-    )
+    assert metrics["metadata"]["llm_timing_events"][0]["responseContent"] == ('{"Classes": []}')
     assert metrics["metadata"]["llm_timing_events"][0]["reasoningContent"] == (
         "empty inventory is enough"
     )
@@ -856,7 +845,8 @@ def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -
     assert preview.unit == "UC1"
     assert preview.image_svg == b"<svg />"
     preview_events = [
-        event for event in events
+        event
+        for event in events
         if event["metadata"].get("progress_event") == "classDiagramPreviewUpdated"
     ]
     assert [event["metadata"]["preview_revision"] for event in preview_events] == [1, 2]
@@ -865,17 +855,26 @@ def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -
 def test_live_preview_store_isolates_commands_and_invalidates_cached_svg() -> None:
     store = LivePreviewStore()
     first = store.publish(
-        app_id="app-1", command_id="command-1", stage="class_diagram",
-        puml="@startuml\nclass A\n@enduml", phase="inventory",
+        app_id="app-1",
+        command_id="command-1",
+        stage="class_diagram",
+        puml="@startuml\nclass A\n@enduml",
+        phase="inventory",
     )
     store.cache_svg("app-1", "command-1", "class_diagram", first.revision, b"svg")
     second = store.publish(
-        app_id="app-1", command_id="command-1", stage="class_diagram",
-        puml="@startuml\nclass B\n@enduml", phase="operations",
+        app_id="app-1",
+        command_id="command-1",
+        stage="class_diagram",
+        puml="@startuml\nclass B\n@enduml",
+        phase="operations",
     )
     store.publish(
-        app_id="app-1", command_id="command-2", stage="class_diagram",
-        puml="@startuml\nclass C\n@enduml", phase="inventory",
+        app_id="app-1",
+        command_id="command-2",
+        stage="class_diagram",
+        puml="@startuml\nclass C\n@enduml",
+        phase="inventory",
     )
 
     assert second.revision == 2
@@ -910,10 +909,12 @@ def test_class_preview_endpoints_return_and_cache_the_latest_snapshot(monkeypatc
 
     payload = workspace_api.get_class_diagram_preview(app_id, "command-1")
     first_image = workspace_api.get_class_diagram_preview_image(
-        app_id, "command-1",
+        app_id,
+        "command-1",
     )
     second_image = workspace_api.get_class_diagram_preview_image(
-        app_id, "command-1",
+        app_id,
+        "command-1",
     )
 
     assert payload == {
@@ -942,16 +943,10 @@ def test_design_operation_marks_a_generated_draft_as_needing_review(monkeypatch)
         {"app_id": "app-1", "command_id": "command-1"},
         stage="sequence_diagram",
         label="Retrying the sequence diagram",
-        operation=lambda: {
-            "validation": {
-                "sequence_diagram": {"findings": ["missing flow step"]}
-            }
-        },
+        operation=lambda: {"validation": {"sequence_diagram": {"findings": ["missing flow step"]}}},
     )
 
-    assert response["validation"]["sequence_diagram"]["findings"] == [
-        "missing flow step"
-    ]
+    assert response["validation"]["sequence_diagram"]["findings"] == ["missing flow step"]
     assert events[-1]["metadata"]["progress_status"] == "needs_review"
     assert "1 findings require revision" in events[-1]["metadata"]["progress_detail"]
 
@@ -976,14 +971,52 @@ def test_design_api_completed_status_finishes_the_workspace_stage() -> None:
 def test_design_feedback_status_remains_a_workspace_review_gate() -> None:
     service = WorkspaceService()
     try:
-        result = service._design_result(
-            {"status": "need_feedback", "stage": "deployment_diagram"}
-        )
+        result = service._design_result({"status": "need_feedback", "stage": "deployment_diagram"})
     finally:
         service.shutdown()
 
     assert result["awaiting_input"] is True
     assert result["current_stage"] == "deployment_diagram"
+
+
+def test_multiple_completed_deployment_targets_use_the_existing_choice_gate() -> None:
+    service = WorkspaceService()
+    try:
+        result = service._design_result(
+            {
+                "status": "need_feedback",
+                "stage": "deployment_diagram",
+                "artifact_metadata": {
+                    "deployment_diagram": {
+                        "selection": {"status": "needsInput"},
+                        "targets": [
+                            {
+                                "id": "aws-target",
+                                "provider": "aws",
+                                "region": "ap-northeast-2",
+                                "zones": ["ap-northeast-2a"],
+                                "status": "completed",
+                            },
+                            {
+                                "id": "gcp-target",
+                                "provider": "gcp",
+                                "region": "asia-northeast3",
+                                "zones": [],
+                                "status": "completed",
+                            },
+                        ],
+                    }
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["resource_question"]["field"] == "deployment.selectedTarget"
+    assert [choice["value"] for choice in result["resource_question"]["choices"]] == [
+        "aws-target",
+        "gcp-target",
+    ]
 
 
 def test_design_findings_without_an_artifact_require_revision() -> None:
@@ -993,9 +1026,7 @@ def test_design_findings_without_an_artifact_require_revision() -> None:
             {
                 "status": "need_feedback",
                 "stage": "sequence_diagram",
-                "validation": {
-                    "sequence_diagram": {"findings": ["missing flow step"]}
-                },
+                "validation": {"sequence_diagram": {"findings": ["missing flow step"]}},
             }
         )
     finally:
@@ -1016,9 +1047,7 @@ def test_design_findings_with_a_generated_artifact_still_require_revision() -> N
                 "status": "need_feedback",
                 "stage": "sequence_diagram",
                 "artifacts": {"sequence_diagram": "@startuml\n@enduml"},
-                "validation": {
-                    "sequence_diagram": {"findings": ["missing flow step"]}
-                },
+                "validation": {"sequence_diagram": {"findings": ["missing flow step"]}},
             }
         )
     finally:
@@ -1044,9 +1073,7 @@ def test_design_findings_cannot_be_waived_by_a_persisted_artifact(monkeypatch) -
                 "app_id": "app-1",
                 "status": "need_feedback",
                 "stage": "sequence_diagram",
-                "validation": {
-                    "sequence_diagram": {"findings": ["missing flow step"]}
-                },
+                "validation": {"sequence_diagram": {"findings": ["missing flow step"]}},
             }
         )
     finally:
@@ -1072,9 +1099,7 @@ def test_retry_design_accepts_only_a_failed_design_command(monkeypatch) -> None:
 
     service = WorkspaceService()
     try:
-        service._validate_action_reference(
-            "app-1", "retry_design", {"action_id": "failed-design"}
-        )
+        service._validate_action_reference("app-1", "retry_design", {"action_id": "failed-design"})
     finally:
         service.shutdown()
 
@@ -1100,9 +1125,7 @@ def test_requirements_progress_tracks_only_active_use_case_spec_tasks(monkeypatc
         "specTaskFinished",
         {"useCaseId": "UC1", "useCaseName": "Browse courses", "status": "completed"},
     )
-    assert events[-1]["metadata"]["active_spec_tasks"] == [
-        {"id": "UC2", "name": "Enroll"}
-    ]
+    assert events[-1]["metadata"]["active_spec_tasks"] == [{"id": "UC2", "name": "Enroll"}]
 
     report(
         "specTaskFinished",
@@ -1136,9 +1159,7 @@ def test_requirements_progress_exposes_concurrent_analysis_steps(monkeypatch) ->
             "elapsedSeconds": 1.0,
         },
     )
-    assert events[-1]["metadata"]["active_analysis_steps"] == [
-        "extract_resource_constraints"
-    ]
+    assert events[-1]["metadata"]["active_analysis_steps"] == ["extract_resource_constraints"]
 
 
 def test_workspace_replaces_internal_feedback_prompt_with_english_ui_copy() -> None:
@@ -1282,7 +1303,7 @@ def test_retry_requirements_accepts_only_a_failed_requirements_command(
         service.shutdown()
 
 
-def test_delegated_repair_stalls_when_the_same_blockers_return() -> None:
+def test_delegated_repair_remains_active_when_the_same_blockers_return() -> None:
     blocker = {
         "code": "requirements.specification",
         "stage": "specs",
@@ -1318,31 +1339,10 @@ def test_delegated_repair_stalls_when_the_same_blockers_return() -> None:
         strategy_key="delegate:requirements:specs:episode-3",
     )
 
-    assert state["status"] == "STALLED"
+    assert state["status"] == "ACTIVE"
     assert state["attempt_count"] == 4
     assert state["recent_attempts"][-1]["outcome"] == "repeated_candidate"
     assert "targeted_findings" in state["tried_strategies"]
-
-
-def test_exhausted_delegated_repair_becomes_an_explicit_manual_gate() -> None:
-    result = {
-        "message": "Delegate the repair to the LLM.",
-        "can_delegate_repair": True,
-        "blocking_findings": [
-            {
-                "code": "design.validation",
-                "stage": "api_spec",
-                "message": "The same API blocker remains.",
-                "repairable": True,
-            }
-        ],
-    }
-
-    workspace_module._close_stalled_delegated_repair(result)
-
-    assert result["can_delegate_repair"] is False
-    assert result["blocking_findings"][0]["repairable"] is False
-    assert "specific revision request" in result["message"]
 
 
 def test_delegated_repair_keeps_running_after_blockers_make_progress() -> None:
@@ -1371,7 +1371,7 @@ def test_delegated_repair_keeps_running_after_blockers_make_progress() -> None:
     assert state["recent_attempts"][-1]["outcome"] == "improved"
 
 
-def test_delegated_repair_stalls_when_it_introduces_more_blockers() -> None:
+def test_delegated_repair_records_regression_without_stopping() -> None:
     previous = {
         "blocking_findings": [
             {"code": "one", "stage": "api_spec", "message": "one"},
@@ -1392,50 +1392,224 @@ def test_delegated_repair_stalls_when_it_introduces_more_blockers() -> None:
         strategy_key="delegate:design:api_spec:episode-1",
     )
 
-    assert state["status"] == "STALLED"
+    assert state["status"] == "ACTIVE"
     assert state["accepted_count"] == 0
     assert state["recent_attempts"][-1]["outcome"] == "regressed"
     assert state["rejected_candidate_digests"] == [state["finding_digest"]]
 
 
 def test_failed_testing_is_an_actionable_repair_gate(monkeypatch) -> None:
-    monkeypatch.setattr(
-        workspace_module,
-        "get_testing_job",
-        lambda _job_id: {
-            "job_id": "testing-1",
-            "status": "COMPLETED",
-            "implementation_job_id": "implementation-1",
-            "result": {
-                "passed": False,
-                "blocking_findings": [
-                    {
-                        "code": "testing.dynamic",
-                        "stage": "testing",
-                        "target_ids": [],
-                        "message": "FR1 assertion failed",
-                        "severity": "error",
-                        "repairable": True,
-                    }
-                ],
-                "repair_state": {
-                    "status": "ACTIVE",
-                    "attempt_count": 1,
-                    "accepted_count": 0,
-                    "recent_attempts": [],
-                },
+    job = {
+        "job_id": "command-1",
+        "status": "COMPLETED",
+        "implementation_job_id": "implementation-1",
+        "result": {
+            "passed": False,
+            "blocking_findings": [
+                {
+                    "code": "testing.dynamic",
+                    "stage": "testing",
+                    "target_ids": [],
+                    "message": "FR1 assertion failed",
+                    "severity": "error",
+                    "repairable": True,
+                }
+            ],
+            "repair_state": {
+                "status": "ACTIVE",
+                "attempt_count": 1,
+                "accepted_count": 0,
+                "recent_attempts": [],
             },
         },
-    )
+    }
     service = WorkspaceService()
     try:
-        result = service._monitor_testing({"job_id": "testing-1"})
+        result = service._testing_result(job)
     finally:
         service.shutdown()
 
     assert result["awaiting_input"] is True
     assert result["can_delegate_repair"] is True
     assert result["job"]["implementation_job_id"] == "implementation-1"
+
+
+def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
+    """Testing 입력을 실행 전에 현재 Workspace command에 저장한다."""
+    updates: list[dict] = []
+    command = {
+        "command_id": "command-1",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "payload": {"implementation_job_id": "implementation-1"},
+    }
+    monkeypatch.setattr(repository, "get_command", lambda _command_id: command)
+    monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda _command_id, **changes: updates.append(changes) or changes,
+    )
+
+    def run_testing(_app_id, implementation_job_id, **kwargs):
+        kwargs["progress"](
+            {
+                "implementation_job_id": implementation_job_id,
+                "testing_input": {"app_id": "app-1"},
+                "current_node": "queued",
+            }
+        )
+        return {
+            "job_id": kwargs["run_id"],
+            "implementation_job_id": implementation_job_id,
+            "status": "COMPLETED",
+            "result": {"passed": True},
+        }
+
+    monkeypatch.setattr(workspace_module, "run_testing", run_testing)
+
+    service = WorkspaceService()
+    try:
+        result = service._dispatch(command)
+    finally:
+        service.shutdown()
+
+    assert updates[0]["payload"]["testing_checkpoint"]["current_node"] == "queued"
+    assert result["job"]["job_id"] == "command-1"
+
+
+def test_interrupted_testing_command_reuses_saved_checkpoint(monkeypatch) -> None:
+    """재시작 복구는 command에 저장한 Testing 입력을 그대로 사용한다."""
+    checkpoint = {
+        "implementation_job_id": "implementation-1",
+        "testing_input": {"app_id": "app-1"},
+        "current_node": "verification",
+    }
+    observed: dict[str, object] = {}
+
+    def run_testing(_app_id, implementation_job_id, **kwargs):
+        observed["implementation_job_id"] = implementation_job_id
+        observed["checkpoint"] = kwargs["checkpoint"]
+        return {
+            "job_id": kwargs["run_id"],
+            "status": "COMPLETED",
+            "result": {"passed": True},
+        }
+
+    monkeypatch.setattr(workspace_module, "run_testing", run_testing)
+
+    service = WorkspaceService()
+    try:
+        result = service._dispatch(
+            {
+                "command_id": "command-1",
+                "app_id": "app-1",
+                "action": "start_testing",
+                "stage": "testing",
+                "payload": {
+                    "implementation_job_id": "implementation-1",
+                    "testing_checkpoint": checkpoint,
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert observed["implementation_job_id"] == "implementation-1"
+    assert observed["checkpoint"] == checkpoint
+    assert result["job"]["job_id"] == "command-1"
+
+
+def test_sut_failure_repairs_implementation_and_reuses_the_same_test(monkeypatch) -> None:
+    """제품 수리 뒤에 새 테스트를 만들지 않고 실패를 발견한 후보를 다시 쓴다."""
+    prior = {
+        "stage": "testing",
+        "payload": {},
+        "result": {
+            "job_id": "testing-1",
+            "job": {
+                "job_id": "testing-1",
+                "implementation_job_id": "implementation-1",
+            },
+            "blocking_findings": [
+                {
+                    "message": "FR1 failed",
+                    "repairable": True,
+                    "defect_class": "SUT_DEFECT",
+                    "candidate_code": "def test_fr1(): assert False",
+                }
+            ],
+            "repair_state": {"attempt_count": 1},
+        },
+    }
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(repository, "get_command", lambda _command_id: prior)
+    monkeypatch.setattr(
+        artifact_repository,
+        "load_state",
+        lambda _app_id: {"class_diagram_puml": "A", "api_spec": {"paths": {}}},
+    )
+
+    def create_feedback(*args):
+        observed["feedback"] = args[2]
+        return {"job_id": "implementation-2", "app_id": "app-1"}
+
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "create_feedback_job",
+        create_feedback,
+    )
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {"base_package": "com.example.app"},
+    )
+
+    def monitor_implementation(_self, job, *, command_id=None, auto_approve=False):
+        observed["auto_approve"] = auto_approve
+        return {"job_id": job["job_id"], "job": {**job, "status": "COMPLETED"}}
+
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_monitor_implementation",
+        monitor_implementation,
+    )
+
+    def run_testing_command(
+        _self,
+        command,
+        implementation_job_id,
+        *,
+        previous_job=None,
+        preserve_test=False,
+    ):
+        observed["implementation_job_id"] = implementation_job_id
+        observed["previous_job"] = previous_job
+        observed["preserve_test"] = preserve_test
+        return {"job": {"job_id": command["command_id"]}}
+
+    monkeypatch.setattr(WorkspaceService, "_run_testing_command", run_testing_command)
+
+    service = WorkspaceService()
+    try:
+        result = service._dispatch(
+            {
+                "action": "delegate_repair",
+                "app_id": "app-1",
+                "command_id": "repair-command",
+                "stage": "testing",
+                "payload": {"action_id": "failed-command"},
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert observed["auto_approve"] is True
+    assert "Preserved executable test" in str(observed["feedback"])
+    assert observed["implementation_job_id"] == "implementation-2"
+    assert observed["previous_job"] == prior["result"]["job"]
+    assert observed["preserve_test"] is True
+    assert result["job"]["job_id"] == "repair-command"
 
 
 def test_implementation_progress_snapshot_uses_public_workflow_phases() -> None:
@@ -1555,9 +1729,7 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
     assert updates["phase-backend"]["status"] == "running"
     assert updates["sub-backend-use-cases"]["status"] == "running"
     assert updates["implementation-file"]["detail"] == "Editing BoundaryAdapter.java"
-    assert progress["current_file"] == (
-        "application/src/main/java/BoundaryAdapter.java"
-    )
+    assert progress["current_file"] == ("application/src/main/java/BoundaryAdapter.java")
     assert progress["current_class"] == "BoundaryAdapter"
     assert progress["agent_results"] == [
         {
@@ -1663,7 +1835,9 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     monkeypatch.setattr(
         workspace_module,
         "artifact_repository",
-        SimpleNamespace(load_state=lambda _app_id: {"class_diagram_puml": "A", "api_spec": {"paths": {}}}),
+        SimpleNamespace(
+            load_state=lambda _app_id: {"class_diagram_puml": "A", "api_spec": {"paths": {}}}
+        ),
     )
     monkeypatch.setattr(
         WorkspaceService,
