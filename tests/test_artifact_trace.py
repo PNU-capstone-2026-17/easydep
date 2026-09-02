@@ -121,6 +121,7 @@ def test_projection_links_requirement_to_spec_step_bce_operation_and_exact_api_b
                     {
                         "method": "post",
                         "path": "/orders",
+                        "operation_id": "createOrder",
                         "control_binding": {
                             "control": "OrderControl",
                             "method": "createOrder",
@@ -135,7 +136,7 @@ def test_projection_links_requirement_to_spec_step_bce_operation_and_exact_api_b
     spec = TraceRef("use_case_spec", "UC-1")
     step = TraceRef("step", "UC-1:main:1")
     operation = TraceRef("operation", "OP-1")
-    api = TraceRef("api", "POST /orders")
+    api = TraceRef("api", "createOrder")
 
     assert set(trace.downstream(requirement)) == {use_case, spec, step, operation, api,
                                                    TraceRef("class", "OrderControl"),

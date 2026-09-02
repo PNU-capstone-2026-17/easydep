@@ -144,6 +144,11 @@ def _bce(nodes: list[TraceNode], model: Mapping[str, Any]) -> dict[tuple[str, st
             if name:
                 candidates.setdefault((class_name, name), []).append(operation_ref)
 
+    for item in _records(model.get("DataTypes")):
+        name = _id(item, "name")
+        if name:
+            _add(nodes, TraceRef("data_type", name), _source_refs(item))
+
     for item in _records(model.get("Collaborations")):
         collaboration_id = _id(item, "collaborationId")
         if not collaboration_id:
@@ -205,7 +210,11 @@ def _api(
 
     for item in _records(model.get("Endpoints")):
         method, path = _id(item, "method"), _id(item, "path")
-        endpoint_id = f"{method.upper()} {path}" if method and path else _id(item, "operation_id")
+        # UI feedback과 저장 모델이 사용하는 operationId를 우선한다. operationId가
+        # 없는 불완전 draft만 HTTP method/path를 임시 주소로 사용한다.
+        endpoint_id = _id(item, "operation_id")
+        if not endpoint_id and method and path:
+            endpoint_id = f"{method.upper()} {path}"
         if not endpoint_id:
             continue
         sources = [
@@ -266,7 +275,12 @@ def _deployment(nodes: list[TraceNode], bundle: Mapping[str, Any]) -> None:
             )
 
     graph = _map(bundle.get("workloadGraph"))
-    for collection, kind in (("workloads", "workload"), ("connections", "connection"), ("constraints", "constraint")):
+    for collection, kind in (
+        ("workloads", "workload"),
+        ("externalDependencies", "external_dependency"),
+        ("connections", "connection"),
+        ("constraints", "constraint"),
+    ):
         for item in _records(graph.get(collection)):
             identifier = _id(item, "id")
             if identifier:

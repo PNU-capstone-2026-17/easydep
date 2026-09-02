@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import copy
-import json
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -191,39 +190,6 @@ def _design_context(state: ArchitectureState, stage: str) -> str:
             ]
         )
     return "\n\n".join(sections)
-
-
-def _sequence_revision_context(
-    state: ArchitectureState, targets: set[str] | None
-) -> str:
-    """관련 없는 유스케이스를 재전송하지 않는 sequence repair 문맥을 만든다.
-
-    자동 validation repair에는 구체적인 영향 use-case ID가 있다. 전체 요구사항은 대상
-    다이어그램보다 훨씬 클 수 있으므로 actor는 유효 participant 정의를 위해 모두 유지하되
-    use case와 상세 scenario는 선택 ID로 좁힌다. target이 없는 사용자 feedback 수정은
-    전체 문맥을 유지한다.
-    """
-    specification = state.get("usecase_spec")
-    if not targets or not isinstance(specification, dict):
-        return _design_context(state, "sequence_diagram")
-
-    scoped_specification = dict(specification)
-    for field, id_field in (("use_cases", "id"), ("use_case_specs", "use_case_id")):
-        values = specification.get(field)
-        if isinstance(values, list):
-            scoped_specification[field] = [
-                value
-                for value in values
-                if isinstance(value, dict)
-                and str(value.get(id_field) or "").strip() in targets
-            ]
-    return "\n\n".join(
-        [
-            "[Use Case Specification]\n"
-            + json.dumps(scoped_specification, ensure_ascii=False, indent=2),
-            "[Class Diagram]\n" + state.get("class_diagram_puml", ""),
-        ]
-    )
 
 
 def _class_scenario(state: ArchitectureState) -> dict[str, Any]:

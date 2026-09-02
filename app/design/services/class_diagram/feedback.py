@@ -2,8 +2,8 @@
 
 입력은 현재 ``BCEModel``, 이를 만든 ``ScenarioIndex``, 사용자 피드백과 선택적 target
 ID다. 출력은 inventory·operation·collaboration 중 하나로 좁혀진 ``FeedbackScope``와
-해당 단계의 수락 결과다. 명시 target과 로컬 타입 이름은 코드가 먼저 해석하고, 어느
-후보인지 결정할 수 없을 때만 LLM에 유한 후보 분류를 요청한다.
+해당 단계의 수락 결과다. 명시 target은 코드가 해석하고, 자연어만으로 어느 후보인지
+결정해야 할 때는 LLM에 유한 후보 분류를 요청한다.
 
 이 모듈의 LLM 부작용은 scope fallback, inventory 교체, 선택된 collaboration 교체다.
 저장소나 graph state를 읽지 않으며, 선택되지 않은 소유자의 내용을 LLM 응답으로
@@ -247,8 +247,8 @@ def _feedback_scope(
 ) -> FeedbackScope:
     """결정론적 단서를 우선 사용해 가장 작은 수정 소유자를 선택한다.
 
-    판정 순서는 명시 target, 로컬 DataType 이름 언급, 유한 후보 LLM 분류다. 서로 다른
-    종류의 target이 섞인 경우 한 종류라고 추측하지 않고 fallback 분류로 보낸다.
+    명시 target은 ID로 확정하고, target이 없거나 서로 다른 종류가 섞였으면 유한 후보
+    LLM 분류로 보낸다. 자연어에 타입 이름이 포함됐다는 이유만으로 소유자를 추측하지 않는다.
     """
 
     inventory_ids = {
@@ -279,17 +279,7 @@ def _feedback_scope(
                 use_case_id for target in targets for use_case_id in local_type_owners[target]
             }
             return FeedbackScope(kind="operation", ids=sorted(owners, key=id_key))
-    # 2. 저장 모델에는 local type의 owner가 없으므로 복원 fragment에서 역으로 찾는다.
-    # 사용자가 DTO 이름을 말한 경우 inventory가 아니라 그 DTO를 선언한 operation만 바뀐다.
-    mentioned_local_owners = {
-        use_case_id
-        for name, owners in local_type_owners.items()
-        if name.casefold() in feedback.casefold()
-        for use_case_id in owners
-    }
-    if mentioned_local_owners:
-        return FeedbackScope(kind="operation", ids=sorted(mentioned_local_owners, key=id_key))
-    # 3. 결정론적 단서가 없을 때만 LLM이 종류와 ID를 고른다. 아래 candidates 밖의 ID는
+    # 2. 결정론적 단서가 없을 때만 LLM이 종류와 ID를 고른다. 아래 candidates 밖의 ID는
     # 응답 검증 직후 거부되며, 이 호출 자체가 설계 내용을 생성하지는 않는다.
     parsed = parse_structured(
         [
@@ -456,7 +446,7 @@ def feedback_scope(
         종류 하나와 그 종류에 속하는 유한 ID 목록이다.
 
     Notes:
-        명시 target이나 로컬 타입 언급으로 확정할 수 있으면 LLM 호출은 발생하지 않는다.
+        명시 target으로 확정할 수 있으면 LLM 호출은 발생하지 않는다.
     """
     return _feedback_scope(
         index, model.model_dump(by_alias=True), feedback, set(targets),
