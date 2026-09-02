@@ -177,6 +177,10 @@
             Continue without this optional input <ChevronRight size={13} />
           </Button>
         {/if}
+      {:else if command?.stage === 'testing' && result?.kind === 'external_action' && implementationJobId}
+        <Button size="sm" onclick={() => onAction('retry_implementation', { action_id: command?.command_id, job_id: implementationJobId })} disabled={busy}>
+          <RotateCcw size={13} /> Retry testing after restoring the environment
+        </Button>
       {:else if requiresRevision}
         <span class="px-1 text-xs text-[#74520c]">
           {#if repairStalled}

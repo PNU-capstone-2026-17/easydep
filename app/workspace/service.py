@@ -609,13 +609,24 @@ class WorkspaceService:
                 and str((prior.get("payload") or {}).get("job_id") or "")
                 == str(payload.get("job_id") or "")
             )
-            if (
-                prior["status"] not in {"FAILED", "INTERRUPTED"}
-                or (prior["stage"] != "implementation" and not testing_repair)
-            ):
+            environment_retry = (
+                testing_repair
+                and prior.get("status") == "AWAITING_INPUT"
+                and any(
+                    isinstance(blocker, dict)
+                    and blocker.get("defect_class") == "ENVIRONMENT_DEFECT"
+                    for blocker in (prior.get("result") or {}).get("blocking_findings")
+                    or []
+                )
+            )
+            retryable_status = (
+                prior["status"] in {"FAILED", "INTERRUPTED"} or environment_retry
+            )
+            retryable_stage = prior["stage"] == "implementation" or testing_repair
+            if not retryable_status or not retryable_stage:
                 raise ValueError(
                     "Only a failed or interrupted implementation command can be retried "
-                    "from its checkpoint."
+                    "from its checkpoint, unless Testing is waiting for a restored environment."
                 )
             return
         if prior["status"] != "AWAITING_INPUT":
@@ -888,7 +899,19 @@ class WorkspaceService:
                         for blocker in blockers
                     )
                     original_implementation = implementation_worker.get(implementation_job_id)
-                    feedback = self._testing_implementation_feedback(result, blockers)
+                    # Testing 이력에는 HTTP 실패 자체는 남지만, 직전 OpenHands가 실제로 어떤
+                    # 파일을 바꾸고 무엇을 해결했다고 판단했는지는 들어 있지 않다. 이 정보가
+                    # 빠지면 다음 수리가 같은 코드를 다시 고치고 같은 응답을 만들 수 있다.
+                    # 화면에도 쓰는 짧은 작업 결과를 재사용해 직전 시도의 변경과 결론만 넘긴다.
+                    previous_repair_results, older_repair_summaries = (
+                        self._implementation_repair_outcomes(original_implementation)
+                    )
+                    feedback = self._testing_implementation_feedback(
+                        result,
+                        blockers,
+                        previous_repair_results=previous_repair_results,
+                        older_repair_summaries=older_repair_summaries,
+                    )
                     confirmed_target_refs = list(dict.fromkeys(
                         str(target)
                         for blocker in blockers
@@ -2364,9 +2387,86 @@ class WorkspaceService:
             snapshot["agent_results"] = agent_results
         return snapshot
 
+    def _implementation_repair_outcomes(
+        self,
+        latest_job: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """부모 작업을 따라가며 최근 상세 이력과 오래된 압축 이력을 만든다.
+
+        최근 세 번은 OpenHands의 결론을 충분히 보여 주고, 그보다 오래된 결과는 같은
+        변경·결론끼리 묶어 횟수만 센다. 별도 LLM 요약을 호출하지 않으므로 원문에 없던
+        해석이 섞이지 않고, 수리 횟수가 늘어도 프롬프트 크기는 반복 종류에 비례한다.
+        """
+
+        recent: list[dict[str, Any]] = []
+        older_by_signature: dict[str, dict[str, Any]] = {}
+        current = latest_job
+        seen_job_ids: set[str] = set()
+        while current.get("job_type") == "FEEDBACK_REVISION":
+            job_id = str(current.get("job_id") or "")
+            if job_id and job_id in seen_job_ids:
+                break
+            if job_id:
+                seen_job_ids.add(job_id)
+
+            progress = self._implementation_progress_snapshot(current)
+            agent_results = [
+                item
+                for item in progress.get("agent_results") or []
+                if isinstance(item, dict)
+            ]
+            changed_files = sorted(
+                {
+                    str(path)
+                    for item in agent_results
+                    for path in item.get("changed_files") or []
+                    if isinstance(path, str) and path
+                }
+            )
+            responses = [
+                str(item.get("raw_response") or "").strip()
+                for item in agent_results
+                if str(item.get("raw_response") or "").strip()
+            ]
+            summary = responses[-1] if responses else ""
+            outcome = {
+                "job_id": job_id,
+                "status": str(current.get("status") or ""),
+                "changed_files": changed_files,
+                "summary": summary[-2000:],
+            }
+            if len(recent) < 3:
+                recent.append(outcome)
+            else:
+                compact = {
+                    "changed_files": changed_files,
+                    "summary": summary[-300:],
+                    "status": str(current.get("status") or ""),
+                }
+                signature = stable_digest(compact)
+                stored = older_by_signature.setdefault(
+                    signature,
+                    {"signature": signature, "repetitions": 0, **compact},
+                )
+                stored["repetitions"] = int(stored["repetitions"]) + 1
+
+            parent_job_id = str(current.get("parent_job_id") or "")
+            if not parent_job_id:
+                break
+            try:
+                current = implementation_worker.get(parent_job_id)
+            except Exception:
+                # 오래된 작업 파일이 정리됐더라도 현재 수리까지 막지는 않는다.
+                break
+        return recent, list(older_by_signature.values())
+
     @staticmethod
     def _testing_implementation_feedback(
-        result: dict[str, Any], blockers: list[dict[str, Any]]
+        result: dict[str, Any],
+        blockers: list[dict[str, Any]],
+        *,
+        previous_repair_results: list[dict[str, Any]] | None = None,
+        older_repair_summaries: list[dict[str, Any]] | None = None,
     ) -> str:
         """제품 수리 에이전트에 실패 증거와 고정 테스트 계획을 전달한다."""
         evidence = []
@@ -2442,6 +2542,41 @@ class WorkspaceService:
             parts.append(
                 "Previous repair history:\n"
                 + json.dumps(history, ensure_ascii=False, sort_keys=True)
+            )
+        previous_outcomes = []
+        for previous in previous_repair_results or []:
+            if not isinstance(previous, dict):
+                continue
+            response = str(
+                previous.get("summary") or previous.get("raw_response") or ""
+            ).strip()
+            previous_outcomes.append(
+                {
+                    "job_id": str(previous.get("job_id") or ""),
+                    "status": str(previous.get("status") or ""),
+                    "changed_files": list(previous.get("changed_files") or []),
+                    # OpenHands의 최종 설명은 보통 짧지만, 비정상적으로 긴 응답 하나가 다음
+                    # 수리의 입력 대부분을 차지하지 않도록 마지막 2,000자만 전달한다.
+                    "summary": response[-2000:],
+                }
+            )
+        if previous_outcomes:
+            parts.append(
+                "Most recent implementation repair outcomes (newest first):\n"
+                + json.dumps(previous_outcomes, ensure_ascii=False, sort_keys=True)
+                + "\nThese changes are already present and the failure evidence above still "
+                "occurred. Do not repeat the same edit or merely report success. Trace the "
+                "actual runtime response path, make a materially different correction, and "
+                "verify the exact failing operation before finishing."
+            )
+        if older_repair_summaries:
+            parts.append(
+                "Older implementation repair outcomes, grouped by identical result:\n"
+                + json.dumps(
+                    older_repair_summaries,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
             )
         return "\n\n".join(parts)
 

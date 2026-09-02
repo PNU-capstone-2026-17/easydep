@@ -317,7 +317,12 @@ class PrototypeOrchestrator:
                 raise ValueError(f"Invalid feedback snapshot path: {relative}")
             target = staging / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(str(content), encoding="utf-8")
+            # Windows에서 ``write_text``의 기본 줄바꿈 변환을 사용하면 이미 CRLF인 snapshot의
+            # LF 앞에 CR이 다시 붙는다. 피드백 작업을 반복할수록 ``CR CR ... LF``가 되어
+            # OpenHands 편집기가 동일한 Java 블록을 찾지 못하므로, 복원 경계에서 한 번만 LF로
+            # 정리하고 이후 플랫폼 변환을 끈다.
+            normalized = re.sub(r"\r+\n?", "\n", str(content))
+            target.write_text(normalized, encoding="utf-8", newline="\n")
             allowed.append(relative)
 
         # A feedback revision starts from an already generated application.

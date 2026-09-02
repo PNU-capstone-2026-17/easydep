@@ -1635,10 +1635,48 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
         "create_feedback_job",
         create_feedback,
     )
+    jobs = {
+        job_id: {
+            "job_id": job_id,
+            "parent_job_id": parent_job_id,
+            "base_package": "com.example.app",
+            "job_type": "FEEDBACK_REVISION",
+            "status": "COMPLETED",
+        }
+        for job_id, parent_job_id in (
+            ("implementation-1", "implementation-0"),
+            ("implementation-0", "implementation-old-1"),
+            ("implementation-old-1", "implementation-old-2"),
+            ("implementation-old-2", "implementation-old-3"),
+            ("implementation-old-3", ""),
+        )
+    }
     monkeypatch.setattr(
         workspace_module.implementation_worker,
         "get",
-        lambda _job_id: {"base_package": "com.example.app"},
+        lambda job_id: jobs[job_id],
+    )
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_implementation_progress_snapshot",
+        staticmethod(
+            lambda job: {
+                "agent_results": [
+                    {
+                        "task_id": "apply-source-feedback",
+                        "status": "SUCCEEDED",
+                        "changed_files": ["application/src/RegistrationService.java"],
+                        "raw_response": (
+                            "An older repeated edit did not fix the runtime."
+                            if str(job.get("job_id") or "").startswith(
+                                "implementation-old-"
+                            )
+                            else "Changed the service, but the runtime still failed."
+                        ),
+                    }
+                ]
+            }
+        ),
     )
 
     def monitor_implementation(_self, job, *, command_id=None, auto_approve=False):
@@ -1685,6 +1723,14 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     assert "api:submitRegistration" in str(observed["feedback"])
     assert "RegistrationService.java" in str(observed["feedback"])
     assert '"statusCode": 500' in str(observed["feedback"])
+    assert "Most recent implementation repair outcomes" in str(observed["feedback"])
+    assert "Do not repeat the same edit" in str(observed["feedback"])
+    assert '"job_id": "implementation-1"' in str(observed["feedback"])
+    assert "Changed the service, but the runtime still failed." in str(
+        observed["feedback"]
+    )
+    assert "Older implementation repair outcomes" in str(observed["feedback"])
+    assert '"repetitions": 2' in str(observed["feedback"])
     assert observed["confirmed_target_refs"] == [
         "api:submitRegistration",
         "test:plan-digest:UC1",
@@ -2011,7 +2057,8 @@ def test_retry_implementation_resumes_the_failed_job_checkpoint(monkeypatch) -> 
     assert events[0]["metadata"]["status"] == "CHECKPOINT_RETRY_STARTED"
 
 
-def test_retry_testing_repair_resumes_the_same_plan(monkeypatch) -> None:
+@pytest.mark.parametrize("repair_status", ["FAILED", "AWAITING_INPUT"])
+def test_retry_testing_repair_resumes_the_same_plan(monkeypatch, repair_status) -> None:
     """Testing 중 끊긴 구현 수리는 같은 job과 기능 계획에서 이어 간다."""
     previous_job = {
         "job_id": "testing-run",
@@ -2039,11 +2086,20 @@ def test_retry_testing_repair_resumes_the_same_plan(monkeypatch) -> None:
         "app_id": "app-1",
         "action": "delegate_repair",
         "stage": "testing",
-        "status": "FAILED",
+        "status": repair_status,
         "payload": {
             "action_id": "testing-command",
             "job_id": "implementation-2",
         },
+        "result": (
+            {
+                "blocking_findings": [
+                    {"defect_class": "ENVIRONMENT_DEFECT", "repairable": False}
+                ]
+            }
+            if repair_status == "AWAITING_INPUT"
+            else None
+        ),
     }
 
     def get_command(command_id):
