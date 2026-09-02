@@ -47,13 +47,20 @@ def _finding_keys(report: dict[str, Any]) -> tuple[str, ...]:
     for name, child in (verification.get("reports") or {}).items():
         if gate_status(child) in {"PASS", "NOT_APPLICABLE"}:
             continue
-        reason = str(
+        validation_issues = (
+            ((child or {}).get("validation") or {}).get("issues")
+            if name == "dynamicFunctional"
+            else None
+        )
+        reasons = validation_issues or [
             (child or {}).get("reason")
             or (child or {}).get("message")
             or verification.get("blockingReason")
             or f"{name} gate did not pass"
-        )
-        findings.append(f"testing.{name}:{reason}")
+        ]
+        # LLM이 다음 후보에서 무엇을 바꿔야 하는지 알 수 있도록 “검사 실패”라는
+        # 요약 대신 실제 오류를 수리 이력에 각각 남긴다.
+        findings.extend(f"testing.{name}:{reason}" for reason in map(str, reasons))
     if not findings and not report.get("passed"):
         findings.append("testing.verification")
     return tuple(sorted(set(findings)))
@@ -215,7 +222,7 @@ def _run_test(
             # 횟수 제한은 두지 않는다. 개선되지 않은 시도도 이력에 남아 다음 LLM 호출이 같은
             # 후보와 전략을 피할 수 있게 하되, 자동 수리 자체를 STALLED로 닫지는 않는다.
             ledger.status = "ACTIVE"
-            ledger.stall_reason = None
+            ledger.stall_reason = ""
         dynamic_defect = dynamic.get("defect") or {}
         defect_class = (
             dynamic_defect.get("class")
@@ -331,18 +338,31 @@ def run_testing(
                 or previous_result.get("passed") is not False
             ):
                 raise ValueError("Only a completed failing Testing result can be repaired.")
-            if (
-                not preserve_test
-                and previous_job.get("implementation_job_id") != implementation_job_id
-            ):
-                raise ValueError("A regenerated test must use the same implementation.")
+            same_implementation = (
+                previous_job.get("implementation_job_id") == implementation_job_id
+            )
             repair_history = dict(previous_job.get("repair_history") or repair_history)
             previous_findings = _finding_keys(previous_result)
             previous_input = previous_job.get("testing_input")
             if previous_input is not None:
                 fixed_previous_input = TestingInput.model_validate(previous_input)
-                if not preserve_test and fixed_previous_input != testing_input:
+                if same_implementation and fixed_previous_input != testing_input:
                     raise ValueError("A Testing repair must use the same implementation artifacts.")
+                # 구현 수리는 새 파일 버전을 만드는 것이 정상이다. 이전 Testing 입력에
+                # 계약이 실제로 기록돼 있었다면 그 계약만 유지됐는지 확인한다. 오래된 작업처럼
+                # 계약이 비어 있으면 비교할 근거가 없으므로 새 구현의 고정 입력을 사용한다.
+                previous_contracts = fixed_previous_input.contract_artifacts.model_dump(
+                    mode="json", exclude_none=True
+                )
+                if (
+                    not same_implementation
+                    and previous_contracts
+                    and fixed_previous_input.contract_artifacts
+                    != testing_input.contract_artifacts
+                ):
+                    raise ValueError(
+                        "An implementation repair must preserve requirements and design contracts."
+                    )
                 if (
                     preserve_test
                     and fixed_previous_input.contract_artifacts != testing_input.contract_artifacts

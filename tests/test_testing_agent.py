@@ -599,10 +599,10 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(
     assert any(command[:2] == ["rm", "-f"] for command in commands)
 
 
-def test_running_application_classifies_frontend_handoff_build_failure(
+def test_running_application_classifies_missing_frontend_build_as_product_defect(
     tmp_path, monkeypatch
 ):
-    """Frontend build 성공 후 dist 전달 누락은 구현 수리가 아닌 runtime 결함이다."""
+    """Dockerfile이 없는 frontend 산출물을 참조하면 구현 단계가 고쳐야 한다."""
     from app.testing.runtime import app_container
     from app.testing.runtime.app_container import ApplicationLaunchError
 
@@ -629,8 +629,17 @@ def test_running_application_classifies_frontend_handoff_build_failure(
     ):
         pass
 
-    assert raised.value.defect_class == "ENVIRONMENT_DEFECT"
+    assert raised.value.defect_class == "SUT_DEFECT"
     assert "/frontend/dist" in str(raised.value)
+
+
+def test_dynamic_testing_uses_the_shared_llm_model(monkeypatch):
+    """Testing이 공통 MODEL 값을 그대로 사용한다."""
+    from app.testing.runtime import provider
+
+    monkeypatch.setattr(provider.settings, "model", "openai/gpt-oss-120b")
+
+    assert provider.configured_model("fallback") == "openai/gpt-oss-120b"
 
 
 def test_static_failure_blocks_the_testing_result():

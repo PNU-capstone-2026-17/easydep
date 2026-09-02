@@ -22,7 +22,10 @@ def configured_api_key() -> str | None:
 
 
 def configured_model(default: str) -> str:
-    return settings.openhands_model or settings.llm_model or default
+    """공통 MODEL을 OpenHands/LiteLLM이 이해하는 NIM 이름으로 바꾼다."""
+
+    model = settings.model or default
+    return model if model.startswith("nvidia_nim/") else f"nvidia_nim/{model}"
 
 
 def configured_max_output_tokens(default: int) -> int:

@@ -21,8 +21,7 @@ DEFAULT_BUILD_TIMEOUT_SECONDS = 1800
 DEFAULT_START_TIMEOUT_SECONDS = 180
 _EXPOSE = re.compile(r"(?mi)^\s*EXPOSE\s+(?P<port>\d+)")
 _FALLBACK_CONTAINER_PORT = 8080
-_RUNTIME_BUILD_FAILURE_MARKERS = (
-    "frontend/dist",
+_ENVIRONMENT_BUILD_FAILURE_MARKERS = (
     "failed to fetch",
     "connection reset",
     "connection refused",
@@ -99,10 +98,15 @@ def _log_excerpt(logs: str, limit: int = 4000) -> str:
 
 
 def _build_failure_defect_class(output: str) -> str:
-    """Testing runtime의 build/입력 handoff 오류를 생성 코드 실패와 구분한다."""
+    """외부 환경 때문에 실패했는지, 생성된 애플리케이션 문제인지 구분한다.
+
+    Dockerfile이 존재하지 않는 파일을 ``COPY``하는 경우처럼 build context와
+    Dockerfile이 맞지 않는 문제는 생성된 애플리케이션을 고쳐야 한다. 네트워크처럼
+    코드를 바꿔도 해결할 수 없는 경우만 실행 환경 문제로 분류한다.
+    """
 
     lowered = output.casefold()
-    if any(marker in lowered for marker in _RUNTIME_BUILD_FAILURE_MARKERS):
+    if any(marker in lowered for marker in _ENVIRONMENT_BUILD_FAILURE_MARKERS):
         return "ENVIRONMENT_DEFECT"
     return "SUT_DEFECT"
 

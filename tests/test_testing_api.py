@@ -147,6 +147,61 @@ def test_implementation_repair_preserves_the_failing_test(monkeypatch) -> None:
     assert result["implementation_job_id"] == "implementation-2"
 
 
+def test_implementation_repair_without_test_candidate_uses_new_artifacts(
+    monkeypatch,
+) -> None:
+    """앱 실행 전 실패도 새 구현 파일로 다시 검사하며 수리 이력은 이어 간다."""
+    fixed_input = _input("implementation-2")
+    previous = {
+        "job_id": "command-1",
+        "app_id": "app-1",
+        "implementation_job_id": "implementation-1",
+        "status": "COMPLETED",
+        "testing_input": _input("implementation-1").model_dump(mode="json"),
+        "repair_history": {"status": "ACTIVE"},
+        "result": {
+            "passed": False,
+            "verification": {
+                "reports": {
+                    "dynamicFunctional": {
+                        "gateStatus": "FAIL",
+                        "reason": "Dockerfile references a missing frontend build.",
+                    }
+                }
+            },
+        },
+    }
+    monkeypatch.setattr(
+        testing_service.implementation_worker,
+        "get_testing_input",
+        lambda _job_id: _completed_implementation("implementation-2"),
+    )
+    monkeypatch.setattr(
+        testing_service,
+        "capture_testing_input",
+        lambda *_args, **_kwargs: fixed_input,
+    )
+
+    def run(_run_id, received_input, **kwargs):
+        assert received_input == fixed_input
+        assert kwargs["repair_history"]["status"] == "ACTIVE"
+        assert kwargs["partial_result"] == {}
+        assert kwargs["previous_findings"]
+        return {"passed": True}, {"status": "COMPLETED"}
+
+    monkeypatch.setattr(testing_service, "_run_test", run)
+
+    result = testing_service.run_testing(
+        "app-1",
+        "implementation-2",
+        run_id="command-2",
+        previous_job=previous,
+        preserve_test=False,
+    )
+
+    assert result["implementation_job_id"] == "implementation-2"
+
+
 def test_repair_rejects_a_successful_previous_result(monkeypatch) -> None:
     fixed_input = _input("implementation-1")
     monkeypatch.setattr(

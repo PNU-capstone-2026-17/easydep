@@ -28,7 +28,9 @@ class ImplementationSettings:
             work_root=work_root,
             python_executable=python,
             max_workers=max(1, settings.implementation_max_workers),
-            model=settings.implementation_agent_model,
+            # 모든 LLM 단계는 MODEL 하나를 공유한다. OpenHands가 요구하는 provider
+            # 접두사는 실제 SDK 객체를 만드는 경계에서만 붙인다.
+            model=settings.model,
             base_url=settings.implementation_agent_base_url,
             command_timeout_seconds=max(
                 60, settings.implementation_command_timeout_seconds

@@ -16,10 +16,6 @@ class Settings(BaseSettings):
     temperature: float = 0.2
     seed: int = 42
 
-    # Specific Agent Models
-    openhands_model: str | None = None
-    llm_model: str | None = None
-
     # LLM Options
     # Structured design models can exceed provider defaults once reasoning
     # tokens are included. Keep a bounded, explicit allowance instead of
@@ -90,7 +86,6 @@ class Settings(BaseSettings):
     design_class_collaboration_max_completion_tokens: int = 8192
     implementation_max_workers: int = 1
     implementation_task_parallelism: int = 2
-    implementation_agent_model: str = "nvidia_nim/openai/gpt-oss-120b"
     implementation_agent_base_url: str = "https://integrate.api.nvidia.com/v1"
     implementation_agent_temperature: float = 0.2
     implementation_agent_max_output_tokens: int = 16384

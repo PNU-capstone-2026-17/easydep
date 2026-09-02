@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Generic, Literal, TypeVar
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 ArtifactT = TypeVar("ArtifactT")
 ContextT = TypeVar("ContextT")
@@ -160,6 +160,13 @@ class RepairLedger(BaseModel):
     attempts: list[RepairAttempt] = []
     stall_reason: str = ""
     next_retry_at: str | None = None
+
+    @field_validator("stall_reason", mode="before")
+    @classmethod
+    def _normalize_empty_stall_reason(cls, value: Any) -> str:
+        """진행 중인 이력이 저장한 null을 공개 문자열 형태로 정리한다."""
+
+        return "" if value is None else str(value)
 
     def model_post_init(self, __context: Any) -> None:
         if not self.episode_id:
