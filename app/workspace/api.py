@@ -18,6 +18,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.artifacts_api import require_app, to_web_response, validate_app_id
 from app.cloudkb import region_catalog
+from app.design.service import (
+    apply_deployment_sizing_session,
+    deployment_sizing_session,
+)
 from app.design.services.common.plantuml import render_plantuml
 from app.repositories import artifact_repository
 from app.requirements.schemas import DeploymentPreferences
@@ -142,6 +146,22 @@ class WorkspaceCommandRequest(BaseModel):
     delegate_repair_approvals: bool = True
     auto_approve_method_proposals: bool = False
     deployment_preferences: dict[str, Any] | None = None
+
+
+class ComputeSizingSelectionRequest(BaseModel):
+    """한 compute unit의 최종 VM 선택이다."""
+
+    computeUnitId: str = Field(min_length=1, max_length=200)
+    sku: str = Field(min_length=1, max_length=200)
+    replicaCount: int = Field(ge=1, le=100)
+    replicationConfirmed: bool = False
+
+
+class ApplyDeploymentSizingRequest(BaseModel):
+    """한 deployment target에 적용할 모든 compute 선택이다."""
+
+    targetId: str = Field(min_length=1, max_length=1000)
+    selections: list[ComputeSizingSelectionRequest] = Field(min_length=1, max_length=50)
 
 
 @router.get("/apps")
@@ -271,6 +291,34 @@ def save_deployment_preferences(
         )
     resume = workspace_service.apply_saved_deployment_preferences(app_id)
     return {"preferences": stored, "resume_command": resume}
+
+
+@router.get("/apps/{app_id}/deployment-sizing")
+def get_deployment_sizing(app_id: str, target: str = Query(min_length=1)) -> dict[str, Any]:
+    """저장된 target의 VM 후보와 compute-only 예상 비용을 반환한다."""
+
+    validate_app_id(app_id)
+    try:
+        return deployment_sizing_session(app_id, target)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.put("/apps/{app_id}/deployment-sizing")
+def apply_deployment_sizing(
+    app_id: str, request: ApplyDeploymentSizingRequest
+) -> dict[str, Any]:
+    """검증된 VM 선택을 ResourcePlan과 저장된 배포 산출물에 반영한다."""
+
+    validate_app_id(app_id)
+    try:
+        return apply_deployment_sizing_session(
+            app_id,
+            request.targetId,
+            [selection.model_dump() for selection in request.selections],
+        )
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/apps/{app_id}")

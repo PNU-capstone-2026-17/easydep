@@ -129,14 +129,14 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
     # 5. Infrastructure & IaC (Deployment Diagram / Cloud Spec)
     cloud = spec.inputs.get("cloud")
     deployment = spec.inputs.get("deploymentBundle")
-    terraform_main = run_root / "application/terraform/main.tf"
+    terraform_main = run_root / "application/deployment/tofu/main.tf"
     # 리소스 요구사항 파일이 있다고 해서 IaC가 항상 생성되는 것은 아니다. 배포 설계가
     # 아직 사용자 입력을 기다리는 경우에는 로컬 컨테이너까지만 검증하므로, 실제로 만든
     # Terraform 파일만 추적표에 올린다. IaC 생성 자체의 성공 여부는 배포 렌더러가 먼저
     # 검사하므로 여기서는 존재하지 않는 선택 산출물을 필수 파일로 잘못 세지 않는다.
     if cloud and cloud.is_file() and terraform_main.is_file():
         mappings.append({
-            "target_file": "application/terraform/main.tf",
+            "target_file": "application/deployment/tofu/main.tf",
             "element_name": "TerraformMain",
             "origin_artifact": "cloud",
             "origin_element": "cloud resource specification",

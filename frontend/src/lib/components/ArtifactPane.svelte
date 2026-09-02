@@ -7,6 +7,7 @@
   import ArtifactVisualization from '$lib/components/ArtifactVisualization.svelte';
   import ArtifactNavigator from '$lib/components/ArtifactNavigator.svelte';
   import DraggableDiagramViewport from '$lib/components/DraggableDiagramViewport.svelte';
+  import DeploymentSizingPanel from '$lib/components/DeploymentSizingPanel.svelte';
   import ReadOnlySourceViewer from '$lib/components/ReadOnlySourceViewer.svelte';
   import SourceFileExplorer from '$lib/components/SourceFileExplorer.svelte';
   import { Badge } from '$lib/components/ui/badge';
@@ -28,6 +29,7 @@
     sequenceMethodApprovalAvailable = false,
     onSequenceMethodApproval,
     onFileSelect,
+    onDeploymentSizingApplied,
     onClose
   }: {
     appId: string;
@@ -47,11 +49,13 @@
     sequenceMethodApprovalAvailable?: boolean;
     onSequenceMethodApproval?: () => void;
     onFileSelect?: (path: string) => void;
+    onDeploymentSizingApplied?: () => void | Promise<void>;
     onClose?: () => void;
   } = $props();
   let tab = $state<'artifact' | 'validation' | 'changes' | 'evidence'>('artifact');
   let diagramExpanded = $state(false);
   let deploymentView = $state<'runtime' | 'provisioning'>('runtime');
+  let deploymentTargetId = $state('');
   let indexOpen = $state(false);
   let versions = $state<Array<Record<string, any>>>([]);
   let versionsError = $state('');
@@ -92,6 +96,8 @@
     )
   );
   let validation = $derived(document?.validation?.[selected]);
+  let deploymentMetadata = $derived(document?.artifact_metadata?.deployment_diagram);
+  let deploymentTargets = $derived(deploymentMetadata?.targets ?? []);
   // The sequence artifact itself changes when feedback is applied, even when
   // the UC summary list keeps the same IDs.  Track it separately so images
   // receive a new URL and cannot retain a previous revision in the DOM/cache.
@@ -141,10 +147,20 @@
       diagramExpanded = false;
       sourceExpanded = false;
       deploymentView = 'runtime';
+      deploymentTargetId = '';
       expandedSequence = null;
       indexOpen = false;
       traceRefs = [];
       selectedArtifactTraceRef = '';
+    }
+  });
+
+  $effect(() => {
+    if (selected !== 'deployment_diagram') return;
+    const targets = deploymentTargets;
+    const stored = deploymentMetadata?.selectedTarget?.id ?? '';
+    if (!targets.some((target) => target.id === deploymentTargetId)) {
+      deploymentTargetId = stored || targets[0]?.id || '';
     }
   });
 
@@ -420,7 +436,10 @@
       return `/api/workspace/apps/${encodedAppId}/commands/${commandId}/previews/class_diagram/image.svg?revision=${liveClassPreview.revision}`;
     }
     if (stage === 'deployment_diagram') {
-      return `/api/apps/${encodedAppId}/stages/deployment_diagram/views/${deploymentView}/image.svg`;
+      const target = deploymentTargetId
+        ? `?target=${encodeURIComponent(deploymentTargetId)}`
+        : '';
+      return `/api/apps/${encodedAppId}/stages/deployment_diagram/views/${deploymentView}/image.svg${target}`;
     }
     return `/api/apps/${encodedAppId}/stages/${encodeURIComponent(stage)}/image.svg`;
   }
@@ -545,6 +564,27 @@
             <span class="flex items-center gap-1 font-normal text-[#85877e]"><Maximize2 size={12} /> Click to expand</span>
           </div>
           {#if selected === 'deployment_diagram'}
+            {#if deploymentTargets.length > 1}
+              <div class="mb-2 flex gap-1.5 overflow-x-auto" role="tablist" aria-label="Deployment target preview">
+                {#each deploymentTargets as target}
+                  <button
+                    class="focus-ring whitespace-nowrap rounded-md border px-2 py-1.5 text-[11px] font-semibold {deploymentTargetId === target.id ? 'border-[#86aa93] bg-[#eaf4ed] text-[#285b43]' : 'border-[#dde1da] bg-white text-[#74776f]'}"
+                    role="tab"
+                    aria-selected={deploymentTargetId === target.id}
+                    onclick={() => (deploymentTargetId = target.id ?? '')}
+                  >
+                    {target.provider.toUpperCase()} · {target.region}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            {#if deploymentTargetId}
+              <DeploymentSizingPanel
+                {appId}
+                targetId={deploymentTargetId}
+                onApplied={onDeploymentSizingApplied}
+              />
+            {/if}
             <div class="mb-3 grid grid-cols-2 rounded-lg bg-[#f0f1ed] p-1" role="tablist" aria-label="Deployment diagram view">
               {#each [['runtime', 'Runtime placement'], ['provisioning', 'Creation dependencies']] as view}
                 <button

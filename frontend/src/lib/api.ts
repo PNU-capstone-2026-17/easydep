@@ -8,6 +8,7 @@ import type {
   CloudProvider,
   CloudRegionOption,
   DeploymentPreferences,
+  DeploymentSizingResponse,
   SequenceDiagramSummary,
   LiveDiagramPreview,
   LiveSourceSnapshot,
@@ -70,6 +71,30 @@ export function sendCommand(appId: string, payload: CommandPayload) {
 
 export function getArtifacts(appId: string) {
   return request<{ app_id: string } & ArtifactDocument>(`/api/apps/${appId}`);
+}
+
+export function getDeploymentSizing(appId: string, targetId: string) {
+  return request<DeploymentSizingResponse>(
+    `/api/workspace/apps/${encodeURIComponent(appId)}/deployment-sizing?target=${encodeURIComponent(targetId)}`
+  );
+}
+
+export function applyDeploymentSizing(
+  appId: string,
+  input: {
+    targetId: string;
+    selections: Array<{
+      computeUnitId: string;
+      sku: string;
+      replicaCount: number;
+      replicationConfirmed: boolean;
+    }>;
+  }
+) {
+  return request(`/api/workspace/apps/${encodeURIComponent(appId)}/deployment-sizing`, {
+    method: 'PUT',
+    body: JSON.stringify(input)
+  });
 }
 
 export function getEventLlmTimings(

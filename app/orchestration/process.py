@@ -1,4 +1,4 @@
-"""Subprocess boundary for testing jobs."""
+"""구현과 Testing이 공유하는 외부 도구 subprocess 실행 경계다."""
 
 from __future__ import annotations
 

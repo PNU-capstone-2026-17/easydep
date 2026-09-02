@@ -28,7 +28,6 @@ from app.implementation.agents.workspace import (
     path_is_editable,
     prepare_agent_workspace,
 )
-from app.implementation.delivery.container import render_deployment
 from app.implementation.delivery.terraform import render_iac
 from app.implementation.domain.models import JobSpec
 from app.implementation.workflows.completion import audit_run_completion
@@ -1511,35 +1510,14 @@ def test_entity_can_add_helpers_while_preserving_generated_public_signatures(
         verify_source_design_conformance(tmp_path, spec)
 
 
-def test_cloud_spec_renders_deployment_and_matching_iac(tmp_path: Path) -> None:
-    """확정된 클라우드 명세가 배포 파일과 같은 공급자의 IaC로 이어지는지 확인한다."""
+def test_legacy_cloud_spec_cannot_bypass_selected_resource_plan(tmp_path: Path) -> None:
+    """이전 cloud JSON만으로는 IaC를 만들지 않는다."""
     cloud = tmp_path / "cloud.json"
     cloud.write_text(
         json.dumps(
             {
                 "provider": "aws",
-                "resources": [
-                    {"type": "AWS::EC2::VPC", "name": "platform"},
-                    {
-                        "type": "AWS::EC2::Subnet",
-                        "name": "private-a",
-                        "availabilityZone": "ap-northeast-2a",
-                        "dependsOn": ["platform"],
-                    },
-                    {
-                        "type": "AWS::EC2::Subnet",
-                        "name": "private-c",
-                        "availabilityZone": "ap-northeast-2c",
-                        "dependsOn": ["platform"],
-                    },
-                    {"type": "AWS::ECR::Repository", "name": "orders"},
-                    {
-                        "type": "AWS::EKS::Cluster",
-                        "name": "orders-cluster",
-                        "dependsOn": ["platform"],
-                        "workloads": [{"name": "orders-api"}],
-                    },
-                ],
+                "resources": [{"type": "AWS::EC2::VPC", "name": "platform"}],
             }
         ),
         encoding="utf-8",
@@ -1547,19 +1525,7 @@ def test_cloud_spec_renders_deployment_and_matching_iac(tmp_path: Path) -> None:
     spec = SimpleNamespace(name="orders", inputs={"cloud": cloud})
     run = tmp_path / "run"
 
-    deployment = render_deployment(run, spec)
-    iac = render_iac(run, spec)
+    with pytest.raises(ValueError, match="deployment diagram bundle"):
+        render_iac(run, spec)
 
-    assert deployment["intentSource"] == "implementation-agent-inference"
-    assert deployment["kubernetesManifests"] is False
-    assert iac["provider"] == "aws"
-    assert iac["kubernetesManifests"] is False
-    assert iac["sourceConformance"]["status"] == "SUCCEEDED"
-    assert (run / "application/Dockerfile").is_file()
-    assert (run / "application/terraform/main.tf").is_file()
-    # 이전 cloud JSON 경로는 Terraform만 만든다. 사용자용 배포 묶음은 검토된
-    # ResourcePlan이 있는 현재 경로에서만 생성한다.
-    assert "deploymentPackage" not in iac
-    assert not (run / "application/deployment-bundle").exists()
-    assert not (run / "application/k8s").exists()
-    assert not (run / "application/deployment-bundle/application/k8s").exists()
+    assert not (run / "application").exists()

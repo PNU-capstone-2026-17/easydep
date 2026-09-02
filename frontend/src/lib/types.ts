@@ -122,9 +122,12 @@ export interface CloudRegionOption {
 }
 
 export interface DeploymentTarget {
+  id?: string;
   provider: CloudProvider;
   region: string;
   zones?: string[];
+  status?: string;
+  issueCount?: number;
 }
 
 export interface DeploymentPreferences {
@@ -145,8 +148,51 @@ export interface ArtifactDocument {
       schemaVersion?: string;
       readOnly?: boolean;
       regeneration?: { required?: boolean; targetSchemaVersion?: string; reason?: string };
+      status?: string;
+      selection?: { status?: string; reason?: string };
+      selectedTarget?: DeploymentTarget | null;
+      targets?: DeploymentTarget[];
     }
   >;
+}
+
+export interface ComputeSizingCandidate {
+  sku: string;
+  vCPU: number;
+  memoryGiB: number;
+  hourlyComputeUSD: number;
+  monthlyComputeUSD: number;
+  replicaCount: number;
+}
+
+export interface ComputeSizingUnit {
+  computeUnitId: string;
+  status: 'completed' | 'needsInput';
+  reason?: string;
+  minimumReplicaCount: number;
+  selectedReplicaCount: number;
+  replicationSafety: 'singleton' | 'interchangeable' | 'unknown';
+  minimumRequirements: { minVCpu: number | null; minMemoryGiB: number | null };
+  candidates: ComputeSizingCandidate[];
+}
+
+export interface DeploymentSizingResponse {
+  target: DeploymentTarget;
+  guidance: {
+    provider: CloudProvider;
+    region: string;
+    currency: 'USD';
+    hoursPerMonth: number;
+    priceRetrievedAt: string;
+    scope: string;
+    computeUnits: ComputeSizingUnit[];
+  };
+  selected: Array<{
+    computeUnitId: string;
+    sku: string;
+    replicaCount: number;
+    replicationConfirmed: boolean;
+  }>;
 }
 
 export interface FileArtifactSnapshot {

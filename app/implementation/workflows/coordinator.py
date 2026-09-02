@@ -17,7 +17,7 @@ from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import execute_openhands_task
 from ..agents.verification.build import WorkspaceVerificationError, verify_run_workspace
-from ..delivery.container import render_deployment, render_local_container
+from ..delivery.container import render_local_container
 from ..delivery.terraform import render_iac
 from ..domain.implementation_ir import (
     assess_bce_erd_entity_contract,
@@ -907,8 +907,6 @@ def _bind_deployment_runtime(run_root: Path, spec: JobSpec) -> Path | None:
 def _render_deployment_if_configured(
     run_root: Path, spec: JobSpec
 ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
-    intent = spec.inputs.get("deploymentIntent")
-    cloud = spec.inputs.get("cloud")
     deployment = spec.inputs.get("deployment")
     deployment_bundle = spec.inputs.get("deploymentBundle")
     has_bundle = bool(deployment_bundle and deployment_bundle.is_file())
@@ -917,11 +915,7 @@ def _render_deployment_if_configured(
         # 로컬 Dockerfile을 만든다. 이후 IaC는 같은 파일과 bound bundle을 사용한다.
         render_local_container(run_root)
     bound_bundle = _bind_deployment_runtime(run_root, spec) if has_bundle else None
-    # 현재 제품 경로는 Docker-on-VM ResourcePlan이다. 구조화된 bundle이 있으면
-    # 예전 Kubernetes cloud inference를 함께 실행하지 않는다.
-    if not has_bundle and ((intent and intent.is_file()) or (cloud and cloud.is_file())):
-        deployment_report = render_deployment(run_root, spec)
-    elif (
+    if (
         deployment
         and deployment.is_file()
         and not (deployment_bundle and deployment_bundle.is_file())
@@ -938,8 +932,6 @@ def _render_deployment_if_configured(
             inputs={**spec.inputs, "deploymentBundle": bound_bundle},
         )
         iac_report = render_iac(run_root, iac_spec)
-    elif not has_bundle and cloud and cloud.is_file():
-        iac_report = render_iac(run_root, spec)
     return deployment_report, iac_report
 
 

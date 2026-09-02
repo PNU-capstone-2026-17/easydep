@@ -571,6 +571,7 @@
             sequenceMethodApprovalAvailable={canApproveSequenceMethodProposals}
             onSequenceMethodApproval={approveSequenceMethodProposals}
             onFileSelect={(path) => (selectedSourcePath = path)}
+            onDeploymentSizingApplied={refreshState}
             onClose={() => (artifactOpen = false)}
           />
         {/snippet}

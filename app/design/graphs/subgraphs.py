@@ -103,6 +103,8 @@ DESIGN_STAGES: tuple[str, ...] = (
     "erd",
     "deployment_diagram",
 )
+from app.design.services.deployment_diagram.normalization import normalize_workload_graph
+from app.design.services.deployment_diagram.planning_facts import extract_planning_facts
 
 # 저장소는 DB artifact type을 key로 사용하고, 배포 계획 문서는 사람이 읽는 model 이름을
 # 사용한다. 경계에서 한 번만 바꿔 주어 PlanningFact가 실제 저장 버전을 놓치지 않게 한다.
@@ -128,6 +130,52 @@ def _planning_artifact_versions(state: ArchitectureState) -> dict[str, Any]:
         for planning_name, artifact_type in _PLANNING_VERSION_TYPES.items()
         if artifact_type in stored
     }
+
+
+def _deployment_planning_inputs(state: ArchitectureState) -> dict[str, Any]:
+    """배포 생성과 검사가 반드시 같은 상류 산출물을 읽게 한다."""
+
+    return {
+        "refined_requirements": state.get("refined_requirements") or [],
+        "capability_contract": dict(state.get("capability_contract") or {}),
+        "resource_intake": dict(state.get("resource_intake") or {}),
+        "usecase_spec": state.get("usecase_spec") or {},
+        "class_model": state.get("extracted_bce_classes") or {},
+        "sequence_model": state.get("sequence_diagram_model") or {},
+        "api_spec": state.get("api_spec") or {},
+        "erd_model": state.get("erd_bce_classes") or state.get("erd_puml") or {},
+        "artifact_versions": _planning_artifact_versions(state),
+        "additional_planning_facts": list(
+            state.get("deployment_planning_facts") or []
+        ),
+    }
+
+
+def _deployment_model_findings(
+    model: dict[str, Any], state: ArchitectureState
+) -> list[ArtifactFinding]:
+    """정규화 뒤에도 남은 WorkloadGraph 문제를 자동 수리 입력으로 바꾼다.
+
+    ``needsInput``은 LLM이 주소·용량·보존 정책을 지어내면 안 되는 자리다. 이 경우에는
+    지적을 화면에 남기되 자동 수리 대상에서 제외한다. 나머지는 현재 모델의 구조 오류라
+    기존 설계 수리 루프가 전체 WorkloadGraph를 다시 제안할 수 있다.
+    """
+
+    facts = extract_planning_facts(
+        resource_spec=dict(state.get("resource_spec") or {}),
+        **_deployment_planning_inputs(state),
+    )
+    normalized = normalize_workload_graph(model, planning_facts=facts)
+    return [
+        ArtifactFinding(
+            "deployment.workload-graph-valid",
+            str(issue.get("reason") or "Deployment workload graph is incomplete."),
+            str(issue.get("field") or "deployment"),
+            requires_user_input=str(issue.get("classification") or "") == "needsInput",
+        )
+        for issue in normalized.get("issues") or []
+        if isinstance(issue, dict)
+    ]
 
 # 수락 단위 cache는 process에만 존재한다. graph state와 checkpoint에는 기록하지 않는다.
 _CLASS_DESIGN_ACCEPTED_UNIT_CACHE = ProcessLocalAcceptedUnitCache(capacity=256)
@@ -554,20 +602,7 @@ def _finalize_deployment_diagram(state: ArchitectureState) -> dict[str, Any]:
     bundle = build_deployment_diagram_bundle(
         candidate,
         dict(state.get("resource_spec") or {}),
-        planning_inputs={
-            "refined_requirements": state.get("refined_requirements") or [],
-            "capability_contract": dict(state.get("capability_contract") or {}),
-            "resource_intake": dict(state.get("resource_intake") or {}),
-            "usecase_spec": state.get("usecase_spec") or {},
-            "class_model": state.get("extracted_bce_classes") or {},
-            "sequence_model": state.get("sequence_diagram_model") or {},
-            "api_spec": state.get("api_spec") or {},
-            "erd_model": state.get("erd_bce_classes") or state.get("erd_puml") or {},
-            "artifact_versions": _planning_artifact_versions(state),
-            "additional_planning_facts": list(
-                state.get("deployment_planning_facts") or []
-            ),
-        },
+        planning_inputs=_deployment_planning_inputs(state),
     )
     hydrated = hydrate_deployment_diagram_bundle(bundle)
     return {
@@ -634,6 +669,9 @@ DEPLOYMENT_DIAGRAM_SPEC = DesignArtifactSpec(
         "connections": lambda n: n.get("id", ""),
         "constraints": lambda n: n.get("id", ""),
     },
+    check=_deployment_model_findings,
+    check_key="deployment_diagram_check",
+    repair=_revise_deployment_state,
     finalize=_finalize_deployment_diagram,
 )
 

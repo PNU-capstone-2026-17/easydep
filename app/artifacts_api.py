@@ -33,6 +33,7 @@ from app.artifact_images import (
     PROVISIONING_VIEW,
     RUNTIME_VIEW,
     artifact_image_cache,
+    deployment_target_view,
     sequence_diagrams_from_state,
     sequence_view,
     warm_artifact_images,
@@ -272,7 +273,12 @@ def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
 
 
 @router.get("/api/apps/{app_id}/stages/deployment_diagram/views/{view}/image.{extension}")
-def get_deployment_diagram_view_image(app_id: str, view: str, extension: str) -> Response:
+def get_deployment_diagram_view_image(
+    app_id: str,
+    view: str,
+    extension: str,
+    target: str | None = None,
+) -> Response:
     """미리 렌더링한 deployment runtime 또는 provisioning 그림을 반환한다."""
     validate_app_id(app_id)
     if extension not in ("png", "svg"):
@@ -281,9 +287,10 @@ def get_deployment_diagram_view_image(app_id: str, view: str, extension: str) ->
         "runtime": RUNTIME_VIEW,
         "provisioning": PROVISIONING_VIEW,
     }
-    cache_view = views.get(view)
-    if cache_view is None:
+    base_view = views.get(view)
+    if base_view is None:
         raise HTTPException(status_code=404, detail="Unknown deployment diagram view.")
+    cache_view = deployment_target_view(base_view, target) if target else base_view
     image = artifact_image_cache.get(
         app_id, "deployment_diagram", cache_view, extension,
     )

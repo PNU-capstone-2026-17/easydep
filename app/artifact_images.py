@@ -14,6 +14,10 @@ from typing import Any
 
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.services.common.plantuml import render_plantuml
+from app.design.services.deployment_diagram.provider_plantuml import (
+    deployment_bundle_provisioning_puml,
+    deployment_bundle_runtime_puml,
+)
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 
 MAIN_VIEW = "main"
@@ -32,6 +36,12 @@ _STAGE_PUML_FIELDS = {
 def sequence_view(use_case_id: str) -> str:
     """유스케이스 ID가 다른 stage view 이름과 겹치지 않게 cache key를 만든다."""
     return f"use-case:{use_case_id}"
+
+
+def deployment_target_view(view: str, target_id: str) -> str:
+    """같은 view의 CSP·리전 후보가 cache에서 서로 덮어쓰지 않게 한다."""
+
+    return f"{view}-target:{target_id}"
 
 
 def sequence_diagrams_from_state(
@@ -99,6 +109,34 @@ def stage_diagram_sources(
             deployment_sources[RUNTIME_VIEW] = runtime
         if provisioning.strip():
             deployment_sources[PROVISIONING_VIEW] = provisioning
+        bundle = state.get("deployment_diagram_bundle") or {}
+        if isinstance(bundle, dict):
+            # 비교 중인 후보도 실제 ResourcePlan에서 렌더한다. 후보 하나만 담은 작은
+            # view bundle을 만들면 기존 renderer를 바꾸거나 projection을 복제할 필요가 없다.
+            for projection in bundle.get("projections") or []:
+                if not isinstance(projection, dict) or not isinstance(
+                    projection.get("target"), dict
+                ):
+                    continue
+                target = dict(projection["target"])
+                target_id = str(target.get("id") or "")
+                if not target_id:
+                    continue
+                view_bundle = {
+                    **bundle,
+                    "selectedTarget": target,
+                    "projections": [projection],
+                }
+                candidate_runtime = deployment_bundle_runtime_puml(view_bundle)
+                candidate_provisioning = deployment_bundle_provisioning_puml(view_bundle)
+                if candidate_runtime.strip():
+                    deployment_sources[
+                        deployment_target_view(RUNTIME_VIEW, target_id)
+                    ] = candidate_runtime
+                if candidate_provisioning.strip():
+                    deployment_sources[
+                        deployment_target_view(PROVISIONING_VIEW, target_id)
+                    ] = candidate_provisioning
         return deployment_sources
 
     return {}

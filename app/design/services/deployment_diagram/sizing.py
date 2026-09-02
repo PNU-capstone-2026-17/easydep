@@ -59,7 +59,12 @@ def _catalog_snapshot_at() -> str:
 
 
 def compute_sizing_guidance(
-    deployment_plan: dict[str, Any], *, provider: str, region: str, limit: int = 5
+    deployment_plan: dict[str, Any],
+    *,
+    provider: str,
+    region: str,
+    workload_graph: dict[str, Any] | None = None,
+    limit: int = 5,
 ) -> dict[str, Any]:
     """compute unit별 SKU 후보와 compute-only 월 예상치를 반환한다.
 
@@ -68,6 +73,12 @@ def compute_sizing_guidance(
 
     provider = provider.lower()
     guidance: list[dict[str, Any]] = []
+    workloads = {
+        str(item.get("id") or ""): item
+        for item in (workload_graph or {}).get("workloads") or []
+        if isinstance(item, dict)
+    }
+    workloads_by_compute = _workloads_by_compute(deployment_plan)
     for compute in deployment_plan.get("computeUnits") or []:
         if not isinstance(compute, dict):
             continue
@@ -75,14 +86,22 @@ def compute_sizing_guidance(
         min_vcpu = requirements.get("minVCpu")
         min_memory = requirements.get("minMemoryGiB")
         minimum_replicas = max(1, int(compute.get("replicaCount") or 1))
+        safety_values = {
+            str((workloads.get(workload_id) or {}).get("replicationSafety") or "unknown")
+            for workload_id in workloads_by_compute.get(str(compute.get("id") or ""), [])
+        }
+        replication_safety = (
+            "singleton"
+            if "singleton" in safety_values
+            else "interchangeable"
+            if safety_values == {"interchangeable"}
+            else "unknown"
+        )
         item: dict[str, Any] = {
             "computeUnitId": str(compute.get("id") or ""),
             "minimumReplicaCount": minimum_replicas,
             "selectedReplicaCount": minimum_replicas,
-            # DeploymentPlan groups workload topology but intentionally omits
-            # application replication semantics. The selection validator reads
-            # the WorkloadGraph before allowing a scale-out.
-            "replicationSafety": "unknown",
+            "replicationSafety": replication_safety,
             "minimumRequirements": {
                 "minVCpu": min_vcpu,
                 "minMemoryGiB": min_memory,
@@ -183,6 +202,14 @@ def _selection_issues(
                     ),
                 }
             )
+    missing = sorted(compute_ids - seen)
+    if missing:
+        issues.append(
+            {
+                "field": "computeUnits",
+                "reason": f"Choose a VM SKU and replica count for: {', '.join(missing)}.",
+            }
+        )
     return issues
 
 
@@ -220,6 +247,7 @@ def apply_compute_selections(
         plan,
         provider=str(projection.get("provider") or "").lower(),
         region=str(projection.get("region") or ""),
+        workload_graph=graph,
         limit=50,
     )
     guidance_by_compute = {
@@ -269,18 +297,18 @@ def apply_compute_selections(
                     "sourceRefs": ["user:compute-sizing-selection"],
                 }
             )
-            confirmation_id = f"selected-replication-confirmation-{workload_id}"
-            constraints[:] = [item for item in constraints if item.get("id") != confirmation_id]
             if selection.replica_count > 1 and selection.replication_confirmed:
-                constraints.append(
-                    {
-                        "id": confirmation_id,
-                        "kind": "replicationConfirmation",
-                        "workloadRefs": [workload_id],
-                        "value": True,
-                        "required": True,
-                        "sourceRefs": ["user:compute-sizing-selection"],
-                    }
+                # 사용자가 "어느 인스턴스가 처리해도 같다"는 의미를 확인한 결과는
+                # 별도 가짜 constraint가 아니라 그 질문의 실제 답인 replicationSafety에
+                # 기록한다. 저장 후 다시 Pydantic 검증해도 같은 WorkloadGraph 계약이다.
+                workload["replicationSafety"] = "interchangeable"
+                workload["sourceRefs"] = list(
+                    dict.fromkeys(
+                        [
+                            *(workload.get("sourceRefs") or []),
+                            "user:compute-sizing-selection",
+                        ]
+                    )
                 )
     context = dict(projection.get("planningContext") or {})
     selected_plan = build_deployment_plan(graph, context)

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from app.design.services.deployment_diagram import (
@@ -14,13 +16,17 @@ from app.design.services.deployment_diagram import (
 )
 from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
+    select_deployment_target,
 )
+from app.design.services.deployment_diagram.models import WorkloadGraph
 from app.design.services.deployment_diagram.planner import extract_planning_facts
 from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
 )
-from app.design.services.deployment_diagram.provider_template import validate_complete_provider_template
+from app.design.services.deployment_diagram.provider_template import (
+    validate_complete_provider_template,
+)
 from app.design.services.deployment_diagram.provider_template_generation import (
     build_complete_provider_template,
 )
@@ -36,7 +42,12 @@ from app.design.services.deployment_diagram.provisioning_renderer import (
 from app.design.services.deployment_diagram.runtime_renderer import (
     render_runtime_deployment,
 )
+from app.design.services.deployment_diagram.sizing import (
+    apply_compute_selections,
+    compute_sizing_guidance,
+)
 from app.implementation.delivery.iac_renderer import render_open_tofu
+from app.implementation.delivery.terraform import render_iac
 
 _ROOT = Path(__file__).resolve().parents[1]
 _PROVIDERS: dict[str, dict[str, Any]] = {
@@ -247,6 +258,86 @@ def _projection_outputs(provider: str) -> dict[str, Any]:
         "provisioningPuml": provisioning_puml,
         "iacFiles": iac_files,
     }
+
+
+def test_selected_target_drives_multi_projection_diagrams() -> None:
+    spec = _resource_spec("aws")
+    spec["deploymentTargets"] = [
+        {"provider": provider, **target}
+        for provider, target in list(_PROVIDERS.items())[:2]
+    ]
+    facts = extract_planning_facts(
+        capability_contract=_capability_contract(),
+        resource_spec=spec,
+        api_spec={"paths": {"/orders": {"get": {}}}},
+        erd_model={"Classes": [{"className": "Order"}]},
+    )
+    bundle = build_deployment_diagram_bundle(
+        _candidate(), spec, planning_facts=facts
+    )
+
+    assert "Multiple provider alternatives" in deployment_bundle_runtime_puml(bundle)
+
+    azure_target = bundle["projections"][1]["target"]
+    selected = select_deployment_target(bundle, azure_target)
+    runtime = deployment_bundle_runtime_puml(selected)
+    provisioning = deployment_bundle_provisioning_puml(selected)
+
+    assert "Microsoft Azure" in runtime
+    assert "Microsoft Azure" in provisioning
+    assert "Deployment target unresolved" not in runtime
+
+
+def test_selected_resource_plan_has_one_canonical_iac_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bundle = _projection_outputs("aws")["bundle"]
+    bundle_path = tmp_path / "deployment-bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    monkeypatch.setattr(
+        "app.implementation.delivery.package._format_open_tofu", lambda _directory: None
+    )
+
+    report = render_iac(
+        tmp_path / "run",
+        SimpleNamespace(inputs={"deploymentBundle": bundle_path}),
+    )
+
+    assert report["deploymentPackage"] == "deployment"
+    assert (tmp_path / "run/application/deployment/tofu/main.tf").is_file()
+    assert not (tmp_path / "run/application/terraform").exists()
+
+
+def test_compute_choices_reproject_without_private_constraint_kind() -> None:
+    bundle = _projection_outputs("aws")["bundle"]
+    projection = bundle["projections"][0]
+    guidance = compute_sizing_guidance(
+        projection["deploymentPlan"],
+        provider="aws",
+        region=_PROVIDERS["aws"]["region"],
+        workload_graph=bundle["workloadGraph"],
+        limit=1,
+    )
+    assert guidance["computeUnits"]
+    assert all(unit["candidates"] for unit in guidance["computeUnits"])
+    selections = [
+        {
+            "computeUnitId": unit["computeUnitId"],
+            "sku": unit["candidates"][0]["sku"],
+            "replicaCount": unit["minimumReplicaCount"],
+            "replicationConfirmed": False,
+        }
+        for unit in guidance["computeUnits"]
+    ]
+
+    selected = apply_compute_selections(bundle, selections)
+
+    WorkloadGraph.model_validate(selected["workloadGraph"])
+    assert not any(
+        item.get("kind") == "replicationConfirmation"
+        for item in selected["workloadGraph"]["constraints"]
+    )
+    assert selected["sizing"]["status"] == "completed"
 
 
 def test_split_projection_public_boundaries_match_compatibility_facades() -> None:

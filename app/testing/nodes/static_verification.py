@@ -1,6 +1,8 @@
+import os
+
 from app.testing.schemas.testing_state import TestingState
 from app.testing.utils.static_analysis import scan_stage
-from app.testing.utils.deployment_package import check_deployment_package
+from app.implementation.delivery.verification import check_deployment_package
 
 
 def _resource_plan(state: TestingState) -> dict:
@@ -48,6 +50,8 @@ def static_verification_node(state: TestingState) -> dict:
         state.get("application_dir", ""),
         expected=bool(resource_plan) if expected is None else expected,
         resource_plan=resource_plan,
+        include_plan=str(os.getenv("TESTING_IAC_PLAN") or "").lower()
+        in {"1", "true", "yes", "on"},
     )
     # A package is part of the deployment gate only when it exists/was expected;
     # absent packages are represented as NOT_APPLICABLE by the package checker.
@@ -63,4 +67,10 @@ def static_verification_node(state: TestingState) -> dict:
     if package.get("issues"):
         report["issues"] = [*(report.get("issues") or []), *package["issues"]]
     scanned["errors"] = report.get("issues") or []
+    scanned["iac_report"] = package.get("openTofu") or {
+        "status": "SKIPPED",
+        "gateStatus": "NOT_APPLICABLE",
+        "issues": [],
+        "source": {"source": "none", "directory": state.get("application_dir", "")},
+    }
     return scanned

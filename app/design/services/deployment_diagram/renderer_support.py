@@ -146,7 +146,33 @@ def _compact_reference_role(path: Any) -> str:
 
 
 def _primary(bundle: dict[str, Any]) -> dict[str, Any] | None:
-    projections = list(bundle.get("projections") or [])
+    """현재 화면과 IaC가 사용할 projection 하나를 고른다.
+
+    후보가 하나면 그대로 사용한다. 후보가 여러 개면 배열의 첫 항목을 암묵적으로
+    선택하지 않고 bundle에 저장된 ``selectedTarget``과 정확히 일치하는 항목만 사용한다.
+    """
+
+    projections = [
+        item for item in bundle.get("projections") or [] if isinstance(item, dict)
+    ]
+    selected = bundle.get("selectedTarget")
+    if isinstance(selected, dict):
+        selected_id = str(selected.get("id") or "")
+        matches = [
+            projection
+            for projection in projections
+            if isinstance(projection.get("target"), dict)
+            and (
+                str(projection["target"].get("id") or "") == selected_id
+                if selected_id
+                else str(projection["target"].get("provider") or "").lower()
+                == str(selected.get("provider") or "").lower()
+                and str(projection["target"].get("region") or "")
+                == str(selected.get("region") or "")
+            )
+        ]
+        if len(matches) == 1:
+            return matches[0]
     return projections[0] if len(projections) == 1 else None
 
 

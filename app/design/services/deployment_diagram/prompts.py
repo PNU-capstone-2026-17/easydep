@@ -48,7 +48,8 @@ Grounding and boundaries:
   capability or explicit requirement resolves public versus internal.
 - Sequence messages may justify connections. Never guess their protocol or port.
 - storage belongs under its owning workload. Include it only for explicitly
-  selected persistent block storage; deletionPolicy and capacity require evidence.
+  selected persistent block storage. Every included storage item needs a positive
+  capacityGiB, an explicit retain/delete policy, unique id, and sourceRefs.
 - For a generated application, choose an absolute POSIX mountPath as part of the
   design contract whenever explicit persistent storage is selected. The generated
   source code will implement that path. Do not invent a mount path for a prebuilt
@@ -64,6 +65,9 @@ Grounding and boundaries:
   name. Never include a secret value or provider credential.
 - Configuration ids and names must be unique within a workload. Ordinary
   non-secret configuration may use kind=value; include a value only when grounded.
+- Workload and external dependency ids are globally unique. Interface ids are
+  unique inside their owner; connection ids are globally unique. Every connection
+  endpoint and cited interface exists and every protocol is explicit HTTP or TCP.
 - replicationSafety is interchangeable only with explicit safety evidence,
   singleton only with explicit singleton semantics, otherwise unknown.
 - Copy typed replica, zone, replacement, colocate, separate, and isolation

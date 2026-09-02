@@ -40,6 +40,10 @@ from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
 )
+from app.design.services.deployment_diagram.sizing import (
+    apply_compute_selections,
+    compute_sizing_guidance,
+)
 from app.design.validation import design_readiness_report
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import AppNotFound
@@ -150,6 +154,77 @@ def select_deployment_target_session(app_id: str, target_id: str) -> dict[str, A
     if status.get("active") and status.get("stage") == "deployment_diagram":
         return resume_design_session(app_id)
     return {"app_id": app_id, **to_web_response(current), "status": "completed"}
+
+
+def deployment_sizing_session(app_id: str, target_id: str) -> dict[str, Any]:
+    """선택 후보의 compute unit별 VM 크기와 compute-only 비용을 계산한다."""
+
+    _validate_app_id(app_id)
+    state = _load_app(app_id)
+    bundle = state.get("deployment_diagram_bundle")
+    if not isinstance(bundle, dict) or not bundle:
+        raise ValueError("A deployment bundle must exist before requesting VM guidance.")
+    selected = select_deployment_target(bundle, target_id)
+    projection = next(
+        item
+        for item in selected.get("projections") or []
+        if isinstance(item, dict) and item.get("target") == selected.get("selectedTarget")
+    )
+    guidance = compute_sizing_guidance(
+        dict(projection.get("deploymentPlan") or {}),
+        provider=str(projection.get("provider") or ""),
+        region=str(projection.get("region") or ""),
+        workload_graph=dict(selected.get("workloadGraph") or {}),
+    )
+    return {
+        "target": selected.get("selectedTarget"),
+        "guidance": guidance,
+        "selected": list((bundle.get("sizing") or {}).get("selected") or []),
+    }
+
+
+def apply_deployment_sizing_session(
+    app_id: str,
+    target_id: str,
+    selections: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """VM 선택을 저장하고 같은 ResourcePlan에서 두 그림을 다시 만든다."""
+
+    _validate_app_id(app_id)
+    state = _load_app(app_id)
+    bundle = state.get("deployment_diagram_bundle")
+    if not isinstance(bundle, dict) or not bundle:
+        raise ValueError("A deployment bundle must exist before applying VM choices.")
+    updated = apply_compute_selections(
+        bundle,
+        selections,
+        selected_target=target_id,
+    )
+    if updated.get("status") != "completed":
+        return {"app_id": app_id, "status": "needs_input", "sizing": updated.get("sizing")}
+    hydrated = hydrate_deployment_diagram_bundle(updated)
+    state.update(hydrated)
+    state["deployment_diagram_puml"] = deployment_bundle_runtime_puml(updated)
+    state["deployment_diagram_provisioning_puml"] = (
+        deployment_bundle_provisioning_puml(updated)
+    )
+    artifact_repository.save_stage(
+        app_id,
+        "deployment_diagram",
+        state,
+        origin=ORIGIN_FEEDBACK_REVISED,
+    )
+    current = _load_app(app_id)
+    sync_design_state(app_id, dict(current))
+    status = session_status(app_id)
+    if status.get("active") and status.get("stage") == "deployment_diagram":
+        return resume_design_session(app_id)
+    return {
+        "app_id": app_id,
+        **to_web_response(current),
+        "status": "completed",
+        "sizing": updated.get("sizing"),
+    }
 
 
 def retry_design_session(app_id: str) -> dict[str, Any]:

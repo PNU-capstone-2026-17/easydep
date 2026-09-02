@@ -71,6 +71,7 @@ CLASS_DIAGRAM = "class_diagram"
 SEQUENCE_DIAGRAM = "sequence_diagram"
 API_SPEC = "api_spec"
 ERD = "erd"
+DEPLOYMENT_DIAGRAM = "deployment_diagram"
 
 
 @dataclass(frozen=True)
@@ -1301,6 +1302,22 @@ RULES: tuple[Rule, ...] = (
             "클래스 개수와 같은 이유다. 개수 규칙을 두면 모델이 개수를 맞추려고 엔티티를 "
             "지어내거나 합친다."
         ),
+    ),
+    Rule(
+        id="deployment.workload-graph-valid",
+        stage=DEPLOYMENT_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "The WorkloadGraph must contain grounded workloads, valid references, supported "
+            "runtime contracts, and all deployment inputs that cannot be derived later."
+        ),
+        citation=(
+            "app/design/services/deployment_diagram/normalization.py "
+            "(validate_workload_graph)"
+        ),
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="deployment_workload_graph",
     ),
 )
 

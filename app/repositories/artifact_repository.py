@@ -175,6 +175,7 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "deployment_diagram_puml",
         "valid_key": "deployment_diagram_syntax_valid",
         "errors_key": "deployment_diagram_syntax_errors",
+        "check_key": "deployment_diagram_check",
         # 편집 가능한 논리 모델과 CSP별 변환 결과를 한 bundle로 저장한다. 실행 구조도와
         # provisioning 구조도를 같은 bundle에서 만들므로 새로고침 후에도 두 그림이 같은
         # 배포 모델을 사용한다.

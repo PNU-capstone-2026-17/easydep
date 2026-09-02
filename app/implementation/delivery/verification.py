@@ -1,13 +1,11 @@
-"""Static checks for the user-facing deployment package.
+"""사용자 배포 패키지를 생성 직후와 Testing에서 함께 검사한다.
 
-These checks never run ``tofu apply`` or create cloud resources. They inspect the
-generated files and, when the corresponding fixed tool is present, run its parser
-in a temporary/read-only validation context.
+검사는 ``tofu apply``나 실제 CSP 리소스 생성을 절대 실행하지 않는다. 구현 단계는 이
+함수로 방금 만든 파일을 확인하고, Testing은 같은 함수를 복원된 snapshot에 다시 적용한다.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -15,13 +13,16 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from app.testing.runtime.process import run_process_tree
+from app.orchestration.process import run_process_tree
 
 _PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 _SECRET_ASSIGNMENT = re.compile(
     r"(?im)^\s*(?:password|passwd|secret|api[_-]?key|token|private[_-]?key)\s*[:=]\s*(?![\"']?\$\{|[\"']?(?:<|CHANGE_ME|REPLACE|YOUR_))[^\s#\"']+"
 )
-_PLACEHOLDER = re.compile(r"\$\{[^}]+\}|\{[^}]+\}|<[^>]+>|CHANGE_ME|REPLACE_ME|YOUR_[A-Z0-9_]+", re.I)
+_PLACEHOLDER = re.compile(
+    r"\$\{[^}]+\}|\{[^}]+\}|<[^>]+>|CHANGE_ME|REPLACE_ME|YOUR_[A-Z0-9_]+",
+    re.IGNORECASE,
+)
 
 
 def _package_root(application: Path) -> Path | None:
@@ -175,6 +176,7 @@ def check_deployment_package(
     expected: bool | None = None,
     resource_plan: dict[str, Any] | None = None,
     timeout_seconds: int = 120,
+    include_plan: bool = False,
 ) -> dict[str, Any]:
     """Check package files and return legacy ``status`` plus canonical ``gateStatus``."""
     application = Path(application_dir)
@@ -202,6 +204,7 @@ def check_deployment_package(
     issues.extend(_secret_findings(root))
     issues.extend(_resource_references(root, resource_plan))
     commands: list[dict[str, Any]] = []
+    tofu_commands: list[dict[str, Any]] = []
 
     tofu = root / "tofu"
     if not tofu.is_dir():
@@ -209,42 +212,46 @@ def check_deployment_package(
     if tofu.is_dir():
         executable = _tool("tofu") or _tool("terraform")
         if executable:
-            # Testing은 구현 snapshot을 읽기 전용으로 연결한다. init이 원본 아래에
-            # ``.terraform``을 만들지 않도록 작은 임시 복사본에서 세 검사를 실행한다.
-            with tempfile.TemporaryDirectory(prefix="easydep-tofu-check-") as temp:
-                validation_tofu = Path(temp) / "tofu"
+            # init이 생성 패키지에 .terraform을 남기지 않도록 작은 임시 복사본에서
+            # 실행한다. apply와 실제 provider refresh는 하지 않는다.
+            with tempfile.TemporaryDirectory(prefix="easydep-tofu-check-") as temporary:
+                validation_tofu = Path(temporary) / "tofu"
                 shutil.copytree(tofu, validation_tofu)
-                commands.append(
-                    _command_result(
-                        [executable, "fmt", "-check", "-recursive"],
-                        validation_tofu,
-                        timeout_seconds,
-                    )
-                )
-                # backend와 실제 CSP plan/apply는 열지 않고 provider와 문법만 확인한다.
-                commands.append(
-                    _command_result(
+                tofu_checks = [
+                    [executable, "fmt", "-check", "-recursive"],
+                    [
+                        executable,
+                        "init",
+                        "-backend=false",
+                        "-input=false",
+                        "-no-color",
+                    ],
+                    [executable, "validate", "-no-color"],
+                ]
+                if include_plan:
+                    tofu_checks.append(
                         [
                             executable,
-                            "init",
-                            "-backend=false",
+                            "plan",
+                            "-refresh=false",
                             "-input=false",
+                            "-lock=false",
                             "-no-color",
-                        ],
-                        validation_tofu,
-                        timeout_seconds,
+                        ]
                     )
-                )
-                commands.append(
-                    _command_result(
-                        [executable, "validate", "-no-color"],
-                        validation_tofu,
-                        timeout_seconds,
+                for command in tofu_checks:
+                    tofu_commands.append(
+                        _command_result(command, validation_tofu, timeout_seconds)
                     )
-                )
         else:
-            commands.append({"name": "tofu", "status": "INCONCLUSIVE", "reason": "OpenTofu is unavailable."})
-
+            tofu_commands.append(
+                {
+                    "name": "tofu",
+                    "status": "INCONCLUSIVE",
+                    "reason": "OpenTofu is unavailable.",
+                }
+            )
+    commands.extend(tofu_commands)
     cloud_init = next(
         (path for path in (tofu / "cloud-init.yaml", tofu / "cloud-init.yaml.tftpl") if path.is_file()),
         None,
@@ -289,6 +296,12 @@ def check_deployment_package(
         else:
             commands.append({"name": f"powershell parser {script.name}", "status": "INCONCLUSIVE", "reason": "PowerShell is unavailable."})
 
+    command_issues = [
+        str(item.get("output") or item.get("error") or item.get("reason") or "")
+        for item in commands
+        if item.get("status") == "FAIL"
+    ]
+    all_issues = [*issues, *[item for item in command_issues if item]]
     if issues:
         status, gate = "FAILED", "FAIL"
     elif any(item.get("status") == "INCONCLUSIVE" for item in commands):
@@ -297,16 +310,44 @@ def check_deployment_package(
         status, gate = "FAILED", "FAIL"
     else:
         status, gate = "PASSED", "PASS"
+    tofu_issues = [
+        str(item.get("output") or item.get("error") or item.get("reason") or "")
+        for item in tofu_commands
+        if item.get("status") == "FAIL"
+    ]
+    tofu_inconclusive = any(
+        item.get("status") == "INCONCLUSIVE" for item in tofu_commands
+    )
+    tofu_failed = any(item.get("status") == "FAIL" for item in tofu_commands)
     return {
         "status": status,
         "gateStatus": gate,
-        "issues": issues,
+        "issues": all_issues,
         "commands": commands,
+        "openTofu": {
+            "status": (
+                "FAILED"
+                if tofu_failed
+                else "UNAVAILABLE"
+                if tofu_inconclusive
+                else "PASSED"
+            ),
+            "gateStatus": (
+                "FAIL"
+                if tofu_failed
+                else "INCONCLUSIVE"
+                if tofu_inconclusive
+                else "PASS"
+            ),
+            "issues": tofu_issues,
+            "commands": tofu_commands,
+            "source": {"source": "application", "directory": str(tofu)},
+        },
         "source": {"source": "application", "directory": str(root)},
         "message": (
             "Deployment package checks passed."
             if gate == "PASS"
-            else f"Deployment package checks produced {len(issues)} file finding(s)."
+            else f"Deployment package checks produced {len(all_issues)} finding(s)."
         ),
     }
 

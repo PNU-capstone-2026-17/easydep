@@ -7,8 +7,6 @@ falls back to a stale directory reports a pass that means nothing.
 """
 
 import hashlib
-import threading
-import time
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -42,7 +40,7 @@ K8S_FILES = {
     "Dockerfile": "FROM eclipse-temurin:21-jre\n",
 }
 IAC_FILES = {
-    "terraform/main.tf": 'resource "aws_db_instance" "bad" {\n  publicly_accessible = true\n}\n',
+    "deployment/tofu/main.tf": 'resource "aws_db_instance" "bad" {\n  publicly_accessible = true\n}\n',
 }
 
 
@@ -58,22 +56,6 @@ def stored_artifacts():
         side_effect=lambda app_id, artifact_type: by_type.get(artifact_type),
     ) as loader:
         yield loader
-
-
-@pytest.fixture(autouse=True)
-def _opentofu_succeeds_without_starting_a_real_provider_download():
-    """이 파일의 graph 테스트는 OpenTofu 자체가 아니라 단계 연결만 확인한다."""
-    with patch(
-        "app.testing.nodes.iac_verification.run_opentofu_checks",
-        return_value={
-            "status": "PASSED",
-            "issues": [],
-            "commands": [],
-            "planEnabled": False,
-            "message": "OpenTofu 검사를 통과했습니다.",
-        },
-    ):
-        yield
 
 
 # ---------------------------------------------------------------------------
@@ -98,15 +80,17 @@ def _initial_state(**overrides) -> dict:
     return state
 
 
-def test_static_stages_scan_the_same_application_folder(tmp_path):
-    """배포와 IaC 검사가 같은 복원 폴더의 파일을 읽는다."""
+def test_static_scan_reads_the_restored_application_once(tmp_path):
+    """복원 폴더 전체를 중복 Trivy 실행 없이 한 번만 읽는다."""
     (tmp_path / "k8s").mkdir()
-    (tmp_path / "terraform").mkdir()
+    (tmp_path / "deployment/tofu").mkdir(parents=True)
     (tmp_path / "Dockerfile").write_text(K8S_FILES["Dockerfile"], encoding="utf-8")
     (tmp_path / "k8s/deployment.yaml").write_text(
         K8S_FILES["k8s/deployment.yaml"], encoding="utf-8"
     )
-    (tmp_path / "terraform/main.tf").write_text(IAC_FILES["terraform/main.tf"], encoding="utf-8")
+    (tmp_path / "deployment/tofu/main.tf").write_text(
+        IAC_FILES["deployment/tofu/main.tf"], encoding="utf-8"
+    )
     scanned: list[list[str]] = []
 
     def fake_scan(target_dir):
@@ -124,60 +108,17 @@ def test_static_stages_scan_the_same_application_folder(tmp_path):
     with patch("app.testing.utils.static_analysis.run_trivy_scan", side_effect=fake_scan):
         result = create_testing_graph().invoke(_initial_state(application_dir=str(tmp_path)))
 
-    assert sorted(scanned) == sorted(
-        [
-            ["Dockerfile", "k8s/deployment.yaml", "terraform/main.tf"],
-            ["main.tf"],
-        ]
-    )
+    assert scanned == [[
+        "Dockerfile",
+        "deployment/tofu/main.tf",
+        "k8s/deployment.yaml",
+    ]]
 
     assert result["static_report"]["status"] == "FAILED"
     assert result["static_report"]["source"]["source"] == "application"
-    assert result["iac_report"]["status"] == "FAILED"
-    assert result["iac_report"]["source"]["source"] == "application"
 
     # No functional requirements were stored, so nothing is asserted about the app.
     assert result["dynamic_functional_report"]["status"] == "SKIPPED"
-
-
-def test_static_stages_overlap_and_merge_results_in_stage_order():
-    """Independent scans overlap, while externally visible errors stay deterministic."""
-    barrier = threading.Barrier(2)
-
-    def scan(name, report_key):
-        def run(_state):
-            barrier.wait(timeout=1)
-            time.sleep(0.02 if name == "static_verification" else 0)
-            return {
-                "current_node": name,
-                "errors": [f"{name}-error"],
-                report_key: {"status": "FAILED"},
-            }
-
-        return run
-
-    with (
-        patch(
-            "app.testing.graphs.testing_graph.static_verification_node",
-            scan("static_verification", "static_report"),
-        ),
-        patch(
-            "app.testing.graphs.testing_graph.iac_verification_node",
-            scan("iac_verification", "iac_report"),
-        ),
-        patch(
-            "app.testing.graphs.testing_graph.dynamic_functional_node",
-            return_value={
-                "current_node": "dynamic_functional",
-                "dynamic_functional_report": {"status": "SKIPPED"},
-            },
-        ),
-    ):
-        result = create_testing_graph().invoke(_initial_state())
-
-    assert result["errors"] == ["static_verification-error", "iac_verification-error"]
-    assert result["static_report"]["status"] == "FAILED"
-    assert result["iac_report"]["status"] == "FAILED"
 
 
 def test_static_stage_reports_a_missing_iac_folder(tmp_path):
@@ -195,40 +136,9 @@ def test_static_stage_reports_a_missing_iac_folder(tmp_path):
     assert result["static_report"]["source"]["source"] == "application"
     # The IaC stage had neither a snapshot nor a directory: nothing was scanned,
     # which is neither a pass nor a misconfiguration.
-    assert result["iac_report"]["status"] == "UNAVAILABLE"
+    assert result["iac_report"]["status"] == "SKIPPED"
     assert result["iac_report"]["issues"] == []
     assert result["iac_report"]["source"]["source"] == "none"
-
-
-def test_opentofu_plan_is_dry_run_and_never_apply(tmp_path, monkeypatch):
-    """plan을 켜도 원본을 바꾸거나 apply를 실행하지 않는다."""
-    from app.testing.utils import opentofu
-
-    terraform = tmp_path / "terraform"
-    terraform.mkdir()
-    source = terraform / "main.tf"
-    source.write_text('terraform { required_version = ">= 1.6.0" }\n', encoding="utf-8")
-    commands: list[list[str]] = []
-
-    monkeypatch.setattr(opentofu, "_tofu_executable", lambda: "tofu")
-    monkeypatch.setattr(
-        opentofu,
-        "_configured_values",
-        lambda: {"PATH": "tools", "TESTING_IAC_PLAN": "true"},
-    )
-
-    def completed(command, **_kwargs):
-        commands.append(list(command))
-        return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
-
-    monkeypatch.setattr(opentofu, "run_process_tree", completed)
-
-    report = opentofu.run_opentofu_checks(terraform)
-
-    assert report["status"] == "PASSED"
-    assert [command[1] for command in commands] == ["fmt", "init", "validate", "plan"]
-    assert all("apply" not in command for command in commands)
-    assert source.read_text(encoding="utf-8").endswith("\n")
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +334,6 @@ def test_verification_still_scans_when_the_app_cannot_be_launched(tmp_path):
     assert [item["code"] for item in result["diagnostics"]] == [
         "APPLICATION_LAUNCH_FAILED",
         "DEPLOYMENT_MISCONFIGURATION",
-        "IAC_NOT_SCANNED",
     ]
 
 

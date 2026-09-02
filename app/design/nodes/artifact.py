@@ -56,11 +56,11 @@ validate → repair 루프가 필요했다. 지금은 다섯 모두 이 골격�
 """
 from __future__ import annotations
 
-import os
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from app.design.knowledge.detectors import (
     Finding,
@@ -326,17 +326,17 @@ def assert_untargeted_elements_preserved(
     if not targets or not spec.elements:
         return
     if not isinstance(candidate, dict):
-        raise ValueError(f"{spec.stage} targeted revision did not return a model object")
+        raise TypeError(f"{spec.stage} targeted revision did not return a model object")
 
-    for field, original_value in original.items():
-        if field not in spec.elements and candidate.get(field) != original_value:
+    for field_name, original_value in original.items():
+        if field_name not in spec.elements and candidate.get(field_name) != original_value:
             raise ValueError(
-                f"{spec.stage} targeted revision changed unscoped field {field!r}"
+                f"{spec.stage} targeted revision changed unscoped field {field_name!r}"
             )
-    for field in candidate:
-        if field not in original and field not in spec.elements:
+    for field_name in candidate:
+        if field_name not in original and field_name not in spec.elements:
             raise ValueError(
-                f"{spec.stage} targeted revision added unscoped field {field!r}"
+                f"{spec.stage} targeted revision added unscoped field {field_name!r}"
             )
 
     for list_field, key_of in spec.elements.items():
@@ -345,7 +345,7 @@ def assert_untargeted_elements_preserved(
         before = original.get(list_field) or []
         after = candidate.get(list_field) or []
         if not isinstance(before, list) or not isinstance(after, list):
-            raise ValueError(
+            raise TypeError(
                 f"{spec.stage} targeted revision changed element collection {list_field!r}"
             )
         before_keys = [key_of(item) for item in before]
@@ -516,6 +516,7 @@ def _repairable_findings(findings: list[Finding]) -> list[Finding]:
     return [
         finding for finding in findings
         if finding.rule_id not in excluded
+        and not finding.requires_user_input
         and not _requires_flow_anchor_input(finding)
     ]
 
@@ -537,6 +538,7 @@ def _unrepaired_stop(findings: list[Finding]) -> str:
         return CLEAN
     if any(
         finding.rule_id in NON_REPAIRABLE_RULES
+        or finding.requires_user_input
         or _requires_flow_anchor_input(finding)
         for finding in findings
     ):
@@ -700,7 +702,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             targets = _sequence_repair_targets(spec, model, state, batch)
             if len(targets) > 1:
                 # 같은 종류의 결함이 여러 유스케이스에 있어도 한 번에 하나만 고친다.
-                target = sorted(targets)[0]
+                target = min(targets)
                 diagram = next(
                     (
                         item

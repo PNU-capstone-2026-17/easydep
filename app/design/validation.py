@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
+from app.design.graphs.subgraphs import _deployment_model_findings
 from app.design.knowledge.detectors import (
     Finding,
     api_spec_validation_report,
@@ -29,6 +30,25 @@ def validate_class_model(model: dict[str, Any], state: dict[str, Any]) -> Valida
 def validate_sequence_model(model: dict[str, Any], state: dict[str, Any]) -> ValidationReport:
     """결정론적 시퀀스 투영의 저장·참조·버전 검사를 반환한다."""
     return _validate_sequence_model(model or {}, state or {})
+
+
+def validate_deployment_model(
+    model: dict[str, Any], state: dict[str, Any]
+) -> ValidationReport:
+    """WorkloadGraph 정규화 뒤 남은 문제를 설계 준비 상태에 포함한다."""
+
+    findings = tuple(_deployment_model_findings(model or {}, state or {}))
+    return ValidationReport(
+        status=(
+            "clean"
+            if not findings
+            else "needs_input"
+            if all(finding.requires_user_input for finding in findings)
+            else "findings"
+        ),
+        findings=findings,
+        checked_rule_ids=("deployment.workload-graph-valid",),
+    )
 
 
 def _finding_payload(finding: Finding) -> dict[str, Any]:
@@ -64,6 +84,12 @@ _CHECKED_STAGES: tuple[tuple[str, str, str, Callable[[dict, dict], ValidationRep
     ),
     ("api_spec", "api_spec_model", "api_spec_check", api_spec_validation_report),
     ("erd", "erd_bce_classes", "erd_check", erd_validation_report),
+    (
+        "deployment_diagram",
+        "deployment_diagram_model",
+        "deployment_diagram_check",
+        validate_deployment_model,
+    ),
 )
 
 

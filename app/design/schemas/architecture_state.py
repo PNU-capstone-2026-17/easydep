@@ -99,6 +99,7 @@ class ArchitectureState(TypedDict, total=False):
     deployment_diagram_provisioning_puml: str
     deployment_diagram_syntax_valid: bool
     deployment_diagram_syntax_errors: list[str]
+    deployment_diagram_check: dict[str, Any]
 
     # 아래 필드는 app/design/graphs/design_graph.py가 실행 중에만 사용하며 산출물이 아니다.
     # gate_route는 조건부 edge가 "advance"(다음 stage)와 "loop"(현재 stage 수정) 중 무엇을
