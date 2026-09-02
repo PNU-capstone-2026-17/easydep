@@ -106,14 +106,15 @@ def render_markdown(report: dict[str, Any]) -> str:
             "",
             "## 실행별 결과",
             "",
-            "| 대상 | 반복 | 상태 | 구현 요구사항 | 필수 게이트 | 제약조건 | 공통 산출물 | 추적성 | 입력/출력/총 토큰 | LLM 호출 | 실행 시간(초) |",
-            "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+            "| 사례 | 대상 | 반복 | 상태 | 구현 요구사항 | 필수 게이트 | 제약조건 | 공통 산출물 | 추적성 | 입력/출력/총 토큰 | LLM 호출 | 실행 시간(초) |",
+            "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for run in report["runs"]:
         usage = run["usage"]
         lines.append(
-            "| {framework} (`{arm}`) | {repetition} | {status} | {requirements} | {gates} | {constraints} | {artifacts} | {traceability} | {input}/{output}/{total} | {calls} | {wall} |".format(
+            "| {case} | {framework} (`{arm}`) | {repetition} | {status} | {requirements} | {gates} | {constraints} | {artifacts} | {traceability} | {input}/{output}/{total} | {calls} | {wall} |".format(
+                case=run.get("caseId", "-"),
                 framework=run["framework"],
                 arm=run["armId"],
                 repetition=run["repetition"],
@@ -150,7 +151,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             )
             lines.extend(
                 [
-                    f"### {run['framework']} / 반복 {run['repetition']}",
+                    f"### {run.get('caseId', '-')} / {run['framework']} / 반복 {run['repetition']}",
                     "",
                     f"- 실행 상태: `{run['status']}`",
                     f"- 미통과 요구사항: {', '.join(failed_requirements) or '없음'}",

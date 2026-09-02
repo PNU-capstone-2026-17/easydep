@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "easydep-comparison-suite/v1",
+  "suiteId": "multi-domain-pilot",
+  "repetitions": 1,
+  "outputRoot": "artifacts/comparison",
+  "cases": [
+    {
+      "id": "course-registration-aws",
+      "input": "../../baselines/course-registration-cases/e1-course-registration-aws.json"
+    },
+    {
+      "id": "checkout-gateway-azure",
+      "input": "../../easydep/requirements/inputs/dev_checkout_gateway.json"
+    },
+    {
+      "id": "iot-monitoring-aws",
+      "input": "../../easydep/requirements/inputs/dev_iot_monitoring.json"
+    },
+    {
+      "id": "notification-delivery-gcp",
+      "input": "../../easydep/requirements/inputs/dev_notification_delivery.json"
+    }
+  ]
+}

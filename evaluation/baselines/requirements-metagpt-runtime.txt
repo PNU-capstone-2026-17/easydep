@@ -1,13 +1,16 @@
 # MetaGPT 0.8.2 Software Company CLI runtime.
 # Storage/search/provider adapters not imported by this experiment are intentionally omitted.
 semantic-kernel==0.4.3.dev0
-agentops==0.4.21
+# agentops 0.1.12 is installed separately by setup_metagpt.ps1. Newer 0.4.x
+# releases pull OpenTelemetry/protobuf 5+, conflicting with this MetaGPT release's
+# pinned Gemini adapter (protobuf <5).
 aiofiles==23.2.1
 aiohttp==3.8.6
 anthropic==0.18.1
 anytree==2.13.0
 beautifulsoup4==4.12.3
 boto3~=1.34.69
+chardet==5.2.0
 dashscope~=1.19.3
 click==8.1.7
 fire==0.4.0
@@ -41,5 +44,6 @@ tree-sitter~=0.23.2
 tree-sitter-python~=0.23.2
 typer==0.9.0
 typing-inspect==0.8.0
+urllib3==2.0.7
 volcengine-python-sdk[ark]~=1.0.94
 zhipuai~=2.1.5

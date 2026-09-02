@@ -8,6 +8,7 @@ from pathlib import Path
 from .models import load_manifest
 from .report import write_reports
 from .runner import run_experiment
+from .suite import load_suite, materialize_manifests, run_suite
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,11 +19,42 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="모든 대상과 반복을 실행하고 JSON/Markdown 보고서를 만듭니다.")
     run.add_argument("manifest", type=Path)
     run.add_argument("--output-root", type=Path, help="manifest의 outputRoot를 덮어씁니다.")
+    validate_suite = subparsers.add_parser(
+        "validate-suite", help="다중 사례 suite와 생성될 manifest를 검사합니다."
+    )
+    validate_suite.add_argument("suite", type=Path)
+    validate_suite.add_argument("--case", action="append", dest="cases")
+    validate_suite.add_argument("--repetitions", type=int)
+    run_suite_parser = subparsers.add_parser(
+        "run-suite", help="여러 도메인 사례를 실행하고 통합 보고서를 만듭니다."
+    )
+    run_suite_parser.add_argument("suite", type=Path)
+    run_suite_parser.add_argument("--case", action="append", dest="cases")
+    run_suite_parser.add_argument("--repetitions", type=int)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command in {"validate-suite", "run-suite"}:
+        suite = load_suite(args.suite)
+        if args.command == "validate-suite":
+            manifests = materialize_manifests(
+                suite, case_ids=args.cases, repetitions=args.repetitions
+            )
+            for path in manifests:
+                load_manifest(path)
+            print(
+                f"유효한 suite: {suite.id} ({len(manifests)}개 사례, "
+                f"{args.repetitions or suite.repetitions}회 반복, 3개 대상)"
+            )
+            return 0
+        json_path, markdown_path = run_suite(
+            suite, case_ids=args.cases, repetitions=args.repetitions
+        )
+        print(f"통합 JSON 결과: {json_path}")
+        print(f"통합 Markdown 결과: {markdown_path}")
+        return 0
     manifest = load_manifest(args.manifest)
     if args.command == "validate":
         profiles = ", ".join(

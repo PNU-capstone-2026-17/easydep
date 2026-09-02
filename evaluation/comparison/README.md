@@ -1,5 +1,25 @@
 # EasyDep · MetaGPT · ChatDev 비교 테스트 자동화
 
+## 원클릭 다중 사례 실행
+
+저장소 루트의 PowerShell에서 아래 한 줄을 실행하면 Python 3.11, MetaGPT 0.8.2,
+고정 revision의 ChatDev 1.1.6을 최초 1회 준비하고 EasyDep 서버를 시작한 뒤, 네 개
+도메인 사례를 세 시스템에 순서대로 입력하여 통합 보고서까지 생성합니다.
+
+```powershell
+.\scripts\run-comparison.ps1
+```
+
+LLM 비밀키는 설치 폴더에 저장하지 않습니다. 실행 전에 저장소 `.env`의 `API_KEY`,
+`BASE_URL`, `MODEL`을 채우거나 `COMPARISON_API_KEY`, `COMPARISON_BASE_URL`,
+`COMPARISON_MODEL` 환경변수를 설정합니다. 최초 실행에는 Python 설치, PyPI 패키지 설치,
+ChatDev 소스 clone 때문에 네트워크가 필요하며 Docker Desktop도 실행 중이어야 합니다.
+
+환경만 먼저 준비하려면 `-SetupOnly`, 이미 설치된 환경을 재사용하려면 `-SkipSetup`,
+특정 사례만 실행하려면 `-Case iot-monitoring-aws`를 사용합니다. 기본 suite는
+`evaluation/comparison/suites/multi-domain-pilot.json`이며 실행 결과는
+`artifacts/comparison/multi-domain-pilot/comparison.md`에 모입니다.
+
 이 도구는 세 프레임워크에 같은 요구사항과 검증 조건을 적용하고, 실행부터 JSON/Markdown
 보고서 생성까지 반복합니다. 하나의 가중 합산값을 만들지 않습니다. 요구사항, 제약조건,
 검증 게이트, 추적성을 각각 `충족 개수 / 전체 개수`로 보여주고 토큰·시간·LLM 호출 수는
