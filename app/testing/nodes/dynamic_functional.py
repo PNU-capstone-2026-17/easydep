@@ -278,7 +278,7 @@ def _without_repeated_operations(case: FunctionalTestCase) -> FunctionalTestCase
 
 def _generate(client: OpenAI, candidate: dict[str, Any]) -> FunctionalTestCase:
     response = client.chat.completions.create(
-        model=configured_model("openai/gpt-oss-120b"),
+        model=configured_model(),
         temperature=settings.temperature,
         messages=[{"role": "user", "content": _prompt(candidate)}],
         response_format=_response_format(),

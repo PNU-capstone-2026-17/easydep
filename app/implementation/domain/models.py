@@ -37,8 +37,6 @@ class JobSpec:
     verify_compile: bool
     output_root: Path
     agent_mode: str
-    agent_model: str
-    agent_base_url: str
     agent_temperature: float
     agent_top_p: float
     agent_max_output_tokens: int

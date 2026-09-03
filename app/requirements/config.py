@@ -1,17 +1,8 @@
-"""애플리케이션 설정. .env 파일 또는 환경변수에서 로드한다.
-
-Nvidia NIM 무료 엔드포인트(OpenAI 호환)를 사용하므로 OpenAI 클라이언트 규격의
-API_KEY / BASE_URL 을 그대로 사용한다.
-"""
+"""요구사항 단계 전용 설정. 공통 LLM 접속값은 `app.config`가 루트 `.env`에서 읽는다."""
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Nvidia NIM (OpenAI 호환) 자격증명
-    api_key: str
-    base_url: str = "https://integrate.api.nvidia.com/v1"
-    # NIM에서 사용할 모델 ID. 요구사항 분석 에이전트 기본값은 gpt-oss-120b.
-    model: str = "openai/gpt-oss-120b"
     # 분류·구조화 작업이라 표본을 넓힐 이유가 없다. 0으로 둔다(2026-07-26까지 0.2였다).
     temperature: float = 0.0
     requirements_reasoning_effort: str = "medium"
@@ -145,6 +136,4 @@ class Settings(BaseSettings):
     )
 
 
-# api_key 등 필수 필드는 .env/환경변수에서 런타임에 주입된다. 타입 체커는 이를 모르고
-# "인자 누락"으로 오판하므로 무시한다. (값이 없으면 여기서 ValidationError로 즉시 실패)
-settings = Settings()  # type: ignore[call-arg]  # pyright: ignore[reportCallIssue]
+settings = Settings()

@@ -241,9 +241,9 @@ def test_dynamic_testing_uses_the_shared_llm_model(monkeypatch):
     """Testing이 공통 MODEL 값을 그대로 사용한다."""
     from app.testing.runtime import provider
 
-    monkeypatch.setattr(provider.settings, "model", "openai/gpt-oss-120b")
+    monkeypatch.setattr(provider.settings, "model", "provider/test-model")
 
-    assert provider.configured_model("fallback") == "openai/gpt-oss-120b"
+    assert provider.configured_model() == "provider/test-model"
 
 
 def test_static_failure_blocks_the_testing_result():

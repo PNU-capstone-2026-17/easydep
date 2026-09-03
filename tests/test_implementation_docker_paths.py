@@ -48,8 +48,6 @@ def _orchestrator(tmp_path: Path) -> PrototypeOrchestrator:
         verify_compile=True,
         output_root=tmp_path / ".easydep" / "implementation-runs" / "orders" / "generated" / "runs",
         agent_mode="plan-only",
-        agent_model="model",
-        agent_base_url="http://localhost",
         agent_temperature=0.0,
         agent_top_p=1.0,
         agent_max_output_tokens=1000,

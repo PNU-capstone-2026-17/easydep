@@ -275,8 +275,6 @@ class PrototypeClient:
             "progressPath": progress_path.relative_to(self.settings.repository_root).as_posix(),
             "agent": {
                 "mode": "openhands",
-                "model": self.settings.model,
-                "baseUrl": self.settings.base_url,
                 "temperature": settings.implementation_agent_temperature,
                 "maxOutputTokens": settings.implementation_agent_max_output_tokens,
             },
@@ -360,6 +358,11 @@ class PrototypeClient:
             if retry_failed:
                 container_args.append("--retry-failed")
             environment = os.environ.copy()
+            environment.update({
+                "API_KEY": settings.api_key,
+                "BASE_URL": settings.base_url,
+                "MODEL": settings.model,
+            })
             command = runner_command(
                 image=runner_image,
                 repository_root=self.settings.repository_root,
@@ -468,6 +471,11 @@ class PrototypeClient:
     def _call(self, args: list[str], operation_id: str | None = None) -> dict[str, Any]:
         """구현 CLI를 UTF-8 하위 프로세스로 실행하고 마지막 JSON 응답을 반환한다."""
         env = os.environ.copy()
+        env.update({
+            "API_KEY": settings.api_key,
+            "BASE_URL": settings.base_url,
+            "MODEL": settings.model,
+        })
         # Windows 기본 code page와 관계없이 한글 설계 파일과 JSON 로그를 읽도록 강제한다.
         env["PYTHONUTF8"] = "1"
         env.setdefault(

@@ -19,12 +19,14 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1
 바꿔 별도 컨테이너로 실행한다. `.env`의
 `EASYDEP_TOOLCHAIN_IMAGE=easydep-toolchain:local`로 작업 컨테이너를 활성화한다.
 
-작업 컨테이너는 저장소를 `/easydep-workspace`에 연결하고 Gradle cache volume만 공유한다.
-구현 컨테이너에는 Docker socket을 주지 않는다. API 컨테이너에서 생성 앱을 Docker로
-빌드하고 동적 테스트하려면 운영 환경이 제공하는 Docker daemon/socket을 별도로 연결한다.
+작업 컨테이너는 저장소를 `/easydep-workspace`에 연결하고 Gradle과 OpenTofu cache volume을
+공유한다. 구현 컨테이너에는 Docker socket을 주지 않는다. API 컨테이너에서 생성 앱을
+Docker로 빌드하고 동적 테스트하려면 운영 환경이 제공하는 Docker daemon/socket을 별도로
+연결한다.
 
-OpenTofu Provider 바이너리는 이미지에 넣지 않는다. 구현·Testing runner가
-`easydep-tofu-provider-cache` named volume을 `/app/.cache/opentofu`에 함께 연결하므로,
-각 Provider는 최초 `tofu init`에서만 내려받고 다음 작업부터 재사용한다. CSP 인증정보는
-이미지나 cache에 넣지 않고 Docker Compose의 `env_file`이나 Kubernetes Secret으로 실행할
-때 전달한다.
+고정한 AWS·Azure·GCP Provider 바이너리는 빌드 중 HashiCorp 공식 Registry에서 서명 검증한
+뒤 이미지의 `/opt/easydep/provider-mirror`에 넣는다. `tofu init`은 이 읽기 전용 미러를
+사용하므로 실행 중 외부 Registry에 접속하지 않는다. 구현·Testing runner는 압축을 푼
+Provider를 `easydep-tofu-provider-cache` named volume에 보관해 다음 작업에서 재사용한다.
+CSP 인증정보는 이미지나 cache에 넣지 않고 Docker Compose의 `env_file`이나 Kubernetes
+Secret으로 실행할 때 전달한다.

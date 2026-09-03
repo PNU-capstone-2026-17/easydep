@@ -24,7 +24,9 @@ def application_dockerfile(*, include_frontend: bool = True) -> str:
         frontend_stage = """FROM node:20-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN npm ci --ignore-scripts --no-audit --no-fund \\
+    && test -x node_modules/.bin/tsc \\
+    && test -x node_modules/.bin/vite
 COPY frontend/ ./
 ARG VITE_API_BASE_URL=""
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
@@ -45,13 +47,11 @@ COPY . .
 
 FROM {DEFAULT_DOCKER_JRE_IMAGE}
 WORKDIR /app
-# VM bootstrap이 영속 경로의 소유권을 같은 숫자로 설정하므로 이미지마다 달라질 수
-# 있는 자동 할당 UID를 사용하지 않는다.
+# Use the same numeric identity as the VM bootstrap when it owns persistent paths.
 RUN addgroup -S -g 10001 app && adduser -S -D -H -u 10001 -G app app
 COPY --chown=10001:10001 --from=build /tmp/app.jar app.jar
 USER 10001:10001
-# Spring Boot의 relaxed binding이 읽는 표준 환경 변수다. Docker가 공개하는 포트와
-# 애플리케이션의 실제 listen 포트가 달라지지 않도록 같은 기본값을 사용한다.
+# Keep the Spring Boot listen port aligned with the container's published port.
 ENV SERVER_PORT={DEFAULT_CONTAINER_PORT}
 EXPOSE {DEFAULT_CONTAINER_PORT}
 ENTRYPOINT ["java", "-jar", "app.jar"]"""
@@ -75,7 +75,9 @@ def frontend_dockerfile() -> str:
     return """FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN npm ci --ignore-scripts --no-audit --no-fund \\
+    && test -x node_modules/.bin/tsc \\
+    && test -x node_modules/.bin/vite
 COPY . .
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL

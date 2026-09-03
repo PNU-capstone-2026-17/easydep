@@ -29,6 +29,18 @@ def _cloud_label(value: Any) -> str:
     return re.sub(r"[^a-z0-9-]", "-", str(value or "resource").lower()).strip("-")
 
 
+def _gcp_name(node_id: str, cloud_label: str, *, limit: int = 63) -> str:
+    """GCP 이름 제한을 지키면서 긴 이름끼리 충돌하지 않는 HCL 표현식을 만든다."""
+
+    candidate = f'"${{var.resource_prefix}}-{cloud_label}"'
+    readable_length = limit - 9
+    return (
+        f"length({candidate}) <= {limit} ? {candidate} : "
+        f'format("%s-%s", substr({candidate}, 0, {readable_length}), '
+        f"substr(sha1({_quoted(node_id)}), 0, 8))"
+    )
+
+
 def _quoted(value: Any) -> str:
     return json.dumps(str(value), ensure_ascii=False)
 
@@ -416,6 +428,9 @@ def _storage_setup_lines(
         if item.get("computeUnitRef") == compute_id
     ]
     lines: list[str] = []
+    if provider == "aws" and bindings:
+        # 여러 볼륨이 있는 경우 fallback이 같은 장치를 두 번 고르지 않게 기록한다.
+        lines.append('CLAIMED_DISKS=""')
     for fallback_index, binding in enumerate(bindings):
         storage_id = str(binding.get("storageRef") or f"storage-{fallback_index}")
         storage_label = _label(storage_id)
@@ -423,21 +438,55 @@ def _storage_setup_lines(
         attributes = _attrs(disk_node)
         index = int(attributes.get("attachmentIndex", fallback_index))
         conventional_device = chr(ord("f") + index)
-        if provider == "aws" and disk_node.get("handling") == "create":
-            disk_key = f"disk_id_{storage_label}"
-            template_vars[disk_key] = context.ref(f"data-disk-{storage_id}")
-            lines.extend(
-                [
-                    f'EXPECTED_VOLUME="${{{disk_key}}}"',
-                    'EXPECTED_VOLUME_NO_DASH=$(printf "%s" "$EXPECTED_VOLUME" | tr -d "-")',
-                    'DISK_DEVICE=""',
-                    "for ATTEMPT in $(seq 1 60); do",
+        if provider == "aws":
+            lines.append('DISK_DEVICE=""')
+            if disk_node.get("handling") == "create":
+                disk_key = f"disk_id_{storage_label}"
+                template_vars[disk_key] = context.ref(f"data-disk-{storage_id}")
+                lines.extend(
+                    [
+                        f'EXPECTED_VOLUME="${{{disk_key}}}"',
+                        'EXPECTED_VOLUME_NO_DASH=$(printf "%s" "$EXPECTED_VOLUME" | tr -d "-")',
+                    ]
+                )
+            lines.append("for ATTEMPT in $(seq 1 60); do")
+            if disk_node.get("handling") == "create":
+                # 단독 VM의 EBS ID를 아는 경우에는 정확히 그 장치를 먼저 찾는다.
+                lines.extend(
+                    [
+                    '  for CANDIDATE in /dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_"$EXPECTED_VOLUME_NO_DASH"*; do',
+                    '    [ ! -b "$CANDIDATE" ] || DISK_DEVICE=$(readlink -f "$CANDIDATE")',
+                    "  done",
                     "  for CANDIDATE in /dev/nvme*n1; do",
                     '    [ -b "$CANDIDATE" ] || continue',
+                    '    CANDIDATE_NAME=$(basename "$CANDIDATE")',
+                    '    CANDIDATE_SERIAL=$(tr -d "-[:space:]" < "/sys/block/$CANDIDATE_NAME/device/serial" 2>/dev/null || true)',
+                    '    if [ "$CANDIDATE_SERIAL" = "$EXPECTED_VOLUME_NO_DASH" ]; then DISK_DEVICE="$CANDIDATE"; break; fi',
                     '    if command -v ebsnvme-id >/dev/null 2>&1 && ebsnvme-id "$CANDIDATE" 2>/dev/null | tr -d "-" | grep -q "$EXPECTED_VOLUME_NO_DASH"; then DISK_DEVICE="$CANDIDATE"; break; fi',
                     "  done",
+                    ]
+                )
+            # Launch Template이 replica별로 만든 EBS는 plan 시점에 volume ID를 알 수
+            # 없다. 요청 장치명과, root를 제외한 유일한 미사용 디스크 순서로 찾는다.
+            lines.extend(
+                [
                     f'  [ -n "$DISK_DEVICE" ] || [ ! -b "/dev/xvd{conventional_device}" ] || DISK_DEVICE="/dev/xvd{conventional_device}"',
                     f'  [ -n "$DISK_DEVICE" ] || [ ! -b "/dev/sd{conventional_device}" ] || DISK_DEVICE="/dev/sd{conventional_device}"',
+                    '  if [ -z "$DISK_DEVICE" ]; then',
+                    '    ROOT_SOURCE=$(readlink -f "$(findmnt -n -o SOURCE /)")',
+                    '    ROOT_DISK=$(lsblk -nro PKNAME "$ROOT_SOURCE" 2>/dev/null | head -n 1)',
+                    '    [ -n "$ROOT_DISK" ] || ROOT_DISK=$(basename "$ROOT_SOURCE")',
+                    '    UNCLAIMED_DISKS=""',
+                    '    for CANDIDATE in /dev/nvme*n1 /dev/xvd? /dev/sd?; do',
+                    '      [ -b "$CANDIDATE" ] || continue',
+                    '      DEVICE_NAME=$(basename "$CANDIDATE")',
+                    '      [ "$DEVICE_NAME" != "$ROOT_DISK" ] || continue',
+                    '      case " $CLAIMED_DISKS " in *" /dev/$DEVICE_NAME "*) continue ;; esac',
+                    '      UNCLAIMED_DISKS="$UNCLAIMED_DISKS $CANDIDATE"',
+                    '    done',
+                    '    set -- $UNCLAIMED_DISKS',
+                    '    [ "$#" -ne 1 ] || DISK_DEVICE="$1"',
+                    '  fi',
                     '  [ -n "$DISK_DEVICE" ] && break',
                     "  sleep 2",
                     "done",
@@ -445,7 +494,6 @@ def _storage_setup_lines(
             )
         else:
             expected = {
-                "aws": f"/dev/xvd{conventional_device}",
                 "azure": f"/dev/disk/azure/scsi1/lun{10 + index}",
                 "gcp": f"/dev/disk/by-id/google-easydep-{_cloud_label(storage_id)}",
             }[provider]
@@ -461,9 +509,15 @@ def _storage_setup_lines(
             )
         filesystem_path = f"/mnt/easydep/{storage_label}"
         guest_path = f"{filesystem_path}/data"
+        lines.append(
+            f'[ -n "$DISK_DEVICE" ] || {{ echo "disk {storage_id} did not attach; root=$ROOT_DISK devices=$(lsblk -dn -o NAME,TYPE | tr \'\\n\' \',\')" >&2; exit 1; }}'
+            if provider == "aws"
+            else f'[ -n "$DISK_DEVICE" ] || {{ echo "disk {storage_id} did not attach" >&2; exit 1; }}'
+        )
+        if provider == "aws":
+            lines.append('CLAIMED_DISKS="$CLAIMED_DISKS $DISK_DEVICE"')
         lines.extend(
             [
-                f'[ -n "$DISK_DEVICE" ] || {{ echo "disk {storage_id} did not attach" >&2; exit 1; }}',
                 'if ! blkid "$DISK_DEVICE" >/dev/null 2>&1; then mkfs.ext4 "$DISK_DEVICE"; fi',
                 'DISK_UUID=$(blkid -s UUID -o value "$DISK_DEVICE")',
                 f"mkdir -p {_quoted(filesystem_path)}",
@@ -486,6 +540,14 @@ def _runtime_files(
     archive_package = " unzip" if provider == "aws" else ""
     files: dict[str, str] = {}
     vars_by_compute: dict[str, dict[str, str]] = {}
+    # 같은 Compose 네트워크의 호출은 container DNS로 직접 들어가므로 host port가
+    # 필요 없다. 다른 VM이나 내부 LB가 호출하는 대상만 사설 host port를 연다.
+    host_port_targets = {
+        str(binding.get("targetWorkloadRef") or "")
+        for binding in plan.get("runtimeBindings") or []
+        if binding.get("kind") == "endpointEnvironment"
+        and binding.get("strategy") != "containerDns"
+    }
     for unit in plan.get("runtimeUnits") or []:
         compute_id = str(unit.get("computeUnitRef") or "")
         template_vars: dict[str, str] = {"runtime_env_b64": "base64encode(var.runtime_env)"}
@@ -587,7 +649,13 @@ def _runtime_files(
                 # 다른 VM과 내부 LB는 VM의 사설 주소로 host port에 접속한다. public
                 # interface만 publish하면 방화벽이 허용해도 container에 도달할 수 없다.
                 if (
-                    interface.get("exposure") in {"public", "internal"}
+                    (
+                        interface.get("exposure") == "public"
+                        or (
+                            interface.get("exposure") == "internal"
+                            and workload_id in host_port_targets
+                        )
+                    )
                     and rendered_port not in published_ports
                 ):
                     compose_ports.append(f'      - "{rendered_port}:{rendered_port}"')
@@ -673,8 +741,16 @@ def _runtime_files(
                                 ]
                             )
                             azure_identity_ready = True
-                        lines.append(
-                            f'export {env_name}="$(az keyvault secret show --id "${{{secret_key}}}" --query value -o tsv)"'
+                        lines.extend(
+                            [
+                                f'AZURE_SECRET_RESOURCE="${{{secret_key}}}"',
+                                'case "$AZURE_SECRET_RESOURCE" in',
+                                "  https://*) SECRET_VALUE=$(az keyvault secret show --id \"$AZURE_SECRET_RESOURCE\" --query value -o tsv) ;;",
+                                "  /subscriptions/*/vaults/*/secrets/*) AZURE_VAULT_NAME=$(printf '%s' \"$AZURE_SECRET_RESOURCE\" | sed -n 's#^.*/vaults/\\([^/]*\\)/secrets/.*$#\\1#p'); AZURE_SECRET_NAME=$(printf '%s' \"$AZURE_SECRET_RESOURCE\" | sed -n 's#^.*/secrets/\\([^/]*\\).*$#\\1#p'); SECRET_VALUE=$(az keyvault secret show --vault-name \"$AZURE_VAULT_NAME\" --name \"$AZURE_SECRET_NAME\" --query value -o tsv) ;;",
+                                '  *) echo "Unsupported Azure Key Vault secret reference: $AZURE_SECRET_RESOURCE" >&2; exit 1 ;;',
+                                "esac",
+                                f'export {env_name}="$SECRET_VALUE"',
+                            ]
                         )
                     else:
                         project_key = f"project_id_{workload_label}_{_label(config_id)}"
@@ -731,6 +807,14 @@ def _runtime_files(
                 *compose_lines,
                 "EASYDEP_COMPOSE",
                 "compose --env-file /opt/easydep/runtime/.env -f /opt/easydep/runtime/compose.yaml up -d --remove-orphans",
+                "sleep 2",
+                *[
+                    f"test \"$(docker inspect --format '{{{{.State.Running}}}}' {_quoted(str(container.get('workloadRef') or 'workload'))})\" = true"
+                    for container in unit.get("containers") or []
+                ],
+                # 직렬 콘솔에서 이 표식을 확인하면 공개 주소가 없는 VM도 부팅 성공 여부를
+                # 배포 도구가 확인할 수 있다. 비밀값이나 애플리케이션 출력은 포함하지 않는다.
+                "printf '%s\\n' EASYDEP_BOOTSTRAP_OK > /dev/console",
             ]
         )
         template_name = f"bootstrap_{_label(compute_id)}.sh.tftpl"
@@ -770,6 +854,18 @@ def _aws_resources(
     context: _Context,
     vars_by_compute: dict[str, dict[str, str]],
 ) -> str:
+    def private_route_for(compute_id: str) -> str | None:
+        """사설 compute의 인터넷 경로가 있으면 해당 Terraform 주소를 돌려준다."""
+
+        route_id = f"private-default-route-{compute_id}"
+        route = context.nodes.get(route_id) or {}
+        if (
+            route.get("handling") == "create"
+            and (route.get("terraformTypes") or [""])[0] == "aws_route"
+        ):
+            return context.address(route_id)
+        return None
+
     blocks: list[str] = []
     for node_id, node in context.nodes.items():
         if node.get("handling") != "create":
@@ -847,9 +943,16 @@ def _aws_resources(
                     '\ningress { from_port = 1; to_port = 65535; protocol = "tcp"; '
                     f"security_groups = [{', '.join(source_groups)}] }}"
                 )
+            for health_check in attributes.get("loadBalancerHealthChecks") or []:
+                port = _port_expression(plan, health_check)
+                ingress += (
+                    f'\ningress {{ from_port = {port}; to_port = {port}; protocol = "tcp"; '
+                    f"cidr_blocks = [{context.ref('network', 'cidr_block')}] }}"
+                )
             body = f'name_prefix = "${{var.resource_prefix}}-{label}-"\nvpc_id = {context.dependency_ref(node_id, "vpc_id")}\negress {{ from_port = 0; to_port = 0; protocol = "-1"; cidr_blocks = ["0.0.0.0/0"] }}{ingress}'
         elif kind == "aws_instance":
             profile = context.target(node_id, "iam_instance_profile")
+            private_route = private_route_for(node_id)
             bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
                 f"ami = {context.dependency_ref(node_id, 'ami')}\n"
@@ -862,6 +965,9 @@ def _aws_resources(
                 body += f"\nprivate_ip = {_quoted(attributes.get('privateIp'))}"
             if profile:
                 body += f"\niam_instance_profile = {context.ref(profile, 'name')}"
+            # 사설 VM은 cloud-init이 패키지를 받기 전에 NAT 경로가 준비되어야 한다.
+            if private_route:
+                body += f"\ndepends_on = [{private_route}]"
         elif kind == "aws_launch_template":
             profile = context.target(node_id, "iam_instance_profile")
             bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
@@ -892,11 +998,16 @@ def _aws_resources(
             replica = int(attributes.get("replicaCount") or 1)
             subnets = context.dependency_refs(node_id, "vpc_zone_identifier[]")
             target_groups = context.targets(node_id, "target_group_arns[]")
+            private_route = private_route_for(node_id)
             body = (
                 f"min_size = {replica}\nmax_size = {replica}\ndesired_capacity = {replica}\n"
                 f"vpc_zone_identifier = [{', '.join(subnets)}]\n"
                 f'launch_template {{ id = {context.dependency_ref(node_id, "launch_template.id")}; version = "$Latest" }}'
             )
+            # 사설 서브넷의 VM은 cloud-init 시작 전에 외부 통신 경로가 필요하다.
+            # 서브넷 참조만으로는 Terraform이 이 생성 순서를 추론할 수 없다.
+            if private_route:
+                body += f"\ndepends_on = [{private_route}]"
             if target_groups:
                 body += (
                     "\ntarget_group_arns = ["
@@ -946,6 +1057,19 @@ def _azure_resources(
     context: _Context,
     vars_by_compute: dict[str, dict[str, str]],
 ) -> str:
+    def nat_dependencies_for(compute_id: str) -> list[str]:
+        """해당 compute subnet을 NAT Gateway에 연결하는 Terraform 주소를 찾는다."""
+
+        prefix = f"nat-association-{compute_id}-"
+        return [
+            context.address(node_id)
+            for node_id, node in context.nodes.items()
+            if node_id.startswith(prefix)
+            and node.get("handling") == "create"
+            and (node.get("terraformTypes") or [""])[0]
+            == "azurerm_subnet_nat_gateway_association"
+        ]
+
     blocks: list[str] = []
     region = str(plan.get("region") or "")
     for node_id, node in context.nodes.items():
@@ -1008,7 +1132,7 @@ def _azure_resources(
                 port = _port_expression(plan, public_paths[0])
                 rule = (
                     '\nsecurity_rule { name = "public-http"; priority = 100; direction = "Inbound"; access = "Allow"; protocol = "Tcp"; '
-                    f'source_port_range = "*"; destination_port_range = "{port}"; source_address_prefix = "Internet"; destination_address_prefix = "*" }}'
+                    f'source_port_range = "*"; destination_port_range = tostring({port}); source_address_prefix = "Internet"; destination_address_prefix = "*" }}'
                 )
             for index, internal_rule in enumerate(attributes.get("internalRules") or [], start=1):
                 connection_ref = str(internal_rule.get("connectionRef") or "internal")
@@ -1020,7 +1144,7 @@ def _azure_resources(
                 rule += (
                     f'\nsecurity_rule {{ name = "internal-{index}"; priority = {100 + index}; '
                     'direction = "Inbound"; access = "Allow"; protocol = "Tcp"; '
-                    f'source_port_range = "*"; destination_port_range = "{port}"; '
+                    f'source_port_range = "*"; destination_port_range = tostring({port}); '
                     f'source_address_prefix = {source_prefix}; destination_address_prefix = "*" }}'
                 )
             body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nlocation = {_quoted(region)}\nresource_group_name = {rg_name}{rule}'
@@ -1054,6 +1178,9 @@ def _azure_resources(
                 body += f'\nidentity {{ type = "UserAssigned"; identity_ids = [{context.ref(identity_target)}] }}'
             if attributes.get("zone"):
                 body += f"\nzone = {_quoted(attributes.get('zone'))}"
+            nat_dependencies = nat_dependencies_for(node_id)
+            if nat_dependencies:
+                body += f"\ndepends_on = [{', '.join(nat_dependencies)}]"
         elif kind == "azurerm_linux_virtual_machine_scale_set":
             subnet_target = context.target(node_id, "network_interface.ip_configuration.subnet_id")
             filter_target = context.target(node_id, "network_interface.network_security_group_id")
@@ -1093,6 +1220,9 @@ def _azure_resources(
                 )
             if identity_target:
                 body += f'\nidentity {{ type = "UserAssigned"; identity_ids = [{context.ref(identity_target)}] }}'
+            nat_dependencies = nat_dependencies_for(node_id)
+            if nat_dependencies:
+                body += f"\ndepends_on = [{', '.join(nat_dependencies)}]"
         elif kind == "azurerm_lb":
             frontend_child = next(
                 (
@@ -1157,6 +1287,15 @@ def _gcp_resources(
 ) -> str:
     blocks: list[str] = []
     region = str(plan.get("region") or "")
+    # 사설 VM은 cloud-init에서 이미지와 패키지를 내려받는다. 리소스 참조만으로는
+    # Compute와 Cloud NAT가 동시에 만들어질 수 있으므로, NAT가 있는 계획에서는
+    # 사설 Compute가 NAT 준비를 명시적으로 기다리게 한다.
+    cloud_nat_dependencies = [
+        context.address(node_id)
+        for node_id, node in context.nodes.items()
+        if node.get("handling") == "create"
+        and (node.get("terraformTypes") or [""])[0] == "google_compute_router_nat"
+    ]
     for node_id, node in context.nodes.items():
         if node.get("handling") != "create":
             continue
@@ -1165,7 +1304,7 @@ def _gcp_resources(
         cloud_label = _cloud_label(node_id)
         attributes = _attrs(node)
         if kind == "google_artifact_registry_repository":
-            body = f'location = {_quoted(region)}\nrepository_id = "${{var.resource_prefix}}-{cloud_label}"\nformat = "DOCKER"'
+            body = f"location = {_quoted(region)}\nrepository_id = {_gcp_name(node_id, cloud_label)}\nformat = \"DOCKER\""
         elif kind == "google_service_account":
             body = f'account_id = substr("${{var.resource_prefix}}-id-${{substr(sha1({_quoted(node_id)}), 0, 6)}}", 0, 30)\ndisplay_name = "EasyDep {cloud_label}"'
         elif kind == "google_artifact_registry_repository_iam_member":
@@ -1181,13 +1320,13 @@ def _gcp_resources(
             principal = context.target(node_id, "member")
             body = f'project = var.project_id\nsecret_id = {context.dependency_ref(node_id, "scope")}\nrole = "roles/secretmanager.secretAccessor"\nmember = "serviceAccount:${{{context.address(principal or "")}.email}}"'
         elif kind == "google_compute_network":
-            body = 'name = "${var.resource_prefix}-network"\nauto_create_subnetworks = false\nrouting_mode = "REGIONAL"'
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nauto_create_subnetworks = false\nrouting_mode = "REGIONAL"'
         elif kind == "google_compute_subnetwork":
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\nnetwork = {context.dependency_ref(node_id, "network")}\nip_cidr_range = {_quoted(attributes.get("cidr"))}\nprivate_ip_google_access = true'
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nregion = {_quoted(region)}\nnetwork = {context.dependency_ref(node_id, "network")}\nip_cidr_range = {_quoted(attributes.get("cidr"))}\nprivate_ip_google_access = true'
         elif kind == "google_compute_router":
-            body = f'name = "${{var.resource_prefix}}-router"\nregion = {_quoted(region)}\nnetwork = {context.dependency_ref(node_id, "network")} '
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nregion = {_quoted(region)}\nnetwork = {context.dependency_ref(node_id, "network")} '
         elif kind == "google_compute_router_nat":
-            body = f'name = "${{var.resource_prefix}}-nat"\nregion = {_quoted(region)}\nrouter = {context.dependency_ref(node_id, "router")}\nnat_ip_allocate_option = "AUTO_ONLY"\nsource_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"'
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nregion = {_quoted(region)}\nrouter = {context.dependency_ref(node_id, "router")}\nnat_ip_allocate_option = "AUTO_ONLY"\nsource_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"'
             subnet_targets = context.targets(node_id, "subnetwork[].name")
             for subnet in subnet_targets:
                 body += f'\nsubnetwork {{ name = {context.ref(subnet)}; source_ip_ranges_to_nat = ["ALL_IP_RANGES"] }}'
@@ -1198,7 +1337,12 @@ def _gcp_resources(
                 ports.append(_port_expression(plan, path))
             target_tags = context.dependency_refs(node_id, "target_tags[]")
             source_tags = context.dependency_refs(node_id, "source_tags[]")
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nnetwork = {context.dependency_ref(node_id, "network")}\ndirection = "INGRESS"\ntarget_tags = [{", ".join(target_tags)}]\nallow {{ protocol = "tcp"; ports = {json.dumps(ports or ["1-65535"])} }}'
+            port_values = (
+                "[" + ", ".join(f"tostring({port})" for port in ports) + "]"
+                if ports
+                else '["1-65535"]'
+            )
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nnetwork = {context.dependency_ref(node_id, "network")}\ndirection = "INGRESS"\ntarget_tags = [{", ".join(target_tags)}]\nallow {{ protocol = "tcp"; ports = {port_values} }}'
             if source_tags:
                 body += f"\nsource_tags = [{', '.join(source_tags)}]"
             else:
@@ -1211,7 +1355,7 @@ def _gcp_resources(
             zone = attributes.get("zone") or f"{region}-a"
             bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
-                f'name = "${{var.resource_prefix}}-{cloud_label}"\nzone = {_quoted(zone)}\nmachine_type = {_vm_sku(node)}\n'
+                f'name = {_gcp_name(node_id, cloud_label)}\nzone = {_quoted(zone)}\nmachine_type = {_vm_sku(node)}\n'
                 f"boot_disk {{ initialize_params {{ image = {context.dependency_ref(node_id, 'boot_disk.initialize_params.image')} }} }}\n"
                 f"network_interface {{ subnetwork = {context.ref(gcp_subnet or '')}"
             )
@@ -1223,13 +1367,15 @@ def _gcp_resources(
             if gcp_identity:
                 body += f'service_account {{ email = {context.ref(gcp_identity, "email")}; scopes = ["cloud-platform"] }}\n'
             body += f'metadata = {{ user-data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\ntags = [{", ".join(tag_values)}]'
+            if not public_address and cloud_nat_dependencies:
+                body += f"\ndepends_on = [{', '.join(cloud_nat_dependencies)}]"
         elif kind == "google_compute_instance_template":
             gcp_template_subnet = context.target(node_id, "network_interface.subnetwork")
             gcp_template_identity = context.target(node_id, "service_account.email")
             tag_values = context.dependency_refs(node_id, "tags[]")
             bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
-                f'name_prefix = "${{var.resource_prefix}}-{cloud_label}-"\nmachine_type = {_vm_sku(node)}\n'
+                f'name_prefix = substr("${{var.resource_prefix}}-{cloud_label}-", 0, 37)\nmachine_type = {_vm_sku(node)}\n'
                 f"disk {{ source_image = {context.dependency_ref(node_id, 'boot_disk.initialize_params.image')}; auto_delete = true; boot = true }}\n"
                 f"network_interface {{ subnetwork = {context.ref(gcp_template_subnet or '')} }}\n"
             )
@@ -1255,18 +1401,20 @@ def _gcp_resources(
             template_ref = context.ref(template or "", "self_link")
             replica = int(attributes.get("replicaCount") or 1)
             zones = attributes.get("zones") or []
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nbase_instance_name = "${{var.resource_prefix}}-{cloud_label}"\ntarget_size = {replica}\nversion {{ instance_template = {template_ref} }}'
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nbase_instance_name = {_gcp_name(node_id, cloud_label, limit=58)}\ntarget_size = {replica}\nversion {{ instance_template = {template_ref} }}'
             if kind == "google_compute_region_instance_group_manager":
                 body += f"\nregion = {_quoted(region)}"
                 if zones:
                     body += f"\ndistribution_policy_zones = {json.dumps(zones)}"
             else:
                 body += f"\nzone = {_quoted(zones[0] if zones else region + '-a')}"
+            if cloud_nat_dependencies:
+                body += f"\ndepends_on = [{', '.join(cloud_nat_dependencies)}]"
         elif kind == "google_compute_address":
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\naddress_type = "EXTERNAL"'
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nregion = {_quoted(region)}\naddress_type = "EXTERNAL"'
         elif kind == "google_compute_region_health_check":
             port = _port_expression(plan, {**attributes, "logicalRef": node.get("logicalRef")})
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\nhttp_health_check {{ port = {port}; request_path = {_quoted(_health_path(plan, node))} }}'
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nregion = {_quoted(region)}\nhttp_health_check {{ port = {port}; request_path = {_quoted(_health_path(plan, node))} }}'
         elif kind == "google_compute_region_backend_service":
             health = context.target(node_id, "health_checks[]")
             health_ref = context.ref(health or "")
@@ -1282,20 +1430,20 @@ def _gcp_resources(
                 raise ValueError(f"GCP backend service has no backend block: {node_id}")
             group_ref = context.dependency_ref(backend_block, "group")
             scheme = "INTERNAL" if attributes.get("scheme") == "internal" else "EXTERNAL"
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\nprotocol = "TCP"\nload_balancing_scheme = "{scheme}"\nhealth_checks = [{health_ref}]\nbackend {{ group = {group_ref} }}'
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nregion = {_quoted(region)}\nprotocol = "TCP"\nload_balancing_scheme = "{scheme}"\nhealth_checks = [{health_ref}]\nbackend {{ group = {group_ref} }}'
         elif kind == "google_compute_forwarding_rule":
             backend_ref = context.dependency_ref(node_id, "backend_service")
             internal = attributes.get("scheme") == "internal"
             scheme = "INTERNAL" if internal else "EXTERNAL"
             port = _port_expression(plan, {**attributes, "logicalRef": node.get("logicalRef")})
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\nload_balancing_scheme = "{scheme}"\nip_protocol = "TCP"\nports = ["{port}"]\nbackend_service = {backend_ref}'
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nregion = {_quoted(region)}\nload_balancing_scheme = "{scheme}"\nip_protocol = "TCP"\nports = [tostring({port})]\nbackend_service = {backend_ref}'
             if internal:
                 body += (
                     f"\nnetwork = {context.dependency_ref(node_id, 'network')}"
                     f"\nsubnetwork = {context.dependency_ref(node_id, 'subnetwork')}"
                 )
         elif kind == "google_compute_disk":
-            body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nzone = {context.dependency_ref(node_id, "zone")}\nsize = {int(attributes.get("capacityGiB") or 10)}\ntype = "pd-balanced"'
+            body = f'name = {_gcp_name(node_id, cloud_label)}\nzone = {context.dependency_ref(node_id, "zone")}\nsize = {int(attributes.get("capacityGiB") or 10)}\ntype = "pd-balanced"'
             if attributes.get("deletionPolicy") == "retain":
                 body += "\nlifecycle { prevent_destroy = true }"
         elif kind == "google_compute_attached_disk":

@@ -105,12 +105,6 @@ def load_job(path: Path) -> JobSpec:
         verify_compile=bool(data.get("verification", {}).get("compile", True)),
         output_root=resolve(data.get("outputRoot", "generated/runs")),
         agent_mode=agent.get("mode", "plan-only"),
-        agent_model=agent.get(
-            "model", "nvidia_nim/openai/gpt-oss-120b"
-        ),
-        agent_base_url=agent.get(
-            "baseUrl", "https://integrate.api.nvidia.com/v1"
-        ),
         agent_temperature=float(
             agent.get("temperature", settings.implementation_agent_temperature)
         ),
@@ -252,8 +246,6 @@ class PrototypeOrchestrator:
                 staging,
                 self.manifest.implementation_tasks,
                 self.spec.agent_mode,
-                self.spec.agent_model,
-                self.spec.agent_base_url,
             )
 
             self._set_status("SUCCEEDED", "초기 생성과 구현 계획 준비가 완료되었습니다.")
@@ -390,8 +382,6 @@ class PrototypeOrchestrator:
             staging,
             self.manifest.implementation_tasks,
             self.spec.agent_mode,
-            self.spec.agent_model,
-            self.spec.agent_base_url,
         )
 
     def _validate_inputs(self) -> None:
@@ -508,8 +498,8 @@ class PrototypeOrchestrator:
         digest.update(self.spec.base_package.encode())
         digest.update(str(self.spec.allow_assumptions).encode())
         digest.update(str(self.spec.verify_compile).encode())
-        digest.update(self.spec.agent_model.encode())
-        digest.update(self.spec.agent_base_url.encode())
+        digest.update(settings.model.encode())
+        digest.update(settings.base_url.encode())
         digest.update(str(self.spec.agent_temperature).encode())
         digest.update(str(self.spec.agent_top_p).encode())
         digest.update(str(self.spec.agent_max_output_tokens).encode())

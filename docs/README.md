@@ -27,6 +27,8 @@
 - `app/design/services/sequence_diagram/README.md`: 결정론적 시퀀스 투영과 피드백 경로
 - [상호작용 설계 개선과 LLM 호출 최적화](interaction-design-improvements.md): 남은 개선,
   호출 운영 원칙과 측정 항목
+- [3사 클라우드 실배포 검증 기록](live-deployment-verification.md): 검증한 배포 템플릿,
+  관찰 결과, 발견한 오류와 수정·정리 결과
 - `app/workspace/README.md`: 프론트엔드 명령, 진행 이벤트와 단계 전환 계약
 - `evaluation/easydep/README.md`: 프론트엔드와 같은 Workspace API를 호출하는 얇은 실행기
 - FastAPI `/docs`: 현재 HTTP API 계약

@@ -15,7 +15,21 @@ RUN apk add --no-cache ca-certificates
 COPY --from=opentofu-runtime /usr/local/bin/tofu /usr/local/bin/tofu
 WORKDIR /provider-bootstrap
 COPY toolchain/opentofu/providers.tf ./providers.tf
-RUN tofu providers mirror -platform=linux_amd64 /provider-mirror
+# OpenTofu Registry의 hashicorp provider는 같은 버전의 upstream 태그를 사용하지만 패키지를
+# GitHub release asset에서 배포한다. 해당 CDN이 제한된 환경에서도 빌드할 수 있도록 접근
+# 가능한 HashiCorp 공식 Registry에서 같은 소스 태그의 서명된 패키지를 받은 뒤, 최종
+# filesystem mirror 주소만 생성 IaC의 기본 주소(registry.opentofu.org)에 맞춘다.
+RUN TF_REGISTRY_DISCOVERY_RETRY=5 \
+    TF_REGISTRY_CLIENT_TIMEOUT=60 \
+    TF_PROVIDER_DOWNLOAD_RETRY=5 \
+    sed -i \
+      's#source  = "hashicorp/#source  = "registry.terraform.io/hashicorp/#' \
+      providers.tf \
+    && tofu providers mirror -platform=linux_amd64 /upstream-provider-mirror \
+    && mkdir -p /provider-mirror/registry.opentofu.org \
+    && mv \
+      /upstream-provider-mirror/registry.terraform.io/hashicorp \
+      /provider-mirror/registry.opentofu.org/hashicorp
 
 FROM aquasec/trivy:0.74.0 AS trivy-runtime
 FROM docker:27.5.1-cli AS docker-runtime

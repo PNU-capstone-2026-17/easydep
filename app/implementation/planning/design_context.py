@@ -1050,8 +1050,10 @@ def llm_config(spec: JobSpec) -> dict[str, object]:
 
     return {
         "provider": "nvidia-nim",
-        "model": spec.agent_model,
-        "baseUrl": spec.agent_base_url,
+        # Stored as execution evidence. Runtime selection still reads the same
+        # required root .env settings and never falls back to this snapshot.
+        "model": settings.model,
+        "baseUrl": settings.base_url,
         "temperature": spec.agent_temperature,
         "topP": spec.agent_top_p,
         "maxOutputTokens": spec.agent_max_output_tokens,

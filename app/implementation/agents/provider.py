@@ -1,30 +1,21 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 
 from app.config import settings
 
-
 MAX_PROVIDER_RETRIES = 3
 
 
-def configured_api_key() -> str | None:
-    return (
-        settings.api_key
-        or settings.nvidia_api_key
-        or settings.nvidia_nim_api_key
-        or settings.llm_api_key
-        or windows_user_environment("NVIDIA_API_KEY")
-        or windows_user_environment("NVIDIA_NIM_API_KEY")
-    )
+def configured_api_key() -> str:
+    return settings.api_key
 
 
-def configured_model(default: str) -> str:
-    """공통 MODEL을 OpenHands/LiteLLM이 이해하는 NIM 이름으로 바꾼다."""
+def configured_model() -> str:
+    """루트 `.env`의 MODEL을 OpenHands/LiteLLM용 NIM 이름으로 바꾼다."""
 
-    model = settings.model or default
+    model = settings.model
     return model if model.startswith("nvidia_nim/") else f"nvidia_nim/{model}"
 
 
@@ -61,19 +52,6 @@ def provider_retry_delay(retry_number: int) -> float:
     base = settings.openhands_provider_retry_base_seconds
     cap = settings.openhands_provider_retry_max_seconds
     return min(cap, base * (2 ** max(0, retry_number - 1)))
-
-
-def windows_user_environment(name: str) -> str | None:
-    if os.name != "nt":
-        return None
-    try:
-        import winreg
-
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
-            value, _ = winreg.QueryValueEx(key, name)
-            return value if isinstance(value, str) and value else None
-    except (FileNotFoundError, OSError):
-        return None
 
 
 def openhands_compatibility() -> dict[str, object]:

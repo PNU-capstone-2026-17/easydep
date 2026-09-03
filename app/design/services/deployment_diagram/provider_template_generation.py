@@ -1720,6 +1720,19 @@ def _add_internal_traffic(
                     cardinality="many",
                     rule="aws.internal-autoscaling-target-registration",
                 )
+                # NLB 상태 검사는 source security group이 아니라 Load Balancer node의
+                # 사설 IP에서 들어온다. workload 사이의 허용 규칙만으로는 이 요청이
+                # 대상 VM에 닿지 않으므로, 대상 포트와 VPC 내부 범위를 명시한다.
+                target_filter = target_details["filter"]
+                template.nodes[target_filter].setdefault("attributes", {}).setdefault(
+                    "loadBalancerHealthChecks", []
+                ).append(
+                    {
+                        "port": target_port,
+                        "targetWorkloadRef": target_workload,
+                        "targetInterfaceRef": target_interface,
+                    }
+                )
             elif template.provider == "azure":
                 frontend_id = f"internal-frontend-ip-config-{target_compute}-{endpoint_key}"
                 backend_id = f"internal-backend-group-{target_compute}-{endpoint_key}"

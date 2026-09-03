@@ -1,4 +1,5 @@
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -6,15 +7,22 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     # Core LLM settings
-    api_key: str | None = None
-    nvidia_api_key: str | None = None
-    nvidia_nim_api_key: str | None = None
-    llm_api_key: str | None = None
-
-    base_url: str | None = None
-    model: str = "openai/gpt-oss-120b"
+    # API_KEY, BASE_URL, MODEL have no code defaults. The root .env (or the
+    # equivalent process environment in deployment) is the only configuration
+    # source, so a missing or blank value fails during startup.
+    api_key: str
+    base_url: str
+    model: str
     temperature: float = 0.2
     seed: int = 42
+
+    @field_validator("api_key", "base_url", "model")
+    @classmethod
+    def require_llm_setting(cls, value: str) -> str:
+        configured = value.strip()
+        if not configured:
+            raise ValueError("LLM configuration values must not be blank")
+        return configured
 
     # LLM Options
     # Structured design models can exceed provider defaults once reasoning
@@ -86,7 +94,6 @@ class Settings(BaseSettings):
     design_class_collaboration_max_completion_tokens: int = 8192
     implementation_max_workers: int = 1
     implementation_task_parallelism: int = 2
-    implementation_agent_base_url: str = "https://integrate.api.nvidia.com/v1"
     implementation_agent_temperature: float = 0.2
     implementation_agent_max_output_tokens: int = 16384
     implementation_reasoning_effort: str = "medium"

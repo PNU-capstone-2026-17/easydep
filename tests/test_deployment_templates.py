@@ -211,6 +211,11 @@ def test_group_and_persistent_templates_include_lifecycle_closures() -> None:
         "aws_lb_target_group",
         "aws_nat_gateway",
     } <= group_types
+    group_iac = render_open_tofu(group["projections"][0]["resourcePlan"])
+    assert (
+        "depends_on = [aws_route.private_default_route_compute_1]"
+        in group_iac["main.tf"]
+    )
 
     data = build_deployment_diagram_bundle(
         _graph(STANDALONE_DEFAULT_TWO_WORKLOADS_ONE_PERSISTENT), _resource_spec("gcp")
@@ -635,8 +640,27 @@ def test_separated_workloads_receive_distinct_bootstrap_contracts() -> None:
     assert "services:\n  worker:" in bootstraps["bootstrap_compute_2.sh.tftpl"]
     assert "services:\n  web:" not in bootstraps["bootstrap_compute_2.sh.tftpl"]
     assert "compose --env-file /opt/easydep/runtime/.env" in bootstraps["bootstrap_compute_1.sh.tftpl"]
+    assert "EASYDEP_BOOTSTRAP_OK" in bootstraps["bootstrap_compute_1.sh.tftpl"]
+    assert "docker inspect --format '{{.State.Running}}'" in bootstraps[
+        "bootstrap_compute_2.sh.tftpl"
+    ]
     assert "cloud-init_compute_1.yaml.tftpl" in files["main.tf"]
     assert "cloud-init_compute_2.yaml.tftpl" in files["main.tf"]
+    assert files["main.tf"].count(
+        "depends_on = [aws_route.private_default_route_compute_2]"
+    ) == 1
+
+
+def test_azure_private_compute_waits_for_subnet_nat_attachment() -> None:
+    bundle = build_deployment_diagram_bundle(
+        _graph(STANDALONE_SEPARATED_PUBLIC), _resource_spec("azure")
+    )
+    main = render_open_tofu(bundle["projections"][0]["resourcePlan"])["main.tf"]
+
+    assert (
+        "depends_on = [azurerm_subnet_nat_gateway_association."
+        "nat_association_compute_2_1]"
+    ) in main
 
 
 @pytest.mark.parametrize(
@@ -661,6 +685,12 @@ def test_generated_application_bootstrap_authenticates_to_registry(
     if provider == "aws":
         assert "awscli.amazonaws.com" in bootstrap
         assert "from_port = var.container_port_web_http" in files["main.tf"]
+    elif provider == "azure":
+        assert "destination_port_range = tostring(var.container_port_web_http)" in files[
+            "main.tf"
+        ]
+    else:
+        assert "ports = [tostring(var.container_port_web_http)]" in files["main.tf"]
 
 
 def test_user_package_can_bootstrap_images_plan_verify_and_destroy(
@@ -723,6 +753,13 @@ def test_persistent_workload_bootstrap_safely_formats_and_mounts_disk(
     assert 'mkfs.ext4 "$DISK_DEVICE"' in data_bootstrap
     assert "/mnt/easydep/state_volume/data" in data_bootstrap
     assert "-v /mnt/easydep/state_volume/data:/var/lib/easydep/state" in data_bootstrap
+    if provider == "aws":
+        assert "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_" in data_bootstrap
+        assert 'CANDIDATE_SERIAL=$(tr -d "-[:space:]"' in data_bootstrap
+        assert '"/sys/block/$CANDIDATE_NAME/device/serial"' in data_bootstrap
+        assert 'ROOT_SOURCE=$(readlink -f "$(findmnt -n -o SOURCE /)")' in data_bootstrap
+        assert 'for CANDIDATE in /dev/nvme*n1 /dev/xvd? /dev/sd?' in data_bootstrap
+        assert '[ "$#" -ne 1 ] || DISK_DEVICE="$1"' in data_bootstrap
 
 
 def test_each_deployment_target_receives_an_independent_complete_projection() -> None:
@@ -749,6 +786,18 @@ def test_each_deployment_target_receives_an_independent_complete_projection() ->
         assert projection["status"] == "completed"
         files = render_open_tofu(projection["resourcePlan"])
         assert rendered_resource_types(files)
+
+
+def test_gcp_instance_template_name_prefix_respects_provider_limit() -> None:
+    case = _case_id("managedVmGroup", 1, 2, 2, 1, 0, "loadBalancer")
+    bundle = build_deployment_diagram_bundle(_graph(case), _resource_spec("gcp"))
+    main = render_open_tofu(bundle["projections"][0]["resourcePlan"])["main.tf"]
+
+    assert (
+        'name_prefix = substr("${var.resource_prefix}-compute-template-compute-1-", 0, 37)'
+        in main
+    )
+    assert "depends_on = [google_compute_router_nat.cloud_nat]" in main
 
 
 @pytest.mark.parametrize(
@@ -790,6 +839,11 @@ def test_per_replica_storage_is_embedded_in_managed_compute_model(
         for name, content in files.items()
         if name.startswith("bootstrap_")
     )
+    if provider == "aws":
+        bootstrap = files["bootstrap_compute_2.sh.tftpl"]
+        assert "UNCLAIMED_DISKS" in bootstrap
+        assert 'ROOT_SOURCE=$(readlink -f "$(findmnt -n -o SOURCE /)")' in bootstrap
+        assert 'for CANDIDATE in /dev/nvme*n1 /dev/xvd? /dev/sd?' in bootstrap
 
 
 @pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
@@ -877,6 +931,10 @@ def test_secret_binding_has_permission_and_identity_based_runtime_fetch(
     assert "compose --env-file /opt/easydep/runtime/.env" in bootstrap
     assert "secret_ref_web_api_token" in bootstrap
     assert 'variable "secret_reference_web_api_token"' in files["variables.tf"]
+    if provider == "azure":
+        assert "/subscriptions/*/vaults/*/secrets/*)" in bootstrap
+        assert "--vault-name" in bootstrap
+        assert "--name" in bootstrap
 
 
 def test_colocated_connection_injects_container_dns_contract_and_renders_env_name() -> None:
@@ -895,6 +953,8 @@ def test_colocated_connection_injects_container_dns_contract_and_renders_env_nam
 
     assert binding["strategy"] == "containerDns"
     assert 'export STATE_SERVICE_URL="http://state:' in bootstrap
+    assert bootstrap.count("    ports:") == 1
+    assert '"${port_state_service}:${port_state_service}"' not in bootstrap
     assert "runtime_web -[#2f6b50]-> runtime_state : HTTP" in runtime
     assert "[env] STATE_SERVICE_URL" in runtime
     assert "persistent_disk ..[#6f7c73]> runtime_state" in runtime
@@ -965,6 +1025,9 @@ def test_separated_singleton_connection_injects_fixed_private_ip(
     assert f'export STATE_SERVICE_URL="http://{private_ip}:' in files[
         "bootstrap_compute_1.sh.tftpl"
     ]
+    assert '"${port_state_service}:${port_state_service}"' in files[
+        "bootstrap_compute_2.sh.tftpl"
+    ]
     assert static_marker in files["main.tf"]
 
 
@@ -1000,6 +1063,27 @@ def test_managed_target_connection_injects_internal_load_balancer_endpoint(
         for node in resource_plan["nodes"]
     )
     assert "endpoint_web_state_service_url" in files["bootstrap_compute_1.sh.tftpl"]
+    if provider == "aws":
+        target_filter = next(
+            node
+            for node in resource_plan["nodes"]
+            if node["id"] == "traffic-filter-compute-2"
+        )
+        assert target_filter["attributes"]["loadBalancerHealthChecks"] == [
+            {
+                "port": {"binding": "late", "field": "containerPort"},
+                "targetWorkloadRef": "state",
+                "targetInterfaceRef": "service",
+            }
+        ]
+        filter_start = files["main.tf"].index(
+            'resource "aws_security_group" "traffic_filter_compute_2"'
+        )
+        filter_end = files["main.tf"].find('\nresource "', filter_start + 1)
+        filter_block = files["main.tf"][filter_start:filter_end]
+        assert "from_port = var.container_port_state_service" in filter_block
+        assert "to_port = var.container_port_state_service" in filter_block
+        assert "cidr_blocks = [aws_vpc.network.cidr_block]" in filter_block
 
 
 def test_secret_runtime_diagram_shows_permission_and_environment_injection() -> None:

@@ -177,7 +177,7 @@ def _nim_client():
     """NIM(OpenAI 호환) 클라이언트를 1회 생성. base_url/api_key 는 settings 재사용."""
     from openai import OpenAI
 
-    from app.requirements.config import settings
+    from app.config import settings
     return OpenAI(api_key=settings.api_key, base_url=settings.base_url)
 
 

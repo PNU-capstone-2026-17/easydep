@@ -127,8 +127,6 @@ def write_execution_plan(
     run_root: Path,
     tasks: list[dict[str, object]],
     requested_mode: str,
-    model: str,
-    base_url: str,
 ) -> dict[str, object]:
     compatibility = openhands_compatibility()
     plan = {
@@ -139,7 +137,11 @@ def write_execution_plan(
             for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured")
         ),
         "compatibility": compatibility,
-        "llm": {"provider": "nvidia-nim", "model": model, "baseUrl": base_url},
+        "llm": {
+            "provider": "nvidia-nim",
+            "model": settings.model,
+            "baseUrl": settings.base_url,
+        },
         "taskOrder": [task["task_id"] for task in tasks],
         "isolation": "copy source-only application to an ASCII temp workspace, edit only assigned implementation paths, run focused checks inside OpenHands, protect generated contracts, promote verified files only",
     }
@@ -506,7 +508,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         "app_id": app_id,
                         "repair_attempt": repair_attempt,
                         "ls_provider": "nvidia-nim",
-                        "ls_model_name": configured_model(str(task["llm"]["model"])),
+                        "ls_model_name": configured_model(),
                     },
                 ) as trace:
                     try:
@@ -795,7 +797,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "taskType": task.get("task_type", "control"),
             "promptSha256": task.get("prompt_sha256"),
             "status": "FAILED",
-            "effectiveModel": configured_model(str(task["llm"]["model"])),
+            "effectiveModel": configured_model(),
             "errorType": error.__class__.__name__,
             "error": str(error),
             "durationMs": int((time.monotonic() - started) * 1000),
@@ -824,7 +826,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "taskId": task_id,
         "taskType": task.get("task_type", "control"),
         "promptSha256": task.get("prompt_sha256"),
-        "effectiveModel": configured_model(str(task["llm"]["model"])),
+        "effectiveModel": configured_model(),
         "changedFiles": sorted(changed),
         "outputFiles": required_paths,
         "verification": verification,
@@ -1152,7 +1154,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "validationEventCount": validation_journal.event_count,
         "allowedWritePaths": allowed,
         "modelCallMade": False,
-        "effectiveModel": configured_model(str(task["llm"]["model"])),
+        "effectiveModel": configured_model(),
         "llm": task["llm"],
     }
     report = run_root / "reports" / f"agent-validation-{task_id}.json"
@@ -1483,7 +1485,7 @@ def create_openhands_conversation(
                 register_tool(grep_registry_name, RestrictedGrepTool)
                 _RESTRICTED_GREP_REGISTERED = True
     task_check_tool_name = register_task_check_tool()
-    model = configured_model(str(llm_config["model"]))
+    model = configured_model()
     is_qwen_coder = "qwen3-coder" in model.lower()
     is_gpt_oss = "gpt-oss" in model.lower()
     chat_template_kwargs = dict(llm_config["chatTemplateKwargs"])
@@ -1495,7 +1497,7 @@ def create_openhands_conversation(
     llm_options: dict[str, object] = {
         "model": model,
         "api_key": SecretStr(api_key),
-        "base_url": settings.base_url or str(llm_config["baseUrl"]),
+        "base_url": settings.base_url,
         "temperature": 0.2 if is_qwen_coder else float(llm_config["temperature"]),
         "max_output_tokens": configured_max_output_tokens(int(llm_config["maxOutputTokens"])),
     }

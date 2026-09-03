@@ -34,12 +34,19 @@ def test_runner_command_transmits_only_named_environment(tmp_path: Path):
         repository_root=tmp_path,
         operation="worker",
         arguments=["/easydep-workspace/job.json"],
-        environment={"LLM_API_KEY": "secret", "UNRELATED_SECRET": "do-not-pass"},
+        environment={
+            "API_KEY": "secret",
+            "BASE_URL": "https://llm.test.invalid/v1",
+            "MODEL": "test/provider-model",
+            "UNRELATED_SECRET": "do-not-pass",
+        },
     )
 
-    assert "LLM_API_KEY" in command
+    assert all(name in command for name in ("API_KEY", "BASE_URL", "MODEL"))
     assert "UNRELATED_SECRET" not in command
     assert "secret" not in command
+    assert "https://llm.test.invalid/v1" not in command
+    assert "test/provider-model" not in command
     assert command[-2:] == ["worker", "/easydep-workspace/job.json"]
     assert "GRADLE_USER_HOME=/tmp/easydep-gradle-cache" in command
     assert f"{RUNNER_GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache" in command

@@ -312,7 +312,7 @@ def test_streaming_structured_output_uses_explicit_effort_and_omits_it_for_non_g
     })()
     from app.config import settings
 
-    monkeypatch.setattr(settings, "model", "openai/gpt-oss-120b")
+    monkeypatch.setattr(settings, "model", "openai/gpt-oss-test")
     stream_structured_response(
         client, [{"role": "user", "content": "x"}], Result, {}, reasoning_effort="low"
     )

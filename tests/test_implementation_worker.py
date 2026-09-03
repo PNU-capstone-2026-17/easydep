@@ -501,8 +501,6 @@ def settings(repository_root: Path) -> ImplementationSettings:
         work_root=repository_root / ".easydep" / "implementation-runs",
         python_executable=python,
         max_workers=1,
-        model="nvidia_nim/openai/gpt-oss-120b",
-        base_url="https://integrate.api.nvidia.com/v1",
         command_timeout_seconds=60,
     )
 

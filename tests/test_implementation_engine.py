@@ -403,7 +403,7 @@ def _write_minimal_agent_task(tmp_path: Path) -> tuple[Path, str, str, Path]:
         "required_output_paths": [source_path],
         "immutable_paths": [],
         "llm": {
-            "model": "openai/gpt-oss-120b",
+            "model": "ignored/task-model",
             "baseUrl": "http://localhost",
             "temperature": 0.2,
             "topP": 1.0,
@@ -586,7 +586,7 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
     source.write_text("class OrderService {}", encoding="utf-8")
     missing_source = tmp_path / "RequiredService.java"
     llm = {
-        "model": "openai/gpt-oss-120b",
+        "model": "ignored/task-model",
         "baseUrl": "http://localhost",
         "temperature": 0.2,
         "topP": 1.0,
@@ -632,7 +632,7 @@ def test_restricted_editor_reads_utf8_korean_source_as_text(tmp_path: Path) -> N
         encoding="utf-8",
     )
     llm = {
-        "model": "openai/gpt-oss-120b",
+        "model": "ignored/task-model",
         "baseUrl": "http://localhost",
         "temperature": 0.2,
         "topP": 1.0,
@@ -673,7 +673,7 @@ def test_restricted_editor_rejects_generated_build_reports(tmp_path: Path) -> No
     source.parent.mkdir(parents=True)
     source.write_text("class Service {}", encoding="utf-8")
     llm = {
-        "model": "openai/gpt-oss-120b",
+        "model": "ignored/task-model",
         "baseUrl": "http://localhost",
         "temperature": 0.2,
         "topP": 1.0,
@@ -1033,8 +1033,6 @@ class Order <<Entity>> { - id: UUID }
         verify_compile=False,
         output_root=tmp_path / "generated-runs",
         agent_mode="plan-only",
-        agent_model="model",
-        agent_base_url="http://localhost",
         agent_temperature=0.0,
         agent_top_p=1.0,
         agent_max_output_tokens=1000,

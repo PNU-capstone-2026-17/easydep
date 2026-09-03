@@ -7,7 +7,7 @@ NIM(OpenAI 호환) 엔드포인트를 langchain-openai의 ChatOpenAI로 감싼�
     이는 OpenAI 네이티브 Structured Outputs(`response_format={"type":"json_schema",
     strict:true}`)를 호출하는 경로로, raw SDK의 `client.chat.completions.parse(...)`
     와 동일한 메커니즘을 langchain이 감싼 것이다.
-  - 폴백: NIM에 서빙된 gpt-oss-120b는 간헐적으로 빈 `parsed`(content='')를 반환한다.
+  - 폴백: NIM에 서빙된 GPT-OSS 계열은 간헐적으로 빈 `parsed`(content='')를 반환한다.
     이 경우 스키마(JSON Schema)를 프롬프트로 주고 원문 JSON을 직접 파싱한다.
 
 `include_raw=True`로 부르는 이유는 둘이다. 하나는 원본 메시지에 실린 토큰 사용량과
@@ -21,7 +21,7 @@ NIM(OpenAI 호환) 엔드포인트를 langchain-openai의 ChatOpenAI로 감싼�
 `temperature=0` + `seed` 고정은 같은 표본을 **요청**하는 것이고, **이 모델에서는 보장이
 되지 않는다.** 이유가 우연이 아니라 구조적이다:
 
-  - `gpt-oss-120b`는 MoE다. 어느 전문가로 라우팅되는지가 **함께 배치된 다른 요청들에
+  - GPT-OSS 계열은 MoE다. 어느 전문가로 라우팅되는지가 **함께 배치된 다른 요청들에
     영향을 받는다.** 우리가 보내는 입력이 같아도 서버의 배치 구성은 매번 다르다.
   - 배치가 달라지면 부동소수 리덕션 순서도 달라져, 같은 가중치·같은 입력에서도 로짓이
     미세하게 갈린다. 그 차이가 argmax를 뒤집는 토큰이 하나만 있어도 출력이 갈라진다.
@@ -44,6 +44,7 @@ from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, SecretStr
 
+from app.config import settings as llm_settings
 from app.requirements.config import settings
 from app.requirements.runtime import telemetry
 
@@ -69,9 +70,9 @@ def build_llm(*, seed_override: int | None = None) -> ChatOpenAI:
     global _llm
     if _llm is None or seed_override is not None:
         instance = ChatOpenAI(
-            model=settings.model,
-            base_url=settings.base_url,
-            api_key=SecretStr(settings.api_key),
+            model=llm_settings.model,
+            base_url=llm_settings.base_url,
+            api_key=SecretStr(llm_settings.api_key),
             temperature=settings.temperature,
             # 같은 입력에 같은 표본을 **요청**한다. 보장은 아니다 — 서버가 seed를
             # 무시할 수도 있고, 백엔드 구성이 바뀌면(system_fingerprint) 같은 seed라도
@@ -80,7 +81,7 @@ def build_llm(*, seed_override: int | None = None) -> ChatOpenAI:
             seed=settings.seed if seed_override is None else seed_override,
             reasoning_effort=(
                 settings.requirements_reasoning_effort
-                if "gpt-oss" in settings.model.lower()
+                if "gpt-oss" in llm_settings.model.lower()
                 else None
             ),
             max_completion_tokens=settings.requirements_max_completion_tokens,
