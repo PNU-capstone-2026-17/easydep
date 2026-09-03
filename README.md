@@ -53,8 +53,9 @@ Docker-on-VM 애플리케이션이다.
 
 ## 실행
 
-필수 환경은 Python 3.11 이상, Node.js 22 이상과 Docker Desktop이다. 개발 서버는 호스트에서
-hot reload로 실행하고 MySQL만 Docker 컨테이너로 준비한다. 생성 코드의 컴파일·단위 테스트는
+필수 환경은 Python 3.11 이상, Node.js 22 이상과 Docker Desktop이다. 개발 UI는 호스트에서
+Vite hot reload로 실행하고, 장시간 작업을 맡는 FastAPI는 기본적으로 자동 재시작 없이 실행한다.
+MySQL만 Docker 컨테이너로 준비한다. 생성 코드의 컴파일·단위 테스트는
 물론 실제 브라우저 엔진이 필요한 DOM·JavaScript E2E도 하나의 `easydep-toolchain`을
 사용한다. 각 작업은 필요한 도구만 실행하며, 큰 BERT 모델과 PlantUML은 서버 runtime에만 둔다.
 
@@ -76,7 +77,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 2. `package-lock.json`이 바뀐 경우에만 `npm ci`를 실행한다.
 3. Docker 입력이 바뀐 경우에만 구현용 이미지와 브라우저 E2E 확장 이미지를 빌드·검증한다.
 4. `easydep-mysql-dev` 컨테이너를 생성하거나 재사용하고 준비 완료까지 기다린다.
-5. FastAPI와 Vite를 hot reload로 시작하고 UI·워크스페이스 API 연결을 확인한다.
+5. FastAPI는 안정 실행하고 Vite만 hot reload로 시작한 뒤 UI·워크스페이스 API 연결을 확인한다.
 
 정상적으로 준비되면 기본 UI는 `http://127.0.0.1:5173/`, API 문서는
 `http://127.0.0.1:8100/docs`에서 볼 수 있다. 실행 상태와 로그는 `.easydep/dev/`에 저장된다.
@@ -85,6 +86,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 |---|---|
 | `-OpenBrowser` | 준비 완료 후 기본 브라우저에서 UI를 연다. |
 | `-ProductionLike` | Vite 대신 `frontend/build`을 FastAPI에서 제공해 배포와 비슷하게 실행한다. |
+| `-BackendReload` | 백엔드 소스 개발 중에만 Uvicorn 자동 재시작을 켠다. 실행 중인 앱 생성 작업은 중단될 수 있다. |
 | `-SkipFrontendBuild` | `-ProductionLike`에서 기존 정적 빌드를 재사용한다. |
 | `-ForceFrontendBuild` | `-ProductionLike`에서 정적 프론트엔드를 강제로 다시 빌드한다. |
 | `-SkipBootstrap` | 기존 Python 환경과 툴체인 이미지를 신뢰하고 준비 작업을 생략한다. |

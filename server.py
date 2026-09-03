@@ -10,7 +10,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -40,6 +40,7 @@ async def lifespan(_app: FastAPI):
     from dotenv import load_dotenv
     from openai import OpenAI
 
+    _app.state.ready = False
     load_dotenv()
     # 시작 시점에 OpenAI SDK import가 가능한지 확인한다. 실제 LLM client 생성은 각 runtime이
     # 담당하므로 여기서는 환경을 바꾸거나 네트워크 요청을 보내지 않는다.
@@ -69,10 +70,12 @@ async def lifespan(_app: FastAPI):
             f"{'yes' if loaded else 'skipped or unavailable'}; "
             f"interrupted workspace commands: {interrupted}"
         )
+        _app.state.ready = True
         yield
     finally:
         # 새 command 접수를 중지한 뒤 구현 worker를 종료한다. 역순으로 정리해야 실행 중인
         # 구현 결과를 workspace가 이미 닫힌 저장소에 기록하려는 경쟁 상태를 줄일 수 있다.
+        _app.state.ready = False
         workspace_service.shutdown()
         implementation_worker.shutdown()
         plantuml_renderer.stop()
@@ -87,9 +90,12 @@ app.include_router(workspace_router)
 
 
 @app.get("/api/health")
-def health() -> dict[str, bool]:
-    """API process가 요청에 응답할 수 있는지 확인한다."""
-    return {"ok": True}
+def health(response: Response) -> dict[str, bool]:
+    """startup을 마쳤고 shutdown을 시작하지 않은 API만 준비 상태로 보고한다."""
+    ready = bool(getattr(app.state, "ready", False))
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {"ok": ready}
 
 
 @app.get("/healthz")

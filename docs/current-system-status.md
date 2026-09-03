@@ -86,8 +86,10 @@ flowchart LR
 수 있다. 실행 스크립트는 FastAPI의 `/api/health`가 준비된 다음 Vite를 시작하고, UI와
 Workspace API가 모두 응답한 뒤 `Ready`를 출력한다.
 
-개발 중에는 Python과 Vite가 호스트에서 실행되므로 백엔드·프론트엔드 파일을 수정하면 hot
-reload로 바로 확인할 수 있다. MySQL과 생성물 검사 도구만 Docker를 사용한다.
+개발 중에는 Python과 Vite가 호스트에서 실행된다. 기본 실행은 Vite만 hot reload하고
+FastAPI는 장시간 앱 생성 작업이 소스 변경으로 끊기지 않도록 안정적으로 유지한다. 백엔드
+자동 재시작이 필요한 짧은 개발 세션에서만 `-BackendReload`를 지정한다. MySQL과 생성물
+검사 도구만 Docker를 사용한다.
 
 ## 3. 사용자가 보는 실행 흐름
 

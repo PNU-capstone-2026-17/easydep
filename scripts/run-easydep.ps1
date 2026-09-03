@@ -3,6 +3,7 @@ param(
     [switch]$Stop,
     [switch]$OpenBrowser,
     [switch]$ProductionLike,
+    [switch]$BackendReload,
     [switch]$SkipFrontendBuild,
     [switch]$ForceFrontendBuild,
     [switch]$ResetDatabaseSchema,
@@ -27,6 +28,8 @@ $stdoutPath = Join-Path $runRoot "server.stdout.log"
 $stderrPath = Join-Path $runRoot "server.stderr.log"
 $frontendStdoutPath = Join-Path $runRoot "frontend.stdout.log"
 $frontendStderrPath = Join-Path $runRoot "frontend.stderr.log"
+$backendStdinPath = Join-Path $runRoot "server.stdin"
+$frontendStdinPath = Join-Path $runRoot "frontend.stdin"
 $frontendBuildHashPath = Join-Path $runRoot "frontend-build.sha256"
 $frontendDependenciesHashPath = Join-Path $runRoot "frontend-dependencies.sha256"
 $requirementsHashPath = Join-Path $runRoot "requirements.sha256"
@@ -525,6 +528,9 @@ if ($LASTEXITCODE -ne 0) {
 if (-not $ProductionLike -and ($SkipFrontendBuild -or $ForceFrontendBuild)) {
     throw "-SkipFrontendBuild and -ForceFrontendBuild require -ProductionLike."
 }
+if ($ProductionLike -and $BackendReload) {
+    throw "-BackendReload cannot be combined with -ProductionLike."
+}
 if (-not $ProductionLike -and $Port -eq $FrontendPort) {
     throw "Backend and frontend development ports must be different."
 }
@@ -535,6 +541,11 @@ Assert-LoopbackPortAvailable -CandidatePort $Port -Purpose "Backend"
 if (-not $ProductionLike) {
     Assert-LoopbackPortAvailable -CandidatePort $FrontendPort -Purpose "Frontend"
 }
+# Start-Process로 띄운 서버가 실행한 PowerShell의 키 입력이나 Ctrl+C를 가져가지 않도록
+# 각 자식 프로세스에 전용 빈 표준입력 파일을 연결한다. 기존 프로세스가 잡고 있던 파일을
+# 먼저 닫을 수 있도록 Stop-OwnedServer보다 뒤에서 새로 만든다.
+Set-Content -LiteralPath $backendStdinPath -Value "" -NoNewline -Encoding ASCII
+Set-Content -LiteralPath $frontendStdinPath -Value "" -NoNewline -Encoding ASCII
 
 if ($ResetDatabase) {
     # 개발 DB 구조가 현재 코드와 맞지 않을 때만 사용한다. 컨테이너와 그 전용 volume을
@@ -664,7 +675,7 @@ $backendArguments = @(
     "-X", "utf8", "-m", "uvicorn", "server:app",
     "--host", "127.0.0.1", "--port", [string]$Port
 )
-if (-not $ProductionLike) {
+if ($BackendReload) {
     $backendArguments += "--reload"
 }
 $server = Start-Process `
@@ -672,6 +683,7 @@ $server = Start-Process `
     -ArgumentList $backendArguments `
     -WorkingDirectory $repoRoot `
     -WindowStyle Hidden `
+    -RedirectStandardInput $backendStdinPath `
     -RedirectStandardOutput $stdoutPath `
     -RedirectStandardError $stderrPath `
     -PassThru
@@ -682,6 +694,7 @@ $serverRecord = @{
     repoRoot = $repoRoot
     port = $Port
     mode = if ($ProductionLike) { "production-like" } else { "development" }
+    backendReload = [bool]$BackendReload
 }
 $serverRecord | ConvertTo-Json | Set-Content -LiteralPath $pidPath -Encoding UTF8
 
@@ -722,6 +735,7 @@ if (-not $ProductionLike) {
         ) `
         -WorkingDirectory $frontendRoot `
         -WindowStyle Hidden `
+        -RedirectStandardInput $frontendStdinPath `
         -RedirectStandardOutput $frontendStdoutPath `
         -RedirectStandardError $frontendStderrPath `
         -PassThru
@@ -778,7 +792,16 @@ Write-Host ""
 Write-Host "[EasyDep] Ready" -ForegroundColor Green
 Write-Host "  UI:   $workspaceUri"
 Write-Host "  API:  http://127.0.0.1:$Port/docs"
-Write-Host "  Mode: $(if ($ProductionLike) { 'production-like' } else { 'development (hot reload)' })"
+$modeLabel = if ($ProductionLike) {
+    "production-like"
+}
+elseif ($BackendReload) {
+    "development (frontend and backend hot reload)"
+}
+else {
+    "development (frontend hot reload; stable backend)"
+}
+Write-Host "  Mode: $modeLabel"
 Write-Host "  Logs: $runRoot"
 Write-Host "  Stop: powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -Stop"
 
