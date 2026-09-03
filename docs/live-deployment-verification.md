@@ -3,6 +3,10 @@
 > 검증일: 2026-09-03
 > 대상: Docker-on-VM 배포 템플릿과 EasyDep이 생성한 OpenTofu·bootstrap 패키지
 
+배포 입력, 템플릿 선택 규칙, 다이어그램과 IaC 생성 과정까지 함께 보려면
+[`deployment-template-system.md`](deployment-template-system.md)를 먼저 읽는다. 이 문서는
+실배포 실행별 세부 기록을 보존하는 용도다.
+
 이 문서는 AWS, Azure, GCP에 테스트 리소스를 실제로 만들고 애플리케이션 응답을 확인한
 결과를 기록한다. 정적 검사만 통과한 경우와 실제 배포까지 통과한 경우를 구분하며, 실행 중
 발견한 오류와 수정 내용도 함께 남긴다.
@@ -48,9 +52,11 @@ AWS는 공개 주소가 없는 VM도 확인할 수 있도록 모든 VM의 직렬
 | 서로 다른 VM의 두 workload (`separated-two`) | 통과 | 통과 | 통과 | 공개 VM에서 사설 VM으로 전달하는 주소·포트, 사설 egress, Registry 권한 |
 | 같은 VM의 두 workload와 영속 디스크 (`persistent-colocated`) | 통과 | 통과 | 통과 | 디스크 연결·마운트, 컨테이너 volume, 애플리케이션 기동 |
 | 서로 다른 VM의 두 workload와 사설 VM 영속 디스크 (`persistent-separated`) | 통과 | 통과 | 통과 | NAT 이후 사설 VM 기동, 사설 디스크 연결·마운트, 공개 앱에서 사설 앱까지 연쇄 헬스 체크 |
+| 서로 다른 VM의 두 workload와 VM별 영속 디스크 (`multi-persistent-separated`) | 통과 | 통과 | 통과 | 두 VM의 독립 디스크 연결·마운트, 두 컨테이너의 파일 쓰기, 공개 앱에서 사설 앱까지 연쇄 헬스 체크 |
 | 관리 그룹의 replica별 영속 디스크 (`per-replica-storage`) | 통과 | 통과 | 통과 | 공개 VM, 내부 Load Balancer, 상태 서비스 복제본 2개, replica별 디스크 마운트와 연쇄 헬스 체크 |
 | 공개 주소가 없는 단일 VM (`private-single`) | 통과 | `separated-two`의 사설 VM으로 경로 확인 | `separated-two`의 사설 VM으로 경로 확인 | NAT를 통한 이미지 pull과 bootstrap; AWS는 직렬 콘솔로 완료 확인 |
 | 외부 비밀값 전달 (`secret-binding`) | 통과 | 통과 | 통과 | Secret Manager·Key Vault, Secret별 최소 읽기 권한, VM 역할·서비스 계정, 실행 시 환경 변수 전달, 앱 내부 값 비교 |
+| 실제 생성된 수강신청 앱 (`course-registration-app`) | 통과 | AWS용 설계라 반복하지 않음 | AWS용 설계라 반복하지 않음 | React/Vite 빌드, Spring Boot JAR, Flyway, ECR, VM, EBS, `/healthz`, 자동 정리 |
 
 Azure와 GCP의 `separated-two`에는 공개 주소가 없는 두 번째 VM이 포함된다. 따라서 별도의
 `private-single`을 반복하지 않고도 두 공급자의 사설 subnet, NAT, Registry pull,
@@ -93,6 +99,22 @@ bootstrap 경로를 실제로 확인했다.
   probe, 공개 앱의 연쇄 헬스 체크가 모두 통과했고 26개 리소스를 삭제했다.
 - 이로써 AWS Auto Scaling Group, Azure VM Scale Set, GCP Managed Instance Group의
   replica별 영속 디스크 조합을 모두 실제 배포로 확인했다.
+- `multi-persistent-separated`는 공개 `web` VM과 사설 `state` VM에 각각 별도 영속
+  디스크를 연결했다. 두 컨테이너가 자신의 마운트 경로에 파일을 쓸 수 있어야 하고 공개
+  앱에서 사설 앱까지 이어지는 상태 검사도 성공해야 통과하도록 했다. AWS 실행
+  `easydep-live-aws-7ca2227e`는 32개, Azure 실행
+  `easydep-live-azure-603c2d3f`는 28개, GCP 실행
+  `easydep-live-gcp-a103bc0d`는 22개 리소스를 각각 정리했다.
+- 16개 요구사항(RR1~RR16)으로 생성한 실제 수강신청 앱은 React/TypeScript/Vite
+  frontend와 Java 21/Spring Boot backend를 한 이미지로 빌드했다. 로컬 사전 검사에서
+  Flyway migration과 `/healthz` 응답을 확인했고, AWS 실행
+  `easydep-live-aws-83fe5673`에서도 EBS를 마운트한 뒤 같은 상태 검사가 통과했다.
+  OpenTofu 리소스 15개, ECR 이미지, 로컬 이미지, 임시 디렉터리를 모두 정리했다.
+- 이 앱의 원래 배포 설계는 database runtime engine이 정해지지 않아 `needsInput` 상태였다.
+  실배포 결과를 반영한 현재 기본 템플릿은 단일 VM·단일 복제본을 선택한 경우 파일 기반
+  H2와 영속 디스크를 함께 계획하고, 같은 datasource 값을 구현물과 cloud-init에 전달한다.
+  여러 복제본이나 별도 DB workload는 이 기본값을 사용하지 않고 명시적인 DB 선택을
+  요구한다.
 - AWS `secret-binding`에서는 실행 전 임시 Secret을 만들고, 해당 ARN만 읽을 수 있는 VM
   역할과 정책을 배포했다. bootstrap이 Secret Manager에서 값을 읽어 컨테이너 환경 변수로
   전달했으며, 테스트 앱이 전달받은 값과 실행 전 기대값이 정확히 같을 때만 HTTP 200을
@@ -114,6 +136,9 @@ bootstrap 경로를 실제로 확인했다.
 - 같은 작은 이미지라도 Registry push가 수십 초 동안 같은 layer 상태를 반복 출력하거나,
   업로드 완료 뒤 Docker CLI가 늦게 종료되는 경우가 있었다. 서버의 tag와 digest는 정상
   등록됐으며 이후 배포도 성공했다.
+- 실제 앱의 첫 Docker 빌드는 배포 디렉터리까지 문맥에 포함해 약 720MB를 전송했다.
+  루트 `deployment`를 제외한 재실행에서는 22.07KB만 전송했고 frontend 빌드 단계도
+  Docker cache를 그대로 사용했다.
 - GCP 네트워크와 Azure Resource Group 삭제는 하위 리소스가 사라진 뒤에도 수십 초 더
   걸렸다. OpenTofu 상태가 빌 때까지 기다려 정리를 완료했다.
 
@@ -136,6 +161,8 @@ bootstrap 경로를 실제로 확인했다.
 | 생성된 frontend 이미지에 필요한 도구가 없을 수 있음 | `npm ci` 성공만 확인함 | 이미지 build 단계에서 `tsc`와 `vite` 실행 파일 존재 여부를 즉시 검사 | Dockerfile 생성 테스트와 정적 검사 통과 |
 | AWS Secret 읽기 정책의 `Resource`가 빈 문자열이 됨 | 실배포 runner가 Secret ARN을 `TF_VAR_*` 환경 변수로 넣었지만, 복사한 `terraform.tfvars`의 빈 예제 값이 더 높은 우선순위로 환경 변수를 가림 | smoke용 로컬 `terraform.tfvars`에 실행 중 만든 Secret ARN을 직접 기록 | 첫 실패의 AWS 리소스 13개와 Secret을 정리한 뒤 재실행. 앱 내부 값 비교와 HTTP 헬스 체크 통과, 리소스 14개와 Secret 정리 |
 | Azure의 Secret 참조 하나를 권한 범위와 실행 시 조회에 함께 사용할 수 없음 | 역할의 `scope`는 Azure 리소스 ID가 필요하지만 `az keyvault secret show --id`는 데이터 영역 URL을 요구함 | 배포 입력은 권한 범위로 바로 쓸 수 있는 Secret 리소스 ID로 통일하고, bootstrap이 그 ID에서 vault 이름과 Secret 이름을 추출해 조회 | Azure plan, Secret 단위 역할 생성, VM의 실제 값 조회와 앱 내부 비교 통과 |
+| 실제 수강신청 앱의 검증 URL이 `/actuator/health`로 생성됨 | 배포 입력에 앱의 상태 검사 경로가 없어서 Spring Boot 기본값을 사용함. 실제 앱은 actuator를 `/healthz`로 옮겨 둠 | 실제 앱 workload interface에 `healthPath: /healthz`를 명시 | AWS VM bootstrap 뒤 생성된 `/healthz` URL의 HTTP 검증 통과 |
+| 실제 앱 Docker 빌드 문맥이 약 720MB까지 커짐 | 앱 안에 생성한 `deployment/tofu/.terraform` provider 파일을 `COPY . .` 빌드 문맥이 다시 포함함 | 생성하는 `.dockerignore`와 기존 앱을 복사하는 실배포 runner에서 루트 `/deployment` 제외 | 재실행 빌드 문맥 22.07KB, frontend cache 재사용, 전체 이미지 빌드·push 통과 |
 
 수정된 주요 코드는
 [`app/implementation/delivery/iac_renderer.py`](../app/implementation/delivery/iac_renderer.py)와
@@ -149,36 +176,45 @@ bootstrap 경로를 실제로 확인했다.
   `private-single` 실행을 재시도해 통과했다.
 - GCP zone-spread 정리 중 `compute.googleapis.com` DNS 조회가 한 번 실패했다. 이미 삭제가
   시작된 OpenTofu 상태에서 `destroy`만 재개했고 상태가 빈 것을 확인했다.
-- 실제 생성된 수강신청 애플리케이션의 frontend 이미지 build에서 npm Registry 연결이
-  `ECONNRESET`으로 끊겼다. 이 실행은 작은 smoke 앱과 달리 외부 npm 다운로드에 의존한다.
-  따라서 현재 기록은 배포 템플릿의 실배포 성공을 뜻하며, 수강신청 애플리케이션 전체
-  이미지의 실배포 완료를 뜻하지는 않는다.
+- 실제 생성된 수강신청 애플리케이션의 첫 frontend 이미지 build에서 npm Registry 연결이
+  `ECONNRESET`으로 한 번 끊겼다. 로컬 사전 검사를 재개하자 npm·TypeScript·Vite·Gradle
+  빌드가 모두 통과했고, 이후 AWS 전체 실배포도 완료했다.
 - GCP Secret Manager API가 처음에는 비활성 상태여서 Secret 생성 전에 멈췄다. 테스트
   프로젝트에서 해당 API를 활성화한 뒤 같은 `secret-binding` 사례를 다시 실행해 통과했다.
 - Azure 구독에 `Microsoft.KeyVault` 리소스 공급자가 등록되지 않아 첫 vault 생성 전에
   멈췄다. 해당 공급자를 등록한 뒤 같은 `secret-binding` 사례를 다시 실행해 통과했다.
 
-## 6. 아직 실배포하지 않은 조합
+## 6. 남은 실배포 범위
 
-다음 항목은 현재 템플릿의 주요 경로와 겹치거나 외부 패키지 다운로드 실패로 아직 전체
-실배포를 끝내지 못했다.
+계획했던 고유한 템플릿 조합과 실제 수강신청 앱의 AWS 배포는 모두 확인했다. 다음 항목은
+이미 검증한 경로를 공급자나 이름만 바꿔 반복하는 경우이므로 이번 검증에서는 실행하지
+않았다.
 
-- 여러 VM에 각각 영속 디스크가 있는 배치
-- 실제 수강신청 애플리케이션 이미지의 npm 의존성 다운로드 이후 전체 배포
-
-이 항목을 검증할 때는 새 배포 체계를 만들지 않고 같은 runner에 작은 case만 추가한다.
+- AWS용으로 설계된 수강신청 앱을 Azure와 GCP의 동일한 단일 VM 템플릿에 다시 배포하는 것
+- Azure와 GCP의 `private-single`을 별도로 반복하는 것. 두 공급자는
+  `separated-two`에서 같은 사설 VM·NAT·Registry pull 경로를 이미 확인했다.
+- 별도 MySQL을 포함한 운영용 수강신청 앱 구성. 이는 원래 배포 설계에서 database engine을
+  선택한 뒤 검증할 별도 사례다.
 
 ## 7. 코드 검증 결과
 
 실배포 수정 뒤 다음 검사를 통과했다.
 
 ```text
+python -X utf8 -m pytest tests/test_deployment_workload_boundary.py -q
 python -X utf8 -m pytest tests/test_deployment_templates.py -q
 python -X utf8 -m ruff check app/implementation/delivery/container.py app/implementation/delivery/iac_renderer.py tests/test_deployment_templates.py scripts/run_live_deployment_smoke.py
 python -X utf8 -m mypy app/implementation/delivery/container.py app/implementation/delivery/iac_renderer.py scripts/run_live_deployment_smoke.py
 python -X utf8 -m compileall -q app/implementation/delivery scripts/run_live_deployment_smoke.py
 git diff --check
 ```
+
+저장된 16개 요구사항 수강신청 앱에도 현재 템플릿을 다시 적용했다. 요구사항·설계 LLM을
+재호출하지 않고 기존 typed 설계와 생성 소스만 사용했으며, bundle은 `completed`, runtime
+결합은 `bound`, AWS ResourcePlan은 issue 0건이었다. 실제 소스에서 8000 포트와 `/healthz`,
+datasource 환경 변수 3개와 보안 환경 변수 2개, `/var/lib/easydep/data` mount 사용을
+확인했다. EBS disk와 attachment node가 각각 생성됐고, 보안 password는
+`secret-reference-application-security-password` 배포 입력으로 만들어졌다.
 
 최종 조회에서 AWS의 instance·VPC·Auto Scaling Group·ECR repository, Azure의
 `easydep-live-*` Resource Group, GCP의 instance·관리형 instance group·network·Artifact

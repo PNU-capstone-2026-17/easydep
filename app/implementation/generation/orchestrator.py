@@ -13,9 +13,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from app.config import settings
 from app.design.contracts.api_spec import ApiSpecModel
+from app.design.contracts.application_runtime import application_security_required
 from app.design.schemas.class_model import BCEModel
 
 from ..agents.runtime import write_execution_plan
@@ -1165,43 +1167,19 @@ def _requires_application_security(spec: JobSpec) -> bool:
     요구사항 문장을 함께 본다. 단순히 actor 역할이 존재한다는 이유로 인증을 추측하지 않고,
     인증·인가를 직접 요구한 문장만 사용한다.
     """
-    openapi_path = spec.inputs.get("openapi")
-    if openapi_path and openapi_path.is_file():
+    def read_json_input(name: str) -> Any:
+        path = spec.inputs.get(name)
+        if not path or not path.is_file():
+            return None
         try:
-            document = json.loads(openapi_path.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            document = {}
-        if isinstance(document, dict):
-            components = document.get("components", {})
-            schemes = components.get("securitySchemes", {}) if isinstance(components, dict) else {}
-            if document.get("security") or schemes:
-                return True
-            paths = document.get("paths", {})
-            if isinstance(paths, dict) and any(
-                operation.get("security")
-                for path_item in paths.values()
-                if isinstance(path_item, dict)
-                for operation in path_item.values()
-                if isinstance(operation, dict)
-            ):
-                return True
+            return None
 
-    requirements_path = spec.inputs.get("refinedRequirements")
-    if not requirements_path or not requirements_path.is_file():
-        return False
-    try:
-        requirements = json.loads(requirements_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return False
-    items = requirements if isinstance(requirements, list) else []
-    security_words = re.compile(
-        r"\b(?:authenticat(?:e|ed|ion)|authoriz(?:e|ed|ation))\b|인증|인가|접근\s*권한",
-        re.IGNORECASE,
-    )
-    return any(
-        security_words.search(str(item.get("text", "")))
-        for item in items
-        if isinstance(item, dict)
+    openapi = read_json_input("openapi")
+    requirements = read_json_input("refinedRequirements")
+    return application_security_required(
+        openapi if isinstance(openapi, dict) else {}, requirements
     )
 
 

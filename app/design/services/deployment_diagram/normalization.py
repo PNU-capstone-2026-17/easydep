@@ -645,12 +645,12 @@ def _automatic_endpoint_bindings(graph: dict[str, Any]) -> None:
 def _single_vm_default_storage(
     graph: dict[str, Any], planning_facts: dict[str, Any] | None
 ) -> None:
-    """논리 ERD만 있는 단일 Docker-on-VM 앱의 최소 영속 disk를 정한다.
+    """단일 VM 애플리케이션의 파일 DB와 영속 disk를 함께 정한다.
 
-    이는 database engine을 추측하는 규칙이 아니다. ``workloads=["vm"]``으로
-    Docker-on-VM이 명시되고, 하나의 generated application이 기본 single replica로
-    배치될 때만 workload-owned block disk를 선택한다. scale-out, 여러 workload,
-    이미 선택된 storage는 계속 명시 설계가 필요하다.
+    ERD, ``workloads=["vm"]``, 단일 복제본이라는 세 조건이 모두 확인될 때만 현재
+    제품이 지원하는 가장 작은 실행 형태인 파일 기반 H2를 선택한다. 여러 workload나
+    scale-out처럼 파일 DB를 안전하게 공유할 수 없는 구조는 계속 명시적인 DB 선택을
+    요구한다.
     """
 
     facts = [
@@ -701,32 +701,63 @@ def _single_vm_default_storage(
     )
     if not isinstance(replica_count, int) or isinstance(replica_count, bool) or replica_count != 1:
         return
+    mount_path = (
+        str(persistent_derivation["mountPath"])
+        if persistent_derivation is not None
+        else "/var/lib/easydep/data"
+    )
+    source_refs = _refs(
+        ["erdModel", "resourceSpec:workloads"]
+        + (
+            list(persistent_derivation.get("sourceRefs") or [])
+            if persistent_derivation is not None
+            else []
+        )
+    )
     workload.setdefault("storage", []).append(
         {
             "id": "workload-data",
             "persistence": "persistent",
             "capacityGiB": 10,
-            "mountPath": (
-                str(persistent_derivation["mountPath"])
-                if persistent_derivation is not None
-                else "/var/lib/easydep/data"
-            ),
+            "mountPath": mount_path,
             "deletionPolicy": "retain",
             "replicaSemantics": "singleAttachment",
-            "sourceRefs": _refs(
-                ["erdModel", "resourceSpec:workloads"]
-                + (
-                    list(persistent_derivation.get("sourceRefs") or [])
-                    if persistent_derivation is not None
-                    else []
-                )
-            ),
+            "sourceRefs": source_refs,
         }
     )
+    # 구현 생성기는 이 세 환경 변수를 읽는다. 배포 계획도 같은 값을 컨테이너에
+    # 전달하므로 설계, 생성 코드, cloud-init이 하나의 DB 실행 방식을 공유한다.
+    for configuration in (
+        {
+            "id": "datasource-url",
+            "name": "SPRING_DATASOURCE_URL",
+            "kind": "value",
+            "value": (
+                f"jdbc:h2:file:{mount_path.rstrip('/')}/easydep;"
+                "MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_ON_EXIT=FALSE"
+            ),
+            "sourceRefs": source_refs,
+        },
+        {
+            "id": "datasource-username",
+            "name": "SPRING_DATASOURCE_USERNAME",
+            "kind": "value",
+            "value": "sa",
+            "sourceRefs": source_refs,
+        },
+        {
+            "id": "datasource-password",
+            "name": "SPRING_DATASOURCE_PASSWORD",
+            "kind": "value",
+            "value": "",
+            "sourceRefs": source_refs,
+        },
+    ):
+        _upsert_by_id(workload.setdefault("configuration", []), configuration)
     graph.setdefault("derivations", []).append(
         _derivation(
             "single-vm-workload-owned-persistent-disk",
-            "Selected the default retained workload data disk for a single-replica Docker-on-VM application.",
+            "Selected a file-backed H2 database on the retained data disk for a single-replica Docker-on-VM application.",
             source_refs=["erdModel", "resourceSpec:workloads"],
         )
     )

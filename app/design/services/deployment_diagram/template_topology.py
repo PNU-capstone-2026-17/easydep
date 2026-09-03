@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.design.contracts.application_runtime import application_security_source_refs
 from app.design.services.deployment_diagram.models import WorkloadGraph
 from app.design.services.deployment_diagram.normalization import normalize_workload_graph
 from app.design.services.deployment_diagram.planning_facts import extract_planning_facts
@@ -152,6 +153,49 @@ def _apply_capability_cases(
             )
 
 
+def _apply_application_security(
+    graph: dict[str, Any], structured_inputs: dict[str, Any]
+) -> None:
+    """인증이 필요한 단일 생성 앱에 실행 계정과 password 입력을 선언한다."""
+
+    source_refs = application_security_source_refs(
+        structured_inputs.get("apiSpec"),
+        structured_inputs.get("refinedRequirements"),
+    )
+    generated = [
+        item
+        for item in graph.get("workloads") or []
+        if isinstance(item, dict)
+        and (item.get("artifact") or {}).get("kind") == "generatedApplication"
+    ]
+    if not source_refs or len(generated) != 1:
+        return
+    configurations = generated[0].setdefault("configuration", [])
+    existing_names = {
+        str(item.get("name") or "")
+        for item in configurations
+        if isinstance(item, dict)
+    }
+    for configuration in (
+        {
+            "id": "security-username",
+            "name": "SPRING_SECURITY_USER_NAME",
+            "kind": "value",
+            "value": "easydep",
+            "sourceRefs": source_refs,
+        },
+        {
+            "id": "security-password",
+            "name": "SPRING_SECURITY_USER_PASSWORD",
+            "kind": "secretBinding",
+            "sensitive": True,
+            "sourceRefs": source_refs,
+        },
+    ):
+        if configuration["name"] not in existing_names:
+            configurations.append(configuration)
+
+
 def build_template_workload_graph(structured_inputs: dict[str, Any]) -> WorkloadGraph:
     """코드 템플릿과 승인 계약으로 WorkloadGraph 구조를 완성한다."""
 
@@ -170,6 +214,7 @@ def build_template_workload_graph(structured_inputs: dict[str, Any]) -> Workload
     facts = _planning_facts(structured_inputs)
     graph = normalize_workload_graph(seed, planning_facts=facts)
     _apply_capability_cases(graph, structured_inputs)
+    _apply_application_security(graph, structured_inputs)
     # capability가 storage나 managed group을 더했으므로 같은 검증기를 한 번 더 적용한다.
     graph = normalize_workload_graph(graph, planning_facts=facts)
     return WorkloadGraph.model_validate(graph)

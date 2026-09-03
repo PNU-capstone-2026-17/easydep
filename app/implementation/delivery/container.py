@@ -64,6 +64,7 @@ def dockerignore() -> str:
 build
 reports
 deployment-bundle
+/deployment
 .env
 .env.*
 *.pem

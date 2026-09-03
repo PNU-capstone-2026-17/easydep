@@ -57,7 +57,8 @@ def _spring_settings(application: Path) -> dict[str, Any]:
 
 
 def _observed_port(application: Path, settings: dict[str, Any]) -> int | None:
-    server = settings.get("server") if isinstance(settings.get("server"), dict) else {}
+    server_value = settings.get("server")
+    server: dict[str, Any] = server_value if isinstance(server_value, dict) else {}
     configured = server.get("port")
     configured_port = configured if isinstance(configured, int) and not isinstance(
         configured, bool
@@ -132,16 +133,29 @@ def _uses_environment(source: str, name: str) -> bool:
     return any(re.search(pattern, source) for pattern in patterns)
 
 
+def _required_environment_names(source: str) -> set[str]:
+    """기본값 없이 참조한 대문자 환경 변수 이름을 찾는다."""
+
+    return set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)\}", source))
+
+
 def _uses_path(source: str, path: str) -> bool:
-    # 경로의 앞뒤에 파일명 문자가 붙은 다른 문자열은 같은 mount 경로가 아니다.
-    boundary = r"A-Za-z0-9_./-"
-    return bool(
-        path
-        and re.search(
-            rf"(?<![{boundary}]){re.escape(path)}(?![{boundary}])",
-            source,
-        )
+    """문자열이 mount 경로 자체나 그 아래 파일을 사용하는지 확인한다."""
+
+    if not path:
+        return False
+    filename_characters = frozenset(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-"
     )
+    for match in re.finditer(re.escape(path), source):
+        before = source[match.start() - 1] if match.start() else ""
+        after = source[match.end()] if match.end() < len(source) else ""
+        if before and before in filename_characters:
+            continue
+        # `/data2`는 다른 경로지만 `/data/app.db`는 계획한 mount를 실제로 쓴다.
+        if not after or after == "/" or after not in filename_characters:
+            return True
+    return False
 
 
 def observe_runtime_contract(
@@ -173,22 +187,40 @@ def observe_runtime_contract(
         # 한 프로세스의 포트와 health를 어느 interface가 소유하는지 파일만으로 구분할 수
         # 있을 때만 연결한다. 여러 interface에 계획값을 복사해 관찰값처럼 만들지 않는다.
         if len(interfaces) == 1 and isinstance(interfaces[0], dict):
-            interface = {"interfaceId": str(interfaces[0].get("id") or "")}
+            interface: dict[str, Any] = {
+                "interfaceId": str(interfaces[0].get("id") or "")
+            }
             if port is not None:
                 interface["port"] = port
             if health_path is not None:
                 interface["healthPath"] = health_path
             if len(interface) > 1:
                 observed["interfaces"] = [interface]
-        configuration = [
-            {"name": str(item.get("name") or "")}
+        configuration_names = [
+            str(item.get("name") or "")
             for item in workload.get("configuration") or []
             if isinstance(item, dict)
             and item.get("name")
             and _uses_environment(source, str(item["name"]))
         ]
-        if configuration:
-            observed["configuration"] = configuration
+        configuration_names.extend(
+            sorted(_required_environment_names(source) - set(configuration_names))
+        )
+        if configuration_names:
+            observed["configuration"] = [
+                {"name": name} for name in configuration_names
+            ]
+        # 파일 경로가 환경 변수 값으로 전달되는 경우도 일반적인 실행 방식이다. 소스가
+        # 그 환경 변수를 실제로 읽고, 설계 값이 mount 아래를 가리킬 때에만 사용 근거로
+        # 인정한다. 계획 값을 관찰값처럼 그대로 복사하지 않는다.
+        consumed_values = [
+            str(item["value"])
+            for item in workload.get("configuration") or []
+            if isinstance(item, dict)
+            and item.get("name")
+            and item.get("value") is not None
+            and _uses_environment(source, str(item["name"]))
+        ]
         mounts = [
             {
                 "storageId": str(item.get("id") or ""),
@@ -197,7 +229,13 @@ def observe_runtime_contract(
             for item in workload.get("storage") or []
             if isinstance(item, dict)
             and isinstance(item.get("mountPath"), str)
-            and _uses_path(source, str(item["mountPath"]))
+            and (
+                _uses_path(source, str(item["mountPath"]))
+                or any(
+                    _uses_path(value, str(item["mountPath"]))
+                    for value in consumed_values
+                )
+            )
         ]
         if mounts:
             observed["mounts"] = mounts

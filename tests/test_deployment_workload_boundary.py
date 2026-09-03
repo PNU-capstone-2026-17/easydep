@@ -21,6 +21,10 @@ from app.design.services.deployment_diagram.models import (
     DeploymentComponentLabels,
     WorkloadGraph,
 )
+from app.design.services.deployment_diagram.planner import (
+    bind_runtime_contract,
+    build_provider_resource_plan,
+)
 from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
@@ -30,6 +34,7 @@ from app.design.services.deployment_diagram.service import (
     revise_workload_graph,
 )
 from app.implementation.delivery.iac_renderer import render_open_tofu
+from app.implementation.runtime.observations import observe_runtime_contract
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -113,6 +118,122 @@ def test_generate_workload_graph_uses_one_name_only_proposal() -> None:
             "useCaseSummary": "UC1: 고객이 주문 목록을 조회한다.",
         },
     }
+
+
+def test_single_vm_file_database_contract_reaches_diagram_and_iac(
+    tmp_path: Path,
+) -> None:
+    """설계 기본값, 실제 앱 관찰, IaC가 같은 실행 계약을 사용하는지 확인한다."""
+
+    resource_spec = _resource_spec()
+    api_spec = {"paths": {"/registrations": {"post": {}}}}
+    erd_model = {"tables": [{"name": "registrations"}]}
+    requirements = [
+        {
+            "id": "R1",
+            "text": "An authenticated identity is required for protected operations.",
+        }
+    ]
+    graph = generate_workload_graph(
+        "A student registers for a course.",
+        api_spec,
+        refined_requirements=requirements,
+        resource_spec=resource_spec,
+        erd_model=erd_model,
+        proposal_call=lambda _messages, _schema: {
+            "components": [{"id": "application", "name": "Course Registration"}]
+        },
+    )
+    workload = graph.workloads[0].model_dump()
+    configuration = {
+        item["name"]: item.get("value") for item in workload["configuration"]
+    }
+    assert workload["storage"][0]["mountPath"] == "/var/lib/easydep/data"
+    assert configuration == {
+        "SPRING_DATASOURCE_URL": (
+            "jdbc:h2:file:/var/lib/easydep/data/easydep;"
+            "MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_ON_EXIT=FALSE"
+        ),
+        "SPRING_DATASOURCE_USERNAME": "sa",
+        "SPRING_DATASOURCE_PASSWORD": "",
+        "SPRING_SECURITY_USER_NAME": "easydep",
+        "SPRING_SECURITY_USER_PASSWORD": None,
+    }
+
+    bundle = build_deployment_diagram_bundle(
+        graph.model_dump(),
+        resource_spec,
+        planning_inputs={
+            "refined_requirements": requirements,
+            "api_spec": api_spec,
+            "erd_model": erd_model,
+        },
+    )
+    assert bundle["status"] == "completed"
+
+    application = tmp_path / "application"
+    resources = application / "src/main/resources"
+    resources.mkdir(parents=True)
+    (resources / "application.yml").write_text(
+        "server:\n"
+        "  port: 8000\n"
+        "spring:\n"
+        "  datasource:\n"
+        "    url: ${SPRING_DATASOURCE_URL}\n"
+        "    username: ${SPRING_DATASOURCE_USERNAME}\n"
+        "    password: ${SPRING_DATASOURCE_PASSWORD}\n"
+        "  security:\n"
+        "    user:\n"
+        "      name: ${SPRING_SECURITY_USER_NAME}\n"
+        "      password: ${SPRING_SECURITY_USER_PASSWORD}\n"
+        "      roles: ${SPRING_SECURITY_USER_ROLES:USER}\n"
+        "management:\n"
+        "  endpoints:\n"
+        "    web:\n"
+        "      base-path: /\n"
+        "      path-mapping:\n"
+        "        health: healthz\n",
+        encoding="utf-8",
+    )
+    (application / "Dockerfile").write_text("EXPOSE 8000\n", encoding="utf-8")
+    observed = observe_runtime_contract(bundle, application)
+    assert observed["workloads"][0]["mounts"] == [
+        {"storageId": "workload-data", "mountPath": "/var/lib/easydep/data"}
+    ]
+
+    projection = bundle["projections"][0]
+    binding = bind_runtime_contract(
+        bundle["workloadGraph"], projection["deploymentPlan"], observed
+    )
+    assert binding["status"] == "bound"
+    resource_plan = build_provider_resource_plan(
+        binding["deploymentPlan"],
+        binding["workloadGraph"],
+        provider="aws",
+        region="ap-northeast-2",
+    )
+    bound_bundle = {
+        **bundle,
+        "workloadGraph": binding["workloadGraph"],
+        "projections": [
+            {
+                **projection,
+                "deploymentPlan": binding["deploymentPlan"],
+                "resourcePlan": resource_plan,
+            }
+        ],
+    }
+    diagram = deployment_bundle_runtime_puml(bound_bundle)
+    rendered_iac = "\n".join(render_open_tofu(resource_plan).values())
+    assert "[listen] http :8000" in diagram
+    assert "[health] /healthz" in diagram
+    assert "/var/lib/easydep/data" in diagram
+    assert "SPRING_DATASOURCE_URL" in rendered_iac
+    assert "jdbc:h2:file:/var/lib/easydep/data/easydep" in rendered_iac
+    assert "SPRING_SECURITY_USER_PASSWORD" in rendered_iac
+    assert "secret_reference_application_security_password" in rendered_iac
+    assert "aws secretsmanager get-secret-value" in rendered_iac
+    assert "/healthz" in rendered_iac
 
 
 def test_explicit_contracts_choose_template_structure_before_llm() -> None:

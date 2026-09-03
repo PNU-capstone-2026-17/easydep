@@ -1,5 +1,9 @@
 # 배포 WorkloadGraph 생성과 수정
 
+배포 템플릿의 입력, 경우의 수, CSP별 리소스, 다이어그램, IaC, 실배포 결과를 한 번에
+이해하려면 [`docs/deployment-template-system.md`](../../../../docs/deployment-template-system.md)를
+먼저 읽는다.
+
 이 패키지는 수락된 요구사항·설계 산출물을 미리 정한 Docker-on-VM 구조에 넣어
 `WorkloadGraph`를 만든다. workload, interface, storage, connection, 배치 조건은 코드와
 명시적으로 승인된 배포 계약이 정한다. LLM은 이미 만들어진 컴포넌트의 영어 표시 이름만
@@ -51,6 +55,10 @@ generate_workload_graph(
 - 일반 HTTP 프로젝트는 하나의 `generatedApplication` 템플릿으로 시작한다.
 - 승인된 `workloadContract`, `connectionContract`, `constraintContract`만 구조를 확장한다.
 - API가 있으면 기본 HTTP 공개 진입점이 생기며, 별도 계약이 있으면 그 값을 우선한다.
+- ERD와 단일 VM·단일 복제본이 함께 선택되면 파일 기반 H2와 영속 disk를 한 묶음으로
+  계획한다. 여러 workload나 복제본은 파일 DB를 자동 선택하지 않는다.
+- 인증·인가가 명시된 단일 생성 앱은 고정된 실행 계정 이름과 CSP Secret으로 받을
+  password 입력을 계획한다. 비밀값 자체는 설계 JSON이나 생성 코드에 넣지 않는다.
 - 승인 capability의 `persistent-block-storage`와 `load-balanced-ingress`는 각각 기존 block
   storage와 managed VM group 템플릿을 선택한다.
 - structured class 모델은 이름을 짓는 작은 문맥으로만 사용한다.
@@ -98,8 +106,9 @@ graph adapter만 raw checkpoint JSON을 `WorkloadGraph.model_validate`로 읽고
 단일 projection은 `selectedTarget`으로 자동 선택한다. 여러 projection은 선택 전에는
 `needsInput`이며, 명시 선택 뒤 해당 projection만 다시 계산한다. 같은 graph 안의 workload
 endpoint와 same-process 호출은 정규화가 결정하지만, 실제 주소를 알 수 없는 external dependency는
-입력으로 남긴다. ERD의 영속 요구는 database engine을 추측하지 않으며, 단일 VM과 명시된
-persistent-storage derivation이 함께 있을 때만 workload-owned disk를 선택한다.
+입력으로 남긴다. ERD가 있고 사용자가 Docker-on-VM 단일 복제본을 선택한 경우에는 현재
+제품이 실제 배포까지 검증한 파일 기반 H2와 workload-owned disk를 기본 템플릿으로 쓴다.
+별도 DB workload와 scale-out은 승인된 배포 계약에서 선택해야 한다.
 
 `sizing.py`는 기존 cloud catalog의 provider·region 일치 SKU만 읽어 compute-only 월 예상치를
 만든다. scale-out은 WorkloadGraph의 `replicationSafety`를 다시 확인하고, 선택된 SKU와 replica는
@@ -120,6 +129,11 @@ ResourcePlan에 투영된다.
 수락된 `WorkloadGraph` 이후의 normalization, planning, provider ResourcePlan, runtime binding,
 bundle hydration과 PlantUML rendering은 LLM을 호출하지 않는다. 기존 dict candidate와 typed
 model의 JSON dump가 같으면 다음 결과도 같다.
+
+구현이 끝나면 runtime binding이 실제 애플리케이션 설정에서 listen port와 health path를
+읽는다. datasource 환경 변수를 실제로 사용하고 그 값이 계획한 mount 아래를 가리키는지도
+확인한다. 결합된 값은 runtime 다이어그램과 ResourcePlan에 함께 들어가므로 IaC가 별도의
+기본 포트나 상태 검사 경로를 추측하지 않는다.
 
 - `deployment_diagram_bundle` 외부 JSON
 - runtime·provisioning PlantUML 문자열

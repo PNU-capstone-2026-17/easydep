@@ -251,6 +251,14 @@ def _runtime_contract_lines(plan: dict[str, Any], workload: dict[str, Any]) -> l
         name = str(configuration.get("name") or "")
         if name and configuration_id not in bound_configuration:
             contract_lines.append(f"[env] {name}")
+    for interface in workload.get("interfaces") or []:
+        port = interface.get("port")
+        if isinstance(port, int):
+            protocol = str(interface.get("protocol") or interface.get("id") or "port")
+            contract_lines.append(f"[listen] {protocol} :{port}")
+        health_path = interface.get("healthPath")
+        if isinstance(health_path, str) and health_path:
+            contract_lines.append(f"[health] {health_path}")
     artifact_kind = str((workload.get("artifact") or {}).get("kind") or "")
     if artifact_kind == "generatedApplication":
         contract_lines.append("[image] digest binding")

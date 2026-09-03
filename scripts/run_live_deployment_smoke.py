@@ -120,10 +120,12 @@ CASES = {
     "separated-two": SEPARATED_TWO,
     "persistent-colocated": DEFAULT_TWO_WORKLOADS_ONE_PERSISTENT,
     "persistent-separated": PERSISTENT_SEPARATED,
+    "multi-persistent-separated": PERSISTENT_SEPARATED,
     "per-replica-storage": PER_REPLICA_STORAGE,
     "single-zone-managed": SINGLE_ZONE_MANAGED,
     "private-single": PRIVATE_SINGLE,
     "secret-binding": PUBLIC_SINGLE,
+    "course-registration-app": PUBLIC_SINGLE,
 }
 
 
@@ -194,6 +196,8 @@ class Handler(BaseHTTPRequestHandler):
         healthy = self.path in ("/healthz", "/actuator/health")
         if healthy and EXPECTED_API_TOKEN:
             healthy = os.getenv("API_TOKEN") == EXPECTED_API_TOKEN
+        if healthy and os.getenv("EASYDEP_EXPECT_STORAGE") == "1":
+            healthy = (data_directory / "live-smoke.txt").is_file()
         state_url = os.getenv("STATE_SERVICE_URL", "").rstrip("/")
         if healthy and state_url:
             try:
@@ -228,12 +232,36 @@ def _live_graph(case_name: str) -> dict[str, Any]:
     if case_name in {
         "persistent-colocated",
         "persistent-separated",
+        "multi-persistent-separated",
         "per-replica-storage",
     }:
         state = next(item for item in graph["workloads"] if item["id"] == "state")
         state["artifact"] = {"kind": "generatedApplication"}
         # smoke 실행은 비용과 데이터가 남지 않아야 하므로 예시의 retain 정책만 바꾼다.
         state["storage"][0]["deletionPolicy"] = "delete"
+    if case_name == "multi-persistent-separated":
+        web = next(item for item in graph["workloads"] if item["id"] == "web")
+        web["storage"] = [
+            {
+                "id": "web-volume",
+                "persistence": "persistent",
+                "capacityGiB": 10,
+                "mountPath": "/var/lib/easydep/state",
+                "deletionPolicy": "delete",
+                "replicaSemantics": "singleAttachment",
+                "sourceRefs": ["requirement:WEB-DATA"],
+            }
+        ]
+        for workload in graph["workloads"]:
+            workload["configuration"].append(
+                {
+                    "id": "expect-storage",
+                    "name": "EASYDEP_EXPECT_STORAGE",
+                    "kind": "value",
+                    "value": "1",
+                    "sourceRefs": ["requirement:LIVE-STORAGE"],
+                }
+            )
     if case_name == "secret-binding":
         graph["workloads"][0]["configuration"] = [
             {
@@ -243,6 +271,60 @@ def _live_graph(case_name: str) -> dict[str, Any]:
                 "sensitive": True,
                 "sourceRefs": ["requirement:LIVE-SECRET"],
             }
+        ]
+    if case_name == "course-registration-app":
+        web = graph["workloads"][0]
+        web["interfaces"][0]["healthPath"] = "/healthz"
+        web["storage"] = [
+            {
+                "id": "application-data",
+                "persistence": "persistent",
+                "capacityGiB": 10,
+                "mountPath": "/var/lib/easydep/state",
+                "deletionPolicy": "delete",
+                "replicaSemantics": "singleAttachment",
+                "sourceRefs": ["requirement:RR15"],
+            }
+        ]
+        web["configuration"] = [
+            {
+                "id": "datasource-url",
+                "name": "SPRING_DATASOURCE_URL",
+                "kind": "value",
+                "value": (
+                    "jdbc:h2:file:/var/lib/easydep/state/course-registration;"
+                    "MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_ON_EXIT=FALSE"
+                ),
+                "sourceRefs": ["requirement:RR15"],
+            },
+            {
+                "id": "datasource-username",
+                "name": "SPRING_DATASOURCE_USERNAME",
+                "kind": "value",
+                "value": "sa",
+                "sourceRefs": ["requirement:RR15"],
+            },
+            {
+                "id": "datasource-password",
+                "name": "SPRING_DATASOURCE_PASSWORD",
+                "kind": "value",
+                "value": "easydep-live-smoke",
+                "sourceRefs": ["requirement:RR15"],
+            },
+            {
+                "id": "security-username",
+                "name": "SPRING_SECURITY_USER_NAME",
+                "kind": "value",
+                "value": "easydep",
+                "sourceRefs": ["requirement:RR1"],
+            },
+            {
+                "id": "security-password",
+                "name": "SPRING_SECURITY_USER_PASSWORD",
+                "kind": "value",
+                "value": "easydep-live-smoke",
+                "sourceRefs": ["requirement:RR1"],
+            },
         ]
     return graph
 
@@ -475,6 +557,16 @@ def _copy_application(source: Path, destination: Path) -> None:
         destination,
         ignore=shutil.ignore_patterns("deployment", "build", "node_modules", ".gradle"),
     )
+    dockerignore = destination / ".dockerignore"
+    content = dockerignore.read_text(encoding="utf-8") if dockerignore.is_file() else ""
+    patterns = content.splitlines()
+    if "/deployment" not in patterns:
+        existing = content.rstrip()
+        dockerignore.write_text(
+            (existing + "\n" if existing else "") + "/deployment\n",
+            encoding="utf-8",
+            newline="\n",
+        )
 
 
 def _provider_inputs(
@@ -661,6 +753,9 @@ def _wait_for_aws_bootstrap(tofu: Path, environment: dict[str, str]) -> None:
 
 def run_smoke(provider: str, application_source: Path | None, case_name: str) -> None:
     """한 공급자의 생성·배포·검증·정리 전 과정을 실행한다."""
+
+    if case_name == "course-registration-app" and application_source is None:
+        raise ValueError("course-registration-app에는 --application-root가 필요합니다.")
 
     prefix = f"easydep-live-{provider}-{uuid.uuid4().hex[:8]}"
     workspace = Path(tempfile.mkdtemp(prefix=f"{prefix}-"))

@@ -14,3 +14,5 @@
 구현 단계가 같은 `ApiSpecModel`을 사용하므로, 구현 코드가 설계 서비스 내부 모듈을 import하지
 않는다. `erd.py`는 검증된 BCE 모델을 논리 데이터 모델로 바꾸는 순수 함수를 공개한다.
 `deployment.py`는 배포 bundle과 runtime binding의 공개 함수를 제공한다.
+`application_runtime.py`는 요구사항과 OpenAPI에서 명시적인 인증·인가 근거만 읽어 배포
+템플릿과 구현 생성기가 같은 보안 설정 판단을 사용하게 한다.
