@@ -1,0 +1,19 @@
+@startuml UC12
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC12 - Manage Course Offering
+
+actor "Academic Administrator" as Academic_Administrator
+boundary "AcademicAdministratorBoundary" as AcademicAdministratorBoundary
+control "CourseOfferingManagementControl" as CourseOfferingManagementControl
+entity "CourseOffering" as CourseOffering
+
+Academic_Administrator -> AcademicAdministratorBoundary : manageCourseOffering(request)
+AcademicAdministratorBoundary -> CourseOfferingManagementControl : process(request)
+CourseOfferingManagementControl -> CourseOffering : create(details)
+CourseOffering --> CourseOfferingManagementControl : CourseOffering
+CourseOfferingManagementControl --> AcademicAdministratorBoundary : ManageCourseOfferingResult
+AcademicAdministratorBoundary --> Academic_Administrator : ManageCourseOfferingResult
+
+@enduml

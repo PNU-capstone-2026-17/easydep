@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v dnf >/dev/null 2>&1; then
+  dnf install -y docker awscli nvme-cli
+else
+  apt-get update
+  apt-get install -y docker.io curl jq
+fi
+systemctl enable --now docker
+EXPECTED_VOLUME="${disk_id_course_registration_db_data}"
+EXPECTED_VOLUME_NO_DASH=$(printf "%s" "$EXPECTED_VOLUME" | tr -d "-")
+DISK_DEVICE=""
+for ATTEMPT in $(seq 1 60); do
+  for CANDIDATE in /dev/nvme*n1; do
+    [ -b "$CANDIDATE" ] || continue
+    if command -v ebsnvme-id >/dev/null 2>&1 && ebsnvme-id "$CANDIDATE" 2>/dev/null | tr -d "-" | grep -q "$EXPECTED_VOLUME_NO_DASH"; then DISK_DEVICE="$CANDIDATE"; break; fi
+  done
+  [ -n "$DISK_DEVICE" ] || [ ! -b "/dev/xvdf" ] || DISK_DEVICE="/dev/xvdf"
+  [ -n "$DISK_DEVICE" ] || [ ! -b "/dev/sdf" ] || DISK_DEVICE="/dev/sdf"
+  [ -n "$DISK_DEVICE" ] && break
+  sleep 2
+done
+[ -n "$DISK_DEVICE" ] || { echo "disk course-registration-db-data did not attach" >&2; exit 1; }
+if ! blkid "$DISK_DEVICE" >/dev/null 2>&1; then mkfs.ext4 "$DISK_DEVICE"; fi
+DISK_UUID=$(blkid -s UUID -o value "$DISK_DEVICE")
+mkdir -p "/mnt/easydep/course_registration_db_data/data"
+grep -q "UUID=$DISK_UUID "/mnt/easydep/course_registration_db_data/data" " /etc/fstab || printf "UUID=%s /mnt/easydep/course_registration_db_data/data ext4 defaults,nofail 0 2\n" "$DISK_UUID" >> /etc/fstab
+mountpoint -q "/mnt/easydep/course_registration_db_data/data" || mount "/mnt/easydep/course_registration_db_data/data"
+chmod 0750 "/mnt/easydep/course_registration_db_data/data"
+docker network inspect "easydep-compute-1" >/dev/null 2>&1 || docker network create "easydep-compute-1"
+aws ecr get-login-password --region "ap-northeast-2" | docker login --username AWS --password-stdin "$(printf %s "${registry_course_registration_app}" | cut -d/ -f1)"
+export COURSE_REGISTRATION_DB_HOST="course-registration-db"
+export COURSE_REGISTRATION_DB_PASSWORD="$(aws secretsmanager get-secret-value --region "ap-northeast-2" --secret-id "${secret_ref_course_registration_app_course_registration_db_credential}" --query SecretString --output text)"
+docker rm -f "course-registration-app" >/dev/null 2>&1 || true
+docker run -d --restart unless-stopped --name "course-registration-app" --network "easydep-compute-1" -p ${port_course_registration_app_course_registration_app_http}:${port_course_registration_app_course_registration_app_http} -e COURSE_REGISTRATION_DB_HOST -e COURSE_REGISTRATION_DB_PASSWORD "${registry_course_registration_app}@${image_digest_course_registration_app}"
+export POSTGRES_PASSWORD="$(aws secretsmanager get-secret-value --region "ap-northeast-2" --secret-id "${secret_ref_course_registration_db_runtime_credential}" --query SecretString --output text)"
+docker rm -f "course-registration-db" >/dev/null 2>&1 || true
+docker run -d --restart unless-stopped --name "course-registration-db" --network "easydep-compute-1" -v /mnt/easydep/course_registration_db_data/data:/var/lib/postgresql/data -e POSTGRES_PASSWORD "postgres:16.4-bookworm"

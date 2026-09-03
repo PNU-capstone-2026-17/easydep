@@ -1,0 +1,31 @@
+@startuml UC3
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC3 - Swap Course Registration
+
+actor "Student" as Student
+boundary "StudentBoundary" as StudentBoundary
+control "RegistrationControl" as RegistrationControl
+entity "CourseOffering" as CourseOffering
+entity "Registration" as Registration
+entity "Student" as Student_Entity
+
+Student -> StudentBoundary : swapCourseRegistration(request)
+StudentBoundary -> RegistrationControl : performSwap(request)
+RegistrationControl -> Student_Entity : isAuthorizedForSwap()
+Student_Entity --> RegistrationControl : boolean
+RegistrationControl -> CourseOffering : isEligibleForSwap(studentId)
+CourseOffering --> RegistrationControl : boolean
+RegistrationControl -> Registration : existsForStudentOffering(studentId, offeringId)
+Registration --> RegistrationControl : boolean
+RegistrationControl -> Registration : deleteById(id)
+Registration --> RegistrationControl : void
+RegistrationControl -> Registration : create(studentId, offeringId, registrationDate)
+Registration --> RegistrationControl : Registration
+RegistrationControl -> CourseOffering : incrementEnrolledCount()
+CourseOffering --> RegistrationControl : void
+RegistrationControl --> StudentBoundary : SwapResult
+StudentBoundary --> Student : SwapResult
+
+@enduml

@@ -1,0 +1,14 @@
+[
+  {
+    "task": "api_spec.extract_api_spec",
+    "elapsedSeconds": 77.709357
+  },
+  {
+    "task": "api_spec.check_api_spec",
+    "elapsedSeconds": 0.016031
+  },
+  {
+    "task": "api_spec.render_api_spec",
+    "elapsedSeconds": 0.012663
+  }
+]

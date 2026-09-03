@@ -1,0 +1,1344 @@
+{
+  "schemaVersion": "easydep-resource-plan",
+  "providerTemplateCatalog": "docker-on-vm-provider-template",
+  "provider": "aws",
+  "region": "ap-northeast-2",
+  "deploymentPlanDigest": "e6fd3bbe5e58eb15f4b71c635f241c8bf0f7105ec351af482f3e0e9b992458ec",
+  "locationBinding": {
+    "region": "ap-northeast-2",
+    "zonePolicy": "providerSelectedSingleZone",
+    "selectedZones": [],
+    "candidateZones": [],
+    "singleRegion": true
+  },
+  "nodes": [
+    {
+      "id": "registry-course-registration-app",
+      "name": "Amazon ECR Repository",
+      "group": "config",
+      "providerKind": "app-registry",
+      "providerPrimitiveKind": "app-registry",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_ecr_repository"
+      ],
+      "attributes": {
+        "repositoryPerWorkload": true,
+        "immutableDigest": true
+      },
+      "templateRuleId": "aws.generated-application-registry",
+      "sourceRefs": [
+        "e1-generated-application",
+        "checkpointCase:e1-aws:generated-application",
+        "project-policy:aws.generated-application-registry"
+      ],
+      "logicalRef": "course-registration-app"
+    },
+    {
+      "id": "registry-pull-identity-compute-1",
+      "name": "IAM Role / VM Registry Pull",
+      "group": "security",
+      "providerKind": "registry-pull-identity",
+      "providerPrimitiveKind": "registry-pull-identity",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_iam_role"
+      ],
+      "attributes": {},
+      "templateRuleId": "aws.registry-pull-identity",
+      "sourceRefs": [
+        "e1-generated-application",
+        "checkpointCase:e1-aws:generated-application",
+        "project-policy:aws.registry-pull-identity",
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "logicalRef": "compute-1"
+    },
+    {
+      "id": "registry-instance-profile-compute-1",
+      "name": "IAM Instance Profile",
+      "group": "security",
+      "providerKind": "registry-instance-profile",
+      "providerPrimitiveKind": "registry-instance-profile",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_iam_instance_profile"
+      ],
+      "attributes": {},
+      "templateRuleId": "aws.registry-instance-profile",
+      "sourceRefs": [
+        "e1-generated-application",
+        "checkpointCase:e1-aws:generated-application",
+        "project-policy:aws.registry-instance-profile"
+      ],
+      "logicalRef": "compute-1"
+    },
+    {
+      "id": "registry-pull-binding-compute-1-course-registration-app",
+      "name": "IAM Role Policy Attachment",
+      "group": "security",
+      "providerKind": "registry-pull-binding",
+      "providerPrimitiveKind": "registry-pull-binding",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_iam_role_policy_attachment"
+      ],
+      "attributes": {},
+      "templateRuleId": "aws.registry-pull-grant",
+      "sourceRefs": [
+        "e1-generated-application",
+        "checkpointCase:e1-aws:generated-application",
+        "project-policy:aws.registry-pull-grant"
+      ],
+      "logicalRef": "course-registration-app"
+    },
+    {
+      "id": "secret-ref-course-registration-app-course-registration-db-credential",
+      "name": "Existing AWS Secret",
+      "group": "config",
+      "providerKind": "secret-ref",
+      "providerPrimitiveKind": "secret-ref",
+      "entityClass": "externalArtifact",
+      "handling": "referenceExisting",
+      "terraformTypes": [],
+      "attributes": {
+        "credentialCollectionByEasyDep": false
+      },
+      "templateRuleId": "aws.external-secret-reference",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection",
+        "project-policy:aws.external-secret-reference"
+      ]
+    },
+    {
+      "id": "secret-access-binding-course-registration-app-course-registration-db-credential",
+      "name": "IAM Role Policy / State Secret Read",
+      "group": "security",
+      "providerKind": "state-secret-access-binding",
+      "providerPrimitiveKind": "state-secret-access-binding",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_iam_role_policy"
+      ],
+      "attributes": {},
+      "templateRuleId": "aws.least-privilege-secret-read",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection",
+        "project-policy:aws.least-privilege-secret-read"
+      ]
+    },
+    {
+      "id": "secret-ref-course-registration-db-runtime-credential",
+      "name": "Existing AWS Secret",
+      "group": "config",
+      "providerKind": "secret-ref",
+      "providerPrimitiveKind": "secret-ref",
+      "entityClass": "externalArtifact",
+      "handling": "referenceExisting",
+      "terraformTypes": [],
+      "attributes": {
+        "credentialCollectionByEasyDep": false
+      },
+      "templateRuleId": "aws.external-secret-reference",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection",
+        "project-policy:aws.external-secret-reference"
+      ]
+    },
+    {
+      "id": "secret-access-binding-course-registration-db-runtime-credential",
+      "name": "IAM Role Policy / State Secret Read",
+      "group": "security",
+      "providerKind": "state-secret-access-binding",
+      "providerPrimitiveKind": "state-secret-access-binding",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_iam_role_policy"
+      ],
+      "attributes": {},
+      "templateRuleId": "aws.least-privilege-secret-read",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection",
+        "project-policy:aws.least-privilege-secret-read"
+      ]
+    },
+    {
+      "id": "network",
+      "name": "VPC",
+      "group": "network",
+      "providerKind": "network",
+      "providerPrimitiveKind": "network",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_vpc"
+      ],
+      "attributes": {
+        "cidr": "10.80.0.0/16",
+        "region": "ap-northeast-2"
+      },
+      "templateRuleId": "aws.isolated-network",
+      "sourceRefs": [
+        "project-policy:aws.isolated-network"
+      ]
+    },
+    {
+      "id": "boot-image",
+      "name": "Amazon Machine Image (AMI)",
+      "group": "compute",
+      "providerKind": "boot-image",
+      "providerPrimitiveKind": "boot-image",
+      "entityClass": "externalArtifact",
+      "handling": "referenceExisting",
+      "terraformTypes": [],
+      "attributes": {
+        "selectionPolicy": "providerDefaultLinuxImage"
+      },
+      "templateRuleId": "aws.linux-boot-image-reference",
+      "sourceRefs": [
+        "project-policy:aws.linux-boot-image-reference"
+      ]
+    },
+    {
+      "id": "internet-gateway",
+      "name": "Internet Gateway",
+      "group": "network",
+      "providerKind": "internet-gateway",
+      "providerPrimitiveKind": "internet-gateway",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_internet_gateway"
+      ],
+      "attributes": {},
+      "templateRuleId": "aws.internet-gateway",
+      "sourceRefs": [
+        "project-policy:aws.internet-gateway"
+      ]
+    },
+    {
+      "id": "public-route-table",
+      "name": "Route Table / ingress",
+      "group": "network",
+      "providerKind": "ingress-route-table",
+      "providerPrimitiveKind": "ingress-route-table",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_route_table"
+      ],
+      "attributes": {},
+      "templateRuleId": "aws.public-route-table",
+      "sourceRefs": [
+        "project-policy:aws.public-route-table"
+      ]
+    },
+    {
+      "id": "public-default-route",
+      "name": "Terraform: aws_route / Internet Gateway",
+      "group": "network",
+      "providerKind": "ingress-default-route",
+      "providerPrimitiveKind": "ingress-default-route",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_route"
+      ],
+      "attributes": {
+        "destination": "0.0.0.0/0"
+      },
+      "templateRuleId": "aws.public-default-route",
+      "sourceRefs": [
+        "project-policy:aws.public-default-route"
+      ]
+    },
+    {
+      "id": "subnet-compute-1-1",
+      "name": "Application Subnet",
+      "group": "network",
+      "providerKind": "subnet",
+      "providerPrimitiveKind": "subnet",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_subnet"
+      ],
+      "attributes": {
+        "zone": "",
+        "cidr": "10.80.1.0/24",
+        "public": true,
+        "purpose": "computePlacement"
+      },
+      "templateRuleId": "aws.compute-subnet",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime",
+        "project-policy:aws.compute-subnet"
+      ],
+      "logicalRef": "compute-1"
+    },
+    {
+      "id": "route-association-compute-1-1",
+      "name": "Terraform: aws_route_table_association / ingress",
+      "group": "network",
+      "providerKind": "ingress-route-association",
+      "providerPrimitiveKind": "ingress-route-association",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_route_table_association"
+      ],
+      "attributes": {},
+      "templateRuleId": "aws.public-compute-route-association",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime",
+        "project-policy:aws.public-compute-route-association"
+      ]
+    },
+    {
+      "id": "traffic-filter-compute-1",
+      "name": "Security Group / Application",
+      "group": "network",
+      "providerKind": "security-group",
+      "providerPrimitiveKind": "security-group",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_security_group"
+      ],
+      "attributes": {
+        "publicInterfaces": [
+          {
+            "id": "public-course-registration-app-course-registration-app-http",
+            "kind": "publicIngress",
+            "ingressKind": "directPublicIp",
+            "targetWorkloadRef": "course-registration-app",
+            "targetInterfaceRef": "course-registration-app-http",
+            "computeUnitRef": "compute-1",
+            "protocol": "http",
+            "port": {
+              "binding": "late",
+              "field": "containerPort"
+            },
+            "sourceRefs": [
+              "checkpointCase:e1-aws:generated-application"
+            ]
+          }
+        ]
+      },
+      "templateRuleId": "aws.compute-traffic-filter",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime",
+        "project-policy:aws.compute-traffic-filter"
+      ],
+      "logicalRef": "compute-1"
+    },
+    {
+      "id": "compute-1",
+      "name": "EC2 Instance",
+      "group": "compute",
+      "providerKind": "compute-instance",
+      "providerPrimitiveKind": "compute-instance",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_instance"
+      ],
+      "attributes": {
+        "replicaCount": 1,
+        "zone": "",
+        "privateIp": "10.80.1.10"
+      },
+      "templateRuleId": "aws.standalone-compute",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime",
+        "project-policy:aws.standalone-compute"
+      ],
+      "logicalRef": "compute-1"
+    },
+    {
+      "id": "public-ip-compute-1",
+      "name": "Elastic IP",
+      "group": "network",
+      "providerKind": "elastic-ip",
+      "providerPrimitiveKind": "public-ip",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_eip"
+      ],
+      "attributes": {
+        "interfaces": [
+          {
+            "id": "public-course-registration-app-course-registration-app-http",
+            "kind": "publicIngress",
+            "ingressKind": "directPublicIp",
+            "targetWorkloadRef": "course-registration-app",
+            "targetInterfaceRef": "course-registration-app-http",
+            "computeUnitRef": "compute-1",
+            "protocol": "http",
+            "port": {
+              "binding": "late",
+              "field": "containerPort"
+            },
+            "sourceRefs": [
+              "checkpointCase:e1-aws:generated-application"
+            ]
+          }
+        ]
+      },
+      "templateRuleId": "aws.direct-public-address",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "project-policy:aws.direct-public-address"
+      ],
+      "logicalRef": "compute-1"
+    },
+    {
+      "id": "data-disk-course-registration-db-data",
+      "name": "EBS Volume",
+      "group": "storage",
+      "providerKind": "block-disk",
+      "providerPrimitiveKind": "disk",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_ebs_volume"
+      ],
+      "attributes": {
+        "capacityGiB": 20,
+        "deletionPolicy": "retain",
+        "zone": "",
+        "attachmentIndex": 0,
+        "storageRef": "course-registration-db-data"
+      },
+      "templateRuleId": "aws.singleton-data-disk",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime",
+        "project-policy:aws.singleton-data-disk"
+      ],
+      "logicalRef": "course-registration-db"
+    },
+    {
+      "id": "disk-attachment-course-registration-db-data",
+      "name": "Terraform: aws_volume_attachment",
+      "group": "storage",
+      "providerKind": "disk-attachment",
+      "providerPrimitiveKind": "disk-attachment",
+      "entityClass": "providerResource",
+      "handling": "create",
+      "terraformTypes": [
+        "aws_volume_attachment"
+      ],
+      "attributes": {
+        "attachmentIndex": 0,
+        "storageRef": "course-registration-db-data"
+      },
+      "templateRuleId": "aws.singleton-data-disk-attachment",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime",
+        "project-policy:aws.singleton-data-disk-attachment"
+      ],
+      "logicalRef": "course-registration-db"
+    }
+  ],
+  "references": [
+    {
+      "id": "ref-26e07c970374c33d",
+      "consumerRef": "registry-instance-profile-compute-1",
+      "consumerPath": "role",
+      "producerRef": "registry-pull-identity-compute-1",
+      "producerAttribute": "name",
+      "cardinality": "one",
+      "templateRuleId": "aws.registry-instance-profile",
+      "sourceRefs": [
+        "project-policy:aws.registry-instance-profile"
+      ]
+    },
+    {
+      "id": "ref-15db845ebbfc51c5",
+      "consumerRef": "registry-pull-binding-compute-1-course-registration-app",
+      "consumerPath": "role",
+      "producerRef": "registry-pull-identity-compute-1",
+      "producerAttribute": "name",
+      "cardinality": "one",
+      "templateRuleId": "aws.registry-pull-grant",
+      "sourceRefs": [
+        "project-policy:aws.registry-pull-grant"
+      ]
+    },
+    {
+      "id": "ref-94e0b91088aac2c8",
+      "consumerRef": "secret-access-binding-course-registration-app-course-registration-db-credential",
+      "consumerPath": "scope",
+      "producerRef": "secret-reference-course-registration-app-course-registration-db-credential",
+      "producerAttribute": "value",
+      "cardinality": "one",
+      "templateRuleId": "aws.least-privilege-secret-read",
+      "sourceRefs": [
+        "project-policy:aws.least-privilege-secret-read"
+      ]
+    },
+    {
+      "id": "ref-4c38f8a379a98870",
+      "consumerRef": "secret-access-binding-course-registration-app-course-registration-db-credential",
+      "consumerPath": "role",
+      "producerRef": "registry-pull-identity-compute-1",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.least-privilege-secret-read",
+      "sourceRefs": [
+        "project-policy:aws.least-privilege-secret-read"
+      ]
+    },
+    {
+      "id": "ref-2d91f8577978d644",
+      "consumerRef": "secret-access-binding-course-registration-db-runtime-credential",
+      "consumerPath": "scope",
+      "producerRef": "secret-reference-course-registration-db-runtime-credential",
+      "producerAttribute": "value",
+      "cardinality": "one",
+      "templateRuleId": "aws.least-privilege-secret-read",
+      "sourceRefs": [
+        "project-policy:aws.least-privilege-secret-read"
+      ]
+    },
+    {
+      "id": "ref-f90c5f37cd867ffb",
+      "consumerRef": "secret-access-binding-course-registration-db-runtime-credential",
+      "consumerPath": "role",
+      "producerRef": "registry-pull-identity-compute-1",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.least-privilege-secret-read",
+      "sourceRefs": [
+        "project-policy:aws.least-privilege-secret-read"
+      ]
+    },
+    {
+      "id": "ref-60df5d783b766d90",
+      "consumerRef": "internet-gateway",
+      "consumerPath": "vpc_id",
+      "producerRef": "network",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.internet-gateway",
+      "sourceRefs": [
+        "project-policy:aws.internet-gateway"
+      ]
+    },
+    {
+      "id": "ref-d9286529ea1d9b8c",
+      "consumerRef": "public-route-table",
+      "consumerPath": "vpc_id",
+      "producerRef": "network",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.public-route-table",
+      "sourceRefs": [
+        "project-policy:aws.public-route-table"
+      ]
+    },
+    {
+      "id": "ref-ca6fcfd7148c08cb",
+      "consumerRef": "public-default-route",
+      "consumerPath": "route_table_id",
+      "producerRef": "public-route-table",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.public-default-route",
+      "sourceRefs": [
+        "project-policy:aws.public-default-route"
+      ]
+    },
+    {
+      "id": "ref-eb2a0f30cea212e3",
+      "consumerRef": "public-default-route",
+      "consumerPath": "gateway_id",
+      "producerRef": "internet-gateway",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.public-default-route",
+      "sourceRefs": [
+        "project-policy:aws.public-default-route"
+      ]
+    },
+    {
+      "id": "ref-5bb0ec9069ecb51b",
+      "consumerRef": "subnet-compute-1-1",
+      "consumerPath": "vpc_id",
+      "producerRef": "network",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.compute-subnet",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime",
+        "project-policy:aws.compute-subnet"
+      ]
+    },
+    {
+      "id": "ref-02b89b2bf0c9775f",
+      "consumerRef": "route-association-compute-1-1",
+      "consumerPath": "subnet_id",
+      "producerRef": "subnet-compute-1-1",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.public-compute-route-association",
+      "sourceRefs": [
+        "project-policy:aws.public-compute-route-association"
+      ]
+    },
+    {
+      "id": "ref-e3994e282f901423",
+      "consumerRef": "route-association-compute-1-1",
+      "consumerPath": "route_table_id",
+      "producerRef": "public-route-table",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.public-compute-route-association",
+      "sourceRefs": [
+        "project-policy:aws.public-compute-route-association"
+      ]
+    },
+    {
+      "id": "ref-1adc8e61d1251ec3",
+      "consumerRef": "traffic-filter-compute-1",
+      "consumerPath": "vpc_id",
+      "producerRef": "network",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.compute-traffic-filter",
+      "sourceRefs": [
+        "project-policy:aws.compute-traffic-filter"
+      ]
+    },
+    {
+      "id": "ref-245c89650444e349",
+      "consumerRef": "compute-1",
+      "consumerPath": "subnet_id",
+      "producerRef": "subnet-compute-1-1",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.standalone-compute-network",
+      "sourceRefs": [
+        "project-policy:aws.standalone-compute-network"
+      ]
+    },
+    {
+      "id": "ref-66c27add0323f1f0",
+      "consumerRef": "compute-1",
+      "consumerPath": "vpc_security_group_ids[]",
+      "producerRef": "traffic-filter-compute-1",
+      "producerAttribute": "id",
+      "cardinality": "many",
+      "templateRuleId": "aws.standalone-compute-network",
+      "sourceRefs": [
+        "project-policy:aws.standalone-compute-network"
+      ]
+    },
+    {
+      "id": "ref-fc803caad68960cd",
+      "consumerRef": "compute-1",
+      "consumerPath": "ami",
+      "producerRef": "boot-image",
+      "producerAttribute": "value",
+      "cardinality": "one",
+      "templateRuleId": "aws.linux-boot-image-reference",
+      "sourceRefs": [
+        "project-policy:aws.linux-boot-image-reference"
+      ]
+    },
+    {
+      "id": "ref-613f1972509b7ac3",
+      "consumerRef": "compute-1",
+      "consumerPath": "iam_instance_profile",
+      "producerRef": "registry-instance-profile-compute-1",
+      "producerAttribute": "name",
+      "cardinality": "one",
+      "templateRuleId": "aws.compute-registry-identity",
+      "sourceRefs": [
+        "project-policy:aws.compute-registry-identity"
+      ]
+    },
+    {
+      "id": "ref-2a86d729c4c2cf9c",
+      "consumerRef": "public-ip-compute-1",
+      "consumerPath": "instance",
+      "producerRef": "compute-1",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.direct-public-address",
+      "sourceRefs": [
+        "project-policy:aws.direct-public-address"
+      ]
+    },
+    {
+      "id": "ref-4e76855c4147ef1d",
+      "consumerRef": "data-disk-course-registration-db-data",
+      "consumerPath": "availability_zone",
+      "producerRef": "subnet-compute-1-1",
+      "producerAttribute": "availability_zone",
+      "cardinality": "one",
+      "templateRuleId": "aws.singleton-data-disk-zone",
+      "sourceRefs": [
+        "project-policy:aws.singleton-data-disk-zone"
+      ]
+    },
+    {
+      "id": "ref-f58cafe474f38b3d",
+      "consumerRef": "disk-attachment-course-registration-db-data",
+      "consumerPath": "volume_id",
+      "producerRef": "data-disk-course-registration-db-data",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.singleton-data-disk-attachment",
+      "sourceRefs": [
+        "project-policy:aws.singleton-data-disk-attachment"
+      ]
+    },
+    {
+      "id": "ref-768ec2d0c7b12cac",
+      "consumerRef": "disk-attachment-course-registration-db-data",
+      "consumerPath": "instance_id",
+      "producerRef": "compute-1",
+      "producerAttribute": "id",
+      "cardinality": "one",
+      "templateRuleId": "aws.singleton-data-disk-attachment",
+      "sourceRefs": [
+        "project-policy:aws.singleton-data-disk-attachment"
+      ]
+    }
+  ],
+  "sharedValues": [],
+  "embeddedBlocks": [],
+  "workloads": [
+    {
+      "id": "course-registration-app",
+      "name": "course-registration-app",
+      "artifact": {
+        "kind": "generatedApplication"
+      },
+      "interfaces": [
+        {
+          "id": "course-registration-app-http",
+          "protocol": "http",
+          "exposure": "public",
+          "sourceRefs": [
+            "checkpointCase:e1-aws:generated-application"
+          ]
+        }
+      ],
+      "storage": [],
+      "configuration": [
+        {
+          "id": "course-registration-db-endpoint",
+          "name": "COURSE_REGISTRATION_DB_HOST",
+          "kind": "endpointBinding",
+          "connectionRef": "course-registration-app-to-course-registration-db",
+          "projection": "host",
+          "sensitive": false,
+          "sourceRefs": [
+            "checkpointCase:e1-aws:private-database-connection"
+          ]
+        },
+        {
+          "id": "course-registration-db-credential",
+          "name": "COURSE_REGISTRATION_DB_PASSWORD",
+          "kind": "secretBinding",
+          "sensitive": true,
+          "sourceRefs": [
+            "checkpointCase:e1-aws:private-database-connection"
+          ]
+        }
+      ],
+      "resourceRequirements": {
+        "minVCpu": null,
+        "minMemoryGiB": null
+      },
+      "replicationSafety": "unknown",
+      "sourceRefs": [
+        "e1-generated-application",
+        "checkpointCase:e1-aws:generated-application"
+      ]
+    },
+    {
+      "id": "course-registration-db",
+      "name": "course-registration-db",
+      "artifact": {
+        "kind": "prebuiltImage",
+        "image": "postgres:16.4-bookworm",
+        "engine": "postgresql",
+        "deploymentMode": "container",
+        "runtimeCatalogRef": "docker-on-vm/prebuilt-image"
+      },
+      "interfaces": [
+        {
+          "id": "course-registration-db-tcp",
+          "protocol": "tcp",
+          "exposure": "internal",
+          "port": 5432,
+          "sourceRefs": [
+            "checkpointCase:e1-aws:postgresql-runtime"
+          ]
+        }
+      ],
+      "storage": [
+        {
+          "id": "course-registration-db-data",
+          "persistence": "persistent",
+          "capacityGiB": 20,
+          "mountPath": "/var/lib/postgresql/data",
+          "deletionPolicy": "retain",
+          "replicaSemantics": "singleAttachment",
+          "sourceRefs": [
+            "checkpointCase:e1-aws:postgresql-runtime"
+          ]
+        }
+      ],
+      "configuration": [
+        {
+          "id": "runtime-credential",
+          "name": "POSTGRES_PASSWORD",
+          "kind": "secretBinding",
+          "sensitive": true,
+          "sourceRefs": [
+            "checkpointCase:e1-aws:private-database-connection"
+          ]
+        }
+      ],
+      "resourceRequirements": {
+        "minVCpu": null,
+        "minMemoryGiB": null
+      },
+      "replicationSafety": "unknown",
+      "sourceRefs": [
+        "e1-postgresql-runtime",
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "placements": [
+    {
+      "id": "placement-course-registration-app",
+      "workloadRef": "course-registration-app",
+      "computeUnitRef": "compute-1",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application"
+      ]
+    },
+    {
+      "id": "placement-course-registration-db",
+      "workloadRef": "course-registration-db",
+      "computeUnitRef": "compute-1",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "storageBindings": [
+    {
+      "id": "storage-binding-course-registration-db-data",
+      "workloadRef": "course-registration-db",
+      "storageRef": "course-registration-db-data",
+      "computeUnitRef": "compute-1",
+      "kind": "blockDisk",
+      "capacityGiB": 20,
+      "mountPath": "/var/lib/postgresql/data",
+      "deletionPolicy": "retain",
+      "replicaSemantics": "singleAttachment",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "networkPaths": [
+    {
+      "id": "public-course-registration-app-course-registration-app-http",
+      "kind": "publicIngress",
+      "ingressKind": "directPublicIp",
+      "targetWorkloadRef": "course-registration-app",
+      "targetInterfaceRef": "course-registration-app-http",
+      "computeUnitRef": "compute-1",
+      "protocol": "http",
+      "port": {
+        "binding": "late",
+        "field": "containerPort"
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application"
+      ]
+    },
+    {
+      "id": "network-course-registration-app-to-course-registration-db",
+      "kind": "internal",
+      "connectionRef": "course-registration-app-to-course-registration-db",
+      "sourceRef": "course-registration-app",
+      "targetRef": "course-registration-db",
+      "protocol": "tcp",
+      "port": 5432,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ]
+    }
+  ],
+  "runtimeBindings": [
+    {
+      "id": "runtime-endpoint-course-registration-app-course-registration-db-endpoint",
+      "kind": "endpointEnvironment",
+      "workloadRef": "course-registration-app",
+      "configurationRef": "course-registration-db-endpoint",
+      "environmentName": "COURSE_REGISTRATION_DB_HOST",
+      "connectionRef": "course-registration-app-to-course-registration-db",
+      "targetWorkloadRef": "course-registration-db",
+      "targetComputeUnitRef": "compute-1",
+      "targetInterfaceRef": "course-registration-db-tcp",
+      "strategy": "containerDns",
+      "projection": "host",
+      "protocol": "tcp",
+      "port": 5432,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "derivationRule": "endpoint-containerdns"
+    },
+    {
+      "id": "runtime-secret-course-registration-app-course-registration-db-credential",
+      "kind": "secretEnvironment",
+      "workloadRef": "course-registration-app",
+      "configurationRef": "course-registration-db-credential",
+      "environmentName": "COURSE_REGISTRATION_DB_PASSWORD",
+      "secretReference": {
+        "binding": "deployment",
+        "field": "workloads.course-registration-app.configuration.course-registration-db-credential.secretRef"
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "derivationRule": "secret-reference-to-runtime-environment"
+    },
+    {
+      "id": "runtime-mount-course-registration-db-course-registration-db-data",
+      "kind": "storageMount",
+      "workloadRef": "course-registration-db",
+      "storageRef": "course-registration-db-data",
+      "mountPath": "/var/lib/postgresql/data",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ],
+      "derivationRule": "workload-storage-mount-contract"
+    },
+    {
+      "id": "runtime-secret-course-registration-db-runtime-credential",
+      "kind": "secretEnvironment",
+      "workloadRef": "course-registration-db",
+      "configurationRef": "runtime-credential",
+      "environmentName": "POSTGRES_PASSWORD",
+      "secretReference": {
+        "binding": "deployment",
+        "field": "workloads.course-registration-db.configuration.runtime-credential.secretRef"
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "derivationRule": "secret-reference-to-runtime-environment"
+    }
+  ],
+  "runtimeUnits": [
+    {
+      "id": "runtime-compute-1",
+      "computeUnitRef": "compute-1",
+      "bootstrapOwnerRef": "compute-1",
+      "orchestrator": "docker-compose",
+      "containerNetwork": "easydep-compute-1",
+      "containers": [
+        {
+          "workloadRef": "course-registration-app",
+          "containerName": "course-registration-app",
+          "image": {
+            "binding": "late",
+            "field": "workloads.course-registration-app.artifact.imageDigest"
+          },
+          "registryRef": "registry-course-registration-app",
+          "interfaces": [
+            {
+              "id": "course-registration-app-http",
+              "protocol": "http",
+              "exposure": "public",
+              "sourceRefs": [
+                "checkpointCase:e1-aws:generated-application"
+              ]
+            }
+          ],
+          "configuration": [
+            {
+              "id": "course-registration-db-endpoint",
+              "name": "COURSE_REGISTRATION_DB_HOST",
+              "kind": "endpointBinding",
+              "connectionRef": "course-registration-app-to-course-registration-db",
+              "projection": "host",
+              "sensitive": false,
+              "sourceRefs": [
+                "checkpointCase:e1-aws:private-database-connection"
+              ]
+            },
+            {
+              "id": "course-registration-db-credential",
+              "name": "COURSE_REGISTRATION_DB_PASSWORD",
+              "kind": "secretBinding",
+              "sensitive": true,
+              "sourceRefs": [
+                "checkpointCase:e1-aws:private-database-connection"
+              ]
+            }
+          ],
+          "runtimeBindings": [
+            {
+              "id": "runtime-endpoint-course-registration-app-course-registration-db-endpoint",
+              "kind": "endpointEnvironment",
+              "workloadRef": "course-registration-app",
+              "configurationRef": "course-registration-db-endpoint",
+              "environmentName": "COURSE_REGISTRATION_DB_HOST",
+              "connectionRef": "course-registration-app-to-course-registration-db",
+              "targetWorkloadRef": "course-registration-db",
+              "targetComputeUnitRef": "compute-1",
+              "targetInterfaceRef": "course-registration-db-tcp",
+              "strategy": "containerDns",
+              "projection": "host",
+              "protocol": "tcp",
+              "port": 5432,
+              "sourceRefs": [
+                "checkpointCase:e1-aws:private-database-connection"
+              ],
+              "derivationRule": "endpoint-containerdns",
+              "endpointHost": "course-registration-db"
+            },
+            {
+              "id": "runtime-secret-course-registration-app-course-registration-db-credential",
+              "kind": "secretEnvironment",
+              "workloadRef": "course-registration-app",
+              "configurationRef": "course-registration-db-credential",
+              "environmentName": "COURSE_REGISTRATION_DB_PASSWORD",
+              "secretReference": {
+                "binding": "deployment",
+                "field": "workloads.course-registration-app.configuration.course-registration-db-credential.secretRef"
+              },
+              "sourceRefs": [
+                "checkpointCase:e1-aws:private-database-connection"
+              ],
+              "derivationRule": "secret-reference-to-runtime-environment"
+            }
+          ],
+          "mounts": [],
+          "restartPolicy": "always",
+          "dependsOn": [
+            "course-registration-db"
+          ],
+          "sourceRefs": [
+            "e1-generated-application",
+            "checkpointCase:e1-aws:generated-application"
+          ]
+        },
+        {
+          "workloadRef": "course-registration-db",
+          "containerName": "course-registration-db",
+          "image": "postgres:16.4-bookworm",
+          "registryRef": null,
+          "interfaces": [
+            {
+              "id": "course-registration-db-tcp",
+              "protocol": "tcp",
+              "exposure": "internal",
+              "port": 5432,
+              "sourceRefs": [
+                "checkpointCase:e1-aws:postgresql-runtime"
+              ]
+            }
+          ],
+          "configuration": [
+            {
+              "id": "runtime-credential",
+              "name": "POSTGRES_PASSWORD",
+              "kind": "secretBinding",
+              "sensitive": true,
+              "sourceRefs": [
+                "checkpointCase:e1-aws:private-database-connection"
+              ]
+            }
+          ],
+          "runtimeBindings": [
+            {
+              "id": "runtime-mount-course-registration-db-course-registration-db-data",
+              "kind": "storageMount",
+              "workloadRef": "course-registration-db",
+              "storageRef": "course-registration-db-data",
+              "mountPath": "/var/lib/postgresql/data",
+              "sourceRefs": [
+                "checkpointCase:e1-aws:postgresql-runtime"
+              ],
+              "derivationRule": "workload-storage-mount-contract"
+            },
+            {
+              "id": "runtime-secret-course-registration-db-runtime-credential",
+              "kind": "secretEnvironment",
+              "workloadRef": "course-registration-db",
+              "configurationRef": "runtime-credential",
+              "environmentName": "POSTGRES_PASSWORD",
+              "secretReference": {
+                "binding": "deployment",
+                "field": "workloads.course-registration-db.configuration.runtime-credential.secretRef"
+              },
+              "sourceRefs": [
+                "checkpointCase:e1-aws:private-database-connection"
+              ],
+              "derivationRule": "secret-reference-to-runtime-environment"
+            }
+          ],
+          "mounts": [
+            {
+              "id": "storage-binding-course-registration-db-data",
+              "workloadRef": "course-registration-db",
+              "storageRef": "course-registration-db-data",
+              "computeUnitRef": "compute-1",
+              "kind": "blockDisk",
+              "capacityGiB": 20,
+              "mountPath": "/var/lib/postgresql/data",
+              "deletionPolicy": "retain",
+              "replicaSemantics": "singleAttachment",
+              "sourceRefs": [
+                "checkpointCase:e1-aws:postgresql-runtime"
+              ]
+            }
+          ],
+          "restartPolicy": "always",
+          "dependsOn": [],
+          "sourceRefs": [
+            "e1-postgresql-runtime",
+            "checkpointCase:e1-aws:postgresql-runtime"
+          ]
+        }
+      ],
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "bindingSlots": [
+    {
+      "id": "image-digest-course-registration-app",
+      "field": "workloads.course-registration-app.artifact.imageDigest",
+      "kind": "imageDigest",
+      "phase": "implementation",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "e1-generated-application",
+        "checkpointCase:e1-aws:generated-application",
+        "project-policy:typed-binding"
+      ]
+    },
+    {
+      "id": "secret-reference-course-registration-app-course-registration-db-credential",
+      "field": "workloads.course-registration-app.configuration.course-registration-db-credential.secretRef",
+      "kind": "secretReference",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection",
+        "project-policy:typed-binding"
+      ]
+    },
+    {
+      "id": "secret-reference-course-registration-db-runtime-credential",
+      "field": "workloads.course-registration-db.configuration.runtime-credential.secretRef",
+      "kind": "secretReference",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection",
+        "project-policy:typed-binding"
+      ]
+    },
+    {
+      "id": "resource-prefix",
+      "field": "deployment.resourcePrefix",
+      "kind": "resourceNamePrefix",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "project-policy:typed-binding"
+      ],
+      "default": "easydep"
+    },
+    {
+      "id": "boot-image-id",
+      "field": "deployment.bootImageId",
+      "kind": "bootImageId",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "project-policy:typed-binding"
+      ]
+    },
+    {
+      "id": "vm-sku-compute-1",
+      "field": "computeUnits.compute-1.vmSku",
+      "kind": "vmSku",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime",
+        "project-policy:typed-binding"
+      ]
+    }
+  ],
+  "lateBindings": [
+    {
+      "id": "image-digest-course-registration-app",
+      "field": "workloads.course-registration-app.artifact.imageDigest",
+      "kind": "imageDigest",
+      "phase": "implementation",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "e1-generated-application",
+        "checkpointCase:e1-aws:generated-application",
+        "project-policy:typed-binding"
+      ]
+    },
+    {
+      "id": "secret-reference-course-registration-app-course-registration-db-credential",
+      "field": "workloads.course-registration-app.configuration.course-registration-db-credential.secretRef",
+      "kind": "secretReference",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection",
+        "project-policy:typed-binding"
+      ]
+    },
+    {
+      "id": "secret-reference-course-registration-db-runtime-credential",
+      "field": "workloads.course-registration-db.configuration.runtime-credential.secretRef",
+      "kind": "secretReference",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection",
+        "project-policy:typed-binding"
+      ]
+    },
+    {
+      "id": "resource-prefix",
+      "field": "deployment.resourcePrefix",
+      "kind": "resourceNamePrefix",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "project-policy:typed-binding"
+      ],
+      "default": "easydep"
+    },
+    {
+      "id": "boot-image-id",
+      "field": "deployment.bootImageId",
+      "kind": "bootImageId",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "project-policy:typed-binding"
+      ]
+    },
+    {
+      "id": "vm-sku-compute-1",
+      "field": "computeUnits.compute-1.vmSku",
+      "kind": "vmSku",
+      "phase": "deployment",
+      "required": true,
+      "structural": false,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime",
+        "project-policy:typed-binding"
+      ]
+    }
+  ],
+  "issues": [],
+  "unresolved": [],
+  "derivations": [
+    {
+      "id": "app-db-config",
+      "kind": "endpointBinding",
+      "workloadRef": "course-registration-app",
+      "connectionRef": "conn-app-db",
+      "name": "DB_HOST",
+      "projection": "host"
+    },
+    {
+      "id": "app-db-port-config",
+      "kind": "endpointBinding",
+      "workloadRef": "course-registration-app",
+      "connectionRef": "conn-app-db",
+      "name": "DB_PORT",
+      "projection": "port"
+    },
+    {
+      "id": "app-db-secret",
+      "kind": "secretBinding",
+      "workloadRef": "course-registration-app",
+      "connectionRef": "conn-app-db",
+      "name": "DB_PASSWORD",
+      "projection": "password"
+    },
+    {
+      "rule": "reject-ungrounded-constraint",
+      "decision": "Ignored app-db-endpoint; it has no source references.",
+      "sourceRefs": [
+        "project-policy:reject-ungrounded-constraint"
+      ]
+    },
+    {
+      "rule": "standalone-vm-default",
+      "decision": "Placed course-registration-app, course-registration-db on compute-1.",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    },
+    {
+      "rule": "persistent-storage-to-block-disk",
+      "decision": "Created one block disk binding for course-registration-db-data.",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    },
+    {
+      "ruleId": "aws.complete-provider-template",
+      "summary": "Expanded DeploymentPlan into a complete provider resource and runtime delivery template.",
+      "sourceRefs": [
+        "project-policy:aws.complete-provider-template"
+      ]
+    }
+  ],
+  "structureDigest": "133fd1b766802505862b4798ef6ff4bee524fabaed6837dcc2759c9915a4e689"
+}

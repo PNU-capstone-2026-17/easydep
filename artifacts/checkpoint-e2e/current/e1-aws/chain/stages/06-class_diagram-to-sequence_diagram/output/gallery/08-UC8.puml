@@ -1,0 +1,24 @@
+@startuml UC8
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC8 - View Waitlist Entries
+
+actor "Student" as Student
+boundary "StudentBoundary" as StudentBoundary
+control "WaitlistControl" as WaitlistControl
+entity "Student" as Student_Entity
+entity "WaitlistEntry" as WaitlistEntry
+
+Student -> StudentBoundary : viewWaitlistEntries(request)
+StudentBoundary -> WaitlistControl : viewStudentWaitlist(request)
+WaitlistControl -> Student_Entity : isAuthorizedForRegistration()
+Student_Entity --> WaitlistControl : boolean
+WaitlistControl -> Student_Entity : findById(id)
+Student_Entity --> WaitlistControl : Student
+WaitlistControl -> WaitlistEntry : findByStudentId(studentId)
+WaitlistEntry --> WaitlistControl : list<WaitlistEntry>
+WaitlistControl --> StudentBoundary : ViewWaitlistResult
+StudentBoundary --> Student : ViewWaitlistResult
+
+@enduml

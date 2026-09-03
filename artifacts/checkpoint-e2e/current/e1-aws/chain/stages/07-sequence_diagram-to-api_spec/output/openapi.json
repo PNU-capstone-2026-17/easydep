@@ -1,0 +1,1059 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/course-offerings/search": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "searchCourseOfferings",
+        "x-easydep-control": {
+          "control": "CourseSearchControl",
+          "method": "executeSearch",
+          "arguments": {
+            "criteria": "$body"
+          },
+          "outcomes": {
+            "200": "found",
+            "400": "validation_error",
+            "403": "unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CourseSearchCriteria"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/course-offerings/{offeringId}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferingDetailsDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferingDetailsDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferingDetailsDto"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "viewCourseOffering",
+        "x-easydep-control": {
+          "control": "CourseSearchControl",
+          "method": "retrieveOfferingDetails",
+          "arguments": {
+            "offeringId": "$path.offeringId"
+          },
+          "outcomes": {
+            "200": "found",
+            "404": "not_found",
+            "403": "unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "offeringId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    "/registrations": {
+      "post": {
+        "responses": {
+          "201": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationOutcome"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationOutcome"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationOutcome"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationOutcome"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "registerForOffering",
+        "x-easydep-control": {
+          "control": "RegistrationControl",
+          "method": "processRegistration",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "201": "created",
+            "400": "validation_error",
+            "403": "unauthorized",
+            "409": "conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/registrations/swap": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwapResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwapResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwapResult"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwapResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "swapCourseRegistration",
+        "x-easydep-control": {
+          "control": "RegistrationControl",
+          "method": "performSwap",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "success",
+            "400": "validation_error",
+            "403": "unauthorized",
+            "409": "conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwapRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/students/schedule": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewRegistrationsResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewRegistrationsResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewRegistrationsResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "viewCurrentRegistrations",
+        "x-easydep-control": {
+          "control": "ScheduleControl",
+          "method": "assembleStudentSchedule",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "found",
+            "400": "validation_error",
+            "403": "unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentScheduleRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/registrations/drop": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "dropCourseRegistration",
+        "x-easydep-control": {
+          "control": "RegistrationControl",
+          "method": "processDrop",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "success",
+            "400": "validation_error",
+            "403": "unauthorized",
+            "404": "not_found"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DropRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/students/schedule/export": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportScheduleResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportScheduleResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportScheduleResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "exportClassSchedule",
+        "x-easydep-control": {
+          "control": "ScheduleControl",
+          "method": "exportStudentSchedule",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "success",
+            "400": "validation_error",
+            "403": "unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportScheduleRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/waitlist/join": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitlistJoinResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitlistJoinResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitlistJoinResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "joinWaitlist",
+        "x-easydep-control": {
+          "control": "WaitlistControl",
+          "method": "processJoin",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "joined",
+            "400": "validation_error",
+            "403": "unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaitlistJoinRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/waitlist/view": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewWaitlistResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewWaitlistResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewWaitlistResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "viewWaitlistEntries",
+        "x-easydep-control": {
+          "control": "WaitlistControl",
+          "method": "viewStudentWaitlist",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "found",
+            "400": "validation_error",
+            "403": "unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewWaitlistRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/waitlist/cancel": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelWaitlistResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelWaitlistResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelWaitlistResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelWaitlistResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "cancelWaitlistEntry",
+        "x-easydep-control": {
+          "control": "WaitlistControl",
+          "method": "processCancellation",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "canceled",
+            "400": "validation_error",
+            "403": "unauthorized",
+            "404": "not_found"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelWaitlistRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/professors/{professorId}/offerings": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "reviewAssignedOfferings",
+        "x-easydep-control": {
+          "control": "ProfessorRosterControl",
+          "method": "getAssignedOfferings",
+          "arguments": {
+            "professorId": "$path.professorId"
+          },
+          "outcomes": {
+            "200": "found",
+            "403": "unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "professorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    "/professors/roster": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferingRosterResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferingRosterResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferingRosterResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferingRosterResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "viewOfferingRoster",
+        "x-easydep-control": {
+          "control": "ProfessorRosterControl",
+          "method": "getOfferingRoster",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "found",
+            "400": "validation_error",
+            "403": "unauthorized",
+            "404": "not_found"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewOfferingRosterRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/terms": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageTermResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageTermResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageTermResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "manageAcademicTerm",
+        "x-easydep-control": {
+          "control": "AcademicTermManagementControl",
+          "method": "manageTerm",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "success",
+            "400": "validation_error",
+            "403": "unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManageTermRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/course-offerings/manage": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageCourseOfferingResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageCourseOfferingResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageCourseOfferingResult"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "manageCourseOffering",
+        "x-easydep-control": {
+          "control": "CourseOfferingManagementControl",
+          "method": "process",
+          "arguments": {
+            "request": "$body"
+          },
+          "outcomes": {
+            "200": "success",
+            "400": "validation_error",
+            "403": "unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManageCourseOfferingRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AcademicTerm": {
+        "type": "object",
+        "properties": {}
+      },
+      "Course": {
+        "type": "object",
+        "properties": {}
+      },
+      "Professor": {
+        "type": "object",
+        "properties": {}
+      },
+      "Student": {
+        "type": "object",
+        "properties": {}
+      },
+      "CourseOffering": {
+        "type": "object",
+        "properties": {}
+      },
+      "Registration": {
+        "type": "object",
+        "properties": {}
+      },
+      "WaitlistEntry": {
+        "type": "object",
+        "properties": {}
+      },
+      "MeetingSchedule": {
+        "type": "object",
+        "properties": {}
+      },
+      "OfferingStatus": {
+        "type": "object",
+        "properties": {}
+      },
+      "DayOfWeek": {
+        "type": "object",
+        "properties": {}
+      },
+      "CourseOfferingSummary": {
+        "type": "object",
+        "properties": {}
+      },
+      "CourseSearchCriteria": {
+        "type": "object",
+        "properties": {}
+      },
+      "OfferingDetailsDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "SearchResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "TimeRange": {
+        "type": "object",
+        "properties": {}
+      },
+      "RegistrationOutcome": {
+        "type": "object",
+        "properties": {}
+      },
+      "RegistrationRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "SwapRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "SwapResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "RegistrationInfo": {
+        "type": "object",
+        "properties": {}
+      },
+      "StudentScheduleRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "ViewRegistrationsResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "DropRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "DropResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "ExportFile": {
+        "type": "object",
+        "properties": {}
+      },
+      "ExportScheduleRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "ExportScheduleResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "WaitlistJoinRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "WaitlistJoinResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "ViewWaitlistRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "ViewWaitlistResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "WaitlistEntryDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CancelWaitlistRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "CancelWaitlistResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "OfferingRosterResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "ReviewRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "StudentRosterDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ViewOfferingRosterRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "ManageTermRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "ManageTermResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "CourseOfferingDetails": {
+        "type": "object",
+        "properties": {}
+      },
+      "ManageCourseOfferingRequest": {
+        "type": "object",
+        "properties": {}
+      },
+      "ManageCourseOfferingResult": {
+        "type": "object",
+        "properties": {}
+      },
+      "ManagementAction": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+@startuml UC6
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC6 - Export Class Schedule
+
+actor "Student" as Student
+boundary "StudentBoundary" as StudentBoundary
+control "ScheduleControl" as ScheduleControl
+entity "Student" as Student_Entity
+
+Student -> StudentBoundary : exportSchedule(request)
+StudentBoundary -> ScheduleControl : exportStudentSchedule(request)
+ScheduleControl -> Student_Entity : isAuthorizedForRegistration()
+Student_Entity --> ScheduleControl : boolean
+ScheduleControl --> StudentBoundary : ExportScheduleResult
+StudentBoundary --> Student : ExportScheduleResult
+
+@enduml

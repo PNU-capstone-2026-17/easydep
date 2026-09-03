@@ -1,0 +1,1166 @@
+{
+  "title": "API",
+  "version": "1.0.0",
+  "Endpoints": [
+    {
+      "path": "/course-offerings/search",
+      "method": "post",
+      "summary": "",
+      "operation_id": "searchCourseOfferings",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "CourseSearchCriteria",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "SearchResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "SearchResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "SearchResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "UniversityUserBoundary",
+        "CourseSearchControl"
+      ],
+      "use_case_ids": [
+        "UC1"
+      ],
+      "control_binding": {
+        "control": "CourseSearchControl",
+        "method": "executeSearch",
+        "arguments": [
+          {
+            "name": "criteria",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "found"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/course-offerings/{offeringId}",
+      "method": "get",
+      "summary": "",
+      "operation_id": "viewCourseOffering",
+      "path_params": [
+        {
+          "name": "offeringId",
+          "type": "uuid",
+          "required": true,
+          "description": ""
+        }
+      ],
+      "query_params": [],
+      "request_schema": "",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "OfferingDetailsDto",
+          "is_array": false
+        },
+        {
+          "status": 404,
+          "description": "",
+          "schema_name": "OfferingDetailsDto",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "OfferingDetailsDto",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "UniversityUserBoundary",
+        "CourseSearchControl"
+      ],
+      "use_case_ids": [
+        "UC1"
+      ],
+      "control_binding": {
+        "control": "CourseSearchControl",
+        "method": "retrieveOfferingDetails",
+        "arguments": [
+          {
+            "name": "offeringId",
+            "source": "$path.offeringId"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "found"
+          },
+          {
+            "status": 404,
+            "outcome": "not_found"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/registrations",
+      "method": "post",
+      "summary": "",
+      "operation_id": "registerForOffering",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "RegistrationRequest",
+      "responses": [
+        {
+          "status": 201,
+          "description": "",
+          "schema_name": "RegistrationOutcome",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "RegistrationOutcome",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "RegistrationOutcome",
+          "is_array": false
+        },
+        {
+          "status": 409,
+          "description": "",
+          "schema_name": "RegistrationOutcome",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "StudentBoundary",
+        "RegistrationControl"
+      ],
+      "use_case_ids": [
+        "UC2"
+      ],
+      "control_binding": {
+        "control": "RegistrationControl",
+        "method": "processRegistration",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 201,
+            "outcome": "created"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          },
+          {
+            "status": 409,
+            "outcome": "conflict"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/registrations/swap",
+      "method": "post",
+      "summary": "",
+      "operation_id": "swapCourseRegistration",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "SwapRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "SwapResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "SwapResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "SwapResult",
+          "is_array": false
+        },
+        {
+          "status": 409,
+          "description": "",
+          "schema_name": "SwapResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "StudentBoundary",
+        "RegistrationControl"
+      ],
+      "use_case_ids": [
+        "UC3"
+      ],
+      "control_binding": {
+        "control": "RegistrationControl",
+        "method": "performSwap",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "success"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          },
+          {
+            "status": 409,
+            "outcome": "conflict"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/students/schedule",
+      "method": "post",
+      "summary": "",
+      "operation_id": "viewCurrentRegistrations",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "StudentScheduleRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "ViewRegistrationsResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "ViewRegistrationsResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "ViewRegistrationsResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "StudentBoundary",
+        "ScheduleControl"
+      ],
+      "use_case_ids": [
+        "UC4"
+      ],
+      "control_binding": {
+        "control": "ScheduleControl",
+        "method": "assembleStudentSchedule",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "found"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/registrations/drop",
+      "method": "post",
+      "summary": "",
+      "operation_id": "dropCourseRegistration",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "DropRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "DropResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "DropResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "DropResult",
+          "is_array": false
+        },
+        {
+          "status": 404,
+          "description": "",
+          "schema_name": "DropResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "StudentBoundary",
+        "RegistrationControl"
+      ],
+      "use_case_ids": [
+        "UC5"
+      ],
+      "control_binding": {
+        "control": "RegistrationControl",
+        "method": "processDrop",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "success"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          },
+          {
+            "status": 404,
+            "outcome": "not_found"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/students/schedule/export",
+      "method": "post",
+      "summary": "",
+      "operation_id": "exportClassSchedule",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "ExportScheduleRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "ExportScheduleResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "ExportScheduleResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "ExportScheduleResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "StudentBoundary",
+        "ScheduleControl"
+      ],
+      "use_case_ids": [
+        "UC6"
+      ],
+      "control_binding": {
+        "control": "ScheduleControl",
+        "method": "exportStudentSchedule",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "success"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/waitlist/join",
+      "method": "post",
+      "summary": "",
+      "operation_id": "joinWaitlist",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "WaitlistJoinRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "WaitlistJoinResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "WaitlistJoinResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "WaitlistJoinResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "StudentBoundary",
+        "WaitlistControl"
+      ],
+      "use_case_ids": [
+        "UC7"
+      ],
+      "control_binding": {
+        "control": "WaitlistControl",
+        "method": "processJoin",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "joined"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/waitlist/view",
+      "method": "post",
+      "summary": "",
+      "operation_id": "viewWaitlistEntries",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "ViewWaitlistRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "ViewWaitlistResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "ViewWaitlistResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "ViewWaitlistResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "StudentBoundary",
+        "WaitlistControl"
+      ],
+      "use_case_ids": [
+        "UC8"
+      ],
+      "control_binding": {
+        "control": "WaitlistControl",
+        "method": "viewStudentWaitlist",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "found"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/waitlist/cancel",
+      "method": "post",
+      "summary": "",
+      "operation_id": "cancelWaitlistEntry",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "CancelWaitlistRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "CancelWaitlistResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "CancelWaitlistResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "CancelWaitlistResult",
+          "is_array": false
+        },
+        {
+          "status": 404,
+          "description": "",
+          "schema_name": "CancelWaitlistResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "StudentBoundary",
+        "WaitlistControl"
+      ],
+      "use_case_ids": [
+        "UC9"
+      ],
+      "control_binding": {
+        "control": "WaitlistControl",
+        "method": "processCancellation",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "canceled"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          },
+          {
+            "status": 404,
+            "outcome": "not_found"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/professors/{professorId}/offerings",
+      "method": "get",
+      "summary": "",
+      "operation_id": "reviewAssignedOfferings",
+      "path_params": [
+        {
+          "name": "professorId",
+          "type": "uuid",
+          "required": true,
+          "description": ""
+        }
+      ],
+      "query_params": [],
+      "request_schema": "",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "SearchResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "SearchResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "ProfessorBoundary",
+        "ProfessorRosterControl"
+      ],
+      "use_case_ids": [
+        "UC10"
+      ],
+      "control_binding": {
+        "control": "ProfessorRosterControl",
+        "method": "getAssignedOfferings",
+        "arguments": [
+          {
+            "name": "professorId",
+            "source": "$path.professorId"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "found"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/professors/roster",
+      "method": "post",
+      "summary": "",
+      "operation_id": "viewOfferingRoster",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "ViewOfferingRosterRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "OfferingRosterResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "OfferingRosterResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "OfferingRosterResult",
+          "is_array": false
+        },
+        {
+          "status": 404,
+          "description": "",
+          "schema_name": "OfferingRosterResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "ProfessorBoundary",
+        "ProfessorRosterControl"
+      ],
+      "use_case_ids": [
+        "UC10"
+      ],
+      "control_binding": {
+        "control": "ProfessorRosterControl",
+        "method": "getOfferingRoster",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "found"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          },
+          {
+            "status": 404,
+            "outcome": "not_found"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/terms",
+      "method": "post",
+      "summary": "",
+      "operation_id": "manageAcademicTerm",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "ManageTermRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "ManageTermResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "ManageTermResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "ManageTermResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "AcademicAdministratorBoundary",
+        "AcademicTermManagementControl"
+      ],
+      "use_case_ids": [
+        "UC11"
+      ],
+      "control_binding": {
+        "control": "AcademicTermManagementControl",
+        "method": "manageTerm",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "success"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/course-offerings/manage",
+      "method": "post",
+      "summary": "",
+      "operation_id": "manageCourseOffering",
+      "path_params": [],
+      "query_params": [],
+      "request_schema": "ManageCourseOfferingRequest",
+      "responses": [
+        {
+          "status": 200,
+          "description": "",
+          "schema_name": "ManageCourseOfferingResult",
+          "is_array": false
+        },
+        {
+          "status": 400,
+          "description": "",
+          "schema_name": "ManageCourseOfferingResult",
+          "is_array": false
+        },
+        {
+          "status": 403,
+          "description": "",
+          "schema_name": "ManageCourseOfferingResult",
+          "is_array": false
+        }
+      ],
+      "source_classes": [
+        "AcademicAdministratorBoundary",
+        "CourseOfferingManagementControl"
+      ],
+      "use_case_ids": [
+        "UC12"
+      ],
+      "control_binding": {
+        "control": "CourseOfferingManagementControl",
+        "method": "process",
+        "arguments": [
+          {
+            "name": "request",
+            "source": "$body"
+          }
+        ],
+        "outcomes": [
+          {
+            "status": 200,
+            "outcome": "success"
+          },
+          {
+            "status": 400,
+            "outcome": "validation_error"
+          },
+          {
+            "status": 403,
+            "outcome": "unauthorized"
+          }
+        ]
+      }
+    }
+  ],
+  "Schemas": [
+    {
+      "name": "AcademicTerm",
+      "description": "",
+      "fields": [],
+      "source_class": "AcademicTerm"
+    },
+    {
+      "name": "Course",
+      "description": "",
+      "fields": [],
+      "source_class": "Course"
+    },
+    {
+      "name": "Professor",
+      "description": "",
+      "fields": [],
+      "source_class": "Professor"
+    },
+    {
+      "name": "Student",
+      "description": "",
+      "fields": [],
+      "source_class": "Student"
+    },
+    {
+      "name": "CourseOffering",
+      "description": "",
+      "fields": [],
+      "source_class": "CourseOffering"
+    },
+    {
+      "name": "Registration",
+      "description": "",
+      "fields": [],
+      "source_class": "Registration"
+    },
+    {
+      "name": "WaitlistEntry",
+      "description": "",
+      "fields": [],
+      "source_class": "WaitlistEntry"
+    },
+    {
+      "name": "MeetingSchedule",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "OfferingStatus",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "DayOfWeek",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "CourseOfferingSummary",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "CourseSearchCriteria",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "OfferingDetailsDto",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "SearchResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "TimeRange",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "RegistrationOutcome",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "RegistrationRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "SwapRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "SwapResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "RegistrationInfo",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "StudentScheduleRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ViewRegistrationsResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "DropRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "DropResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ExportFile",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ExportScheduleRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ExportScheduleResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "WaitlistJoinRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "WaitlistJoinResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ViewWaitlistRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ViewWaitlistResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "WaitlistEntryDto",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "CancelWaitlistRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "CancelWaitlistResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "OfferingRosterResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ReviewRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "StudentRosterDto",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ViewOfferingRosterRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ManageTermRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ManageTermResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "CourseOfferingDetails",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ManageCourseOfferingRequest",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ManageCourseOfferingResult",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    },
+    {
+      "name": "ManagementAction",
+      "description": "",
+      "fields": [],
+      "source_class": ""
+    }
+  ]
+}

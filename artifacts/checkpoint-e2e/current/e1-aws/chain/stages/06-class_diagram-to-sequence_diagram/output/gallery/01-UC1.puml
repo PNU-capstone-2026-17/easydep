@@ -1,0 +1,33 @@
+@startuml UC1
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC1 - Search Course Offerings
+
+actor "University User" as University_User
+boundary "UniversityUserBoundary" as UniversityUserBoundary
+control "CourseSearchControl" as CourseSearchControl
+entity "Course" as Course
+entity "CourseOffering" as CourseOffering
+entity "Professor" as Professor
+
+University_User -> UniversityUserBoundary : searchCourseOfferings(criteria)
+UniversityUserBoundary -> CourseSearchControl : executeSearch(criteria)
+CourseSearchControl -> CourseOffering : searchPublished(criteria)
+CourseOffering --> CourseSearchControl : list<CourseOffering>
+CourseSearchControl -> CourseOffering : toSummary()
+CourseOffering --> CourseSearchControl : CourseOfferingSummary
+CourseSearchControl --> UniversityUserBoundary : SearchResult
+UniversityUserBoundary --> University_User : SearchResult
+University_User -> UniversityUserBoundary : viewCourseOffering(offeringId)
+UniversityUserBoundary -> CourseSearchControl : retrieveOfferingDetails(offeringId)
+CourseSearchControl -> CourseOffering : findById(id)
+CourseOffering --> CourseSearchControl : CourseOffering
+CourseSearchControl -> Course : findById(id)
+Course --> CourseSearchControl : Course
+CourseSearchControl -> Professor : findById(id)
+Professor --> CourseSearchControl : Professor
+CourseSearchControl --> UniversityUserBoundary : OfferingDetailsDto
+UniversityUserBoundary --> University_User : OfferingDetailsDto
+
+@enduml

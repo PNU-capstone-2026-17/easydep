@@ -1,0 +1,126 @@
+{
+  "draft": {
+    "schemaVersion": "4",
+    "workloads": [
+      "vm"
+    ],
+    "provider": "aws",
+    "regionAsWritten": "ap-northeast-2",
+    "region": "ap-northeast-2",
+    "monthlyBudgetUSD": 500.0
+  },
+  "valid": true,
+  "errors": [],
+  "questions": [
+    {
+      "field": "region",
+      "kind": "asked",
+      "why": "Pricing and capacity data are indexed by provider region code; the place name is resolved before those datasets are queried.",
+      "question": "Which region should host the deployment? A place name is acceptable.",
+      "seen": []
+    },
+    {
+      "field": "minVCpu",
+      "kind": "suggested",
+      "why": "A sizing floor enables instance-spec selection. Without one, the system does not assume that the cheapest or smallest instance is sufficient.",
+      "question": "If known, provide either the minimum vCPU or minimum memory required by this workload.",
+      "seen": []
+    }
+  ],
+  "understanding": "The user explicitly restricts the pilot to Docker on Linux virtual machines, disallows managed databases, Kubernetes, and serverless compute, requires synthetic data, and excludes recovery from a data‑storage server failure.",
+  "provenance": [
+    {
+      "field": "provider",
+      "value": "aws",
+      "as_written": "aws",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    },
+    {
+      "field": "regionAsWritten",
+      "value": "ap-northeast-2",
+      "as_written": "ap-northeast-2",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    },
+    {
+      "field": "region",
+      "value": "ap-northeast-2",
+      "as_written": "ap-northeast-2",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    },
+    {
+      "field": "monthlyBudgetUSD",
+      "value": 500.0,
+      "as_written": "500.0",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    },
+    {
+      "field": "provider",
+      "value": "aws",
+      "as_written": "AWS",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    },
+    {
+      "field": "monthlyBudgetUSD",
+      "value": 500.0,
+      "as_written": "must not exceed 500 USD",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    }
+  ],
+  "rejected": [],
+  "trace": [
+    {
+      "action": "system_scope",
+      "field": "workloads",
+      "value": [
+        "vm"
+      ]
+    },
+    {
+      "action": "record_field",
+      "field": "provider",
+      "value": "aws"
+    },
+    {
+      "action": "record_field",
+      "field": "regionAsWritten",
+      "value": "ap-northeast-2"
+    },
+    {
+      "action": "record_field",
+      "field": "region",
+      "value": "ap-northeast-2"
+    },
+    {
+      "action": "record_field",
+      "field": "monthlyBudgetUSD",
+      "value": 500.0
+    },
+    {
+      "action": "record_field",
+      "field": "provider",
+      "value": "aws"
+    },
+    {
+      "action": "ask_user",
+      "field": "region",
+      "question": "Which region should host the deployment? A place name is acceptable."
+    },
+    {
+      "action": "record_field",
+      "field": "monthlyBudgetUSD",
+      "value": 500.0
+    }
+  ]
+}

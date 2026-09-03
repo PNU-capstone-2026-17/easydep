@@ -1,0 +1,3643 @@
+{
+  "Diagrams": [
+    {
+      "use_case_id": "UC1",
+      "use_case_name": "Search Course Offerings",
+      "Participants": [
+        {
+          "name": "University User",
+          "alias": "University_User",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "UniversityUserBoundary",
+          "alias": "UniversityUserBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "UniversityUserBoundary"
+        },
+        {
+          "name": "CourseSearchControl",
+          "alias": "CourseSearchControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "CourseSearchControl"
+        },
+        {
+          "name": "CourseOffering",
+          "alias": "CourseOffering",
+          "kind": "entity",
+          "description": "",
+          "source_class": "CourseOffering"
+        },
+        {
+          "name": "Course",
+          "alias": "Course",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Course"
+        },
+        {
+          "name": "Professor",
+          "alias": "Professor",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Professor"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "University_User",
+          "target": "UniversityUserBoundary",
+          "label": "searchCourseOfferings(criteria:CourseSearchCriteria)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:1",
+            "UC1:main:4",
+            "UC1:extension:2a:2a1"
+          ],
+          "call_id": "UC1:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "criteria",
+              "type": "CourseSearchCriteria",
+              "source_kind": "input",
+              "source_ref": "UC1:main:1#criteria"
+            }
+          ]
+        },
+        {
+          "source": "UniversityUserBoundary",
+          "target": "CourseSearchControl",
+          "label": "executeSearch(criteria:CourseSearchCriteria)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:2",
+            "UC1:main:3"
+          ],
+          "call_id": "UC1:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "criteria",
+              "type": "CourseSearchCriteria",
+              "source_kind": "call_parameter",
+              "source_ref": "UC1:main:1::call:1#criteria"
+            }
+          ]
+        },
+        {
+          "source": "CourseSearchControl",
+          "target": "CourseOffering",
+          "label": "searchPublished(criteria:CourseSearchCriteria)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:3"
+          ],
+          "call_id": "UC1:main:1::call:3",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "criteria",
+              "type": "CourseSearchCriteria",
+              "source_kind": "call_parameter",
+              "source_ref": "UC1:main:1::call:2#criteria"
+            }
+          ]
+        },
+        {
+          "source": "CourseOffering",
+          "target": "CourseSearchControl",
+          "label": "list<CourseOffering>",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC1:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "CourseSearchControl",
+          "target": "CourseOffering",
+          "label": "toSummary()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:3"
+          ],
+          "call_id": "UC1:main:1::call:4",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "CourseOffering",
+          "target": "CourseSearchControl",
+          "label": "CourseOfferingSummary",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC1:main:1::call:4",
+          "arguments": []
+        },
+        {
+          "source": "CourseSearchControl",
+          "target": "UniversityUserBoundary",
+          "label": "SearchResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:2",
+            "UC1:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC1:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "UniversityUserBoundary",
+          "target": "University_User",
+          "label": "SearchResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:1",
+            "UC1:main:4",
+            "UC1:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC1:main:1::call:1",
+          "arguments": []
+        },
+        {
+          "source": "University_User",
+          "target": "UniversityUserBoundary",
+          "label": "viewCourseOffering(offeringId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "UC1:main:5::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "offeringId",
+              "type": "uuid",
+              "source_kind": "input",
+              "source_ref": "UC1:main:5#offeringId"
+            }
+          ]
+        },
+        {
+          "source": "UniversityUserBoundary",
+          "target": "CourseSearchControl",
+          "label": "retrieveOfferingDetails(offeringId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "UC1:main:5::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "offeringId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC1:main:5::call:1#offeringId"
+            }
+          ]
+        },
+        {
+          "source": "CourseSearchControl",
+          "target": "CourseOffering",
+          "label": "findById(id:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "UC1:main:5::call:3",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC1:main:5::call:2#offeringId"
+            }
+          ]
+        },
+        {
+          "source": "CourseOffering",
+          "target": "CourseSearchControl",
+          "label": "CourseOffering",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "",
+          "reply_to": "UC1:main:5::call:3",
+          "arguments": []
+        },
+        {
+          "source": "CourseSearchControl",
+          "target": "Course",
+          "label": "findById(id:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "UC1:main:5::call:4",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC1:main:5::call:2#offeringId"
+            }
+          ]
+        },
+        {
+          "source": "Course",
+          "target": "CourseSearchControl",
+          "label": "Course",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "",
+          "reply_to": "UC1:main:5::call:4",
+          "arguments": []
+        },
+        {
+          "source": "CourseSearchControl",
+          "target": "Professor",
+          "label": "findById(id:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "UC1:main:5::call:5",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC1:main:5::call:2#offeringId"
+            }
+          ]
+        },
+        {
+          "source": "Professor",
+          "target": "CourseSearchControl",
+          "label": "Professor",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "",
+          "reply_to": "UC1:main:5::call:5",
+          "arguments": []
+        },
+        {
+          "source": "CourseSearchControl",
+          "target": "UniversityUserBoundary",
+          "label": "OfferingDetailsDto",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "",
+          "reply_to": "UC1:main:5::call:2",
+          "arguments": []
+        },
+        {
+          "source": "UniversityUserBoundary",
+          "target": "University_User",
+          "label": "OfferingDetailsDto",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC1"
+          ],
+          "step_ids": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "call_id": "",
+          "reply_to": "UC1:main:5::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC2",
+      "use_case_name": "Register for Course Offering",
+      "Participants": [
+        {
+          "name": "Student",
+          "alias": "Student",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "StudentBoundary",
+          "alias": "StudentBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "StudentBoundary"
+        },
+        {
+          "name": "RegistrationControl",
+          "alias": "RegistrationControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "RegistrationControl"
+        },
+        {
+          "name": "Student",
+          "alias": "Student_Entity",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Student"
+        },
+        {
+          "name": "CourseOffering",
+          "alias": "CourseOffering",
+          "kind": "entity",
+          "description": "",
+          "source_class": "CourseOffering"
+        },
+        {
+          "name": "Registration",
+          "alias": "Registration",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Registration"
+        },
+        {
+          "name": "WaitlistControl",
+          "alias": "WaitlistControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "WaitlistControl"
+        },
+        {
+          "name": "WaitlistEntry",
+          "alias": "WaitlistEntry",
+          "kind": "entity",
+          "description": "",
+          "source_class": "WaitlistEntry"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "registerForOffering(request:RegistrationRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:1",
+            "UC2:main:5",
+            "UC2:extension:2a:2a1",
+            "UC2:extension:3a:3a1"
+          ],
+          "call_id": "UC2:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "RegistrationRequest",
+              "source_kind": "input",
+              "source_ref": "UC2:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "RegistrationControl",
+          "label": "processRegistration(request:RegistrationRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:2",
+            "UC2:main:3",
+            "UC2:main:4"
+          ],
+          "call_id": "UC2:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "RegistrationRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC2:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Student_Entity",
+          "label": "isAuthorizedForRegistration()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:2"
+          ],
+          "call_id": "UC2:main:1::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "Student_Entity",
+          "target": "RegistrationControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC2:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "CourseOffering",
+          "label": "isOpenForRegistration()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:3"
+          ],
+          "call_id": "UC2:main:1::call:4",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "CourseOffering",
+          "target": "RegistrationControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC2:main:1::call:4",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "CourseOffering",
+          "label": "hasAvailableSeat()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:3"
+          ],
+          "call_id": "UC2:main:1::call:5",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "CourseOffering",
+          "target": "RegistrationControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC2:main:1::call:5",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "CourseOffering",
+          "label": "conflictsWithStudent(studentId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:3"
+          ],
+          "call_id": "UC2:main:1::call:6",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC2:main:1::call:1#request.studentId"
+            }
+          ]
+        },
+        {
+          "source": "CourseOffering",
+          "target": "RegistrationControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC2:main:1::call:6",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Registration",
+          "label": "existsForStudentOffering(studentId:uuid,offeringId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:3"
+          ],
+          "call_id": "UC2:main:1::call:7",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC2:main:1::call:1#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC2:main:1::call:1#request.offeringId"
+            }
+          ]
+        },
+        {
+          "source": "Registration",
+          "target": "RegistrationControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC2:main:1::call:7",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "CourseOffering",
+          "label": "incrementEnrolledCount()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:4"
+          ],
+          "call_id": "UC2:main:1::call:8",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "CourseOffering",
+          "target": "RegistrationControl",
+          "label": "void",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC2:main:1::call:8",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Registration",
+          "label": "create(studentId:uuid,offeringId:uuid,registrationDate:localdatetime)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:4"
+          ],
+          "call_id": "UC2:main:1::call:9",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "registrationDate",
+              "type": "localdatetime",
+              "source_kind": "state",
+              "source_ref": "runtime#currentDateTime"
+            },
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC2:main:1::call:1#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC2:main:1::call:1#request.offeringId"
+            }
+          ]
+        },
+        {
+          "source": "Registration",
+          "target": "RegistrationControl",
+          "label": "Registration",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC2:main:1::call:9",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "StudentBoundary",
+          "label": "RegistrationOutcome",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:2",
+            "UC2:main:3",
+            "UC2:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC2:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "joinWaitlist(request:WaitlistJoinRequest)",
+          "type": "sync",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:1",
+            "UC7:extension:2a:2a1"
+          ],
+          "call_id": "UC7:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "WaitlistJoinRequest",
+              "source_kind": "input",
+              "source_ref": "UC7:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "WaitlistControl",
+          "label": "processJoin(request:WaitlistJoinRequest)",
+          "type": "sync",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "call_id": "UC7:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "WaitlistJoinRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC7:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "Student_Entity",
+          "label": "isAuthorizedForRegistration()",
+          "type": "sync",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:2"
+          ],
+          "call_id": "UC7:main:1::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "Student_Entity",
+          "target": "WaitlistControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "CourseOffering",
+          "label": "findById(id:uuid)",
+          "type": "sync",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "call_id": "UC7:main:1::call:4",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC7:main:1::call:1#request.studentId"
+            }
+          ]
+        },
+        {
+          "source": "CourseOffering",
+          "target": "WaitlistControl",
+          "label": "CourseOffering",
+          "type": "return",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:4",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "WaitlistEntry",
+          "label": "createEntry(studentId:uuid,offeringId:uuid,position:int,entryDate:localdatetime)",
+          "type": "sync",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:3"
+          ],
+          "call_id": "UC7:main:1::call:5",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "entryDate",
+              "type": "localdatetime",
+              "source_kind": "state",
+              "source_ref": "runtime#currentDateTime"
+            },
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC7:main:1::call:1#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC7:main:1::call:1#request.offeringId"
+            },
+            {
+              "parameter": "position",
+              "type": "int",
+              "source_kind": "call_result",
+              "source_ref": "UC7:main:1::call:4#result.capacity"
+            }
+          ]
+        },
+        {
+          "source": "WaitlistEntry",
+          "target": "WaitlistControl",
+          "label": "WaitlistEntry",
+          "type": "return",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:5",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "StudentBoundary",
+          "label": "WaitlistJoinResult",
+          "type": "return",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "WaitlistJoinResult",
+          "type": "return",
+          "fragments": [
+            {
+              "id": "UC2:extend:UC7",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when offering is full"
+            }
+          ],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC7:main:1",
+            "UC7:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:1",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "RegistrationOutcome",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC2"
+          ],
+          "step_ids": [
+            "UC2:main:1",
+            "UC2:main:5",
+            "UC2:extension:2a:2a1",
+            "UC2:extension:3a:3a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC2:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC3",
+      "use_case_name": "Swap Course Registration",
+      "Participants": [
+        {
+          "name": "Student",
+          "alias": "Student",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "StudentBoundary",
+          "alias": "StudentBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "StudentBoundary"
+        },
+        {
+          "name": "RegistrationControl",
+          "alias": "RegistrationControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "RegistrationControl"
+        },
+        {
+          "name": "Student",
+          "alias": "Student_Entity",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Student"
+        },
+        {
+          "name": "CourseOffering",
+          "alias": "CourseOffering",
+          "kind": "entity",
+          "description": "",
+          "source_class": "CourseOffering"
+        },
+        {
+          "name": "Registration",
+          "alias": "Registration",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Registration"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "swapCourseRegistration(request:SwapRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:1",
+            "UC3:main:5",
+            "UC3:extension:2a:2a1",
+            "UC3:extension:3a:3a1",
+            "UC3:extension:4a:4a1"
+          ],
+          "call_id": "UC3:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "SwapRequest",
+              "source_kind": "input",
+              "source_ref": "UC3:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "RegistrationControl",
+          "label": "performSwap(request:SwapRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:2",
+            "UC3:main:3",
+            "UC3:main:4",
+            "UC3:extension:2a:2a1",
+            "UC3:extension:3a:3a1",
+            "UC3:extension:4a:4a1"
+          ],
+          "call_id": "UC3:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "SwapRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC3:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Student_Entity",
+          "label": "isAuthorizedForSwap()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:2"
+          ],
+          "call_id": "UC3:main:1::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "Student_Entity",
+          "target": "RegistrationControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC3:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "CourseOffering",
+          "label": "isEligibleForSwap(studentId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:3"
+          ],
+          "call_id": "UC3:main:1::call:4",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC3:main:1::call:2#request.studentId"
+            }
+          ]
+        },
+        {
+          "source": "CourseOffering",
+          "target": "RegistrationControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC3:main:1::call:4",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Registration",
+          "label": "existsForStudentOffering(studentId:uuid,offeringId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:3"
+          ],
+          "call_id": "UC3:main:1::call:5",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC3:main:1::call:2#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC3:main:1::call:2#request.targetOfferingId"
+            }
+          ]
+        },
+        {
+          "source": "Registration",
+          "target": "RegistrationControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC3:main:1::call:5",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Registration",
+          "label": "deleteById(id:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:4"
+          ],
+          "call_id": "UC3:main:1::call:6",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC3:main:1::call:2#request.currentRegistrationId"
+            }
+          ]
+        },
+        {
+          "source": "Registration",
+          "target": "RegistrationControl",
+          "label": "void",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC3:main:1::call:6",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Registration",
+          "label": "create(studentId:uuid,offeringId:uuid,registrationDate:localdatetime)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:4"
+          ],
+          "call_id": "UC3:main:1::call:7",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "registrationDate",
+              "type": "localdatetime",
+              "source_kind": "state",
+              "source_ref": "runtime#currentDateTime"
+            },
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC3:main:1::call:2#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC3:main:1::call:2#request.targetOfferingId"
+            }
+          ]
+        },
+        {
+          "source": "Registration",
+          "target": "RegistrationControl",
+          "label": "Registration",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC3:main:1::call:7",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "CourseOffering",
+          "label": "incrementEnrolledCount()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:4"
+          ],
+          "call_id": "UC3:main:1::call:8",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "CourseOffering",
+          "target": "RegistrationControl",
+          "label": "void",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC3:main:1::call:8",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "StudentBoundary",
+          "label": "SwapResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:2",
+            "UC3:main:3",
+            "UC3:main:4",
+            "UC3:extension:2a:2a1",
+            "UC3:extension:3a:3a1",
+            "UC3:extension:4a:4a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC3:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "SwapResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC3"
+          ],
+          "step_ids": [
+            "UC3:main:1",
+            "UC3:main:5",
+            "UC3:extension:2a:2a1",
+            "UC3:extension:3a:3a1",
+            "UC3:extension:4a:4a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC3:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC4",
+      "use_case_name": "View Current Registrations and Schedule",
+      "Participants": [
+        {
+          "name": "Student",
+          "alias": "Student",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "StudentBoundary",
+          "alias": "StudentBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "StudentBoundary"
+        },
+        {
+          "name": "ScheduleControl",
+          "alias": "ScheduleControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "ScheduleControl"
+        },
+        {
+          "name": "Registration",
+          "alias": "Registration",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Registration"
+        },
+        {
+          "name": "Student",
+          "alias": "Student_Entity",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Student"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "viewCurrentRegistrations(request:StudentScheduleRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC4:main:1",
+            "UC4:main:5"
+          ],
+          "call_id": "UC4:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "StudentScheduleRequest",
+              "source_kind": "input",
+              "source_ref": "UC4:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "ScheduleControl",
+          "label": "assembleStudentSchedule(request:StudentScheduleRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC4:main:2",
+            "UC4:main:3",
+            "UC4:main:4",
+            "UC4:extension:2a:2a1"
+          ],
+          "call_id": "UC4:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "StudentScheduleRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC4:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "ScheduleControl",
+          "target": "Registration",
+          "label": "findByStudentId(studentId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC4:main:3"
+          ],
+          "call_id": "UC4:main:1::call:3",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC4:main:1::call:2#request.studentId"
+            }
+          ]
+        },
+        {
+          "source": "Registration",
+          "target": "ScheduleControl",
+          "label": "list<Registration>",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC4:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC4:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "ScheduleControl",
+          "target": "StudentBoundary",
+          "label": "ViewRegistrationsResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC4:main:2",
+            "UC4:main:3",
+            "UC4:main:4",
+            "UC4:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC4:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "ViewRegistrationsResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC4:main:1",
+            "UC4:main:5"
+          ],
+          "call_id": "",
+          "reply_to": "UC4:main:1::call:1",
+          "arguments": []
+        },
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "exportSchedule(request:ExportScheduleRequest)",
+          "type": "sync",
+          "fragments": [
+            {
+              "id": "UC4:extend:UC6",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when student selects export"
+            }
+          ],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC6:main:1",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "call_id": "UC6:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ExportScheduleRequest",
+              "source_kind": "input",
+              "source_ref": "UC6:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "ScheduleControl",
+          "label": "exportStudentSchedule(request:ExportScheduleRequest)",
+          "type": "sync",
+          "fragments": [
+            {
+              "id": "UC4:extend:UC6",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when student selects export"
+            }
+          ],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC6:main:2",
+            "UC6:main:3",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "call_id": "UC6:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ExportScheduleRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC6:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "ScheduleControl",
+          "target": "Student_Entity",
+          "label": "isAuthorizedForRegistration()",
+          "type": "sync",
+          "fragments": [
+            {
+              "id": "UC4:extend:UC6",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when student selects export"
+            }
+          ],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC6:main:2"
+          ],
+          "call_id": "UC6:main:1::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "Student_Entity",
+          "target": "ScheduleControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [
+            {
+              "id": "UC4:extend:UC6",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when student selects export"
+            }
+          ],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC6:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC6:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "ScheduleControl",
+          "target": "StudentBoundary",
+          "label": "ExportScheduleResult",
+          "type": "return",
+          "fragments": [
+            {
+              "id": "UC4:extend:UC6",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when student selects export"
+            }
+          ],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC6:main:2",
+            "UC6:main:3",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC6:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "ExportScheduleResult",
+          "type": "return",
+          "fragments": [
+            {
+              "id": "UC4:extend:UC6",
+              "type": "opt",
+              "branch": "main",
+              "condition": "when student selects export"
+            }
+          ],
+          "use_case_ids": [
+            "UC4"
+          ],
+          "step_ids": [
+            "UC6:main:1",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC6:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC5",
+      "use_case_name": "Drop Course Registration",
+      "Participants": [
+        {
+          "name": "Student",
+          "alias": "Student",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "StudentBoundary",
+          "alias": "StudentBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "StudentBoundary"
+        },
+        {
+          "name": "RegistrationControl",
+          "alias": "RegistrationControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "RegistrationControl"
+        },
+        {
+          "name": "Student",
+          "alias": "Student_Entity",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Student"
+        },
+        {
+          "name": "Registration",
+          "alias": "Registration",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Registration"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "dropRegistration(request:DropRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:1",
+            "UC5:main:4"
+          ],
+          "call_id": "UC5:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "DropRequest",
+              "source_kind": "input",
+              "source_ref": "UC5:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "RegistrationControl",
+          "label": "processDrop(request:DropRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:2",
+            "UC5:main:3",
+            "UC5:extension:2a:2a1"
+          ],
+          "call_id": "UC5:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "DropRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC5:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Student_Entity",
+          "label": "isAuthorizedForRegistration()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:2"
+          ],
+          "call_id": "UC5:main:1::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "Student_Entity",
+          "target": "RegistrationControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC5:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Registration",
+          "label": "findById(id:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:3"
+          ],
+          "call_id": "UC5:main:1::call:4",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC5:main:1::call:1#request.studentId"
+            }
+          ]
+        },
+        {
+          "source": "Registration",
+          "target": "RegistrationControl",
+          "label": "Registration",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC5:main:1::call:4",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "Registration",
+          "label": "deleteById(id:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:3"
+          ],
+          "call_id": "UC5:main:1::call:5",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_result",
+              "source_ref": "UC5:main:1::call:4#result.id"
+            }
+          ]
+        },
+        {
+          "source": "Registration",
+          "target": "RegistrationControl",
+          "label": "void",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC5:main:1::call:5",
+          "arguments": []
+        },
+        {
+          "source": "RegistrationControl",
+          "target": "StudentBoundary",
+          "label": "DropResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:2",
+            "UC5:main:3",
+            "UC5:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC5:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "DropResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC5"
+          ],
+          "step_ids": [
+            "UC5:main:1",
+            "UC5:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC5:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC6",
+      "use_case_name": "Export Class Schedule",
+      "Participants": [
+        {
+          "name": "Student",
+          "alias": "Student",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "StudentBoundary",
+          "alias": "StudentBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "StudentBoundary"
+        },
+        {
+          "name": "ScheduleControl",
+          "alias": "ScheduleControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "ScheduleControl"
+        },
+        {
+          "name": "Student",
+          "alias": "Student_Entity",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Student"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "exportSchedule(request:ExportScheduleRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC6"
+          ],
+          "step_ids": [
+            "UC6:main:1",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "call_id": "UC6:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ExportScheduleRequest",
+              "source_kind": "input",
+              "source_ref": "UC6:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "ScheduleControl",
+          "label": "exportStudentSchedule(request:ExportScheduleRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC6"
+          ],
+          "step_ids": [
+            "UC6:main:2",
+            "UC6:main:3",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "call_id": "UC6:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ExportScheduleRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC6:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "ScheduleControl",
+          "target": "Student_Entity",
+          "label": "isAuthorizedForRegistration()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC6"
+          ],
+          "step_ids": [
+            "UC6:main:2"
+          ],
+          "call_id": "UC6:main:1::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "Student_Entity",
+          "target": "ScheduleControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC6"
+          ],
+          "step_ids": [
+            "UC6:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC6:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "ScheduleControl",
+          "target": "StudentBoundary",
+          "label": "ExportScheduleResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC6"
+          ],
+          "step_ids": [
+            "UC6:main:2",
+            "UC6:main:3",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC6:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "ExportScheduleResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC6"
+          ],
+          "step_ids": [
+            "UC6:main:1",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC6:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC7",
+      "use_case_name": "Join Waitlist for Full Course",
+      "Participants": [
+        {
+          "name": "Student",
+          "alias": "Student",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "StudentBoundary",
+          "alias": "StudentBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "StudentBoundary"
+        },
+        {
+          "name": "WaitlistControl",
+          "alias": "WaitlistControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "WaitlistControl"
+        },
+        {
+          "name": "Student",
+          "alias": "Student_Entity",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Student"
+        },
+        {
+          "name": "CourseOffering",
+          "alias": "CourseOffering",
+          "kind": "entity",
+          "description": "",
+          "source_class": "CourseOffering"
+        },
+        {
+          "name": "WaitlistEntry",
+          "alias": "WaitlistEntry",
+          "kind": "entity",
+          "description": "",
+          "source_class": "WaitlistEntry"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "joinWaitlist(request:WaitlistJoinRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:1",
+            "UC7:extension:2a:2a1"
+          ],
+          "call_id": "UC7:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "WaitlistJoinRequest",
+              "source_kind": "input",
+              "source_ref": "UC7:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "WaitlistControl",
+          "label": "processJoin(request:WaitlistJoinRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "call_id": "UC7:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "WaitlistJoinRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC7:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "Student_Entity",
+          "label": "isAuthorizedForRegistration()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:2"
+          ],
+          "call_id": "UC7:main:1::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "Student_Entity",
+          "target": "WaitlistControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "CourseOffering",
+          "label": "findById(id:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "call_id": "UC7:main:1::call:4",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC7:main:1::call:1#request.studentId"
+            }
+          ]
+        },
+        {
+          "source": "CourseOffering",
+          "target": "WaitlistControl",
+          "label": "CourseOffering",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:4",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "WaitlistEntry",
+          "label": "createEntry(studentId:uuid,offeringId:uuid,position:int,entryDate:localdatetime)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:3"
+          ],
+          "call_id": "UC7:main:1::call:5",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "entryDate",
+              "type": "localdatetime",
+              "source_kind": "state",
+              "source_ref": "runtime#currentDateTime"
+            },
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC7:main:1::call:1#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC7:main:1::call:1#request.offeringId"
+            },
+            {
+              "parameter": "position",
+              "type": "int",
+              "source_kind": "call_result",
+              "source_ref": "UC7:main:1::call:4#result.capacity"
+            }
+          ]
+        },
+        {
+          "source": "WaitlistEntry",
+          "target": "WaitlistControl",
+          "label": "WaitlistEntry",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:5",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "StudentBoundary",
+          "label": "WaitlistJoinResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "WaitlistJoinResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC7"
+          ],
+          "step_ids": [
+            "UC7:main:1",
+            "UC7:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC7:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC8",
+      "use_case_name": "View Waitlist Entries",
+      "Participants": [
+        {
+          "name": "Student",
+          "alias": "Student",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "StudentBoundary",
+          "alias": "StudentBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "StudentBoundary"
+        },
+        {
+          "name": "WaitlistControl",
+          "alias": "WaitlistControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "WaitlistControl"
+        },
+        {
+          "name": "Student",
+          "alias": "Student_Entity",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Student"
+        },
+        {
+          "name": "WaitlistEntry",
+          "alias": "WaitlistEntry",
+          "kind": "entity",
+          "description": "",
+          "source_class": "WaitlistEntry"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "viewWaitlistEntries(request:ViewWaitlistRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:1",
+            "UC8:main:4"
+          ],
+          "call_id": "UC8:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ViewWaitlistRequest",
+              "source_kind": "input",
+              "source_ref": "UC8:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "WaitlistControl",
+          "label": "viewStudentWaitlist(request:ViewWaitlistRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:2",
+            "UC8:main:3"
+          ],
+          "call_id": "UC8:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ViewWaitlistRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC8:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "Student_Entity",
+          "label": "isAuthorizedForRegistration()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:2"
+          ],
+          "call_id": "UC8:main:1::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "Student_Entity",
+          "target": "WaitlistControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC8:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "Student_Entity",
+          "label": "findById(id:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:2"
+          ],
+          "call_id": "UC8:main:1::call:4",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC8:main:1::call:2#request.studentId"
+            }
+          ]
+        },
+        {
+          "source": "Student_Entity",
+          "target": "WaitlistControl",
+          "label": "Student",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC8:main:1::call:4",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "WaitlistEntry",
+          "label": "findByStudentId(studentId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:3"
+          ],
+          "call_id": "UC8:main:1::call:5",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "studentId",
+              "type": "uuid",
+              "source_kind": "call_result",
+              "source_ref": "UC8:main:1::call:4#result.id"
+            }
+          ]
+        },
+        {
+          "source": "WaitlistEntry",
+          "target": "WaitlistControl",
+          "label": "list<WaitlistEntry>",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC8:main:1::call:5",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "StudentBoundary",
+          "label": "ViewWaitlistResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:2",
+            "UC8:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC8:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "ViewWaitlistResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC8"
+          ],
+          "step_ids": [
+            "UC8:main:1",
+            "UC8:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC8:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC9",
+      "use_case_name": "Cancel Waitlist Entry",
+      "Participants": [
+        {
+          "name": "Student",
+          "alias": "Student",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "StudentBoundary",
+          "alias": "StudentBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "StudentBoundary"
+        },
+        {
+          "name": "WaitlistControl",
+          "alias": "WaitlistControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "WaitlistControl"
+        },
+        {
+          "name": "Student",
+          "alias": "Student_Entity",
+          "kind": "entity",
+          "description": "",
+          "source_class": "Student"
+        },
+        {
+          "name": "WaitlistEntry",
+          "alias": "WaitlistEntry",
+          "kind": "entity",
+          "description": "",
+          "source_class": "WaitlistEntry"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Student",
+          "target": "StudentBoundary",
+          "label": "cancelWaitlist(request:CancelWaitlistRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:1",
+            "UC9:main:2",
+            "UC9:main:3",
+            "UC9:main:4",
+            "UC9:extension:1a:1a1",
+            "UC9:extension:2a:2a1"
+          ],
+          "call_id": "UC9:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "CancelWaitlistRequest",
+              "source_kind": "input",
+              "source_ref": "UC9:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "WaitlistControl",
+          "label": "processCancellation(request:CancelWaitlistRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:2",
+            "UC9:main:3",
+            "UC9:main:4",
+            "UC9:extension:1a:1a1",
+            "UC9:extension:2a:2a1"
+          ],
+          "call_id": "UC9:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "CancelWaitlistRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC9:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "Student_Entity",
+          "label": "isAuthorizedForWaitlistCancellation()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:2"
+          ],
+          "call_id": "UC9:main:1::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "Student_Entity",
+          "target": "WaitlistControl",
+          "label": "boolean",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC9:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "WaitlistEntry",
+          "label": "findById(id:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:2"
+          ],
+          "call_id": "UC9:main:1::call:4",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "id",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC9:main:1::call:1#request.studentId"
+            }
+          ]
+        },
+        {
+          "source": "WaitlistEntry",
+          "target": "WaitlistControl",
+          "label": "WaitlistEntry",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:2"
+          ],
+          "call_id": "",
+          "reply_to": "UC9:main:1::call:4",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "WaitlistEntry",
+          "label": "deleteEntry()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:3"
+          ],
+          "call_id": "UC9:main:1::call:5",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistEntry",
+          "target": "WaitlistControl",
+          "label": "void",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC9:main:1::call:5",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "WaitlistEntry",
+          "label": "shiftPositionsAfter(deletedPosition:int)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:4"
+          ],
+          "call_id": "UC9:main:1::call:6",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "deletedPosition",
+              "type": "int",
+              "source_kind": "call_result",
+              "source_ref": "UC9:main:1::call:4#result.position"
+            }
+          ]
+        },
+        {
+          "source": "WaitlistEntry",
+          "target": "WaitlistControl",
+          "label": "void",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC9:main:1::call:6",
+          "arguments": []
+        },
+        {
+          "source": "WaitlistControl",
+          "target": "StudentBoundary",
+          "label": "CancelWaitlistResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:2",
+            "UC9:main:3",
+            "UC9:main:4",
+            "UC9:extension:1a:1a1",
+            "UC9:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC9:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "StudentBoundary",
+          "target": "Student",
+          "label": "CancelWaitlistResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC9"
+          ],
+          "step_ids": [
+            "UC9:main:1",
+            "UC9:main:2",
+            "UC9:main:3",
+            "UC9:main:4",
+            "UC9:extension:1a:1a1",
+            "UC9:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC9:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC10",
+      "use_case_name": "Review Assigned Course Offerings and Rosters",
+      "Participants": [
+        {
+          "name": "Professor",
+          "alias": "Professor",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "ProfessorBoundary",
+          "alias": "ProfessorBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "ProfessorBoundary"
+        },
+        {
+          "name": "ProfessorRosterControl",
+          "alias": "ProfessorRosterControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "ProfessorRosterControl"
+        },
+        {
+          "name": "CourseOffering",
+          "alias": "CourseOffering",
+          "kind": "entity",
+          "description": "",
+          "source_class": "CourseOffering"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Professor",
+          "target": "ProfessorBoundary",
+          "label": "reviewAssignedOfferings(request:ReviewRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:1",
+            "UC10:main:3"
+          ],
+          "call_id": "UC10:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ReviewRequest",
+              "source_kind": "input",
+              "source_ref": "UC10:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "ProfessorBoundary",
+          "target": "ProfessorRosterControl",
+          "label": "getAssignedOfferings(professorId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:2",
+            "UC10:main:3",
+            "UC10:extension:2a:2a1"
+          ],
+          "call_id": "UC10:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "professorId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC10:main:1::call:1#request.professorId"
+            }
+          ]
+        },
+        {
+          "source": "ProfessorRosterControl",
+          "target": "CourseOffering",
+          "label": "findByInstructorId(instructorId:uuid)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:3"
+          ],
+          "call_id": "UC10:main:1::call:3",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "instructorId",
+              "type": "uuid",
+              "source_kind": "call_parameter",
+              "source_ref": "UC10:main:1::call:2#professorId"
+            }
+          ]
+        },
+        {
+          "source": "CourseOffering",
+          "target": "ProfessorRosterControl",
+          "label": "list<CourseOffering>",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC10:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "ProfessorRosterControl",
+          "target": "ProfessorBoundary",
+          "label": "SearchResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:2",
+            "UC10:main:3",
+            "UC10:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC10:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "ProfessorBoundary",
+          "target": "Professor",
+          "label": "SearchResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:1",
+            "UC10:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC10:main:1::call:1",
+          "arguments": []
+        },
+        {
+          "source": "Professor",
+          "target": "ProfessorBoundary",
+          "label": "viewOfferingRoster(request:ViewOfferingRosterRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:4",
+            "UC10:main:5"
+          ],
+          "call_id": "UC10:main:4::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ViewOfferingRosterRequest",
+              "source_kind": "input",
+              "source_ref": "UC10:main:4#request"
+            }
+          ]
+        },
+        {
+          "source": "ProfessorBoundary",
+          "target": "ProfessorRosterControl",
+          "label": "getOfferingRoster(request:ViewOfferingRosterRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:4",
+            "UC10:main:5"
+          ],
+          "call_id": "UC10:main:4::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ViewOfferingRosterRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC10:main:4::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "ProfessorRosterControl",
+          "target": "CourseOffering",
+          "label": "getRoster()",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:5"
+          ],
+          "call_id": "UC10:main:4::call:3",
+          "reply_to": "",
+          "arguments": []
+        },
+        {
+          "source": "CourseOffering",
+          "target": "ProfessorRosterControl",
+          "label": "list<StudentRosterDto>",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:5"
+          ],
+          "call_id": "",
+          "reply_to": "UC10:main:4::call:3",
+          "arguments": []
+        },
+        {
+          "source": "ProfessorRosterControl",
+          "target": "ProfessorBoundary",
+          "label": "OfferingRosterResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:4",
+            "UC10:main:5"
+          ],
+          "call_id": "",
+          "reply_to": "UC10:main:4::call:2",
+          "arguments": []
+        },
+        {
+          "source": "ProfessorBoundary",
+          "target": "Professor",
+          "label": "OfferingRosterResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC10"
+          ],
+          "step_ids": [
+            "UC10:main:4",
+            "UC10:main:5"
+          ],
+          "call_id": "",
+          "reply_to": "UC10:main:4::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC11",
+      "use_case_name": "Manage Academic Term",
+      "Participants": [
+        {
+          "name": "Academic Administrator",
+          "alias": "Academic_Administrator",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "AcademicAdministratorBoundary",
+          "alias": "AcademicAdministratorBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "AcademicAdministratorBoundary"
+        },
+        {
+          "name": "AcademicTermManagementControl",
+          "alias": "AcademicTermManagementControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "AcademicTermManagementControl"
+        },
+        {
+          "name": "AcademicTerm",
+          "alias": "AcademicTerm",
+          "kind": "entity",
+          "description": "",
+          "source_class": "AcademicTerm"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Academic_Administrator",
+          "target": "AcademicAdministratorBoundary",
+          "label": "handleManageTerm(request:ManageTermRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC11"
+          ],
+          "step_ids": [
+            "UC11:main:1",
+            "UC11:main:2",
+            "UC11:main:3",
+            "UC11:extension:2a:2a1"
+          ],
+          "call_id": "UC11:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ManageTermRequest",
+              "source_kind": "input",
+              "source_ref": "UC11:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "AcademicAdministratorBoundary",
+          "target": "AcademicTermManagementControl",
+          "label": "manageTerm(request:ManageTermRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC11"
+          ],
+          "step_ids": [
+            "UC11:main:1",
+            "UC11:main:2",
+            "UC11:main:3",
+            "UC11:extension:2a:2a1"
+          ],
+          "call_id": "UC11:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ManageTermRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC11:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "AcademicTermManagementControl",
+          "target": "AcademicTerm",
+          "label": "create(name:String,startDate:localdate,endDate:localdate,registrationStartDate:localdate,registrationEndDate:localdate)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC11"
+          ],
+          "step_ids": [
+            "UC11:main:3"
+          ],
+          "call_id": "UC11:main:1::call:3",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "name",
+              "type": "String",
+              "source_kind": "call_parameter",
+              "source_ref": "UC11:main:1::call:2#request.name"
+            },
+            {
+              "parameter": "startDate",
+              "type": "localdate",
+              "source_kind": "call_parameter",
+              "source_ref": "UC11:main:1::call:2#request.startDate"
+            },
+            {
+              "parameter": "endDate",
+              "type": "localdate",
+              "source_kind": "call_parameter",
+              "source_ref": "UC11:main:1::call:2#request.endDate"
+            },
+            {
+              "parameter": "registrationStartDate",
+              "type": "localdate",
+              "source_kind": "call_parameter",
+              "source_ref": "UC11:main:1::call:2#request.registrationStartDate"
+            },
+            {
+              "parameter": "registrationEndDate",
+              "type": "localdate",
+              "source_kind": "call_parameter",
+              "source_ref": "UC11:main:1::call:2#request.registrationEndDate"
+            }
+          ]
+        },
+        {
+          "source": "AcademicTerm",
+          "target": "AcademicTermManagementControl",
+          "label": "AcademicTerm",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC11"
+          ],
+          "step_ids": [
+            "UC11:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC11:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "AcademicTermManagementControl",
+          "target": "AcademicAdministratorBoundary",
+          "label": "ManageTermResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC11"
+          ],
+          "step_ids": [
+            "UC11:main:1",
+            "UC11:main:2",
+            "UC11:main:3",
+            "UC11:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC11:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "AcademicAdministratorBoundary",
+          "target": "Academic_Administrator",
+          "label": "ManageTermResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC11"
+          ],
+          "step_ids": [
+            "UC11:main:1",
+            "UC11:main:2",
+            "UC11:main:3",
+            "UC11:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC11:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    },
+    {
+      "use_case_id": "UC12",
+      "use_case_name": "Manage Course Offering",
+      "Participants": [
+        {
+          "name": "Academic Administrator",
+          "alias": "Academic_Administrator",
+          "kind": "actor",
+          "description": "",
+          "source_class": ""
+        },
+        {
+          "name": "AcademicAdministratorBoundary",
+          "alias": "AcademicAdministratorBoundary",
+          "kind": "boundary",
+          "description": "",
+          "source_class": "AcademicAdministratorBoundary"
+        },
+        {
+          "name": "CourseOfferingManagementControl",
+          "alias": "CourseOfferingManagementControl",
+          "kind": "control",
+          "description": "",
+          "source_class": "CourseOfferingManagementControl"
+        },
+        {
+          "name": "CourseOffering",
+          "alias": "CourseOffering",
+          "kind": "entity",
+          "description": "",
+          "source_class": "CourseOffering"
+        }
+      ],
+      "Messages": [
+        {
+          "source": "Academic_Administrator",
+          "target": "AcademicAdministratorBoundary",
+          "label": "manageCourseOffering(request:ManageCourseOfferingRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC12"
+          ],
+          "step_ids": [
+            "UC12:main:1",
+            "UC12:main:4"
+          ],
+          "call_id": "UC12:main:1::call:1",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ManageCourseOfferingRequest",
+              "source_kind": "input",
+              "source_ref": "UC12:main:1#request"
+            }
+          ]
+        },
+        {
+          "source": "AcademicAdministratorBoundary",
+          "target": "CourseOfferingManagementControl",
+          "label": "process(request:ManageCourseOfferingRequest)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC12"
+          ],
+          "step_ids": [
+            "UC12:main:2",
+            "UC12:main:3",
+            "UC12:extension:2a:2a1"
+          ],
+          "call_id": "UC12:main:1::call:2",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "request",
+              "type": "ManageCourseOfferingRequest",
+              "source_kind": "call_parameter",
+              "source_ref": "UC12:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "source": "CourseOfferingManagementControl",
+          "target": "CourseOffering",
+          "label": "create(details:CourseOfferingDetails)",
+          "type": "sync",
+          "fragments": [],
+          "use_case_ids": [
+            "UC12"
+          ],
+          "step_ids": [
+            "UC12:main:3"
+          ],
+          "call_id": "UC12:main:1::call:3",
+          "reply_to": "",
+          "arguments": [
+            {
+              "parameter": "details",
+              "type": "CourseOfferingDetails",
+              "source_kind": "state",
+              "source_ref": "derived#CourseOfferingDetails(capacity=UC12:main:1::call:2#request.capacity,courseId=UC12:main:1::call:2#request.courseId,instructorId=UC12:main:1::call:2#request.instructorId,schedule=UC12:main:1::call:2#request.schedule,termId=UC12:main:1::call:2#request.termId)"
+            }
+          ]
+        },
+        {
+          "source": "CourseOffering",
+          "target": "CourseOfferingManagementControl",
+          "label": "CourseOffering",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC12"
+          ],
+          "step_ids": [
+            "UC12:main:3"
+          ],
+          "call_id": "",
+          "reply_to": "UC12:main:1::call:3",
+          "arguments": []
+        },
+        {
+          "source": "CourseOfferingManagementControl",
+          "target": "AcademicAdministratorBoundary",
+          "label": "ManageCourseOfferingResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC12"
+          ],
+          "step_ids": [
+            "UC12:main:2",
+            "UC12:main:3",
+            "UC12:extension:2a:2a1"
+          ],
+          "call_id": "",
+          "reply_to": "UC12:main:1::call:2",
+          "arguments": []
+        },
+        {
+          "source": "AcademicAdministratorBoundary",
+          "target": "Academic_Administrator",
+          "label": "ManageCourseOfferingResult",
+          "type": "return",
+          "fragments": [],
+          "use_case_ids": [
+            "UC12"
+          ],
+          "step_ids": [
+            "UC12:main:1",
+            "UC12:main:4"
+          ],
+          "call_id": "",
+          "reply_to": "UC12:main:1::call:1",
+          "arguments": []
+        }
+      ],
+      "UnresolvedSteps": [],
+      "NarrativeSteps": []
+    }
+  ],
+  "class_diagram_hash": "d21f7a0b3749fc4863bc876c91009e4fc6c5d5242bf18ab0a05b939ccefd9038",
+  "MethodProposals": []
+}

@@ -1,0 +1,10 @@
+[
+  {
+    "task": "write_specifications.generate_specs",
+    "elapsedSeconds": 71.510157
+  },
+  {
+    "task": "write_specifications.check_specs",
+    "elapsedSeconds": 0.00391
+  }
+]

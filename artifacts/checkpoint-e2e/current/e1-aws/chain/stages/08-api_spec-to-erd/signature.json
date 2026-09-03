@@ -1,0 +1,23 @@
+{
+  "entities": [
+    "AcademicAdministratorBoundary",
+    "AcademicTerm",
+    "AcademicTermManagementControl",
+    "Course",
+    "CourseOffering",
+    "CourseOfferingManagementControl",
+    "CourseSearchControl",
+    "Professor",
+    "ProfessorBoundary",
+    "ProfessorRosterControl",
+    "Registration",
+    "RegistrationControl",
+    "ScheduleControl",
+    "Student",
+    "StudentBoundary",
+    "UniversityUserBoundary",
+    "WaitlistControl",
+    "WaitlistEntry"
+  ],
+  "findingRules": []
+}

@@ -1,0 +1,160 @@
+[
+  {
+    "id": "UC1",
+    "name": "Search Course Offerings",
+    "primary_actor": "University User",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Search published course offerings and inspect their details.",
+    "requirement_ids": [
+      "RR2",
+      "RR14"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC2",
+    "name": "Register for Course Offering",
+    "primary_actor": "Student",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Register for a selected course offering during its registration period and receive the result.",
+    "requirement_ids": [
+      "RR3",
+      "RR14",
+      "RR5"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC3",
+    "name": "Swap Course Registration",
+    "primary_actor": "Student",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Atomically swap a current registration for another course offering and receive the result.",
+    "requirement_ids": [
+      "RR4",
+      "RR14",
+      "RR5"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC4",
+    "name": "View Current Registrations and Schedule",
+    "primary_actor": "Student",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "View current registrations and the resulting class schedule.",
+    "requirement_ids": [
+      "RR6",
+      "RR14"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC5",
+    "name": "Drop Course Registration",
+    "primary_actor": "Student",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Drop a selected registration during the allowed period and receive the result.",
+    "requirement_ids": [
+      "RR7",
+      "RR14"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC6",
+    "name": "Export Class Schedule",
+    "primary_actor": "Student",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Export the currently viewed class schedule in a downloadable format.",
+    "requirement_ids": [
+      "RR8",
+      "RR14"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC7",
+    "name": "Join Waitlist for Full Course",
+    "primary_actor": "Student",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Join the waitlist for a course offering when registration is rejected because the offering is full and waitlist is enabled.",
+    "requirement_ids": [
+      "RR9",
+      "RR14"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC8",
+    "name": "View Waitlist Entries",
+    "primary_actor": "Student",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "View own waitlist entries.",
+    "requirement_ids": [
+      "RR10",
+      "RR14"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC9",
+    "name": "Cancel Waitlist Entry",
+    "primary_actor": "Student",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Cancel a previously created waitlist entry.",
+    "requirement_ids": [
+      "RR10",
+      "RR14"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC10",
+    "name": "Review Assigned Course Offerings and Rosters",
+    "primary_actor": "Professor",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Review assigned course offerings and their current student rosters.",
+    "requirement_ids": [
+      "RR11",
+      "RR14"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC11",
+    "name": "Manage Academic Term",
+    "primary_actor": "Academic Administrator",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Create and update academic terms and their registration periods.",
+    "requirement_ids": [
+      "RR12",
+      "RR14"
+    ],
+    "nfr_ids": []
+  },
+  {
+    "id": "UC12",
+    "name": "Manage Course Offering",
+    "primary_actor": "Academic Administrator",
+    "supporting_actors": [],
+    "level": "user_goal",
+    "goal": "Create, update, publish, or cancel course offerings and assign instructor, meeting schedule, and enrollment capacity.",
+    "requirement_ids": [
+      "RR13",
+      "RR14"
+    ],
+    "nfr_ids": []
+  }
+]

@@ -1,0 +1,19 @@
+@startuml UC11
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC11 - Manage Academic Term
+
+actor "Academic Administrator" as Academic_Administrator
+boundary "AcademicAdministratorBoundary" as AcademicAdministratorBoundary
+control "AcademicTermManagementControl" as AcademicTermManagementControl
+entity "AcademicTerm" as AcademicTerm
+
+Academic_Administrator -> AcademicAdministratorBoundary : handleManageTerm(request)
+AcademicAdministratorBoundary -> AcademicTermManagementControl : manageTerm(request)
+AcademicTermManagementControl -> AcademicTerm : create(name, startDate, endDate\nregistrationStartDate, registrationEndDate)
+AcademicTerm --> AcademicTermManagementControl : AcademicTerm
+AcademicTermManagementControl --> AcademicAdministratorBoundary : ManageTermResult
+AcademicAdministratorBoundary --> Academic_Administrator : ManageTermResult
+
+@enduml

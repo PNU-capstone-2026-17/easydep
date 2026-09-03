@@ -1,0 +1,10 @@
+{
+  "sourceCheckpoint": "specifications",
+  "targetCheckpoint": "usecase_diagram",
+  "validation": "passed",
+  "tasks": 3,
+  "files": [
+    "usecase.puml",
+    "usecase.svg"
+  ]
+}

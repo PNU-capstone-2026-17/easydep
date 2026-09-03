@@ -1,0 +1,84 @@
+@startuml
+hide circle
+!theme plain
+
+skinparam linetype ortho
+
+entity "AcademicTerm" as AcademicTerm {
+  * id : UUID
+  --
+  name : VARCHAR(255)
+  startDate : DATE
+  endDate : DATE
+  registrationStartDate : DATE
+  registrationEndDate : DATE
+}
+
+entity "Course" as Course {
+  * id : UUID
+  --
+  code : VARCHAR(255)
+  title : VARCHAR(255)
+  description : VARCHAR(255)
+}
+
+entity "Professor" as Professor {
+  * id : UUID
+  --
+  name : VARCHAR(255)
+  email : VARCHAR(255)
+}
+
+entity "Student" as Student {
+  * id : UUID
+  --
+  name : VARCHAR(255)
+  email : VARCHAR(255)
+}
+
+entity "CourseOffering" as CourseOffering {
+  * id : UUID
+  --
+  termId : UUID
+  courseId : UUID
+  instructorId : UUID
+  schedule : MEETINGSCHEDULE
+  capacity : INT
+  enrolledCount : INT
+  waitlistEnabled : BOOLEAN
+  status : OFFERINGSTATUS
+  academicterm_id : UUID <<FK>> <<not null>>
+  course_id : UUID <<FK>> <<not null>>
+  professor_id : UUID <<FK>> <<not null>>
+}
+
+entity "Registration" as Registration {
+  * id : UUID
+  --
+  studentId : UUID
+  offeringId : UUID
+  registrationDate : TIMESTAMP WITH TIME ZONE
+  courseoffering_id : UUID <<FK>> <<not null>>
+  student_id : UUID <<FK>> <<not null>>
+}
+
+entity "WaitlistEntry" as WaitlistEntry {
+  * id : UUID
+  --
+  studentId : UUID
+  offeringId : UUID
+  position : INT
+  entryDate : TIMESTAMP WITH TIME ZONE
+  courseoffering_id : UUID <<FK>> <<not null>>
+  student_id : UUID <<FK>> <<not null>>
+}
+
+CourseOffering }o..|| AcademicTerm
+CourseOffering }o..|| Course
+CourseOffering }o..|| Professor
+Registration }o..|| CourseOffering
+Registration }o..|| Student
+WaitlistEntry }o..|| CourseOffering
+WaitlistEntry }o..|| Student
+
+@enduml

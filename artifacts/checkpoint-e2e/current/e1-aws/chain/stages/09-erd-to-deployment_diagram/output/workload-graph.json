@@ -1,0 +1,237 @@
+{
+  "schemaVersion": "easydep-workload-graph",
+  "workloads": [
+    {
+      "id": "course-registration-app",
+      "name": "course-registration-app",
+      "artifact": {
+        "kind": "generatedApplication"
+      },
+      "interfaces": [
+        {
+          "id": "course-registration-app-http",
+          "protocol": "http",
+          "exposure": "public",
+          "sourceRefs": [
+            "checkpointCase:e1-aws:generated-application"
+          ]
+        }
+      ],
+      "storage": [],
+      "configuration": [
+        {
+          "id": "course-registration-db-endpoint",
+          "name": "COURSE_REGISTRATION_DB_HOST",
+          "kind": "endpointBinding",
+          "connectionRef": "course-registration-app-to-course-registration-db",
+          "projection": "host",
+          "sensitive": false,
+          "sourceRefs": [
+            "checkpointCase:e1-aws:private-database-connection"
+          ]
+        },
+        {
+          "id": "course-registration-db-credential",
+          "name": "COURSE_REGISTRATION_DB_PASSWORD",
+          "kind": "secretBinding",
+          "sensitive": true,
+          "sourceRefs": [
+            "checkpointCase:e1-aws:private-database-connection"
+          ]
+        }
+      ],
+      "resourceRequirements": {
+        "minVCpu": null,
+        "minMemoryGiB": null
+      },
+      "replicationSafety": "unknown",
+      "sourceRefs": [
+        "e1-generated-application",
+        "checkpointCase:e1-aws:generated-application"
+      ]
+    },
+    {
+      "id": "course-registration-db",
+      "name": "course-registration-db",
+      "artifact": {
+        "kind": "prebuiltImage",
+        "image": "postgres:16.4-bookworm",
+        "engine": "postgresql",
+        "deploymentMode": "container",
+        "runtimeCatalogRef": "docker-on-vm/prebuilt-image"
+      },
+      "interfaces": [
+        {
+          "id": "course-registration-db-tcp",
+          "protocol": "tcp",
+          "exposure": "internal",
+          "port": 5432,
+          "sourceRefs": [
+            "checkpointCase:e1-aws:postgresql-runtime"
+          ]
+        }
+      ],
+      "storage": [
+        {
+          "id": "course-registration-db-data",
+          "persistence": "persistent",
+          "capacityGiB": 20,
+          "mountPath": "/var/lib/postgresql/data",
+          "deletionPolicy": "retain",
+          "replicaSemantics": "singleAttachment",
+          "sourceRefs": [
+            "checkpointCase:e1-aws:postgresql-runtime"
+          ]
+        }
+      ],
+      "configuration": [
+        {
+          "id": "runtime-credential",
+          "name": "POSTGRES_PASSWORD",
+          "kind": "secretBinding",
+          "sensitive": true,
+          "sourceRefs": [
+            "checkpointCase:e1-aws:private-database-connection"
+          ]
+        }
+      ],
+      "resourceRequirements": {
+        "minVCpu": null,
+        "minMemoryGiB": null
+      },
+      "replicationSafety": "unknown",
+      "sourceRefs": [
+        "e1-postgresql-runtime",
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "externalDependencies": [],
+  "connections": [
+    {
+      "id": "course-registration-app-to-course-registration-db",
+      "sourceRef": "course-registration-app",
+      "targetRef": "course-registration-db",
+      "protocol": "tcp",
+      "sourceInterfaceRef": "",
+      "targetInterfaceRef": "course-registration-db-tcp",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ]
+    }
+  ],
+  "constraints": [
+    {
+      "id": "course-registration-app-replicas",
+      "kind": "replicaCount",
+      "workloadRefs": [
+        "course-registration-app"
+      ],
+      "value": 1,
+      "required": true,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application"
+      ]
+    },
+    {
+      "id": "course-registration-db-replicas",
+      "kind": "replicaCount",
+      "workloadRefs": [
+        "course-registration-db"
+      ],
+      "value": 1,
+      "required": true,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "derivations": [
+    {
+      "id": "app-db-config",
+      "kind": "endpointBinding",
+      "workloadRef": "course-registration-app",
+      "connectionRef": "conn-app-db",
+      "name": "DB_HOST",
+      "projection": "host"
+    },
+    {
+      "id": "app-db-port-config",
+      "kind": "endpointBinding",
+      "workloadRef": "course-registration-app",
+      "connectionRef": "conn-app-db",
+      "name": "DB_PORT",
+      "projection": "port"
+    },
+    {
+      "id": "app-db-secret",
+      "kind": "secretBinding",
+      "workloadRef": "course-registration-app",
+      "connectionRef": "conn-app-db",
+      "name": "DB_PASSWORD",
+      "projection": "password"
+    },
+    {
+      "rule": "reject-ungrounded-constraint",
+      "decision": "Ignored app-db-endpoint; it has no source references.",
+      "sourceRefs": [
+        "project-policy:reject-ungrounded-constraint"
+      ]
+    }
+  ],
+  "issues": [],
+  "inputArtifacts": [
+    {
+      "artifact": "refinedRequirements",
+      "version": null,
+      "digest": "02b898ca79d9a233cbbc1f0dd7913ef810edb938a1ad2f1b7ed9202d2243782f"
+    },
+    {
+      "artifact": "capabilityContract",
+      "version": null,
+      "digest": "51e30c096a7d76bffde5682c6e85af4b53d1cedb72d24a7c11a852e42752428b"
+    },
+    {
+      "artifact": "resourceIntake",
+      "version": null,
+      "digest": "6165395924b6b331a72727084ff9e38df143802d469e8fa91dafde55ce92164b"
+    },
+    {
+      "artifact": "resourceSpec",
+      "version": null,
+      "digest": "d88ca5eeb2036bdcee970d4dbc888b49a39e1eb4f8226ee8e54252be81a9bfde"
+    },
+    {
+      "artifact": "usecaseSpec",
+      "version": null,
+      "digest": "f736663dc6d44bce1daa696d11637b76ba0af5c88d761cb2b3f5a48046536dcf"
+    },
+    {
+      "artifact": "classModel",
+      "version": null,
+      "digest": "fc1c272c756cd3876ea7c70df3b60ea36f7f12464b372af60486901d5de5b580"
+    },
+    {
+      "artifact": "sequenceModel",
+      "version": null,
+      "digest": "1cf969880c72f6e2ad31d287237b3fb0ebaf1166cb792691582f3b820045ebc9"
+    },
+    {
+      "artifact": "apiSpec",
+      "version": null,
+      "digest": "20e04b61e059507ba7abb70c4af48272bd10e08bc501cb22881afaccdcee50e6"
+    },
+    {
+      "artifact": "erdModel",
+      "version": null,
+      "digest": "fc1c272c756cd3876ea7c70df3b60ea36f7f12464b372af60486901d5de5b580"
+    },
+    {
+      "artifact": "deploymentPlanningFacts",
+      "version": null,
+      "digest": "6266092abb41a0cec0fe016d638e34b5353dbc52cb3035c3548b6330a4caef3c"
+    }
+  ],
+  "inputDigest": "07b40adc38a4fa871f131b445474989929554887754485860899f344db7a7a12",
+  "structureDigest": "8a8d3b24a11aa606c2ffcf30b53cc2c5d207d9d76d547cc18f439b7977bc546f"
+}

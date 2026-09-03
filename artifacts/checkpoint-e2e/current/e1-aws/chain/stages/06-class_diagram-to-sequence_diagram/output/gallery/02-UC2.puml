@@ -1,0 +1,47 @@
+@startuml UC2
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC2 - Register for Course Offering
+
+actor "Student" as Student
+boundary "StudentBoundary" as StudentBoundary
+control "RegistrationControl" as RegistrationControl
+control "WaitlistControl" as WaitlistControl
+entity "CourseOffering" as CourseOffering
+entity "Registration" as Registration
+entity "Student" as Student_Entity
+entity "WaitlistEntry" as WaitlistEntry
+
+Student -> StudentBoundary : registerForOffering(request)
+StudentBoundary -> RegistrationControl : processRegistration(request)
+RegistrationControl -> Student_Entity : isAuthorizedForRegistration()
+Student_Entity --> RegistrationControl : boolean
+RegistrationControl -> CourseOffering : isOpenForRegistration()
+CourseOffering --> RegistrationControl : boolean
+RegistrationControl -> CourseOffering : hasAvailableSeat()
+CourseOffering --> RegistrationControl : boolean
+RegistrationControl -> CourseOffering : conflictsWithStudent(studentId)
+CourseOffering --> RegistrationControl : boolean
+RegistrationControl -> Registration : existsForStudentOffering(studentId, offeringId)
+Registration --> RegistrationControl : boolean
+RegistrationControl -> CourseOffering : incrementEnrolledCount()
+CourseOffering --> RegistrationControl : void
+RegistrationControl -> Registration : create(studentId, offeringId, registrationDate)
+Registration --> RegistrationControl : Registration
+RegistrationControl --> StudentBoundary : RegistrationOutcome
+opt when offering is full
+  Student -> StudentBoundary : joinWaitlist(request)
+  StudentBoundary -> WaitlistControl : processJoin(request)
+  WaitlistControl -> Student_Entity : isAuthorizedForRegistration()
+  Student_Entity --> WaitlistControl : boolean
+  WaitlistControl -> CourseOffering : findById(id)
+  CourseOffering --> WaitlistControl : CourseOffering
+  WaitlistControl -> WaitlistEntry : createEntry(studentId, offeringId, position\nentryDate)
+  WaitlistEntry --> WaitlistControl : WaitlistEntry
+  WaitlistControl --> StudentBoundary : WaitlistJoinResult
+  StudentBoundary --> Student : WaitlistJoinResult
+end
+StudentBoundary --> Student : RegistrationOutcome
+
+@enduml

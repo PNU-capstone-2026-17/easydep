@@ -1,0 +1,14 @@
+[
+  {
+    "task": "draw_diagram.identify_relationships",
+    "elapsedSeconds": 38.362804
+  },
+  {
+    "task": "draw_diagram.check_relationships",
+    "elapsedSeconds": 0.008174
+  },
+  {
+    "task": "draw_diagram.render_diagram",
+    "elapsedSeconds": 0.011325
+  }
+]

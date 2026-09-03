@@ -1,0 +1,11 @@
+{
+  "sourceCheckpoint": "usecase_diagram",
+  "targetCheckpoint": "class_diagram",
+  "validation": "passed",
+  "tasks": 3,
+  "files": [
+    "class-model.json",
+    "class.puml",
+    "class.svg"
+  ]
+}

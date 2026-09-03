@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "CapabilityContract/v1",
+  "capabilities": [
+    {
+      "id": "authentication",
+      "statement": "Provide verification of a user's identity before any protected operation is allowed, as the system requires an authenticated identity as a precondition.",
+      "requirementIds": [
+        "RR1"
+      ],
+      "evidenceSpans": [
+        "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations."
+      ],
+      "origin": "explicit",
+      "necessity": "required",
+      "decision": "abstained",
+      "decisionReason": "not-deployment-boundary",
+      "rawConfidence": 1.0,
+      "calibratedConfidence": 1.0,
+      "thresholdVersion": "development-no-inference-v1",
+      "confirmation": "pending",
+      "alternatives": [],
+      "unresolvedFields": [],
+      "dependencyCapabilityIds": []
+    },
+    {
+      "id": "authorization",
+      "statement": "Enforce role‑based permission checks for every protected operation, ensuring that only users with the appropriate university‑user role can perform the action.",
+      "requirementIds": [
+        "RR14"
+      ],
+      "evidenceSpans": [
+        "The system shall authorize each protected operation according to the authenticated university‑user role."
+      ],
+      "origin": "explicit",
+      "necessity": "required",
+      "decision": "abstained",
+      "decisionReason": "not-deployment-boundary",
+      "rawConfidence": 1.0,
+      "calibratedConfidence": 1.0,
+      "thresholdVersion": "development-no-inference-v1",
+      "confirmation": "pending",
+      "alternatives": [],
+      "unresolvedFields": [],
+      "dependencyCapabilityIds": []
+    },
+    {
+      "id": "durable_storage",
+      "statement": "Persist all core domain data (courses, offerings, terms, users, registrations, waitlist entries) so that it survives application and server restarts.",
+      "requirementIds": [
+        "RR15"
+      ],
+      "evidenceSpans": [
+        "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts."
+      ],
+      "origin": "explicit",
+      "necessity": "required",
+      "decision": "accepted",
+      "decisionReason": "explicit-grounded-constraint",
+      "rawConfidence": 1.0,
+      "calibratedConfidence": 1.0,
+      "thresholdVersion": "development-no-inference-v1",
+      "confirmation": "notRequired",
+      "alternatives": [],
+      "unresolvedFields": [],
+      "dependencyCapabilityIds": []
+    },
+    {
+      "id": "concurrency_control",
+      "statement": "Guarantee correct handling of concurrent registration, swap, drop, and waitlist operations so that enrollment capacity, registration uniqueness, and waitlist ordering are preserved.",
+      "requirementIds": [
+        "RR16"
+      ],
+      "evidenceSpans": [
+        "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering."
+      ],
+      "origin": "explicit",
+      "necessity": "required",
+      "decision": "abstained",
+      "decisionReason": "not-deployment-boundary",
+      "rawConfidence": 1.0,
+      "calibratedConfidence": 1.0,
+      "thresholdVersion": "development-no-inference-v1",
+      "confirmation": "pending",
+      "alternatives": [],
+      "unresolvedFields": [],
+      "dependencyCapabilityIds": []
+    }
+  ],
+  "questions": []
+}

@@ -1,0 +1,41 @@
+{
+  "signature": {
+    "workloads": [
+      "course-registration-app",
+      "course-registration-db"
+    ],
+    "connections": [
+      "course-registration-app-to-course-registration-db"
+    ],
+    "computeKinds": [
+      "standaloneVm"
+    ],
+    "placements": [
+      "course-registration-app->compute-1",
+      "course-registration-db->compute-1"
+    ],
+    "resourceKinds": [
+      "app-registry",
+      "boot-image",
+      "compute-instance",
+      "disk",
+      "disk-attachment",
+      "ingress-default-route",
+      "ingress-route-association",
+      "ingress-route-table",
+      "internet-gateway",
+      "network",
+      "public-ip",
+      "registry-instance-profile",
+      "registry-pull-binding",
+      "registry-pull-identity",
+      "secret-ref",
+      "secret-ref",
+      "security-group",
+      "state-secret-access-binding",
+      "state-secret-access-binding",
+      "subnet"
+    ],
+    "issueStatuses": []
+  }
+}

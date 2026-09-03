@@ -1,0 +1,14 @@
+[
+  {
+    "task": "class_diagram.extract_class_diagram",
+    "elapsedSeconds": 76.043918
+  },
+  {
+    "task": "class_diagram.check_class_diagram",
+    "elapsedSeconds": 0.035582
+  },
+  {
+    "task": "class_diagram.render_class_diagram",
+    "elapsedSeconds": 2.975339
+  }
+]

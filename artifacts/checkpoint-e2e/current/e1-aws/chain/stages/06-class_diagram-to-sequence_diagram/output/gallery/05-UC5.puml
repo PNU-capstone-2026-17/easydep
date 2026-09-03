@@ -1,0 +1,24 @@
+@startuml UC5
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC5 - Drop Course Registration
+
+actor "Student" as Student
+boundary "StudentBoundary" as StudentBoundary
+control "RegistrationControl" as RegistrationControl
+entity "Registration" as Registration
+entity "Student" as Student_Entity
+
+Student -> StudentBoundary : dropRegistration(request)
+StudentBoundary -> RegistrationControl : processDrop(request)
+RegistrationControl -> Student_Entity : isAuthorizedForRegistration()
+Student_Entity --> RegistrationControl : boolean
+RegistrationControl -> Registration : findById(id)
+Registration --> RegistrationControl : Registration
+RegistrationControl -> Registration : deleteById(id)
+Registration --> RegistrationControl : void
+RegistrationControl --> StudentBoundary : DropResult
+StudentBoundary --> Student : DropResult
+
+@enduml

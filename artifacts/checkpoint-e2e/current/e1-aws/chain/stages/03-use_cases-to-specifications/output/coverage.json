@@ -1,0 +1,61 @@
+{
+  "fr_total": 14,
+  "covered_fr_ids": [
+    "RR10",
+    "RR11",
+    "RR12",
+    "RR13",
+    "RR14",
+    "RR2",
+    "RR3",
+    "RR4",
+    "RR5",
+    "RR6",
+    "RR7",
+    "RR8",
+    "RR9"
+  ],
+  "unrealized_fr_ids": [
+    "RR16"
+  ],
+  "orphan_fr_ids": [],
+  "unattached_nfr_ids": [],
+  "unknown_requirement_refs": [],
+  "unknown_use_case_refs": [],
+  "unaccounted_requirement_ids": [],
+  "goal_requirement_ids": [
+    "RR10",
+    "RR11",
+    "RR12",
+    "RR13",
+    "RR14",
+    "RR2",
+    "RR3",
+    "RR4",
+    "RR5",
+    "RR6",
+    "RR7",
+    "RR8",
+    "RR9"
+  ],
+  "covered_goal_requirement_ids": [
+    "RR10",
+    "RR11",
+    "RR12",
+    "RR13",
+    "RR14",
+    "RR2",
+    "RR3",
+    "RR4",
+    "RR5",
+    "RR6",
+    "RR7",
+    "RR8",
+    "RR9"
+  ],
+  "missing_goal_requirement_ids": [],
+  "goal_coverage_ratio": 1.0,
+  "accounted_coverage_ratio": 1.0,
+  "fr_realization_ratio": 0.9286,
+  "coverage_ratio": 1.0
+}

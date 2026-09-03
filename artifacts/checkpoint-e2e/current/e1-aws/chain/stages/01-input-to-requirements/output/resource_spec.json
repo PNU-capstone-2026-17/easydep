@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "4",
+  "workloads": [
+    "vm"
+  ],
+  "provider": "aws",
+  "regionAsWritten": "ap-northeast-2",
+  "region": "ap-northeast-2",
+  "monthlyBudgetUSD": 500.0
+}

@@ -1,0 +1,82 @@
+@startuml
+!theme plain
+left to right direction
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 55
+skinparam ranksep 65
+skinparam ArrowColor #2f6b50
+skinparam node {
+  BackgroundColor #ffffff
+  BorderColor #68736b
+}
+skinparam rectangle {
+  BackgroundColor #f8faf8
+  BorderColor #68736b
+}
+skinparam cloud {
+  BackgroundColor #f5f7f4
+  BorderColor #7f8d83
+}
+title Runtime deployment - AWS / ap-northeast-2
+actor "Internet client" as internet_client
+cloud "AWS" as provider_boundary {
+  frame "Region: ap-northeast-2" as region_boundary {
+    node "VPC" as provider_network {
+      node "Application Subnet\none selected zone" as provider_subnet {
+        node "EC2 Instance\n1 standalone instance" as primary_compute {
+          component "course-registration-app\n<<Docker container>>\n[runtime contract]\n[env] COURSE_REGISTRATION_DB_HOST\n[secret] COURSE_REGISTRATION_DB_PASSWORD\n[image] digest binding" as runtime_course_registration_app
+          component "course-registration-db\n<<Docker container>>\n[runtime contract]\n[mount] /var/lib/postgresql/data\n[secret] POSTGRES_PASSWORD\n[image] pinned digest" as runtime_course_registration_db
+        }
+      }
+      rectangle "Security Group / Application\nCompute: course-registration-app + course-registration-db" as traffic_filter_traffic_filter_compute_1 <<traffic policy>>
+    }
+    node "Elastic IP" as public_address
+    database "EBS Volume" as persistent_disk <<retained>>
+  }
+}
+
+actor "User-run deploy.sh\n<<local CSP authentication>>" as user_deploy
+frame "Application delivery dependencies" as delivery_dependencies {
+  cloud "VM outbound path\n(public address or managed NAT)" as workload_outbound_dependency
+  node "Amazon ECR Repository" as application_registry_dependency_course_registration_app
+  node "IAM Role / VM Registry Pull" as application_identity_dependency_course_registration_app
+  artifact "course-registration-app image source" as application_source_artifact_course_registration_app
+  artifact "course-registration-app image@sha256\n<<immutable digest>>" as application_image_dependency_course_registration_app
+}
+user_deploy -[#2f6b50]-> application_registry_dependency_course_registration_app : create
+user_deploy -[#2f6b50]-> application_image_dependency_course_registration_app : push
+application_registry_dependency_course_registration_app -[#2f6b50]-> application_image_dependency_course_registration_app
+application_identity_dependency_course_registration_app ..[#8a6d3b]> application_image_dependency_course_registration_app : pull
+application_source_artifact_course_registration_app -[#2f6b50]-> application_image_dependency_course_registration_app : build
+frame "Prebuilt image dependencies" as prebuilt_dependencies {
+  artifact "postgres:16.4-bookworm\n<<explicit prebuilt image; immutable digest>>" as prebuilt_image_dependency_course_registration_db
+}
+frame "Secret runtime dependencies" as secret_dependencies {
+  artifact "Existing AWS Secret" as secret_secret_ref_course_registration_app_course_registration_db_credential
+  artifact "Existing AWS Secret" as secret_secret_ref_course_registration_db_runtime_credential
+  node "IAM Role Policy / State Secret Read" as secret_binding_secret_access_binding_course_registration_app_course_registration_db_credential
+  node "IAM Role Policy / State Secret Read" as secret_binding_secret_access_binding_course_registration_db_runtime_credential
+}
+interface "Public HTTP endpoint" as public_endpoint
+internet_client -[#2f6b50]-> public_endpoint : HTTP
+public_endpoint -[#2f6b50]-> public_address
+public_address -[#2f6b50]-> runtime_course_registration_app : HTTP
+runtime_course_registration_app -[#2f6b50]-> runtime_course_registration_db : TCP
+application_image_dependency_course_registration_app -[#2f6b50]-> runtime_course_registration_app
+workload_outbound_dependency ..[#8a6d3b]> runtime_course_registration_app
+secret_secret_ref_course_registration_app_course_registration_db_credential --[#8a6d3b] application_identity_dependency_course_registration_app : read permission
+application_identity_dependency_course_registration_app ..[#8a6d3b]> runtime_course_registration_app : inject
+prebuilt_image_dependency_course_registration_db -[#2f6b50]-> runtime_course_registration_db
+secret_secret_ref_course_registration_db_runtime_credential --[#8a6d3b] application_identity_dependency_course_registration_app : read permission
+application_identity_dependency_course_registration_app ..[#8a6d3b]> runtime_course_registration_db : inject
+traffic_filter_traffic_filter_compute_1 ..[#8a6d3b]> runtime_course_registration_app
+traffic_filter_traffic_filter_compute_1 ..[#8a6d3b]> runtime_course_registration_db
+persistent_disk ..[#6f7c73]> runtime_course_registration_db
+legend bottom
+  |= Line |= Meaning |
+  | <color:#2f6b50>solid arrow</color> | runtime request or data flow |
+  | <color:#8a6d3b>dotted arrow</color> | health or traffic policy configuration |
+  | <color:#6f7c73>dotted arrow</color> | placement or attachment |
+endlegend
+@enduml

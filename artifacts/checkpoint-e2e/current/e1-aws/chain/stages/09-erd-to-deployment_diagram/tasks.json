@@ -1,0 +1,14 @@
+[
+  {
+    "task": "deployment_diagram.extract_deployment_diagram",
+    "elapsedSeconds": 27.408973
+  },
+  {
+    "task": "deployment_diagram.finalize_deployment_diagram",
+    "elapsedSeconds": 0.041259
+  },
+  {
+    "task": "deployment_diagram.render_deployment_diagram",
+    "elapsedSeconds": 3.442684
+  }
+]

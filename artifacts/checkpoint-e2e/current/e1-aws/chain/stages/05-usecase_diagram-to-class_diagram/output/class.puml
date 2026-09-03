@@ -1,0 +1,382 @@
+@startuml
+allowmixing
+!theme plain
+skinparam classAttributeIconSize 0
+
+class UniversityUserBoundary <<Boundary>> {
+  + searchCourseOfferings(criteria : CourseSearchCriteria): SearchResult
+  + viewCourseOffering(offeringId : uuid): OfferingDetailsDto
+}
+
+class StudentBoundary <<Boundary>> {
+  + registerForOffering(request : RegistrationRequest): RegistrationOutcome
+  + swapCourseRegistration(request : SwapRequest): SwapResult
+  + viewCurrentRegistrations(request : StudentScheduleRequest): ViewRegistrationsResult
+  + dropRegistration(request : DropRequest): DropResult
+  + exportSchedule(request : ExportScheduleRequest): ExportScheduleResult
+  + joinWaitlist(request : WaitlistJoinRequest): WaitlistJoinResult
+  + viewWaitlistEntries(request : ViewWaitlistRequest): ViewWaitlistResult
+  + cancelWaitlist(request : CancelWaitlistRequest): CancelWaitlistResult
+}
+
+class ProfessorBoundary <<Boundary>> {
+  + reviewAssignedOfferings(request : ReviewRequest): SearchResult
+  + viewOfferingRoster(request : ViewOfferingRosterRequest): OfferingRosterResult
+}
+
+class AcademicAdministratorBoundary <<Boundary>> {
+  + handleManageTerm(request : ManageTermRequest): ManageTermResult
+  + manageCourseOffering(request : ManageCourseOfferingRequest): ManageCourseOfferingResult
+}
+
+class CourseSearchControl <<Control>> {
+  + executeSearch(criteria : CourseSearchCriteria): SearchResult
+  + retrieveOfferingDetails(offeringId : uuid): OfferingDetailsDto
+}
+
+class RegistrationControl <<Control>> {
+  + processRegistration(request : RegistrationRequest): RegistrationOutcome
+  + performSwap(request : SwapRequest): SwapResult
+  + processDrop(request : DropRequest): DropResult
+}
+
+class ScheduleControl <<Control>> {
+  + assembleStudentSchedule(request : StudentScheduleRequest): ViewRegistrationsResult
+  + exportStudentSchedule(request : ExportScheduleRequest): ExportScheduleResult
+}
+
+class WaitlistControl <<Control>> {
+  + processJoin(request : WaitlistJoinRequest): WaitlistJoinResult
+  + viewStudentWaitlist(request : ViewWaitlistRequest): ViewWaitlistResult
+  + processCancellation(request : CancelWaitlistRequest): CancelWaitlistResult
+}
+
+class CourseOfferingManagementControl <<Control>> {
+  + process(request : ManageCourseOfferingRequest): ManageCourseOfferingResult
+}
+
+class AcademicTermManagementControl <<Control>> {
+  + manageTerm(request : ManageTermRequest): ManageTermResult
+}
+
+class ProfessorRosterControl <<Control>> {
+  + getAssignedOfferings(professorId : uuid): SearchResult
+  + getOfferingRoster(request : ViewOfferingRosterRequest): OfferingRosterResult
+}
+
+class AcademicTerm <<Entity>> {
+  - id : uuid
+  - name : String
+  - startDate : localdate
+  - endDate : localdate
+  - registrationStartDate : localdate
+  - registrationEndDate : localdate
+  + findById(id : uuid): AcademicTerm
+  + updateDetails(name : String, startDate : localdate, endDate : localdate, registrationStartDate : localdate, registrationEndDate : localdate): void
+  + create(name : String, startDate : localdate, endDate : localdate, registrationStartDate : localdate, registrationEndDate : localdate): AcademicTerm
+}
+
+class Course <<Entity>> {
+  - id : uuid
+  - code : String
+  - title : String
+  - description : String
+  + findById(id : uuid): Course
+}
+
+class Professor <<Entity>> {
+  - id : uuid
+  - name : String
+  - email : String
+  + findById(id : uuid): Professor
+}
+
+class Student <<Entity>> {
+  - id : uuid
+  - name : String
+  - email : String
+  + isAuthorizedForRegistration(): boolean
+  + isAuthorizedForSwap(): boolean
+  + findById(id : uuid): Student
+  + isAuthorizedForWaitlistCancellation(): boolean
+}
+
+class CourseOffering <<Entity>> {
+  - id : uuid
+  - termId : uuid
+  - courseId : uuid
+  - instructorId : uuid
+  - schedule : MeetingSchedule
+  - capacity : int
+  - enrolledCount : int
+  - waitlistEnabled : boolean
+  - status : OfferingStatus
+  + searchPublished(criteria : CourseSearchCriteria): list<CourseOffering>
+  + toSummary(): CourseOfferingSummary
+  + findById(id : uuid): CourseOffering
+  + isOpenForRegistration(): boolean
+  + hasAvailableSeat(): boolean
+  + conflictsWithStudent(studentId : uuid): boolean
+  + incrementEnrolledCount(): void
+  + isEligibleForSwap(studentId : uuid): boolean
+  + findByInstructorId(instructorId : uuid): list<CourseOffering>
+  + getRoster(): list<StudentRosterDto>
+  + create(details : CourseOfferingDetails): CourseOffering
+  + update(details : CourseOfferingDetails): void
+  + publish(): void
+  + cancel(): void
+}
+
+class Registration <<Entity>> {
+  - id : uuid
+  - studentId : uuid
+  - offeringId : uuid
+  - registrationDate : localdatetime
+  + existsForStudentOffering(studentId : uuid, offeringId : uuid): boolean
+  + create(studentId : uuid, offeringId : uuid, registrationDate : localdatetime): Registration
+  + deleteById(id : uuid): void
+  + findByStudentId(studentId : uuid): list<Registration>
+  + findById(id : uuid): Registration
+}
+
+class WaitlistEntry <<Entity>> {
+  - id : uuid
+  - studentId : uuid
+  - offeringId : uuid
+  - position : int
+  - entryDate : localdatetime
+  + findByOfferingId(offeringId : uuid): list<WaitlistEntry>
+  + createEntry(studentId : uuid, offeringId : uuid, position : int, entryDate : localdatetime): WaitlistEntry
+  + findByStudentId(studentId : uuid): list<WaitlistEntry>
+  + findById(id : uuid): WaitlistEntry
+  + deleteEntry(): void
+  + shiftPositionsAfter(deletedPosition : int): void
+}
+
+package "Data Types" {
+  class MeetingSchedule <<ValueObject>> {
+    - days : list<DayOfWeek>
+    - startTime : localtime
+    - endTime : localtime
+    - location : String
+  }
+  enum OfferingStatus {
+    DRAFT
+    PUBLISHED
+    CANCELLED
+  }
+  enum DayOfWeek {
+    MONDAY
+    TUESDAY
+    WEDNESDAY
+    THURSDAY
+    FRIDAY
+    SATURDAY
+    SUNDAY
+  }
+  class CourseOfferingSummary <<ValueObject>> {
+    - offeringId : uuid
+    - courseCode : String
+    - title : String
+    - termId : uuid
+    - instructorName : String
+    - schedule : MeetingSchedule
+    - capacity : int
+    - enrolledCount : int
+    - status : OfferingStatus
+  }
+  class CourseSearchCriteria <<ValueObject>> {
+    - termId : optional<uuid>
+    - courseCode : optional<String>
+    - instructorName : optional<String>
+    - days : optional<list<DayOfWeek>>
+    - timeRange : optional<TimeRange>
+  }
+  class OfferingDetailsDto <<ValueObject>> {
+    - offeringId : uuid
+    - courseCode : String
+    - courseTitle : String
+    - instructorName : String
+    - schedule : MeetingSchedule
+    - capacity : int
+    - remainingSeats : int
+    - status : OfferingStatus
+  }
+  class SearchResult <<ValueObject>> {
+    - success : boolean
+    - offerings : optional<list<CourseOfferingSummary>>
+    - errorMessage : optional<String>
+  }
+  class TimeRange <<ValueObject>> {
+    - start : localtime
+    - end : localtime
+  }
+  class RegistrationOutcome <<ValueObject>> {
+    - success : boolean
+    - registrationId : optional<uuid>
+    - errorMessage : optional<String>
+  }
+  class RegistrationRequest <<ValueObject>> {
+    - studentId : uuid
+    - offeringId : uuid
+  }
+  class SwapRequest <<ValueObject>> {
+    - studentId : uuid
+    - currentRegistrationId : uuid
+    - targetOfferingId : uuid
+  }
+  class SwapResult <<ValueObject>> {
+    - success : boolean
+    - updatedSchedule : optional<list<MeetingSchedule>>
+    - errorMessage : optional<String>
+  }
+  class RegistrationInfo <<ValueObject>> {
+    - registrationId : uuid
+    - offeringId : uuid
+    - registrationDate : localdatetime
+  }
+  class StudentScheduleRequest <<ValueObject>> {
+    - studentId : uuid
+  }
+  class ViewRegistrationsResult <<ValueObject>> {
+    - success : boolean
+    - registrations : optional<list<RegistrationInfo>>
+    - schedule : optional<list<MeetingSchedule>>
+    - errorMessage : optional<String>
+  }
+  class DropRequest <<ValueObject>> {
+    - studentId : uuid
+    - registrationId : uuid
+  }
+  class DropResult <<ValueObject>> {
+    - success : boolean
+    - errorMessage : optional<String>
+  }
+  class ExportFile <<ValueObject>> {
+    - content : byte[]
+    - mimeType : String
+    - fileName : String
+  }
+  class ExportScheduleRequest <<ValueObject>> {
+    - studentId : uuid
+    - format : optional<String>
+  }
+  class ExportScheduleResult <<ValueObject>> {
+    - success : boolean
+    - file : optional<ExportFile>
+    - errorMessage : optional<String>
+  }
+  class WaitlistJoinRequest <<ValueObject>> {
+    - studentId : uuid
+    - offeringId : uuid
+  }
+  class WaitlistJoinResult <<ValueObject>> {
+    - success : boolean
+    - position : optional<int>
+    - errorMessage : optional<String>
+  }
+  class ViewWaitlistRequest <<ValueObject>> {
+    - studentId : uuid
+  }
+  class ViewWaitlistResult <<ValueObject>> {
+    - success : boolean
+    - entries : optional<list<WaitlistEntryDto>>
+    - errorMessage : optional<String>
+  }
+  class WaitlistEntryDto <<ValueObject>> {
+    - id : uuid
+    - offeringId : uuid
+    - position : int
+    - entryDate : localdatetime
+  }
+  class CancelWaitlistRequest <<ValueObject>> {
+    - studentId : uuid
+    - waitlistEntryId : uuid
+  }
+  class CancelWaitlistResult <<ValueObject>> {
+    - success : boolean
+    - errorMessage : optional<String>
+  }
+  class OfferingRosterResult <<ValueObject>> {
+    - success : boolean
+    - roster : optional<list<StudentRosterDto>>
+    - errorMessage : optional<String>
+  }
+  class ReviewRequest <<ValueObject>> {
+    - professorId : uuid
+  }
+  class StudentRosterDto <<ValueObject>> {
+    - studentId : uuid
+    - studentName : String
+    - registrationDate : localdatetime
+  }
+  class ViewOfferingRosterRequest <<ValueObject>> {
+    - professorId : uuid
+    - offeringId : uuid
+  }
+  class ManageTermRequest <<ValueObject>> {
+    - id : optional<uuid>
+    - name : String
+    - startDate : localdate
+    - endDate : localdate
+    - registrationStartDate : localdate
+    - registrationEndDate : localdate
+  }
+  class ManageTermResult <<ValueObject>> {
+    - success : boolean
+    - termId : optional<uuid>
+    - errorMessage : optional<String>
+  }
+  class CourseOfferingDetails <<ValueObject>> {
+    - courseId : uuid
+    - termId : uuid
+    - instructorId : uuid
+    - schedule : MeetingSchedule
+    - capacity : int
+  }
+  class ManageCourseOfferingRequest <<ValueObject>> {
+    - actorId : uuid
+    - action : ManagementAction
+    - offeringId : optional<uuid>
+    - courseId : uuid
+    - termId : uuid
+    - instructorId : uuid
+    - schedule : MeetingSchedule
+    - capacity : int
+  }
+  class ManageCourseOfferingResult <<ValueObject>> {
+    - success : boolean
+    - offeringId : optional<uuid>
+    - message : optional<String>
+  }
+  enum ManagementAction {
+    CREATE
+    UPDATE
+    PUBLISH
+    CANCEL
+  }
+}
+
+AcademicAdministratorBoundary ..> AcademicTermManagementControl
+AcademicAdministratorBoundary ..> CourseOfferingManagementControl
+AcademicTermManagementControl ..> AcademicTerm
+CourseOfferingManagementControl ..> CourseOffering
+CourseSearchControl ..> Course
+CourseSearchControl ..> CourseOffering
+CourseSearchControl ..> Professor
+ProfessorBoundary ..> ProfessorRosterControl
+ProfessorRosterControl ..> CourseOffering
+RegistrationControl ..> CourseOffering
+RegistrationControl ..> Registration
+RegistrationControl ..> Student
+ScheduleControl ..> Registration
+ScheduleControl ..> Student
+StudentBoundary ..> RegistrationControl
+StudentBoundary ..> ScheduleControl
+StudentBoundary ..> WaitlistControl
+UniversityUserBoundary ..> CourseSearchControl
+WaitlistControl ..> CourseOffering
+WaitlistControl ..> Student
+WaitlistControl ..> WaitlistEntry
+
+@enduml

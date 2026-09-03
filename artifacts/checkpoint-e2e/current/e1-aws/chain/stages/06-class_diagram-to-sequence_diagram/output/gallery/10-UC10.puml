@@ -1,0 +1,25 @@
+@startuml UC10
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC10 - Review Assigned Course Offerings and Rosters
+
+actor "Professor" as Professor
+boundary "ProfessorBoundary" as ProfessorBoundary
+control "ProfessorRosterControl" as ProfessorRosterControl
+entity "CourseOffering" as CourseOffering
+
+Professor -> ProfessorBoundary : reviewAssignedOfferings(request)
+ProfessorBoundary -> ProfessorRosterControl : getAssignedOfferings(professorId)
+ProfessorRosterControl -> CourseOffering : findByInstructorId(instructorId)
+CourseOffering --> ProfessorRosterControl : list<CourseOffering>
+ProfessorRosterControl --> ProfessorBoundary : SearchResult
+ProfessorBoundary --> Professor : SearchResult
+Professor -> ProfessorBoundary : viewOfferingRoster(request)
+ProfessorBoundary -> ProfessorRosterControl : getOfferingRoster(request)
+ProfessorRosterControl -> CourseOffering : getRoster()
+CourseOffering --> ProfessorRosterControl : list<StudentRosterDto>
+ProfessorRosterControl --> ProfessorBoundary : OfferingRosterResult
+ProfessorBoundary --> Professor : OfferingRosterResult
+
+@enduml
