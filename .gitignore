@@ -100,3 +100,8 @@ app/cloudkb/depkb/experiments/**/ca.crt
 /docs/research-history/
 /scripts/build_history_research_inventory.py
 
+/docs/final_report_prep/
+/.codex/skills/easydep-report-style/
+/tmp/easydep-final-report-docx/
+/tmp/easydep_final_a11y.json
+
