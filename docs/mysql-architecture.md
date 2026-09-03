@@ -28,6 +28,9 @@ agent_checkpoint_writes
 - `workspace_events`는 영구 데이터가 아니다. 현재 SSE 진행 이벤트는 프로세스 메모리에
   최대 1,000개만 보관하므로 서버 재시작 뒤 과거 이벤트를 재생하지 않는다. 완료 결과와
   오류는 `workspace_commands`에 남는다.
+- Testing의 고정 입력, 현재 노드와 누적 repair 이력은 해당 `workspace_commands.payload`의
+  `testing_checkpoint`에 함께 저장한다. 명령과 수명주기가 같아 별도 1:1 테이블을 만들지 않으며,
+  서버 재시작 뒤 checkpoint가 있는 중단 명령만 안전한 재개 대상으로 구분한다.
 - 매번 DB를 비우고 재생성하므로 migration 이력 표와 증분 migration 코드는 제거했다.
 
 이 선택으로 테이블 수, 조인 수, 외래키 수가 줄고 각 데이터의 소유자가 명확해진다. 다만

@@ -13,10 +13,7 @@ from app.requirements.config import settings
 from app.requirements.contracts.request import FeedbackEdit
 from app.requirements.contracts.state import AgentState
 from app.requirements.modeling.diagram import render_diagram  # noqa: F401
-from app.requirements.modeling.feedback import (  # noqa: F401 - public orchestration seam
-    classify_feedback,
-    resolve_intent,
-)
+from app.requirements.modeling.feedback import resolve_intent
 from app.requirements.modeling.relationships import identify_relationships
 from app.requirements.modeling.specifications import generate_specs
 from app.requirements.modeling.use_cases import (
@@ -82,7 +79,7 @@ def _cascade(
 
 
 def apply_feedback_upto(
-    state: AgentState, feedback: str | FeedbackEdit, up_to: str
+    state: AgentState, feedback: FeedbackEdit, up_to: str
 ) -> tuple[FeedbackIntent, list[str]]:
     """게이트용: 피드백에서 의도를 정해 대상 stage를 재생성하고, up_to stage까지만 cascade한다.
 
@@ -118,7 +115,7 @@ def _consistency(state: AgentState) -> dict[str, object]:
 
 def apply_feedback(
     state: AgentState,
-    feedback: str | FeedbackEdit,
+    feedback: FeedbackEdit,
     run_id: str = "",
     dataset: str = "",
 ) -> tuple[AgentState, dict[str, object]]:

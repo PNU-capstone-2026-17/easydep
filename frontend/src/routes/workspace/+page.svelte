@@ -70,15 +70,13 @@
     return [...new Set(messages)];
   });
 
-  let canApproveSequenceMethodProposals = $derived(
-    command?.status === 'AWAITING_INPUT' &&
-      command?.stage === 'design' &&
-      (
-        (Array.isArray(command?.result?.method_proposals) &&
-          command.result.method_proposals.length > 0) ||
-        Boolean(artifacts?.validation?.sequence_diagram?.method_proposals?.length)
-      )
+  let sequenceMethodApprovalOffer = $derived(
+    command?.result?.actions?.find(
+      (offer) =>
+        offer.action === 'advance' && offer.payload.auto_approve_method_proposals === true
+    ) ?? null
   );
+  let canApproveSequenceMethodProposals = $derived(Boolean(sequenceMethodApprovalOffer));
 
   let busy = $derived(actionBusy || ['QUEUED', 'RUNNING'].includes(command?.status ?? ''));
   let classGenerating = $derived(
@@ -154,7 +152,7 @@
     if (!autoMode || busy || !current) return;
     const next = nextAutoAction(current);
     if (!next) return;
-    const key = `${current.command_id}:${current.status}:${next.action}`;
+    const key = `${current.command_id}:${current.status}:${next.action}:${JSON.stringify(next.extra ?? {})}`;
     if (key === autoActionKey) return;
     autoActionKey = key;
     queueMicrotask(() => {
@@ -386,13 +384,9 @@
   }
 
   async function approveSequenceMethodProposals() {
-    if (!canApproveSequenceMethodProposals || !command?.command_id) return;
-    await act('advance', {
-      action_id: command.command_id,
-      // This is the user's explicit consent.  The normal sequence
-      // reconciliation path applies only persisted MethodProposals.
-      auto_approve_method_proposals: true
-    });
+    const offer = sequenceMethodApprovalOffer;
+    if (!offer) return;
+    await act(offer.action, offer.payload);
   }
 
   async function submitSequenceFeedback(
@@ -439,11 +433,11 @@
     }
   }
 
-  async function send(text: string) {
+  async function send(text: string, extra: Record<string, unknown> = {}) {
     await act('message', {
+      context: { stage: selectedStage, artifact_stage: selectedArtifact },
+      ...extra,
       text,
-      action_id: command?.status === 'AWAITING_INPUT' ? command.command_id : undefined,
-      context: { stage: selectedStage, artifact_stage: selectedArtifact }
     });
   }
 

@@ -9,10 +9,8 @@
 선언한다. (예전 Command(goto=...) 런타임 라우팅을 대체 — 토폴로지가 컴파일 타임에 고정된다.)
 "advance"는 서브그래프 END(→ 상위 그래프가 다음 스텝으로), "loop"는 같은 게이트로 재진입.
 
-피드백은 배치 경로(app/feedback.py)와 동일한 의도 분류 엔진(apply_feedback_upto)을 거친다:
-자연어 피드백을 {stage, scope, target_ids}로 분류해 '어느 게이트에서 말했든' 대상 stage로 라우팅하고
-(예: use_cases 게이트에서 '외부 액터 추가'라고 하면 actors를 재생성), local scope면 대상 항목만
-고쳐 형제(및 그 id)를 보존한다. cascade는 게이트가 이미 진행한 단계(up_to)까지만 수행한다.
+피드백은 Workspace가 실제 ref로 검증한 `FeedbackEdit`을 받는다. local scope면 대상 항목만
+고쳐 형제(및 그 id)를 보존하고, cascade는 게이트가 이미 진행한 단계(up_to)까지만 수행한다.
 """
 from __future__ import annotations
 
@@ -36,7 +34,7 @@ def _ask(stage: str, summary, *, edit_stage: str | None = None, edit_targets=(),
          questions=()) -> object:
     """피드백을 요청하는 interrupt. 재개 값을 그대로 반환한다.
 
-    재개 값은 자연어 문자열이거나 `FeedbackEdit`·`ResourceAnswer`다.
+    재개 값은 `FeedbackEdit`·`ResourceAnswer`·`DeploymentPreferences` 중 하나다.
     `edit_stage`/`edit_targets`는 화면이 `FeedbackEdit`을 만들 때 쓰는 재료다 — 어느
     단계를 재생성할 수 있고 어떤 항목을 고를 수 있는지. 화면이 그걸 보내면 의도 분류
     LLM 호출이 생략된다.
@@ -48,7 +46,7 @@ def _ask(stage: str, summary, *, edit_stage: str | None = None, edit_targets=(),
     return interrupt({
         "stage": stage,
         "status": "need_feedback",
-        "prompt": f"[{stage}] 결과에 대한 피드백을 입력하세요. 비워두면 다음 단계로 진행합니다.",
+        "prompt": f"Enter feedback for [{stage}]. Leave it blank to continue.",
         "summary": summary,
         "edit_stage": edit_stage,
         "edit_targets": list(edit_targets),
@@ -90,7 +88,8 @@ def _as_text(answer) -> str:
     """
     if isinstance(answer, (DeploymentPreferences, ResourceAnswer)):
         raise TypeError(
-            "구조화된 배포 입력은 요구사항 게이트에서만 받는다 — 자연어 피드백으로 흘리지 않는다."
+            "Structured deployment input is accepted only at the requirements gate; "
+            "it must not be routed as natural-language feedback."
         )
     return answer.instruction if isinstance(answer, FeedbackEdit) else str(answer)
 
@@ -173,9 +172,9 @@ def gate_use_cases(state: AgentState) -> dict[str, object]:
     if _empty(answer):
         return {"gate_route": "advance"}
     st = dict(state)
-    apply_feedback_upto(
-        cast(AgentState, st), cast(str | FeedbackEdit, answer), up_to="coverage"
-    )
+    if not isinstance(answer, FeedbackEdit):
+        raise TypeError("Use-case feedback requires a validated FeedbackEdit.")
+    apply_feedback_upto(cast(AgentState, st), answer, up_to="coverage")
     return {
         **_pick(st, (
             "actors", "use_cases", "constraint_applicability", "coverage", "traceability"
@@ -196,9 +195,9 @@ def gate_specs(state: AgentState) -> dict[str, object]:
     if _empty(answer):
         return {"gate_route": "advance"}
     st = dict(state)
-    apply_feedback_upto(
-        cast(AgentState, st), cast(str | FeedbackEdit, answer), up_to="specs"
-    )
+    if not isinstance(answer, FeedbackEdit):
+        raise TypeError("Specification feedback requires a validated FeedbackEdit.")
+    apply_feedback_upto(cast(AgentState, st), answer, up_to="specs")
     st.update(check_specs(cast(AgentState, st)))  # spec_report 갱신
     upd = _pick(st, (
         "actors", "use_cases", "constraint_applicability", "coverage", "traceability",
@@ -216,9 +215,9 @@ def gate_relationships(state: AgentState) -> dict[str, object]:
     if _empty(answer):
         return {"gate_route": "advance"}
     st = dict(state)
-    apply_feedback_upto(
-        cast(AgentState, st), cast(str | FeedbackEdit, answer), up_to="diagram"
-    )
+    if not isinstance(answer, FeedbackEdit):
+        raise TypeError("Relationship feedback requires a validated FeedbackEdit.")
+    apply_feedback_upto(cast(AgentState, st), answer, up_to="diagram")
     st.update(check_specs(cast(AgentState, st)))          # 상위 stage 편집 시 명세도 바뀔 수 있어 갱신
     st.update(check_relationships(cast(AgentState, st)))  # relationship_report 갱신
     upd = _pick(st, (

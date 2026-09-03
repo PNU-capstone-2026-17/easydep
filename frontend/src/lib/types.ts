@@ -7,6 +7,21 @@ export type CommandStatus =
   | 'FAILED'
   | 'INTERRUPTED';
 
+export type WaitReason = 'review' | 'question' | 'repair' | 'approval' | 'external_wait';
+
+export interface ActionOffer {
+  action: string;
+  label: string;
+  payload: Record<string, unknown>;
+  auto_selectable: boolean;
+  description?: string;
+}
+
+export interface WorkspaceCommandResult extends Record<string, any> {
+  wait_reason?: WaitReason;
+  actions?: ActionOffer[];
+}
+
 export interface WorkspaceCommand {
   command_id: string;
   app_id: string;
@@ -14,7 +29,7 @@ export interface WorkspaceCommand {
   stage: Stage;
   status: CommandStatus;
   payload: Record<string, unknown>;
-  result?: Record<string, any> | null;
+  result?: WorkspaceCommandResult | null;
   error?: string | null;
   created_at?: string | null;
 }

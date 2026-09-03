@@ -4,8 +4,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-
-from app.implementation.application.feedback import assess_feedback_eligibility
 from app.implementation.workflows.traceability import build_rtm_traceability_map
 
 
@@ -180,15 +178,3 @@ def test_required_outputs_keep_file_ownership_separate_between_tasks(
     assert by_target[order_file]["sourceRefs"] == ["api:createOrder"]
     assert by_target[billing_file]["taskId"] == "implement-billing"
     assert by_target[billing_file]["sourceRefs"] == ["api:chargeOrder"]
-
-
-def test_evaluate_feedback_with_rtm_rejects_design_contract_changes() -> None:
-    result = assess_feedback_eligibility("OpenAPI 엔드포인트와 응답 DTO 스키마를 변경해줘")
-    assert result["status"] == "UNSUITABLE"
-    assert result["rtmValidated"] is True
-
-
-def test_evaluate_feedback_with_rtm_accepts_pure_implementation_edits() -> None:
-    result = assess_feedback_eligibility("배송 시작 로직의 예외 처리 문구를 다듬어줘")
-    assert result["status"] == "ELIGIBLE"
-    assert result["rtmValidated"] is True

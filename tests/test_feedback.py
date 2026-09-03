@@ -7,7 +7,7 @@
 import pytest
 
 from app.requirements.orchestration import feedback as fb
-from app.requirements.schemas import FeedbackEdit, FeedbackIntent
+from app.requirements.schemas import FeedbackEdit
 
 
 # ---------------------------------------------------------------------------
@@ -177,13 +177,7 @@ def test_structured_edit_skips_the_intent_classifier(monkeypatch):
     edit = FeedbackEdit(
         stage="specs", scope="local", target_ids=["UC2"], instruction="결제 실패 확장을 추가"
     )
-    intent = fb.resolve_intent(
-        edit,
-        {},
-        proposal_call=lambda *_args, **_kwargs: pytest.fail(
-            "구조화 편집에는 분류기가 돌면 안 된다"
-        ),
-    )
+    intent = fb.resolve_intent(edit, {})
 
     assert intent.stage == "specs"
     assert intent.scope == "local"
@@ -197,27 +191,6 @@ def test_broad_edit_drops_stray_targets():
         stage="use_cases", scope="broad", target_ids=["UC1"], instruction="다시 뽑아줘"
     )
     assert fb.resolve_intent(edit, {}).target_ids == []
-
-
-def test_natural_language_still_goes_through_the_classifier(monkeypatch):
-    """자연어 경로는 그대로다 — 다른 단계로 라우팅되는 기능을 잃으면 안 된다."""
-    seen = {}
-
-    def fake_classify(feedback, state):
-        seen["feedback"] = feedback
-        return FeedbackIntent(
-            stage="actors", scope="broad", target_ids=[], instruction="관리자 액터를 분리"
-        )
-
-    def propose(_schema, _messages):
-        return fake_classify("액터에서 관리자를 분리해줘", {})
-
-    intent = fb.resolve_intent(
-        "액터에서 관리자를 분리해줘", {}, proposal_call=propose
-    )
-
-    assert seen["feedback"] == "액터에서 관리자를 분리해줘"
-    assert intent.stage == "actors"      # use_cases 게이트에서 말해도 actors로 간다
 
 
 def test_structured_edit_is_clamped_like_natural_language(monkeypatch):

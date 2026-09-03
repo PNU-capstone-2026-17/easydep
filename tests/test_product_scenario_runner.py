@@ -29,24 +29,70 @@ def _command(
     }
 
 
+def _auto_result(action: str, payload: Mapping[str, Any], **result: Any) -> dict[str, Any]:
+    return {
+        **result,
+        "actions": [
+            {
+                "action": action,
+                "label": action,
+                "payload": dict(payload),
+                "auto_selectable": True,
+            }
+        ],
+    }
+
+
 @pytest.mark.parametrize(
     ("command", "expected"),
     [
-        (_command(1, "requirements", "COMPLETED"), {"action": "start_design"}),
         (
-            _command(2, "design", "COMPLETED"),
-            {"action": "start_implementation", "allow_assumptions": True},
+            _command(
+                1,
+                "requirements",
+                "COMPLETED",
+                result=_auto_result("start_design", {"action_id": "command-1"}),
+            ),
+            {"action": "start_design", "action_id": "command-1"},
         ),
         (
-            _command(3, "implementation", "COMPLETED", result={"job_id": "i-1"}),
-            {"action": "start_testing", "implementation_job_id": "i-1"},
+            _command(
+                2,
+                "design",
+                "COMPLETED",
+                result=_auto_result(
+                    "start_implementation", {"action_id": "command-2"}
+                ),
+            ),
+            {"action": "start_implementation", "action_id": "command-2"},
+        ),
+        (
+            _command(
+                3,
+                "implementation",
+                "COMPLETED",
+                result=_auto_result(
+                    "start_testing",
+                    {"action_id": "command-3", "implementation_job_id": "i-1"},
+                    job_id="i-1",
+                ),
+            ),
+            {
+                "action": "start_testing",
+                "action_id": "command-3",
+                "implementation_job_id": "i-1",
+            },
         ),
         (
             _command(
                 4,
                 "requirements",
                 "AWAITING_INPUT",
-                result={"resource_question": {"kind": "suggested"}},
+                result=_auto_result(
+                    "advance",
+                    {"action_id": "command-4"},
+                    resource_question={"kind": "suggested"},
+                ),
             ),
             {"action": "advance", "action_id": "command-4"},
         ),
@@ -55,7 +101,12 @@ def _command(
                 5,
                 "requirements",
                 "AWAITING_INPUT",
-                result={"requires_revision": True, "can_delegate_repair": True},
+                result=_auto_result(
+                    "delegate_repair",
+                    {"action_id": "command-5"},
+                    requires_revision=True,
+                    can_delegate_repair=True,
+                ),
             ),
             {"action": "delegate_repair", "action_id": "command-5"},
         ),
@@ -64,7 +115,14 @@ def _command(
                 6,
                 "design",
                 "AWAITING_INPUT",
-                result={"method_proposals": [{"id": "method-1"}]},
+                result=_auto_result(
+                    "advance",
+                    {
+                        "action_id": "command-6",
+                        "auto_approve_method_proposals": True,
+                    },
+                    method_proposals=[{"id": "method-1"}],
+                ),
             ),
             {
                 "action": "advance",
@@ -77,7 +135,17 @@ def _command(
                 7,
                 "implementation",
                 "AWAITING_INPUT",
-                result={"job_id": "i-1", "request_id": "r-1"},
+                result=_auto_result(
+                    "approve_implementation",
+                    {
+                        "action_id": "command-7",
+                        "job_id": "i-1",
+                        "request_id": "r-1",
+                        "delegate_repair_approvals": True,
+                    },
+                    job_id="i-1",
+                    request_id="r-1",
+                ),
             ),
             {
                 "action": "approve_implementation",
@@ -157,25 +225,59 @@ class FakeTransport:
 
 def test_runner_calls_only_the_public_product_flow() -> None:
     snapshots = [
-        _command(1, "requirements", "COMPLETED"),
+        _command(
+            1,
+            "requirements",
+            "COMPLETED",
+            result=_auto_result("start_design", {"action_id": "command-1"}),
+        ),
         _command(
             2,
             "design",
             "AWAITING_INPUT",
-            result={"requires_revision": True, "can_delegate_repair": True},
+            result=_auto_result(
+                "delegate_repair",
+                {"action_id": "command-2"},
+                requires_revision=True,
+                can_delegate_repair=True,
+            ),
         ),
-        _command(3, "design", "COMPLETED"),
+        _command(
+            3,
+            "design",
+            "COMPLETED",
+            result=_auto_result(
+                "start_implementation", {"action_id": "command-3"}
+            ),
+        ),
         _command(
             4,
             "implementation",
             "AWAITING_INPUT",
-            result={"job_id": "implementation-1", "request_id": "approval-1"},
+            result=_auto_result(
+                "approve_implementation",
+                {
+                    "action_id": "command-4",
+                    "job_id": "implementation-1",
+                    "request_id": "approval-1",
+                    "delegate_repair_approvals": True,
+                },
+                job_id="implementation-1",
+                request_id="approval-1",
+            ),
         ),
         _command(
             5,
             "implementation",
             "COMPLETED",
-            result={"job_id": "implementation-1"},
+            result=_auto_result(
+                "start_testing",
+                {
+                    "action_id": "command-5",
+                    "implementation_job_id": "implementation-1",
+                },
+                job_id="implementation-1",
+            ),
         ),
         _command(6, "testing", "COMPLETED", result={"job_id": "testing-1"}),
     ]

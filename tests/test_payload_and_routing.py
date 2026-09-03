@@ -296,7 +296,7 @@ def test_retry_analysis_rejects_a_missing_checkpoint(monkeypatch):
         lambda _gates, _thread_id, _persist: False,
     )
 
-    with pytest.raises(ValueError, match="저장된 checkpoint를 찾을 수 없습니다"):
+    with pytest.raises(ValueError, match="No saved checkpoint was found"):
         graph.retry_analysis("missing-run", persist=True)
 
 

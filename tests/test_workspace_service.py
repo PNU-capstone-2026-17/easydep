@@ -125,13 +125,13 @@ def test_reconcile_implementation_command_restores_progress_after_restart(
         "_implementation_progress_snapshot",
         staticmethod(
             lambda _job: {
-                "progress_card_label": "구현 진행 상황",
+                "progress_card_label": "Implementation progress",
                 "updates": [
                     {
                         "step": "phase-backend",
-                        "label": "Backend 구현",
+                        "label": "Backend implementation",
                         "status": "running",
-                        "detail": "Backend 구현을 진행하고 있습니다.",
+                        "detail": "Backend implementation is in progress.",
                     }
                 ],
             }
@@ -287,6 +287,7 @@ def test_cross_stage_feedback_waits_before_mutating_artifacts(monkeypatch) -> No
     monkeypatch.setattr(repository, "create_command", create_command)
     monkeypatch.setattr(repository, "update_command", update_command)
     monkeypatch.setattr(repository, "get_command", get_command)
+    monkeypatch.setattr(repository, "latest_command", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
 
     service = WorkspaceService()
@@ -1344,101 +1345,6 @@ def test_retry_requirements_accepts_only_a_failed_requirements_command(
         )
     finally:
         service.shutdown()
-
-
-def test_delegated_repair_remains_active_when_the_same_blockers_return() -> None:
-    blocker = {
-        "code": "requirements.specification",
-        "stage": "specs",
-        "target_ids": ["UC1"],
-        "message": "Specification has an unresolved finding.",
-        "severity": "error",
-        "repairable": True,
-    }
-    previous = {
-        "blocking_findings": [blocker],
-        "repair_state": {
-            "status": "ACTIVE",
-            "attempt_count": 2,
-            "accepted_count": 0,
-            "recent_attempts": [],
-            "tried_strategies": ["targeted_findings"],
-            "rejected_candidate_digests": [],
-        },
-    }
-    current = {
-        "blocking_findings": [blocker],
-        "repair_state": {
-            "status": "ACTIVE",
-            "attempt_count": 1,
-            "accepted_count": 0,
-            "recent_attempts": [],
-        },
-    }
-
-    state = workspace_module._merge_delegated_repair_state(
-        previous,
-        current,
-        strategy_key="delegate:requirements:specs:episode-3",
-    )
-
-    assert state["status"] == "ACTIVE"
-    assert state["attempt_count"] == 4
-    assert state["recent_attempts"][-1]["outcome"] == "repeated_candidate"
-    assert "targeted_findings" in state["tried_strategies"]
-
-
-def test_delegated_repair_keeps_running_after_blockers_make_progress() -> None:
-    previous = {
-        "blocking_findings": [
-            {"code": "one", "stage": "specs", "message": "one"},
-            {"code": "two", "stage": "specs", "message": "two"},
-        ],
-        "repair_state": {"status": "ACTIVE", "recent_attempts": []},
-    }
-    current = {
-        "blocking_findings": [
-            {"code": "two", "stage": "specs", "message": "two"},
-        ],
-        "repair_state": {"status": "ACTIVE", "recent_attempts": []},
-    }
-
-    state = workspace_module._merge_delegated_repair_state(
-        previous,
-        current,
-        strategy_key="delegate:requirements:specs:episode-1",
-    )
-
-    assert state["status"] == "ACTIVE"
-    assert state["accepted_count"] == 1
-    assert state["recent_attempts"][-1]["outcome"] == "improved"
-
-
-def test_delegated_repair_records_regression_without_stopping() -> None:
-    previous = {
-        "blocking_findings": [
-            {"code": "one", "stage": "api_spec", "message": "one"},
-        ],
-        "repair_state": {"status": "ACTIVE", "recent_attempts": []},
-    }
-    current = {
-        "blocking_findings": [
-            {"code": "one", "stage": "api_spec", "message": "one"},
-            {"code": "two", "stage": "api_spec", "message": "two"},
-        ],
-        "repair_state": {"status": "ACTIVE", "recent_attempts": []},
-    }
-
-    state = workspace_module._merge_delegated_repair_state(
-        previous,
-        current,
-        strategy_key="delegate:design:api_spec:episode-1",
-    )
-
-    assert state["status"] == "ACTIVE"
-    assert state["accepted_count"] == 0
-    assert state["recent_attempts"][-1]["outcome"] == "regressed"
-    assert state["rejected_candidate_digests"] == [state["finding_digest"]]
 
 
 def test_failed_testing_is_an_actionable_repair_gate(monkeypatch) -> None:

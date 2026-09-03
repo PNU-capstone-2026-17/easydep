@@ -4,7 +4,7 @@
   1. Workspace가 요구사항 실행에 넘기는 입력 계약 — AnalyzeRequest
   2. LLM 구조화 출력 — Assessment / ClarifyOnlyResult 등
 LLM 구조화 출력은 graph.py에서 ChatOpenAI.with_structured_output(...) 에 넘겨,
-gpt-oss-120b가 스키마에 맞는 JSON을 반환하도록 강제하는 데 쓴다.
+설정된 LLM이 스키마에 맞는 JSON을 반환하도록 강제하는 데 쓴다.
 (FR/NFR 분류는 LLM이 아니라 파인튜닝 BERT가 단독 수행한다 → step1 classify.)
 """
 
@@ -607,10 +607,10 @@ class CoverageJudgment(BaseModel):
 
 
 # ----------------------------------------------------------------------------
-# 피드백 기반 재생성 — 사용자 자연어 피드백의 의도 분류
+# 피드백 기반 재생성 — Workspace가 검증한 구조화 수정 의도
 # ----------------------------------------------------------------------------
 class FeedbackIntent(BaseModel):
-    """사용자 자연어 피드백을 재생성 의도로 분류한 결과."""
+    """검증된 `FeedbackEdit`을 modeling 재생성에 전달하는 결과."""
 
     stage: Literal["actors", "use_cases", "specs", "relationships"] = Field(
         description="Which pipeline artifact the feedback targets. Feedback about the diagram "

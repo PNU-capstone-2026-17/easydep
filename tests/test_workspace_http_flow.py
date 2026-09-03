@@ -101,7 +101,8 @@ def test_frontend_can_create_read_and_advance_a_workspace(
     )
     snapshot = client.get(f"/api/workspace/apps/{APP_ID}")
     advanced = client.post(
-        f"/api/workspace/apps/{APP_ID}/commands", json={"action": "start_design"}
+        f"/api/workspace/apps/{APP_ID}/commands",
+        json={"action": "start_design", "action_id": "command-1"},
     )
 
     assert created.status_code == 202
@@ -120,6 +121,7 @@ def test_frontend_can_create_read_and_advance_a_workspace(
     }
     assert advanced.status_code == 202
     assert advanced.json()["command"]["action"] == "start_design"
+    assert submitted[1]["payload"]["action_id"] == "command-1"
     assert [call["action"] for call in submitted] == ["message", "start_design"]
 
 

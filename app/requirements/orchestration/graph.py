@@ -93,8 +93,7 @@ def _handoff_gate(state: AgentState) -> dict:
         "requires_revision": True,
         "repair_state": repair_state(state),
         # The blocker may belong to use cases, specifications, or relationships. Do not make the
-        # UI fabricate a relationship edit target; free-form feedback is routed by the existing
-        # feedback classifier to the owning stage.
+        # UI는 관계 수정 target을 직접 만들지 않는다. Workspace project tool이 owner를 검증한다.
         "edit_stage": None,
         "edit_targets": [],
         "resource_questions": capability_resource_questions(
@@ -106,15 +105,14 @@ def _handoff_gate(state: AgentState) -> dict:
         # An invalid or stale choice leaves the same question visible.  It must
         # never fall through to natural-language feedback classification.
         return {**patch, "gate_route": "loop"}
-    if isinstance(answer, FeedbackEdit):
-        empty = not answer.instruction.strip()
-    else:
-        empty = not isinstance(answer, str) or not answer.strip()
+    empty = isinstance(answer, FeedbackEdit) and not answer.instruction.strip()
     if empty:
         # Unlike an ordinary review acknowledgement, a blank answer cannot
         # waive an unsafe downstream handoff.
         return {"gate_route": "loop"}
 
+    if not isinstance(answer, FeedbackEdit):
+        raise TypeError("Requirements handoff repair requires a validated FeedbackEdit.")
     updated = dict(state)
     apply_feedback_upto(cast(AgentState, updated), answer, up_to="diagram")
     updated.update(review_model(cast(AgentState, updated)))
@@ -519,7 +517,7 @@ def retry_analysis(thread_id: str, *, persist: bool = False) -> dict[str, object
     gates = _recall_mode(thread_id, persist)
     if not _has_checkpoint(gates, thread_id, persist):
         raise ValueError(
-            f"요구사항 실행 {thread_id!r}의 저장된 checkpoint를 찾을 수 없습니다."
+            f"No saved checkpoint was found for requirements run {thread_id!r}."
         )
     with telemetry.run_scope(f"retry:{thread_id}") as stats:
         result = _invoke(gates, thread_id, None, persist)

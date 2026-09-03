@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { ArrowUp, Bot, Check, ChevronRight, Download, LoaderCircle, Paperclip, Play, RotateCcw, X, Zap } from '@lucide/svelte';
+  import { ArrowUp, Download, LoaderCircle, Paperclip, Zap } from '@lucide/svelte';
   import { downloadImplementationArtifacts } from '$lib/api';
-  import type { WorkspaceCommand } from '$lib/types';
+  import type { ActionOffer, WorkspaceCommand } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
 
   let {
@@ -21,22 +21,26 @@
     context?: { stage: string; artifact_stage?: string; element_ref?: string } | null;
     autoMode: boolean;
     targetRequired?: boolean;
-    onSend: (text: string) => Promise<void>;
+    onSend: (text: string, extra?: Record<string, unknown>) => Promise<void>;
     onAction: (action: string, extra?: Record<string, unknown>) => Promise<void>;
     onToggleAutoMode: () => void;
   } = $props();
   let text = $state('');
 
-  let awaiting = $derived(command?.status === 'AWAITING_INPUT');
   let result = $derived(command?.result ?? {});
-  let confirmation = $derived(result?.action === 'confirm_change');
-  let resourceQuestion = $derived(
-    result?.resource_question ?? result?.resource_questions?.[0] ?? null
+  let actions = $derived(
+    (Array.isArray(result?.actions) ? result.actions : []).filter(isActionOffer)
   );
-  let resourceChoices = $derived(
-    Array.isArray(resourceQuestion?.choices)
-      ? resourceQuestion.choices.filter((choice: unknown) => choice && typeof choice === 'object')
-      : []
+  let messageChoices = $derived(
+    actions.filter((offer) => offer.action === 'message' && hasMessageText(offer))
+  );
+  let messageInput = $derived(
+    actions.find((offer) => offer.action === 'message' && !hasMessageText(offer))
+  );
+  let buttonActions = $derived(actions.filter((offer) => offer.action !== 'message'));
+  let resourceQuestion = $derived(result?.resource_question ?? result?.resource_questions?.[0] ?? null);
+  let questionText = $derived(
+    String(resourceQuestion?.question ?? result?.question ?? result?.questions?.[0]?.question ?? '').trim()
   );
   let requiresRevision = $derived(Boolean(result?.requires_revision));
   let canDelegateRepair = $derived(Boolean(result?.can_delegate_repair));
@@ -47,12 +51,6 @@
       ['approve_implementation', 'retry_implementation', 'rerun_implementation', 'start_implementation'].includes(command.action)
       ? command.action
       : null
-  );
-  let implementationJobId = $derived(
-    String(result?.job_id ?? result?.job?.job_id ?? command?.payload?.job_id ?? '')
-  );
-  let checkpointRetryable = $derived(
-    Boolean(result?.checkpoint_retryable ?? result?.job?.checkpoint_retryable)
   );
   let implementationResponse = $derived(
     implementationAction && implementationAction !== 'approve_implementation' && ['QUEUED', 'RUNNING'].includes(command?.status ?? '')
@@ -76,6 +74,23 @@
   );
   let downloadError = $state('');
 
+  function isActionOffer(value: unknown): value is ActionOffer {
+    if (!value || typeof value !== 'object') return false;
+    const candidate = value as Partial<ActionOffer>;
+    return (
+      typeof candidate.action === 'string' &&
+      typeof candidate.label === 'string' &&
+      Boolean(candidate.payload) &&
+      typeof candidate.payload === 'object' &&
+      !Array.isArray(candidate.payload) &&
+      typeof candidate.auto_selectable === 'boolean'
+    );
+  }
+
+  function hasMessageText(offer: ActionOffer): boolean {
+    return typeof offer.payload.text === 'string' && offer.payload.text.trim().length > 0;
+  }
+
   async function downloadArtifacts() {
     downloadError = '';
     try {
@@ -87,14 +102,9 @@
 
   async function submit() {
     const value = text.trim();
-    if (!value || busy || targetRequired) return;
+    if (!value || busy || targetRequired || !messageInput) return;
     text = '';
-    await onSend(value);
-  }
-
-  async function answerResourceChoice(value: unknown) {
-    if (busy || !command?.command_id || typeof value !== 'string' || !value.trim()) return;
-    await onAction('message', { text: value, action_id: command.command_id });
+    await onSend(value, messageInput.payload);
   }
 
   function keydown(event: KeyboardEvent) {
@@ -138,136 +148,60 @@
       </span>
     </div>
   {/if}
-  {#if awaiting}
+  {#if questionText || requiresRevision}
+    <div class="mb-2 rounded-xl border border-[#e5ddc9] bg-[#fffaf0] p-2.5 text-xs text-[#74520c]">
+      {#if questionText}<p class="text-sm font-medium text-[#5f4610]">{questionText}</p>{/if}
+      {#if requiresRevision}
+        <p class:mt-1={Boolean(questionText)}>
+          {repairStalled
+            ? 'Automatic repair could not reduce the blockers. Enter a specific revision request to continue.'
+            : canDelegateRepair
+              ? 'Automatic repair is continuing with the previous attempts in context.'
+              : 'Review the blocking findings and enter a specific revision request to continue.'}
+        </p>
+        {#if repairStallReason}
+          <p class="mt-1 text-[11px] text-[#876f45]">{repairStallReason}</p>
+        {/if}
+      {/if}
+    </div>
+  {/if}
+
+  {#if messageChoices.length || buttonActions.length || messageInput?.description}
     <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#e5ddc9] bg-[#fffaf0] p-2.5">
-      {#if confirmation}
-        <Button size="sm" onclick={() => onAction('confirm_change', { action_id: command?.command_id })} disabled={busy}>
-          <RotateCcw size={13} /> Return to the earlier stage
-        </Button>
-        <Button size="sm" variant="ghost" onclick={() => onAction('dismiss_change', { action_id: command?.command_id })} disabled={busy}>
-          Keep current artifacts
-        </Button>
-      {:else if resourceQuestion}
-        <div class="w-full px-1">
-          <p class="text-sm font-medium text-[#5f4610]">{resourceQuestion.question}</p>
-          {#if resourceChoices.length}
-            <div class="mt-2 grid gap-2 sm:grid-cols-2">
-              {#each resourceChoices as choice}
-                <button
-                  type="button"
-                  class="rounded-lg border border-[#d9caa4] bg-white px-3 py-2 text-left transition hover:border-[#86ad98] hover:bg-[#f6fbf7] disabled:cursor-not-allowed disabled:opacity-60"
-                  onclick={() => answerResourceChoice(choice.value)}
-                  disabled={busy}
-                >
-                  <span class="block text-xs font-semibold text-[#37433b]">
-                    {choice.label}{choice.recommended ? ' (Recommended)' : ''}
-                  </span>
-                  {#if choice.description}
-                    <span class="mt-1 block text-[11px] leading-4 text-[#6d7068]">{choice.description}</span>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {:else}
-            <span class="mt-1 block text-xs text-[#74520c]">Reply to the question below.</span>
+      {#if messageChoices.length}
+        <div class="grid w-full gap-2 sm:grid-cols-2">
+          {#each messageChoices as offer}
+            <button
+              type="button"
+              class="rounded-lg border border-[#d9caa4] bg-white px-3 py-2 text-left transition hover:border-[#86ad98] hover:bg-[#f6fbf7] disabled:cursor-not-allowed disabled:opacity-60"
+              onclick={() => onAction(offer.action, offer.payload)}
+              disabled={busy}
+            >
+              <span class="block text-xs font-semibold text-[#37433b]">{offer.label}</span>
+              {#if offer.description}
+                <span class="mt-1 block text-[11px] leading-4 text-[#6d7068]">{offer.description}</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#each buttonActions as offer}
+        <div class="flex items-center gap-2">
+          <Button size="sm" onclick={() => onAction(offer.action, offer.payload)} disabled={busy}>
+            {offer.label}
+          </Button>
+          {#if offer.description}
+            <span class="text-[11px] leading-4 text-[#6d7068]">{offer.description}</span>
           {/if}
         </div>
-        {#if resourceQuestion.kind === 'suggested' && !resourceChoices.length}
-          <Button size="sm" variant="ghost" onclick={() => onAction('advance', { action_id: command?.command_id })} disabled={busy}>
-            Continue without this optional input <ChevronRight size={13} />
-          </Button>
-        {/if}
-      {:else if command?.stage === 'testing' && result?.kind === 'external_action' && implementationJobId}
-        <Button size="sm" onclick={() => onAction('retry_implementation', { action_id: command?.command_id, job_id: implementationJobId })} disabled={busy}>
-          <RotateCcw size={13} /> Retry testing after restoring the environment
-        </Button>
-      {:else if requiresRevision}
-        <span class="px-1 text-xs text-[#74520c]">
-          {#if repairStalled}
-            Automatic repair could not reduce the blockers. Enter a specific revision request to continue.
-          {:else if canDelegateRepair}
-            Automatic repair is continuing with the previous attempts in context.
-          {:else}
-            Review the blocking findings and enter a specific revision request to continue.
-          {/if}
-          {#if repairStallReason}
-            <span class="mt-1 block text-[11px] text-[#876f45]">{repairStallReason}</span>
-          {/if}
-        </span>
-      {:else if command?.stage === 'design'}
-        <Button size="sm" onclick={() => onAction('advance', { action_id: command?.command_id })} disabled={busy}>
-          Continue to the next design step <ChevronRight size={13} />
-        </Button>
-      {:else if command?.stage === 'implementation' && result?.request_id}
-        <Button size="sm" onclick={() => onAction('approve_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id, delegate_repair_approvals: false })} disabled={busy}>
-          <Check size={13} /> Approve this phase
-        </Button>
-        <Button size="sm" variant="outline" onclick={() => onAction('approve_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id, delegate_repair_approvals: true })} disabled={busy}>
-          <Bot size={13} /> Approve and delegate repairs
-        </Button>
-        <Button size="sm" variant="danger" onclick={() => onAction('reject_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id })} disabled={busy}>
-          <X size={13} /> Reject
-        </Button>
-      {:else}
-        <span class="px-1 text-xs text-[#74520c]">Enter an answer or confirm to continue.</span>
-        <Button size="sm" variant="outline" onclick={() => onAction('advance', { action_id: command?.command_id })} disabled={busy}>
-          Confirm and continue
-        </Button>
+      {/each}
+      {#if messageInput?.description}
+        <span class="w-full px-1 text-[11px] leading-4 text-[#6d7068]">{messageInput.description}</span>
       {/if}
     </div>
-  {:else if command && ['FAILED', 'INTERRUPTED'].includes(command.status) && command.stage === 'requirements'}
-    <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">
-      <Button size="sm" onclick={() => onAction('retry_requirements', { action_id: command?.command_id })} disabled={busy}>
-        <RotateCcw size={13} /> Retry failed requirements step
-      </Button>
-      <span class="text-xs text-[#85524c]">Completed requirements artifacts and the saved checkpoint will be reused.</span>
-    </div>
-  {:else if command?.status === 'FAILED' && command.stage === 'design'}
-    <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">
-      <Button size="sm" onclick={() => onAction('retry_design', { action_id: command?.command_id })} disabled={busy}>
-        <RotateCcw size={13} /> Retry the failed design step
-      </Button>
-      <span class="text-xs text-[#85524c]">Completed design artifacts will be kept.</span>
-    </div>
-  {:else if command?.status === 'FAILED' && command.stage === 'implementation'}
-    <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">
-      {#if checkpointRetryable && implementationJobId}
-        <Button size="sm" onclick={() => onAction('retry_implementation', { action_id: command?.command_id, job_id: implementationJobId })} disabled={busy}>
-          <RotateCcw size={13} /> Retry from checkpoint
-        </Button>
-      {/if}
-      <Button size="sm" variant={checkpointRetryable ? 'outline' : 'default'} onclick={() => onAction('rerun_implementation', { base_package: 'com.easydep.app', allow_assumptions: true })} disabled={busy}>
-        <RotateCcw size={13} /> Start over
-      </Button>
-      <span class="text-xs text-[#85524c]">
-        {checkpointRetryable
-          ? 'Retry only the failed task, or start over with the same design context.'
-          : 'No approved execution checkpoint is available; start a fresh implementation pass.'}
-      </span>
-    </div>
-  {:else if command?.status === 'FAILED' && command.stage === 'testing'}
-    <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">
-      {#if command.payload?.implementation_job_id}
-        <Button size="sm" onclick={() => onAction('start_testing', { implementation_job_id: command.payload.implementation_job_id })} disabled={busy}>
-          <RotateCcw size={13} /> Retry testing
-        </Button>
-        <span class="text-xs text-[#85524c]">The completed implementation will be tested again.</span>
-      {:else}
-        <span class="text-xs text-[#85524c]">The implementation job reference is unavailable. Refresh the workspace.</span>
-      {/if}
-    </div>
-  {:else if command?.status === 'COMPLETED' && command.stage === 'requirements'}
-    <div class="mb-2"><Button size="sm" onclick={() => onAction('start_design')} disabled={busy}><Play size={13} /> Start design</Button></div>
-  {:else if command?.status === 'COMPLETED' && command.stage === 'design'}
-    <div class="mb-2"><Button size="sm" onclick={() => onAction('start_implementation')} disabled={busy}><Play size={13} /> Start implementation</Button></div>
-  {:else if command?.status === 'COMPLETED' && command.stage === 'implementation'}
-    <div class="mb-2 flex flex-wrap items-center gap-2">
-      <Button size="sm" onclick={() => onAction('rerun_implementation', { base_package: 'com.easydep.app', allow_assumptions: true })} disabled={busy}><RotateCcw size={13} /> Rerun implementation</Button>
-      {#if result?.job_id}
-        <Button size="sm" onclick={() => onAction('start_testing', { implementation_job_id: result.job_id })} disabled={busy}><Play size={13} /> Start testing</Button>
-      {/if}
-    </div>
-  {:else if command?.status === 'COMPLETED' && command.stage === 'testing'}
+  {/if}
+
+  {#if command?.status === 'COMPLETED' && command.stage === 'testing'}
     <div class="mb-2 flex flex-wrap items-center gap-2">
       <Button size="sm" onclick={downloadArtifacts} disabled={busy}>
         <Download size={13} /> Download implementation ZIP
@@ -294,8 +228,14 @@
       onkeydown={keydown}
       rows="2"
       class="max-h-40 min-h-14 w-full resize-none border-0 bg-transparent px-2 py-2 text-sm leading-6 outline-none placeholder:text-[#999b93]"
-      placeholder={targetRequired ? 'Use the targeted feedback form in the sequence diagram panel' : resourceChoices.length ? 'Choose one of the answers above' : resourceQuestion?.question ?? (awaiting ? 'Enter an answer or revision request' : 'Enter a request for the current stage')}
-      disabled={busy || targetRequired || resourceChoices.length > 0}
+      placeholder={targetRequired
+        ? 'Use the targeted feedback form in the sequence diagram panel'
+        : messageInput
+          ? questionText || messageInput.label || 'Enter a response'
+          : messageChoices.length
+            ? 'Choose one of the answers above'
+            : 'No message action is currently available'}
+      disabled={busy || targetRequired || !messageInput}
     ></textarea>
     <div class="flex items-center justify-between px-1 pb-1">
       <span class="text-[10px] text-[#a0a199]">Enter to send · Shift+Enter for a new line</span>
@@ -313,7 +253,7 @@
         >
           <Zap size={14} />
         </Button>
-        <Button size="icon" onclick={submit} disabled={busy || targetRequired || resourceChoices.length > 0 || !text.trim()} aria-label="Send message">
+        <Button size="icon" onclick={submit} disabled={busy || targetRequired || !messageInput || !text.trim()} aria-label="Send message">
           <ArrowUp size={16} />
         </Button>
       </div>

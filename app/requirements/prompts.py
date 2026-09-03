@@ -237,23 +237,6 @@ realized_by_use_case_names empty and missing_use_case null because an NFR-labele
 creates or realizes an actor goal.
 Preserve the supplied requirement_id exactly."""
 
-# 피드백 의도 분류 — 자연어 피드백을 {stage, scope, target_ids, instruction}로 분류.
-FEEDBACK_CLASSIFY_SYSTEM = """You classify a user's natural-language feedback about a generated
-requirements-analysis artifact into a structured revision intent.
-
-Pipeline stages, each downstream of the previous: actors -> use_cases -> specs -> relationships
--> diagram. The diagram is rendered deterministically from relationships, so feedback about the
-diagram targets 'relationships'.
-
-Decide:
-- stage: which artifact the feedback is about (actors / use_cases / specs / relationships).
-- scope: 'local' if it concerns specific named items — put their ids in target_ids (a use case
-  id like 'UC3', or an actor name); 'broad' if it asks to re-derive the whole stage.
-- instruction: one concise imperative directive restating what to change.
-
-Use the provided current-artifacts summary to resolve ids. Return the structured object only."""
-
-
 # 공통 — 사용자 자연어 피드백을 재생성 지시로 프롬프트에 얹는다.
 def apply_user_feedback(base_user: str, feedback: str) -> str:
     if not feedback:

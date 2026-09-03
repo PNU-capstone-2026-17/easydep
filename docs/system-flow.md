@@ -1,6 +1,6 @@
 # EasyDep 전체 실행 흐름과 데이터 계약
 
-> 기준일: 2026-09-02
+> 기준일: 2026-09-03
 > 대상: `dev` 브랜치의 현재 코드  
 > 목적: 기능을 줄이거나 고치기 전에, 사용자의 입력이 어떤 API와 LLM을 거쳐 어떤 산출물이 되는지 한 문서에서 확인한다.
 
@@ -33,6 +33,9 @@
 flowchart LR
     U[사용자] --> F[SvelteKit 작업대]
     F --> W[Workspace API]
+    W --> C[대화형 에이전트]
+    C --> P[읽기 전용 프로젝트 도구]
+    P --> DB
     W --> R[요구사항 분석]
     R --> D[설계]
     D --> I[구현]
@@ -43,7 +46,7 @@ flowchart LR
     I --> DB
     W --> DB
     I --> FS[구현 작업 디렉터리]
-    T --> MEM[프로세스 메모리]
+    T --> DB
 
     DB --> A[산출물 API]
     A --> F
@@ -130,9 +133,20 @@ type WorkspaceCommand = {
   stage: Stage;
   status: CommandStatus;
   payload: Record<string, unknown>;
-  result?: Record<string, unknown>;
+  result?: {
+    wait_reason?: "review" | "question" | "repair" | "approval" | "external_wait";
+    actions: ActionOffer[];
+  } & Record<string, unknown>;
   error?: string;
   created_at?: string;
+};
+
+type ActionOffer = {
+  action: string;
+  label: string;
+  payload: Record<string, unknown>;
+  auto_selectable: boolean;
+  description?: string;
 };
 ```
 
@@ -153,8 +167,22 @@ start_testing, apply_deployment_preferences
 
 한 앱에서는 `QUEUED` 또는 `RUNNING` 명령을 동시에 두 개 실행하지 않는다.
 `AWAITING_INPUT`은 실행 중인 명령으로 보지 않으므로 사용자가 답변이나 다음 행동을 보낼 수 있다.
+모든 `AWAITING_INPUT` 결과에는 `wait_reason`과 한 개 이상의 `actions`가 있다. 프론트엔드와
+평가 실행기는 단계나 결과 flag를 보고 버튼을 만들지 않고 이 목록의 payload를 그대로 보낸다.
+자동 모드는 `auto_selectable=true`인 첫 action만 실행한다.
 
-### 2.4 진행 이벤트
+### 2.4 자연어 대화와 프로젝트 도구
+
+첫 요구사항 입력과 명시적인 버튼·선택 답변을 제외한 메시지는 대화형 에이전트가 먼저
+`Reply`, `Clarification`, `CommandIntent` 중 하나로 분류한다. 일반 대화는 단계 서비스를
+호출하지 않는다. 프로젝트 질문은 최신 산출물·RTM을 읽는 도구 결과만 근거로 답한다.
+자연어 진행 요청은 서버가 이미 공개한 action으로 바뀌므로 버튼과 같은 command 경로를 쓴다.
+
+수정 요청에서 LLM은 검색어와 유한 후보 중 ref만 고른다. ref의 존재 여부, owner, 편집 가능
+여부와 artifact version은 코드가 검증하고, 영향 범위는 design RTM과 implementation RTM에서
+계산한다. 최신 편집 범위와 frozen Testing 근거는 서로 다른 view로 조회한다.
+
+### 2.5 진행 이벤트
 
 ```ts
 type WorkspaceEvent = {
@@ -763,9 +791,9 @@ class TestingState(TypedDict):
 수리한다. 구현 파일이 바뀌면 회귀를 확인하기 위해 같은 계획의 모든 case를 다시 실행한다.
 외부 도구나 네트워크 문제는 구현 코드를 고치지 않고 환경이 복구된 뒤 같은 작업을 재시도한다.
 
-별도 Testing 작업 registry나 테이블은 두지 않는다. Workspace가 `TestingInput`, 현재 검사와
-부분 결과를 현재 `workspace_commands.payload.testing_checkpoint`에 저장한다. 서버가 재시작되면
-같은 command가 체크포인트를 읽어 고정 입력과 수리 이력을 유지한 채 전체 흐름 검사를 재개한다.
+`workspace_commands.payload.testing_checkpoint`가 `TestingInput`, 현재 검사, 부분 결과, 이전
+finding과 repair history를 저장한다. 서버가 재시작되면 고정 입력이 있는 `INTERRUPTED` 작업만
+같은 command에서 재개하며, 입력 저장 전에 끊긴 작업과 이미 실패·완료한 작업을 구분한다.
 
 ## 7. 자동 수리의 실제 동작
 
@@ -841,14 +869,8 @@ class RepairStateSummary(BaseModel):
 내부 수리 루프와 사용자 검토 지점은 별개이다. 내부에서 가능한 수리를 마쳐도 요구사항과 설계
 그래프는 단계 끝에 검토 지점을 만든다. Workspace는 이를 `AWAITING_INPUT`으로 저장한다.
 
-프론트엔드의 자동 모드는 별도 AI 판단기가 아니다. 백엔드가 화면에 노출한 일반 선택지 중
-다음 선택을 대신 클릭한다.
-
-- `can_delegate_repair=true`: `delegate_repair` 선택
-- 깨끗한 요구사항·설계: `advance` 선택
-- 설계 method proposal: 자동 승인 옵션을 붙인 `advance` 선택
-- 구현 전송 요청: 위임 수리 승인을 포함한 `approve_implementation` 선택
-- 한 단계 완료: 다음 단계 시작 선택
+프론트엔드의 자동 모드는 별도 AI 판단기가 아니다. 백엔드가 `actions`에 공개한 선택지 중
+`auto_selectable=true`인 첫 항목을 payload 변경 없이 대신 클릭한다.
 
 명확한 사용자 답이 필요한 질문, 이전 단계 변경 확인, `STALLED`, `WAITING_EXTERNAL`에서는 자동
 모드도 멈춘다. 따라서 현재 구현은 “모든 수리가 한 API 호출 안에서 끝나는 완전 자율 실행”이
@@ -858,7 +880,7 @@ class RepairStateSummary(BaseModel):
 
 ### 8.1 MySQL의 업무 데이터
 
-새 데이터베이스의 기준은 `app/db/models.py`의 7개 ORM 테이블이다. 애플리케이션 시작 시
+새 데이터베이스의 기준은 `app/db/models.py`의 8개 ORM 테이블이다. 애플리케이션 시작 시
 `create_all()`로 없는 표를 만들며 기존 개발 DB의 증분 migration은 지원하지 않는다. schema가
 바뀌면 DB를 삭제·재생성한다. `app/db/schema.sql`은 같은 구조의 수동 확인용 DDL이다. 관계와
 필드별 설계 이유는 [MySQL 구조 문서](mysql-architecture.md)에 정리한다.
@@ -868,7 +890,7 @@ class RepairStateSummary(BaseModel):
 | `apps` | 앱 ID, 원문 요구사항, 배포 선택, 요구사항 실행 모드, 최근 단계 | `app_id` |
 | `artifact_versions` | 모든 산출물 버전의 내용·문법 결과·생성 원인 | `(app_id, artifact_type, version_no)` |
 | `artifact_files` | 구현 산출물 버전 안의 파일·내용·SHA-256 | `(artifact_version_id, file_path)` |
-| `workspace_commands` | 화면 명령, 상태, 입력 JSON, 결과 JSON, 오류 | `command_id` |
+| `workspace_commands` | 화면 명령, 상태, 입력 JSON, 결과 JSON, 오류와 Testing checkpoint | `command_id` |
 
 `ArtifactVersion.origin`은 `GENERATED`, `AUTO_FIXED`, `FEEDBACK_REVISED`, `IMPORTED` 중 하나이다.
 파일 산출물은 한 버전 안에서 경로와 내용이 바뀌지 않는 snapshot으로 취급한다.
@@ -898,7 +920,7 @@ checkpoint 본문, 각 상태 채널의 값, 아직 반영되지 않은 쓰기�
 | 클래스 accepted-unit cache | 프로세스 메모리 | 사라짐 |
 | 구현 작업 | 구현 work root의 `easydep-job-state.json` | 승인 파일이 있으면 실행 재개, 없으면 실패 처리 |
 | 구현 생성 run | 구현 work root의 immutable run directory | 완료된 run 재사용 가능 |
-| 테스트 진행 위치와 고정 입력 | `workspace_commands.payload.testing_checkpoint` | 같은 명령에서 재개 가능 |
+| 테스트 진행 위치와 고정 입력 | MySQL `workspace_commands.payload` | 고정 입력이 있으면 같은 명령에서 재개 가능 |
 
 Workspace 명령이 `INTERRUPTED`가 되었다고 요구사항·설계 체크포인트가 삭제되는 것은 아니다.
 사용자는 해당 단계의 retry 명령으로 실패 지점부터 다시 실행할 수 있다.
@@ -937,14 +959,14 @@ class_diagram, sequence_diagram, api_spec, erd, deployment_diagram
 
 | 영역 | 모델 | temperature | reasoning | 출력 상한 | 동시 실행 |
 |---|---|---:|---|---:|---:|
-| 요구사항 일반 | `openai/gpt-oss-120b` | 0.0 | medium | 8,192 | 단계에 따라 다름 |
+| 요구사항 일반 | `.env`의 `MODEL` | 0.0 | medium | 8,192 | 단계에 따라 다름 |
 | 요구사항 명세 | 같은 모델 | 0.0 | medium | 8,192 | 유스케이스 최대 8 |
 | 클래스 inventory | 같은 모델 | 0.0 | medium | 16,384 | 1 |
 | 클래스 operation | 같은 모델 | 0.0 | medium | 8,192 | 실행 묶음 최대 2 |
 | 클래스 call plan | 같은 모델 | 0.0 | medium | 8,192 | 실행 묶음 최대 2 |
 | 클래스 selector | 같은 모델 | 0.0 | low | 최대 2,048 또는 단계 cap | 작업 내부 |
 | API·ERD·배포 설계 | 같은 모델 | 0.0 | medium | 기본 16,384 | 설계 단계별 |
-| 구현 agent | `nvidia_nim/openai/gpt-oss-120b` | 0.2 | medium, 수리 high | 16,384 | task 최대 2 |
+| 구현 agent | 같은 모델(provider 접두사는 runtime에서 추가) | 0.2 | medium, 수리 high | 16,384 | task 최대 2 |
 | 구현 job | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 | job 최대 1 |
 | Workspace command | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 | worker 기본 2 |
 | 테스트 정적 검사 | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 | 최대 2 |
@@ -992,7 +1014,7 @@ agent 한 대화가 끝나지 않는 것을 막기 위한 제한까지 없앤 �
 4. 요구사항 또는 설계라면 MySQL 체크포인트가 같은 `app_id`로 남아 있는지 본다.
 5. 구현이라면 job 상태 JSON의 `status`, `workflow.blockingReason`, `transmission_request`,
    승인 파일, run manifest를 본다.
-6. 테스트라면 서버가 재시작했는지 먼저 확인한다. 재시작했다면 예전 testing job은 조회할 수 없다.
+6. 테스트라면 command의 `payload.testing_checkpoint`에서 고정 입력·현재 node를 확인한다.
 7. 외부 호출 오류는 sandbox의 네트워크 차단, HTTP 429, stream 미종료, 실제 timeout을 구분한다.
 8. 환경만 고쳤다면 저장된 체크포인트나 구현 run에서 실패 단계만 재개한다.
 
@@ -1000,7 +1022,7 @@ agent 한 대화가 끝나지 않는 것을 막기 위한 제한까지 없앤 �
 
 | 상태 | 뜻 | 다음 행동 |
 |---|---|---|
-| `AWAITING_INPUT` | 질문·검토·승인 선택을 기다림 | 결과의 action과 선택지 확인 |
+| `AWAITING_INPUT` | 질문·검토·수리·승인·외부 대기 | `wait_reason`과 공개 `actions` 확인 |
 | `NEEDS_INPUT` | 입력 또는 앞 단계 설계를 고쳐야 함 | blocking details가 지목한 단계 수정 |
 | `NEEDS_PLANNER` | 구현 planner가 처리하지 못한 task가 남음 | task 종류와 provider 지원 확인 |
 | `STALLED` | 같은 상태에서 쓸 새 수리 전략이 없음 | 입력·모델·검증 규칙 중 원인 수정 |

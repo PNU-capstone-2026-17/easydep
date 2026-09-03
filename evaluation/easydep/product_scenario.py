@@ -154,89 +154,22 @@ class AutoAction:
         return {"action": self.action, **dict(self.extra)}
 
 
-def _resource_question(result: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    question = result.get("resource_question")
-    if isinstance(question, dict):
-        return question
-    questions = result.get("resource_questions")
-    if isinstance(questions, list):
-        return next((item for item in questions if isinstance(item, dict)), None)
-    return None
-
-
 def next_auto_action(command: Mapping[str, Any] | None) -> AutoAction | None:
-    """프론트엔드 ``nextAutoAction``과 같은 조건으로 다음 버튼을 고른다."""
+    """서버가 공개한 목록에서 자동 실행 가능하다고 표시한 첫 action을 고른다."""
     if not command:
         return None
-    status = str(command.get("status") or "")
-    stage = str(command.get("stage") or "")
-    command_id = str(command.get("command_id") or "")
     raw_result = command.get("result")
     result = raw_result if isinstance(raw_result, dict) else {}
-    proposals = result.get("method_proposals")
-    has_method_proposals = (
-        stage == "design" and isinstance(proposals, list) and bool(proposals)
-    )
-
-    if status == "AWAITING_INPUT":
-        if result.get("action") == "confirm_change":
-            return None
-        question = _resource_question(result)
-        if question is not None:
-            if question.get("kind") == "suggested":
-                return AutoAction("advance", {"action_id": command_id})
-            return None
-        questions = result.get("questions")
-        if result.get("kind") == "question" or (
-            isinstance(questions, list) and bool(questions)
-        ):
-            return None
-        if (
-            result.get("requires_revision") is True
-            and result.get("can_delegate_repair") is True
-        ):
-            repair_state = result.get("repair_state")
-            repair_status = (
-                str(repair_state.get("status") or "")
-                if isinstance(repair_state, dict)
-                else ""
-            )
-            if repair_status in {"WAITING_EXTERNAL", "STALLED"}:
-                return None
-            return AutoAction("delegate_repair", {"action_id": command_id})
-        if result.get("requires_revision") is True and not has_method_proposals:
-            return None
-        if stage in {"requirements", "design"}:
-            extra: JsonObject = {"action_id": command_id}
-            if has_method_proposals:
-                extra["auto_approve_method_proposals"] = True
-            return AutoAction("advance", extra)
-        if (
-            stage == "implementation"
-            and result.get("job_id")
-            and result.get("request_id")
-        ):
-            return AutoAction(
-                "approve_implementation",
-                {
-                    "action_id": command_id,
-                    "job_id": str(result["job_id"]),
-                    "request_id": str(result["request_id"]),
-                    "delegate_repair_approvals": True,
-                },
-            )
+    actions = result.get("actions")
+    if not isinstance(actions, list):
         return None
-
-    if status != "COMPLETED":
-        return None
-    if stage == "requirements":
-        return AutoAction("start_design")
-    if stage == "design":
-        return AutoAction("start_implementation", {"allow_assumptions": True})
-    if stage == "implementation" and result.get("job_id"):
-        return AutoAction(
-            "start_testing", {"implementation_job_id": str(result["job_id"])}
-        )
+    for offer in actions:
+        if not isinstance(offer, dict) or offer.get("auto_selectable") is not True:
+            continue
+        action = str(offer.get("action") or "")
+        payload = offer.get("payload")
+        if action and isinstance(payload, dict):
+            return AutoAction(action, payload)
     return None
 
 

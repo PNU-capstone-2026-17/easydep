@@ -10,11 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.implementation.application.feedback import (
-    FeedbackTargetProposal,
-    assess_feedback_eligibility,
-    resolve_feedback_targets,
-)
+from app.implementation.application.feedback import resolve_feedback_targets
 from app.implementation.application.jobs import ImplementationWorker
 from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
 from app.implementation.config import ImplementationSettings
@@ -271,48 +267,6 @@ def test_job_execution_lease_reclaims_an_abandoned_partial_file(tmp_path: Path) 
         worker.shutdown()
 
 
-def test_feedback_eligibility_rejects_design_contract_changes() -> None:
-    result = assess_feedback_eligibility("OpenAPI 엔드포인트와 응답 스키마를 변경해줘")
-
-    assert result["status"] == "UNSUITABLE"
-    assert result["matches"][0]["code"] == "OPENAPI_CONTRACT_CHANGE"
-
-
-def test_feedback_eligibility_accepts_existing_contract_behavior_change() -> None:
-    result = assess_feedback_eligibility(
-        "배송이 시작된 주문은 취소 요청을 거절하고 테스트를 보강해줘"
-    )
-
-    assert result["status"] == "ELIGIBLE"
-
-
-def test_feedback_target_candidate_is_confirmed_against_the_rtm() -> None:
-    """LLM이 없는 ref를 제안해도 RTM에 있는 대상과 파일만 수리 힌트가 된다."""
-    rtm = {
-        "mappings": [
-            {
-                "target_file": "application/src/RegistrationService.java",
-                "element_name": "RegistrationService",
-                "taskId": "implement-registration",
-                "sourceRefs": ["api:registerForOffering"],
-            }
-        ]
-    }
-
-    result = resolve_feedback_targets(
-        "수강 신청 충돌 처리를 고쳐줘",
-        rtm,
-        proposal_call=lambda _feedback, _candidates: FeedbackTargetProposal(
-            target_refs=["api:registerForOffering", "api:invented"]
-        ),
-    )
-
-    assert result["confirmedTargetRefs"] == ["api:registerForOffering"]
-    assert result["relatedFiles"] == [
-        "application/src/RegistrationService.java"
-    ]
-
-
 def test_confirmed_testing_target_does_not_call_the_feedback_selector() -> None:
     rtm = {
         "mappings": [
@@ -324,10 +278,8 @@ def test_confirmed_testing_target_does_not_call_the_feedback_selector() -> None:
     }
 
     result = resolve_feedback_targets(
-        "The evidence contains requirement_ids but does not request a contract change.",
         rtm,
         confirmed_refs=["api:registerForOffering", "api:not-in-the-rtm"],
-        proposal_call=lambda *_args: pytest.fail("confirmed targets must not call the LLM"),
     )
 
     assert result == {
@@ -373,6 +325,7 @@ def test_feedback_job_restores_frontend_snapshot_under_frontend_directory(
             "배송이 시작된 주문은 취소 요청을 거절해줘",
             "com.example",
             False,
+            confirmed_target_refs=[],
         )
     finally:
         worker.shutdown()
@@ -381,46 +334,6 @@ def test_feedback_job_restores_frontend_snapshot_under_frontend_directory(
     assert captured["build.gradle"] == "plugins {}"
     assert captured["frontend/package.json"] == "{}"
     assert "package.json" not in captured
-
-
-def test_unsuitable_feedback_does_not_create_an_execution_run(monkeypatch, tmp_path: Path) -> None:
-    source_snapshot = {
-        "version_no": 3,
-        "files": {
-            "src/main/java/com/example/OrderService.java": {"content": "class OrderService {}"}
-        },
-    }
-    monkeypatch.setattr(
-        "app.implementation.application.jobs.artifact_repository.load_file_snapshot",
-        lambda *_args, **_kwargs: source_snapshot,
-    )
-    implementation_worker = ImplementationWorker(settings(tmp_path))
-    implementation_worker.client.prepare_feedback_job = lambda *_args, **_kwargs: pytest.fail(
-        "Unsuitable feedback must not create a feedback run"
-    )
-    try:
-        record = implementation_worker.create_feedback_job(
-            "app-1", {}, "API 명세의 엔드포인트를 추가해줘", "com.example", False
-        )
-    finally:
-        implementation_worker.shutdown()
-
-    assert record["status"] == "NEEDS_INPUT"
-    assert record["feedback_eligibility"]["status"] == "UNSUITABLE"
-    assert record["prompt"]["kind"] == "upstream_revision_confirmation"
-    assert record["prompt"]["requiredStage"] == "design"
-    assert record["prompt"]["question"]
-    assert (
-        tmp_path / ".easydep/implementation-runs" / record["job_id"] / "feedback-eligibility.json"
-    ).is_file()
-
-
-def test_requirement_feedback_asks_before_returning_to_requirements() -> None:
-    result = assess_feedback_eligibility("요구사항에 대기자 우선순위 업무 규칙을 추가해줘")
-
-    assert result["status"] == "UNSUITABLE"
-    assert result["requiredStage"] == "requirements"
-    assert "requirements 단계" in result["confirmationQuestion"]
 
 
 def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path) -> None:

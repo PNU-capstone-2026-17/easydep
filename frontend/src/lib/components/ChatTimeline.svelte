@@ -243,7 +243,7 @@
         <div class="mb-2 flex items-center justify-between gap-3">
           <span class="font-semibold text-[#343831]">
             {isLlmMetrics
-              ? 'LLM 실행 기록'
+              ? 'LLM run history'
               : String(event.metadata?.progress_card_label ?? 'Requirements analysis')}
           </span>
           <time class="text-[10px] text-[#a0a29a]">{formatTime(event.created_at)}</time>

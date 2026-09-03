@@ -27,6 +27,7 @@ from app.repositories import artifact_repository
 from app.requirements.schemas import DeploymentPreferences
 
 from . import repository
+from .contracts import WorkspaceAction
 from .live_preview import live_previews
 from .service import workspace_service
 
@@ -116,24 +117,7 @@ class WorkspaceCommandRequest(BaseModel):
 
     # action은 프론트엔드가 임의 문자열을 보내지 못하도록 가능한 값을 고정한다. 나머지
     # 필드는 action별 선택 값이며, 실제 조합 검사는 workspace_service가 담당한다.
-    action: Literal[
-        "message",
-        "advance",
-        "delegate_repair",
-        "confirm_change",
-        "dismiss_change",
-        "start_design",
-        "retry_requirements",
-        "retry_design",
-        "start_implementation",
-        "retry_implementation",
-        "rerun_implementation",
-        "approve_implementation",
-        "reject_implementation",
-        "cancel_implementation",
-        "start_testing",
-        "apply_deployment_preferences",
-    ]
+    action: WorkspaceAction
     text: str = Field(default="", max_length=30000)
     context: dict[str, Any] | None = None
     action_id: str | None = None
@@ -377,7 +361,9 @@ def create_command(app_id: str, request: WorkspaceCommandRequest) -> dict[str, A
     if request.action == "message" and not request.text.strip():
         raise HTTPException(status_code=422, detail="Enter a message.")
     try:
-        command = workspace_service.submit(app_id, action=request.action, payload=payload)
+        command = workspace_service.submit(
+            app_id, action=request.action.value, payload=payload
+        )
     except artifact_repository.AppNotFound as error:
         raise HTTPException(status_code=404, detail="Unknown app id.") from error
     except (RuntimeError, ValueError) as error:

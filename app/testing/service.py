@@ -394,7 +394,20 @@ def _run_test(
                 }
             )
         report["repair_state"] = _repair_state(ledger, passed=bool(report["passed"]))
-        return report, ledger.model_dump(mode="json")
+        completed_history = ledger.model_dump(mode="json")
+        if progress is not None:
+            # Workspace 결과가 저장되기 직전 서버가 종료되어도 방금 사용한 후보와 finding을
+            # 잃지 않는다. 이 경계는 아직 command 완료가 아니므로 저장소에는 RUNNING
+            # checkpoint로 남고, 재개 시 같은 후보 반복을 감지할 수 있다.
+            progress(
+                {
+                    "current_node": "verification_complete",
+                    "result": report,
+                    "repair_history": completed_history,
+                    "previous_findings": list(findings),
+                }
+            )
+        return report, completed_history
 
     return execute_snapshot()
 
@@ -525,8 +538,10 @@ def run_testing(
                 "testing_input": testing_input.model_dump(mode="json"),
                 "current_node": state.get("current_node"),
                 "result": dict(state.get("result") or {}),
-                "repair_history": repair_history,
-                "previous_findings": list(previous_findings),
+                "repair_history": dict(state.get("repair_history") or repair_history),
+                "previous_findings": list(
+                    state.get("previous_findings") or previous_findings
+                ),
             }
         )
 
@@ -550,4 +565,5 @@ def run_testing(
         "testing_input": testing_input.model_dump(mode="json"),
         "result": report,
         "repair_history": completed_history,
+        "previous_findings": list(_finding_keys(report)),
     }

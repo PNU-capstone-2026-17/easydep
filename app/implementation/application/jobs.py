@@ -39,7 +39,7 @@ from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
 
 from ..config import ImplementationSettings
-from .feedback import assess_feedback_eligibility, resolve_feedback_targets
+from .feedback import resolve_feedback_targets
 from .prototype import PrototypeClient
 from .source_files import (
     classify_source_path,
@@ -228,7 +228,8 @@ def _preserve_feedback_traceability(
             merged.append(item)
             continue
         updated = dict(item)
-        prior = prior_by_file.get(updated.get("target_file"))
+        target_file = updated.get("target_file")
+        prior = prior_by_file.get(target_file) if isinstance(target_file, str) else None
         if isinstance(prior, dict):
             # 새 행에 없는 필드만 같은 파일의 이전 확정 값을 옮긴다.
             for key in ("requirementIds", "useCaseIds", "sourceRefs"):
@@ -413,7 +414,10 @@ class ImplementationWorker:
             },
             "design_validation": readiness,
             "transmission_request": None,
-            "error": "설계 불일치가 남아 구현 작업을 시작하지 않았습니다. " + summary,
+            "error": (
+                "The implementation job did not start because design inconsistencies remain. "
+                + summary
+            ),
             "created_at": _now(),
             "updated_at": _now(),
         }
@@ -427,8 +431,8 @@ class ImplementationWorker:
             {
                 "stage": "api_spec",
                 "finding": (
-                    f"검증 가능한 설계 모델 '{name}'이 없어 API·Control·시퀀스 "
-                    "정합성을 증명할 수 없음 — 설계 단계를 다시 생성하거나 수정하세요."
+                    f"The verifiable design model '{name}' is missing, so API, Control, and "
+                    "sequence consistency cannot be established. Regenerate or revise the design stage."
                 ),
             }
             for name in missing_models
@@ -454,8 +458,8 @@ class ImplementationWorker:
     ) -> dict[str, Any]:
         """저장된 구현 파일에 사용자 피드백을 적용하는 새 작업을 만든다.
 
-        먼저 피드백이 구현 코드만 고쳐서 해결할 수 있는지 확인한다. 설계 변경이 필요하면
-        코드를 생성하지 않고 어느 설계 단계로 돌아가야 하는지 사용자에게 알려 준다.
+        Workspace가 owner·version·편집 가능 여부를 검증한 RTM ref만 받는다. 상류 산출물
+        변경은 대화형 router가 해당 전문 단계로 보내므로 여기서 자연어를 다시 분류하지 않는다.
         """
         source_snapshot = artifact_repository.load_file_snapshot(
             app_id, TYPE_SOURCE_CODE
@@ -472,66 +476,33 @@ class ImplementationWorker:
             else None
         )
         if confirmed_target_refs is None:
-            eligibility = assess_feedback_eligibility(
-                feedback,
-                design,
-                implementation_rtm if isinstance(implementation_rtm, dict) else None,
+            raise ValueError(
+                "Implementation feedback requires Workspace-validated target refs."
             )
-        else:
-            # Testing은 이미 실패 operation을 RTM ref로 확정했다. 긴 실행 증거 안의
-            # ``requirement_ids`` 같은 단어를 사용자 설계 변경 요청으로 다시 해석하지 않는다.
-            eligibility = {
-                "status": "ELIGIBLE",
-                "source": "confirmed_testing_failure",
-                "rtmValidated": True,
-            }
+        # 대화형 Workspace 또는 Testing이 이미 실제 RTM ref를 확정했다. 긴 자연어를
+        # 정규식으로 다시 분류하지 않고 이 유한한 대상만 구현 작업에 전달한다.
+        eligibility = {
+            "status": "ELIGIBLE",
+            "source": "confirmed_workspace_targets",
+            "rtmValidated": True,
+        }
         job_id = uuid.uuid4().hex
-        if eligibility["status"] == "UNSUITABLE":
-            report_path = self.settings.work_root / job_id / "feedback-eligibility.json"
-            report_path.parent.mkdir(parents=True, exist_ok=True)
-            report_path.write_text(
-                json.dumps(eligibility, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            record = {
-                "job_id": job_id,
-                "job_type": "FEEDBACK_REVISION",
-                "app_id": app_id,
-                "status": "NEEDS_INPUT",
-                "base_package": base_package,
-                "feedback": feedback,
-                "workflow": None,
-                "transmission_request": None,
-                "feedback_eligibility": eligibility,
-                "prompt": {
-                    "kind": "upstream_revision_confirmation",
-                    "requiredStage": eligibility.get("requiredStage"),
-                    "question": eligibility.get("confirmationQuestion"),
-                },
-                "eligibility_report": str(report_path.relative_to(self.settings.work_root)),
-                "error": None,
-                "created_at": _now(),
-                "updated_at": _now(),
-            }
-            self._write(record)
-            return self.public_record(record)
-
-        try:
-            targeting = resolve_feedback_targets(
-                feedback,
-                implementation_rtm if isinstance(implementation_rtm, dict) else None,
-                confirmed_refs=confirmed_target_refs,
-            )
-        except Exception as error:
-            # 대상 해석은 OpenHands의 조사 범위를 좁히는 힌트다. provider가 잠시 끊겨도
-            # 이미 적격으로 확인된 피드백 자체를 잃지 않고 전체 구현 snapshot에서 진행한다.
-            targeting = {
-                "source": "unavailable",
-                "confirmedTargetRefs": [],
-                "relatedFiles": [],
-                "error": f"{error.__class__.__name__}: {error}",
-            }
-        confirmed_refs = list(targeting.get("confirmedTargetRefs") or [])
-        related_files = list(targeting.get("relatedFiles") or [])
+        targeting = resolve_feedback_targets(
+            implementation_rtm if isinstance(implementation_rtm, dict) else None,
+            confirmed_refs=confirmed_target_refs,
+        )
+        raw_confirmed_refs = targeting.get("confirmedTargetRefs")
+        raw_related_files = targeting.get("relatedFiles")
+        confirmed_refs = (
+            [str(item) for item in raw_confirmed_refs]
+            if isinstance(raw_confirmed_refs, list)
+            else []
+        )
+        related_files = (
+            [str(item) for item in raw_related_files]
+            if isinstance(raw_related_files, list)
+            else []
+        )
         execution_feedback = feedback
         if confirmed_refs or related_files:
             execution_feedback += (
@@ -1055,12 +1026,14 @@ class ImplementationWorker:
                 else None
             )
             targeting = record.get("feedback_targeting")
-            confirmed_refs = (
+            raw_confirmed_refs = (
                 targeting.get("confirmedTargetRefs")
                 if isinstance(targeting, dict)
                 else []
             )
-            confirmed_refs = confirmed_refs if isinstance(confirmed_refs, list) else []
+            confirmed_refs = (
+                raw_confirmed_refs if isinstance(raw_confirmed_refs, list) else []
+            )
             implementation_trace = _preserve_feedback_traceability(
                 implementation_trace if isinstance(implementation_trace, dict) else None,
                 previous_snapshot,

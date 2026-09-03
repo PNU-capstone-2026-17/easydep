@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -51,10 +52,24 @@ from app.requirements.orchestration.service import (
 from app.requirements.resources.capability_contract import capability_resource_questions
 from app.requirements.runtime import telemetry as requirements_telemetry
 from app.testing.service import run_testing
-from app.validation import RepairAttempt, RepairOutcome, stable_digest
+from app.validation import stable_digest
 
 from . import repository
+from .actions import (
+    StagePolicy,
+    action_is_offered,
+    action_spec,
+    offered_actions,
+    result_with_contract,
+    validate_payload,
+)
+from .conversation.agent import conversation_agent
+from .conversation.context import build_conversation_context
+from .conversation.contracts import Clarification, CommandIntent, ConversationIntent, Reply
+from .conversation.project_tools import ProjectTools
 from .live_preview import live_previews
+
+_log = logging.getLogger(__name__)
 
 TERMINAL_JOB_STATUSES = {
     "COMPLETED",
@@ -109,17 +124,6 @@ def _implementation_agent_results(run_path: Path) -> list[dict[str, Any]]:
     return results
 
 
-def _blocker_keys(result: dict[str, Any]) -> tuple[str, ...]:
-    """수리 전후를 비교할 안정된 공개 blocker 키를 만든다."""
-    return tuple(
-        sorted(
-            json.dumps(blocker, ensure_ascii=False, sort_keys=True, default=str)
-            for blocker in result.get("blocking_findings") or []
-            if isinstance(blocker, dict)
-        )
-    )
-
-
 def _resource_questions(
     result: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -166,124 +170,31 @@ def _with_capability_handoff_questions(app_id: str, result: dict[str, Any]) -> d
     return enriched
 
 
-def _merge_delegated_repair_state(
-    previous: dict[str, Any],
-    current: dict[str, Any],
-    *,
-    strategy_key: str,
-) -> dict[str, Any]:
-    """명령 경계를 넘은 LLM 수리 이력을 압축 정보까지 잃지 않고 합친다."""
-    old = dict(previous.get("repair_state") or {})
-    new = dict(current.get("repair_state") or {})
-    before = _blocker_keys(previous)
-    after = _blocker_keys(current)
-    input_digest = stable_digest(before)
-    candidate_digest = stable_digest(after)
-    rejected_before = {str(value) for value in old.get("rejected_candidate_digests") or [] if value}
-    repeated = bool(after) and (after == before or candidate_digest in rejected_before)
-    before_set = set(before)
-    after_set = set(after)
-    outcome: RepairOutcome = (
-        "clean"
-        if not after
-        else "repeated_candidate"
-        if repeated
-        else "improved"
-        if after_set < before_set
-        else "regressed"
-        if before_set < after_set
-        else "no_improvement"
-    )
-    delegated = RepairAttempt(
-        stage="workspace.delegate-repair",
-        strategy_key=strategy_key,
-        input_digest=input_digest,
-        candidate_digest=candidate_digest,
-        finding_keys_before=before,
-        finding_keys_after=after,
-        outcome=outcome,
-        detail=(
-            "The delegated repair returned the same blocker set."
-            if repeated
-            else "The delegated repair introduced additional blockers."
-            if outcome == "regressed"
-            else "The delegated repair did not reduce the blocker set."
-            if outcome == "no_improvement"
-            else "The normal user-visible delegate action was executed."
-        ),
-    ).model_dump(mode="json")
-
-    recent: list[dict[str, Any]] = []
-    seen_attempts: set[str] = set()
-    for attempt in [
-        *(old.get("recent_attempts") or []),
-        *(new.get("recent_attempts") or []),
-        delegated,
-    ]:
-        if not isinstance(attempt, dict):
-            continue
-        identity = str(attempt.get("attempt_id") or stable_digest(attempt))
-        if identity in seen_attempts:
-            continue
-        seen_attempts.add(identity)
-        recent.append(attempt)
-
-    tried = {
-        str(value) for state in (old, new) for value in state.get("tried_strategies") or [] if value
-    }
-    tried.add(strategy_key)
-    rejected = {
-        str(value)
-        for state in (old, new)
-        for value in state.get("rejected_candidate_digests") or []
-        if value
-    }
-    if outcome not in {"improved", "clean"}:
-        rejected.add(candidate_digest)
-    # 같은 결과가 다시 나와도 자동 수리를 닫지 않는다. 거절된 후보 digest와 이미 사용한
-    # strategy를 계속 전달하므로 다음 시도는 다른 접근을 요구받으며, 횟수 상한은 없다.
-    status = "COMPLETED" if not after else "ACTIVE"
-    return {
-        "status": status,
-        "attempt_count": int(old.get("attempt_count") or 0)
-        + int(new.get("attempt_count") or 0)
-        + 1,
-        "accepted_count": int(old.get("accepted_count") or 0)
-        + int(new.get("accepted_count") or 0)
-        + (outcome in {"improved", "clean"}),
-        "recent_attempts": recent[-5:],
-        "tried_strategies": sorted(tried),
-        "rejected_candidate_digests": sorted(rejected),
-        "finding_digest": candidate_digest,
-        "stall_reason": "",
-    }
-
-
 # The implementation worker has two distinct parts: initial deterministic
 # generation and the resumable agent workflow.  Keep their user-facing labels
 # here so the workspace can report the same stable milestones even when the
 # underlying task plan differs by application.
 _IMPLEMENTATION_GENERATION_STEPS = (
-    ("validate-input", "입력 및 설계 검증"),
-    ("generate-sources", "기본 소스 생성"),
-    ("prepare-build", "빌드 환경 구성"),
-    ("verify-generated", "초기 컴파일 검증"),
-    ("plan-workflow", "구현 작업 계획"),
+    ("validate-input", "Validate input and design"),
+    ("generate-sources", "Generate base sources"),
+    ("prepare-build", "Prepare build environment"),
+    ("verify-generated", "Verify initial compilation"),
+    ("plan-workflow", "Plan implementation workflow"),
 )
 _IMPLEMENTATION_WORKFLOW_PHASES = (
-    ("persistence", "Persistence 구현"),
-    ("use-cases", "유스케이스 Backend 구현"),
-    ("frontend", "Frontend 구현"),
-    ("wiring", "Application 연결 및 HTTP 흐름 검증"),
+    ("persistence", "Persistence implementation"),
+    ("use-cases", "Use-case backend implementation"),
+    ("frontend", "Frontend implementation"),
+    ("wiring", "Verify application wiring and HTTP flow"),
 )
 _IMPLEMENTATION_DISPLAY_PHASES = (
     (
         "backend",
-        "Backend 구현",
+        "Backend implementation",
         frozenset({"persistence", "use-cases"}),
     ),
-    ("frontend", "Frontend 구현", frozenset({"frontend"})),
-    ("e2e", "Application 실행 검증", frozenset({"wiring"})),
+    ("frontend", "Frontend implementation", frozenset({"frontend"})),
+    ("e2e", "Verify application execution", frozenset({"wiring"})),
 )
 
 
@@ -299,9 +210,8 @@ class WorkspaceService:
 
     def startup(self) -> int:
         interrupted = repository.interrupt_unfinished()
-        # Testing command는 payload에 고정 입력과 마지막 검사 경계를 저장한다. 별도 작업
-        # 표나 worker를 복구하지 않고 같은 command를 다시 실행하면 Testing 서비스가 그
-        # 체크포인트에서 이어 간다.
+        # Testing command payload에 고정 입력과 마지막 검사 경계를 저장하므로 같은 command를
+        # 다시 실행하면 해당 경계에서 이어 간다.
         for command in repository.interrupted_testing_commands():
             self._executor.submit(self._execute, str(command["command_id"]))
         return interrupted
@@ -350,6 +260,9 @@ class WorkspaceService:
                     "job": job,
                     "checkpoint_retryable": bool(job.get("checkpoint_retryable")),
                 }
+                result = result_with_contract(
+                    {**command, "status": "FAILED"}, result
+                )
                 return repository.update_command(
                     command["command_id"],
                     status="FAILED",
@@ -363,6 +276,9 @@ class WorkspaceService:
             "job": job,
             "review_artifacts": True,
         }
+        result = result_with_contract(
+            {**command, "status": "COMPLETED"}, result
+        )
         updated = repository.update_command(
             command["command_id"],
             status="COMPLETED",
@@ -429,7 +345,7 @@ class WorkspaceService:
                     "step": step,
                     "progress_step_label": label,
                     "progress_card_label": str(
-                        progress.get("progress_card_label") or "구현 진행 상황"
+                        progress.get("progress_card_label") or "Implementation progress"
                     ),
                     "progress_detail": detail,
                     "progress_status": status,
@@ -468,10 +384,17 @@ class WorkspaceService:
         stage: str | None = None,
     ) -> dict[str, Any]:
         artifact_repository.ensure_app_exists(app_id)
+        user_text = str(payload.get("text") or "").strip()
+        action, payload, stage = self._prepare_conversational_message(
+            app_id,
+            action=action,
+            payload=payload,
+            stage=stage,
+        )
         resolved_stage = stage or self.infer_stage(app_id, action, payload)
         self._validate_payload(action, payload)
         self._validate_action_reference(app_id, action, payload)
-        text = str(payload.get("text") or "").strip()
+        text = user_text or str(payload.get("text") or "").strip()
         context = payload.get("context") or {}
         if (
             action == "message"
@@ -497,13 +420,22 @@ class WorkspaceService:
                 metadata={"context": payload.get("context")},
             )
 
-        if action == "message" and context and context.get("stage") != resolved_stage:
+        if (
+            action == "message"
+            and not payload.get("_conversation_outcome")
+            and not payload.get("conversation_intent")
+            and context.get("stage")
+            and context.get("stage") != resolved_stage
+        ):
             result = {
                 "action_id": command_id,
                 "action": "confirm_change",
                 "context": context,
                 "message": "This change may affect an earlier stage and its downstream artifacts.",
             }
+            result = result_with_contract(
+                {**command, "status": "AWAITING_INPUT"}, result
+            )
             repository.update_command(
                 command_id,
                 status="AWAITING_INPUT",
@@ -523,6 +455,201 @@ class WorkspaceService:
 
         self._executor.submit(self._execute, command_id)
         return command
+
+    def _prepare_conversational_message(
+        self,
+        app_id: str,
+        *,
+        action: str,
+        payload: dict[str, Any],
+        stage: str | None,
+    ) -> tuple[str, dict[str, Any], str | None]:
+        """실행 command를 만들기 전에 자연어 발화를 해석한다.
+
+        명시적 버튼, 리소스 답변과 UI에서 대상을 고른 수정은 LLM을 거치지 않는다. 자연어
+        command는 backend가 이미 공개한 action과 payload로 바꾸고 답변과 clarification은
+        전문 단계를 실행하지 않는 message command로 남긴다.
+        """
+
+        if action != "message":
+            return action, payload, stage
+        text = str(payload.get("text") or "").strip()
+        latest = repository.latest_command(app_id)
+        if not text or latest is None:
+            return action, payload, stage
+        if latest.get("status") in repository.ACTIVE_STATUSES:
+            raise RuntimeError(
+                f"An active workspace command already exists: {latest['command_id']}"
+            )
+        selected = payload.get("context") or {}
+        if any(
+            selected.get(key)
+            for key in ("element_ref", "target_feedbacks", "validated_target_feedbacks")
+        ):
+            return action, payload, stage
+
+        action_id = str(payload.get("action_id") or "")
+        prior = repository.get_command(action_id) if action_id else latest
+        prior_result = (prior or {}).get("result") or {}
+        # 전문 단계가 낸 구체적인 질문의 답은 그 단계의 typed 재개 경로를 유지한다.
+        # 대화형 clarification의 답만 저장된 문맥과 함께 대화형 에이전트로 돌려보낸다.
+        conversation = prior_result.get("conversation")
+        if (
+            prior is not None
+            and prior.get("status") == "AWAITING_INPUT"
+            and not isinstance(conversation, dict)
+            and (
+                prior_result.get("kind") == "question"
+                or prior_result.get("resource_question")
+                or prior_result.get("questions")
+            )
+        ):
+            return action, payload, str(prior.get("stage") or stage or "requirements")
+
+        actionable = latest
+        latest_conversation = (latest.get("result") or {}).get("conversation")
+        if isinstance(latest_conversation, dict) and latest_conversation.get("clarification"):
+            referenced = repository.get_command(
+                str((latest.get("payload") or {}).get("action_id") or "")
+            )
+            if referenced is not None:
+                actionable = referenced
+        try:
+            outcome = conversation_agent.respond(
+                app_id,
+                text,
+                build_conversation_context(app_id),
+                tools=ProjectTools(app_id),
+            )
+        except Exception:
+            _log.exception("Failed to interpret a workspace conversation message")
+            outcome = Clarification(
+                question=(
+                    "I could not interpret that message right now. "
+                    "Please retry or use one of the available actions."
+                )
+            )
+        if isinstance(outcome, Reply):
+            return (
+                "message",
+                {
+                    **payload,
+                    "_conversation_actions": [
+                        item.model_dump(mode="json", exclude_none=True)
+                        for item in offered_actions(actionable)
+                    ],
+                    "_conversation_outcome": {
+                        "kind": "reply",
+                        **outcome.model_dump(mode="json"),
+                    },
+                },
+                stage or str(latest.get("stage") or "requirements"),
+            )
+        if isinstance(outcome, Clarification):
+            return self._clarification_message(payload, outcome, stage, latest)
+        return self._route_conversation_intent(app_id, payload, outcome, actionable)
+
+    @staticmethod
+    def _clarification_message(
+        payload: dict[str, Any],
+        outcome: Clarification,
+        stage: str | None,
+        latest: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        return (
+            "message",
+            {
+                **payload,
+                "_conversation_outcome": {
+                    "kind": "clarification",
+                    **outcome.model_dump(mode="json"),
+                },
+            },
+            stage or str(latest.get("stage") or "requirements"),
+        )
+
+    def _route_conversation_intent(
+        self,
+        app_id: str,
+        payload: dict[str, Any],
+        intent: CommandIntent,
+        latest: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        """자연어 의도를 공개 offer와 검증된 프로젝트 ref로 연결한다."""
+
+        offered = offered_actions(latest)
+        intent_name = str(intent.intent)
+        if intent_name == ConversationIntent.REVISE.value:
+            tools = ProjectTools(app_id)
+            validation = tools.validate_targets(intent.targets)
+            targets = list(validation.get("targets") or [])
+            valid_refs = list(validation.get("valid_refs") or [])
+            owners = {str(item.get("owner") or "") for item in targets if item.get("valid")}
+            if not validation.get("valid") or not valid_refs or len(owners) != 1:
+                candidates = [str(item.get("canonical_ref") or item.get("ref") or "") for item in targets]
+                return self._clarification_message(
+                    payload,
+                    Clarification(
+                        question="Select editable targets owned by a single delivery stage.",
+                        candidates=list(dict.fromkeys(item for item in candidates if item)),
+                    ),
+                    None,
+                    latest,
+                )
+            owner = owners.pop()
+            owner_command = repository.latest_command(app_id, stage=owner)
+            routed_payload = {
+                **payload,
+                "text": intent.instruction,
+                "action_id": str((owner_command or latest).get("command_id") or ""),
+                "conversation_intent": intent.model_dump(mode="json"),
+                "validated_targets": targets,
+                "validated_impact": tools.trace_impact(valid_refs, view="editing"),
+            }
+            if owner == "design":
+                routed_payload["context"] = {
+                    "validated_target_feedbacks": [
+                        {"target": ref, "feedback": intent.instruction}
+                        for ref in valid_refs
+                    ]
+                }
+            return "message", routed_payload, owner
+
+        action_candidates = {
+            ConversationIntent.ADVANCE.value: {
+                "advance",
+                "start_design",
+                "start_implementation",
+                "start_testing",
+            },
+            ConversationIntent.ANSWER.value: {"message"},
+            ConversationIntent.DELEGATE_REPAIR.value: {"delegate_repair"},
+        }.get(intent_name, set())
+        offer = next(
+            (item for item in offered if str(item.action) in action_candidates),
+            None,
+        )
+        if offer is None:
+            return self._clarification_message(
+                payload,
+                Clarification(
+                    question=(
+                        "That action is not available in the current state. "
+                        "Choose one of the available actions."
+                    ),
+                    candidates=[str(item.label) for item in offered],
+                ),
+                None,
+                latest,
+            )
+        routed_payload = {
+            **payload,
+            **dict(offer.payload),
+            "conversation_intent": intent.model_dump(mode="json"),
+        }
+        if str(offer.action) == "message":
+            routed_payload["text"] = intent.instruction
+        return str(offer.action), routed_payload, None
 
     def apply_saved_deployment_preferences(self, app_id: str) -> dict[str, Any] | None:
         """Resume only a requirements gate that is waiting for cloud coordinates."""
@@ -560,33 +687,14 @@ class WorkspaceService:
             return None
         presented = dict(command)
         result = command.get("result")
-        if isinstance(result, dict):
-            presented["result"] = _with_capability_handoff_questions(app_id, result)
+        shaped_result = dict(result) if isinstance(result, dict) else {}
+        shaped_result = _with_capability_handoff_questions(app_id, shaped_result)
+        presented["result"] = result_with_contract(presented, shaped_result)
         return presented
 
     @staticmethod
     def _validate_payload(action: str, payload: dict[str, Any]) -> None:
-        required = {
-            "advance": ("action_id",),
-            "delegate_repair": ("action_id",),
-            "retry_requirements": ("action_id",),
-            "retry_design": ("action_id",),
-            "retry_implementation": ("action_id", "job_id"),
-            "rerun_implementation": (),
-            "confirm_change": ("action_id",),
-            "dismiss_change": ("action_id",),
-            "approve_implementation": ("action_id", "job_id", "request_id"),
-            "reject_implementation": ("action_id", "job_id", "request_id"),
-            "cancel_implementation": ("job_id",),
-            "start_testing": ("implementation_job_id",),
-            "apply_deployment_preferences": (
-                "action_id",
-                "deployment_preferences",
-            ),
-        }
-        missing = [name for name in required.get(action, ()) if not payload.get(name)]
-        if missing:
-            raise ValueError(f"Missing values for the {action} command: {', '.join(missing)}")
+        validate_payload(action, payload)
 
     def _validate_action_reference(self, app_id: str, action: str, payload: dict[str, Any]) -> None:
         action_id = str(payload.get("action_id") or "")
@@ -595,55 +703,33 @@ class WorkspaceService:
         prior = repository.get_command(action_id)
         if prior is None or prior["app_id"] != app_id:
             raise ValueError("The command to answer could not be found.")
-        if action in {"retry_requirements", "retry_design"}:
-            expected_stage = "requirements" if action == "retry_requirements" else "design"
-            if prior["status"] not in {"FAILED", "INTERRUPTED"} or prior["stage"] != expected_stage:
-                raise ValueError(
-                    f"Only a failed or interrupted {expected_stage} command can be retried."
-                )
+        # 저장된 배포 선택은 내부 재개 trigger다. 같은 질문에 답하지만 choice text 대신
+        # 구조화된 값을 전달한다.
+        if action == "apply_deployment_preferences":
+            result = prior.get("result") or {}
+            fields = {
+                str(question.get("field") or "")
+                for question in result.get("resource_questions") or []
+                if isinstance(question, dict)
+            }
+            if prior["status"] != "AWAITING_INPUT" or not fields.intersection(
+                {"provider", "region"}
+            ):
+                raise ValueError("Deployment preferences do not answer this command.")
             return
-        if action == "retry_implementation":
-            testing_repair = (
-                prior.get("action") == "delegate_repair"
-                and prior.get("stage") == "testing"
-                and str((prior.get("payload") or {}).get("job_id") or "")
-                == str(payload.get("job_id") or "")
-            )
-            environment_retry = (
-                testing_repair
-                and prior.get("status") == "AWAITING_INPUT"
-                and any(
-                    isinstance(blocker, dict)
-                    and blocker.get("defect_class") == "ENVIRONMENT_DEFECT"
-                    for blocker in (prior.get("result") or {}).get("blocking_findings")
-                    or []
-                )
-            )
-            retryable_status = (
-                prior["status"] in {"FAILED", "INTERRUPTED"} or environment_retry
-            )
-            retryable_stage = prior["stage"] == "implementation" or testing_repair
-            if not retryable_status or not retryable_stage:
-                raise ValueError(
-                    "Only a failed or interrupted implementation command can be retried "
-                    "from its checkpoint, unless Testing is waiting for a restored environment."
-                )
-            return
-        if prior["status"] != "AWAITING_INPUT":
-            raise ValueError("The command was already handled or is not awaiting a response.")
-        result = prior.get("result") or {}
-        if (
-            action in {"confirm_change", "dismiss_change"}
-            and result.get("action") != "confirm_change"
-        ):
-            raise ValueError("This command is not awaiting change confirmation.")
+        if not action_is_offered(action, payload, prior):
+            raise ValueError("This action is not currently offered for the referenced command.")
 
     def infer_stage(self, app_id: str, action: str, payload: dict[str, Any]) -> str:
-        if action in {"apply_deployment_preferences", "retry_requirements"}:
-            return "requirements"
-        if action in {"start_design", "retry_design"}:
-            return "design"
-        if action == "retry_implementation":
+        policy = action_spec(action).stage_policy
+        if policy in {
+            StagePolicy.REQUIREMENTS,
+            StagePolicy.DESIGN,
+            StagePolicy.IMPLEMENTATION,
+            StagePolicy.TESTING,
+        }:
+            return policy.value
+        if policy == StagePolicy.RETRY_IMPLEMENTATION:
             # Testing이 자동으로 만든 구현 수리도 같은 구현 checkpoint다. 이 경우 재개
             # 명령을 Testing 단계에 두면 구현 수리가 끝난 뒤 보존한 기능 계획을 바로 다시
             # 실행할 수 있고, 서버가 중간에 재시작돼도 아래 Testing checkpoint로 이어진다.
@@ -654,23 +740,24 @@ class WorkspaceService:
                 and prior.get("stage") == "testing"
             ):
                 return "testing"
-        if action in {
-            "start_implementation",
-            "retry_implementation",
-            "rerun_implementation",
-            "approve_implementation",
-            "reject_implementation",
-            "cancel_implementation",
-        }:
             return "implementation"
-        if action == "start_testing":
-            return "testing"
-        if action in {"confirm_change", "dismiss_change"}:
+        if policy == StagePolicy.REFERENCE:
             prior = repository.get_command(str(payload.get("action_id") or ""))
-            return str((prior or {}).get("stage") or "design")
+            if prior is not None:
+                return str(
+                    (prior.get("result") or {}).get("routing_stage")
+                    or prior.get("stage")
+                    or "requirements"
+                )
         latest = repository.latest_command(app_id)
-        if action in {"advance", "delegate_repair"} and latest is not None:
-            return str(latest["stage"])
+        if action == "message" and payload.get("action_id"):
+            prior = repository.get_command(str(payload["action_id"]))
+            if prior is not None:
+                return str(
+                    (prior.get("result") or {}).get("routing_stage")
+                    or prior.get("stage")
+                    or "requirements"
+                )
         state = artifact_repository.load_state(app_id)
         if not state.get("refined_requirements") or (
             latest is not None
@@ -733,8 +820,21 @@ class WorkspaceService:
         try:
             result = self._dispatch(command)
             self._complete_referenced_action(command)
-            if result.get("awaiting_input"):
-                repository.update_command(command_id, status="AWAITING_INPUT", result=result)
+            awaiting_input = result.pop("awaiting_input", False) is True
+            if awaiting_input:
+                result = result_with_contract(
+                    {**command, "status": "AWAITING_INPUT"}, result
+                )
+                routed_stage = str(result.get("routing_stage") or "")
+                changes: dict[str, Any] = {
+                    "status": "AWAITING_INPUT",
+                    "result": result,
+                }
+                if routed_stage in {"requirements", "design", "implementation", "testing"}:
+                    changes["stage"] = routed_stage
+                    command["stage"] = routed_stage
+                    stage = routed_stage
+                repository.update_command(command_id, **changes)
                 repository.append_event(
                     app_id,
                     command_id=command_id,
@@ -748,7 +848,8 @@ class WorkspaceService:
                 # 질문이 아니다. 각 단계가 공개하던 ``delegate_repair`` 선택을 백엔드가
                 # 곧바로 실행한다. 요구사항 선택·확인 질문은 그대로 사용자에게 남긴다.
                 if (
-                    result.get("requires_revision") is True
+                    command.get("action") == "delegate_repair"
+                    and result.get("requires_revision") is True
                     and result.get("can_delegate_repair") is True
                     and not result.get("resource_question")
                     and not result.get("resource_questions")
@@ -772,6 +873,7 @@ class WorkspaceService:
                 if stage == "requirements":
                     self.apply_saved_deployment_preferences(app_id)
                 return
+            result = result_with_contract({**command, "status": "COMPLETED"}, result)
             repository.update_command(
                 command_id,
                 status="COMPLETED",
@@ -789,9 +891,15 @@ class WorkspaceService:
             )
         except Exception as error:
             detail = self._error_text(error)
+            latest = repository.get_command(command_id) or command
+            failure_result = result_with_contract(
+                {**latest, "status": "FAILED"},
+                dict(latest.get("result") or {}),
+            )
             repository.update_command(
                 command_id,
                 status="FAILED",
+                result=failure_result,
                 error=detail,
                 completed_at=repository.now(),
             )
@@ -807,6 +915,8 @@ class WorkspaceService:
             raise
 
     def _complete_referenced_action(self, command: dict[str, Any]) -> None:
+        if command["payload"].get("_conversation_outcome"):
+            return
         action_id = str(command["payload"].get("action_id") or "")
         if not action_id:
             return
@@ -816,6 +926,32 @@ class WorkspaceService:
 
     def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         action = str(command["action"])
+        handler = action_spec(action).handler
+        conversation_outcome = command["payload"].get("_conversation_outcome")
+        if action == "message" and isinstance(conversation_outcome, dict):
+            kind = str(conversation_outcome.get("kind") or "")
+            if kind == "reply":
+                reply = Reply.model_validate(
+                    {key: value for key, value in conversation_outcome.items() if key != "kind"}
+                )
+                return {
+                    "kind": "reply",
+                    "message": reply.text,
+                    "conversation": {"reply": reply.model_dump(mode="json")},
+                }
+            if kind == "clarification":
+                clarification = Clarification.model_validate(
+                    {key: value for key, value in conversation_outcome.items() if key != "kind"}
+                )
+                return {
+                    "awaiting_input": True,
+                    "kind": "question",
+                    "message": clarification.question,
+                    "conversation": {
+                        "clarification": clarification.model_dump(mode="json")
+                    },
+                }
+            raise ValueError("Unknown conversation outcome.")
         # 파일 복원이나 검사 도중 서버가 재시작되었다면 구현 수리부터 반복하지 않는다.
         # 현재 command에 저장한 Testing 체크포인트를 그대로 실행 서비스에 돌려준다.
         checkpoint = command["payload"].get("testing_checkpoint")
@@ -824,14 +960,9 @@ class WorkspaceService:
             if not implementation_job_id:
                 raise ValueError("The Testing checkpoint has no implementation job ID.")
             return self._run_testing_command(command, implementation_job_id)
-        if action in {
-            "message",
-            "advance",
-            "apply_deployment_preferences",
-            "start_design",
-        }:
+        if handler == "stage_message":
             return self._stage_message(command, advance=action in {"advance", "start_design"})
-        if action == "delegate_repair":
+        if handler == "delegate_repair":
             action_id = str(command["payload"].get("action_id") or "")
             prior = repository.get_command(action_id) or {}
             result = prior.get("result") or {}
@@ -884,6 +1015,7 @@ class WorkspaceService:
                     # 설계 단계는 기존 그래프 순서대로 이어서 진행한다.
                     revised = rewind_design_session(str(command["app_id"]), "api_spec")
                     shaped = self._design_result(revised)
+                    shaped["routing_stage"] = "design"
                     shaped["message"] = (
                         "Testing found an ambiguous requirements-to-API mapping, so EasyDep "
                         "regenerated the API specification from the preserved sequence design."
@@ -988,7 +1120,7 @@ class WorkspaceService:
                 ),
             }
             return self._stage_message(delegated, advance=False)
-        if action == "retry_requirements":
+        if handler == "retry_requirements":
             app_id = str(command["app_id"])
             progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
             with requirements_telemetry.progress_scope(progress):
@@ -997,7 +1129,7 @@ class WorkspaceService:
                     app_id=app_id,
                 )
             return self._requirements_result(result)
-        if action == "retry_design":
+        if handler == "retry_design":
             app_id = str(command["app_id"])
             status = session_status(app_id)
             stage = str(status.get("stage") or "design")
@@ -1008,11 +1140,11 @@ class WorkspaceService:
                 operation=lambda: retry_design_session(app_id),
             )
             return self._design_result(response)
-        if action == "confirm_change":
+        if handler == "confirm_change":
             return self._confirm_change(command)
-        if action == "dismiss_change":
+        if handler == "dismiss_change":
             return {"message": "Kept the existing artifacts and dismissed the change request."}
-        if action in {"start_implementation", "rerun_implementation"}:
+        if handler == "start_implementation":
             if action == "rerun_implementation":
                 # The retry starts a new implementation run.  Tell the UI to
                 # discard only the previous implementation timeline while
@@ -1044,7 +1176,7 @@ class WorkspaceService:
                 payload=persisted_payload,
             )
             return self._monitor_implementation(job, command_id=str(command["command_id"]))
-        if action == "retry_implementation":
+        if handler == "retry_implementation":
             payload = command["payload"]
             current_job = implementation_worker.get(str(payload["job_id"]))
             if str(current_job.get("app_id") or "") != str(command["app_id"]):
@@ -1104,7 +1236,7 @@ class WorkspaceService:
                 previous_job=previous_job,
                 preserve_test=preserve_test,
             )
-        if action in {"approve_implementation", "reject_implementation"}:
+        if handler == "implementation_approval":
             payload = command["payload"]
             app_id = str(command["app_id"])
             approved = action == "approve_implementation"
@@ -1130,10 +1262,7 @@ class WorkspaceService:
                 bool(payload.get("delegate_repair_approvals", True)),
             )
             return self._monitor_implementation(job, command_id=str(command["command_id"]))
-        if action == "cancel_implementation":
-            job = implementation_worker.cancel(str(command["payload"]["job_id"]))
-            return {"message": "Cancelled the implementation job.", "job": job}
-        if action == "start_testing":
+        if handler == "start_testing":
             return self._run_testing_command(
                 command,
                 str(command["payload"]["implementation_job_id"]),
@@ -1190,7 +1319,42 @@ class WorkspaceService:
                         app_id=app_id,
                     )
                 else:
-                    if command.get("action") == "delegate_repair":
+                    conversation_intent = payload.get("conversation_intent")
+                    if (
+                        isinstance(conversation_intent, dict)
+                        and conversation_intent.get("intent") == "revise"
+                    ):
+                        refs = [
+                            str(ref)
+                            for ref in conversation_intent.get("targets") or []
+                            if isinstance(ref, str)
+                        ]
+                        prefixes = {ref.partition(":")[0] for ref in refs}
+                        owner_by_prefix: dict[str, FeedbackStage] = {
+                            "requirement": "actors",
+                            "actor": "actors",
+                            "use_case": "use_cases",
+                            "use_case_spec": "specs",
+                            "relationship": "relationships",
+                        }
+                        stages = {owner_by_prefix[prefix] for prefix in prefixes}
+                        if len(stages) != 1:
+                            raise ValueError(
+                                "A requirements revision must target one modeling stage."
+                            )
+                        owner = stages.pop()
+                        target_ids = [ref.partition(":")[2] for ref in refs]
+                        request = AnalyzeRequest(
+                            edit=FeedbackEdit(
+                                stage=owner,
+                                scope="local",
+                                target_ids=target_ids,
+                                instruction=text,
+                            ),
+                            thread_id=app_id,
+                            app_id=app_id,
+                        )
+                    elif command.get("action") == "delegate_repair":
                         repairable = [
                             blocker
                             for blocker in previous_result.get("blocking_findings") or []
@@ -1255,15 +1419,7 @@ class WorkspaceService:
             progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
             with requirements_telemetry.progress_scope(progress):
                 result = analyze_requirements(request)
-            shaped = self._requirements_result(result)
-            if command.get("action") == "delegate_repair":
-                merged_repair_state = _merge_delegated_repair_state(
-                    previous_result,
-                    shaped,
-                    strategy_key=str(payload.get("_repair_strategy_key") or "delegate"),
-                )
-                shaped["repair_state"] = merged_repair_state
-            return shaped
+            return self._requirements_result(result)
 
         if stage == "design":
             status = session_status(app_id)
@@ -1287,6 +1443,30 @@ class WorkspaceService:
                 if text not in allowed:
                     raise ValueError("Choose one of the stored deployment targets.")
                 return self._design_result(select_deployment_target_session(app_id, text))
+            validated_feedbacks = context.get("validated_target_feedbacks")
+            if validated_feedbacks is not None:
+                if not isinstance(validated_feedbacks, list) or not validated_feedbacks:
+                    raise ValueError("Validated design feedback requires at least one target.")
+                revisions = BatchReviseRequest.model_validate(
+                    {"revisions": validated_feedbacks}
+                ).revisions
+                validated_revision = revise_design_elements(
+                    app_id,
+                    BatchReviseRequest(revisions=revisions),
+                )
+                return {
+                    "awaiting_input": True,
+                    "kind": "action_required",
+                    "message": (
+                        f"Revised {len(revisions)} validated design element(s) and only "
+                        "their trace-linked artifacts. Review the result or continue."
+                    ),
+                    "current_stage": status.get("stage") or "design",
+                    "changed": validated_revision.get("changed") or [],
+                    "touched": validated_revision.get("touched") or {},
+                    "related": validated_revision.get("related") or [],
+                    "design": validated_revision,
+                }
             target_feedbacks = self._sequence_target_feedbacks(context)
             revised: dict[str, Any] | None = None
             if target_feedbacks:
@@ -1370,28 +1550,32 @@ class WorkspaceService:
                 label=self._design_stage_label(operation_stage, verb),
                 operation=operation,
             )
-            shaped = self._design_result(response)
-            if command.get("action") == "delegate_repair":
-                action_id = str(payload.get("action_id") or "")
-                previous = repository.get_command(action_id) or {}
-                merged_repair_state = _merge_delegated_repair_state(
-                    previous.get("result") or {},
-                    shaped,
-                    strategy_key=str(payload.get("_repair_strategy_key") or "delegate"),
-                )
-                shaped["repair_state"] = merged_repair_state
-            return shaped
+            return self._design_result(response)
 
         if stage != "implementation":
             raise ValueError("The current stage cannot process a conversational command.")
         if not text:
             raise ValueError("Enter implementation feedback.")
+        conversation_intent = payload.get("conversation_intent")
+        confirmed_target_refs = (
+            [
+                str(ref)
+                for ref in conversation_intent.get("targets") or []
+                if isinstance(ref, str)
+            ]
+            if isinstance(conversation_intent, dict)
+            and conversation_intent.get("intent") == "revise"
+            else []
+            if command.get("action") == "delegate_repair"
+            else None
+        )
         job = implementation_worker.create_feedback_job(
             app_id,
             cast(dict[str, Any], artifact_repository.load_state(app_id)),
             text,
             str(payload.get("base_package") or "com.easydep.app"),
             bool(payload.get("allow_assumptions", True)),
+            confirmed_target_refs=confirmed_target_refs,
         )
         return self._monitor_implementation(job)
 
@@ -2071,7 +2255,7 @@ class WorkspaceService:
         failure_detail = (
             (meaningful_failure_lines[-1] if meaningful_failure_lines else failure_lines[-1])[-500:]
             if failure_lines
-            else "구현 작업이 완료되지 않았습니다."
+            else "The implementation job did not complete."
         )
         live_progress = job.get("progress")
         progress_status = (
@@ -2094,15 +2278,15 @@ class WorkspaceService:
         }:
             add_update(
                 "prepare-job",
-                "구현 작업 준비",
+                "Prepare implementation job",
                 "running",
-                "구현 작업을 준비하고 있습니다.",
+                "Preparing the implementation job.",
             )
         else:
             # The job leaves the queue before its first generator checkpoint.
             # Explicitly close this UI-only milestone so it cannot look like a
             # long-running task while source generation or compilation proceeds.
-            add_update("prepare-job", "구현 작업 준비", "completed")
+            add_update("prepare-job", "Prepare implementation job", "completed")
 
         if generation_status in {
             "VALIDATING_INPUT",
@@ -2127,16 +2311,16 @@ class WorkspaceService:
                 elif index == active_index and generation_status != "SUCCEEDED":
                     add_update(step, label, "running", progress_message)
         elif generation_status == "REUSING_GENERATED_RUN":
-            add_update("validate-input", "입력 및 설계 검증", "completed")
+            add_update("validate-input", "Validate input and design", "completed")
             add_update(
                 "reuse-generated-run",
-                "기존 생성 결과 재사용",
+                "Reuse generated output",
                 "running",
                 progress_message,
             )
         elif generation_status == "PREPARING_FEEDBACK":
-            add_update("validate-input", "입력 및 설계 검증", "completed")
-            add_update("prepare-feedback", "피드백 적용 준비", "running", progress_message)
+            add_update("validate-input", "Validate input and design", "completed")
+            add_update("prepare-feedback", "Prepare feedback application", "running", progress_message)
 
         workflow_complete = False
         if isinstance(workflow, dict):
@@ -2197,7 +2381,7 @@ class WorkspaceService:
                         f"phase-{display_id}",
                         label,
                         "running",
-                        f"{label}을 진행하고 있습니다.",
+                        f"{label} is in progress.",
                     )
                 if display_id == "backend" and not all_succeeded:
                     tasks_by_phase: dict[str, list[dict[str, Any]]] = {}
@@ -2264,7 +2448,7 @@ class WorkspaceService:
                 activity_id = str(activity["id"])
                 activity_phase = activity_id.removeprefix("verify-").removeprefix("audit-")
                 if activity_phase == "backend":
-                    display_id, display_label = "backend", "Backend 구현"
+                    display_id, display_label = "backend", "Backend implementation"
                 else:
                     display_id, display_label, _ = next(
                         (
@@ -2272,14 +2456,14 @@ class WorkspaceService:
                             for item in _IMPLEMENTATION_DISPLAY_PHASES
                             if activity_phase in item[2]
                         ),
-                        ("implementation", "Backend 구현", frozenset()),
+                        ("implementation", "Backend implementation", frozenset()),
                     )
-                activity_prefix = (
-                    "빌드 및 Unit Test" if activity_id.startswith("verify-") else "구현 결과 확인"
+                activity_suffix = (
+                    "build and unit tests"
+                    if activity_id.startswith("verify-")
+                    else "output review"
                 )
-                activity_label = f"{display_label} {activity_prefix}"
-                if display_label.endswith(" 구현") and activity_prefix.startswith("구현 "):
-                    activity_label = f"{display_label} {activity_prefix.removeprefix('구현 ')}"
+                activity_label = f"{display_label}: {activity_suffix}"
                 if activity_id != "completion-audit" and display_id != "backend":
                     add_update(
                         "activity-" + display_id,
@@ -2288,12 +2472,12 @@ class WorkspaceService:
                         str(activity.get("detail") or ""),
                     )
             elif workflow_complete:
-                add_update("release-verification", "최종 릴리스 검증", "completed")
+                add_update("release-verification", "Final release verification", "completed")
 
         if terminal_failure:
             add_update(
                 "implementation-result",
-                "구현 작업 실패",
+                "Implementation job failed",
                 "failed",
                 failure_detail,
             )
@@ -2364,7 +2548,7 @@ class WorkspaceService:
             file_name = Path(current_file).name
             add_update(
                 "implementation-file",
-                "현재 구현 파일",
+                "Current implementation file",
                 "running",
                 f"Editing {file_name}",
             )
@@ -2374,7 +2558,7 @@ class WorkspaceService:
         latest = updates[-1]
         snapshot: dict[str, Any] = {
             "updates": updates,
-            "progress_card_label": "구현 진행 상황",
+            "progress_card_label": "Implementation progress",
             "text": latest["detail"] or latest["label"],
             "progress_detail": latest["detail"] or latest["label"],
             "progress_status": latest["status"],
@@ -2628,14 +2812,14 @@ class WorkspaceService:
                         text=str(
                             update.get("detail")
                             or update.get("label")
-                            or "구현을 진행하고 있습니다."
+                            or "Implementation is in progress."
                         ),
                         metadata={
                             "progress_event": "implementationStepUpdated",
                             "step": step,
                             "progress_step_label": str(update.get("label") or step),
                             "progress_card_label": str(
-                                progress.get("progress_card_label") or "구현 진행 상황"
+                                progress.get("progress_card_label") or "Implementation progress"
                             ),
                             "progress_detail": str(update.get("detail") or ""),
                             "progress_status": str(update.get("status") or "running"),
@@ -2663,7 +2847,7 @@ class WorkspaceService:
                         stage="implementation",
                         kind="progress",
                         actor="system",
-                        text=raw_response or f"{task_id} 작업 결과가 기록되었습니다.",
+                        text=raw_response or f"The result for {task_id} was recorded.",
                         metadata={
                             "progress_event": "implementationAgentResult",
                             **result,
@@ -2714,13 +2898,13 @@ class WorkspaceService:
         previous_job: dict[str, Any] | None = None,
         preserve_test: bool = False,
     ) -> dict[str, Any]:
-        """Testing을 실행하고 재시작에 필요한 최소 상태를 현재 command에 저장한다."""
+        """Testing을 실행하고 재시작 checkpoint를 현재 Workspace command에 저장한다."""
 
         command_id = str(command["command_id"])
 
         def save_checkpoint(checkpoint: dict[str, Any]) -> None:
-            # 긴 Docker 검사 중에도 command row는 존재한다. 최신 payload를 다시 읽어 다른
-            # 실행 정보는 보존하고 Testing 전용 값 하나만 교체한다.
+            # Testing command와 checkpoint의 수명주기가 같으므로 기존 payload에 함께 저장한다.
+            # 다른 command 입력은 그대로 보존한다.
             latest = repository.get_command(command_id)
             if latest is None:
                 raise RuntimeError("The Workspace command disappeared during Testing.")

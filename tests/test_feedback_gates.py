@@ -84,8 +84,14 @@ def test_requirements_gate_reclassifies_and_loops(monkeypatch):
 
 
 def test_gate_regenerates_and_loops_on_feedback(monkeypatch):
-    # 게이트는 의도 분류 엔진(apply_feedback_upto)으로 위임한다.
-    monkeypatch.setattr(fg, "interrupt", lambda payload: "merge cart use cases")
+    # 게이트는 검증된 구조화 edit을 cascade 엔진(apply_feedback_upto)으로 넘긴다.
+    monkeypatch.setattr(
+        fg,
+        "interrupt",
+        lambda payload: FeedbackEdit(
+            stage="use_cases", instruction="merge cart use cases"
+        ),
+    )
     seen = {}
 
     def fake_apply(state, feedback, up_to):
@@ -100,7 +106,7 @@ def test_gate_regenerates_and_loops_on_feedback(monkeypatch):
     upd = fg.gate_use_cases({"use_cases": [{"name": "A"}], "classified": []})
 
     assert upd["gate_route"] == "loop"                         # 재생성 후 게이트로 루프백
-    assert seen["feedback"] == "merge cart use cases"          # 피드백이 분류 엔진에 전달됨
+    assert seen["feedback"].instruction == "merge cart use cases"
     assert seen["up_to"] == "coverage"                         # use_cases 게이트는 coverage까지만 cascade
     assert upd["use_cases"] == [{"id": "UC1", "name": "X"}]
     assert upd["coverage"]["coverage_ratio"] == 1.0
@@ -113,7 +119,13 @@ def test_specs_and_relationship_gates_advance(monkeypatch):
 
 
 def test_relationship_gate_loops_and_rerenders(monkeypatch):
-    monkeypatch.setattr(fg, "interrupt", lambda payload: "add authenticate include")
+    monkeypatch.setattr(
+        fg,
+        "interrupt",
+        lambda payload: FeedbackEdit(
+            stage="relationships", instruction="add authenticate include"
+        ),
+    )
 
     def fake_apply(state, feedback, up_to):
         state["relationships"] = {"includes": [1]}

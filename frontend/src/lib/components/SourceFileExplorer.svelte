@@ -86,7 +86,7 @@
           <FileCode2 size={10} class="shrink-0 opacity-85" />
           <span class="min-w-0 flex-1 truncate font-mono" style="font-size: 11px; line-height: 15px;">{row.label}</span>
           {#if 'status' in row.file && row.file.status === 'writing'}
-            <span class="size-1 shrink-0 animate-pulse rounded-full bg-[#45a76b]" title="작성 중"></span>
+            <span class="size-1 shrink-0 animate-pulse rounded-full bg-[#45a76b]" title="Writing"></span>
           {/if}
           {#if mode === 'sidebar'}
             <Maximize2 size={8} class="shrink-0 opacity-40" />

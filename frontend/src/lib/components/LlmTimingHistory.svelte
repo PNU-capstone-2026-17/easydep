@@ -54,7 +54,7 @@
 
 <details class="rounded-lg border border-[#dfe3dc] bg-white px-3 py-2" ontoggle={toggleHistory}>
   <summary class="cursor-pointer font-semibold text-[#343831]">
-    LLM 원문 응답 {displayTotal}건
+    LLM raw responses ({displayTotal})
   </summary>
   {#if open}
     <div class="mt-2 space-y-2">
@@ -94,7 +94,7 @@
           disabled={loading}
         >
           {#if loading}<LoaderCircle size={11} class="animate-spin" />{/if}
-          {timings.length === 0 ? '기록 불러오기' : `다음 ${Math.min(PAGE_SIZE, displayTotal - timings.length)}건 불러오기`}
+          {timings.length === 0 ? 'Load records' : `Load next ${Math.min(PAGE_SIZE, displayTotal - timings.length)}`}
         </button>
       {/if}
     </div>

@@ -60,4 +60,4 @@
   });
 </script>
 
-<div bind:this={host} class="h-full min-h-[28rem] w-full" aria-label="읽기 전용 소스 코드"></div>
+<div bind:this={host} class="h-full min-h-[28rem] w-full" aria-label="Read-only source code"></div>
