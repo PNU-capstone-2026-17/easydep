@@ -21,10 +21,10 @@ if str(ROOT) not in sys.path:
 from app.cloudkb.depkb.provider_cache import (  # noqa: E402
     provider_cache_environment,
 )
-from app.implementation.delivery.iac_renderer import render_open_tofu  # noqa: E402
 from app.design.services.deployment_diagram.bundle import (  # noqa: E402
     build_deployment_diagram_bundle,
 )
+from app.implementation.delivery.iac_renderer import render_open_tofu  # noqa: E402
 from scripts.generate_deployment_diagram_examples import (  # noqa: E402
     CASE_EXPECTATIONS,
     DEPLOYMENT_CASES,
@@ -259,6 +259,7 @@ def validate(
                                 "AWS_ACCESS_KEY_ID": "testing",
                                 "AWS_SECRET_ACCESS_KEY": "testing",
                                 "AWS_EC2_METADATA_DISABLED": "true",
+                                "TF_VAR_offline_validation": "true",
                                 "TF_VAR_boot_image_id": "ami-0123456789abcdef0",
                             }
                         )

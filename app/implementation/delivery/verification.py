@@ -87,7 +87,15 @@ def _required_paths(root: Path) -> tuple[list[Path], list[str]]:
         missing.append("tofu/")
     required.append(runtime / "compose.yaml")
     required.append(runtime / ".env.example")
-    for name in ("plan.sh", "deploy.sh", "verify.sh", "destroy.sh"):
+    for name in (
+        "doctor.sh",
+        "prepare-images.sh",
+        "plan.sh",
+        "deploy.sh",
+        "verify.sh",
+        "destroy.sh",
+        "smoke-test.sh",
+    ):
         required.append(scripts / name)
     # PowerShell is optional on POSIX packages, but if one exists it is checked too.
     for path in required:

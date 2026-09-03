@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.cloudkb.depkb.provider_cache import PINNED_PROVIDERS
+from app.implementation.config import DEFAULT_CONTAINER_PORT
 
 RESOURCE_PLAN_SCHEMA = "easydep-resource-plan"
 
@@ -43,6 +44,33 @@ def _vm_sku(node: dict[str, Any]) -> str:
     return _quoted(value) if isinstance(value, str) and value.strip() else "var.vm_sku"
 
 
+def _port_expression(plan: dict[str, Any], owner: dict[str, Any], field: str = "port") -> str:
+    """고정 포트 또는 같은 workload interface를 가리키는 입력 변수를 돌려준다."""
+
+    value = owner.get(field)
+    if isinstance(value, int):
+        return str(value)
+    workload_id = str(owner.get("targetWorkloadRef") or owner.get("logicalRef") or "")
+    workload: dict[str, Any] = next(
+        (item for item in plan.get("workloads") or [] if item.get("id") == workload_id),
+        {},
+    )
+    interfaces = list(workload.get("interfaces") or [])
+    interface_id = str(owner.get("targetInterfaceRef") or "")
+    if not interface_id and len(interfaces) == 1:
+        interface_id = str(interfaces[0].get("id") or "")
+    interface: dict[str, Any] = next(
+        (item for item in interfaces if item.get("id") == interface_id),
+        {},
+    )
+    interface_port = interface.get("port")
+    if isinstance(interface_port, int):
+        return str(interface_port)
+    if workload_id and interface_id:
+        return f"var.container_port_{_label(workload_id)}_{_label(interface_id)}"
+    return str(DEFAULT_CONTAINER_PORT)
+
+
 def _health_path(plan: dict[str, Any], health_owner: dict[str, Any]) -> str:
     """health resource가 가리키는 workload의 실제 경로를 읽는다.
 
@@ -53,10 +81,7 @@ def _health_path(plan: dict[str, Any], health_owner: dict[str, Any]) -> str:
 
     workload_id = str(health_owner.get("logicalRef") or "")
     workload: dict[str, Any] = next(
-        (
-            item for item in plan.get("workloads") or []
-            if str(item.get("id") or "") == workload_id
-        ),
+        (item for item in plan.get("workloads") or [] if str(item.get("id") or "") == workload_id),
         {},
     )
     paths = {
@@ -98,10 +123,7 @@ def _registry_expression(
 ) -> str:
     return {
         "aws": f"{context.address(registry_ref)}.repository_url",
-        "azure": (
-            f'format("%s/{workload_label}", '
-            f"{context.address(registry_ref)}.login_server)"
-        ),
+        "azure": (f'format("%s/{workload_label}", {context.address(registry_ref)}.login_server)'),
         "gcp": (
             f'"{plan.get("region")}-docker.pkg.dev/${{var.project_id}}/'
             f'${{{context.address(registry_ref)}.repository_id}}/{workload_label}"'
@@ -114,9 +136,7 @@ class _Context:
     plan: dict[str, Any]
 
     def __post_init__(self) -> None:
-        self.nodes = {
-            str(item.get("id") or ""): item for item in self.plan.get("nodes") or []
-        }
+        self.nodes = {str(item.get("id") or ""): item for item in self.plan.get("nodes") or []}
         self.addresses: dict[str, str] = {}
         for node_id, node in self.nodes.items():
             types = list(node.get("terraformTypes") or [])
@@ -125,16 +145,13 @@ class _Context:
         self.references = list(self.plan.get("references") or [])
         self.consumed_reference_ids: set[str] = set()
         self.shared_values = {
-            str(item.get("id") or ""): item
-            for item in self.plan.get("sharedValues") or []
+            str(item.get("id") or ""): item for item in self.plan.get("sharedValues") or []
         }
         self.embedded_blocks = {
-            str(item.get("id") or ""): item
-            for item in self.plan.get("embeddedBlocks") or []
+            str(item.get("id") or ""): item for item in self.plan.get("embeddedBlocks") or []
         }
         self.binding_slots = {
-            str(item.get("id") or ""): item
-            for item in self.plan.get("bindingSlots") or []
+            str(item.get("id") or ""): item for item in self.plan.get("bindingSlots") or []
         }
 
     def address(self, node_id: str) -> str:
@@ -148,8 +165,7 @@ class _Context:
             (
                 item
                 for item in self.references
-                if item.get("consumerRef") == node_id
-                and item.get("consumerPath") == path
+                if item.get("consumerRef") == node_id and item.get("consumerPath") == path
             ),
             None,
         )
@@ -162,8 +178,7 @@ class _Context:
         matches = [
             reference
             for reference in self.references
-            if reference.get("consumerRef") == node_id
-            and reference.get("consumerPath") == path
+            if reference.get("consumerRef") == node_id and reference.get("consumerPath") == path
         ]
         self.consumed_reference_ids.update(str(item.get("id") or "") for item in matches)
         return [str(reference.get("producerRef") or "") for reference in matches]
@@ -190,8 +205,7 @@ class _Context:
             (
                 reference
                 for reference in self.references
-                if reference.get("consumerRef") == node_id
-                and reference.get("consumerPath") == path
+                if reference.get("consumerRef") == node_id and reference.get("consumerPath") == path
             ),
             None,
         )
@@ -208,8 +222,7 @@ class _Context:
         matches = [
             reference
             for reference in self.references
-            if reference.get("consumerRef") == node_id
-            and reference.get("consumerPath") == path
+            if reference.get("consumerRef") == node_id and reference.get("consumerPath") == path
         ]
         self.consumed_reference_ids.update(str(item.get("id") or "") for item in matches)
         return [
@@ -239,23 +252,17 @@ def _provider_file(provider: str, region: str) -> str:
         "aws": (
             'provider "aws" {\n'
             f"  region                      = {_quoted(region)}\n"
-            "  skip_credentials_validation = true\n"
-            "  skip_requesting_account_id  = true\n"
-            "  skip_metadata_api_check     = true\n"
-            "  skip_region_validation      = true\n"
+            "  skip_credentials_validation = var.offline_validation\n"
+            "  skip_requesting_account_id  = var.offline_validation\n"
+            "  skip_metadata_api_check     = var.offline_validation\n"
+            "  skip_region_validation      = var.offline_validation\n"
             "}"
         ),
         "azure": (
-            'provider "azurerm" {\n'
-            "  features {}\n"
-            "  subscription_id = var.subscription_id\n"
-            "}"
+            'provider "azurerm" {\n  features {}\n  subscription_id = var.subscription_id\n}'
         ),
         "gcp": (
-            'provider "google" {\n'
-            "  project = var.project_id\n"
-            f"  region  = {_quoted(region)}\n"
-            "}"
+            f'provider "google" {{\n  project = var.project_id\n  region  = {_quoted(region)}\n}}'
         ),
     }[provider]
     return (
@@ -311,6 +318,12 @@ def _variable_file(plan: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
+                'variable "offline_validation" {',
+                "  type        = bool",
+                "  default     = false",
+                '  description = "Internal switch used only by the offline template test."',
+                "}",
+                "",
                 'variable "ssh_public_key" {',
                 "  type      = string",
                 "  sensitive = true",
@@ -336,7 +349,7 @@ def _variable_file(plan: dict[str, Any]) -> str:
                     f'variable "image_digest_{workload_id}" {{',
                     "  type = string",
                     "  validation {",
-                    f"    condition     = startswith(var.image_digest_{workload_id}, \"sha256:\")",
+                    f'    condition     = startswith(var.image_digest_{workload_id}, "sha256:")',
                     f'    error_message = "image_digest_{workload_id} must be an immutable sha256 digest."',
                     "  }",
                     "}",
@@ -368,9 +381,7 @@ def _variable_file(plan: dict[str, Any]) -> str:
             ]
         )
     external_endpoint_slots = [
-        item
-        for item in plan.get("bindingSlots") or []
-        if item.get("kind") == "externalEndpoint"
+        item for item in plan.get("bindingSlots") or [] if item.get("kind") == "externalEndpoint"
     ]
     for item in external_endpoint_slots:
         lines.extend(
@@ -420,16 +431,16 @@ def _storage_setup_lines(
                     f'EXPECTED_VOLUME="${{{disk_key}}}"',
                     'EXPECTED_VOLUME_NO_DASH=$(printf "%s" "$EXPECTED_VOLUME" | tr -d "-")',
                     'DISK_DEVICE=""',
-                    'for ATTEMPT in $(seq 1 60); do',
-                    '  for CANDIDATE in /dev/nvme*n1; do',
+                    "for ATTEMPT in $(seq 1 60); do",
+                    "  for CANDIDATE in /dev/nvme*n1; do",
                     '    [ -b "$CANDIDATE" ] || continue',
                     '    if command -v ebsnvme-id >/dev/null 2>&1 && ebsnvme-id "$CANDIDATE" 2>/dev/null | tr -d "-" | grep -q "$EXPECTED_VOLUME_NO_DASH"; then DISK_DEVICE="$CANDIDATE"; break; fi',
-                    '  done',
+                    "  done",
                     f'  [ -n "$DISK_DEVICE" ] || [ ! -b "/dev/xvd{conventional_device}" ] || DISK_DEVICE="/dev/xvd{conventional_device}"',
                     f'  [ -n "$DISK_DEVICE" ] || [ ! -b "/dev/sd{conventional_device}" ] || DISK_DEVICE="/dev/sd{conventional_device}"',
                     '  [ -n "$DISK_DEVICE" ] && break',
-                    '  sleep 2',
-                    'done',
+                    "  sleep 2",
+                    "done",
                 ]
             )
         else:
@@ -441,11 +452,11 @@ def _storage_setup_lines(
             lines.extend(
                 [
                     'DISK_DEVICE=""',
-                    'for ATTEMPT in $(seq 1 60); do',
-                    f'  [ ! -b {_quoted(expected)} ] || DISK_DEVICE={_quoted(expected)}',
+                    "for ATTEMPT in $(seq 1 60); do",
+                    f"  [ ! -b {_quoted(expected)} ] || DISK_DEVICE={_quoted(expected)}",
                     '  [ -n "$DISK_DEVICE" ] && break',
-                    '  sleep 2',
-                    'done',
+                    "  sleep 2",
+                    "done",
                 ]
             )
         filesystem_path = f"/mnt/easydep/{storage_label}"
@@ -470,6 +481,9 @@ def _runtime_files(
     plan: dict[str, Any], context: _Context
 ) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
     provider = str(plan.get("provider") or "")
+    # 컨테이너 레지스트리에 로그인할 때 필요한 명령만 VM에 함께 설치한다.
+    # Ubuntu 24.04에는 awscli APT 후보가 없으므로 AWS 공식 설치 파일을 사용한다.
+    archive_package = " unzip" if provider == "aws" else ""
     files: dict[str, str] = {}
     vars_by_compute: dict[str, dict[str, str]] = {}
     for unit in plan.get("runtimeUnits") or []:
@@ -480,15 +494,31 @@ def _runtime_files(
             "set -euo pipefail",
             "",
             "if command -v dnf >/dev/null 2>&1; then",
-            "  dnf install -y docker awscli nvme-cli docker-compose-plugin || dnf install -y docker awscli nvme-cli docker-compose",
+            f"  dnf install -y docker nvme-cli docker-compose-plugin{archive_package} || dnf install -y docker nvme-cli docker-compose{archive_package}",
             "else",
             "  apt-get update",
-            "  apt-get install -y docker.io docker-compose-v2 curl jq || apt-get install -y docker.io docker-compose curl jq",
+            f"  apt-get install -y docker.io docker-compose-v2 curl jq{archive_package} || apt-get install -y docker.io docker-compose curl jq{archive_package}",
             "fi",
-            "systemctl enable --now docker",
-            "compose() { if docker compose version >/dev/null 2>&1; then docker compose \"$@\"; else docker-compose \"$@\"; fi; }",
-            "[ ! -f /opt/easydep/runtime/.env ] || set -a; [ ! -f /opt/easydep/runtime/.env ] || . /opt/easydep/runtime/.env; set +a",
         ]
+        if provider == "aws":
+            lines.extend(
+                [
+                    "if ! command -v aws >/dev/null 2>&1; then",
+                    '  case "$(uname -m)" in x86_64) AWS_ARCH=x86_64 ;; aarch64|arm64) AWS_ARCH=aarch64 ;; *) echo "unsupported AWS CLI architecture" >&2; exit 1 ;; esac',
+                    '  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$${AWS_ARCH}.zip" -o /tmp/easydep-awscliv2.zip',
+                    "  unzip -q /tmp/easydep-awscliv2.zip -d /tmp/easydep-aws-cli",
+                    "  /tmp/easydep-aws-cli/aws/install",
+                    "  rm -rf /tmp/easydep-aws-cli /tmp/easydep-awscliv2.zip",
+                    "fi",
+                ]
+            )
+        lines.extend(
+            [
+                "systemctl enable --now docker",
+                'compose() { if docker compose version >/dev/null 2>&1; then docker compose "$@"; else docker-compose "$@"; fi; }',
+                "[ ! -f /opt/easydep/runtime/.env ] || set -a; [ ! -f /opt/easydep/runtime/.env ] || . /opt/easydep/runtime/.env; set +a",
+            ]
+        )
         lines.extend(
             _storage_setup_lines(
                 plan,
@@ -522,14 +552,14 @@ def _runtime_files(
                     authenticated_registries.add(registry_ref)
                     if provider == "aws":
                         lines.append(
-                            f'aws ecr get-login-password --region {_quoted(plan.get("region"))} | docker login --username AWS --password-stdin "$(printf %s \"${{{registry_key}}}\" | cut -d/ -f1)"'
+                            f'aws ecr get-login-password --region {_quoted(plan.get("region"))} | docker login --username AWS --password-stdin "$(printf %s "${{{registry_key}}}" | cut -d/ -f1)"'
                         )
                     elif provider == "azure":
                         lines.extend(
                             [
                                 "command -v az >/dev/null 2>&1 || curl -sL https://aka.ms/InstallAzureCLIDeb | bash",
                                 "az login --identity --allow-no-subscriptions >/dev/null",
-                                f'az acr login --name "$(printf %s \"${{{registry_key}}}\" | cut -d. -f1)"',
+                                f'az acr login --name "$(printf %s "${{{registry_key}}}" | cut -d. -f1)"',
                             ]
                         )
                         azure_identity_ready = True
@@ -537,7 +567,7 @@ def _runtime_files(
                         lines.extend(
                             [
                                 'REGISTRY_TOKEN=$(curl -fsS -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | jq -r .access_token)',
-                                f'printf %s "$REGISTRY_TOKEN" | docker login -u oauth2accesstoken --password-stdin "$(printf %s \"${{{registry_key}}}\" | cut -d/ -f1)"',
+                                f'printf %s "$REGISTRY_TOKEN" | docker login -u oauth2accesstoken --password-stdin "$(printf %s "${{{registry_key}}}" | cut -d/ -f1)"',
                             ]
                         )
             else:
@@ -550,7 +580,9 @@ def _runtime_files(
                     rendered_port = str(port)
                 else:
                     key = f"port_{workload_label}_{_label(interface.get('id'))}"
-                    template_vars[key] = f"var.container_port_{workload_label}_{_label(interface.get('id'))}"
+                    template_vars[key] = (
+                        f"var.container_port_{workload_label}_{_label(interface.get('id'))}"
+                    )
                     rendered_port = f"${{{key}}}"
                 # 다른 VM과 내부 LB는 VM의 사설 주소로 host port에 접속한다. public
                 # interface만 publish하면 방화벽이 허용해도 container에 도달할 수 없다.
@@ -577,14 +609,18 @@ def _runtime_files(
                 env_name = str(binding.get("environmentName") or "")
                 host = binding.get("endpointHost")
                 if binding.get("endpointProducerRef"):
-                    endpoint_key = f"endpoint_{workload_label}_{_label(binding.get('configurationRef'))}"
+                    endpoint_key = (
+                        f"endpoint_{workload_label}_{_label(binding.get('configurationRef'))}"
+                    )
                     owner = str(unit.get("bootstrapOwnerRef") or compute_id)
                     template_vars[endpoint_key] = context.dependency_ref(
                         owner, f"bootstrap.environment.{env_name}"
                     )
                     host = f"${{{endpoint_key}}}"
                 elif binding.get("endpointValueBindingRef"):
-                    endpoint_key = f"endpoint_{workload_label}_{_label(binding.get('configurationRef'))}"
+                    endpoint_key = (
+                        f"endpoint_{workload_label}_{_label(binding.get('configurationRef'))}"
+                    )
                     template_vars[endpoint_key] = context.producer_expression(
                         str(binding.get("endpointValueBindingRef")), "value"
                     )
@@ -596,10 +632,10 @@ def _runtime_files(
                 if not isinstance(port, int):
                     target_label = _label(binding.get("targetWorkloadRef"))
                     interface_label = _label(binding.get("targetInterfaceRef"))
-                    port_key = f"endpoint_port_{workload_label}_{_label(binding.get('configurationRef'))}"
-                    template_vars[port_key] = (
-                        f"var.container_port_{target_label}_{interface_label}"
+                    port_key = (
+                        f"endpoint_port_{workload_label}_{_label(binding.get('configurationRef'))}"
                     )
+                    template_vars[port_key] = f"var.container_port_{target_label}_{interface_label}"
                     port = f"${{{port_key}}}"
                 projection = str(binding.get("projection") or "url")
                 protocol = str(binding.get("protocol") or "http")
@@ -616,18 +652,17 @@ def _runtime_files(
                 if config_id in endpoint_configuration_ids:
                     continue
                 env_name = str(config.get("name") or _label(config_id).upper())
-                is_secret = config.get("sensitive") is True or str(
-                    config.get("kind") or ""
-                ) in {"secret", "secretBinding"}
+                is_secret = config.get("sensitive") is True or str(config.get("kind") or "") in {
+                    "secret",
+                    "secretBinding",
+                }
                 if is_secret:
                     secret_key = f"secret_ref_{workload_label}_{_label(config_id)}"
-                    variable_name = _label(
-                        f"secret-reference-{workload_id}-{config_id}"
-                    )
+                    variable_name = _label(f"secret-reference-{workload_id}-{config_id}")
                     template_vars[secret_key] = f"var.{variable_name}"
                     if provider == "aws":
                         lines.append(
-                            f'export {env_name}="$(aws secretsmanager get-secret-value --region {_quoted(plan.get("region"))} --secret-id \"${{{secret_key}}}\" --query SecretString --output text)"'
+                            f'export {env_name}="$(aws secretsmanager get-secret-value --region {_quoted(plan.get("region"))} --secret-id "${{{secret_key}}}" --query SecretString --output text)"'
                         )
                     elif provider == "azure":
                         if not azure_identity_ready:
@@ -639,7 +674,7 @@ def _runtime_files(
                             )
                             azure_identity_ready = True
                         lines.append(
-                            f'export {env_name}="$(az keyvault secret show --id \"${{{secret_key}}}\" --query value -o tsv)"'
+                            f'export {env_name}="$(az keyvault secret show --id "${{{secret_key}}}" --query value -o tsv)"'
                         )
                     else:
                         project_key = f"project_id_{workload_label}_{_label(config_id)}"
@@ -649,7 +684,7 @@ def _runtime_files(
                                 f'SECRET_RESOURCE="${{{secret_key}}}"',
                                 f'case "$SECRET_RESOURCE" in projects/*) ;; *) SECRET_RESOURCE="projects/${{{project_key}}}/secrets/$SECRET_RESOURCE" ;; esac',
                                 'SECRET_TOKEN=$(curl -fsS -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | jq -r .access_token)',
-                                f'export {env_name}="$(curl -fsS -H \"Authorization: Bearer $SECRET_TOKEN\" \"https://secretmanager.googleapis.com/v1/$SECRET_RESOURCE/versions/latest:access\" | jq -r .payload.data | tr \"_-\" \"/+\" | base64 -d)"',
+                                f'export {env_name}="$(curl -fsS -H "Authorization: Bearer $SECRET_TOKEN" "https://secretmanager.googleapis.com/v1/$SECRET_RESOURCE/versions/latest:access" | jq -r .payload.data | tr "_-" "/+" | base64 -d)"',
                             ]
                         )
                 elif config.get("value") is not None:
@@ -669,13 +704,11 @@ def _runtime_files(
             if mount_args:
                 compose_lines.append("    volumes:")
                 compose_lines.extend(
-                    f'      - {_quoted(item.removeprefix("-v "))}' for item in mount_args
+                    f"      - {_quoted(item.removeprefix('-v '))}" for item in mount_args
                 )
             if environment_names:
                 compose_lines.append("    environment:")
-                compose_lines.extend(
-                    f"      - {name}" for name in dict.fromkeys(environment_names)
-                )
+                compose_lines.extend(f"      - {name}" for name in dict.fromkeys(environment_names))
             compose_lines.extend(["    networks:", "      - easydep"])
             # Keep the former Docker-run mapping as trace evidence. The command
             # is intentionally a comment: cloud-init now executes Compose only.
@@ -723,7 +756,9 @@ def _cloud_init_files(bootstrap_files: dict[str, str]) -> dict[str, str]:
             "  - path: /opt/easydep/bootstrap.sh\n"
             "    permissions: '0755'\n"
             "    content: |\n"
-            + "\n".join(f"      {line}" if line else "      " for line in bootstrap.rstrip().splitlines())
+            + "\n".join(
+                f"      {line}" if line else "      " for line in bootstrap.rstrip().splitlines()
+            )
             + "\nruncmd:\n"
             "  - [ /opt/easydep/bootstrap.sh ]\n"
         )
@@ -743,7 +778,10 @@ def _aws_resources(
         label = _label(node_id)
         attributes = _attrs(node)
         if kind == "aws_ecr_repository":
-            body = f'name = "${{var.resource_prefix}}-{label}"\nimage_tag_mutability = "IMMUTABLE"\nforce_delete = false'
+            # 생성 이미지는 소스에서 다시 만들 수 있으므로 사용자가 destroy를 실행했을 때
+            # 비어 있지 않은 ECR도 함께 정리되어야 한다. 영구 데이터 디스크의 retain 정책과
+            # 달리 registry 자체를 남기면 smoke test와 일반 정리가 모두 실패한다.
+            body = f'name = "${{var.resource_prefix}}-{label}"\nimage_tag_mutability = "IMMUTABLE"\nforce_delete = true'
         elif kind == "aws_iam_role":
             body = (
                 f'name = "${{var.resource_prefix}}-{label}"\n'
@@ -756,8 +794,8 @@ def _aws_resources(
         elif kind == "aws_iam_role_policy":
             body = (
                 f'name = "${{var.resource_prefix}}-{label}"\n'
-                f'role = {context.dependency_ref(node_id, "role")}\n'
-                "policy = jsonencode({ Version = \"2012-10-17\", Statement = [{ "
+                f"role = {context.dependency_ref(node_id, 'role')}\n"
+                'policy = jsonencode({ Version = "2012-10-17", Statement = [{ '
                 'Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], '
                 f"Resource = {context.dependency_ref(node_id, 'scope')} }}] }})"
             )
@@ -801,7 +839,7 @@ def _aws_resources(
             ingress = ""
             if public_paths:
                 path = public_paths[0]
-                port = path.get("port") if isinstance(path.get("port"), int) else 8080
+                port = _port_expression(plan, path)
                 ingress = f'\ningress {{ from_port = {port}; to_port = {port}; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }}'
             source_groups = context.dependency_refs(node_id, "ingress.security_groups[]")
             if source_groups:
@@ -812,9 +850,7 @@ def _aws_resources(
             body = f'name_prefix = "${{var.resource_prefix}}-{label}-"\nvpc_id = {context.dependency_ref(node_id, "vpc_id")}\negress {{ from_port = 0; to_port = 0; protocol = "-1"; cidr_blocks = ["0.0.0.0/0"] }}{ingress}'
         elif kind == "aws_instance":
             profile = context.target(node_id, "iam_instance_profile")
-            bootstrap_file, bootstrap_vars = _bootstrap_expression(
-                node_id, vars_by_compute
-            )
+            bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
                 f"ami = {context.dependency_ref(node_id, 'ami')}\n"
                 f"instance_type = {_vm_sku(node)}\n"
@@ -828,9 +864,7 @@ def _aws_resources(
                 body += f"\niam_instance_profile = {context.ref(profile, 'name')}"
         elif kind == "aws_launch_template":
             profile = context.target(node_id, "iam_instance_profile")
-            bootstrap_file, bootstrap_vars = _bootstrap_expression(
-                node_id, vars_by_compute
-            )
+            bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
                 f"image_id = {context.dependency_ref(node_id, 'image_id')}\n"
                 f"instance_type = {_vm_sku(node)}\n"
@@ -838,16 +872,19 @@ def _aws_resources(
                 f'user_data = base64encode(templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}))'
             )
             for child_id, child in context.embedded_blocks.items():
-                if child.get("ownerRef") != node_id or child.get("blockPath") != "block_device_mappings":
+                if (
+                    child.get("ownerRef") != node_id
+                    or child.get("blockPath") != "block_device_mappings"
+                ):
                     continue
                 child_attrs = _attrs(child)
                 index = int(child_attrs.get("attachmentIndex") or 0)
                 device = chr(ord("f") + index)
                 body += (
                     f'\nblock_device_mappings {{ device_name = "/dev/sd{device}"; '
-                    f'ebs {{ volume_size = {int(child_attrs.get("capacityGiB") or 10)}; '
+                    f"ebs {{ volume_size = {int(child_attrs.get('capacityGiB') or 10)}; "
                     'volume_type = "gp3"; delete_on_termination = '
-                    f'{str(child_attrs.get("deletionPolicy") != "retain").lower()} }} }}'
+                    f"{str(child_attrs.get('deletionPolicy') != 'retain').lower()} }} }}"
                 )
             if profile:
                 body += f"\niam_instance_profile {{ name = {context.ref(profile, 'name')} }}"
@@ -858,29 +895,32 @@ def _aws_resources(
             body = (
                 f"min_size = {replica}\nmax_size = {replica}\ndesired_capacity = {replica}\n"
                 f"vpc_zone_identifier = [{', '.join(subnets)}]\n"
-                f"launch_template {{ id = {context.dependency_ref(node_id, 'launch_template.id')}; version = \"$Latest\" }}"
+                f'launch_template {{ id = {context.dependency_ref(node_id, "launch_template.id")}; version = "$Latest" }}'
             )
             if target_groups:
-                body += "\ntarget_group_arns = [" + ", ".join(context.ref(item, "arn") for item in target_groups) + "]"
+                body += (
+                    "\ntarget_group_arns = ["
+                    + ", ".join(context.ref(item, "arn") for item in target_groups)
+                    + "]"
+                )
         elif kind == "aws_lb":
             subnets = context.targets(node_id, "subnets[]")
             internal = str(attributes.get("scheme") or "public") == "internal"
             body = f'name = substr("${{var.resource_prefix}}-lb-${{substr(sha1({_quoted(node_id)}), 0, 8)}}", 0, 32)\ninternal = {str(internal).lower()}\nload_balancer_type = "network"\nsubnets = [{", ".join(context.ref(item) for item in subnets)}]'
         elif kind == "aws_lb_target_group":
-            port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
+            port = _port_expression(plan, {**attributes, "logicalRef": node.get("logicalRef")})
             health: dict[str, Any] = next(
                 (
                     block
                     for block in context.embedded_blocks.values()
-                    if block.get("ownerRef") == node_id
-                    and block.get("blockPath") == "health_check"
+                    if block.get("ownerRef") == node_id and block.get("blockPath") == "health_check"
                 ),
                 {},
             )
             path = _health_path(plan, health)
             body = f'name = substr("${{var.resource_prefix}}-tg-${{substr(sha1({_quoted(node_id)}), 0, 8)}}", 0, 32)\nport = {port}\nprotocol = "TCP"\nvpc_id = {context.dependency_ref(node_id, "vpc_id")}\nhealth_check {{ protocol = "HTTP"; path = {_quoted(path)}; port = "traffic-port" }}'
         elif kind == "aws_lb_listener":
-            port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
+            port = _port_expression(plan, {**attributes, "logicalRef": node.get("logicalRef")})
             body = f'load_balancer_arn = {context.dependency_ref(node_id, "load_balancer_arn")}\nport = {port}\nprotocol = "TCP"\ndefault_action {{ type = "forward"; target_group_arn = {context.dependency_ref(node_id, "default_action.target_group_arn")} }}'
         elif kind == "aws_ebs_volume":
             body = (
@@ -916,7 +956,11 @@ def _azure_resources(
         cloud_label = _cloud_label(node_id)
         attributes = _attrs(node)
         rg_target = context.target(node_id, "resource_group_name")
-        rg_name = context.ref(rg_target, "name") if rg_target else "azurerm_resource_group.resource_group.name"
+        rg_name = (
+            context.ref(rg_target, "name")
+            if rg_target
+            else "azurerm_resource_group.resource_group.name"
+        )
         if kind == "azurerm_resource_group":
             body = f'name = "${{var.resource_prefix}}-rg"\nlocation = {_quoted(region)}'
         elif kind == "azurerm_container_registry":
@@ -961,18 +1005,14 @@ def _azure_resources(
             public_paths = attributes.get("publicInterfaces") or []
             rule = ""
             if public_paths:
-                port = public_paths[0].get("port")
-                if not isinstance(port, int):
-                    port = 8080
+                port = _port_expression(plan, public_paths[0])
                 rule = (
                     '\nsecurity_rule { name = "public-http"; priority = 100; direction = "Inbound"; access = "Allow"; protocol = "Tcp"; '
                     f'source_port_range = "*"; destination_port_range = "{port}"; source_address_prefix = "Internet"; destination_address_prefix = "*" }}'
                 )
             for index, internal_rule in enumerate(attributes.get("internalRules") or [], start=1):
                 connection_ref = str(internal_rule.get("connectionRef") or "internal")
-                port = internal_rule.get("port")
-                if not isinstance(port, int):
-                    port = 8080
+                port = _port_expression(plan, internal_rule)
                 source_prefix = context.dependency_ref(
                     node_id,
                     f"security_rule[{connection_ref}].source_address_prefix",
@@ -981,7 +1021,7 @@ def _azure_resources(
                     f'\nsecurity_rule {{ name = "internal-{index}"; priority = {100 + index}; '
                     'direction = "Inbound"; access = "Allow"; protocol = "Tcp"; '
                     f'source_port_range = "*"; destination_port_range = "{port}"; '
-                    f"source_address_prefix = {source_prefix}; destination_address_prefix = \"*\" }}"
+                    f'source_address_prefix = {source_prefix}; destination_address_prefix = "*" }}'
                 )
             body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nlocation = {_quoted(region)}\nresource_group_name = {rg_name}{rule}'
         elif kind == "azurerm_network_interface":
@@ -1001,12 +1041,10 @@ def _azure_resources(
             nic_target = context.target(node_id, "network_interface_ids[]")
             identity_target = context.target(node_id, "identity.identity_ids[]")
             nic_ref = context.ref(nic_target or "")
-            bootstrap_file, bootstrap_vars = _bootstrap_expression(
-                node_id, vars_by_compute
-            )
+            bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
                 f'name = "${{var.resource_prefix}}-{cloud_label}"\nresource_group_name = {rg_name}\nlocation = {_quoted(region)}\n'
-                f"size = {_vm_sku(node)}\nadmin_username = \"easydep\"\nnetwork_interface_ids = [{nic_ref}]\n"
+                f'size = {_vm_sku(node)}\nadmin_username = "easydep"\nnetwork_interface_ids = [{nic_ref}]\n'
                 'disable_password_authentication = true\nadmin_ssh_key { username = "easydep"; public_key = var.ssh_public_key }\n'
                 'os_disk { caching = "ReadWrite"; storage_account_type = "Standard_LRS" }\n'
                 'source_image_reference { publisher = "Canonical"; offer = "0001-com-ubuntu-server-jammy"; sku = "22_04-lts-gen2"; version = "latest" }\n'
@@ -1015,23 +1053,17 @@ def _azure_resources(
             if identity_target:
                 body += f'\nidentity {{ type = "UserAssigned"; identity_ids = [{context.ref(identity_target)}] }}'
             if attributes.get("zone"):
-                body += f'\nzone = {_quoted(attributes.get("zone"))}'
+                body += f"\nzone = {_quoted(attributes.get('zone'))}"
         elif kind == "azurerm_linux_virtual_machine_scale_set":
-            subnet_target = context.target(
-                node_id, "network_interface.ip_configuration.subnet_id"
-            )
-            filter_target = context.target(
-                node_id, "network_interface.network_security_group_id"
-            )
+            subnet_target = context.target(node_id, "network_interface.ip_configuration.subnet_id")
+            filter_target = context.target(node_id, "network_interface.network_security_group_id")
             identity_target = context.target(node_id, "identity.identity_ids[]")
             replica = int(attributes.get("replicaCount") or 1)
             zones = attributes.get("zones") or ["1"]
-            bootstrap_file, bootstrap_vars = _bootstrap_expression(
-                node_id, vars_by_compute
-            )
+            bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
                 f'name = "${{var.resource_prefix}}-{cloud_label}"\nresource_group_name = {rg_name}\nlocation = {_quoted(region)}\n'
-                f"sku = {_vm_sku(node)}\ninstances = {replica}\nzones = {json.dumps(zones)}\nadmin_username = \"easydep\"\n"
+                f'sku = {_vm_sku(node)}\ninstances = {replica}\nzones = {json.dumps(zones)}\nadmin_username = "easydep"\n'
                 'disable_password_authentication = true\nadmin_ssh_key { username = "easydep"; public_key = var.ssh_public_key }\n'
                 'os_disk { caching = "ReadWrite"; storage_account_type = "Standard_LRS" }\n'
                 'source_image_reference { publisher = "Canonical"; offer = "0001-com-ubuntu-server-jammy"; sku = "22_04-lts-gen2"; version = "latest" }\n'
@@ -1043,7 +1075,11 @@ def _azure_resources(
                 "network_interface.ip_configuration.load_balancer_backend_address_pool_ids[]",
             )
             if backend_targets:
-                body += "; load_balancer_backend_address_pool_ids = [" + ", ".join(context.ref(item) for item in backend_targets) + "]"
+                body += (
+                    "; load_balancer_backend_address_pool_ids = ["
+                    + ", ".join(context.ref(item) for item in backend_targets)
+                    + "]"
+                )
             body += " }\n}\n"
             body += f'custom_data = base64encode(templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}))'
             for child_id, child in context.embedded_blocks.items():
@@ -1089,10 +1125,14 @@ def _azure_resources(
         elif kind == "azurerm_lb_backend_address_pool":
             body = f'name = "backend"\nloadbalancer_id = {context.dependency_ref(node_id, "loadbalancer_id")} '
         elif kind == "azurerm_lb_probe":
-            port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
+            port = _port_expression(plan, {**attributes, "logicalRef": node.get("logicalRef")})
             body = f'name = "health"\nloadbalancer_id = {context.dependency_ref(node_id, "loadbalancer_id")}\nprotocol = "Http"\nport = {port}\nrequest_path = {_quoted(_health_path(plan, node))}'
         elif kind == "azurerm_lb_rule":
-            port = attributes.get("frontendPort") if isinstance(attributes.get("frontendPort"), int) else 8080
+            port = _port_expression(
+                plan,
+                {**attributes, "logicalRef": node.get("logicalRef")},
+                "frontendPort",
+            )
             frontend_name = context.dependency_ref(node_id, "frontend_ip_configuration_name")
             body = f'name = "http"\nloadbalancer_id = {context.dependency_ref(node_id, "loadbalancer_id")}\nprotocol = "Tcp"\nfrontend_port = {port}\nbackend_port = {port}\nfrontend_ip_configuration_name = {frontend_name}\nbackend_address_pool_ids = [{context.dependency_ref(node_id, "backend_address_pool_ids[]")}]\nprobe_id = {context.dependency_ref(node_id, "probe_id")} '
         elif kind == "azurerm_managed_disk":
@@ -1101,9 +1141,9 @@ def _azure_resources(
                 body += "\nlifecycle { prevent_destroy = true }"
         elif kind == "azurerm_virtual_machine_data_disk_attachment":
             index = int(attributes.get("attachmentIndex") or 0)
-            body = f"managed_disk_id = {context.dependency_ref(node_id, 'managed_disk_id')}\nvirtual_machine_id = {context.dependency_ref(node_id, 'virtual_machine_id')}\nlun = {10 + index}\ncaching = \"ReadWrite\""
+            body = f'managed_disk_id = {context.dependency_ref(node_id, "managed_disk_id")}\nvirtual_machine_id = {context.dependency_ref(node_id, "virtual_machine_id")}\nlun = {10 + index}\ncaching = "ReadWrite"'
         elif kind == "azurerm_network_interface_backend_address_pool_association":
-            body = f"network_interface_id = {context.dependency_ref(node_id, 'network_interface_id')}\nip_configuration_name = \"primary\"\nbackend_address_pool_id = {context.dependency_ref(node_id, 'backend_address_pool_id')}"
+            body = f'network_interface_id = {context.dependency_ref(node_id, "network_interface_id")}\nip_configuration_name = "primary"\nbackend_address_pool_id = {context.dependency_ref(node_id, "backend_address_pool_id")}'
         else:
             raise ValueError(f"Unsupported Azure ResourcePlan primitive: {node_id}/{kind}")
         blocks.append(_block(kind, label, body))
@@ -1139,7 +1179,7 @@ def _gcp_resources(
             )
         elif kind == "google_secret_manager_secret_iam_member":
             principal = context.target(node_id, "member")
-            body = f"project = var.project_id\nsecret_id = {context.dependency_ref(node_id, 'scope')}\nrole = \"roles/secretmanager.secretAccessor\"\nmember = \"serviceAccount:${{{context.address(principal or '')}.email}}\""
+            body = f'project = var.project_id\nsecret_id = {context.dependency_ref(node_id, "scope")}\nrole = "roles/secretmanager.secretAccessor"\nmember = "serviceAccount:${{{context.address(principal or "")}.email}}"'
         elif kind == "google_compute_network":
             body = 'name = "${var.resource_prefix}-network"\nauto_create_subnetworks = false\nrouting_mode = "REGIONAL"'
         elif kind == "google_compute_subnetwork":
@@ -1155,8 +1195,7 @@ def _gcp_resources(
             public_paths = attributes.get("publicInterfaces") or []
             ports = []
             for path in public_paths:
-                port = path.get("port")
-                ports.append(str(port if isinstance(port, int) else 8080))
+                ports.append(_port_expression(plan, path))
             target_tags = context.dependency_refs(node_id, "target_tags[]")
             source_tags = context.dependency_refs(node_id, "source_tags[]")
             body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nnetwork = {context.dependency_ref(node_id, "network")}\ndirection = "INGRESS"\ntarget_tags = [{", ".join(target_tags)}]\nallow {{ protocol = "tcp"; ports = {json.dumps(ports or ["1-65535"])} }}'
@@ -1168,13 +1207,9 @@ def _gcp_resources(
             gcp_subnet = context.target(node_id, "network_interface.subnetwork")
             tag_values = context.dependency_refs(node_id, "tags[]")
             gcp_identity = context.target(node_id, "service_account.email")
-            public_address = context.target(
-                node_id, "network_interface.access_config.nat_ip"
-            )
+            public_address = context.target(node_id, "network_interface.access_config.nat_ip")
             zone = attributes.get("zone") or f"{region}-a"
-            bootstrap_file, bootstrap_vars = _bootstrap_expression(
-                node_id, vars_by_compute
-            )
+            bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
                 f'name = "${{var.resource_prefix}}-{cloud_label}"\nzone = {_quoted(zone)}\nmachine_type = {_vm_sku(node)}\n'
                 f"boot_disk {{ initialize_params {{ image = {context.dependency_ref(node_id, 'boot_disk.initialize_params.image')} }} }}\n"
@@ -1186,22 +1221,20 @@ def _gcp_resources(
                 body += f"; access_config {{ nat_ip = {context.dependency_ref(node_id, 'network_interface.access_config.nat_ip')} }}"
             body += " }\n"
             if gcp_identity:
-                body += f"service_account {{ email = {context.ref(gcp_identity, 'email')}; scopes = [\"cloud-platform\"] }}\n"
+                body += f'service_account {{ email = {context.ref(gcp_identity, "email")}; scopes = ["cloud-platform"] }}\n'
             body += f'metadata = {{ user-data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\ntags = [{", ".join(tag_values)}]'
         elif kind == "google_compute_instance_template":
             gcp_template_subnet = context.target(node_id, "network_interface.subnetwork")
             gcp_template_identity = context.target(node_id, "service_account.email")
             tag_values = context.dependency_refs(node_id, "tags[]")
-            bootstrap_file, bootstrap_vars = _bootstrap_expression(
-                node_id, vars_by_compute
-            )
+            bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
                 f'name_prefix = "${{var.resource_prefix}}-{cloud_label}-"\nmachine_type = {_vm_sku(node)}\n'
                 f"disk {{ source_image = {context.dependency_ref(node_id, 'boot_disk.initialize_params.image')}; auto_delete = true; boot = true }}\n"
                 f"network_interface {{ subnetwork = {context.ref(gcp_template_subnet or '')} }}\n"
             )
             if gcp_template_identity:
-                body += f"service_account {{ email = {context.ref(gcp_template_identity, 'email')}; scopes = [\"cloud-platform\"] }}\n"
+                body += f'service_account {{ email = {context.ref(gcp_template_identity, "email")}; scopes = ["cloud-platform"] }}\n'
             for child_id, child in context.embedded_blocks.items():
                 if child.get("ownerRef") != node_id or child.get("blockPath") != "disk":
                     continue
@@ -1209,9 +1242,9 @@ def _gcp_resources(
                 storage_ref = _cloud_label(child_attrs.get("storageRef") or child_id)
                 body += (
                     f'\ndisk {{ device_name = "easydep-{storage_ref}"; type = "PERSISTENT"; '
-                    f'disk_size_gb = {int(child_attrs.get("capacityGiB") or 10)}; '
+                    f"disk_size_gb = {int(child_attrs.get('capacityGiB') or 10)}; "
                     'disk_type = "pd-balanced"; auto_delete = '
-                    f'{str(child_attrs.get("deletionPolicy") != "retain").lower()}; boot = false }}'
+                    f"{str(child_attrs.get('deletionPolicy') != 'retain').lower()}; boot = false }}"
                 )
             body += f'\ntags = [{", ".join(tag_values)}]\nmetadata = {{ user-data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\nlifecycle {{ create_before_destroy = true }}'
         elif kind in {
@@ -1232,7 +1265,7 @@ def _gcp_resources(
         elif kind == "google_compute_address":
             body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\naddress_type = "EXTERNAL"'
         elif kind == "google_compute_region_health_check":
-            port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
+            port = _port_expression(plan, {**attributes, "logicalRef": node.get("logicalRef")})
             body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\nhttp_health_check {{ port = {port}; request_path = {_quoted(_health_path(plan, node))} }}'
         elif kind == "google_compute_region_backend_service":
             health = context.target(node_id, "health_checks[]")
@@ -1254,7 +1287,7 @@ def _gcp_resources(
             backend_ref = context.dependency_ref(node_id, "backend_service")
             internal = attributes.get("scheme") == "internal"
             scheme = "INTERNAL" if internal else "EXTERNAL"
-            port = attributes.get("port") if isinstance(attributes.get("port"), int) else 8080
+            port = _port_expression(plan, {**attributes, "logicalRef": node.get("logicalRef")})
             body = f'name = "${{var.resource_prefix}}-{cloud_label}"\nregion = {_quoted(region)}\nload_balancing_scheme = "{scheme}"\nip_protocol = "TCP"\nports = ["{port}"]\nbackend_service = {backend_ref}'
             if internal:
                 body += (
@@ -1274,12 +1307,9 @@ def _gcp_resources(
     return "\n".join(blocks)
 
 
-def _output_file(
-    plan: dict[str, Any], context: _Context
-) -> tuple[str, list[tuple[str, str, str]]]:
+def _output_file(plan: dict[str, Any], context: _Context) -> str:
     provider = str(plan.get("provider") or "")
     outputs: list[str] = []
-    generated: list[tuple[str, str, str]] = []
     for unit in plan.get("runtimeUnits") or []:
         for container in unit.get("containers") or []:
             registry_ref = str(container.get("registryRef") or "")
@@ -1287,9 +1317,7 @@ def _output_file(
                 continue
             workload_id = str(container.get("workloadRef") or "")
             workload_label = _label(workload_id)
-            expression = _registry_expression(
-                provider, plan, context, registry_ref, workload_label
-            )
+            expression = _registry_expression(provider, plan, context, registry_ref, workload_label)
             output_name = f"registry_{workload_label}_url"
             outputs.extend(
                 [
@@ -1299,7 +1327,6 @@ def _output_file(
                     "",
                 ]
             )
-            generated.append((workload_label, output_name, registry_ref))
     for path in plan.get("networkPaths") or []:
         if not isinstance(path, dict) or path.get("kind") != "publicIngress":
             continue
@@ -1352,7 +1379,9 @@ def _output_file(
                     "",
                 ]
             )
-    for compute_id in sorted({str(item.get("computeUnitRef") or "") for item in plan.get("placements") or []}):
+    for compute_id in sorted(
+        {str(item.get("computeUnitRef") or "") for item in plan.get("placements") or []}
+    ):
         if compute_id in context.addresses:
             outputs.extend(
                 [
@@ -1362,76 +1391,7 @@ def _output_file(
                     "",
                 ]
             )
-    return "\n".join(outputs), generated
-
-
-def _script_files(
-    provider: str,
-    plan: dict[str, Any],
-    context: _Context,
-    generated: list[tuple[str, str, str]],
-) -> dict[str, str]:
-    environment = {
-        "aws": "AWS_PROFILE=${AWS_PROFILE:-default}",
-        "azure": "ARM_SUBSCRIPTION_ID=${ARM_SUBSCRIPTION_ID:?set ARM_SUBSCRIPTION_ID}",
-        "gcp": "GOOGLE_PROJECT=${GOOGLE_PROJECT:?set GOOGLE_PROJECT}",
-    }[provider]
-    prefix = f"#!/usr/bin/env bash\nset -euo pipefail\nexport {environment}\n"
-    doctor_cli = {"aws": "aws", "azure": "az", "gcp": "gcloud"}[provider]
-    deploy = [
-        prefix.rstrip(),
-        "tofu init",
-    ]
-    if generated:
-        placeholder_digest = "sha256:" + "0" * 64
-        for workload_label, _, _ in generated:
-            deploy.append(
-                f'export TF_VAR_image_digest_{workload_label}="${{TF_VAR_image_digest_{workload_label}:-{placeholder_digest}}}"'
-            )
-        targets = " ".join(
-            f"-target={context.address(registry_ref)}"
-            for _, _, registry_ref in generated
-        )
-        deploy.append(f"tofu apply -auto-approve {targets}")
-        for workload_label, output_name, _ in generated:
-            deploy.extend(
-                [
-                    f'REGISTRY_URL=$(tofu output -raw {output_name})',
-                    'REGISTRY_HOST=$(printf "%s" "$REGISTRY_URL" | cut -d/ -f1)',
-                ]
-            )
-            if provider == "aws":
-                deploy.append(
-                    f'aws ecr get-login-password --region {_quoted(plan.get("region"))} | docker login --username AWS --password-stdin "$REGISTRY_HOST"'
-                )
-            elif provider == "azure":
-                deploy.append(
-                    'az acr login --name "$(printf "%s" "$REGISTRY_HOST" | cut -d. -f1)"'
-                )
-            else:
-                deploy.append('gcloud auth configure-docker "$REGISTRY_HOST" --quiet')
-            deploy.extend(
-                [
-                    f'IMAGE_TAG="$REGISTRY_URL:easydep-{workload_label}"',
-                    'docker build --pull -t "$IMAGE_TAG" ..',
-                    'PUSH_OUTPUT=$(docker push "$IMAGE_TAG" 2>&1)',
-                    'printf "%s\\n" "$PUSH_OUTPUT"',
-                    'IMAGE_DIGEST=$(printf "%s\\n" "$PUSH_OUTPUT" | sed -n "s/.*digest: \\(sha256:[0-9a-f]\\{64\\}\\).*/\\1/p" | tail -1)',
-                    '[ -n "$IMAGE_DIGEST" ] || { echo "docker push did not report an immutable digest" >&2; exit 1; }',
-                    f'export TF_VAR_image_digest_{workload_label}="$IMAGE_DIGEST"',
-                ]
-            )
-    deploy.append('tofu apply "$@"')
-    return {
-        "doctor.sh": prefix
-        + "command -v tofu >/dev/null\ncommand -v docker >/dev/null\n"
-        + f"command -v {doctor_cli} >/dev/null\n"
-        + "tofu version\n",
-        "plan.sh": prefix + "tofu init\ntofu validate\ntofu plan -out=easydep.tfplan \"$@\"\n",
-        "deploy.sh": "\n".join(deploy) + "\n",
-        "status.sh": prefix + "tofu output -json\n",
-        "destroy.sh": prefix + "tofu destroy \"$@\"\n",
-    }
+    return "\n".join(outputs)
 
 
 def rendered_resource_types(files: dict[str, str]) -> list[str]:
@@ -1457,7 +1417,7 @@ def render_open_tofu(resource_plan: dict[str, Any]) -> dict[str, str]:
     context = _Context(resource_plan)
     bootstrap_files, vars_by_compute = _runtime_files(resource_plan, context)
     cloud_init_files = _cloud_init_files(bootstrap_files)
-    outputs, generated = _output_file(resource_plan, context)
+    outputs = _output_file(resource_plan, context)
     renderer = {
         "aws": _aws_resources,
         "azure": _azure_resources,
@@ -1465,15 +1425,12 @@ def render_open_tofu(resource_plan: dict[str, Any]) -> dict[str, str]:
     }[provider]
     locals_content = _locals_file(resource_plan)
     files = {
-        "easydep-provider.tf": _provider_file(
-            provider, str(resource_plan.get("region") or "")
-        ),
+        "easydep-provider.tf": _provider_file(provider, str(resource_plan.get("region") or "")),
         "variables.tf": _variable_file(resource_plan),
         "main.tf": renderer(resource_plan, context, vars_by_compute),
         "outputs.tf": outputs,
         **bootstrap_files,
         **cloud_init_files,
-        **_script_files(provider, resource_plan, context, generated),
         **({"easydep-locals.tf": locals_content} if locals_content else {}),
     }
     expected_types = sorted(

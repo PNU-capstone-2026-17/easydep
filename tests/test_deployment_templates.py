@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import io
+from pathlib import Path
 
 import hcl2
 import pytest
@@ -18,6 +19,7 @@ from app.implementation.delivery.iac_renderer import (
     render_open_tofu,
     rendered_resource_types,
 )
+from app.implementation.delivery.package import render_deployment_package
 from scripts.generate_deployment_diagram_examples import (
     CASE_EXPECTATIONS,
     DEPLOYMENT_CASES,
@@ -656,14 +658,51 @@ def test_generated_application_bootstrap_authenticates_to_registry(
 
     assert login_marker in bootstrap
     assert "@${image_digest_web}" in bootstrap
-    deploy = files["deploy.sh"]
-    assert "-target=" in deploy
-    assert "docker build --pull" in deploy
-    assert "docker push" in deploy
-    assert "TF_VAR_image_digest_web" in deploy
-    assert deploy.index("-target=") < deploy.index("docker push") < deploy.rindex(
-        'tofu apply "$@"'
+    if provider == "aws":
+        assert "awscli.amazonaws.com" in bootstrap
+        assert "from_port = var.container_port_web_http" in files["main.tf"]
+
+
+def test_user_package_can_bootstrap_images_plan_verify_and_destroy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실제 사용자 package가 registry와 image의 선후 관계를 스스로 해결한다."""
+
+    monkeypatch.setattr(
+        "app.implementation.delivery.package._format_open_tofu", lambda _path: None
     )
+    for provider in ("aws", "azure", "gcp"):
+        bundle = build_deployment_diagram_bundle(
+            _graph(STANDALONE_PRIMARY_PUBLIC), _resource_spec(provider)
+        )
+        resource_plan = bundle["projections"][0]["resourcePlan"]
+        rendered = render_open_tofu(resource_plan)
+        application = tmp_path / provider
+        application.mkdir()
+
+        package = render_deployment_package(application, resource_plan, rendered)
+        tfvars = (package / "tofu/terraform.tfvars.example").read_text(
+            encoding="utf-8"
+        )
+        prepare = (package / "scripts/prepare-images.sh").read_text(
+            encoding="utf-8"
+        )
+        powershell_plan = (package / "scripts/plan.ps1").read_text(
+            encoding="utf-8"
+        )
+        destroy = (package / "scripts/destroy.sh").read_text(encoding="utf-8")
+        verify = (package / "scripts/verify.sh").read_text(encoding="utf-8")
+
+        assert "container_port_web_http = 8000" in tfvars
+        assert "image_digest_WEB" not in tfvars
+        assert "-target=" in prepare
+        assert "docker push" in prepare
+        assert "TF_VAR_image_digest_web=" in prepare
+        assert "$planArgs = @('plan', '-out=easydep.tfplan')" in powershell_plan
+        assert "runtime/image-digests.env" in destroy
+        assert "health_url_compute_1_http" in verify
+        assert (package / "scripts/smoke-test.sh").is_file()
+        assert (package / "scripts/smoke-test.ps1").is_file()
 
 
 @pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
