@@ -1,0 +1,11 @@
+{
+  "n_specs": 12,
+  "total_issues": 0,
+  "issues_by_uc": {},
+  "total_repair_iters": 5,
+  "unvalidated_ucs": [],
+  "failed_ucs": [],
+  "repair_stopped": {
+    "clean": 12
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "sourceCheckpoint": "class_diagram",
+  "targetCheckpoint": "sequence_diagram",
+  "validation": "passed",
+  "tasks": 3,
+  "files": [
+    "gallery/01-UC1.puml",
+    "gallery/01-UC1.svg",
+    "gallery/02-UC2.puml",
+    "gallery/02-UC2.svg",
+    "gallery/03-UC3.puml",
+    "gallery/03-UC3.svg",
+    "gallery/04-UC4.puml",
+    "gallery/04-UC4.svg",
+    "gallery/05-UC5.puml",
+    "gallery/05-UC5.svg",
+    "gallery/06-UC6.puml",
+    "gallery/06-UC6.svg",
+    "gallery/07-UC7.puml",
+    "gallery/07-UC7.svg",
+    "gallery/08-UC8.puml",
+    "gallery/08-UC8.svg",
+    "gallery/09-UC9.puml",
+    "gallery/09-UC9.svg",
+    "gallery/10-UC10.puml",
+    "gallery/10-UC10.svg",
+    "gallery/11-UC11.puml",
+    "gallery/11-UC11.svg",
+    "gallery/12-UC12.puml",
+    "gallery/12-UC12.svg",
+    "sequence-model.json"
+  ]
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "task": "model_use_cases.identify_actors",
+    "elapsedSeconds": 6.192448
+  },
+  {
+    "task": "model_use_cases.identify_use_cases",
+    "elapsedSeconds": 21.601899
+  },
+  {
+    "task": "model_use_cases.review_model",
+    "elapsedSeconds": 8.535606
+  },
+  {
+    "task": "model_use_cases.check_coverage",
+    "elapsedSeconds": 0.003507
+  }
+]

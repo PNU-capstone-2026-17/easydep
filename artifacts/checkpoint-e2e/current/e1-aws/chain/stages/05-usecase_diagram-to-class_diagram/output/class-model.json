@@ -1,0 +1,2782 @@
+{
+  "Classes": [
+    {
+      "className": "UniversityUserBoundary",
+      "stereotype": "Boundary",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC1"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "UniversityUserBoundary::searchCourseOfferings(criteria:CourseSearchCriteria)",
+          "name": "searchCourseOfferings",
+          "parameters": [
+            {
+              "name": "criteria",
+              "type": "CourseSearchCriteria"
+            }
+          ],
+          "returnType": "SearchResult",
+          "stepRefs": [
+            "UC1:main:1",
+            "UC1:main:4",
+            "UC1:extension:2a:2a1"
+          ]
+        },
+        {
+          "operationId": "UniversityUserBoundary::viewCourseOffering(offeringId:uuid)",
+          "name": "viewCourseOffering",
+          "parameters": [
+            {
+              "name": "offeringId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "OfferingDetailsDto",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "StudentBoundary",
+      "stereotype": "Boundary",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC2",
+        "UC3",
+        "UC4",
+        "UC5",
+        "UC6",
+        "UC7",
+        "UC8",
+        "UC9"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "StudentBoundary::registerForOffering(request:RegistrationRequest)",
+          "name": "registerForOffering",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "RegistrationRequest"
+            }
+          ],
+          "returnType": "RegistrationOutcome",
+          "stepRefs": [
+            "UC2:main:1",
+            "UC2:main:5",
+            "UC2:extension:2a:2a1",
+            "UC2:extension:3a:3a1"
+          ]
+        },
+        {
+          "operationId": "StudentBoundary::swapCourseRegistration(request:SwapRequest)",
+          "name": "swapCourseRegistration",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "SwapRequest"
+            }
+          ],
+          "returnType": "SwapResult",
+          "stepRefs": [
+            "UC3:main:1",
+            "UC3:main:5",
+            "UC3:extension:2a:2a1",
+            "UC3:extension:3a:3a1",
+            "UC3:extension:4a:4a1"
+          ]
+        },
+        {
+          "operationId": "StudentBoundary::viewCurrentRegistrations(request:StudentScheduleRequest)",
+          "name": "viewCurrentRegistrations",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "StudentScheduleRequest"
+            }
+          ],
+          "returnType": "ViewRegistrationsResult",
+          "stepRefs": [
+            "UC4:main:1",
+            "UC4:main:5"
+          ]
+        },
+        {
+          "operationId": "StudentBoundary::dropRegistration(request:DropRequest)",
+          "name": "dropRegistration",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "DropRequest"
+            }
+          ],
+          "returnType": "DropResult",
+          "stepRefs": [
+            "UC5:main:1",
+            "UC5:main:4"
+          ]
+        },
+        {
+          "operationId": "StudentBoundary::exportSchedule(request:ExportScheduleRequest)",
+          "name": "exportSchedule",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ExportScheduleRequest"
+            }
+          ],
+          "returnType": "ExportScheduleResult",
+          "stepRefs": [
+            "UC6:main:1",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ]
+        },
+        {
+          "operationId": "StudentBoundary::joinWaitlist(request:WaitlistJoinRequest)",
+          "name": "joinWaitlist",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "WaitlistJoinRequest"
+            }
+          ],
+          "returnType": "WaitlistJoinResult",
+          "stepRefs": [
+            "UC7:main:1",
+            "UC7:extension:2a:2a1"
+          ]
+        },
+        {
+          "operationId": "StudentBoundary::viewWaitlistEntries(request:ViewWaitlistRequest)",
+          "name": "viewWaitlistEntries",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ViewWaitlistRequest"
+            }
+          ],
+          "returnType": "ViewWaitlistResult",
+          "stepRefs": [
+            "UC8:main:1",
+            "UC8:main:4"
+          ]
+        },
+        {
+          "operationId": "StudentBoundary::cancelWaitlist(request:CancelWaitlistRequest)",
+          "name": "cancelWaitlist",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "CancelWaitlistRequest"
+            }
+          ],
+          "returnType": "CancelWaitlistResult",
+          "stepRefs": [
+            "UC9:main:1",
+            "UC9:main:2",
+            "UC9:main:3",
+            "UC9:main:4",
+            "UC9:extension:1a:1a1",
+            "UC9:extension:2a:2a1"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "ProfessorBoundary",
+      "stereotype": "Boundary",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC10"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "ProfessorBoundary::reviewAssignedOfferings(request:ReviewRequest)",
+          "name": "reviewAssignedOfferings",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ReviewRequest"
+            }
+          ],
+          "returnType": "SearchResult",
+          "stepRefs": [
+            "UC10:main:1",
+            "UC10:main:3"
+          ]
+        },
+        {
+          "operationId": "ProfessorBoundary::viewOfferingRoster(request:ViewOfferingRosterRequest)",
+          "name": "viewOfferingRoster",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ViewOfferingRosterRequest"
+            }
+          ],
+          "returnType": "OfferingRosterResult",
+          "stepRefs": [
+            "UC10:main:4",
+            "UC10:main:5"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "AcademicAdministratorBoundary",
+      "stereotype": "Boundary",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC11",
+        "UC12"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "AcademicAdministratorBoundary::handleManageTerm(request:ManageTermRequest)",
+          "name": "handleManageTerm",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ManageTermRequest"
+            }
+          ],
+          "returnType": "ManageTermResult",
+          "stepRefs": [
+            "UC11:main:1",
+            "UC11:main:2",
+            "UC11:main:3",
+            "UC11:extension:2a:2a1"
+          ]
+        },
+        {
+          "operationId": "AcademicAdministratorBoundary::manageCourseOffering(request:ManageCourseOfferingRequest)",
+          "name": "manageCourseOffering",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ManageCourseOfferingRequest"
+            }
+          ],
+          "returnType": "ManageCourseOfferingResult",
+          "stepRefs": [
+            "UC12:main:1",
+            "UC12:main:4"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "CourseSearchControl",
+      "stereotype": "Control",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC1"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "CourseSearchControl::executeSearch(criteria:CourseSearchCriteria)",
+          "name": "executeSearch",
+          "parameters": [
+            {
+              "name": "criteria",
+              "type": "CourseSearchCriteria"
+            }
+          ],
+          "returnType": "SearchResult",
+          "stepRefs": [
+            "UC1:main:2",
+            "UC1:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseSearchControl::retrieveOfferingDetails(offeringId:uuid)",
+          "name": "retrieveOfferingDetails",
+          "parameters": [
+            {
+              "name": "offeringId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "OfferingDetailsDto",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "RegistrationControl",
+      "stereotype": "Control",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC2",
+        "UC3",
+        "UC5"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "RegistrationControl::processRegistration(request:RegistrationRequest)",
+          "name": "processRegistration",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "RegistrationRequest"
+            }
+          ],
+          "returnType": "RegistrationOutcome",
+          "stepRefs": [
+            "UC2:main:2",
+            "UC2:main:3",
+            "UC2:main:4"
+          ]
+        },
+        {
+          "operationId": "RegistrationControl::performSwap(request:SwapRequest)",
+          "name": "performSwap",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "SwapRequest"
+            }
+          ],
+          "returnType": "SwapResult",
+          "stepRefs": [
+            "UC3:main:2",
+            "UC3:main:3",
+            "UC3:main:4",
+            "UC3:extension:2a:2a1",
+            "UC3:extension:3a:3a1",
+            "UC3:extension:4a:4a1"
+          ]
+        },
+        {
+          "operationId": "RegistrationControl::processDrop(request:DropRequest)",
+          "name": "processDrop",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "DropRequest"
+            }
+          ],
+          "returnType": "DropResult",
+          "stepRefs": [
+            "UC5:main:2",
+            "UC5:main:3",
+            "UC5:extension:2a:2a1"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "ScheduleControl",
+      "stereotype": "Control",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC4",
+        "UC6"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "ScheduleControl::assembleStudentSchedule(request:StudentScheduleRequest)",
+          "name": "assembleStudentSchedule",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "StudentScheduleRequest"
+            }
+          ],
+          "returnType": "ViewRegistrationsResult",
+          "stepRefs": [
+            "UC4:main:2",
+            "UC4:main:3",
+            "UC4:main:4",
+            "UC4:extension:2a:2a1"
+          ]
+        },
+        {
+          "operationId": "ScheduleControl::exportStudentSchedule(request:ExportScheduleRequest)",
+          "name": "exportStudentSchedule",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ExportScheduleRequest"
+            }
+          ],
+          "returnType": "ExportScheduleResult",
+          "stepRefs": [
+            "UC6:main:2",
+            "UC6:main:3",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "WaitlistControl",
+      "stereotype": "Control",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC7",
+        "UC8",
+        "UC9"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "WaitlistControl::processJoin(request:WaitlistJoinRequest)",
+          "name": "processJoin",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "WaitlistJoinRequest"
+            }
+          ],
+          "returnType": "WaitlistJoinResult",
+          "stepRefs": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ]
+        },
+        {
+          "operationId": "WaitlistControl::viewStudentWaitlist(request:ViewWaitlistRequest)",
+          "name": "viewStudentWaitlist",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ViewWaitlistRequest"
+            }
+          ],
+          "returnType": "ViewWaitlistResult",
+          "stepRefs": [
+            "UC8:main:2",
+            "UC8:main:3"
+          ]
+        },
+        {
+          "operationId": "WaitlistControl::processCancellation(request:CancelWaitlistRequest)",
+          "name": "processCancellation",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "CancelWaitlistRequest"
+            }
+          ],
+          "returnType": "CancelWaitlistResult",
+          "stepRefs": [
+            "UC9:main:2",
+            "UC9:main:3",
+            "UC9:main:4",
+            "UC9:extension:1a:1a1",
+            "UC9:extension:2a:2a1"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "CourseOfferingManagementControl",
+      "stereotype": "Control",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC12"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "CourseOfferingManagementControl::process(request:ManageCourseOfferingRequest)",
+          "name": "process",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ManageCourseOfferingRequest"
+            }
+          ],
+          "returnType": "ManageCourseOfferingResult",
+          "stepRefs": [
+            "UC12:main:2",
+            "UC12:main:3",
+            "UC12:extension:2a:2a1"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "AcademicTermManagementControl",
+      "stereotype": "Control",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC11"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "AcademicTermManagementControl::manageTerm(request:ManageTermRequest)",
+          "name": "manageTerm",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ManageTermRequest"
+            }
+          ],
+          "returnType": "ManageTermResult",
+          "stepRefs": [
+            "UC11:main:1",
+            "UC11:main:2",
+            "UC11:main:3",
+            "UC11:extension:2a:2a1"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "ProfessorRosterControl",
+      "stereotype": "Control",
+      "description": "",
+      "fields": [],
+      "use_case_ids": [
+        "UC10"
+      ],
+      "identifier": [],
+      "operations": [
+        {
+          "operationId": "ProfessorRosterControl::getAssignedOfferings(professorId:uuid)",
+          "name": "getAssignedOfferings",
+          "parameters": [
+            {
+              "name": "professorId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "SearchResult",
+          "stepRefs": [
+            "UC10:main:2",
+            "UC10:main:3",
+            "UC10:extension:2a:2a1"
+          ]
+        },
+        {
+          "operationId": "ProfessorRosterControl::getOfferingRoster(request:ViewOfferingRosterRequest)",
+          "name": "getOfferingRoster",
+          "parameters": [
+            {
+              "name": "request",
+              "type": "ViewOfferingRosterRequest"
+            }
+          ],
+          "returnType": "OfferingRosterResult",
+          "stepRefs": [
+            "UC10:main:4",
+            "UC10:main:5"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "AcademicTerm",
+      "stereotype": "Entity",
+      "description": "",
+      "fields": [
+        "id : uuid",
+        "name : String",
+        "startDate : localdate",
+        "endDate : localdate",
+        "registrationStartDate : localdate",
+        "registrationEndDate : localdate"
+      ],
+      "use_case_ids": [
+        "UC11"
+      ],
+      "identifier": [
+        "id"
+      ],
+      "operations": [
+        {
+          "operationId": "AcademicTerm::findById(id:uuid)",
+          "name": "findById",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "AcademicTerm",
+          "stepRefs": [
+            "UC11:main:3"
+          ]
+        },
+        {
+          "operationId": "AcademicTerm::updateDetails(name:String,startDate:localdate,endDate:localdate,registrationStartDate:localdate,registrationEndDate:localdate)",
+          "name": "updateDetails",
+          "parameters": [
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "startDate",
+              "type": "localdate"
+            },
+            {
+              "name": "endDate",
+              "type": "localdate"
+            },
+            {
+              "name": "registrationStartDate",
+              "type": "localdate"
+            },
+            {
+              "name": "registrationEndDate",
+              "type": "localdate"
+            }
+          ],
+          "returnType": "void",
+          "stepRefs": [
+            "UC11:main:3"
+          ]
+        },
+        {
+          "operationId": "AcademicTerm::create(name:String,startDate:localdate,endDate:localdate,registrationStartDate:localdate,registrationEndDate:localdate)",
+          "name": "create",
+          "parameters": [
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "startDate",
+              "type": "localdate"
+            },
+            {
+              "name": "endDate",
+              "type": "localdate"
+            },
+            {
+              "name": "registrationStartDate",
+              "type": "localdate"
+            },
+            {
+              "name": "registrationEndDate",
+              "type": "localdate"
+            }
+          ],
+          "returnType": "AcademicTerm",
+          "stepRefs": [
+            "UC11:main:3"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "Course",
+      "stereotype": "Entity",
+      "description": "",
+      "fields": [
+        "id : uuid",
+        "code : String",
+        "title : String",
+        "description : String"
+      ],
+      "use_case_ids": [
+        "UC1",
+        "UC12"
+      ],
+      "identifier": [
+        "id"
+      ],
+      "operations": [
+        {
+          "operationId": "Course::findById(id:uuid)",
+          "name": "findById",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "Course",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6",
+            "UC12:main:3"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "Professor",
+      "stereotype": "Entity",
+      "description": "",
+      "fields": [
+        "id : uuid",
+        "name : String",
+        "email : String"
+      ],
+      "use_case_ids": [
+        "UC1",
+        "UC12"
+      ],
+      "identifier": [
+        "id"
+      ],
+      "operations": [
+        {
+          "operationId": "Professor::findById(id:uuid)",
+          "name": "findById",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "Professor",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6",
+            "UC12:main:3"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "Student",
+      "stereotype": "Entity",
+      "description": "",
+      "fields": [
+        "id : uuid",
+        "name : String",
+        "email : String"
+      ],
+      "use_case_ids": [
+        "UC2",
+        "UC3",
+        "UC4",
+        "UC5",
+        "UC6",
+        "UC7",
+        "UC8",
+        "UC9"
+      ],
+      "identifier": [
+        "id"
+      ],
+      "operations": [
+        {
+          "operationId": "Student::isAuthorizedForRegistration()",
+          "name": "isAuthorizedForRegistration",
+          "parameters": [],
+          "returnType": "boolean",
+          "stepRefs": [
+            "UC2:main:2",
+            "UC4:main:2",
+            "UC5:main:2",
+            "UC6:main:2",
+            "UC7:main:2",
+            "UC8:main:2"
+          ]
+        },
+        {
+          "operationId": "Student::isAuthorizedForSwap()",
+          "name": "isAuthorizedForSwap",
+          "parameters": [],
+          "returnType": "boolean",
+          "stepRefs": [
+            "UC3:main:2"
+          ]
+        },
+        {
+          "operationId": "Student::findById(id:uuid)",
+          "name": "findById",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "Student",
+          "stepRefs": [
+            "UC4:main:2",
+            "UC5:main:2",
+            "UC6:main:2",
+            "UC7:main:2",
+            "UC8:main:2"
+          ]
+        },
+        {
+          "operationId": "Student::isAuthorizedForWaitlistCancellation()",
+          "name": "isAuthorizedForWaitlistCancellation",
+          "parameters": [],
+          "returnType": "boolean",
+          "stepRefs": [
+            "UC9:main:2"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "CourseOffering",
+      "stereotype": "Entity",
+      "description": "",
+      "fields": [
+        "id : uuid",
+        "termId : uuid",
+        "courseId : uuid",
+        "instructorId : uuid",
+        "schedule : MeetingSchedule",
+        "capacity : int",
+        "enrolledCount : int",
+        "waitlistEnabled : boolean",
+        "status : OfferingStatus"
+      ],
+      "use_case_ids": [
+        "UC1",
+        "UC2",
+        "UC3",
+        "UC7",
+        "UC10",
+        "UC12"
+      ],
+      "identifier": [
+        "id"
+      ],
+      "operations": [
+        {
+          "operationId": "CourseOffering::searchPublished(criteria:CourseSearchCriteria)",
+          "name": "searchPublished",
+          "parameters": [
+            {
+              "name": "criteria",
+              "type": "CourseSearchCriteria"
+            }
+          ],
+          "returnType": "list<CourseOffering>",
+          "stepRefs": [
+            "UC1:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::toSummary()",
+          "name": "toSummary",
+          "parameters": [],
+          "returnType": "CourseOfferingSummary",
+          "stepRefs": [
+            "UC1:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::findById(id:uuid)",
+          "name": "findById",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "CourseOffering",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6",
+            "UC7:main:2",
+            "UC7:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::isOpenForRegistration()",
+          "name": "isOpenForRegistration",
+          "parameters": [],
+          "returnType": "boolean",
+          "stepRefs": [
+            "UC2:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::hasAvailableSeat()",
+          "name": "hasAvailableSeat",
+          "parameters": [],
+          "returnType": "boolean",
+          "stepRefs": [
+            "UC2:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::conflictsWithStudent(studentId:uuid)",
+          "name": "conflictsWithStudent",
+          "parameters": [
+            {
+              "name": "studentId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "boolean",
+          "stepRefs": [
+            "UC2:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::incrementEnrolledCount()",
+          "name": "incrementEnrolledCount",
+          "parameters": [],
+          "returnType": "void",
+          "stepRefs": [
+            "UC2:main:4",
+            "UC3:main:4"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::isEligibleForSwap(studentId:uuid)",
+          "name": "isEligibleForSwap",
+          "parameters": [
+            {
+              "name": "studentId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "boolean",
+          "stepRefs": [
+            "UC3:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::findByInstructorId(instructorId:uuid)",
+          "name": "findByInstructorId",
+          "parameters": [
+            {
+              "name": "instructorId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "list<CourseOffering>",
+          "stepRefs": [
+            "UC10:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::getRoster()",
+          "name": "getRoster",
+          "parameters": [],
+          "returnType": "list<StudentRosterDto>",
+          "stepRefs": [
+            "UC10:main:5"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::create(details:CourseOfferingDetails)",
+          "name": "create",
+          "parameters": [
+            {
+              "name": "details",
+              "type": "CourseOfferingDetails"
+            }
+          ],
+          "returnType": "CourseOffering",
+          "stepRefs": [
+            "UC12:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::update(details:CourseOfferingDetails)",
+          "name": "update",
+          "parameters": [
+            {
+              "name": "details",
+              "type": "CourseOfferingDetails"
+            }
+          ],
+          "returnType": "void",
+          "stepRefs": [
+            "UC12:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::publish()",
+          "name": "publish",
+          "parameters": [],
+          "returnType": "void",
+          "stepRefs": [
+            "UC12:main:3"
+          ]
+        },
+        {
+          "operationId": "CourseOffering::cancel()",
+          "name": "cancel",
+          "parameters": [],
+          "returnType": "void",
+          "stepRefs": [
+            "UC12:main:3"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "Registration",
+      "stereotype": "Entity",
+      "description": "",
+      "fields": [
+        "id : uuid",
+        "studentId : uuid",
+        "offeringId : uuid",
+        "registrationDate : localdatetime"
+      ],
+      "use_case_ids": [
+        "UC2",
+        "UC3",
+        "UC4",
+        "UC5"
+      ],
+      "identifier": [
+        "id"
+      ],
+      "operations": [
+        {
+          "operationId": "Registration::existsForStudentOffering(studentId:uuid,offeringId:uuid)",
+          "name": "existsForStudentOffering",
+          "parameters": [
+            {
+              "name": "studentId",
+              "type": "uuid"
+            },
+            {
+              "name": "offeringId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "boolean",
+          "stepRefs": [
+            "UC2:main:3",
+            "UC3:main:3"
+          ]
+        },
+        {
+          "operationId": "Registration::create(studentId:uuid,offeringId:uuid,registrationDate:localdatetime)",
+          "name": "create",
+          "parameters": [
+            {
+              "name": "studentId",
+              "type": "uuid"
+            },
+            {
+              "name": "offeringId",
+              "type": "uuid"
+            },
+            {
+              "name": "registrationDate",
+              "type": "localdatetime"
+            }
+          ],
+          "returnType": "Registration",
+          "stepRefs": [
+            "UC2:main:4",
+            "UC3:main:4"
+          ]
+        },
+        {
+          "operationId": "Registration::deleteById(id:uuid)",
+          "name": "deleteById",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "void",
+          "stepRefs": [
+            "UC3:main:4",
+            "UC5:main:3"
+          ]
+        },
+        {
+          "operationId": "Registration::findByStudentId(studentId:uuid)",
+          "name": "findByStudentId",
+          "parameters": [
+            {
+              "name": "studentId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "list<Registration>",
+          "stepRefs": [
+            "UC4:main:3"
+          ]
+        },
+        {
+          "operationId": "Registration::findById(id:uuid)",
+          "name": "findById",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "Registration",
+          "stepRefs": [
+            "UC5:main:3"
+          ]
+        }
+      ]
+    },
+    {
+      "className": "WaitlistEntry",
+      "stereotype": "Entity",
+      "description": "",
+      "fields": [
+        "id : uuid",
+        "studentId : uuid",
+        "offeringId : uuid",
+        "position : int",
+        "entryDate : localdatetime"
+      ],
+      "use_case_ids": [
+        "UC7",
+        "UC8",
+        "UC9"
+      ],
+      "identifier": [
+        "id"
+      ],
+      "operations": [
+        {
+          "operationId": "WaitlistEntry::findByOfferingId(offeringId:uuid)",
+          "name": "findByOfferingId",
+          "parameters": [
+            {
+              "name": "offeringId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "list<WaitlistEntry>",
+          "stepRefs": [
+            "UC7:main:3"
+          ]
+        },
+        {
+          "operationId": "WaitlistEntry::createEntry(studentId:uuid,offeringId:uuid,position:int,entryDate:localdatetime)",
+          "name": "createEntry",
+          "parameters": [
+            {
+              "name": "studentId",
+              "type": "uuid"
+            },
+            {
+              "name": "offeringId",
+              "type": "uuid"
+            },
+            {
+              "name": "position",
+              "type": "int"
+            },
+            {
+              "name": "entryDate",
+              "type": "localdatetime"
+            }
+          ],
+          "returnType": "WaitlistEntry",
+          "stepRefs": [
+            "UC7:main:3"
+          ]
+        },
+        {
+          "operationId": "WaitlistEntry::findByStudentId(studentId:uuid)",
+          "name": "findByStudentId",
+          "parameters": [
+            {
+              "name": "studentId",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "list<WaitlistEntry>",
+          "stepRefs": [
+            "UC8:main:3"
+          ]
+        },
+        {
+          "operationId": "WaitlistEntry::findById(id:uuid)",
+          "name": "findById",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid"
+            }
+          ],
+          "returnType": "WaitlistEntry",
+          "stepRefs": [
+            "UC9:main:2"
+          ]
+        },
+        {
+          "operationId": "WaitlistEntry::deleteEntry()",
+          "name": "deleteEntry",
+          "parameters": [],
+          "returnType": "void",
+          "stepRefs": [
+            "UC9:main:3"
+          ]
+        },
+        {
+          "operationId": "WaitlistEntry::shiftPositionsAfter(deletedPosition:int)",
+          "name": "shiftPositionsAfter",
+          "parameters": [
+            {
+              "name": "deletedPosition",
+              "type": "int"
+            }
+          ],
+          "returnType": "void",
+          "stepRefs": [
+            "UC9:main:4"
+          ]
+        }
+      ]
+    }
+  ],
+  "DataTypes": [
+    {
+      "name": "MeetingSchedule",
+      "kind": "valueObject",
+      "fields": [
+        "days : list<DayOfWeek>",
+        "startTime : localtime",
+        "endTime : localtime",
+        "location : String"
+      ],
+      "values": []
+    },
+    {
+      "name": "OfferingStatus",
+      "kind": "enumeration",
+      "fields": [],
+      "values": [
+        "DRAFT",
+        "PUBLISHED",
+        "CANCELLED"
+      ]
+    },
+    {
+      "name": "DayOfWeek",
+      "kind": "enumeration",
+      "fields": [],
+      "values": [
+        "MONDAY",
+        "TUESDAY",
+        "WEDNESDAY",
+        "THURSDAY",
+        "FRIDAY",
+        "SATURDAY",
+        "SUNDAY"
+      ]
+    },
+    {
+      "name": "CourseOfferingSummary",
+      "kind": "valueObject",
+      "fields": [
+        "offeringId : uuid",
+        "courseCode : String",
+        "title : String",
+        "termId : uuid",
+        "instructorName : String",
+        "schedule : MeetingSchedule",
+        "capacity : int",
+        "enrolledCount : int",
+        "status : OfferingStatus"
+      ],
+      "values": []
+    },
+    {
+      "name": "CourseSearchCriteria",
+      "kind": "valueObject",
+      "fields": [
+        "termId : optional<uuid>",
+        "courseCode : optional<String>",
+        "instructorName : optional<String>",
+        "days : optional<list<DayOfWeek>>",
+        "timeRange : optional<TimeRange>"
+      ],
+      "values": []
+    },
+    {
+      "name": "OfferingDetailsDto",
+      "kind": "valueObject",
+      "fields": [
+        "offeringId : uuid",
+        "courseCode : String",
+        "courseTitle : String",
+        "instructorName : String",
+        "schedule : MeetingSchedule",
+        "capacity : int",
+        "remainingSeats : int",
+        "status : OfferingStatus"
+      ],
+      "values": []
+    },
+    {
+      "name": "SearchResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "offerings : optional<list<CourseOfferingSummary>>",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "TimeRange",
+      "kind": "valueObject",
+      "fields": [
+        "start : localtime",
+        "end : localtime"
+      ],
+      "values": []
+    },
+    {
+      "name": "RegistrationOutcome",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "registrationId : optional<uuid>",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "RegistrationRequest",
+      "kind": "valueObject",
+      "fields": [
+        "studentId : uuid",
+        "offeringId : uuid"
+      ],
+      "values": []
+    },
+    {
+      "name": "SwapRequest",
+      "kind": "valueObject",
+      "fields": [
+        "studentId : uuid",
+        "currentRegistrationId : uuid",
+        "targetOfferingId : uuid"
+      ],
+      "values": []
+    },
+    {
+      "name": "SwapResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "updatedSchedule : optional<list<MeetingSchedule>>",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "RegistrationInfo",
+      "kind": "valueObject",
+      "fields": [
+        "registrationId : uuid",
+        "offeringId : uuid",
+        "registrationDate : localdatetime"
+      ],
+      "values": []
+    },
+    {
+      "name": "StudentScheduleRequest",
+      "kind": "valueObject",
+      "fields": [
+        "studentId : uuid"
+      ],
+      "values": []
+    },
+    {
+      "name": "ViewRegistrationsResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "registrations : optional<list<RegistrationInfo>>",
+        "schedule : optional<list<MeetingSchedule>>",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "DropRequest",
+      "kind": "valueObject",
+      "fields": [
+        "studentId : uuid",
+        "registrationId : uuid"
+      ],
+      "values": []
+    },
+    {
+      "name": "DropResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "ExportFile",
+      "kind": "valueObject",
+      "fields": [
+        "content : byte[]",
+        "mimeType : String",
+        "fileName : String"
+      ],
+      "values": []
+    },
+    {
+      "name": "ExportScheduleRequest",
+      "kind": "valueObject",
+      "fields": [
+        "studentId : uuid",
+        "format : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "ExportScheduleResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "file : optional<ExportFile>",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "WaitlistJoinRequest",
+      "kind": "valueObject",
+      "fields": [
+        "studentId : uuid",
+        "offeringId : uuid"
+      ],
+      "values": []
+    },
+    {
+      "name": "WaitlistJoinResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "position : optional<int>",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "ViewWaitlistRequest",
+      "kind": "valueObject",
+      "fields": [
+        "studentId : uuid"
+      ],
+      "values": []
+    },
+    {
+      "name": "ViewWaitlistResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "entries : optional<list<WaitlistEntryDto>>",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "WaitlistEntryDto",
+      "kind": "valueObject",
+      "fields": [
+        "id : uuid",
+        "offeringId : uuid",
+        "position : int",
+        "entryDate : localdatetime"
+      ],
+      "values": []
+    },
+    {
+      "name": "CancelWaitlistRequest",
+      "kind": "valueObject",
+      "fields": [
+        "studentId : uuid",
+        "waitlistEntryId : uuid"
+      ],
+      "values": []
+    },
+    {
+      "name": "CancelWaitlistResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "OfferingRosterResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "roster : optional<list<StudentRosterDto>>",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "ReviewRequest",
+      "kind": "valueObject",
+      "fields": [
+        "professorId : uuid"
+      ],
+      "values": []
+    },
+    {
+      "name": "StudentRosterDto",
+      "kind": "valueObject",
+      "fields": [
+        "studentId : uuid",
+        "studentName : String",
+        "registrationDate : localdatetime"
+      ],
+      "values": []
+    },
+    {
+      "name": "ViewOfferingRosterRequest",
+      "kind": "valueObject",
+      "fields": [
+        "professorId : uuid",
+        "offeringId : uuid"
+      ],
+      "values": []
+    },
+    {
+      "name": "ManageTermRequest",
+      "kind": "valueObject",
+      "fields": [
+        "id : optional<uuid>",
+        "name : String",
+        "startDate : localdate",
+        "endDate : localdate",
+        "registrationStartDate : localdate",
+        "registrationEndDate : localdate"
+      ],
+      "values": []
+    },
+    {
+      "name": "ManageTermResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "termId : optional<uuid>",
+        "errorMessage : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "CourseOfferingDetails",
+      "kind": "valueObject",
+      "fields": [
+        "courseId : uuid",
+        "termId : uuid",
+        "instructorId : uuid",
+        "schedule : MeetingSchedule",
+        "capacity : int"
+      ],
+      "values": []
+    },
+    {
+      "name": "ManageCourseOfferingRequest",
+      "kind": "valueObject",
+      "fields": [
+        "actorId : uuid",
+        "action : ManagementAction",
+        "offeringId : optional<uuid>",
+        "courseId : uuid",
+        "termId : uuid",
+        "instructorId : uuid",
+        "schedule : MeetingSchedule",
+        "capacity : int"
+      ],
+      "values": []
+    },
+    {
+      "name": "ManageCourseOfferingResult",
+      "kind": "valueObject",
+      "fields": [
+        "success : boolean",
+        "offeringId : optional<uuid>",
+        "message : optional<String>"
+      ],
+      "values": []
+    },
+    {
+      "name": "ManagementAction",
+      "kind": "enumeration",
+      "fields": [],
+      "values": [
+        "CREATE",
+        "UPDATE",
+        "PUBLISH",
+        "CANCEL"
+      ]
+    }
+  ],
+  "Relationships": [
+    {
+      "source": "CourseOffering",
+      "target": "AcademicTerm",
+      "type": "Association",
+      "sourceMultiplicity": "*",
+      "targetMultiplicity": "1",
+      "description": ""
+    },
+    {
+      "source": "CourseOffering",
+      "target": "Course",
+      "type": "Association",
+      "sourceMultiplicity": "*",
+      "targetMultiplicity": "1",
+      "description": ""
+    },
+    {
+      "source": "CourseOffering",
+      "target": "Professor",
+      "type": "Association",
+      "sourceMultiplicity": "*",
+      "targetMultiplicity": "1",
+      "description": ""
+    },
+    {
+      "source": "Registration",
+      "target": "CourseOffering",
+      "type": "Association",
+      "sourceMultiplicity": "*",
+      "targetMultiplicity": "1",
+      "description": ""
+    },
+    {
+      "source": "Registration",
+      "target": "Student",
+      "type": "Association",
+      "sourceMultiplicity": "*",
+      "targetMultiplicity": "1",
+      "description": ""
+    },
+    {
+      "source": "WaitlistEntry",
+      "target": "CourseOffering",
+      "type": "Association",
+      "sourceMultiplicity": "*",
+      "targetMultiplicity": "1",
+      "description": ""
+    },
+    {
+      "source": "WaitlistEntry",
+      "target": "Student",
+      "type": "Association",
+      "sourceMultiplicity": "*",
+      "targetMultiplicity": "1",
+      "description": ""
+    }
+  ],
+  "Collaborations": [
+    {
+      "collaborationId": "UC1:main:1",
+      "useCaseIds": [
+        "UC1"
+      ],
+      "entryActor": "University User",
+      "calls": [
+        {
+          "callId": "UC1:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "UniversityUserBoundary::searchCourseOfferings(criteria:CourseSearchCriteria)",
+          "stepRefs": [
+            "UC1:main:1",
+            "UC1:main:4",
+            "UC1:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "criteria",
+              "sourceRef": "UC1:main:1#criteria"
+            }
+          ]
+        },
+        {
+          "callId": "UC1:main:1::call:2",
+          "parentCallId": "UC1:main:1::call:1",
+          "receiverOperationId": "CourseSearchControl::executeSearch(criteria:CourseSearchCriteria)",
+          "stepRefs": [
+            "UC1:main:2",
+            "UC1:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "criteria",
+              "sourceRef": "UC1:main:1::call:1#criteria"
+            }
+          ]
+        },
+        {
+          "callId": "UC1:main:1::call:3",
+          "parentCallId": "UC1:main:1::call:2",
+          "receiverOperationId": "CourseOffering::searchPublished(criteria:CourseSearchCriteria)",
+          "stepRefs": [
+            "UC1:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "criteria",
+              "sourceRef": "UC1:main:1::call:2#criteria"
+            }
+          ]
+        },
+        {
+          "callId": "UC1:main:1::call:4",
+          "parentCallId": "UC1:main:1::call:2",
+          "receiverOperationId": "CourseOffering::toSummary()",
+          "stepRefs": [
+            "UC1:main:3"
+          ],
+          "argumentBindings": []
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC1:main:5",
+      "useCaseIds": [
+        "UC1"
+      ],
+      "entryActor": "University User",
+      "calls": [
+        {
+          "callId": "UC1:main:5::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "UniversityUserBoundary::viewCourseOffering(offeringId:uuid)",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "offeringId",
+              "sourceRef": "UC1:main:5#offeringId"
+            }
+          ]
+        },
+        {
+          "callId": "UC1:main:5::call:2",
+          "parentCallId": "UC1:main:5::call:1",
+          "receiverOperationId": "CourseSearchControl::retrieveOfferingDetails(offeringId:uuid)",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "offeringId",
+              "sourceRef": "UC1:main:5::call:1#offeringId"
+            }
+          ]
+        },
+        {
+          "callId": "UC1:main:5::call:3",
+          "parentCallId": "UC1:main:5::call:2",
+          "receiverOperationId": "CourseOffering::findById(id:uuid)",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "id",
+              "sourceRef": "UC1:main:5::call:2#offeringId"
+            }
+          ]
+        },
+        {
+          "callId": "UC1:main:5::call:4",
+          "parentCallId": "UC1:main:5::call:2",
+          "receiverOperationId": "Course::findById(id:uuid)",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "id",
+              "sourceRef": "UC1:main:5::call:2#offeringId"
+            }
+          ]
+        },
+        {
+          "callId": "UC1:main:5::call:5",
+          "parentCallId": "UC1:main:5::call:2",
+          "receiverOperationId": "Professor::findById(id:uuid)",
+          "stepRefs": [
+            "UC1:main:5",
+            "UC1:main:6"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "id",
+              "sourceRef": "UC1:main:5::call:2#offeringId"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC2:main:1",
+      "useCaseIds": [
+        "UC2"
+      ],
+      "entryActor": "Student",
+      "calls": [
+        {
+          "callId": "UC2:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "StudentBoundary::registerForOffering(request:RegistrationRequest)",
+          "stepRefs": [
+            "UC2:main:1",
+            "UC2:main:5",
+            "UC2:extension:2a:2a1",
+            "UC2:extension:3a:3a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC2:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC2:main:1::call:2",
+          "parentCallId": "UC2:main:1::call:1",
+          "receiverOperationId": "RegistrationControl::processRegistration(request:RegistrationRequest)",
+          "stepRefs": [
+            "UC2:main:2",
+            "UC2:main:3",
+            "UC2:main:4"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC2:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC2:main:1::call:3",
+          "parentCallId": "UC2:main:1::call:2",
+          "receiverOperationId": "Student::isAuthorizedForRegistration()",
+          "stepRefs": [
+            "UC2:main:2"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC2:main:1::call:4",
+          "parentCallId": "UC2:main:1::call:2",
+          "receiverOperationId": "CourseOffering::isOpenForRegistration()",
+          "stepRefs": [
+            "UC2:main:3"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC2:main:1::call:5",
+          "parentCallId": "UC2:main:1::call:2",
+          "receiverOperationId": "CourseOffering::hasAvailableSeat()",
+          "stepRefs": [
+            "UC2:main:3"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC2:main:1::call:6",
+          "parentCallId": "UC2:main:1::call:2",
+          "receiverOperationId": "CourseOffering::conflictsWithStudent(studentId:uuid)",
+          "stepRefs": [
+            "UC2:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "studentId",
+              "sourceRef": "UC2:main:1::call:1#request.studentId"
+            }
+          ]
+        },
+        {
+          "callId": "UC2:main:1::call:7",
+          "parentCallId": "UC2:main:1::call:2",
+          "receiverOperationId": "Registration::existsForStudentOffering(studentId:uuid,offeringId:uuid)",
+          "stepRefs": [
+            "UC2:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "studentId",
+              "sourceRef": "UC2:main:1::call:1#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "sourceRef": "UC2:main:1::call:1#request.offeringId"
+            }
+          ]
+        },
+        {
+          "callId": "UC2:main:1::call:8",
+          "parentCallId": "UC2:main:1::call:2",
+          "receiverOperationId": "CourseOffering::incrementEnrolledCount()",
+          "stepRefs": [
+            "UC2:main:4"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC2:main:1::call:9",
+          "parentCallId": "UC2:main:1::call:2",
+          "receiverOperationId": "Registration::create(studentId:uuid,offeringId:uuid,registrationDate:localdatetime)",
+          "stepRefs": [
+            "UC2:main:4"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "registrationDate",
+              "sourceRef": "runtime#currentDateTime"
+            },
+            {
+              "parameter": "studentId",
+              "sourceRef": "UC2:main:1::call:1#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "sourceRef": "UC2:main:1::call:1#request.offeringId"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC3:main:1",
+      "useCaseIds": [
+        "UC3"
+      ],
+      "entryActor": "Student",
+      "calls": [
+        {
+          "callId": "UC3:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "StudentBoundary::swapCourseRegistration(request:SwapRequest)",
+          "stepRefs": [
+            "UC3:main:1",
+            "UC3:main:5",
+            "UC3:extension:2a:2a1",
+            "UC3:extension:3a:3a1",
+            "UC3:extension:4a:4a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC3:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC3:main:1::call:2",
+          "parentCallId": "UC3:main:1::call:1",
+          "receiverOperationId": "RegistrationControl::performSwap(request:SwapRequest)",
+          "stepRefs": [
+            "UC3:main:2",
+            "UC3:main:3",
+            "UC3:main:4",
+            "UC3:extension:2a:2a1",
+            "UC3:extension:3a:3a1",
+            "UC3:extension:4a:4a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC3:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC3:main:1::call:3",
+          "parentCallId": "UC3:main:1::call:2",
+          "receiverOperationId": "Student::isAuthorizedForSwap()",
+          "stepRefs": [
+            "UC3:main:2"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC3:main:1::call:4",
+          "parentCallId": "UC3:main:1::call:2",
+          "receiverOperationId": "CourseOffering::isEligibleForSwap(studentId:uuid)",
+          "stepRefs": [
+            "UC3:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "studentId",
+              "sourceRef": "UC3:main:1::call:2#request.studentId"
+            }
+          ]
+        },
+        {
+          "callId": "UC3:main:1::call:5",
+          "parentCallId": "UC3:main:1::call:2",
+          "receiverOperationId": "Registration::existsForStudentOffering(studentId:uuid,offeringId:uuid)",
+          "stepRefs": [
+            "UC3:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "studentId",
+              "sourceRef": "UC3:main:1::call:2#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "sourceRef": "UC3:main:1::call:2#request.targetOfferingId"
+            }
+          ]
+        },
+        {
+          "callId": "UC3:main:1::call:6",
+          "parentCallId": "UC3:main:1::call:2",
+          "receiverOperationId": "Registration::deleteById(id:uuid)",
+          "stepRefs": [
+            "UC3:main:4"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "id",
+              "sourceRef": "UC3:main:1::call:2#request.currentRegistrationId"
+            }
+          ]
+        },
+        {
+          "callId": "UC3:main:1::call:7",
+          "parentCallId": "UC3:main:1::call:2",
+          "receiverOperationId": "Registration::create(studentId:uuid,offeringId:uuid,registrationDate:localdatetime)",
+          "stepRefs": [
+            "UC3:main:4"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "registrationDate",
+              "sourceRef": "runtime#currentDateTime"
+            },
+            {
+              "parameter": "studentId",
+              "sourceRef": "UC3:main:1::call:2#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "sourceRef": "UC3:main:1::call:2#request.targetOfferingId"
+            }
+          ]
+        },
+        {
+          "callId": "UC3:main:1::call:8",
+          "parentCallId": "UC3:main:1::call:2",
+          "receiverOperationId": "CourseOffering::incrementEnrolledCount()",
+          "stepRefs": [
+            "UC3:main:4"
+          ],
+          "argumentBindings": []
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC4:main:1",
+      "useCaseIds": [
+        "UC4"
+      ],
+      "entryActor": "Student",
+      "calls": [
+        {
+          "callId": "UC4:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "StudentBoundary::viewCurrentRegistrations(request:StudentScheduleRequest)",
+          "stepRefs": [
+            "UC4:main:1",
+            "UC4:main:5"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC4:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC4:main:1::call:2",
+          "parentCallId": "UC4:main:1::call:1",
+          "receiverOperationId": "ScheduleControl::assembleStudentSchedule(request:StudentScheduleRequest)",
+          "stepRefs": [
+            "UC4:main:2",
+            "UC4:main:3",
+            "UC4:main:4",
+            "UC4:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC4:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC4:main:1::call:3",
+          "parentCallId": "UC4:main:1::call:2",
+          "receiverOperationId": "Registration::findByStudentId(studentId:uuid)",
+          "stepRefs": [
+            "UC4:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "studentId",
+              "sourceRef": "UC4:main:1::call:2#request.studentId"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC5:main:1",
+      "useCaseIds": [
+        "UC5"
+      ],
+      "entryActor": "Student",
+      "calls": [
+        {
+          "callId": "UC5:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "StudentBoundary::dropRegistration(request:DropRequest)",
+          "stepRefs": [
+            "UC5:main:1",
+            "UC5:main:4"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC5:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC5:main:1::call:2",
+          "parentCallId": "UC5:main:1::call:1",
+          "receiverOperationId": "RegistrationControl::processDrop(request:DropRequest)",
+          "stepRefs": [
+            "UC5:main:2",
+            "UC5:main:3",
+            "UC5:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC5:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC5:main:1::call:3",
+          "parentCallId": "UC5:main:1::call:2",
+          "receiverOperationId": "Student::isAuthorizedForRegistration()",
+          "stepRefs": [
+            "UC5:main:2"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC5:main:1::call:4",
+          "parentCallId": "UC5:main:1::call:2",
+          "receiverOperationId": "Registration::findById(id:uuid)",
+          "stepRefs": [
+            "UC5:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "id",
+              "sourceRef": "UC5:main:1::call:1#request.studentId"
+            }
+          ]
+        },
+        {
+          "callId": "UC5:main:1::call:5",
+          "parentCallId": "UC5:main:1::call:2",
+          "receiverOperationId": "Registration::deleteById(id:uuid)",
+          "stepRefs": [
+            "UC5:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "id",
+              "sourceRef": "UC5:main:1::call:4#result.id"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC6:main:1",
+      "useCaseIds": [
+        "UC6"
+      ],
+      "entryActor": "Student",
+      "calls": [
+        {
+          "callId": "UC6:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "StudentBoundary::exportSchedule(request:ExportScheduleRequest)",
+          "stepRefs": [
+            "UC6:main:1",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC6:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC6:main:1::call:2",
+          "parentCallId": "UC6:main:1::call:1",
+          "receiverOperationId": "ScheduleControl::exportStudentSchedule(request:ExportScheduleRequest)",
+          "stepRefs": [
+            "UC6:main:2",
+            "UC6:main:3",
+            "UC6:main:4",
+            "UC6:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC6:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC6:main:1::call:3",
+          "parentCallId": "UC6:main:1::call:2",
+          "receiverOperationId": "Student::isAuthorizedForRegistration()",
+          "stepRefs": [
+            "UC6:main:2"
+          ],
+          "argumentBindings": []
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC7:main:1",
+      "useCaseIds": [
+        "UC7"
+      ],
+      "entryActor": "Student",
+      "calls": [
+        {
+          "callId": "UC7:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "StudentBoundary::joinWaitlist(request:WaitlistJoinRequest)",
+          "stepRefs": [
+            "UC7:main:1",
+            "UC7:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC7:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC7:main:1::call:2",
+          "parentCallId": "UC7:main:1::call:1",
+          "receiverOperationId": "WaitlistControl::processJoin(request:WaitlistJoinRequest)",
+          "stepRefs": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC7:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC7:main:1::call:3",
+          "parentCallId": "UC7:main:1::call:2",
+          "receiverOperationId": "Student::isAuthorizedForRegistration()",
+          "stepRefs": [
+            "UC7:main:2"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC7:main:1::call:4",
+          "parentCallId": "UC7:main:1::call:2",
+          "receiverOperationId": "CourseOffering::findById(id:uuid)",
+          "stepRefs": [
+            "UC7:main:2",
+            "UC7:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "id",
+              "sourceRef": "UC7:main:1::call:1#request.studentId"
+            }
+          ]
+        },
+        {
+          "callId": "UC7:main:1::call:5",
+          "parentCallId": "UC7:main:1::call:2",
+          "receiverOperationId": "WaitlistEntry::createEntry(studentId:uuid,offeringId:uuid,position:int,entryDate:localdatetime)",
+          "stepRefs": [
+            "UC7:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "entryDate",
+              "sourceRef": "runtime#currentDateTime"
+            },
+            {
+              "parameter": "studentId",
+              "sourceRef": "UC7:main:1::call:1#request.studentId"
+            },
+            {
+              "parameter": "offeringId",
+              "sourceRef": "UC7:main:1::call:1#request.offeringId"
+            },
+            {
+              "parameter": "position",
+              "sourceRef": "UC7:main:1::call:4#result.capacity"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC8:main:1",
+      "useCaseIds": [
+        "UC8"
+      ],
+      "entryActor": "Student",
+      "calls": [
+        {
+          "callId": "UC8:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "StudentBoundary::viewWaitlistEntries(request:ViewWaitlistRequest)",
+          "stepRefs": [
+            "UC8:main:1",
+            "UC8:main:4"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC8:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC8:main:1::call:2",
+          "parentCallId": "UC8:main:1::call:1",
+          "receiverOperationId": "WaitlistControl::viewStudentWaitlist(request:ViewWaitlistRequest)",
+          "stepRefs": [
+            "UC8:main:2",
+            "UC8:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC8:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC8:main:1::call:3",
+          "parentCallId": "UC8:main:1::call:2",
+          "receiverOperationId": "Student::isAuthorizedForRegistration()",
+          "stepRefs": [
+            "UC8:main:2"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC8:main:1::call:4",
+          "parentCallId": "UC8:main:1::call:2",
+          "receiverOperationId": "Student::findById(id:uuid)",
+          "stepRefs": [
+            "UC8:main:2"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "id",
+              "sourceRef": "UC8:main:1::call:2#request.studentId"
+            }
+          ]
+        },
+        {
+          "callId": "UC8:main:1::call:5",
+          "parentCallId": "UC8:main:1::call:2",
+          "receiverOperationId": "WaitlistEntry::findByStudentId(studentId:uuid)",
+          "stepRefs": [
+            "UC8:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "studentId",
+              "sourceRef": "UC8:main:1::call:4#result.id"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC9:main:1",
+      "useCaseIds": [
+        "UC9"
+      ],
+      "entryActor": "Student",
+      "calls": [
+        {
+          "callId": "UC9:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "StudentBoundary::cancelWaitlist(request:CancelWaitlistRequest)",
+          "stepRefs": [
+            "UC9:main:1",
+            "UC9:main:2",
+            "UC9:main:3",
+            "UC9:main:4",
+            "UC9:extension:1a:1a1",
+            "UC9:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC9:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC9:main:1::call:2",
+          "parentCallId": "UC9:main:1::call:1",
+          "receiverOperationId": "WaitlistControl::processCancellation(request:CancelWaitlistRequest)",
+          "stepRefs": [
+            "UC9:main:2",
+            "UC9:main:3",
+            "UC9:main:4",
+            "UC9:extension:1a:1a1",
+            "UC9:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC9:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC9:main:1::call:3",
+          "parentCallId": "UC9:main:1::call:2",
+          "receiverOperationId": "Student::isAuthorizedForWaitlistCancellation()",
+          "stepRefs": [
+            "UC9:main:2"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC9:main:1::call:4",
+          "parentCallId": "UC9:main:1::call:2",
+          "receiverOperationId": "WaitlistEntry::findById(id:uuid)",
+          "stepRefs": [
+            "UC9:main:2"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "id",
+              "sourceRef": "UC9:main:1::call:1#request.studentId"
+            }
+          ]
+        },
+        {
+          "callId": "UC9:main:1::call:5",
+          "parentCallId": "UC9:main:1::call:2",
+          "receiverOperationId": "WaitlistEntry::deleteEntry()",
+          "stepRefs": [
+            "UC9:main:3"
+          ],
+          "argumentBindings": []
+        },
+        {
+          "callId": "UC9:main:1::call:6",
+          "parentCallId": "UC9:main:1::call:2",
+          "receiverOperationId": "WaitlistEntry::shiftPositionsAfter(deletedPosition:int)",
+          "stepRefs": [
+            "UC9:main:4"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "deletedPosition",
+              "sourceRef": "UC9:main:1::call:4#result.position"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC10:main:1",
+      "useCaseIds": [
+        "UC10"
+      ],
+      "entryActor": "Professor",
+      "calls": [
+        {
+          "callId": "UC10:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "ProfessorBoundary::reviewAssignedOfferings(request:ReviewRequest)",
+          "stepRefs": [
+            "UC10:main:1",
+            "UC10:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC10:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC10:main:1::call:2",
+          "parentCallId": "UC10:main:1::call:1",
+          "receiverOperationId": "ProfessorRosterControl::getAssignedOfferings(professorId:uuid)",
+          "stepRefs": [
+            "UC10:main:2",
+            "UC10:main:3",
+            "UC10:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "professorId",
+              "sourceRef": "UC10:main:1::call:1#request.professorId"
+            }
+          ]
+        },
+        {
+          "callId": "UC10:main:1::call:3",
+          "parentCallId": "UC10:main:1::call:2",
+          "receiverOperationId": "CourseOffering::findByInstructorId(instructorId:uuid)",
+          "stepRefs": [
+            "UC10:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "instructorId",
+              "sourceRef": "UC10:main:1::call:2#professorId"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC10:main:4",
+      "useCaseIds": [
+        "UC10"
+      ],
+      "entryActor": "Professor",
+      "calls": [
+        {
+          "callId": "UC10:main:4::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "ProfessorBoundary::viewOfferingRoster(request:ViewOfferingRosterRequest)",
+          "stepRefs": [
+            "UC10:main:4",
+            "UC10:main:5"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC10:main:4#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC10:main:4::call:2",
+          "parentCallId": "UC10:main:4::call:1",
+          "receiverOperationId": "ProfessorRosterControl::getOfferingRoster(request:ViewOfferingRosterRequest)",
+          "stepRefs": [
+            "UC10:main:4",
+            "UC10:main:5"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC10:main:4::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC10:main:4::call:3",
+          "parentCallId": "UC10:main:4::call:2",
+          "receiverOperationId": "CourseOffering::getRoster()",
+          "stepRefs": [
+            "UC10:main:5"
+          ],
+          "argumentBindings": []
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC11:main:1",
+      "useCaseIds": [
+        "UC11"
+      ],
+      "entryActor": "Academic Administrator",
+      "calls": [
+        {
+          "callId": "UC11:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "AcademicAdministratorBoundary::handleManageTerm(request:ManageTermRequest)",
+          "stepRefs": [
+            "UC11:main:1",
+            "UC11:main:2",
+            "UC11:main:3",
+            "UC11:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC11:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC11:main:1::call:2",
+          "parentCallId": "UC11:main:1::call:1",
+          "receiverOperationId": "AcademicTermManagementControl::manageTerm(request:ManageTermRequest)",
+          "stepRefs": [
+            "UC11:main:1",
+            "UC11:main:2",
+            "UC11:main:3",
+            "UC11:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC11:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC11:main:1::call:3",
+          "parentCallId": "UC11:main:1::call:2",
+          "receiverOperationId": "AcademicTerm::create(name:String,startDate:localdate,endDate:localdate,registrationStartDate:localdate,registrationEndDate:localdate)",
+          "stepRefs": [
+            "UC11:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "name",
+              "sourceRef": "UC11:main:1::call:2#request.name"
+            },
+            {
+              "parameter": "startDate",
+              "sourceRef": "UC11:main:1::call:2#request.startDate"
+            },
+            {
+              "parameter": "endDate",
+              "sourceRef": "UC11:main:1::call:2#request.endDate"
+            },
+            {
+              "parameter": "registrationStartDate",
+              "sourceRef": "UC11:main:1::call:2#request.registrationStartDate"
+            },
+            {
+              "parameter": "registrationEndDate",
+              "sourceRef": "UC11:main:1::call:2#request.registrationEndDate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collaborationId": "UC12:main:1",
+      "useCaseIds": [
+        "UC12"
+      ],
+      "entryActor": "Academic Administrator",
+      "calls": [
+        {
+          "callId": "UC12:main:1::call:1",
+          "parentCallId": null,
+          "receiverOperationId": "AcademicAdministratorBoundary::manageCourseOffering(request:ManageCourseOfferingRequest)",
+          "stepRefs": [
+            "UC12:main:1",
+            "UC12:main:4"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC12:main:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC12:main:1::call:2",
+          "parentCallId": "UC12:main:1::call:1",
+          "receiverOperationId": "CourseOfferingManagementControl::process(request:ManageCourseOfferingRequest)",
+          "stepRefs": [
+            "UC12:main:2",
+            "UC12:main:3",
+            "UC12:extension:2a:2a1"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "request",
+              "sourceRef": "UC12:main:1::call:1#request"
+            }
+          ]
+        },
+        {
+          "callId": "UC12:main:1::call:3",
+          "parentCallId": "UC12:main:1::call:2",
+          "receiverOperationId": "CourseOffering::create(details:CourseOfferingDetails)",
+          "stepRefs": [
+            "UC12:main:3"
+          ],
+          "argumentBindings": [
+            {
+              "parameter": "details",
+              "sourceRef": "derived#CourseOfferingDetails(capacity=UC12:main:1::call:2#request.capacity,courseId=UC12:main:1::call:2#request.courseId,instructorId=UC12:main:1::call:2#request.instructorId,schedule=UC12:main:1::call:2#request.schedule,termId=UC12:main:1::call:2#request.termId)"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

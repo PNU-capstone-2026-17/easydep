@@ -1,0 +1,225 @@
+{
+  "schemaVersion": "easydep-deployment-plan",
+  "workloadGraphDigest": "8a8d3b24a11aa606c2ffcf30b53cc2c5d207d9d76d547cc18f439b7977bc546f",
+  "computeUnits": [
+    {
+      "id": "compute-1",
+      "kind": "standaloneVm",
+      "replicaCount": 1,
+      "zones": [],
+      "managedReplacement": false,
+      "resourceRequirements": {},
+      "vmSku": {
+        "binding": "late",
+        "field": "vmSku"
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "placements": [
+    {
+      "id": "placement-course-registration-app",
+      "workloadRef": "course-registration-app",
+      "computeUnitRef": "compute-1",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application"
+      ]
+    },
+    {
+      "id": "placement-course-registration-db",
+      "workloadRef": "course-registration-db",
+      "computeUnitRef": "compute-1",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "storageBindings": [
+    {
+      "id": "storage-binding-course-registration-db-data",
+      "workloadRef": "course-registration-db",
+      "storageRef": "course-registration-db-data",
+      "computeUnitRef": "compute-1",
+      "kind": "blockDisk",
+      "capacityGiB": 20,
+      "mountPath": "/var/lib/postgresql/data",
+      "deletionPolicy": "retain",
+      "replicaSemantics": "singleAttachment",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "networkPaths": [
+    {
+      "id": "public-course-registration-app-course-registration-app-http",
+      "kind": "publicIngress",
+      "ingressKind": "directPublicIp",
+      "targetWorkloadRef": "course-registration-app",
+      "targetInterfaceRef": "course-registration-app-http",
+      "computeUnitRef": "compute-1",
+      "protocol": "http",
+      "port": {
+        "binding": "late",
+        "field": "containerPort"
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application"
+      ]
+    },
+    {
+      "id": "network-course-registration-app-to-course-registration-db",
+      "kind": "internal",
+      "connectionRef": "course-registration-app-to-course-registration-db",
+      "sourceRef": "course-registration-app",
+      "targetRef": "course-registration-db",
+      "protocol": "tcp",
+      "port": 5432,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ]
+    }
+  ],
+  "runtimeBindings": [
+    {
+      "id": "runtime-endpoint-course-registration-app-course-registration-db-endpoint",
+      "kind": "endpointEnvironment",
+      "workloadRef": "course-registration-app",
+      "configurationRef": "course-registration-db-endpoint",
+      "environmentName": "COURSE_REGISTRATION_DB_HOST",
+      "connectionRef": "course-registration-app-to-course-registration-db",
+      "targetWorkloadRef": "course-registration-db",
+      "targetComputeUnitRef": "compute-1",
+      "targetInterfaceRef": "course-registration-db-tcp",
+      "strategy": "containerDns",
+      "projection": "host",
+      "protocol": "tcp",
+      "port": 5432,
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "derivationRule": "endpoint-containerdns"
+    },
+    {
+      "id": "runtime-secret-course-registration-app-course-registration-db-credential",
+      "kind": "secretEnvironment",
+      "workloadRef": "course-registration-app",
+      "configurationRef": "course-registration-db-credential",
+      "environmentName": "COURSE_REGISTRATION_DB_PASSWORD",
+      "secretReference": {
+        "binding": "deployment",
+        "field": "workloads.course-registration-app.configuration.course-registration-db-credential.secretRef"
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "derivationRule": "secret-reference-to-runtime-environment"
+    },
+    {
+      "id": "runtime-mount-course-registration-db-course-registration-db-data",
+      "kind": "storageMount",
+      "workloadRef": "course-registration-db",
+      "storageRef": "course-registration-db-data",
+      "mountPath": "/var/lib/postgresql/data",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ],
+      "derivationRule": "workload-storage-mount-contract"
+    },
+    {
+      "id": "runtime-secret-course-registration-db-runtime-credential",
+      "kind": "secretEnvironment",
+      "workloadRef": "course-registration-db",
+      "configurationRef": "runtime-credential",
+      "environmentName": "POSTGRES_PASSWORD",
+      "secretReference": {
+        "binding": "deployment",
+        "field": "workloads.course-registration-db.configuration.runtime-credential.secretRef"
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "derivationRule": "secret-reference-to-runtime-environment"
+    }
+  ],
+  "locationPlan": {
+    "region": "ap-northeast-2",
+    "zonePolicy": "providerSelectedSingleZone",
+    "selectedZones": [],
+    "candidateZones": [],
+    "singleRegion": true
+  },
+  "lateBindings": [
+    {
+      "id": "late-vm-sku-compute-1",
+      "field": "computeUnits.compute-1.vmSku",
+      "kind": "vmSku",
+      "structural": false
+    },
+    {
+      "id": "late-port-course-registration-app-course-registration-app-http",
+      "field": "workloads.course-registration-app.interfaces.course-registration-app-http.port",
+      "kind": "containerPort",
+      "structural": false
+    },
+    {
+      "id": "late-image-course-registration-app",
+      "field": "workloads.course-registration-app.artifact.imageDigest",
+      "kind": "imageDigest",
+      "structural": false
+    }
+  ],
+  "issues": [],
+  "derivations": [
+    {
+      "id": "app-db-config",
+      "kind": "endpointBinding",
+      "workloadRef": "course-registration-app",
+      "connectionRef": "conn-app-db",
+      "name": "DB_HOST",
+      "projection": "host"
+    },
+    {
+      "id": "app-db-port-config",
+      "kind": "endpointBinding",
+      "workloadRef": "course-registration-app",
+      "connectionRef": "conn-app-db",
+      "name": "DB_PORT",
+      "projection": "port"
+    },
+    {
+      "id": "app-db-secret",
+      "kind": "secretBinding",
+      "workloadRef": "course-registration-app",
+      "connectionRef": "conn-app-db",
+      "name": "DB_PASSWORD",
+      "projection": "password"
+    },
+    {
+      "rule": "reject-ungrounded-constraint",
+      "decision": "Ignored app-db-endpoint; it has no source references.",
+      "sourceRefs": [
+        "project-policy:reject-ungrounded-constraint"
+      ]
+    },
+    {
+      "rule": "standalone-vm-default",
+      "decision": "Placed course-registration-app, course-registration-db on compute-1.",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application",
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    },
+    {
+      "rule": "persistent-storage-to-block-disk",
+      "decision": "Created one block disk binding for course-registration-db-data.",
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ]
+    }
+  ],
+  "structureDigest": "e6fd3bbe5e58eb15f4b71c635f241c8bf0f7105ec351af482f3e0e9b992458ec"
+}

@@ -1,0 +1,101 @@
+{
+  "raw_requirements": [
+    "Students, professors, and academic administrators are specialized roles of a university user. An authenticated identity and role are preconditions for protected operations.",
+    "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining-seat information.",
+    "A student shall register for a selected course offering during its registration period and receive the result.",
+    "A student shall atomically swap a current registration for another course offering and receive the result.",
+    "Before either a registration or a swap is accepted, the system shall perform the same mandatory enrollment-eligibility validation, including registration-period, duplicate-enrollment, capacity, and timetable-conflict checks.",
+    "A student shall view current registrations and the resulting class schedule.",
+    "A student shall drop a selected registration during the allowed period and receive the result.",
+    "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view. Viewing the schedule remains complete without an export.",
+    "When registration is rejected only because an offering is full and its waitlist is enabled, the student may join the waitlist. The rejected registration remains a complete result without joining.",
+    "A student shall view and cancel their own waitlist entries.",
+    "A professor shall review assigned course offerings and their current student rosters.",
+    "An academic administrator shall create and update academic terms and their registration periods.",
+    "An academic administrator shall create, update, publish, or cancel course offerings and assign their instructor, meeting schedule, and enrollment capacity.",
+    "The system shall authorize each protected operation according to the authenticated university-user role.",
+    "Course, offering, term, university-user, registration, and waitlist information shall survive application and server restarts.",
+    "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering."
+  ],
+  "resource_constraints_text": "The university will pilot the service in the AWS Seoul Region (ap-northeast-2), and the monthly cloud budget must not exceed 500 USD. The fixed research scope is Docker on Linux virtual machines with Terraform and temporary HTTP endpoints. HTTPS, TLS certificates, and domain management are outside this pilot. The pilot may not use a managed database service, Kubernetes, or serverless compute and must use synthetic data instead of real personal data. Recovery from a data-storage server failure is outside this pilot.",
+  "initial_cloud_constraints": {
+    "provider": "aws",
+    "region": "ap-northeast-2",
+    "monthly_budget_amount": 500.0,
+    "monthly_budget_currency": "USD"
+  },
+  "_case": {
+    "caseId": "e1-aws",
+    "inputPath": "evaluation/checkpoint_e2e/cases/e1-aws.json"
+  },
+  "deployment_planning_facts": [
+    {
+      "id": "e1-generated-application",
+      "kind": "workloadContract",
+      "value": {
+        "workloadId": "course-registration-app",
+        "artifactKind": "generatedApplication",
+        "interface": {
+          "protocol": "http",
+          "exposure": "public"
+        },
+        "replicaCount": 1
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application"
+      ],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    },
+    {
+      "id": "e1-postgresql-runtime",
+      "kind": "workloadContract",
+      "value": {
+        "workloadId": "course-registration-db",
+        "artifactKind": "prebuiltImage",
+        "image": "postgres:16.4-bookworm",
+        "engine": "postgresql",
+        "deploymentMode": "container",
+        "runtimeCatalogRef": "docker-on-vm/prebuilt-image",
+        "interface": {
+          "protocol": "tcp",
+          "exposure": "internal",
+          "port": 5432
+        },
+        "replicaCount": 1,
+        "storage": {
+          "persistence": "persistent",
+          "capacityGiB": 20,
+          "mountPath": "/var/lib/postgresql/data",
+          "deletionPolicy": "retain",
+          "replicaSemantics": "singleAttachment"
+        }
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    },
+    {
+      "id": "e1-private-database-connection",
+      "kind": "connectionContract",
+      "value": {
+        "sourceWorkloadRef": "course-registration-app",
+        "targetWorkloadRef": "course-registration-db",
+        "protocol": "tcp",
+        "targetPort": 5432,
+        "endpointBindingRequired": true,
+        "secretBindingRequired": true
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    }
+  ]
+}

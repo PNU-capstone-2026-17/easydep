@@ -1,0 +1,39 @@
+@startuml
+left to right direction
+actor "University User" as University_User_e1634ddd
+actor "Student" as Student_2a164d54
+actor "Professor" as Professor_6511f4da
+actor "Academic Administrator" as Academic_Administrator_c8d09c43
+rectangle System {
+  usecase "Search Course Offerings" as UC1_45c30a63
+  usecase "Register for Course Offering\n-- extension points --\nafter eligibility validation" as UC2_473e1e87
+  usecase "Swap Course Registration" as UC3_0e196e2a
+  usecase "View Current Registrations and Schedule\n-- extension points --\nafter schedule presented" as UC4_569683a6
+  usecase "Drop Course Registration" as UC5_7c47f710
+  usecase "Export Class Schedule" as UC6_a54c9fc1
+  usecase "Join Waitlist for Full Course" as UC7_d3094e89
+  usecase "View Waitlist Entries" as UC8_e74073a7
+  usecase "Cancel Waitlist Entry" as UC9_afc00d6b
+  usecase "Review Assigned Course Offerings and Rosters" as UC10_84475997
+  usecase "Manage Academic Term" as UC11_62cfa8a1
+  usecase "Manage Course Offering" as UC12_19abde85
+  usecase "Validate Enrollment Eligibility" as UC_INC_60DA7C89EDCE53F0_dc272ec4
+}
+University_User_e1634ddd --- UC1_45c30a63
+Student_2a164d54 --- UC2_473e1e87
+Student_2a164d54 --- UC3_0e196e2a
+Student_2a164d54 --- UC4_569683a6
+Student_2a164d54 --- UC5_7c47f710
+Student_2a164d54 --- UC8_e74073a7
+Student_2a164d54 --- UC9_afc00d6b
+Professor_6511f4da --- UC10_84475997
+Academic_Administrator_c8d09c43 --- UC11_62cfa8a1
+Academic_Administrator_c8d09c43 --- UC12_19abde85
+UC2_473e1e87 ..> UC_INC_60DA7C89EDCE53F0_dc272ec4 : <<include>>
+UC3_0e196e2a ..> UC_INC_60DA7C89EDCE53F0_dc272ec4 : <<include>>
+UC4_569683a6 <.. UC6_a54c9fc1 : <<extend>>\n[when student selects export]
+UC2_473e1e87 <.. UC7_d3094e89 : <<extend>>\n[when offering is full]
+University_User_e1634ddd <|-- Student_2a164d54
+University_User_e1634ddd <|-- Professor_6511f4da
+University_User_e1634ddd <|-- Academic_Administrator_c8d09c43
+@enduml

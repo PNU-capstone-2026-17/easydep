@@ -1,0 +1,26 @@
+@startuml UC9
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC9 - Cancel Waitlist Entry
+
+actor "Student" as Student
+boundary "StudentBoundary" as StudentBoundary
+control "WaitlistControl" as WaitlistControl
+entity "Student" as Student_Entity
+entity "WaitlistEntry" as WaitlistEntry
+
+Student -> StudentBoundary : cancelWaitlist(request)
+StudentBoundary -> WaitlistControl : processCancellation(request)
+WaitlistControl -> Student_Entity : isAuthorizedForWaitlistCancellation()
+Student_Entity --> WaitlistControl : boolean
+WaitlistControl -> WaitlistEntry : findById(id)
+WaitlistEntry --> WaitlistControl : WaitlistEntry
+WaitlistControl -> WaitlistEntry : deleteEntry()
+WaitlistEntry --> WaitlistControl : void
+WaitlistControl -> WaitlistEntry : shiftPositionsAfter(deletedPosition)
+WaitlistEntry --> WaitlistControl : void
+WaitlistControl --> StudentBoundary : CancelWaitlistResult
+StudentBoundary --> Student : CancelWaitlistResult
+
+@enduml

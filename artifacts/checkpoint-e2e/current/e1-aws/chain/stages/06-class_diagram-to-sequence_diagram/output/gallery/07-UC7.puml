@@ -1,0 +1,25 @@
+@startuml UC7
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC7 - Join Waitlist for Full Course
+
+actor "Student" as Student
+boundary "StudentBoundary" as StudentBoundary
+control "WaitlistControl" as WaitlistControl
+entity "CourseOffering" as CourseOffering
+entity "Student" as Student_Entity
+entity "WaitlistEntry" as WaitlistEntry
+
+Student -> StudentBoundary : joinWaitlist(request)
+StudentBoundary -> WaitlistControl : processJoin(request)
+WaitlistControl -> Student_Entity : isAuthorizedForRegistration()
+Student_Entity --> WaitlistControl : boolean
+WaitlistControl -> CourseOffering : findById(id)
+CourseOffering --> WaitlistControl : CourseOffering
+WaitlistControl -> WaitlistEntry : createEntry(studentId, offeringId, position\nentryDate)
+WaitlistEntry --> WaitlistControl : WaitlistEntry
+WaitlistControl --> StudentBoundary : WaitlistJoinResult
+StudentBoundary --> Student : WaitlistJoinResult
+
+@enduml

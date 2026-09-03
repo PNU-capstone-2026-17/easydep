@@ -1,0 +1,12 @@
+{
+  "sourceCheckpoint": "input",
+  "targetCheckpoint": "requirements",
+  "validation": "passed",
+  "tasks": 6,
+  "files": [
+    "capability_contract.json",
+    "classified.json",
+    "resource_intake.json",
+    "resource_spec.json"
+  ]
+}

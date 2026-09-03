@@ -1,0 +1,13 @@
+{
+  "sourceCheckpoint": "use_cases",
+  "targetCheckpoint": "specifications",
+  "validation": "passed",
+  "tasks": 2,
+  "files": [
+    "actors.json",
+    "coverage.json",
+    "spec_report.json",
+    "use_case_specs.json",
+    "use_cases.json"
+  ]
+}

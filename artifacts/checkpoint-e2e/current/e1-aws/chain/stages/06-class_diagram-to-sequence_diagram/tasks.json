@@ -1,0 +1,14 @@
+[
+  {
+    "task": "sequence_diagram.extract_sequence_diagram",
+    "elapsedSeconds": 0.023681
+  },
+  {
+    "task": "sequence_diagram.check_sequence_diagram",
+    "elapsedSeconds": 0.010945
+  },
+  {
+    "task": "sequence_diagram.render_sequence_diagram",
+    "elapsedSeconds": 3.583998
+  }
+]

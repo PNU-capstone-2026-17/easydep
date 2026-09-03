@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "easydep-checkpoint-goldset",
+  "caseId": "e1-aws",
+  "sourceCommit": "6d99258fe4bc2d8acf1830a5ca7ac216b10a451f",
+  "input": "evaluation/checkpoint_e2e/cases/e1-aws.json",
+  "status": "complete",
+  "error": null,
+  "checkpoints": [
+    {
+      "id": "input",
+      "sha256": "ca4469c5fe2558463c91796e7f7cdd9c90392f17d7135cc1004f5d34d207bf40"
+    },
+    {
+      "id": "requirements",
+      "sha256": "976c45028e157753f2dc0868e7c53124dbe7d3e8f19e15badbb6b64f821bc140"
+    },
+    {
+      "id": "use_cases",
+      "sha256": "9157727abf59a51768d4357f637a33b39f7a26e644153d65ea4ca917dbafe2b6"
+    },
+    {
+      "id": "specifications",
+      "sha256": "64d8a480bbf47e2a0749bdfad310d7d455d0accf195a14f27debe1911e475c13"
+    },
+    {
+      "id": "usecase_diagram",
+      "sha256": "9e4f421d6d7bae27d89416841625bee08a407d1c447ac7c68b78873a0ce30fa9"
+    },
+    {
+      "id": "class_diagram",
+      "sha256": "c50338764ecbc4807e9b8147a2136565cef9916d0bfd240f7dce82777621a330"
+    },
+    {
+      "id": "sequence_diagram",
+      "sha256": "d408069a79968c81c563a016ebdc0ad4e9ed59cd5c98953eaf8f0053d59ab768"
+    },
+    {
+      "id": "api_spec",
+      "sha256": "30c23c29a35bf02d72de50ad498f04f1314d7bc8df190777ddc03ec45eb08675"
+    },
+    {
+      "id": "erd",
+      "sha256": "d360f3c73a587eb8170dc53eb1016b78c1743fd6f31ebd1619e3534d819545cd"
+    },
+    {
+      "id": "deployment_diagram",
+      "sha256": "1994bcf3be18025ac8f3ff26a74bcfe959afdc6742dbbef6cdb3a513796641f8"
+    }
+  ]
+}

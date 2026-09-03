@@ -1,0 +1,146 @@
+[
+  {
+    "id": "RR1",
+    "text": "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations.",
+    "type": "NFR",
+    "draft_ref": "RR1",
+    "source_refs": [
+      "RAW1"
+    ]
+  },
+  {
+    "id": "RR2",
+    "text": "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining‑seat information.",
+    "type": "FR",
+    "draft_ref": "RR2",
+    "source_refs": [
+      "RAW2"
+    ]
+  },
+  {
+    "id": "RR3",
+    "text": "A student shall register for a selected course offering during its registration period and receive the result.",
+    "type": "FR",
+    "draft_ref": "RR3",
+    "source_refs": [
+      "RAW3"
+    ]
+  },
+  {
+    "id": "RR4",
+    "text": "A student shall atomically swap a current registration for another course offering and receive the result.",
+    "type": "FR",
+    "draft_ref": "RR4",
+    "source_refs": [
+      "RAW4"
+    ]
+  },
+  {
+    "id": "RR5",
+    "text": "Before a registration or swap is accepted, the system shall perform mandatory enrollment‑eligibility validation, including registration‑period, duplicate‑enrollment, capacity, and timetable‑conflict checks.",
+    "type": "FR",
+    "draft_ref": "RR5",
+    "source_refs": [
+      "RAW5"
+    ]
+  },
+  {
+    "id": "RR6",
+    "text": "A student shall view current registrations and the resulting class schedule.",
+    "type": "FR",
+    "draft_ref": "RR6",
+    "source_refs": [
+      "RAW6"
+    ]
+  },
+  {
+    "id": "RR7",
+    "text": "A student shall drop a selected registration during the allowed period and receive the result.",
+    "type": "FR",
+    "draft_ref": "RR7",
+    "source_refs": [
+      "RAW7"
+    ]
+  },
+  {
+    "id": "RR8",
+    "text": "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view; the schedule view remains complete without an export.",
+    "type": "FR",
+    "draft_ref": "RR8",
+    "source_refs": [
+      "RAW8"
+    ]
+  },
+  {
+    "id": "RR9",
+    "text": "When a registration is rejected solely because an offering is full and its waitlist is enabled, a student may join the waitlist; the rejected registration remains a complete result without joining.",
+    "type": "FR",
+    "draft_ref": "RR9",
+    "source_refs": [
+      "RAW9"
+    ]
+  },
+  {
+    "id": "RR10",
+    "text": "A student shall view and cancel their own waitlist entries.",
+    "type": "FR",
+    "draft_ref": "RR10",
+    "source_refs": [
+      "RAW10"
+    ]
+  },
+  {
+    "id": "RR11",
+    "text": "A professor shall review assigned course offerings and their current student rosters.",
+    "type": "FR",
+    "draft_ref": "RR11",
+    "source_refs": [
+      "RAW11"
+    ]
+  },
+  {
+    "id": "RR12",
+    "text": "An academic administrator shall create and update academic terms and their registration periods.",
+    "type": "FR",
+    "draft_ref": "RR12",
+    "source_refs": [
+      "RAW12"
+    ]
+  },
+  {
+    "id": "RR13",
+    "text": "An academic administrator shall create, update, publish, or cancel course offerings and assign their instructor, meeting schedule, and enrollment capacity.",
+    "type": "FR",
+    "draft_ref": "RR13",
+    "source_refs": [
+      "RAW13"
+    ]
+  },
+  {
+    "id": "RR14",
+    "text": "The system shall authorize each protected operation according to the authenticated university‑user role.",
+    "type": "FR",
+    "draft_ref": "RR14",
+    "source_refs": [
+      "RAW14"
+    ]
+  },
+  {
+    "id": "RR15",
+    "text": "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts.",
+    "type": "NFR",
+    "draft_ref": "RR15",
+    "source_refs": [
+      "RAW15"
+    ]
+  },
+  {
+    "id": "RR16",
+    "text": "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering.",
+    "type": "FR",
+    "draft_ref": "RR16",
+    "source_refs": [
+      "RAW16"
+    ]
+  }
+]

@@ -1,0 +1,107 @@
+{
+  "signature": {
+    "requirements": {
+      "valid": true,
+      "requirements": [
+        {
+          "id": "RR1",
+          "type": "NFR",
+          "text": "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations.",
+          "qualifies": []
+        },
+        {
+          "id": "RR10",
+          "type": "FR",
+          "text": "A student shall view and cancel their own waitlist entries.",
+          "qualifies": []
+        },
+        {
+          "id": "RR11",
+          "type": "FR",
+          "text": "A professor shall review assigned course offerings and their current student rosters.",
+          "qualifies": []
+        },
+        {
+          "id": "RR12",
+          "type": "FR",
+          "text": "An academic administrator shall create and update academic terms and their registration periods.",
+          "qualifies": []
+        },
+        {
+          "id": "RR13",
+          "type": "FR",
+          "text": "An academic administrator shall create, update, publish, or cancel course offerings and assign their instructor, meeting schedule, and enrollment capacity.",
+          "qualifies": []
+        },
+        {
+          "id": "RR14",
+          "type": "FR",
+          "text": "The system shall authorize each protected operation according to the authenticated university‑user role.",
+          "qualifies": []
+        },
+        {
+          "id": "RR15",
+          "type": "NFR",
+          "text": "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts.",
+          "qualifies": []
+        },
+        {
+          "id": "RR16",
+          "type": "FR",
+          "text": "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering.",
+          "qualifies": []
+        },
+        {
+          "id": "RR2",
+          "type": "FR",
+          "text": "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining‑seat information.",
+          "qualifies": []
+        },
+        {
+          "id": "RR3",
+          "type": "FR",
+          "text": "A student shall register for a selected course offering during its registration period and receive the result.",
+          "qualifies": []
+        },
+        {
+          "id": "RR4",
+          "type": "FR",
+          "text": "A student shall atomically swap a current registration for another course offering and receive the result.",
+          "qualifies": []
+        },
+        {
+          "id": "RR5",
+          "type": "FR",
+          "text": "Before a registration or swap is accepted, the system shall perform mandatory enrollment‑eligibility validation, including registration‑period, duplicate‑enrollment, capacity, and timetable‑conflict checks.",
+          "qualifies": []
+        },
+        {
+          "id": "RR6",
+          "type": "FR",
+          "text": "A student shall view current registrations and the resulting class schedule.",
+          "qualifies": []
+        },
+        {
+          "id": "RR7",
+          "type": "FR",
+          "text": "A student shall drop a selected registration during the allowed period and receive the result.",
+          "qualifies": []
+        },
+        {
+          "id": "RR8",
+          "type": "FR",
+          "text": "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view; the schedule view remains complete without an export.",
+          "qualifies": []
+        },
+        {
+          "id": "RR9",
+          "type": "FR",
+          "text": "When a registration is rejected solely because an offering is full and its waitlist is enabled, a student may join the waitlist; the rejected registration remains a complete result without joining.",
+          "qualifies": []
+        }
+      ]
+    },
+    "capabilityCount": 4,
+    "resourceSpecSchema": "4"
+  }
+}

@@ -1,0 +1,43 @@
+@startuml
+!theme plain
+top to bottom direction
+skinparam shadowing false
+skinparam linetype polyline
+skinparam nodesep 12
+title Provisioning dependencies - AWS / ap-northeast-2
+node "Amazon Machine Image (AMI)" as provision_boot_image <<reference>>
+node "EC2 Instance" as provision_compute_1 <<create>>
+node "EBS Volume" as provision_data_disk_course_registration_db_data <<create>>
+node "Internet Gateway" as provision_internet_gateway <<create>>
+node "VPC" as provision_network <<create>>
+node "Elastic IP" as provision_public_ip_compute_1 <<create>>
+node "Route Table / ingress" as provision_public_route_table <<create>>
+node "Amazon ECR Repository" as provision_registry_course_registration_app <<create>>
+node "IAM Instance Profile" as provision_registry_instance_profile_compute_1 <<create>>
+node "IAM Role / VM Registry Pull" as provision_registry_pull_identity_compute_1 <<create>>
+node "Existing AWS Secret\nsecret-ref-course-registration-app-course-registration-db-credential" as provision_secret_ref_course_registration_app_course_registration_db_credential <<reference>>
+node "Existing AWS Secret\nsecret-ref-course-registration-db-runtime-credential" as provision_secret_ref_course_registration_db_runtime_credential <<reference>>
+node "Application Subnet" as provision_subnet_compute_1_1 <<create>>
+node "Security Group / Application" as provision_traffic_filter_compute_1 <<create>>
+provision_registry_instance_profile_compute_1 -[#6f7780,dashed]-> provision_registry_pull_identity_compute_1
+provision_internet_gateway -[#6f7780,dashed]-> provision_network
+provision_public_route_table -[#6f7780,dashed]-> provision_network
+provision_subnet_compute_1_1 -[#6f7780,dashed]-> provision_network
+provision_traffic_filter_compute_1 -[#6f7780,dashed]-> provision_network
+provision_compute_1 -[#6f7780,dashed]-> provision_subnet_compute_1_1
+provision_compute_1 -[#6f7780,dashed]-> provision_traffic_filter_compute_1
+provision_compute_1 -[#6f7780,dashed]-> provision_boot_image
+provision_compute_1 -[#6f7780,dashed]-> provision_registry_instance_profile_compute_1
+provision_public_ip_compute_1 -[#6f7780,dashed]-> provision_compute_1
+provision_data_disk_course_registration_db_data -[#6f7780,dashed]-> provision_subnet_compute_1_1
+provision_data_disk_course_registration_db_data -[#c47713,dashed]- provision_compute_1 : attached
+provision_public_route_table -[#c47713,dashed]- provision_internet_gateway : default route to Internet Gateway
+provision_subnet_compute_1_1 -[#c47713,dashed]- provision_public_route_table : uses route table
+legend bottom
+  Arrow: dependent -> prerequisite.
+  Arrow labels appear only when duplicate references need disambiguation.
+  Undirected line: Terraform association, attachment, permission, or route.
+  Shared value: one Terraform local consumed by multiple fields.
+  Runtime traffic is intentionally omitted.
+endlegend
+@enduml

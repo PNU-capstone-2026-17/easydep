@@ -1,0 +1,14 @@
+[
+  {
+    "task": "erd.extract_erd",
+    "elapsedSeconds": 0.006982
+  },
+  {
+    "task": "erd.check_erd",
+    "elapsedSeconds": 0.025332
+  },
+  {
+    "task": "erd.render_erd",
+    "elapsedSeconds": 3.132764
+  }
+]

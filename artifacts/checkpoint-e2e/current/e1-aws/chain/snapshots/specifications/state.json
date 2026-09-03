@@ -1,0 +1,2514 @@
+{
+  "raw_requirements": [
+    "Students, professors, and academic administrators are specialized roles of a university user. An authenticated identity and role are preconditions for protected operations.",
+    "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining-seat information.",
+    "A student shall register for a selected course offering during its registration period and receive the result.",
+    "A student shall atomically swap a current registration for another course offering and receive the result.",
+    "Before either a registration or a swap is accepted, the system shall perform the same mandatory enrollment-eligibility validation, including registration-period, duplicate-enrollment, capacity, and timetable-conflict checks.",
+    "A student shall view current registrations and the resulting class schedule.",
+    "A student shall drop a selected registration during the allowed period and receive the result.",
+    "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view. Viewing the schedule remains complete without an export.",
+    "When registration is rejected only because an offering is full and its waitlist is enabled, the student may join the waitlist. The rejected registration remains a complete result without joining.",
+    "A student shall view and cancel their own waitlist entries.",
+    "A professor shall review assigned course offerings and their current student rosters.",
+    "An academic administrator shall create and update academic terms and their registration periods.",
+    "An academic administrator shall create, update, publish, or cancel course offerings and assign their instructor, meeting schedule, and enrollment capacity.",
+    "The system shall authorize each protected operation according to the authenticated university-user role.",
+    "Course, offering, term, university-user, registration, and waitlist information shall survive application and server restarts.",
+    "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering."
+  ],
+  "resource_constraints_text": "The university will pilot the service in the AWS Seoul Region (ap-northeast-2), and the monthly cloud budget must not exceed 500 USD. The fixed research scope is Docker on Linux virtual machines with Terraform and temporary HTTP endpoints. HTTPS, TLS certificates, and domain management are outside this pilot. The pilot may not use a managed database service, Kubernetes, or serverless compute and must use synthetic data instead of real personal data. Recovery from a data-storage server failure is outside this pilot.",
+  "initial_cloud_constraints": {
+    "provider": "aws",
+    "region": "ap-northeast-2",
+    "monthly_budget_amount": 500.0,
+    "monthly_budget_currency": "USD"
+  },
+  "_case": {
+    "caseId": "e1-aws",
+    "inputPath": "evaluation/checkpoint_e2e/cases/e1-aws.json"
+  },
+  "deployment_planning_facts": [
+    {
+      "id": "e1-generated-application",
+      "kind": "workloadContract",
+      "value": {
+        "workloadId": "course-registration-app",
+        "artifactKind": "generatedApplication",
+        "interface": {
+          "protocol": "http",
+          "exposure": "public"
+        },
+        "replicaCount": 1
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:generated-application"
+      ],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    },
+    {
+      "id": "e1-postgresql-runtime",
+      "kind": "workloadContract",
+      "value": {
+        "workloadId": "course-registration-db",
+        "artifactKind": "prebuiltImage",
+        "image": "postgres:16.4-bookworm",
+        "engine": "postgresql",
+        "deploymentMode": "container",
+        "runtimeCatalogRef": "docker-on-vm/prebuilt-image",
+        "interface": {
+          "protocol": "tcp",
+          "exposure": "internal",
+          "port": 5432
+        },
+        "replicaCount": 1,
+        "storage": {
+          "persistence": "persistent",
+          "capacityGiB": 20,
+          "mountPath": "/var/lib/postgresql/data",
+          "deletionPolicy": "retain",
+          "replicaSemantics": "singleAttachment"
+        }
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:postgresql-runtime"
+      ],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    },
+    {
+      "id": "e1-private-database-connection",
+      "kind": "connectionContract",
+      "value": {
+        "sourceWorkloadRef": "course-registration-app",
+        "targetWorkloadRef": "course-registration-db",
+        "protocol": "tcp",
+        "targetPort": 5432,
+        "endpointBindingRequired": true,
+        "secretBindingRequired": true
+      },
+      "sourceRefs": [
+        "checkpointCase:e1-aws:private-database-connection"
+      ],
+      "derivationRule": "explicit-checkpoint-case-input",
+      "authority": "explicit",
+      "status": "accepted"
+    }
+  ],
+  "expanded_requirements": [
+    "Students, professors, and academic administrators are specialized roles of a university user. An authenticated identity and role are preconditions for protected operations.",
+    "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining-seat information.",
+    "A student shall register for a selected course offering during its registration period and receive the result.",
+    "A student shall atomically swap a current registration for another course offering and receive the result.",
+    "Before either a registration or a swap is accepted, the system shall perform the same mandatory enrollment-eligibility validation, including registration-period, duplicate-enrollment, capacity, and timetable-conflict checks.",
+    "A student shall view current registrations and the resulting class schedule.",
+    "A student shall drop a selected registration during the allowed period and receive the result.",
+    "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view. Viewing the schedule remains complete without an export.",
+    "When registration is rejected only because an offering is full and its waitlist is enabled, the student may join the waitlist. The rejected registration remains a complete result without joining.",
+    "A student shall view and cancel their own waitlist entries.",
+    "A professor shall review assigned course offerings and their current student rosters.",
+    "An academic administrator shall create and update academic terms and their registration periods.",
+    "An academic administrator shall create, update, publish, or cancel course offerings and assign their instructor, meeting schedule, and enrollment capacity.",
+    "The system shall authorize each protected operation according to the authenticated university-user role.",
+    "Course, offering, term, university-user, registration, and waitlist information shall survive application and server restarts.",
+    "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering."
+  ],
+  "expanded_source_refs": [
+    [
+      "RAW1"
+    ],
+    [
+      "RAW2"
+    ],
+    [
+      "RAW3"
+    ],
+    [
+      "RAW4"
+    ],
+    [
+      "RAW5"
+    ],
+    [
+      "RAW6"
+    ],
+    [
+      "RAW7"
+    ],
+    [
+      "RAW8"
+    ],
+    [
+      "RAW9"
+    ],
+    [
+      "RAW10"
+    ],
+    [
+      "RAW11"
+    ],
+    [
+      "RAW12"
+    ],
+    [
+      "RAW13"
+    ],
+    [
+      "RAW14"
+    ],
+    [
+      "RAW15"
+    ],
+    [
+      "RAW16"
+    ]
+  ],
+  "phase": "check_specs",
+  "refined_requirements": [
+    "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations.",
+    "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining‑seat information.",
+    "A student shall register for a selected course offering during its registration period and receive the result.",
+    "A student shall atomically swap a current registration for another course offering and receive the result.",
+    "Before a registration or swap is accepted, the system shall perform mandatory enrollment‑eligibility validation, including registration‑period, duplicate‑enrollment, capacity, and timetable‑conflict checks.",
+    "A student shall view current registrations and the resulting class schedule.",
+    "A student shall drop a selected registration during the allowed period and receive the result.",
+    "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view; the schedule view remains complete without an export.",
+    "When a registration is rejected solely because an offering is full and its waitlist is enabled, a student may join the waitlist; the rejected registration remains a complete result without joining.",
+    "A student shall view and cancel their own waitlist entries.",
+    "A professor shall review assigned course offerings and their current student rosters.",
+    "An academic administrator shall create and update academic terms and their registration periods.",
+    "An academic administrator shall create, update, publish, or cancel course offerings and assign their instructor, meeting schedule, and enrollment capacity.",
+    "The system shall authorize each protected operation according to the authenticated university‑user role.",
+    "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts.",
+    "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering."
+  ],
+  "constraint_links": [
+    {
+      "constraint": "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts.",
+      "qualifies": "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining‑seat information."
+    },
+    {
+      "constraint": "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering.",
+      "qualifies": "A student shall register for a selected course offering during its registration period and receive the result."
+    }
+  ],
+  "requirement_drafts": [
+    {
+      "text": "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations.",
+      "sourceRefs": [
+        "RAW1"
+      ],
+      "ref": "RR1"
+    },
+    {
+      "text": "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining‑seat information.",
+      "sourceRefs": [
+        "RAW2"
+      ],
+      "ref": "RR2"
+    },
+    {
+      "text": "A student shall register for a selected course offering during its registration period and receive the result.",
+      "sourceRefs": [
+        "RAW3"
+      ],
+      "ref": "RR3"
+    },
+    {
+      "text": "A student shall atomically swap a current registration for another course offering and receive the result.",
+      "sourceRefs": [
+        "RAW4"
+      ],
+      "ref": "RR4"
+    },
+    {
+      "text": "Before a registration or swap is accepted, the system shall perform mandatory enrollment‑eligibility validation, including registration‑period, duplicate‑enrollment, capacity, and timetable‑conflict checks.",
+      "sourceRefs": [
+        "RAW5"
+      ],
+      "ref": "RR5"
+    },
+    {
+      "text": "A student shall view current registrations and the resulting class schedule.",
+      "sourceRefs": [
+        "RAW6"
+      ],
+      "ref": "RR6"
+    },
+    {
+      "text": "A student shall drop a selected registration during the allowed period and receive the result.",
+      "sourceRefs": [
+        "RAW7"
+      ],
+      "ref": "RR7"
+    },
+    {
+      "text": "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view; the schedule view remains complete without an export.",
+      "sourceRefs": [
+        "RAW8"
+      ],
+      "ref": "RR8"
+    },
+    {
+      "text": "When a registration is rejected solely because an offering is full and its waitlist is enabled, a student may join the waitlist; the rejected registration remains a complete result without joining.",
+      "sourceRefs": [
+        "RAW9"
+      ],
+      "ref": "RR9"
+    },
+    {
+      "text": "A student shall view and cancel their own waitlist entries.",
+      "sourceRefs": [
+        "RAW10"
+      ],
+      "ref": "RR10"
+    },
+    {
+      "text": "A professor shall review assigned course offerings and their current student rosters.",
+      "sourceRefs": [
+        "RAW11"
+      ],
+      "ref": "RR11"
+    },
+    {
+      "text": "An academic administrator shall create and update academic terms and their registration periods.",
+      "sourceRefs": [
+        "RAW12"
+      ],
+      "ref": "RR12"
+    },
+    {
+      "text": "An academic administrator shall create, update, publish, or cancel course offerings and assign their instructor, meeting schedule, and enrollment capacity.",
+      "sourceRefs": [
+        "RAW13"
+      ],
+      "ref": "RR13"
+    },
+    {
+      "text": "The system shall authorize each protected operation according to the authenticated university‑user role.",
+      "sourceRefs": [
+        "RAW14"
+      ],
+      "ref": "RR14"
+    },
+    {
+      "text": "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts.",
+      "sourceRefs": [
+        "RAW15"
+      ],
+      "ref": "RR15"
+    },
+    {
+      "text": "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering.",
+      "sourceRefs": [
+        "RAW16"
+      ],
+      "ref": "RR16"
+    }
+  ],
+  "requirement_source_issues": [],
+  "classified": [
+    {
+      "id": "RR1",
+      "text": "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations.",
+      "type": "NFR",
+      "draft_ref": "RR1",
+      "source_refs": [
+        "RAW1"
+      ]
+    },
+    {
+      "id": "RR2",
+      "text": "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining‑seat information.",
+      "type": "FR",
+      "draft_ref": "RR2",
+      "source_refs": [
+        "RAW2"
+      ]
+    },
+    {
+      "id": "RR3",
+      "text": "A student shall register for a selected course offering during its registration period and receive the result.",
+      "type": "FR",
+      "draft_ref": "RR3",
+      "source_refs": [
+        "RAW3"
+      ]
+    },
+    {
+      "id": "RR4",
+      "text": "A student shall atomically swap a current registration for another course offering and receive the result.",
+      "type": "FR",
+      "draft_ref": "RR4",
+      "source_refs": [
+        "RAW4"
+      ]
+    },
+    {
+      "id": "RR5",
+      "text": "Before a registration or swap is accepted, the system shall perform mandatory enrollment‑eligibility validation, including registration‑period, duplicate‑enrollment, capacity, and timetable‑conflict checks.",
+      "type": "FR",
+      "draft_ref": "RR5",
+      "source_refs": [
+        "RAW5"
+      ]
+    },
+    {
+      "id": "RR6",
+      "text": "A student shall view current registrations and the resulting class schedule.",
+      "type": "FR",
+      "draft_ref": "RR6",
+      "source_refs": [
+        "RAW6"
+      ]
+    },
+    {
+      "id": "RR7",
+      "text": "A student shall drop a selected registration during the allowed period and receive the result.",
+      "type": "FR",
+      "draft_ref": "RR7",
+      "source_refs": [
+        "RAW7"
+      ]
+    },
+    {
+      "id": "RR8",
+      "text": "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view; the schedule view remains complete without an export.",
+      "type": "FR",
+      "draft_ref": "RR8",
+      "source_refs": [
+        "RAW8"
+      ]
+    },
+    {
+      "id": "RR9",
+      "text": "When a registration is rejected solely because an offering is full and its waitlist is enabled, a student may join the waitlist; the rejected registration remains a complete result without joining.",
+      "type": "FR",
+      "draft_ref": "RR9",
+      "source_refs": [
+        "RAW9"
+      ]
+    },
+    {
+      "id": "RR10",
+      "text": "A student shall view and cancel their own waitlist entries.",
+      "type": "FR",
+      "draft_ref": "RR10",
+      "source_refs": [
+        "RAW10"
+      ]
+    },
+    {
+      "id": "RR11",
+      "text": "A professor shall review assigned course offerings and their current student rosters.",
+      "type": "FR",
+      "draft_ref": "RR11",
+      "source_refs": [
+        "RAW11"
+      ]
+    },
+    {
+      "id": "RR12",
+      "text": "An academic administrator shall create and update academic terms and their registration periods.",
+      "type": "FR",
+      "draft_ref": "RR12",
+      "source_refs": [
+        "RAW12"
+      ]
+    },
+    {
+      "id": "RR13",
+      "text": "An academic administrator shall create, update, publish, or cancel course offerings and assign their instructor, meeting schedule, and enrollment capacity.",
+      "type": "FR",
+      "draft_ref": "RR13",
+      "source_refs": [
+        "RAW13"
+      ]
+    },
+    {
+      "id": "RR14",
+      "text": "The system shall authorize each protected operation according to the authenticated university‑user role.",
+      "type": "FR",
+      "draft_ref": "RR14",
+      "source_refs": [
+        "RAW14"
+      ]
+    },
+    {
+      "id": "RR15",
+      "text": "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts.",
+      "type": "NFR",
+      "draft_ref": "RR15",
+      "source_refs": [
+        "RAW15"
+      ]
+    },
+    {
+      "id": "RR16",
+      "text": "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering.",
+      "type": "FR",
+      "draft_ref": "RR16",
+      "source_refs": [
+        "RAW16"
+      ]
+    }
+  ],
+  "deployment_needs": {
+    "authentication": {
+      "role": "Provide verification of a user's identity before any protected operation is allowed, as the system requires an authenticated identity as a precondition.",
+      "required": true,
+      "requirementIds": [
+        "RR1"
+      ],
+      "metadata": {},
+      "evidenceSpans": [
+        "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "abstained"
+    },
+    "authorization": {
+      "role": "Enforce role‑based permission checks for every protected operation, ensuring that only users with the appropriate university‑user role can perform the action.",
+      "required": true,
+      "requirementIds": [
+        "RR14"
+      ],
+      "metadata": {},
+      "evidenceSpans": [
+        "The system shall authorize each protected operation according to the authenticated university‑user role."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "abstained"
+    },
+    "durable_storage": {
+      "role": "Persist all core domain data (courses, offerings, terms, users, registrations, waitlist entries) so that it survives application and server restarts.",
+      "required": true,
+      "requirementIds": [
+        "RR15"
+      ],
+      "metadata": {
+        "applicationState": {
+          "durability": "persistent"
+        }
+      },
+      "evidenceSpans": [
+        "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "accepted",
+      "rejectedMetadata": [
+        {
+          "path": "applicationState.accessScope",
+          "value": "shared-service",
+          "reason": "value-not-grounded-in-evidence-span"
+        }
+      ]
+    },
+    "concurrency_control": {
+      "role": "Guarantee correct handling of concurrent registration, swap, drop, and waitlist operations so that enrollment capacity, registration uniqueness, and waitlist ordering are preserved.",
+      "required": true,
+      "requirementIds": [
+        "RR16"
+      ],
+      "metadata": {},
+      "evidenceSpans": [
+        "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering."
+      ],
+      "origin": "explicit",
+      "dependencyCapabilityIds": [],
+      "decision": "abstained"
+    }
+  },
+  "capability_contract": {
+    "schemaVersion": "CapabilityContract/v1",
+    "capabilities": [
+      {
+        "id": "authentication",
+        "statement": "Provide verification of a user's identity before any protected operation is allowed, as the system requires an authenticated identity as a precondition.",
+        "requirementIds": [
+          "RR1"
+        ],
+        "evidenceSpans": [
+          "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "abstained",
+        "decisionReason": "not-deployment-boundary",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "pending",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      },
+      {
+        "id": "authorization",
+        "statement": "Enforce role‑based permission checks for every protected operation, ensuring that only users with the appropriate university‑user role can perform the action.",
+        "requirementIds": [
+          "RR14"
+        ],
+        "evidenceSpans": [
+          "The system shall authorize each protected operation according to the authenticated university‑user role."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "abstained",
+        "decisionReason": "not-deployment-boundary",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "pending",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      },
+      {
+        "id": "durable_storage",
+        "statement": "Persist all core domain data (courses, offerings, terms, users, registrations, waitlist entries) so that it survives application and server restarts.",
+        "requirementIds": [
+          "RR15"
+        ],
+        "evidenceSpans": [
+          "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "accepted",
+        "decisionReason": "explicit-grounded-constraint",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "notRequired",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      },
+      {
+        "id": "concurrency_control",
+        "statement": "Guarantee correct handling of concurrent registration, swap, drop, and waitlist operations so that enrollment capacity, registration uniqueness, and waitlist ordering are preserved.",
+        "requirementIds": [
+          "RR16"
+        ],
+        "evidenceSpans": [
+          "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering."
+        ],
+        "origin": "explicit",
+        "necessity": "required",
+        "decision": "abstained",
+        "decisionReason": "not-deployment-boundary",
+        "rawConfidence": 1.0,
+        "calibratedConfidence": 1.0,
+        "thresholdVersion": "development-no-inference-v1",
+        "confirmation": "pending",
+        "alternatives": [],
+        "unresolvedFields": [],
+        "dependencyCapabilityIds": []
+      }
+    ],
+    "questions": []
+  },
+  "resource_constraint_extraction": {
+    "status": "completed",
+    "result": {
+      "provider": "aws",
+      "provider_evidence": "AWS",
+      "region_as_written": "AWS Seoul Region (ap-northeast-2)",
+      "region_evidence": "AWS Seoul Region (ap-northeast-2)",
+      "monthly_budget_amount": 500.0,
+      "monthly_budget_currency": "USD",
+      "monthly_budget_evidence": "must not exceed 500 USD",
+      "min_vcpu": null,
+      "min_vcpu_evidence": "",
+      "min_memory_gib": null,
+      "min_memory_evidence": "",
+      "traffic_pattern": null,
+      "traffic_pattern_evidence": "",
+      "scale_value": null,
+      "scale_unit": null,
+      "scale_evidence": "",
+      "data_residency": null,
+      "data_residency_evidence": "",
+      "ambiguous_fields": [],
+      "understanding": "The user explicitly restricts the pilot to Docker on Linux virtual machines, disallows managed databases, Kubernetes, and serverless compute, requires synthetic data, and excludes recovery from a data‑storage server failure."
+    }
+  },
+  "resource_intake": {
+    "draft": {
+      "schemaVersion": "4",
+      "workloads": [
+        "vm"
+      ],
+      "provider": "aws",
+      "regionAsWritten": "ap-northeast-2",
+      "region": "ap-northeast-2",
+      "monthlyBudgetUSD": 500.0
+    },
+    "valid": true,
+    "errors": [],
+    "questions": [
+      {
+        "field": "region",
+        "kind": "asked",
+        "why": "Pricing and capacity data are indexed by provider region code; the place name is resolved before those datasets are queried.",
+        "question": "Which region should host the deployment? A place name is acceptable.",
+        "seen": []
+      },
+      {
+        "field": "minVCpu",
+        "kind": "suggested",
+        "why": "A sizing floor enables instance-spec selection. Without one, the system does not assume that the cheapest or smallest instance is sufficient.",
+        "question": "If known, provide either the minimum vCPU or minimum memory required by this workload.",
+        "seen": []
+      }
+    ],
+    "understanding": "The user explicitly restricts the pilot to Docker on Linux virtual machines, disallows managed databases, Kubernetes, and serverless compute, requires synthetic data, and excludes recovery from a data‑storage server failure.",
+    "provenance": [
+      {
+        "field": "provider",
+        "value": "aws",
+        "as_written": "aws",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      },
+      {
+        "field": "regionAsWritten",
+        "value": "ap-northeast-2",
+        "as_written": "ap-northeast-2",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      },
+      {
+        "field": "region",
+        "value": "ap-northeast-2",
+        "as_written": "ap-northeast-2",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      },
+      {
+        "field": "monthlyBudgetUSD",
+        "value": 500.0,
+        "as_written": "500.0",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      },
+      {
+        "field": "provider",
+        "value": "aws",
+        "as_written": "AWS",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      },
+      {
+        "field": "monthlyBudgetUSD",
+        "value": 500.0,
+        "as_written": "must not exceed 500 USD",
+        "source": "agent",
+        "how": "user",
+        "via": ""
+      }
+    ],
+    "rejected": [],
+    "trace": [
+      {
+        "action": "system_scope",
+        "field": "workloads",
+        "value": [
+          "vm"
+        ]
+      },
+      {
+        "action": "record_field",
+        "field": "provider",
+        "value": "aws"
+      },
+      {
+        "action": "record_field",
+        "field": "regionAsWritten",
+        "value": "ap-northeast-2"
+      },
+      {
+        "action": "record_field",
+        "field": "region",
+        "value": "ap-northeast-2"
+      },
+      {
+        "action": "record_field",
+        "field": "monthlyBudgetUSD",
+        "value": 500.0
+      },
+      {
+        "action": "record_field",
+        "field": "provider",
+        "value": "aws"
+      },
+      {
+        "action": "ask_user",
+        "field": "region",
+        "question": "Which region should host the deployment? A place name is acceptable."
+      },
+      {
+        "action": "record_field",
+        "field": "monthlyBudgetUSD",
+        "value": 500.0
+      }
+    ]
+  },
+  "resource_spec": {
+    "schemaVersion": "4",
+    "workloads": [
+      "vm"
+    ],
+    "provider": "aws",
+    "regionAsWritten": "ap-northeast-2",
+    "region": "ap-northeast-2",
+    "monthlyBudgetUSD": 500.0
+  },
+  "actors": [
+    {
+      "name": "University User",
+      "description": "Any authenticated person who belongs to the university (student, professor, or academic‑administrator). The role and identity are required before any protected operation can be performed.",
+      "parent_actor": null,
+      "source_refs": [
+        "RR1",
+        "RR2"
+      ]
+    },
+    {
+      "name": "Student",
+      "description": "A university user whose primary goal is to manage personal enrollment – searching offerings, registering, swapping, dropping, viewing schedules, and handling wait‑list entries.",
+      "parent_actor": "University User",
+      "source_refs": [
+        "RR1",
+        "RR10",
+        "RR3",
+        "RR4",
+        "RR6",
+        "RR7",
+        "RR8",
+        "RR9"
+      ]
+    },
+    {
+      "name": "Professor",
+      "description": "A university user whose goal is to review the course offerings assigned to them and see the current rosters of enrolled students.",
+      "parent_actor": "University User",
+      "source_refs": [
+        "RR1",
+        "RR11"
+      ]
+    },
+    {
+      "name": "Academic Administrator",
+      "description": "A university user responsible for configuring the academic calendar (terms and registration periods) and for creating, publishing, updating, or canceling course offerings, including instructor assignment and capacity settings.",
+      "parent_actor": "University User",
+      "source_refs": [
+        "RR1",
+        "RR12",
+        "RR13"
+      ]
+    }
+  ],
+  "use_cases": [
+    {
+      "id": "UC1",
+      "name": "Search Course Offerings",
+      "primary_actor": "University User",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Search published course offerings and inspect their details.",
+      "requirement_ids": [
+        "RR2",
+        "RR14"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC2",
+      "name": "Register for Course Offering",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Register for a selected course offering during its registration period and receive the result.",
+      "requirement_ids": [
+        "RR3",
+        "RR14",
+        "RR5"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC3",
+      "name": "Swap Course Registration",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Atomically swap a current registration for another course offering and receive the result.",
+      "requirement_ids": [
+        "RR4",
+        "RR14",
+        "RR5"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC4",
+      "name": "View Current Registrations and Schedule",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "View current registrations and the resulting class schedule.",
+      "requirement_ids": [
+        "RR6",
+        "RR14"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC5",
+      "name": "Drop Course Registration",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Drop a selected registration during the allowed period and receive the result.",
+      "requirement_ids": [
+        "RR7",
+        "RR14"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC6",
+      "name": "Export Class Schedule",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Export the currently viewed class schedule in a downloadable format.",
+      "requirement_ids": [
+        "RR8",
+        "RR14"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC7",
+      "name": "Join Waitlist for Full Course",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Join the waitlist for a course offering when registration is rejected because the offering is full and waitlist is enabled.",
+      "requirement_ids": [
+        "RR9",
+        "RR14"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC8",
+      "name": "View Waitlist Entries",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "View own waitlist entries.",
+      "requirement_ids": [
+        "RR10",
+        "RR14"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC9",
+      "name": "Cancel Waitlist Entry",
+      "primary_actor": "Student",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Cancel a previously created waitlist entry.",
+      "requirement_ids": [
+        "RR10",
+        "RR14"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC10",
+      "name": "Review Assigned Course Offerings and Rosters",
+      "primary_actor": "Professor",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Review assigned course offerings and their current student rosters.",
+      "requirement_ids": [
+        "RR11",
+        "RR14"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC11",
+      "name": "Manage Academic Term",
+      "primary_actor": "Academic Administrator",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Create and update academic terms and their registration periods.",
+      "requirement_ids": [
+        "RR12",
+        "RR14"
+      ],
+      "nfr_ids": []
+    },
+    {
+      "id": "UC12",
+      "name": "Manage Course Offering",
+      "primary_actor": "Academic Administrator",
+      "supporting_actors": [],
+      "level": "user_goal",
+      "goal": "Create, update, publish, or cancel course offerings and assign instructor, meeting schedule, and enrollment capacity.",
+      "requirement_ids": [
+        "RR13",
+        "RR14"
+      ],
+      "nfr_ids": []
+    }
+  ],
+  "constraint_applicability": {
+    "RR16": [
+      "UC2",
+      "UC3",
+      "UC5",
+      "UC7",
+      "UC9"
+    ],
+    "RR1": []
+  },
+  "model_review": {
+    "issues": [],
+    "semantic_status": "ok",
+    "unexamined_rules": []
+  },
+  "coverage": {
+    "fr_total": 14,
+    "covered_fr_ids": [
+      "RR10",
+      "RR11",
+      "RR12",
+      "RR13",
+      "RR14",
+      "RR2",
+      "RR3",
+      "RR4",
+      "RR5",
+      "RR6",
+      "RR7",
+      "RR8",
+      "RR9"
+    ],
+    "unrealized_fr_ids": [
+      "RR16"
+    ],
+    "orphan_fr_ids": [],
+    "unattached_nfr_ids": [],
+    "unknown_requirement_refs": [],
+    "unknown_use_case_refs": [],
+    "unaccounted_requirement_ids": [],
+    "goal_requirement_ids": [
+      "RR10",
+      "RR11",
+      "RR12",
+      "RR13",
+      "RR14",
+      "RR2",
+      "RR3",
+      "RR4",
+      "RR5",
+      "RR6",
+      "RR7",
+      "RR8",
+      "RR9"
+    ],
+    "covered_goal_requirement_ids": [
+      "RR10",
+      "RR11",
+      "RR12",
+      "RR13",
+      "RR14",
+      "RR2",
+      "RR3",
+      "RR4",
+      "RR5",
+      "RR6",
+      "RR7",
+      "RR8",
+      "RR9"
+    ],
+    "missing_goal_requirement_ids": [],
+    "goal_coverage_ratio": 1.0,
+    "accounted_coverage_ratio": 1.0,
+    "fr_realization_ratio": 0.9286,
+    "coverage_ratio": 1.0
+  },
+  "traceability": {
+    "requirements": {
+      "RR1": {
+        "type": "NFR",
+        "text": "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations.",
+        "use_cases": [],
+        "realized_by_use_cases": [],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": true,
+        "scenario_steps": [],
+        "actor_roles": [
+          "University User",
+          "Student",
+          "Professor",
+          "Academic Administrator"
+        ],
+        "deployment_needs": [
+          "authentication"
+        ],
+        "capabilities": [
+          "authentication"
+        ],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR2": {
+        "type": "FR",
+        "text": "A university user shall search published course offerings and inspect their course, section, instructor, meeting schedule, capacity, and remaining‑seat information.",
+        "use_cases": [
+          "UC1"
+        ],
+        "realized_by_use_cases": [
+          "UC1"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "University User"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR3": {
+        "type": "FR",
+        "text": "A student shall register for a selected course offering during its registration period and receive the result.",
+        "use_cases": [
+          "UC2"
+        ],
+        "realized_by_use_cases": [
+          "UC2"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Student"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR4": {
+        "type": "FR",
+        "text": "A student shall atomically swap a current registration for another course offering and receive the result.",
+        "use_cases": [
+          "UC3"
+        ],
+        "realized_by_use_cases": [
+          "UC3"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Student"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR5": {
+        "type": "FR",
+        "text": "Before a registration or swap is accepted, the system shall perform mandatory enrollment‑eligibility validation, including registration‑period, duplicate‑enrollment, capacity, and timetable‑conflict checks.",
+        "use_cases": [
+          "UC2",
+          "UC3"
+        ],
+        "realized_by_use_cases": [
+          "UC2",
+          "UC3"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR6": {
+        "type": "FR",
+        "text": "A student shall view current registrations and the resulting class schedule.",
+        "use_cases": [
+          "UC4"
+        ],
+        "realized_by_use_cases": [
+          "UC4"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Student"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR7": {
+        "type": "FR",
+        "text": "A student shall drop a selected registration during the allowed period and receive the result.",
+        "use_cases": [
+          "UC5"
+        ],
+        "realized_by_use_cases": [
+          "UC5"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Student"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR8": {
+        "type": "FR",
+        "text": "While viewing the current class schedule, a student may optionally export it in a downloadable format using the information already presented by that view; the schedule view remains complete without an export.",
+        "use_cases": [
+          "UC6"
+        ],
+        "realized_by_use_cases": [
+          "UC6"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Student"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR9": {
+        "type": "FR",
+        "text": "When a registration is rejected solely because an offering is full and its waitlist is enabled, a student may join the waitlist; the rejected registration remains a complete result without joining.",
+        "use_cases": [
+          "UC7"
+        ],
+        "realized_by_use_cases": [
+          "UC7"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Student"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR10": {
+        "type": "FR",
+        "text": "A student shall view and cancel their own waitlist entries.",
+        "use_cases": [
+          "UC8",
+          "UC9"
+        ],
+        "realized_by_use_cases": [
+          "UC8",
+          "UC9"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Student"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR11": {
+        "type": "FR",
+        "text": "A professor shall review assigned course offerings and their current student rosters.",
+        "use_cases": [
+          "UC10"
+        ],
+        "realized_by_use_cases": [
+          "UC10"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Professor"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR12": {
+        "type": "FR",
+        "text": "An academic administrator shall create and update academic terms and their registration periods.",
+        "use_cases": [
+          "UC11"
+        ],
+        "realized_by_use_cases": [
+          "UC11"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Academic Administrator"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR13": {
+        "type": "FR",
+        "text": "An academic administrator shall create, update, publish, or cancel course offerings and assign their instructor, meeting schedule, and enrollment capacity.",
+        "use_cases": [
+          "UC12"
+        ],
+        "realized_by_use_cases": [
+          "UC12"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [
+          "Academic Administrator"
+        ],
+        "deployment_needs": [],
+        "capabilities": [],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR14": {
+        "type": "FR",
+        "text": "The system shall authorize each protected operation according to the authenticated university‑user role.",
+        "use_cases": [
+          "UC1",
+          "UC2",
+          "UC3",
+          "UC4",
+          "UC5",
+          "UC6",
+          "UC7",
+          "UC8",
+          "UC9",
+          "UC10",
+          "UC11",
+          "UC12"
+        ],
+        "realized_by_use_cases": [
+          "UC1",
+          "UC2",
+          "UC3",
+          "UC4",
+          "UC5",
+          "UC6",
+          "UC7",
+          "UC8",
+          "UC9",
+          "UC10",
+          "UC11",
+          "UC12"
+        ],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [],
+        "deployment_needs": [
+          "authorization"
+        ],
+        "capabilities": [
+          "authorization"
+        ],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR15": {
+        "type": "NFR",
+        "text": "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts.",
+        "use_cases": [],
+        "realized_by_use_cases": [],
+        "constrains_use_cases": [],
+        "modeled_as_constraint": false,
+        "scenario_steps": [],
+        "actor_roles": [],
+        "deployment_needs": [
+          "durable_storage"
+        ],
+        "capabilities": [
+          "durable_storage"
+        ],
+        "qualifies": [],
+        "realized": null
+      },
+      "RR16": {
+        "type": "FR",
+        "text": "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering.",
+        "use_cases": [
+          "UC2",
+          "UC3",
+          "UC5",
+          "UC7",
+          "UC9"
+        ],
+        "realized_by_use_cases": [],
+        "constrains_use_cases": [
+          "UC2",
+          "UC3",
+          "UC5",
+          "UC7",
+          "UC9"
+        ],
+        "modeled_as_constraint": true,
+        "scenario_steps": [],
+        "actor_roles": [],
+        "deployment_needs": [
+          "concurrency_control"
+        ],
+        "capabilities": [
+          "concurrency_control"
+        ],
+        "qualifies": [],
+        "realized": null
+      }
+    },
+    "use_cases": {
+      "UC1": {
+        "name": "Search Course Offerings",
+        "requirements": [
+          "RR2",
+          "RR14"
+        ]
+      },
+      "UC2": {
+        "name": "Register for Course Offering",
+        "requirements": [
+          "RR3",
+          "RR5",
+          "RR14",
+          "RR16"
+        ]
+      },
+      "UC3": {
+        "name": "Swap Course Registration",
+        "requirements": [
+          "RR4",
+          "RR5",
+          "RR14",
+          "RR16"
+        ]
+      },
+      "UC4": {
+        "name": "View Current Registrations and Schedule",
+        "requirements": [
+          "RR6",
+          "RR14"
+        ]
+      },
+      "UC5": {
+        "name": "Drop Course Registration",
+        "requirements": [
+          "RR7",
+          "RR14",
+          "RR16"
+        ]
+      },
+      "UC6": {
+        "name": "Export Class Schedule",
+        "requirements": [
+          "RR8",
+          "RR14"
+        ]
+      },
+      "UC7": {
+        "name": "Join Waitlist for Full Course",
+        "requirements": [
+          "RR9",
+          "RR14",
+          "RR16"
+        ]
+      },
+      "UC8": {
+        "name": "View Waitlist Entries",
+        "requirements": [
+          "RR10",
+          "RR14"
+        ]
+      },
+      "UC9": {
+        "name": "Cancel Waitlist Entry",
+        "requirements": [
+          "RR10",
+          "RR14",
+          "RR16"
+        ]
+      },
+      "UC10": {
+        "name": "Review Assigned Course Offerings and Rosters",
+        "requirements": [
+          "RR11",
+          "RR14"
+        ]
+      },
+      "UC11": {
+        "name": "Manage Academic Term",
+        "requirements": [
+          "RR12",
+          "RR14"
+        ]
+      },
+      "UC12": {
+        "name": "Manage Course Offering",
+        "requirements": [
+          "RR13",
+          "RR14"
+        ]
+      }
+    },
+    "deployment_needs": {
+      "authentication": {
+        "role": "Provide verification of a user's identity before any protected operation is allowed, as the system requires an authenticated identity as a precondition.",
+        "required": true,
+        "requirementIds": [
+          "RR1"
+        ],
+        "metadata": {},
+        "evidenceSpans": [
+          "Students, professors, and academic administrators are specialized roles of a university user, and an authenticated identity and role are preconditions for protected operations."
+        ],
+        "origin": "explicit",
+        "dependencyCapabilityIds": [],
+        "decision": "abstained"
+      },
+      "authorization": {
+        "role": "Enforce role‑based permission checks for every protected operation, ensuring that only users with the appropriate university‑user role can perform the action.",
+        "required": true,
+        "requirementIds": [
+          "RR14"
+        ],
+        "metadata": {},
+        "evidenceSpans": [
+          "The system shall authorize each protected operation according to the authenticated university‑user role."
+        ],
+        "origin": "explicit",
+        "dependencyCapabilityIds": [],
+        "decision": "abstained"
+      },
+      "durable_storage": {
+        "role": "Persist all core domain data (courses, offerings, terms, users, registrations, waitlist entries) so that it survives application and server restarts.",
+        "required": true,
+        "requirementIds": [
+          "RR15"
+        ],
+        "metadata": {
+          "applicationState": {
+            "durability": "persistent"
+          }
+        },
+        "evidenceSpans": [
+          "Course, offering, term, university‑user, registration, and waitlist information shall survive application and server restarts."
+        ],
+        "origin": "explicit",
+        "dependencyCapabilityIds": [],
+        "decision": "accepted",
+        "rejectedMetadata": [
+          {
+            "path": "applicationState.accessScope",
+            "value": "shared-service",
+            "reason": "value-not-grounded-in-evidence-span"
+          }
+        ]
+      },
+      "concurrency_control": {
+        "role": "Guarantee correct handling of concurrent registration, swap, drop, and waitlist operations so that enrollment capacity, registration uniqueness, and waitlist ordering are preserved.",
+        "required": true,
+        "requirementIds": [
+          "RR16"
+        ],
+        "metadata": {},
+        "evidenceSpans": [
+          "Concurrent registration, swap, drop, and waitlist operations shall preserve enrollment capacity, registration uniqueness, and waitlist ordering."
+        ],
+        "origin": "explicit",
+        "dependencyCapabilityIds": [],
+        "decision": "abstained"
+      }
+    },
+    "unknown_refs": [],
+    "unknown_use_case_refs": [],
+    "summary": {
+      "requirements": 16,
+      "covered_functional_requirements": 13,
+      "unrealized_functional_requirements": [
+        "RR16"
+      ],
+      "orphan_functional_requirements": [],
+      "attached_nonfunctional_requirements": 2,
+      "unattached_nonfunctional_requirements": [],
+      "accounted_requirements": 16,
+      "unaccounted_requirements": [],
+      "goal_requirements": 13,
+      "covered_goal_requirements": 13,
+      "missing_goal_requirements": [],
+      "goal_coverage_ratio": 1.0,
+      "accounted_coverage_ratio": 1.0,
+      "deployment_needs": 4
+    }
+  },
+  "use_case_specs": [
+    {
+      "use_case_id": "UC1",
+      "name": "Search Course Offerings",
+      "requirement_ids": [
+        "RR2",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "University user is authenticated and has an assigned university role"
+      ],
+      "trigger": "University user requests to search for course offerings",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "University user provides search criteria for published course offerings",
+          "covered_req_ids": [
+            "RR2"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies that the user is authorized to search course offerings",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System retrieves the list of published course offerings that match the criteria",
+          "covered_req_ids": [
+            "RR2"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System presents the matching course offerings to the user",
+          "covered_req_ids": [
+            "RR2"
+          ]
+        },
+        {
+          "step_number": 5,
+          "sentence": "University user selects one of the presented offerings to view its details",
+          "covered_req_ids": [
+            "RR2"
+          ]
+        },
+        {
+          "step_number": 6,
+          "sentence": "System displays the selected offering's course, section, instructor, meeting schedule, capacity, and remaining-seat information",
+          "covered_req_ids": [
+            "RR2"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "User is not authorized to search course offerings",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the user that they lack permission to perform the search"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "The user has viewed detailed information of a selected published course offering",
+        "The presented information reflects the current published offering data"
+      ],
+      "minimal_guarantee": [
+        "If the user is not authorized, the system informs the user of insufficient permissions and no offering data is disclosed"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC2",
+      "name": "Register for Course Offering",
+      "requirement_ids": [
+        "RR3",
+        "RR14",
+        "RR5"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Student is authenticated as a university user",
+        "Student has selected a specific course offering to register"
+      ],
+      "trigger": "Student initiates registration for the selected course offering",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student requests registration for the selected offering",
+          "covered_req_ids": [
+            "RR3"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System confirms the student is authorized to perform the registration operation",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System validates enrollment eligibility, checking registration period, duplicate enrollment, capacity, and timetable conflicts",
+          "covered_req_ids": [
+            "RR5"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System records the registration for the student",
+          "covered_req_ids": [
+            "RR3"
+          ]
+        },
+        {
+          "step_number": 5,
+          "sentence": "System notifies the student that registration succeeded",
+          "covered_req_ids": [
+            "RR3"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "student is not authorized for registration",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System notifies the student that registration is not permitted"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "3a",
+          "branch_step": 3,
+          "condition": "any enrollment-eligibility check fails",
+          "handling_steps": [
+            {
+              "sub_step": "3a1",
+              "sentence": "System notifies the student of the reason why registration was rejected"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "Student is enrolled in the selected course offering",
+        "Offering capacity is reduced by one and remains within its defined limit, preserving capacity under concurrent operations",
+        "Student has no duplicate enrollment for the same offering, preserving registration uniqueness",
+        "Waitlist ordering for the offering is unchanged"
+      ],
+      "minimal_guarantee": [
+        "If registration is not authorized or fails eligibility validation, no registration is recorded and offering capacity remains unchanged"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC3",
+      "name": "Swap Course Registration",
+      "requirement_ids": [
+        "RR4",
+        "RR14",
+        "RR5"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Student is authenticated and has an active registration that is eligible for swapping"
+      ],
+      "trigger": "Student requests to swap the active registration for a different course offering",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student selects the current registration to be swapped and the desired target course offering",
+          "covered_req_ids": []
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies that the student is authorized for the swap operation",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System validates enrollment eligibility for the target offering, including registration period, duplicate enrollment, capacity, and timetable conflict",
+          "covered_req_ids": [
+            "RR5"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System atomically removes the current registration and creates a new registration for the target offering",
+          "covered_req_ids": [
+            "RR4"
+          ]
+        },
+        {
+          "step_number": 5,
+          "sentence": "System returns a result indicating the swap succeeded and provides the updated schedule",
+          "covered_req_ids": [
+            "RR4"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "student is not authorized for the swap operation",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System returns a failure result indicating lack of authorization"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "3a",
+          "branch_step": 3,
+          "condition": "enrollment eligibility validation fails",
+          "handling_steps": [
+            {
+              "sub_step": "3a1",
+              "sentence": "System returns a failure result describing the validation error such as period closed, duplicate enrollment, capacity full, or timetable conflict"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "4a",
+          "branch_step": 4,
+          "condition": "concurrent operation prevents preserving capacity, uniqueness, or waitlist ordering",
+          "handling_steps": [
+            {
+              "sub_step": "4a1",
+              "sentence": "System aborts the swap and returns a failure result indicating a concurrency conflict"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "Student's registration is updated to the target offering and the original registration is removed",
+        "Enrollment capacity, registration uniqueness, and waitlist ordering are preserved",
+        "Student receives the result of the successful swap and the updated schedule"
+      ],
+      "minimal_guarantee": [
+        "If the swap fails, the original registration remains unchanged and no new registration is created"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC4",
+      "name": "View Current Registrations and Schedule",
+      "requirement_ids": [
+        "RR6",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Student is authenticated and holds a university-user role"
+      ],
+      "trigger": "Student selects the option to view current registrations and schedule",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student requests to view current registrations and schedule",
+          "covered_req_ids": [
+            "RR6"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies that the student is authorized to view registrations",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System retrieves the student's current registrations",
+          "covered_req_ids": [
+            "RR6"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System compiles the class schedule based on the retrieved registrations",
+          "covered_req_ids": [
+            "RR6"
+          ]
+        },
+        {
+          "step_number": 5,
+          "sentence": "System presents the current registrations and the compiled schedule to the student",
+          "covered_req_ids": [
+            "RR6"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "student is not authorized to view registrations",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the student that they lack permission to view registrations"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "Student sees an up-to-date list of their current registrations and a schedule reflecting those registrations"
+      ],
+      "minimal_guarantee": [
+        "If authorization fails, the student is notified of insufficient permissions and no registration data is disclosed"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC5",
+      "name": "Drop Course Registration",
+      "requirement_ids": [
+        "RR7",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "The student is authenticated as a university user.",
+        "The student has an active registration for the course to be dropped.",
+        "The current date falls within the allowed drop period for the term."
+      ],
+      "trigger": "Student initiates a request to drop the selected registration.",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student requests to drop the selected registration.",
+          "covered_req_ids": [
+            "RR7"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies the student's authorization for the drop operation.",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System removes the registration from the student's schedule and updates enrollment capacity.",
+          "covered_req_ids": [
+            "RR7"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System returns the result of the drop operation to the student.",
+          "covered_req_ids": [
+            "RR7"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "Student is not authorized for the drop operation",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the student that the drop request is denied due to insufficient permissions."
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "The selected registration is no longer present in the student's list of registrations.",
+        "Enrollment capacity for the course offering is increased by one.",
+        "Waitlist ordering for the course offering remains unchanged.",
+        "The student receives a confirmation of the successful drop."
+      ],
+      "minimal_guarantee": [
+        "If the use case fails, the student's existing registrations remain unchanged.",
+        "No enrollment capacity or waitlist ordering is altered."
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC6",
+      "name": "Export Class Schedule",
+      "requirement_ids": [
+        "RR8",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Student is authenticated as a university user",
+        "Student is currently viewing the class schedule"
+      ],
+      "trigger": "Student initiates an export of the currently viewed class schedule",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student requests export of the currently viewed class schedule",
+          "covered_req_ids": [
+            "RR8"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies that the student is authorized to export the schedule",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System generates a downloadable file containing the schedule data",
+          "covered_req_ids": [
+            "RR8"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System provides the downloadable file to the student",
+          "covered_req_ids": [
+            "RR8"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "student is not authorized to export the schedule",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the student that export is not permitted"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "Student receives a downloadable file of the current class schedule",
+        "The schedule view remains complete and unchanged"
+      ],
+      "minimal_guarantee": [
+        "Student does not receive a file",
+        "The schedule view remains complete and unchanged",
+        "Student is informed that export is not permitted"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC7",
+      "name": "Join Waitlist for Full Course",
+      "requirement_ids": [
+        "RR9",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Student is authenticated as a university user",
+        "Student has received a registration rejection for the course offering because the offering is full and waitlist is enabled"
+      ],
+      "trigger": "Student receives a registration rejection indicating the offering is full and waitlist is enabled",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student requests to join the waitlist for the rejected course offering",
+          "covered_req_ids": [
+            "RR9"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies the student is authorized for the operation",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System records the student's position at the end of the waitlist for the offering",
+          "covered_req_ids": [
+            "RR9"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "Student is not authorized for the protected operation",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the student that they are not authorized to join the waitlist"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "Student is listed on the waitlist for the offering at a defined position",
+        "The original registration remains rejected",
+        "Enrollment capacity and waitlist ordering are preserved"
+      ],
+      "minimal_guarantee": [
+        "If the operation fails, the student's registration remains rejected and no waitlist entry is created",
+        "The system state regarding the offering's enrollment and waitlist is unchanged"
+      ],
+      "issues": [],
+      "repair_iters": 1,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC8",
+      "name": "View Waitlist Entries",
+      "requirement_ids": [
+        "RR10",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Student is authenticated and has the Student role"
+      ],
+      "trigger": "Student initiates request to view own waitlist entries",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student requests to view own waitlist entries",
+          "covered_req_ids": [
+            "RR10"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies the student is authorized to view waitlist entries",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System retrieves the student's waitlist entries",
+          "covered_req_ids": [
+            "RR10"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System presents the retrieved entries to the student",
+          "covered_req_ids": [
+            "RR10"
+          ]
+        }
+      ],
+      "extensions": [],
+      "success_guarantee": [
+        "The student sees an up-to-date list of their waitlist entries"
+      ],
+      "minimal_guarantee": [],
+      "issues": [],
+      "repair_iters": 2,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC9",
+      "name": "Cancel Waitlist Entry",
+      "requirement_ids": [
+        "RR10",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Student is authenticated as a university user",
+        "Student has at least one waitlist entry in the system"
+      ],
+      "trigger": "Student requests cancellation of a specific waitlist entry",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Student requests cancellation of a waitlist entry",
+          "covered_req_ids": [
+            "RR10"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies that the student is authorized to cancel the selected entry",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System removes the selected waitlist entry",
+          "covered_req_ids": [
+            "RR10"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System updates the ordering of the remaining waitlist entries",
+          "covered_req_ids": []
+        }
+      ],
+      "extensions": [
+        {
+          "label": "1a",
+          "branch_step": 1,
+          "condition": "the selected waitlist entry does not exist for the student",
+          "handling_steps": [
+            {
+              "sub_step": "1a1",
+              "sentence": "System informs the student that the waitlist entry cannot be found"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        },
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "student is not authorized to cancel the entry",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the student that they are not authorized to cancel the entry"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "The selected waitlist entry is no longer present for the student",
+        "Enrollment capacity of the course offering remains unchanged",
+        "Waitlist ordering for the course offering is preserved after removal"
+      ],
+      "minimal_guarantee": [
+        "If cancellation fails, the student's existing waitlist entries remain unchanged",
+        "Enrollment capacity and waitlist ordering remain unchanged"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC10",
+      "name": "Review Assigned Course Offerings and Rosters",
+      "requirement_ids": [
+        "RR11",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Professor is authenticated and has the professor role"
+      ],
+      "trigger": "Professor requests to review assigned course offerings and their student rosters",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Professor initiates a review of assigned course offerings",
+          "covered_req_ids": []
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies the professor's authorization for reviewing assigned offerings",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System provides the professor with a list of course offerings assigned to them",
+          "covered_req_ids": [
+            "RR11"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "Professor selects a course offering from the presented list",
+          "covered_req_ids": []
+        },
+        {
+          "step_number": 5,
+          "sentence": "System displays the current student roster for the selected offering",
+          "covered_req_ids": [
+            "RR11"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "professor is not authorized to review assigned offerings",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the professor that they lack permission to review assigned offerings"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "The professor sees the list of their assigned course offerings and, for the chosen offering, sees the up-to-date roster of enrolled students"
+      ],
+      "minimal_guarantee": [
+        "If the professor is not authorized, the professor is informed of insufficient permissions and no offering or roster information is disclosed"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC11",
+      "name": "Manage Academic Term",
+      "requirement_ids": [
+        "RR12",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Academic Administrator is authenticated"
+      ],
+      "trigger": "Academic Administrator initiates a request to create or update an academic term",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Academic Administrator provides the term identifier, start date, end date, and registration period dates",
+          "covered_req_ids": []
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies that the administrator is authorized to manage academic terms",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System creates a new academic term with the supplied details or updates the existing term identified and stores the registration period",
+          "covered_req_ids": [
+            "RR12"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "Administrator is not authorized to manage academic terms",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs the administrator of insufficient permissions"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "The academic term exists with the specified start date, end date, and registration period stored in the system",
+        "The term is available for subsequent scheduling and registration operations"
+      ],
+      "minimal_guarantee": [
+        "If the operation fails, no academic term records are created or modified"
+      ],
+      "issues": [],
+      "repair_iters": 2,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    },
+    {
+      "use_case_id": "UC12",
+      "name": "Manage Course Offering",
+      "requirement_ids": [
+        "RR13",
+        "RR14"
+      ],
+      "nfr_ids": [],
+      "preconditions": [
+        "Academic Administrator is authenticated and holds the Academic Administrator role"
+      ],
+      "trigger": "Academic Administrator initiates a request to manage a course offering",
+      "main_scenario": [
+        {
+          "step_number": 1,
+          "sentence": "Academic Administrator specifies the desired management action (create, update, publish, or cancel) and provides the course offering details, including instructor, meeting schedule, and enrollment capacity",
+          "covered_req_ids": [
+            "RR13"
+          ]
+        },
+        {
+          "step_number": 2,
+          "sentence": "System verifies that Academic Administrator is authorized for the requested action",
+          "covered_req_ids": [
+            "RR14"
+          ]
+        },
+        {
+          "step_number": 3,
+          "sentence": "System applies the requested management action to the course offering, updating the records accordingly",
+          "covered_req_ids": [
+            "RR13"
+          ]
+        },
+        {
+          "step_number": 4,
+          "sentence": "System confirms to Academic Administrator that the course offering has been successfully managed as requested",
+          "covered_req_ids": [
+            "RR13"
+          ]
+        }
+      ],
+      "extensions": [
+        {
+          "label": "2a",
+          "branch_step": 2,
+          "condition": "Academic Administrator is not authorized for the requested action",
+          "handling_steps": [
+            {
+              "sub_step": "2a1",
+              "sentence": "System informs Academic Administrator that they lack permission to perform the requested operation"
+            }
+          ],
+          "outcome": "fail",
+          "resume_at_step": null
+        }
+      ],
+      "success_guarantee": [
+        "The course offering is created, updated, published, or canceled as specified, with the assigned instructor, meeting schedule, and enrollment capacity recorded in the system"
+      ],
+      "minimal_guarantee": [
+        "If the use case fails because Academic Administrator is not authorized, no changes are made to any course offering"
+      ],
+      "issues": [],
+      "repair_iters": 0,
+      "semantic_status": "ok",
+      "repair_stopped": "clean"
+    }
+  ],
+  "spec_report": {
+    "n_specs": 12,
+    "total_issues": 0,
+    "issues_by_uc": {},
+    "total_repair_iters": 5,
+    "unvalidated_ucs": [],
+    "failed_ucs": [],
+    "repair_stopped": {
+      "clean": 12
+    }
+  }
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "task": "refine_requirements.expand_requirements",
+    "elapsedSeconds": 0.014975
+  },
+  {
+    "task": "refine_requirements.intake",
+    "elapsedSeconds": 0.002784
+  },
+  {
+    "task": "refine_requirements.clarify",
+    "elapsedSeconds": 24.459468
+  },
+  {
+    "task": "refine_requirements.classify",
+    "elapsedSeconds": 10.5523
+  },
+  {
+    "task": "analyze_cloud_inputs.analyze_cloud_inputs",
+    "elapsedSeconds": 10.762362
+  },
+  {
+    "task": "structure_constraints.build_resource_spec",
+    "elapsedSeconds": 0.007823
+  }
+]

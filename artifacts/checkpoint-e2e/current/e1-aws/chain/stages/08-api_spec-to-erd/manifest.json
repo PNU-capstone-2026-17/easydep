@@ -1,0 +1,11 @@
+{
+  "sourceCheckpoint": "api_spec",
+  "targetCheckpoint": "erd",
+  "validation": "passed",
+  "tasks": 3,
+  "files": [
+    "erd-model.json",
+    "erd.puml",
+    "erd.svg"
+  ]
+}

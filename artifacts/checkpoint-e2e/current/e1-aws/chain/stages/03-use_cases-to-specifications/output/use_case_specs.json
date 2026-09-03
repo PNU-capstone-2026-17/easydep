@@ -1,0 +1,900 @@
+[
+  {
+    "use_case_id": "UC1",
+    "name": "Search Course Offerings",
+    "requirement_ids": [
+      "RR2",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "University user is authenticated and has an assigned university role"
+    ],
+    "trigger": "University user requests to search for course offerings",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "University user provides search criteria for published course offerings",
+        "covered_req_ids": [
+          "RR2"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies that the user is authorized to search course offerings",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System retrieves the list of published course offerings that match the criteria",
+        "covered_req_ids": [
+          "RR2"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System presents the matching course offerings to the user",
+        "covered_req_ids": [
+          "RR2"
+        ]
+      },
+      {
+        "step_number": 5,
+        "sentence": "University user selects one of the presented offerings to view its details",
+        "covered_req_ids": [
+          "RR2"
+        ]
+      },
+      {
+        "step_number": 6,
+        "sentence": "System displays the selected offering's course, section, instructor, meeting schedule, capacity, and remaining-seat information",
+        "covered_req_ids": [
+          "RR2"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "User is not authorized to search course offerings",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the user that they lack permission to perform the search"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The user has viewed detailed information of a selected published course offering",
+      "The presented information reflects the current published offering data"
+    ],
+    "minimal_guarantee": [
+      "If the user is not authorized, the system informs the user of insufficient permissions and no offering data is disclosed"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC2",
+    "name": "Register for Course Offering",
+    "requirement_ids": [
+      "RR3",
+      "RR14",
+      "RR5"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Student is authenticated as a university user",
+      "Student has selected a specific course offering to register"
+    ],
+    "trigger": "Student initiates registration for the selected course offering",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student requests registration for the selected offering",
+        "covered_req_ids": [
+          "RR3"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System confirms the student is authorized to perform the registration operation",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System validates enrollment eligibility, checking registration period, duplicate enrollment, capacity, and timetable conflicts",
+        "covered_req_ids": [
+          "RR5"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System records the registration for the student",
+        "covered_req_ids": [
+          "RR3"
+        ]
+      },
+      {
+        "step_number": 5,
+        "sentence": "System notifies the student that registration succeeded",
+        "covered_req_ids": [
+          "RR3"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "student is not authorized for registration",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System notifies the student that registration is not permitted"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "any enrollment-eligibility check fails",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System notifies the student of the reason why registration was rejected"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Student is enrolled in the selected course offering",
+      "Offering capacity is reduced by one and remains within its defined limit, preserving capacity under concurrent operations",
+      "Student has no duplicate enrollment for the same offering, preserving registration uniqueness",
+      "Waitlist ordering for the offering is unchanged"
+    ],
+    "minimal_guarantee": [
+      "If registration is not authorized or fails eligibility validation, no registration is recorded and offering capacity remains unchanged"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC3",
+    "name": "Swap Course Registration",
+    "requirement_ids": [
+      "RR4",
+      "RR14",
+      "RR5"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Student is authenticated and has an active registration that is eligible for swapping"
+    ],
+    "trigger": "Student requests to swap the active registration for a different course offering",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student selects the current registration to be swapped and the desired target course offering",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies that the student is authorized for the swap operation",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System validates enrollment eligibility for the target offering, including registration period, duplicate enrollment, capacity, and timetable conflict",
+        "covered_req_ids": [
+          "RR5"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System atomically removes the current registration and creates a new registration for the target offering",
+        "covered_req_ids": [
+          "RR4"
+        ]
+      },
+      {
+        "step_number": 5,
+        "sentence": "System returns a result indicating the swap succeeded and provides the updated schedule",
+        "covered_req_ids": [
+          "RR4"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "student is not authorized for the swap operation",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System returns a failure result indicating lack of authorization"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "enrollment eligibility validation fails",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System returns a failure result describing the validation error such as period closed, duplicate enrollment, capacity full, or timetable conflict"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "4a",
+        "branch_step": 4,
+        "condition": "concurrent operation prevents preserving capacity, uniqueness, or waitlist ordering",
+        "handling_steps": [
+          {
+            "sub_step": "4a1",
+            "sentence": "System aborts the swap and returns a failure result indicating a concurrency conflict"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Student's registration is updated to the target offering and the original registration is removed",
+      "Enrollment capacity, registration uniqueness, and waitlist ordering are preserved",
+      "Student receives the result of the successful swap and the updated schedule"
+    ],
+    "minimal_guarantee": [
+      "If the swap fails, the original registration remains unchanged and no new registration is created"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC4",
+    "name": "View Current Registrations and Schedule",
+    "requirement_ids": [
+      "RR6",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Student is authenticated and holds a university-user role"
+    ],
+    "trigger": "Student selects the option to view current registrations and schedule",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student requests to view current registrations and schedule",
+        "covered_req_ids": [
+          "RR6"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies that the student is authorized to view registrations",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System retrieves the student's current registrations",
+        "covered_req_ids": [
+          "RR6"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System compiles the class schedule based on the retrieved registrations",
+        "covered_req_ids": [
+          "RR6"
+        ]
+      },
+      {
+        "step_number": 5,
+        "sentence": "System presents the current registrations and the compiled schedule to the student",
+        "covered_req_ids": [
+          "RR6"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "student is not authorized to view registrations",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the student that they lack permission to view registrations"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Student sees an up-to-date list of their current registrations and a schedule reflecting those registrations"
+    ],
+    "minimal_guarantee": [
+      "If authorization fails, the student is notified of insufficient permissions and no registration data is disclosed"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC5",
+    "name": "Drop Course Registration",
+    "requirement_ids": [
+      "RR7",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "The student is authenticated as a university user.",
+      "The student has an active registration for the course to be dropped.",
+      "The current date falls within the allowed drop period for the term."
+    ],
+    "trigger": "Student initiates a request to drop the selected registration.",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student requests to drop the selected registration.",
+        "covered_req_ids": [
+          "RR7"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies the student's authorization for the drop operation.",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System removes the registration from the student's schedule and updates enrollment capacity.",
+        "covered_req_ids": [
+          "RR7"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System returns the result of the drop operation to the student.",
+        "covered_req_ids": [
+          "RR7"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "Student is not authorized for the drop operation",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the student that the drop request is denied due to insufficient permissions."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The selected registration is no longer present in the student's list of registrations.",
+      "Enrollment capacity for the course offering is increased by one.",
+      "Waitlist ordering for the course offering remains unchanged.",
+      "The student receives a confirmation of the successful drop."
+    ],
+    "minimal_guarantee": [
+      "If the use case fails, the student's existing registrations remain unchanged.",
+      "No enrollment capacity or waitlist ordering is altered."
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC6",
+    "name": "Export Class Schedule",
+    "requirement_ids": [
+      "RR8",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Student is authenticated as a university user",
+      "Student is currently viewing the class schedule"
+    ],
+    "trigger": "Student initiates an export of the currently viewed class schedule",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student requests export of the currently viewed class schedule",
+        "covered_req_ids": [
+          "RR8"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies that the student is authorized to export the schedule",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System generates a downloadable file containing the schedule data",
+        "covered_req_ids": [
+          "RR8"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System provides the downloadable file to the student",
+        "covered_req_ids": [
+          "RR8"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "student is not authorized to export the schedule",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the student that export is not permitted"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Student receives a downloadable file of the current class schedule",
+      "The schedule view remains complete and unchanged"
+    ],
+    "minimal_guarantee": [
+      "Student does not receive a file",
+      "The schedule view remains complete and unchanged",
+      "Student is informed that export is not permitted"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC7",
+    "name": "Join Waitlist for Full Course",
+    "requirement_ids": [
+      "RR9",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Student is authenticated as a university user",
+      "Student has received a registration rejection for the course offering because the offering is full and waitlist is enabled"
+    ],
+    "trigger": "Student receives a registration rejection indicating the offering is full and waitlist is enabled",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student requests to join the waitlist for the rejected course offering",
+        "covered_req_ids": [
+          "RR9"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies the student is authorized for the operation",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System records the student's position at the end of the waitlist for the offering",
+        "covered_req_ids": [
+          "RR9"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "Student is not authorized for the protected operation",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the student that they are not authorized to join the waitlist"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Student is listed on the waitlist for the offering at a defined position",
+      "The original registration remains rejected",
+      "Enrollment capacity and waitlist ordering are preserved"
+    ],
+    "minimal_guarantee": [
+      "If the operation fails, the student's registration remains rejected and no waitlist entry is created",
+      "The system state regarding the offering's enrollment and waitlist is unchanged"
+    ],
+    "issues": [],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC8",
+    "name": "View Waitlist Entries",
+    "requirement_ids": [
+      "RR10",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Student is authenticated and has the Student role"
+    ],
+    "trigger": "Student initiates request to view own waitlist entries",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student requests to view own waitlist entries",
+        "covered_req_ids": [
+          "RR10"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies the student is authorized to view waitlist entries",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System retrieves the student's waitlist entries",
+        "covered_req_ids": [
+          "RR10"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System presents the retrieved entries to the student",
+        "covered_req_ids": [
+          "RR10"
+        ]
+      }
+    ],
+    "extensions": [],
+    "success_guarantee": [
+      "The student sees an up-to-date list of their waitlist entries"
+    ],
+    "minimal_guarantee": [],
+    "issues": [],
+    "repair_iters": 2,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC9",
+    "name": "Cancel Waitlist Entry",
+    "requirement_ids": [
+      "RR10",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Student is authenticated as a university user",
+      "Student has at least one waitlist entry in the system"
+    ],
+    "trigger": "Student requests cancellation of a specific waitlist entry",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student requests cancellation of a waitlist entry",
+        "covered_req_ids": [
+          "RR10"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies that the student is authorized to cancel the selected entry",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System removes the selected waitlist entry",
+        "covered_req_ids": [
+          "RR10"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System updates the ordering of the remaining waitlist entries",
+        "covered_req_ids": []
+      }
+    ],
+    "extensions": [
+      {
+        "label": "1a",
+        "branch_step": 1,
+        "condition": "the selected waitlist entry does not exist for the student",
+        "handling_steps": [
+          {
+            "sub_step": "1a1",
+            "sentence": "System informs the student that the waitlist entry cannot be found"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "student is not authorized to cancel the entry",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the student that they are not authorized to cancel the entry"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The selected waitlist entry is no longer present for the student",
+      "Enrollment capacity of the course offering remains unchanged",
+      "Waitlist ordering for the course offering is preserved after removal"
+    ],
+    "minimal_guarantee": [
+      "If cancellation fails, the student's existing waitlist entries remain unchanged",
+      "Enrollment capacity and waitlist ordering remain unchanged"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC10",
+    "name": "Review Assigned Course Offerings and Rosters",
+    "requirement_ids": [
+      "RR11",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Professor is authenticated and has the professor role"
+    ],
+    "trigger": "Professor requests to review assigned course offerings and their student rosters",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Professor initiates a review of assigned course offerings",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies the professor's authorization for reviewing assigned offerings",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System provides the professor with a list of course offerings assigned to them",
+        "covered_req_ids": [
+          "RR11"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "Professor selects a course offering from the presented list",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 5,
+        "sentence": "System displays the current student roster for the selected offering",
+        "covered_req_ids": [
+          "RR11"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "professor is not authorized to review assigned offerings",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the professor that they lack permission to review assigned offerings"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The professor sees the list of their assigned course offerings and, for the chosen offering, sees the up-to-date roster of enrolled students"
+    ],
+    "minimal_guarantee": [
+      "If the professor is not authorized, the professor is informed of insufficient permissions and no offering or roster information is disclosed"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC11",
+    "name": "Manage Academic Term",
+    "requirement_ids": [
+      "RR12",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Academic Administrator is authenticated"
+    ],
+    "trigger": "Academic Administrator initiates a request to create or update an academic term",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Academic Administrator provides the term identifier, start date, end date, and registration period dates",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies that the administrator is authorized to manage academic terms",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System creates a new academic term with the supplied details or updates the existing term identified and stores the registration period",
+        "covered_req_ids": [
+          "RR12"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "Administrator is not authorized to manage academic terms",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the administrator of insufficient permissions"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The academic term exists with the specified start date, end date, and registration period stored in the system",
+      "The term is available for subsequent scheduling and registration operations"
+    ],
+    "minimal_guarantee": [
+      "If the operation fails, no academic term records are created or modified"
+    ],
+    "issues": [],
+    "repair_iters": 2,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC12",
+    "name": "Manage Course Offering",
+    "requirement_ids": [
+      "RR13",
+      "RR14"
+    ],
+    "nfr_ids": [],
+    "preconditions": [
+      "Academic Administrator is authenticated and holds the Academic Administrator role"
+    ],
+    "trigger": "Academic Administrator initiates a request to manage a course offering",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Academic Administrator specifies the desired management action (create, update, publish, or cancel) and provides the course offering details, including instructor, meeting schedule, and enrollment capacity",
+        "covered_req_ids": [
+          "RR13"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System verifies that Academic Administrator is authorized for the requested action",
+        "covered_req_ids": [
+          "RR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System applies the requested management action to the course offering, updating the records accordingly",
+        "covered_req_ids": [
+          "RR13"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System confirms to Academic Administrator that the course offering has been successfully managed as requested",
+        "covered_req_ids": [
+          "RR13"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "Academic Administrator is not authorized for the requested action",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs Academic Administrator that they lack permission to perform the requested operation"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The course offering is created, updated, published, or canceled as specified, with the assigned instructor, meeting schedule, and enrollment capacity recorded in the system"
+    ],
+    "minimal_guarantee": [
+      "If the use case fails because Academic Administrator is not authorized, no changes are made to any course offering"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  }
+]

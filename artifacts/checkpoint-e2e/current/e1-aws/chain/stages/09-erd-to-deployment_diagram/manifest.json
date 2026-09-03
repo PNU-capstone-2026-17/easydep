@@ -1,0 +1,26 @@
+{
+  "sourceCheckpoint": "erd",
+  "targetCheckpoint": "deployment_diagram",
+  "validation": "passed",
+  "tasks": 3,
+  "files": [
+    "bundle.json",
+    "deployment-plan.json",
+    "iac/bootstrap_compute_1.sh.tftpl",
+    "iac/deploy.sh",
+    "iac/destroy.sh",
+    "iac/doctor.sh",
+    "iac/easydep-provider.tf",
+    "iac/main.tf",
+    "iac/outputs.tf",
+    "iac/plan.sh",
+    "iac/status.sh",
+    "iac/variables.tf",
+    "provisioning.puml",
+    "provisioning.svg",
+    "resource-plan.json",
+    "runtime.puml",
+    "runtime.svg",
+    "workload-graph.json"
+  ]
+}

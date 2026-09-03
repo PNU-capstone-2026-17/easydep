@@ -1,0 +1,26 @@
+{
+  "signature": {
+    "actorNames": [
+      "Academic Administrator",
+      "Professor",
+      "Student",
+      "University User"
+    ],
+    "useCaseIds": [
+      "UC1",
+      "UC10",
+      "UC11",
+      "UC12",
+      "UC2",
+      "UC3",
+      "UC4",
+      "UC5",
+      "UC6",
+      "UC7",
+      "UC8",
+      "UC9"
+    ],
+    "specUseCaseIds": [],
+    "hasDiagram": false
+  }
+}

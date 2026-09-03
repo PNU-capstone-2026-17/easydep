@@ -1,0 +1,28 @@
+@startuml UC4
+!theme plain
+hide footbox
+skinparam sequenceMessageAlign center
+title UC4 - View Current Registrations and Schedule
+
+actor "Student" as Student
+boundary "StudentBoundary" as StudentBoundary
+control "ScheduleControl" as ScheduleControl
+entity "Registration" as Registration
+entity "Student" as Student_Entity
+
+Student -> StudentBoundary : viewCurrentRegistrations(request)
+StudentBoundary -> ScheduleControl : assembleStudentSchedule(request)
+ScheduleControl -> Registration : findByStudentId(studentId)
+Registration --> ScheduleControl : list<Registration>
+ScheduleControl --> StudentBoundary : ViewRegistrationsResult
+StudentBoundary --> Student : ViewRegistrationsResult
+opt when student selects export
+  Student -> StudentBoundary : exportSchedule(request)
+  StudentBoundary -> ScheduleControl : exportStudentSchedule(request)
+  ScheduleControl -> Student_Entity : isAuthorizedForRegistration()
+  Student_Entity --> ScheduleControl : boolean
+  ScheduleControl --> StudentBoundary : ExportScheduleResult
+  StudentBoundary --> Student : ExportScheduleResult
+end
+
+@enduml

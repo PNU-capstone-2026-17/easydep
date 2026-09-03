@@ -1,0 +1,10 @@
+{
+  "sourceCheckpoint": "sequence_diagram",
+  "targetCheckpoint": "api_spec",
+  "validation": "passed",
+  "tasks": 3,
+  "files": [
+    "api-model.json",
+    "openapi.json"
+  ]
+}

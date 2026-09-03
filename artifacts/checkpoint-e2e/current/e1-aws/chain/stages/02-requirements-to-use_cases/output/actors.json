@@ -1,0 +1,45 @@
+[
+  {
+    "name": "University User",
+    "description": "Any authenticated person who belongs to the university (student, professor, or academic‑administrator). The role and identity are required before any protected operation can be performed.",
+    "parent_actor": null,
+    "source_refs": [
+      "RR1",
+      "RR2"
+    ]
+  },
+  {
+    "name": "Student",
+    "description": "A university user whose primary goal is to manage personal enrollment – searching offerings, registering, swapping, dropping, viewing schedules, and handling wait‑list entries.",
+    "parent_actor": "University User",
+    "source_refs": [
+      "RR1",
+      "RR10",
+      "RR3",
+      "RR4",
+      "RR6",
+      "RR7",
+      "RR8",
+      "RR9"
+    ]
+  },
+  {
+    "name": "Professor",
+    "description": "A university user whose goal is to review the course offerings assigned to them and see the current rosters of enrolled students.",
+    "parent_actor": "University User",
+    "source_refs": [
+      "RR1",
+      "RR11"
+    ]
+  },
+  {
+    "name": "Academic Administrator",
+    "description": "A university user responsible for configuring the academic calendar (terms and registration periods) and for creating, publishing, updating, or canceling course offerings, including instructor assignment and capacity settings.",
+    "parent_actor": "University User",
+    "source_refs": [
+      "RR1",
+      "RR12",
+      "RR13"
+    ]
+  }
+]
