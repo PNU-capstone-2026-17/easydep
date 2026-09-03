@@ -10,13 +10,20 @@ import pytest
 
 from evaluation.comparison.adapters.chatdev import parse_chatdev_usage
 from evaluation.comparison.adapters.metagpt import parse_cost_manager, parse_metagpt_log
+from evaluation.comparison.collect import collect_artifacts
 from evaluation.comparison.evaluate import evaluate_run
+from evaluation.comparison.gates import (
+    run_artifact_contains,
+    run_artifact_present,
+    run_container_http_oracle,
+)
 from evaluation.comparison.models import (
     SUBJECT_RESULT_SCHEMA,
     load_manifest,
     load_subject_result,
 )
 from evaluation.comparison.oracle import run_http_oracle
+from evaluation.comparison.prompts import render_arm_prompt, render_task_input
 from evaluation.comparison.report import add_aggregates, render_markdown, write_reports
 from evaluation.comparison.runner import run_experiment
 from evaluation.comparison.subjects.artifacts import (
@@ -398,3 +405,296 @@ def test_artifact_discovery_does_not_treat_metagpt_class_view_as_data_model(
         "resources/data_api_design/class_view.mmd",
         "schema.sql",
     ]
+
+
+def _static_gate_subject(tmp_path: Path, artifact_evidence: dict[str, object]):
+    data = _subject_data(tmp_path)
+    data["artifactEvidence"] = artifact_evidence
+    return load_subject_result(
+        _write_json(tmp_path / "subject.json", data), run_directory=tmp_path
+    )
+
+
+def test_artifact_present_gate_requires_reported_file_to_exist(tmp_path: Path) -> None:
+    (tmp_path / "main.tf").write_text("terraform {}\n", encoding="utf-8")
+    subject = _static_gate_subject(
+        tmp_path, {"infrastructure": ["main.tf"], "container": ["Dockerfile"]}
+    )
+
+    present = run_artifact_present({"artifacts": ["infrastructure"]}, subject)
+    absent = run_artifact_present({"artifacts": ["infrastructure", "container"]}, subject)
+
+    assert present["status"] == "passed"
+    assert absent["status"] == "failed"
+    assert absent["missingArtifacts"] == ["container"]
+
+
+def test_artifact_contains_gate_checks_region_and_forbidden_tokens(tmp_path: Path) -> None:
+    terraform = 'provider "aws" {\n  region = "ap-northeast-2"\n}\nresource "aws_rds_cluster" "db" {}\n'
+    (tmp_path / "main.tf").write_text(terraform, encoding="utf-8")
+    subject = _static_gate_subject(tmp_path, {"infrastructure": ["main.tf"]})
+
+    region = run_artifact_contains(
+        {"artifact": "infrastructure", "anyOf": ["ap-northeast-2", "seoul"]}, subject
+    )
+    wrong_region = run_artifact_contains(
+        {"artifact": "infrastructure", "anyOf": ["koreacentral"]}, subject
+    )
+    forbidden = run_artifact_contains(
+        {"artifact": "infrastructure", "noneOf": ["aws_rds", "aws_eks"]}, subject
+    )
+
+    assert region["status"] == "passed"
+    assert region["matchedTokens"] == ["ap-northeast-2"]
+    assert wrong_region["status"] == "failed"
+    assert wrong_region["missingTokens"] == ["koreacentral"]
+    assert forbidden["status"] == "failed"
+    assert forbidden["violatedTokens"] == ["aws_rds"]
+
+
+def test_artifact_contains_gate_fails_when_artifact_was_never_produced(tmp_path: Path) -> None:
+    subject = _static_gate_subject(tmp_path, {})
+
+    result = run_artifact_contains(
+        {"artifact": "infrastructure", "anyOf": ["ap-northeast-2"]}, subject
+    )
+
+    assert result["status"] == "failed"
+    assert result["checkedFiles"] == []
+
+
+def test_container_oracle_reports_missing_docker_instead_of_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("evaluation.comparison.gates.shutil.which", lambda name: None)
+    subject = _static_gate_subject(tmp_path, {"container": ["Dockerfile"]})
+
+    result = run_container_http_oracle({"port": 8080}, subject, {"phases": []})
+
+    assert result["status"] == "failed"
+    assert result["phases"] == []
+    assert "Docker" in result["reason"]
+
+
+def _suite_with_case(tmp_path: Path, case: dict[str, object]):
+    repository = Path(__file__).resolve().parents[1]
+    return load_suite(
+        _write_json(
+            tmp_path / "suite.json",
+            {
+                "schemaVersion": "easydep-comparison-suite/v1",
+                "suiteId": "gate-suite",
+                "repetitions": 1,
+                "outputRoot": str(tmp_path / "output"),
+                "cases": [
+                    case,
+                    {
+                        "id": "second-case",
+                        "input": str(
+                            repository
+                            / "evaluation/easydep/requirements/inputs/dev_iot_monitoring.json"
+                        ),
+                    },
+                ],
+            },
+        )
+    )
+
+
+def test_suite_generates_structural_gates_and_links_cloud_constraint(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    suite = _suite_with_case(
+        tmp_path,
+        {
+            "id": "first-case",
+            "input": str(
+                repository / "evaluation/easydep/requirements/inputs/dev_checkout_gateway.json"
+            ),
+            "regionTokens": ["koreacentral"],
+            "forbiddenTokens": ["aws_rds"],
+        },
+    )
+    manifest = load_manifest(materialize_manifests(suite)[0])
+
+    gate_ids = [gate.id for gate in manifest.gates]
+    assert "iac-region" in gate_ids and "iac-forbidden" in gate_ids
+    assert all(gate.required for gate in manifest.gates)
+    assert manifest.constraints[0].verification_gates == (
+        "iac-artifact",
+        "iac-region",
+        "iac-forbidden",
+    )
+
+
+def test_suite_omits_region_gate_when_case_declares_no_token(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    suite = _suite_with_case(
+        tmp_path,
+        {
+            "id": "first-case",
+            "input": str(
+                repository / "evaluation/easydep/requirements/inputs/dev_checkout_gateway.json"
+            ),
+        },
+    )
+    manifest = load_manifest(materialize_manifests(suite)[0])
+
+    assert "iac-region" not in [gate.id for gate in manifest.gates]
+    assert manifest.constraints[0].verification_gates == ("iac-artifact",)
+
+
+def test_gate_pack_wires_oracle_phases_to_requirements(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    pack = _write_json(
+        tmp_path / "pack.json",
+        {
+            "schemaVersion": "easydep-comparison-gate-pack/v1",
+            "apiContract": "GET /courses returns the catalog.",
+            "gates": [
+                {
+                    "id": "business-api",
+                    "kind": "containerHttpOracle",
+                    "oraclePath": str(
+                        repository
+                        / "evaluation/baselines/course-registration-cases/business-oracle.json"
+                    ),
+                }
+            ],
+            "requirementGates": {"REQ-02": ["business-api#course-catalog"]},
+        },
+    )
+    suite = _suite_with_case(
+        tmp_path,
+        {
+            "id": "first-case",
+            "input": str(
+                repository
+                / "evaluation/baselines/course-registration-cases/e1-course-registration-aws.json"
+            ),
+            "gatePack": str(pack),
+        },
+    )
+    manifest = load_manifest(materialize_manifests(suite)[0])
+
+    linked = {item.id: item.verification_gates for item in manifest.requirements}
+    assert linked["REQ-02"] == ("business-api#course-catalog",)
+    assert linked["REQ-01"] == ()
+    assert manifest.prompt_protocol is not None
+    assert "GET /courses" in manifest.prompt_protocol.api_contract
+
+
+def test_gate_pack_rejects_unknown_requirement_id(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    pack = _write_json(
+        tmp_path / "pack.json",
+        {
+            "schemaVersion": "easydep-comparison-gate-pack/v1",
+            "gates": [{"id": "business-api", "kind": "artifactPresent", "artifacts": ["tests"]}],
+            "requirementGates": {"REQ-99": ["business-api"]},
+        },
+    )
+    suite = _suite_with_case(
+        tmp_path,
+        {
+            "id": "first-case",
+            "input": str(
+                repository
+                / "evaluation/baselines/course-registration-cases/e1-course-registration-aws.json"
+            ),
+            "gatePack": str(pack),
+        },
+    )
+
+    with pytest.raises(ValueError, match="REQ-99"):
+        materialize_manifests(suite)
+
+
+def test_api_contract_reaches_every_arm_and_is_absent_by_default(tmp_path: Path) -> None:
+    data = _manifest_data()
+    data["promptProtocol"] = {
+        "taskPreamble": "Build it.",
+        "artifactContractPreamble": "Deliver these.",
+        "artifactContract": [
+            {"id": "tests", "title": "Tests", "description": "Automated tests."}
+        ],
+    }
+    without = load_manifest(_write_json(tmp_path / "a.json", data))
+    baseline = render_task_input(without)
+
+    data["promptProtocol"]["apiContract"] = "GET /courses returns the catalog."
+    with_contract = load_manifest(_write_json(tmp_path / "b.json", data))
+
+    assert "API contract" not in baseline
+    task = render_task_input(with_contract)
+    assert "API contract:" in task and "GET /courses" in task
+    for arm in with_contract.arms:
+        assert "GET /courses" in render_arm_prompt(with_contract, arm)
+
+
+def _collect_report(workspace: Path, evidence: dict[str, object], arm: str = "easydep"):
+    return {
+        "experimentId": "collect-test",
+        "promptProtocol": {
+            "artifactContract": [
+                {"id": "classDiagram", "title": "Class diagram", "description": "d"},
+                {"id": "infrastructure", "title": "IaC", "description": "d"},
+            ]
+        },
+        "runs": [
+            {
+                "armId": arm,
+                "framework": arm,
+                "repetition": 1,
+                "workspace": str(workspace),
+                "artifactEvidence": evidence,
+            }
+        ],
+    }
+
+
+def test_collect_groups_files_by_arm_then_artifact(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    (workspace / "design").mkdir(parents=True)
+    (workspace / "design/class-diagram.puml").write_text("@startuml", encoding="utf-8")
+    (workspace / "deployment/tofu").mkdir(parents=True)
+    (workspace / "deployment/tofu/main.tf").write_text("terraform {}", encoding="utf-8")
+    report = _collect_report(
+        workspace,
+        {
+            "classDiagram": ["design/class-diagram.puml"],
+            "infrastructure": ["deployment/tofu/main.tf"],
+        },
+    )
+
+    root = collect_artifacts(report, tmp_path / "out")
+
+    assert (root / "easydep/classDiagram/design/class-diagram.puml").is_file()
+    assert (root / "easydep/infrastructure/deployment/tofu/main.tf").is_file()
+    assert (root / "easydep/classDiagram/design/class-diagram.puml").read_text(
+        encoding="utf-8"
+    ) == "@startuml"
+
+
+def test_collect_marks_artifact_the_arm_never_produced(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "c.puml").write_text("@startuml", encoding="utf-8")
+    report = _collect_report(workspace, {"classDiagram": ["c.puml"]})
+
+    root = collect_artifacts(report, tmp_path / "out")
+    index = (root / "INDEX.md").read_text(encoding="utf-8")
+
+    assert not (root / "easydep/infrastructure").exists()
+    assert "| infrastructure | - |" in index
+    assert "| classDiagram | 1 |" in index
+
+
+def test_collect_skips_evidence_whose_file_is_gone(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    report = _collect_report(workspace, {"classDiagram": ["missing.puml"]})
+
+    root = collect_artifacts(report, tmp_path / "out")
+
+    assert not (root / "easydep/classDiagram").exists()
+    assert "| classDiagram | - |" in (root / "INDEX.md").read_text(encoding="utf-8")

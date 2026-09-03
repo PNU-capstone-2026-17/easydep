@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from evaluation.easydep.product_scenario import (
+    CloudCoordinates,
     HttpProductScenarioTransport,
     ProductScenarioRunner,
     ProductScenarioStopped,
@@ -31,6 +32,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="완료를 기다릴 마지막 공개 Workspace 단계",
     )
     parser.add_argument("--timeout-seconds", type=float, default=7200.0)
+    # 앱 생성 화면의 배포 좌표. 생략하면 분석이 리전을 물으며 멈춘다.
+    parser.add_argument("--provider", choices=("aws", "azure", "gcp"))
+    parser.add_argument("--region", default="", help="예: ap-northeast-2")
+    parser.add_argument("--monthly-budget", type=float, help="월 예산 (USD)")
     parser.add_argument(
         "--output",
         type=Path,
@@ -56,7 +61,14 @@ def main(argv: list[str] | None = None) -> int:
         else args.message_file.read_text(encoding="utf-8")
     )
     runner = ProductScenarioRunner(
-        HttpProductScenarioTransport(args.base_url),
+        HttpProductScenarioTransport(
+            args.base_url,
+            cloud=CloudCoordinates(
+                provider=args.provider,
+                region=args.region,
+                monthly_budget_amount=args.monthly_budget,
+            ),
+        ),
         timeout_seconds=args.timeout_seconds,
     )
     try:

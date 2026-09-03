@@ -74,7 +74,9 @@ def test_cli_writes_one_raw_result_without_profiles_or_reports(
             )
 
     monkeypatch.setattr(cli, "ProductScenarioRunner", FakeRunner)
-    monkeypatch.setattr(cli, "HttpProductScenarioTransport", lambda _url: object())
+    monkeypatch.setattr(
+        cli, "HttpProductScenarioTransport", lambda _url, **_options: object()
+    )
 
     exit_code = cli.main(
         [

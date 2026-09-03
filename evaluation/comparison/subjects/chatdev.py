@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             "projectName": project_name,
             "promptSha256": prompt_sha256(prompt_file),
             "model": model,
-            "baseUrl": base_url,
+            "llmBaseUrl": base_url,
         },
     )
     print(f"ChatDev workspace: {workspace}")

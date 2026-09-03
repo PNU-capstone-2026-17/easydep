@@ -84,9 +84,23 @@ def _relative(path: Path, workspace: Path) -> str:
     return path.relative_to(workspace).as_posix()
 
 
-def _contains(path: Path, *needles: str) -> bool:
-    value = path.as_posix().lower()
+def _contains(relative: str, *needles: str) -> bool:
+    """workspace 기준 상대 경로만 본다. 출력 폴더 이름이 판정을 바꾸면 안 된다."""
+    value = relative.lower()
     return any(needle in value for needle in needles)
+
+
+API_SPEC_HINTS = ("openapi", "swagger", "api_spec", "api-spec", "apispec")
+# `test`/`spec`을 경로 구분자나 밑줄로 끊어진 낱말로만 인정한다. `latest.py`나
+# `api_spec.json`이 시험 산출물로 잡히면 공통 산출물 개수가 왜곡된다.
+TEST_TOKEN = re.compile(r"(?:^|[/_.-])(?:tests?|specs?)(?:[/_.-]|$)")
+
+
+def _is_test(relative: str) -> bool:
+    value = relative.lower()
+    if any(hint in value for hint in API_SPEC_HINTS):
+        return False
+    return bool(TEST_TOKEN.search(value))
 
 
 def collect_artifact_evidence(workspace: Path) -> dict[str, list[str]]:
@@ -106,10 +120,10 @@ def collect_artifact_evidence(workspace: Path) -> dict[str, list[str]]:
         relative = _relative(path, workspace)
         name = path.name.lower()
         suffix = path.suffix.lower()
-        if _contains(path, "requirement", "prd", "usecase", "use_case"):
+        if _contains(relative, "requirement", "prd", "usecase", "use_case"):
             evidence["requirements"].add(relative)
         if _contains(
-            path,
+            relative,
             "class_diagram",
             "class-diagram",
             "classdiagram",
@@ -117,15 +131,16 @@ def collect_artifact_evidence(workspace: Path) -> dict[str, list[str]]:
             "data_api_design",
         ):
             evidence["classDiagram"].add(relative)
-        if _contains(path, "sequence", "seq_flow", "seq-flow"):
+        if _contains(relative, "sequence", "seq_flow", "seq-flow"):
             evidence["sequenceDiagram"].add(relative)
-        if _contains(path, "openapi", "swagger", "api_spec", "api-spec"):
+        if _contains(relative, *API_SPEC_HINTS):
             evidence["apiSpecification"].add(relative)
-        if _contains(path, "data_model", "data-model", "erd", "schema.sql"):
+        if _contains(relative, "data_model", "data-model", "erd", "schema.sql"):
             evidence["dataModel"].add(relative)
-        if suffix in SOURCE_SUFFIXES and not _contains(path, "test", "spec"):
+        is_test = _is_test(relative)
+        if suffix in SOURCE_SUFFIXES and not is_test:
             evidence["sourceCode"].add(relative)
-        if _contains(path, "test", "spec") and suffix in SOURCE_SUFFIXES | {".xml", ".json", ".yaml", ".yml"}:
+        if is_test and suffix in SOURCE_SUFFIXES | {".xml", ".json", ".yaml", ".yml"}:
             evidence["tests"].add(relative)
         if name in {"dockerfile", "compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}:
             evidence["container"].add(relative)

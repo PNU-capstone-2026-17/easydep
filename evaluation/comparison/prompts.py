@@ -25,6 +25,12 @@ def render_task_input(manifest: Manifest) -> str:
     if manifest.constraints:
         lines.extend(["", "Constraints:"])
         lines.extend(f"- [{item.id}] {item.text}" for item in manifest.constraints)
+    api_contract = (
+        manifest.prompt_protocol.api_contract if manifest.prompt_protocol is not None else ""
+    )
+    if api_contract:
+        # 실행 오라클이 고정된 API 표면을 전제하므로 모든 실험군에 같은 계약을 전달한다.
+        lines.extend(["", "API contract:", api_contract])
     return "\n".join(lines).rstrip() + "\n"
 
 

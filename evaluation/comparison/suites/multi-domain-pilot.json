@@ -6,19 +6,55 @@
   "cases": [
     {
       "id": "course-registration-aws",
-      "input": "../../baselines/course-registration-cases/e1-course-registration-aws.json"
+      "input": "../../baselines/course-registration-cases/e1-course-registration-aws.json",
+      "regionTokens": [
+        "ap-northeast-2"
+      ],
+      "forbiddenTokens": [
+        "aws_rds",
+        "aws_eks",
+        "aws_lambda",
+        "kubernetes"
+      ],
+      "provider": "aws",
+      "region": "ap-northeast-2",
+      "monthlyBudgetUSD": 500
     },
     {
       "id": "checkout-gateway-azure",
-      "input": "../../easydep/requirements/inputs/dev_checkout_gateway.json"
+      "input": "../../easydep/requirements/inputs/dev_checkout_gateway.json",
+      "regionTokens": [
+        "koreacentral",
+        "korea central"
+      ],
+      "forbiddenTokens": [],
+      "provider": "azure",
+      "region": "koreacentral",
+      "monthlyBudgetUSD": 450
     },
     {
       "id": "iot-monitoring-aws",
-      "input": "../../easydep/requirements/inputs/dev_iot_monitoring.json"
+      "input": "../../easydep/requirements/inputs/dev_iot_monitoring.json",
+      "regionTokens": [
+        "ap-northeast-2",
+        "seoul"
+      ],
+      "forbiddenTokens": [],
+      "provider": "aws",
+      "region": "ap-northeast-2",
+      "monthlyBudgetUSD": 700
     },
     {
       "id": "notification-delivery-gcp",
-      "input": "../../easydep/requirements/inputs/dev_notification_delivery.json"
+      "input": "../../easydep/requirements/inputs/dev_notification_delivery.json",
+      "regionTokens": [
+        "asia-northeast3",
+        "seoul"
+      ],
+      "forbiddenTokens": [],
+      "provider": "gcp",
+      "region": "asia-northeast3",
+      "monthlyBudgetUSD": 250
     }
   ]
 }

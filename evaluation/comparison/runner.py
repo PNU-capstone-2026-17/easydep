@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -12,8 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from .evaluate import evaluate_run
+from .gates import run_artifact_contains, run_artifact_present, run_container_http_oracle
 from .models import ArmSpec, Manifest, SubjectResult, TokenUsage, load_subject_result
 from .oracle import run_http_oracle
+from .process import run_command
 from .prompts import materialize_prompt_files
 
 
@@ -22,59 +23,6 @@ def _render(value: str, variables: dict[str, Any]) -> str:
         return value.format_map({key: str(item) for key, item in variables.items()})
     except KeyError as error:
         raise ValueError(f"알 수 없는 템플릿 변수입니다: {error.args[0]}") from error
-
-
-def _run_command(
-    command: list[str],
-    *,
-    cwd: Path,
-    env: dict[str, str],
-    timeout_seconds: float,
-) -> dict[str, Any]:
-    started = time.monotonic()
-    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-    try:
-        process = subprocess.Popen(  # noqa: S603 - shell 없이 manifest 배열을 그대로 실행한다.
-            command,
-            cwd=cwd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=creationflags,
-            start_new_session=os.name != "nt",
-        )
-    except OSError as error:
-        return {
-            "exitCode": None,
-            "timedOut": False,
-            "wallSeconds": round(time.monotonic() - started, 3),
-            "stdout": "",
-            "stderr": f"{type(error).__name__}: {error}",
-        }
-    timed_out = False
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        if os.name == "nt":
-            subprocess.run(  # noqa: S603 - 방금 시작한 PID의 자식만 종료한다.
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                capture_output=True,
-                check=False,
-            )
-        else:
-            process.kill()
-        stdout, stderr = process.communicate()
-    return {
-        "exitCode": process.returncode,
-        "timedOut": timed_out,
-        "wallSeconds": round(time.monotonic() - started, 3),
-        "stdout": stdout,
-        "stderr": stderr,
-    }
 
 
 def _subject_failure(arm: ArmSpec, run_directory: Path, status: str) -> SubjectResult:
@@ -95,8 +43,9 @@ def _gate_variables(base: dict[str, Any], subject: SubjectResult) -> dict[str, A
     for key, value in subject.metadata.items():
         if isinstance(value, (str, int, float)):
             variables[key] = value
-    if "baseUrl" in subject.metadata:
-        variables["base_url"] = subject.metadata["baseUrl"]
+    if "appBaseUrl" in subject.metadata:
+        variables["app_base_url"] = subject.metadata["appBaseUrl"]
+        variables["base_url"] = subject.metadata["appBaseUrl"]
     return variables
 
 
@@ -118,7 +67,7 @@ def _run_gate(gate: Any, variables: dict[str, Any], subject: SubjectResult, mani
         cwd = Path(_render(str(gate.config.get("cwd", "{workspace}")), variables))
         if not cwd.is_dir():
             return {**base, "status": "failed", "reason": f"cwd가 없습니다: {cwd}"}
-        result = _run_command(
+        result = run_command(
             command,
             cwd=cwd,
             env=os.environ.copy(),
@@ -127,12 +76,18 @@ def _run_gate(gate: Any, variables: dict[str, Any], subject: SubjectResult, mani
         expected = gate.config.get("expectedExitCodes", [0])
         passed = not result["timedOut"] and result["exitCode"] in expected
         return {**base, "status": "passed" if passed else "failed", **result}
-    if gate.kind == "httpOracle":
+    if gate.kind == "artifactPresent":
+        return {**base, **run_artifact_present(gate.config, subject)}
+    if gate.kind == "artifactContains":
+        return {**base, **run_artifact_contains(gate.config, subject)}
+    if gate.kind in {"httpOracle", "containerHttpOracle"}:
         oracle_path = Path(_render(str(gate.config.get("oraclePath", "")), variables))
         if not oracle_path.is_absolute():
             oracle_path = (manifest.directory / oracle_path).resolve()
-        base_url = _render(str(gate.config.get("baseUrl", "{base_url}")), variables)
         oracle = json.loads(oracle_path.read_text(encoding="utf-8"))
+        if gate.kind == "containerHttpOracle":
+            return {**base, **run_container_http_oracle(gate.config, subject, oracle)}
+        base_url = _render(str(gate.config.get("baseUrl", "{base_url}")), variables)
         return {**base, **run_http_oracle(oracle, base_url)}
     return {**base, "status": "failed", "reason": f"지원하지 않는 gate kind: {gate.kind}"}
 
@@ -192,7 +147,7 @@ def run_experiment(manifest: Manifest, *, output_root: Path | None = None) -> di
             if not cwd.is_dir():
                 execution = {"exitCode": None, "timedOut": False, "wallSeconds": 0.0, "stdout": "", "stderr": f"cwd가 없습니다: {cwd}"}
             else:
-                execution = _run_command(command, cwd=cwd, env=env, timeout_seconds=arm.timeout_seconds)
+                execution = run_command(command, cwd=cwd, env=env, timeout_seconds=arm.timeout_seconds)
             (run_directory / "stdout.log").write_text(execution["stdout"], encoding="utf-8")
             (run_directory / "stderr.log").write_text(execution["stderr"], encoding="utf-8")
             result_path = Path(_render(arm.result_path, variables))
@@ -245,6 +200,11 @@ def run_experiment(manifest: Manifest, *, output_root: Path | None = None) -> di
                 "execution": {key: value for key, value in execution.items() if key not in {"stdout", "stderr"}},
                 "prompt": prompt_metadata,
                 "resultLoadError": load_error,
+                # 산출물 수집기가 보고서만 보고 실제 파일을 찾을 수 있어야 한다.
+                "workspace": str(subject.workspace),
+                "artifactEvidence": {
+                    key: list(value) for key, value in subject.artifact_evidence.items()
+                },
                 **evaluation,
             }
             (run_directory / "evaluation.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")

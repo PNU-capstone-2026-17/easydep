@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "easydep-comparison-gate-pack/v1",
+  "apiContract": "The application must be startable with the container definition you deliver, must publish port 8080 on the host, and must expose exactly these HTTP endpoints so that an independent test suite can drive it.\n- POST /initialize -> 200. Resets all data and seeds exactly two course offerings: {\"courseId\": \"C-RACE\", \"capacity\": 1, \"remainingSeats\": 1} and {\"courseId\": \"C-DUP\", \"capacity\": 10, \"remainingSeats\": 10}.\n- GET /courses -> 200 with a JSON array of course offerings, each containing courseId, capacity, and remainingSeats.\n- GET /courses/{courseId} -> 200 with that single course offering.\n- POST /enrollments with body {\"studentId\": \"...\", \"courseId\": \"...\"} -> 201 echoing studentId and courseId; 409 when the same student is already enrolled in that course; 409 when the course has no remaining seats.\n- GET /students/{studentId}/enrollments -> 200 with a JSON array of that student's enrollments, each containing studentId and courseId.\n- DELETE /enrollments/{studentId}/{courseId} -> 204, and the released seat must be reflected in remainingSeats.\nAll request and response bodies are JSON. Concurrent POST /enrollments requests must never oversell capacity and must never create duplicate enrollments.",
+  "gates": [
+    {
+      "id": "business-api",
+      "kind": "containerHttpOracle",
+      "oraclePath": "../../baselines/course-registration-cases/business-oracle.json",
+      "port": 8080,
+      "healthPath": "/courses",
+      "readyTimeoutSeconds": 300,
+      "startTimeoutSeconds": 1800
+    }
+  ],
+  "requirementGates": {
+    "REQ-02": ["business-api#course-catalog"],
+    "REQ-03": ["business-api#enroll"],
+    "REQ-05": [
+      "business-api#duplicate-enrollment-rejected",
+      "business-api#last-seat-not-oversold"
+    ],
+    "REQ-06": ["business-api#student-enrollment-visible"],
+    "REQ-07": [
+      "business-api#cancel-enrollment",
+      "business-api#seat-restored-after-cancel"
+    ],
+    "REQ-16": [
+      "business-api#last-seat-not-oversold",
+      "business-api#duplicate-race-retains-one"
+    ]
+  }
+}
