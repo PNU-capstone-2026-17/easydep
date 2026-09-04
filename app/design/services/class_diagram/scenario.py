@@ -158,8 +158,13 @@ def _actor_steps(use_case: UseCase) -> set[str]:
         return set()
     entries = {main_steps[candidates[0]].id}
     for ordinal, position in enumerate(candidates[1:], start=1):
+        previous_actor = candidates[ordinal - 1]
         next_actor = candidates[ordinal + 1] if ordinal + 1 < len(candidates) else len(main_steps)
-        if position + 1 < next_actor:
+        # 같은 actor가 요청 내용을 여러 문장으로 연달아 제공한 것은 하나의 입력이다.
+        # 두 actor 단계 사이에 시스템 처리가 있었을 때만 후속 입력을 새 호출 root로
+        # 나눈다. 그렇지 않으면 데이터가 아직 없는 첫 문장만 별도 Boundary→Control
+        # 흐름이 되어 의미 없는 start 메서드를 만들게 된다.
+        if previous_actor + 1 < position and position + 1 < next_actor:
             entries.add(main_steps[position].id)
     return entries
 

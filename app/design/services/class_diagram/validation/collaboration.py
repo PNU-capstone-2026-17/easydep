@@ -257,6 +257,13 @@ def _source_type(
         ), "")
         if not dot:
             field_path = ""
+    # optional<T> 자체뿐 아니라 그 안의 field도 명시적으로 unwrap한 뒤 참조한다.
+    # ``result.unwrap.id``는 optional<User> 결과의 User.id를 뜻한다.
+    if field_path.startswith("unwrap."):
+        source_type = optional_inner_type(source_type)
+        if not source_type:
+            return ""
+        field_path = field_path.removeprefix("unwrap.")
     unwrap = field_path == "unwrap" or field_path.endswith(".unwrap")
     if unwrap:
         field_path = "" if field_path == "unwrap" else field_path.removesuffix(".unwrap")

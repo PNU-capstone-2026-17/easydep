@@ -27,6 +27,17 @@ def test_scenario_index_splits_actor_entries_and_attaches_extension_steps():
     assert "UC2:main:1" in first.required_step_ids
     assert first.trace_use_case_ids == ("UC1", "UC2")
 
+    consecutive = scenario()
+    consecutive["use_case_specs"][0]["main_scenario"][1].update({
+        "subject_ref": "Customer",
+        "sentence": "Customer also supplies the order details.",
+    })
+    consecutive_groups = build_scenario_index(consecutive).groups
+    assert [group.id for group in consecutive_groups] == ["UC1:main:1", "UC1:main:4"]
+    assert consecutive_groups[0].step_ids[:3] == (
+        "UC1:main:1", "UC1:main:2", "UC1:main:3",
+    )
+
 
 def test_scenario_index_keeps_system_steps_before_first_actor_entry():
     value = single_use_case()

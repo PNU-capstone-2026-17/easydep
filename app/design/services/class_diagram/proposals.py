@@ -131,7 +131,16 @@ class ProposedCall(Proposal):
     call ID, stepRefs, argument binding은 승인 모델에서 결정론적으로 계산한다.
     """
     receiver_operation_id: str = Field(alias="receiverOperationId", min_length=1)
-    parent_call_index: int | None = Field(default=None, alias="parentCallIndex", ge=1)
+    # 루트도 null을 명시하게 한다. 필드를 선택 사항으로 두면 구조화 출력은 모든
+    # 호출에서 이 값을 생략해도 schema를 통과하고, 뒤의 호출 관계 검사만 실패한다.
+    parent_call_index: int | None = Field(
+        alias="parentCallIndex",
+        ge=1,
+        description=(
+            "One-based parent position in the complete flat calls array; "
+            "null for a root. The position never restarts after another root."
+        ),
+    )
 
 
 class CallPlanProposal(Proposal):
@@ -146,7 +155,14 @@ class CombinedUnitCall(Proposal):
         alias="operationRef",
         pattern=r"^[A-Z][A-Za-z0-9]*\.[A-Za-z_][A-Za-z0-9_]*$",
     )
-    parent_call_index: int | None = Field(default=None, alias="parentCallIndex", ge=1)
+    parent_call_index: int | None = Field(
+        alias="parentCallIndex",
+        ge=1,
+        description=(
+            "One-based parent position in the complete flat calls array; "
+            "null for a root. The position never restarts after another root."
+        ),
+    )
 
 
 class CombinedUnitProposal(Proposal):

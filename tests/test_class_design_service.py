@@ -1,6 +1,7 @@
 """클래스 설계 서비스의 결합 생성, 수리와 cache 경계를 검증한다."""
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -10,10 +11,12 @@ from app.design.services.class_diagram import service
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
+    CombinedUnitCall,
     CombinedUnitProposal,
     FeedbackScope,
     InventoryProposal,
     OperationFragment,
+    ProposedCall,
 )
 from app.design.services.class_diagram.scenario import build_scenario_index
 from tests.class_design_fixtures import (
@@ -93,15 +96,26 @@ def test_combined_cache_skips_warm_calls_and_revalidates_the_hit(monkeypatch):
 def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
     combined_calls = 0
     call_plan_calls = 0
+    combined_payloads: list[dict] = []
 
-    def fake_parse(_messages, schema, **_kwargs):
+    # 루트와 자식을 구분하는 값은 null일 수 있지만 생략할 수는 없다. 이 계약을
+    # 구조화 출력 단계에서 강제해야 모든 호출이 루트로 해석되는 일을 막을 수 있다.
+    for schema, payload in (
+        (ProposedCall, {"receiverOperationId": "RequestBoundary::submit()"}),
+        (CombinedUnitCall, {"operationRef": "RequestBoundary.submit"}),
+    ):
+        with pytest.raises(ValidationError, match="parentCallIndex"):
+            schema.model_validate(payload)
+
+    def fake_parse(messages, schema, **_kwargs):
         nonlocal call_plan_calls, combined_calls
         if schema is InventoryProposal:
             return inventory_proposal()
         if schema is CombinedUnitProposal:
             combined_calls += 1
+            combined_payloads.append(json.loads(messages[-1]["content"]))
             proposal = multiple_root_combined_proposal()
-            if combined_calls == 1:
+            if combined_calls < 3:
                 proposal["calls"][2]["parentCallIndex"] = 2
             return proposal
         if issubclass(schema, CallPlanProposal):
@@ -114,7 +128,10 @@ def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
     patch_class_design_parser(monkeypatch, fake_parse)
     model = service.generate_class_model(build_scenario_index(multiple_entry_use_case()))
 
-    assert (combined_calls, call_plan_calls) == (2, 2)
+    # 각 call plan은 한 번만 교체한다. 그 결과도 실패하면 오류 문구를 바꿔가며 같은
+    # 범위에 머물지 않고 operation과 calls를 함께 고치는 결합 수리로 올라간다.
+    assert (combined_calls, call_plan_calls) == (3, 2)
+    assert len(combined_payloads[-1]["repairHistory"]) >= 2
     assert [item.collaboration_id for item in model.Collaborations] == ["UC1"]
     assert sum(call.parent_call_id is None for call in model.Collaborations[0].calls) == 2
 
@@ -172,7 +189,7 @@ def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
     previews.clear()
     resumed = service.resume_class_model(index, current)
     assert [item.collaboration_id for item in resumed.Collaborations] == ["UC1"]
-    assert (combined_calls - before_repair[0], call_plan_calls - before_repair[1]) == (1, 2)
+    assert (combined_calls - before_repair[0], call_plan_calls - before_repair[1]) == (1, 1)
     assert {item[1] for item in previews} == {"operations", "collaborations"}
 
     failure = ""

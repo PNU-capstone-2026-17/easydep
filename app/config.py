@@ -19,10 +19,9 @@ class Settings(BaseSettings):
     cloudflare_account_id: str | None = None
     cloudflare_api_token: str | None = None
     cloudflare_ai_gateway_id: str | None = None
-    # gpt-oss의 공식 일반 권장값 1.0과 구조화 작업용 저분산 값 0.2 사이를 실제
-    # 요구사항·클래스 실험으로 비교했다. 0.6이 1.0보다 필요한 동작을 덜 생략했고
-    # 0.2보다 복합 요구사항을 잘 나눠, 품질과 속도의 공통 기본값으로 사용한다.
-    temperature: float = 0.6
+    # 미등록 모델의 공통 기본값이다. 현재 클래스 전체 실행에서 검증된 저분산 값으로
+    # 되돌렸으며, 모델별로 다른 값이 필요하면 app.llm_profiles가 명시적으로 덮어쓴다.
+    temperature: float = 0.2
     seed: int = 42
 
     @field_validator("api_key", "base_url", "model")
@@ -40,10 +39,10 @@ class Settings(BaseSettings):
     llm_max_completion_tokens: int | None = 16384
     design_reasoning_effort: str = "medium"
     design_selector_reasoning_effort: str = "low"
-    # 전역 inventory는 여러 유스케이스를 함께 판단하므로 medium을 유지한다. 한
-    # 유스케이스의 operation은 후보와 step이 이미 제한되어 low로도 충분했다.
+    # 전역 inventory와 유스케이스별 operation·호출 계획 모두 설계 판단이 필요하다.
+    # 수강신청 전체 실행에서 완주가 확인된 medium을 기본값으로 사용한다.
     design_class_inventory_reasoning_effort: str = "medium"
-    design_class_operation_reasoning_effort: str = "low"
+    design_class_operation_reasoning_effort: str = "medium"
     design_class_call_plan_reasoning_effort: str = "medium"
     design_class_compact_operation_payload: bool = True
     llm_timeout_seconds: float = 300.0
@@ -91,9 +90,9 @@ class Settings(BaseSettings):
     # Stage-specific caps retain the former broad defaults until the frozen E1
     # experiment justifies a lower 2K/4K/8K/16K tier.
     design_class_inventory_max_completion_tokens: int = 16384
-    # low reasoning의 UC2·UC3·UC10 출력은 2K 미만이었고 compact UC2도 4K에서
-    # finish_reason=stop으로 끝났다. 예상 밖 수리를 위한 여유를 포함해 4K로 제한한다.
-    design_class_operation_max_completion_tokens: int = 4096
+    # 짧은 사례만 보고 4K로 낮추면 여러 관리 동작을 가진 유스케이스가 JSON 중간에서
+    # 잘릴 수 있다. 전체 수강신청 실행에서 검증된 기존 상한을 유지한다.
+    design_class_operation_max_completion_tokens: int = 16384
     design_class_call_plan_max_completion_tokens: int = 8192
     # The global inventory needs enough combined reasoning/output budget to
     # finish strict JSON.  Choice-space reduction happens in its compact input,

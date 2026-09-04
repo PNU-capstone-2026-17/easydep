@@ -47,6 +47,10 @@ Also return a flat call forest for this complete use case. Refer to operations
 only as ClassName.methodName. Each supplied actorEntry creates exactly one
 Boundary root in the same order; no other root is allowed. Each non-root uses
 the one-based position of an earlier call in the latest root as parentCallIndex.
+The position is counted in the complete flat calls array and never restarts
+after a new root.
+Always include parentCallIndex: use null for each root and an integer for every
+non-root.
 Ordinary results return through the existing call chain. Use a Control-to-
 Boundary call only when the scenario explicitly requires the system to initiate
 a separate interaction with an external actor or system through that Boundary,
@@ -130,11 +134,14 @@ def _propose_unit(
     reserved_types: list[dict[str, Any]],
     previous: dict[str, Any] | None = None,
     initial_issue: str = "",
+    repair_history: list[dict[str, str]] | None = None,
 ) -> tuple[AcceptedFragment, dict[str, Any]]:
     """operation 검사를 통과할 때까지 한 유스케이스 제안만 전체 교체한다."""
 
     issue = initial_issue
-    history: list[dict[str, str]] = []
+    # 바깥의 call-plan 검사에서 다시 결합 수리로 돌아온 경우에도 이전 후보와
+    # 실패 이유를 이어받는다. 숫자 상한 없이 반복하더라도 같은 실패를 잊지 않는다.
+    history = repair_history if repair_history is not None else []
     seen_states: set[str] = set()
     prior = previous
     while True:
@@ -170,6 +177,7 @@ def _propose_unit(
                 index,
                 inventory,
                 use_case,
+                reserved=reserved,
                 reserved_types=reserved_types,
                 allowed_step_ids=tuple(step.id for step in use_case.steps),
                 same_boundary_response_operations=(
@@ -200,6 +208,19 @@ def _propose_unit(
                     "different complete operation fragment and call forest."
                 )
             prior = raw
+
+
+def _repair_history_item(
+    candidate: dict[str, Any], issue: str,
+) -> dict[str, str]:
+    """다음 LLM 요청에 넣을 수 있도록 실패 후보를 짧게 기록한다."""
+
+    return {
+        "candidateDigest": stable_digest(candidate),
+        # issue 뒤에는 바로 앞 call-plan의 상세 ledger가 붙을 수 있다. 과거 후보마다
+        # 이를 다시 중첩하지 않고 실제 검사 메시지만 보존한다.
+        "error": issue.partition("\n\n")[0],
+    }
 
 
 def _catalog(model: BCEModel) -> dict[str, str]:
@@ -315,6 +336,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
         zip(use_cases, proposed, strict=True), start=1,
     ):
         collision_states: set[str] = set()
+        collision_history: list[dict[str, str]] = []
         while True:
             try:
                 preview = operations.compose_operation_units(inventory, [*committed, fragment])
@@ -329,6 +351,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         "different complete unit."
                     )
                 collision_states.add(state)
+                collision_history.append(_repair_history_item(raw, issue))
                 fragment, raw = _propose_unit(
                     index,
                     inventory,
@@ -339,6 +362,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                     ],
                     previous=raw,
                     initial_issue=issue,
+                    repair_history=collision_history,
                 )
         committed.append(fragment)
         raw_by_use_case[use_case.id] = raw
@@ -374,6 +398,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                 snapshot = operations.compose_operation_units(inventory, others)
                 previous = raw_by_use_case[use_case.id]
                 issue = signal.issue
+                repair_history = [_repair_history_item(previous, issue)]
                 while True:
                     fragment, raw = _propose_unit(
                         index,
@@ -385,6 +410,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         ],
                         previous=previous,
                         initial_issue=issue,
+                        repair_history=repair_history,
                     )
                     candidate_fragments = list(committed)
                     candidate_fragments[unit_index] = fragment
@@ -392,10 +418,24 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         skeleton = operations.compose_operation_units(
                             inventory, candidate_fragments, final=True,
                         )
-                        break
                     except (Collision, DataTypeCollision) as error:
                         previous = raw
                         issue = f"{type(error).__name__}: {error}"
+                        repair_history.append(_repair_history_item(raw, issue))
+                        continue
+                    try:
+                        # 결합 수리는 operation뿐 아니라 calls도 교체한다. 새 calls를
+                        # 여기서 검사하지 않으면 바깥 루프가 새 수리 이력을 만들며 같은
+                        # call-plan 실패로 되돌아간다.
+                        value = _materialize_use_case(
+                            index, skeleton, use_case, raw,
+                        )
+                    except collaboration.CombinedReplacementRequired as repeated:
+                        previous = raw
+                        issue = repeated.issue
+                        repair_history.append(_repair_history_item(raw, issue))
+                        continue
+                    break
                 committed = candidate_fragments
                 raw_by_use_case[use_case.id] = raw
                 accepted = {
@@ -408,7 +448,6 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         collaboration_value,
                     )
                 }
-                break
             accepted[use_case.id] = value
             ordered_accepted = [
                 accepted[item.id] for item in standalone if item.id in accepted
@@ -422,8 +461,6 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                 },
                 "collaborations", use_case.id, len(accepted), len(standalone),
             )
-        else:
-            break
     return BCEModel.model_validate({
         **skeleton.model_dump(by_alias=True),
         "Collaborations": [
@@ -478,6 +515,7 @@ def replace_use_case_unit(
     previous = _previous_combined_unit(fragment, current, signal.previous_plan)
     issue = signal.issue
     collision_states: set[str] = set()
+    repair_history = [_repair_history_item(previous, issue)]
     while True:
         replacement, raw = _propose_unit(
             index,
@@ -489,6 +527,7 @@ def replace_use_case_unit(
             ],
             previous=previous,
             initial_issue=issue,
+            repair_history=repair_history,
         )
         candidate_fragments = {**others, use_case.id: replacement}
         try:
@@ -503,6 +542,7 @@ def replace_use_case_unit(
                 )
             collision_states.add(state)
             previous = raw
+            repair_history.append(_repair_history_item(raw, issue))
             continue
         operations.emit_preview(
             skeleton.model_dump(by_alias=True),
@@ -516,6 +556,7 @@ def replace_use_case_unit(
         except collaboration.CombinedReplacementRequired as repeated:
             previous = raw
             issue = repeated.issue
+            repair_history.append(_repair_history_item(raw, issue))
             continue
         return skeleton, accepted
 

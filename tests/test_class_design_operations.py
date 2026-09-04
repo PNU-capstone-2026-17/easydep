@@ -62,6 +62,14 @@ def test_operation_generation_keeps_signature_data_types_in_the_persisted_model(
         index,
         inventory,
         index.use_case("UC1"),
+        reserved=[{
+            "className": "RequestControl",
+            "operations": [{
+                "name": "process",
+                "parameters": [{"name": "acceptedRequest", "type": "RequestData"}],
+                "returnType": "RequestResult",
+            }],
+        }],
         allowed_step_ids=("UC1:main:1",),
     ).as_payload()
     control = next(
@@ -69,6 +77,9 @@ def test_operation_generation_keeps_signature_data_types_in_the_persisted_model(
         if item["className"] == "RequestControl"
     )
     assert control["operations"][0]["stepRefs"] == ["UC1:main:1"]
+    assert control["operations"][0]["parameters"] == [
+        {"name": "acceptedRequest", "type": "RequestData"},
+    ]
 
 def test_operation_validation_rejects_step_ref_outside_use_case_scope():
     index = build_scenario_index(single_use_case())

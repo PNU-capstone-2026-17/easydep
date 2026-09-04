@@ -40,14 +40,17 @@ from app.design.services.class_diagram.validation.model import (
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import effective_temperature
-from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, stable_digest
+from app.validation import Finding, run_checks
 
 CALL_PLAN_PROMPT = """
 Build one ordered call forest for the complete use case. Select only supplied
 receiverOperationId values. Return only receiverOperationId and parentCallIndex.
+Always include parentCallIndex: use null for a root and an earlier one-based
+position for every non-root.
 Each actorEntry creates exactly one root in the supplied order; no other root is
 allowed. A root has no parent. Every non-root uses the one-based position of an
-earlier call in the same root as parentCallIndex. A root is Boundary and
+earlier call in the same root as parentCallIndex. The position is counted in the
+complete flat calls array and never restarts after a new root. A root is Boundary and
 delegates to Control, which may delegate state work to Entity. Ordinary results
 return through the existing call chain. Use a Control-to-Boundary call only when
 the scenario explicitly requires the system to initiate a separate interaction
@@ -255,6 +258,18 @@ def _ancestors(calls: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
     return result
 
 
+def _field_matches_parameter(parameter: str, owner_type: str, field: str) -> bool:
+    """``User.id``처럼 타입 이름이 붙으면 parameter와 같은 field인지 확인한다."""
+
+    def normalize(value: str) -> str:
+        return "".join(
+            character for character in value.casefold() if character.isalnum()
+        )
+
+    expected = normalize(parameter)
+    return expected in {normalize(field), normalize(owner_type + field)}
+
+
 def _binding_candidates(
     model: dict[str, Any],
     use_case: UseCase,
@@ -307,13 +322,21 @@ def _binding_candidates(
             candidates.append(result_ref)
         elif types_compatible(optional_inner_type(return_type), target_type):
             candidates.append(result_ref + ".unwrap")
-        for field_path in fields_by_type.get(return_type, {}):
-            projected = projected_field_type(return_type, field_path, fields_by_type)
-            field_ref = f"{result_ref}.{field_path}"
+        # Optional<T>를 반환한 조회도 unwrap 뒤 T의 field를 다음 호출에 전달할 수 있다.
+        # 예: optional<User> 결과의 id는 ``result.unwrap.id``로 표현한다.
+        projection_type = optional_inner_type(return_type) or return_type
+        projection_ref = (
+            f"{result_ref}.unwrap" if optional_inner_type(return_type) else result_ref
+        )
+        for field_path in fields_by_type.get(projection_type, {}):
+            projected = projected_field_type(
+                projection_type, field_path, fields_by_type,
+            )
+            field_ref = f"{projection_ref}.{field_path}"
             add_named(field_path, projected, field_ref)
             if (
                 text(earlier.get("callId")) in ancestor_ids
-                or field_path.casefold() == name.casefold()
+                or _field_matches_parameter(name, projection_type, field_path)
             ):
                 if types_compatible(projected, target_type):
                     candidates.append(field_ref)
@@ -516,58 +539,24 @@ def _accepted_payload(
     use_case: UseCase,
     directive: str,
 ) -> dict[str, Any]:
-    ledger = RepairLedger()
-    previous: CallPlanProposal | None = None
-    finding = directive
-    attempt = 0
-    seen_states: set[str] = set()
-    seen_findings: set[str] = set()
-    while True:
-        # Provider/schema 예외는 semantic finding으로 바꾸지 않는다.
-        candidate = propose_call_plan(
-            index, model, use_case, previous=previous, finding=finding,
-        )
-        try:
-            return materialize(index, model, use_case, candidate).model_dump(by_alias=True)
-        except ValueError as error:
-            error_text = f"{type(error).__name__}: {error}"
-            candidate_digest = stable_digest(candidate.model_dump(by_alias=True))
-            state_digest = stable_digest({
-                "candidate": candidate_digest,
-                "finding": error_text,
-            })
-            # call 순서를 바꿨는데도 같은 값 출처나 BCE 방향 오류가 다시 나오면
-            # operation 자체가 원인일 가능성이 높다. 같은 finding을 두 번 고치게 하지
-            # 않고 operation+call 결합 교체로 곧바로 범위를 넓힌다.
-            repeated = state_digest in seen_states or error_text in seen_findings
-            ledger.record(RepairAttempt(
-                stage="design.class.collaboration",
-                target_ids=(use_case.id,),
-                strategy_key=f"full-call-plan-replacement-{attempt + 1}",
-                input_digest=stable_digest(_use_case_payload(
-                    index, model.model_dump(by_alias=True), use_case,
-                )),
-                candidate_digest=candidate_digest,
-                finding_keys_before=(error_text,),
-                finding_keys_after=(error_text,),
-                outcome="repeated_candidate" if repeated else "no_improvement",
-                detail=error_text,
-            ))
-            if repeated:
-                raise CombinedReplacementRequired(
-                    use_case.id,
-                    error_text + "\n\nAccumulated call-plan repair history:\n"
-                    + ledger.prompt_context(),
-                    candidate,
-                ) from error
-            seen_states.add(state_digest)
-            seen_findings.add(error_text)
-            previous = candidate
-            finding = (
-                f"{error_text}\n\nReturn a different full plan. Repair history:\n"
-                + ledger.prompt_context()
-            )
-            attempt += 1
+    """call plan을 한 번 교체하고, 실패하면 operation까지 고치도록 알린다.
+
+    호출 순서만 잘못된 경우에는 이 한 번의 국소 수리로 충분하다. 새 계획도 실행할 수
+    없다면 오류 문구가 달라질 때마다 같은 범위에서 계속 시도하지 않는다. 상위 흐름이
+    해당 유스케이스의 operation과 calls를 함께 교체하며 전체 자동 수리는 계속된다.
+    """
+
+    # Provider/schema 예외는 semantic finding으로 바꾸지 않는다.
+    candidate = propose_call_plan(index, model, use_case, finding=directive)
+    try:
+        return materialize(index, model, use_case, candidate).model_dump(by_alias=True)
+    except ValueError as error:
+        error_text = f"{type(error).__name__}: {error}"
+        raise CombinedReplacementRequired(
+            use_case.id,
+            error_text,
+            candidate,
+        ) from error
 
 
 def _cache_key(
@@ -604,7 +593,7 @@ def process_use_case(
     *,
     cache: AcceptedUnitCache | None = None,
 ) -> Collaboration:
-    """유스케이스 전체 call plan을 수락할 때까지 국소 교체한다."""
+    """call plan을 국소 교체하고 필요하면 상위 결합 수리로 범위를 넓힌다."""
 
     if not _groups(index, use_case):
         raise ValueError("use case has no actor entry")

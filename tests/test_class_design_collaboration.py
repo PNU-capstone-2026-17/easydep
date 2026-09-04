@@ -176,8 +176,8 @@ def test_optional_results_use_explicit_unwrap_sources():
                 "className": "Student",
                 "stereotype": "Entity",
                 "use_case_ids": ["UC1"],
-                "fields": ["studentId : uuid"],
-                "identifier": ["studentId"],
+                "fields": ["id : uuid"],
+                "identifier": ["id"],
                 "operations": [],
             },
             {
@@ -245,6 +245,20 @@ def test_optional_results_use_explicit_unwrap_sources():
                     "stepRefs": ["UC1:main:2"],
                 }],
             },
+            {
+                "className": "Session",
+                "stereotype": "Entity",
+                "use_case_ids": ["UC1"],
+                "fields": ["id : uuid", "studentId : uuid"],
+                "identifier": ["id"],
+                "operations": [{
+                    "operationId": "Session::create(studentId:uuid)",
+                    "name": "create",
+                    "parameters": [{"name": "studentId", "type": "uuid"}],
+                    "returnType": "Session",
+                    "stepRefs": ["UC1:main:2"],
+                }],
+            },
         ],
         "DataTypes": [
             {
@@ -278,6 +292,10 @@ def test_optional_results_use_explicit_unwrap_sources():
                 ),
                 "parentCallIndex": 3,
             },
+            {
+                "receiverOperationId": "Session::create(studentId:uuid)",
+                "parentCallIndex": 2,
+            },
         ],
     })
 
@@ -298,6 +316,10 @@ def test_optional_results_use_explicit_unwrap_sources():
             "sourceRef": "UC1::call:3#result.failureCode.unwrap",
         },
     ]
+    assert collaboration_model["calls"][4]["argumentBindings"] == [{
+        "parameter": "studentId",
+        "sourceRef": "UC1::call:2#result.unwrap.id",
+    }]
 
     entity_to_control = CallPlanProposal.model_validate({
         "calls": [

@@ -87,8 +87,10 @@ from an entry input, an earlier operation result, an explicit precondition, or a
 supported runtime value. Declare a result type when later work needs several
 values produced earlier. Do not invent caller input merely to satisfy a signature.
 
-Reuse an exact reserved operation signature when it represents the same behavior;
-the same class must not overload one method name with a different signature.
+When this use case reuses a reserved operation, include that operation in the
+fragment with its exact supplied name, parameters, and returnType, plus this use
+case's stepRefs. Referencing it only from calls does not assign those steps. The
+same class must not overload one method name with a different signature.
 Reuse fixed and reserved DataTypes by name. A new DataType must have resolved
 fields or enum values and must be referenced by an operation signature. Use
 kind=valueObject with non-empty fields and no values, or kind=enumeration with
@@ -397,6 +399,43 @@ def _canonicalize_downstream_input_types(
     return candidate
 
 
+def _reuse_reserved_operation_signatures(
+    candidate: dict[str, Any],
+    reserved: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """이미 승인된 메서드 이름을 고르면 그 서명을 그대로 재사용한다.
+
+    한 클래스에서 메서드 이름은 유일하므로 LLM이 같은 parameter와 return type을 다시
+    작성하게 할 필요가 없다. 현재 유스케이스의 ``stepRefs``만 후보가 소유하고, 기존
+    서명은 코드가 복사한다. 이후 값 전달 검사는 이 서명을 실제로 호출할 수 있는지
+    별도로 확인한다.
+    """
+
+    signatures = {
+        (text(owner.get("className")), text(operation.get("name"))): operation
+        for owner in reserved or []
+        if isinstance(owner, dict)
+        for operation in owner.get("operations") or []
+        if isinstance(operation, dict)
+    }
+    if not signatures:
+        return candidate
+    normalized = deepcopy(candidate)
+    for owner in normalized.get("Classes") or []:
+        if not isinstance(owner, dict):
+            continue
+        class_name_value = text(owner.get("className"))
+        for operation in owner.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            accepted = signatures.get((class_name_value, text(operation.get("name"))))
+            if accepted is None:
+                continue
+            operation["parameters"] = deepcopy(accepted.get("parameters") or [])
+            operation["returnType"] = text(accepted.get("returnType"))
+    return normalized
+
+
 def _canonicalize_step_ownership(
     candidate: dict[str, Any],
     inventory: dict[str, Any],
@@ -563,6 +602,7 @@ def normalize_operation_fragment(
     inventory: AcceptedInventory,
     use_case: UseCase,
     *,
+    reserved: list[dict[str, Any]] | None = None,
     reserved_types: list[dict[str, Any]] | None = None,
     allowed_step_ids: tuple[str, ...] = (),
     same_boundary_response_operations: set[str] | None = None,
@@ -595,6 +635,7 @@ def normalize_operation_fragment(
         for item in candidate.get("DataTypes") or []
         if text(item.get("name")) not in fixed_names
     ]
+    candidate = _reuse_reserved_operation_signatures(candidate, reserved)
     candidate = _canonicalize_downstream_input_types(candidate, inventory_payload)
     actor_entry_refs = {
         group.actor_step
@@ -698,6 +739,7 @@ def _propose_fragment(
     ]
     # 4. 하류 DTO가 실제 상류 값에서 만들어질 수 있는지 보고 불필요한 layer DTO를
     # 재사용 가능한 입력 타입으로 정규화한다. 새 LLM 호출은 발생하지 않는다.
+    candidate = _reuse_reserved_operation_signatures(candidate, reserved)
     candidate = _canonicalize_downstream_input_types(candidate, inventory)
     actor_entry_refs = {
         group.actor_step
