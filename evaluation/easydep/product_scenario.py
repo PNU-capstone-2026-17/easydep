@@ -49,12 +49,47 @@ class ProductScenarioTransport(Protocol):
     def get_artifacts(self, app_id: str) -> Mapping[str, Any]: ...
 
 
+@dataclass(frozen=True)
+class CloudCoordinates:
+    """앱 생성 화면이 요구사항과 별도로 받는 배포 좌표다.
+
+    요구사항 원문에 리전이 문장으로 적혀 있어도 분석은 구조화된 값을 따로 묻는다.
+    자동 실행은 사람 대신 답을 지어내지 않으므로, 이 값을 미리 넘겨야 끝까지 간다.
+    """
+
+    provider: str | None = None
+    region: str = ""
+    monthly_budget_amount: float | None = None
+    monthly_budget_currency: str = "USD"
+    resource_constraints_text: str = ""
+
+    def as_create_fields(self) -> JsonObject:
+        fields: JsonObject = {}
+        if self.provider:
+            fields["provider"] = self.provider
+        if self.region:
+            fields["region"] = self.region
+        if self.monthly_budget_amount is not None:
+            fields["monthly_budget_amount"] = self.monthly_budget_amount
+            fields["monthly_budget_currency"] = self.monthly_budget_currency
+        if self.resource_constraints_text:
+            fields["resource_constraints_text"] = self.resource_constraints_text[:12000]
+        return fields
+
+
 class HttpProductScenarioTransport:
     """프론트엔드가 사용하는 URL에 표준 라이브러리로 연결한다."""
 
-    def __init__(self, base_url: str, *, request_timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        request_timeout_seconds: float = 30.0,
+        cloud: CloudCoordinates | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.request_timeout_seconds = request_timeout_seconds
+        self.cloud = cloud
 
     def _url(self, path: str, query: Mapping[str, Any] | None = None) -> str:
         url = f"{self.base_url}{path}"
@@ -93,9 +128,12 @@ class HttpProductScenarioTransport:
         return payload
 
     def create_app(self, message: str) -> Mapping[str, Any]:
-        return self._json_request(
-            "POST", "/api/workspace/apps", body={"message": message}
-        )
+        # 앱 생성 화면은 요구사항과 함께 배포 좌표도 받는다. 좌표를 주지 않으면 요구사항
+        # 분석이 리전을 되묻고 멈추므로, 무인 실행에서는 호출자가 미리 넘긴다.
+        body: JsonObject = {"message": message}
+        if self.cloud is not None:
+            body.update(self.cloud.as_create_fields())
+        return self._json_request("POST", "/api/workspace/apps", body=body)
 
     def get_workspace(self, app_id: str) -> Mapping[str, Any]:
         return self._json_request(

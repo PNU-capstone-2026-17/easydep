@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from evaluation.easydep.product_scenario import (
+    CloudCoordinates,
     HttpProductScenarioTransport,
     ProductScenarioRunner,
     ProductScenarioStopped,
@@ -68,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prompt-file", type=Path, required=True)
     parser.add_argument("--base-url", default="http://127.0.0.1:8100")
     parser.add_argument("--timeout-seconds", type=float, default=14400.0)
+    # 세 실험군 모두 같은 클라우드 제약을 프롬프트로 받는다. EasyDep은 그 제약을 앱 생성
+    # 화면의 구조화 입력으로도 받으므로, 사례가 선언한 좌표를 그대로 넘겨 무인 실행한다.
+    parser.add_argument("--provider", choices=("aws", "azure", "gcp"))
+    parser.add_argument("--region", default="")
+    parser.add_argument("--monthly-budget", type=float)
     args = parser.parse_args(argv)
     repository = args.repository.resolve()
     run_dir = args.run_dir.resolve()
@@ -75,7 +81,15 @@ def main(argv: list[str] | None = None) -> int:
     workspace = run_dir / "workspace"
     run_dir.mkdir(parents=True, exist_ok=True)
     runner = ProductScenarioRunner(
-        HttpProductScenarioTransport(args.base_url), timeout_seconds=args.timeout_seconds
+        HttpProductScenarioTransport(
+            args.base_url,
+            cloud=CloudCoordinates(
+                provider=args.provider,
+                region=args.region,
+                monthly_budget_amount=args.monthly_budget,
+            ),
+        ),
+        timeout_seconds=args.timeout_seconds,
     )
     try:
         product = runner.run(
@@ -112,8 +126,10 @@ def main(argv: list[str] | None = None) -> int:
         artifact_evidence=json.loads(artifact_path.read_text(encoding="utf-8")),
         metadata={
             "appId": location.get("app_id"),
+            "provider": args.provider or "",
+            "region": args.region,
             "promptSha256": prompt_sha256(prompt_file),
-            "baseUrl": args.base_url,
+            "easydepBaseUrl": args.base_url,
         },
     )
     print(f"EasyDep workspace: {workspace}")

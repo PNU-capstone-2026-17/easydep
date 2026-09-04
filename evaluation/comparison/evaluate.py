@@ -60,7 +60,7 @@ def _gate_fraction(
     }
 
 
-def _evidence_exists(workspace: Path, raw_path: str) -> bool:
+def evidence_exists(workspace: Path, raw_path: str) -> bool:
     candidate = Path(raw_path)
     if not candidate.is_absolute():
         candidate = workspace / candidate
@@ -76,7 +76,7 @@ def _traceability(manifest: Manifest, subject: SubjectResult) -> dict[str, Any]:
         missing_stages = [
             stage
             for stage in requirement.evidence_stages
-            if not any(_evidence_exists(subject.workspace, path) for path in evidence.get(stage, ()))
+            if not any(evidence_exists(subject.workspace, path) for path in evidence.get(stage, ()))
         ]
         if requirement.evidence_stages and not missing_stages:
             complete.append(requirement.id)
@@ -105,7 +105,7 @@ def _artifact_coverage(manifest: Manifest, subject: SubjectResult) -> dict[str, 
     missing_paths: dict[str, list[str]] = {}
     for artifact in protocol.artifact_contract:
         paths = subject.artifact_evidence.get(artifact.id, ())
-        if any(_evidence_exists(subject.workspace, path) for path in paths):
+        if any(evidence_exists(subject.workspace, path) for path in paths):
             present.append(artifact.id)
         else:
             missing.append(artifact.id)

@@ -5,10 +5,19 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .models import load_manifest
+from .models import Manifest, load_manifest
 from .report import write_reports
 from .runner import run_experiment
 from .suite import load_suite, materialize_manifests, run_suite
+
+
+def _gate_summary(manifest: Manifest) -> str:
+    linked = sum(1 for item in manifest.requirements if item.verification_gates)
+    required = sum(1 for gate in manifest.gates if gate.required)
+    return (
+        f"요구사항 {len(manifest.requirements)}개 중 {linked}개가 게이트에 연결됨, "
+        f"필수 게이트 {required}개"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,12 +51,12 @@ def main(argv: list[str] | None = None) -> int:
             manifests = materialize_manifests(
                 suite, case_ids=args.cases, repetitions=args.repetitions
             )
-            for path in manifests:
-                load_manifest(path)
             print(
                 f"유효한 suite: {suite.id} ({len(manifests)}개 사례, "
                 f"{args.repetitions or suite.repetitions}회 반복, 3개 대상)"
             )
+            for path in manifests:
+                print(f"  - {path.stem}: {_gate_summary(load_manifest(path))}")
             return 0
         json_path, markdown_path = run_suite(
             suite, case_ids=args.cases, repetitions=args.repetitions
@@ -70,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             f"({len(manifest.arms)}개 대상, {manifest.repetitions}회 반복, "
             f"공통 산출물 {artifact_count}개; {profiles})"
         )
+        print(_gate_summary(manifest))
         return 0
     output_root = args.output_root
     report = run_experiment(manifest, output_root=output_root)

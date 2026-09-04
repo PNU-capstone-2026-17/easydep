@@ -47,6 +47,9 @@ EasyDep은 제품 파이프라인 자체가 설계·구현·시험·배포 산�
 .\.venv\Scripts\python.exe -X utf8 -m evaluation.comparison run evaluation/comparison/examples/smoke-manifest.json
 ```
 
+`validate`와 `validate-suite`는 사례마다 "요구사항 N개 중 M개가 게이트에 연결됨, 필수 게이트
+K개"를 함께 출력합니다. 실행 전에 무엇이 실제로 채점될지 여기서 확인하세요.
+
 결과는 다음 위치에 생깁니다.
 
 - `artifacts/comparison/comparison-smoke-test/comparison.md`: 사람이 읽는 비교표
@@ -65,7 +68,11 @@ EasyDep은 제품 파이프라인 자체가 설계·구현·시험·배포 산�
 | 통과 필수 게이트 | 통과한 필수 게이트 수 | 전체 필수 게이트 수 | 빌드, API, 동시성, 영속성 등 |
 | 공통 산출물 커버리지 | 실제 파일이 확인된 공통 산출물 수 | 계약에 선언한 산출물 수 | 동일 파일 형식이 아닌 동일 의미 범주를 확인 |
 | 완전 추적성 | 필수 증거 단계가 모두 연결된 요구사항 수 | 전체 요구사항 수 | 연결된 파일이 실제로 존재해야 함 |
-| 성공 실행 | 완료되고 모든 필수 게이트를 통과한 실행 수 | 계획한 전체 반복 수 | 실패·시간 초과 포함 |
+| 필수 게이트 통과 실행 | 완료되고 모든 필수 게이트를 통과한 실행 수 | 계획한 전체 반복 수 | 실패·시간 초과 포함. 요구사항 구현 개수와 다른 값 |
+
+`구현 요구사항`의 분모에는 검증 게이트가 연결되지 않은 요구사항도 포함됩니다. 그 수는
+보고서의 `자동 검증 미연결` 열로 따로 표시하므로, 0/N이 "전부 실패"인지 "아직 판정하지
+않음"인지 구분할 수 있습니다.
 
 구현 여부와 추적성은 다릅니다. 코드 파일을 요구사항에 연결했더라도 동작 게이트가 실패하면
 구현 요구사항으로 세지 않습니다. 반대로 동작이 통과해도 설계·API·코드·테스트 증거가
@@ -94,6 +101,74 @@ MetaGPT와 ChatDev는 현재 고정 설치 스크립트를 사용할 수 있습�
 ```
 
 설치와 실제 LLM 실행은 외부 네트워크 및 각 공급자의 API 키가 필요합니다.
+
+## suite가 자동으로 만드는 게이트
+
+`run-suite`는 사례마다 manifest를 생성하면서 아래 필수 게이트를 함께 만듭니다. 손으로
+manifest를 쓰지 않아도 산출물 계약과 클라우드 제약이 실제로 채점됩니다.
+
+| 게이트 | 검사 대상 |
+|---|---|
+| `design-artifacts` | classDiagram, sequenceDiagram, apiSpecification, dataModel |
+| `code-artifact` | sourceCode |
+| `test-artifact` | tests |
+| `container-artifact` | container |
+| `iac-artifact` | infrastructure |
+| `iac-region` | infrastructure 본문에 사례의 `regionTokens` 중 하나 |
+| `iac-forbidden` | infrastructure 본문에 사례의 `forbiddenTokens` 없음 |
+
+`iac-artifact`, `iac-region`, `iac-forbidden`은 그 사례의 클라우드 제약조건에 연결됩니다.
+리전 이름을 자연어 제약에서 추론하지 않고 suite 파일이 사례마다 선언합니다.
+
+```json
+{
+  "id": "iot-monitoring-aws",
+  "input": "../../easydep/requirements/inputs/dev_iot_monitoring.json",
+  "regionTokens": ["ap-northeast-2", "seoul"],
+  "forbiddenTokens": []
+}
+```
+
+구조 게이트는 **기능 요구사항에 연결하지 않습니다.** 코드 파일이 존재한다는 이유로
+요구사항을 구현으로 세면 동작 검증과 구별되지 않기 때문입니다. 기능 요구사항의 구현 여부는
+아래 게이트 팩의 실행 오라클로만 판정합니다.
+
+## 게이트 팩으로 요구사항별 동작 검증 붙이기
+
+`evaluation/comparison/gate-packs/<사례 ID>.json`이 있으면 suite가 자동으로 읽습니다.
+suite 파일의 사례에 `gatePack` 경로를 직접 적어도 됩니다. 팩이 없는 사례는 구조 게이트만
+적용되고 기능 요구사항은 `자동 검증 미연결`로 남습니다.
+
+```json
+{
+  "schemaVersion": "easydep-comparison-gate-pack/v1",
+  "apiContract": "The application must publish port 8080 and expose GET /courses ...",
+  "gates": [
+    {
+      "id": "business-api",
+      "kind": "containerHttpOracle",
+      "oraclePath": "../../baselines/course-registration-cases/business-oracle.json",
+      "port": 8080,
+      "healthPath": "/courses"
+    }
+  ],
+  "requirementGates": {
+    "REQ-02": ["business-api#course-catalog"],
+    "REQ-03": ["business-api#enroll"]
+  }
+}
+```
+
+- `requirementGates`의 키는 사례 입력에서 만들어진 요구사항 ID입니다. `classified` 배열이
+  있는 입력은 그 안의 `FR1`·`NFR1`을 그대로 쓰고, 문장 배열만 있는 입력은 순서대로
+  `REQ-01`이 붙습니다. 존재하지 않는 ID를 참조하면 `validate-suite`가 거부합니다.
+- `oraclePath`는 팩 파일 기준 상대 경로입니다.
+- `apiContract`는 **모든 실험군의 `task-input.txt`에 동일하게** 덧붙습니다. 공통 산출물
+  계약이 아니라 과제 입력에 넣기 때문에 EasyDep의 `requirementsOnly` 프로필도 같은 계약을
+  받고, MetaGPT와 ChatDev의 `armPromptSha256`은 여전히 서로 같습니다. 실행 오라클은 고정된
+  API 표면을 전제하므로, 오라클을 붙일 사례에는 계약이 필요합니다.
+- 매핑하지 않은 요구사항은 비워 두세요. 억지로 연결하는 것보다 미연결로 남기는 편이
+  정직합니다.
 
 ## manifest 작성
 
@@ -169,7 +244,52 @@ MetaGPT와 ChatDev는 현재 고정 설치 스크립트를 사용할 수 있습�
 }
 ```
 
-HTTP 업무·동시성 오라클:
+공통 산출물 존재 확인 (실행 불필요):
+
+```json
+{
+  "id": "iac-artifact",
+  "kind": "artifactPresent",
+  "artifacts": ["infrastructure"]
+}
+```
+
+`artifactEvidence`에 신고한 파일이 실제로 존재해야 통과합니다. 프레임워크마다 파일 경로가
+달라도 되므로 `fileExists`와 달리 경로를 미리 고정할 필요가 없습니다.
+
+공통 산출물 본문 검사 (실행 불필요):
+
+```json
+{
+  "id": "iac-region",
+  "kind": "artifactContains",
+  "artifact": "infrastructure",
+  "anyOf": ["ap-northeast-2", "seoul"],
+  "noneOf": ["aws_eks"]
+}
+```
+
+`anyOf`는 하나라도 있어야, `noneOf`는 하나도 없어야 통과합니다. 대소문자를 구분하지
+않습니다. 리전·금지 서비스 같은 클라우드 제약을 Docker 없이 판정할 때 씁니다.
+
+생성 앱을 띄우고 실행하는 오라클:
+
+```json
+{
+  "id": "business-api",
+  "kind": "containerHttpOracle",
+  "oraclePath": "../../baselines/course-registration-cases/business-oracle.json",
+  "port": 8080,
+  "healthPath": "/courses",
+  "readyTimeoutSeconds": 300
+}
+```
+
+비교 대상이 `artifactEvidence.container`로 신고한 compose 파일(없으면 Dockerfile)로 앱을
+띄우고, `healthPath`가 응답하면 오라클을 실행한 뒤 반드시 정리합니다. Docker가 없거나
+기동에 실패해도 예외가 아니라 `failed`로 기록합니다.
+
+HTTP 업무·동시성 오라클 (이미 떠 있는 앱 대상):
 
 ```json
 {
@@ -181,7 +301,9 @@ HTTP 업무·동시성 오라클:
 ```
 
 `httpOracle`은 순차 `request`와 실제 동시 `concurrentRequests`를 지원합니다. 비교 대상의
-`subject-result.json`에서 `metadata.baseUrl`을 제공하면 `{base_url}`로 사용할 수 있습니다.
+`subject-result.json`에서 `metadata.appBaseUrl`을 제공하면 `{base_url}`과 `{app_base_url}`로
+사용할 수 있습니다. 이 값은 **생성된 애플리케이션**의 주소여야 합니다. LLM 공급자 주소는
+`metadata.llmBaseUrl`처럼 다른 이름으로 기록하세요.
 기존 수강신청 오라클은 기본 흐름, 중복 등록 거부, 마지막 좌석 초과 판매 방지 등을 검사합니다.
 
 한 HTTP 오라클에 여러 업무 검증이 있으면 요구사항을 오라클 전체가 아니라 개별 phase에
@@ -271,7 +393,7 @@ manifest의 프레임워크 이름과 고정 버전이 결과 파일의 값과 �
     "container": ["Dockerfile"],
     "infrastructure": ["main.tf"]
   },
-  "metadata": {"baseUrl": "http://127.0.0.1:18080"}
+  "metadata": {"appBaseUrl": "http://127.0.0.1:18080"}
 }
 ```
 
@@ -320,7 +442,7 @@ EasyDep 공개 제품 실행 결과 변환:
 ```
 
 실제 arm 래퍼는 `{prompt_file}`을 읽은 뒤 다음 세 단계를 한 프로세스 안에서 수행하면 됩니다: 프레임워크 실행,
-사용량·증거 변환, 생성 앱 기동과 `metadata.baseUrl` 기록. 비교 실행기는 그 다음 동일한
+사용량·증거 변환, 생성 앱 기동과 `metadata.appBaseUrl` 기록. 비교 실행기는 그 다음 동일한
 게이트를 적용합니다. 고정 프롬프트 원문은 실행 디렉터리의 `arm-prompt.txt`에만 보존하고,
 API 키나 비밀 값은 프롬프트·결과 파일·로그에 기록하지 마세요.
 

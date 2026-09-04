@@ -65,6 +65,7 @@ class PromptProtocol:
     task_preamble: str
     artifact_contract_preamble: str
     artifact_contract: tuple[ArtifactSpec, ...]
+    api_contract: str = ""
 
 
 @dataclass(frozen=True)
@@ -229,6 +230,7 @@ def load_manifest(path: str | Path) -> Manifest:
                 )
             ).strip(),
             artifact_contract=tuple(artifacts),
+            api_contract=str(prompt.get("apiContract", "")).strip(),
         )
         if not prompt_protocol.task_preamble or not prompt_protocol.artifact_contract_preamble:
             raise ValueError("promptProtocol의 preamble은 비어 있을 수 없습니다.")
