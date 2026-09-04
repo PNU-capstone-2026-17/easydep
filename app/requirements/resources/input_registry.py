@@ -89,9 +89,9 @@ class Basis:
 
     def __post_init__(self) -> None:
         if self.kind not in _BASIS_KINDS:
-            raise ValueError(f"모르는 근거 갈래: {self.kind!r}")
+            raise ValueError(f"Unknown basis kind: {self.kind!r}")
         if not self.ref.strip():
-            raise ValueError("근거에 좌표가 없다")
+            raise ValueError("A basis reference is required")
 
     def __str__(self) -> str:
         return f"{self.kind}:{self.ref}"
@@ -124,21 +124,20 @@ class Ask:
 
     def __post_init__(self) -> None:
         if not self.id.strip():
-            raise ValueError("Ask에 id가 없다")
+            raise ValueError("An ask ID is required")
         if not self.question.strip():
-            raise ValueError(f"{self.id}: 질문이 없다")
+            raise ValueError(f"{self.id}: a question is required")
         if not self.opens.strip():
             raise ValueError(
-                f"{self.id}: 소비자(`opens`)가 없다 — 무엇을 여는지 말할 수 없는 "
-                "칸은 받지 않는다(request.json이 적어 둔 규율)"
+                f"{self.id}: an `opens` consumer is required; do not collect a field "
+                "that enables no named decision"
             )
         if not self.basis:
             raise ValueError(
-                f"{self.id}: 근거가 없다 — 근거 없는 질문은 우리 취향이지 지식이 "
-                "아니다(cloudkb/CLAUDE.md §5)"
+                f"{self.id}: at least one basis reference is required"
             )
         if self.tier not in _TIERS:
-            raise ValueError(f"{self.id}: 모르는 계층 {self.tier!r}")
+            raise ValueError(f"{self.id}: unknown tier {self.tier!r}")
 
 
 #: 값 질문. **결정 질문은 여기 없다** — depkb에서 파생된다(`_decision_asks`).
@@ -246,10 +245,9 @@ ASKS: tuple[Ask, ...] = (
 #: 사용자에게 묻지 **않는** 칸과 그 이유. 스키마에 있는데 여기 없는 칸이 생기면
 #: 테스트가 실패한다 — "빠뜨린 것"과 "안 묻기로 한 것"을 구별하기 위해서다.
 NOT_ASKED: dict[str, str] = {
-    "schemaVersion": "계약 판 — 스키마가 const로 못 박았고 생산자가 옮겨 적는다",
-    "workloads": "시스템 범위를 Docker 기반 VM 배포로 고정했으므로 ['vm']을 넣는다",
-    "regionAsWritten": "사용자가 쓴 원문을 생산자가 그대로 남기는 것이라 "
-    "물을 것이 없다(join.region의 부산물)",
+    "schemaVersion": "The producer copies the constant contract version from the schema.",
+    "workloads": "The Docker-on-VM deployment scope fixes this value to ['vm'].",
+    "regionAsWritten": "The producer preserves the user's region text from join.region.",
 }
 
 #: **요구사항 단계에서 안 받고 인계로 넘기는 것**과 그 이유(2026-08-01).
@@ -259,11 +257,9 @@ NOT_ASKED: dict[str, str] = {
 #: 안 받으면 사라지므로, **인계 항목으로 명시해서 낸다**(`cloud_artifact`의
 #: `_handoff`) — 침묵과 인계는 다르다.
 HANDOFF: dict[str, str] = {
-    "containerRegistry": "컨테이너 이미지를 올릴 레지스트리. 이미지 태그와 같은 "
-    "종류이고 태그는 CI가 정한다 — 둘 중 하나만 요구사항에서 "
-    "받으면 선이 이상하다. 없으면 매니페스트에 자리표시자가 "
-    "남고, 그 자리표시자가 곧 인계 표시다",
-    "tlsCertificate": "TLS 인증서·시크릿. 운영·보안 결정이다",
+    "containerRegistry": "The deployment operator supplies the container registry; CI "
+    "selects the image tag, and the manifest keeps a placeholder until then.",
+    "tlsCertificate": "The deployment operator supplies the TLS certificate or secret.",
 }
 
 
@@ -320,17 +316,15 @@ def _decision_asks(csp: str, workloads: tuple[str, ...]) -> tuple[Ask, ...]:
             continue  # 이 CSP에서 미측정인 앵커 — 계획 쪽이 따로 말한다
         for decision in plan.decisions:
             subject, _, obj = decision.about.partition("→")
-            detail = str(decision.condition.get("description") or "").strip()
             ask = Ask(
                 id=f"decision.{csp}.{subject}.{obj.replace('|', '-or-')}",
                 spec_field="",
                 tier=DECISION,
                 csp=csp,
                 needs_resource=subject,
-                question=(
-                    f"How should {obj} be selected for {subject}?"
-                    f"{' ' + detail if detail else ''}"
-                ),
+                # DepKB 설명은 내부 조사 기록이며 일부 자료는 한글이다. 사용자에게는
+                # 선택 대상과 이유만 영어로 보여 주고, 원문은 basis 좌표에서 조회한다.
+                question=f"How should {obj} be selected for {subject}?",
                 opens=f"The {subject} creation flow requires this control-plane decision "
                 f"({decision.kind}).",
                 basis=(Basis(CLAIM, f"{csp}/{decision.about}/existence"),),

@@ -99,7 +99,7 @@ def _coerce_scalar(kind: str, allowed: tuple[str, ...], raw: object) -> tuple[ob
         value = str(text).strip().lower()
         lowered = {a.lower(): a for a in allowed}
         if value not in lowered:
-            return None, f"{' 또는 '.join(allowed)}여야 한다"
+            return None, f"must be one of: {', '.join(allowed)}"
         return lowered[value], ""
     if kind == "boolean":
         if isinstance(text, bool):
@@ -107,16 +107,16 @@ def _coerce_scalar(kind: str, allowed: tuple[str, ...], raw: object) -> tuple[ob
         value = str(text).strip().lower()
         if value in ("true", "false"):
             return value == "true", ""
-        return None, "true 또는 false여야 한다"
+        return None, "must be true or false"
     if kind in ("integer", "number"):
         if isinstance(text, bool):
-            return None, "수여야 한다"
+            return None, "must be a number"
         try:
             number = float(str(text).replace(",", "").replace("_", "").strip())
         except (TypeError, ValueError):
-            return None, "수로 못 읽었다 — 구분자 없는 숫자로 달라"
+            return None, "must be a number written without grouping separators"
         if number <= 0:
-            return None, "양수여야 한다"
+            return None, "must be greater than zero"
         return (int(number) if kind == "integer" else number), ""
     return str(text), ""
 
@@ -131,7 +131,7 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
     """
     kind = cloud_contract.field_type(field_name)
     if not kind:
-        return None, "계약에 없는 칸이다"
+        return None, "is not a RESOURCE_SPEC field"
     text = raw.strip() if isinstance(raw, str) else raw
 
     if kind in ("enum", "boolean", "integer", "number"):
@@ -155,7 +155,7 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
             )
         items = [i for i in items if i]
         if not items:
-            return None, "적어도 하나는 있어야 한다"
+            return None, "must contain at least one item"
         # 순서는 뜻이 없고 중복은 스키마가 거부한다 — 여기서 정리해 준다.
         return list(dict.fromkeys(items)), ""
     if kind == "object":
@@ -170,13 +170,13 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
                 decoded = None
             if not isinstance(decoded, dict):
                 sub = ", ".join(n for n, _k, _e, _r in cloud_contract.field_object(field_name))
-                return None, f"JSON 객체여야 한다 — 하위 칸: {sub}"
+                return None, f"must be a JSON object with fields: {sub}"
             object_body = cast(dict[str, object], decoded)
         out: dict[str, object] = {}
         for name, sub_kind, allowed, required in cloud_contract.field_object(field_name):
             if name not in object_body:
                 if required:
-                    return None, f"하위 칸 {name}이 없다"
+                    return None, f"is missing required field {name}"
                 continue
             # 하위 칸도 같은 마샬링을 받는다 — 규칙이 갈라지지 않게.
             value, why = _coerce_scalar(sub_kind, allowed, object_body[name])
@@ -187,7 +187,7 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
             n for n, _k, _e, _r in cloud_contract.field_object(field_name)
         }
         if extra:
-            return None, f"계약에 없는 하위 칸이다: {', '.join(sorted(extra))}"
+            return None, f"contains unknown fields: {', '.join(sorted(extra))}"
         return out, ""
     return str(text), ""
 
@@ -203,14 +203,14 @@ def _domain_error(field_name: str, value: object, draft: dict) -> str:
         known = regions.providers()
         if value not in known:
             return (
-                f"아는 프로바이더가 아니다 — {', '.join(known)} 중 하나여야 한다 "
-                "(list_cloud_providers)"
+                f"unknown provider; choose one of {', '.join(known)} "
+                "using list_cloud_providers"
             )
     if field_name == "region":
         if not regions.is_region_code(str(value), provider=draft.get("provider")):
             return (
-                "리전 **코드**가 아니다 — 지명을 그대로 넣으면 뒤 단계 조인이 조용히 "
-                "빈 답이 된다. resolve_region으로 코드를 받아라"
+                "must be a region code, not a place name; use resolve_region "
+                "to obtain a code"
             )
     if field_name == "workloads":
         # 계획 전체가 이 값 위에 선다. **실측이 없는 종류를 받으면 그 부분 계획이
@@ -218,15 +218,15 @@ def _domain_error(field_name: str, value: object, draft: dict) -> str:
         provider = draft.get("provider")
         if not provider:
             return (
-                "provider를 먼저 정해야 한다 — 배포 가능한 종류가 프로바이더마다 "
-                "다르고, 그 목록이 실측에서 나온다(list_workload_kinds)"
+                "record provider first because supported workload kinds differ by provider; "
+                "use list_workload_kinds"
             )
         known = input_registry.anchors_for(str(provider))
         unknown = [v for v in cast(list[str], value or []) if v not in known]
         if unknown:
             return (
-                f"{provider}에서 실측이 없는 종류다: {', '.join(unknown)} — "
-                f"list_workload_kinds가 주는 목록에서 골라라 "
+                f"unsupported workload kinds for {provider}: {', '.join(unknown)}; "
+                f"choose from list_workload_kinds "
                 f"({', '.join(known[:8])}…)"
             )
     return ""
@@ -291,7 +291,7 @@ class ResourceIntakeSession:
                 name,
                 as_written,
                 raw,
-                "인용한 조각이 입력에도 도구 출력에도 없다 — 지어낸 것으로 본다",
+                "the quoted evidence does not occur in the user input or a tool result",
             )
         value, why = _coerce(name, raw)
         if why:
@@ -640,6 +640,22 @@ def extract_resource_constraints(
                 "degraded": (
                     "The resource constraint LLM is disabled; no constraints were extracted."
                 ),
+            }
+        }
+    # 구조화 입력과 이전 질문의 답은 아래 build 단계가 field를 이미 알고 처리한다.
+    # 자유문장과 요구사항이 모두 없으면 모델이 읽을 근거도 없으므로 빈 proposal을 바로 낸다.
+    has_natural_input = bool(
+        str(extraction_state.get("resource_constraints_text") or "").strip()
+        or any(
+            str(item.get("text") or "").strip()
+            for item in extraction_state.get("classified") or []
+        )
+    )
+    if not has_natural_input:
+        return {
+            "resource_constraint_extraction": {
+                "status": "completed",
+                "result": CloudConstraintExtraction().model_dump(mode="json"),
             }
         }
     try:

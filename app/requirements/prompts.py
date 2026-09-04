@@ -53,7 +53,7 @@ def _validator_system(
         selected = {only} if isinstance(only, str) else set(only)
         judged = tuple(r for r in judged if r.id in selected)
         if not judged:
-            raise KeyError(f"{stage}에 의미 검증 규칙 {only!r}이 없다")
+            raise KeyError(f"Stage {stage} has no semantic validation rule {only!r}")
     n = len(judged)
     count = f"{n} verdict" if n == 1 else f"{n} verdicts"
     block = "\n".join(r.prompt_line() for r in judged)
@@ -416,12 +416,18 @@ def spec_repair_user(
     repair_history: str,
 ) -> str:
     joined = "\n".join(f"- {d}" for d in directives)
+    history = (
+        "\n\n[PREVIOUS REPAIR ATTEMPTS FOR THIS SPECIFICATION STATE]\n"
+        + repair_history
+        if repair_history
+        else ""
+    )
     return (
         f"{base_user}\n\n[PREVIOUS SPECIFICATION]\n{previous_spec}\n\n"
         f"[THE PREVIOUS SPECIFICATION FAILED THESE CHECKS — return the complete corrected "
         f"specification, preserving fields that do not need a change and introducing no new "
-        f"behavior]\n{joined}\n\n[REPAIR STRATEGY]\n{strategy}\n\n"
-        f"[ACCUMULATED REPAIR HISTORY]\n{repair_history}"
+        f"behavior]\n{joined}\n\n[REPAIR STRATEGY]\n{strategy}"
+        f"{history}"
     )
 
 
@@ -450,7 +456,7 @@ def probe_system_for(stage: str, rule_id: str) -> str:
     """
     rule = _rules.rule(rule_id)
     if rule.stage != stage:
-        raise KeyError(f"{rule_id}는 {stage} 단계의 규칙이 아니다({rule.stage})")
+        raise KeyError(f"Rule {rule_id} does not belong to stage {stage} ({rule.stage})")
     role, do_not_flag = _VALIDATOR_ROLES[stage]
     n = "1 verdict"
     already = ", ".join(_rules.already_checked_names(stage)) or "(none)"
@@ -490,7 +496,7 @@ def generation_system_for(stage: str) -> str:
 
     shape = _generation_shapes().get(stage)
     if shape is None:  # pragma: no cover - 배선 오류
-        raise KeyError(f"{stage}: 생성 프롬프트가 없다")
+        raise KeyError(f"{stage}: no generation prompt is registered")
     if not settings.playbook_enabled:
         return _generation_system(stage, shape)
 
@@ -630,7 +636,7 @@ def fingerprint(paths: Sequence[str] | None = None) -> dict[str, str]:
     wanted = PATHS if paths is None else paths
     unknown = [p for p in wanted if p not in builders]
     if unknown:  # pragma: no cover - 배선 오류
-        raise KeyError(f"모르는 측정 경로 {unknown} — 아는 것은 {list(builders)}")
+        raise KeyError(f"Unknown measurement paths {unknown}; known paths: {list(builders)}")
     return {p: builders[p]() for p in wanted}
 
 
@@ -643,8 +649,8 @@ def validator_system_for(
     """
     if stage not in _VALIDATOR_SYSTEMS:  # pragma: no cover - 배선 오류
         raise KeyError(
-            f"{stage}: 의미 검증 프롬프트가 없다. knowledge/rules.py에 규칙을 넣었다면 "
-            "여기에도 프롬프트를 등록해야 한다."
+            f"{stage}: no semantic validation prompt is registered. If a rule was added "
+            "to knowledge/rules.py, register its prompt here as well."
         )
     if only is None:
         return _VALIDATOR_SYSTEMS[stage]

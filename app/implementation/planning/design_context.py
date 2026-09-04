@@ -958,7 +958,7 @@ Rules:
 
 ## OpenAPI contract
 ```json
-{json.dumps(openapi, ensure_ascii=False, indent=2)}
+{_prompt_json(openapi)}
 ```
 
 ## Exact OpenAPI Generator TypeScript contracts
@@ -1057,14 +1057,8 @@ def llm_config(spec: JobSpec) -> dict[str, object]:
         "model": connection.model,
         "baseUrl": connection.base_url,
         "temperature": spec.agent_temperature,
-        "topP": spec.agent_top_p,
         "maxOutputTokens": spec.agent_max_output_tokens,
-        "reasoningBudget": spec.agent_reasoning_budget,
         "reasoningEffort": settings.implementation_reasoning_effort,
-        "chatTemplateKwargs": {
-            "enable_thinking": True,
-            "force_nonempty_content": True,
-        },
     }
 
 

@@ -78,6 +78,18 @@ def test_prompt_context_keeps_all_unique_failures_and_only_recent_details():
     assert '"strategy-0"' in context
     assert '"strategy-7"' in context
 
+    focused = ledger.prompt_context_for_state(
+        input_digest=ledger.attempts[-1].input_digest,
+        finding_keys=ledger.attempts[-1].finding_keys_before,
+    )
+    assert '"strategy-7"' in focused
+    assert '"strategy-0"' not in focused
+    assert "candidateDigest" not in focused
+    assert ledger.prompt_context_for_state(
+        input_digest="unseen",
+        finding_keys=("rule",),
+    ) == ""
+
 
 def test_progress_accepts_strict_reduction_or_validation_frontier_advance():
     assert repair_makes_progress(("a", "b"), ("b",))

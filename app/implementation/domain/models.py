@@ -38,9 +38,7 @@ class JobSpec:
     output_root: Path
     agent_mode: str
     agent_temperature: float
-    agent_top_p: float
     agent_max_output_tokens: int
-    agent_reasoning_budget: int
     # The parent web process polls this small file while the independently
     # spawned generator is running.  It is deliberately outside the immutable
     # run directory, which does not exist until generation completes.

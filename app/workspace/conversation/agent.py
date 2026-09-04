@@ -34,7 +34,7 @@ class _ConversationPlan(BaseModel):
     question: str = ""
 
     @model_validator(mode="after")
-    def validate_kind_fields(self) -> "_ConversationPlan":
+    def validate_kind_fields(self) -> _ConversationPlan:
         if self.kind == "command" and self.intent is None:
             raise ValueError("command plans require an intent")
         if self.kind == "project_question" and not self.query.strip():
@@ -87,8 +87,24 @@ class ConversationAgent:
 
         project_tools = tools or ProjectTools(app_id)
         utterance = _bounded_text(text.strip(), 8_000)
+        # 분류기는 앱 ID나 오래된 command ID를 사용하지 않는다. 현재 상태와 대기 질문을
+        # 먼저 주고, 지시 대상을 이어 말할 때 필요한 최근 대화만 남긴다. 실제 project
+        # 정보와 수정 대상은 분류 뒤 전용 tool이 다시 읽으므로 여기서 산출물을 복사하지 않는다.
+        planning_context = {
+            "workspace": context.workspace,
+            "pendingQuestion": context.pending_question,
+            "actions": context.actions,
+            "recentTurns": [
+                {"role": turn.role, "text": turn.text}
+                for turn in context.turns[-4:]
+            ],
+            "recentDecisions": context.decisions[-3:],
+        }
         context_json = json.dumps(
-            context.model_dump(mode="json"), ensure_ascii=False, default=str
+            planning_context,
+            ensure_ascii=False,
+            default=str,
+            separators=(",", ":"),
         )
         context_json = _bounded_text(context_json, 24_000)
         plan = self._propose(

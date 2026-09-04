@@ -12,7 +12,7 @@ from typing import Any
 
 from app.config import settings
 from app.llm_connection import build_llm_connection
-from app.llm_profiles import profile_for
+from app.llm_profiles import canonical_model_id, profile_for
 from app.metrics import langsmith as langsmith_metrics
 from app.validation import RepairAttempt, RepairLedger, stable_digest
 
@@ -1515,6 +1515,15 @@ def create_openhands_conversation(
         fallback_temperature=float(raw_temperature),
         fallback_max_tokens=int(raw_max_output),
     )
+    if profile.preserve_reasoning_on_tool_turn:
+        # OpenHands는 지원 모델의 assistant reasoning_content를 다음 tool turn에 다시
+        # 싣는 기능이 있지만, proxy 접두사가 붙은 최신 모델 ID는 내장 목록에 늦게 반영될
+        # 수 있다. 실제 요청 모델은 바꾸지 않고 정확한 canonical ID만 기능 목록에 보탠다.
+        from openhands.sdk.llm.utils.model_features import SEND_REASONING_CONTENT_MODELS
+
+        reasoning_model = canonical_model_id(model)
+        if reasoning_model not in SEND_REASONING_CONTENT_MODELS:
+            SEND_REASONING_CONTENT_MODELS.append(reasoning_model)
     is_qwen_coder = "qwen3-coder" in model.lower()
     requested_output = configured_max_output_tokens(int(raw_max_output))
     llm_options: dict[str, Any] = {

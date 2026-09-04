@@ -46,16 +46,16 @@ def _ref(
 ) -> dict[str, Any]:
     """입력 예시와 leaf 탐색에 필요한 local $ref 하나만 푼다."""
     if not isinstance(schema, dict):
-        raise UpstreamAmbiguity("OpenAPI schema가 object가 아닙니다.")
+        raise UpstreamAmbiguity("The OpenAPI schema must be an object.")
     pointer = schema.get("$ref")
     if not pointer:
         return schema
     if not isinstance(pointer, str) or not pointer.startswith("#/") or pointer in seen:
-        raise UpstreamAmbiguity(f"OpenAPI schema 참조를 해석할 수 없습니다: {pointer}")
+        raise UpstreamAmbiguity(f"The OpenAPI schema reference cannot be resolved: {pointer}")
     target: Any = document
     for part in pointer[2:].split("/"):
         if not isinstance(target, dict) or part not in target:
-            raise UpstreamAmbiguity(f"OpenAPI schema 참조가 없습니다: {pointer}")
+            raise UpstreamAmbiguity(f"The OpenAPI schema reference does not exist: {pointer}")
         target = target[part]
     return {
         **_ref(document, target, seen | {pointer}),
@@ -72,11 +72,13 @@ def _inline_refs(document: dict[str, Any], value: Any, seen: frozenset[str] = fr
     pointer = value.get("$ref")
     if pointer:
         if not isinstance(pointer, str) or not pointer.startswith("#/") or pointer in seen:
-            raise UpstreamAmbiguity(f"OpenAPI schema 참조를 펼칠 수 없습니다: {pointer}")
+            raise UpstreamAmbiguity(f"The OpenAPI schema reference cannot be expanded: {pointer}")
         target: Any = document
         for part in pointer[2:].split("/"):
             if not isinstance(target, dict) or part not in target:
-                raise UpstreamAmbiguity(f"OpenAPI schema 참조가 없습니다: {pointer}")
+                raise UpstreamAmbiguity(
+                    f"The OpenAPI schema reference does not exist: {pointer}"
+                )
             target = target[part]
         merged = {
             **target,
@@ -97,7 +99,7 @@ def _type(document: dict[str, Any], schema: Any) -> str:
         return "array"
     if value.get("enum"):
         return "string"
-    raise UpstreamAmbiguity("OpenAPI schema type이 비어 있습니다.")
+    raise UpstreamAmbiguity("The OpenAPI schema type is missing.")
 
 
 def _fields(document: dict[str, Any], schema: Any) -> list[tuple[str, dict[str, Any], bool]]:
@@ -110,7 +112,7 @@ def _fields(document: dict[str, Any], schema: Any) -> list[tuple[str, dict[str, 
     if properties is None:
         return []
     if not isinstance(properties, dict):
-        raise UpstreamAmbiguity("object OpenAPI schema에 properties가 없습니다.")
+        raise UpstreamAmbiguity("An object OpenAPI schema has no properties.")
     required = set(value.get("required") or [])
     return [
         (str(name), _ref(document, child), name in required)
@@ -143,7 +145,7 @@ def _sample(document: dict[str, Any], schema: Any) -> Any:
     if kind == "array":
         items = value.get("items")
         if not isinstance(items, dict):
-            raise UpstreamAmbiguity("array OpenAPI schema에 items가 없습니다.")
+            raise UpstreamAmbiguity("An array OpenAPI schema has no items.")
         return [_sample(document, items)]
     if kind == "object":
         return {
@@ -151,13 +153,13 @@ def _sample(document: dict[str, Any], schema: Any) -> Any:
             for name, child, required in _fields(document, value)
             if required
         }
-    raise UpstreamAmbiguity(f"안정 예시값을 만들 수 없는 OpenAPI type입니다: {kind}")
+    raise UpstreamAmbiguity(f"No stable example value can be created for OpenAPI type {kind}.")
 
 
 def _index(document: dict[str, Any]) -> dict[str, list[Operation]]:
     paths = document.get("paths")
     if not isinstance(paths, dict) or not paths:
-        raise UpstreamAmbiguity("고정 OpenAPI paths가 비어 있습니다.")
+        raise UpstreamAmbiguity("The frozen OpenAPI document has no paths.")
     result: dict[str, list[Operation]] = {}
     for path, path_item in paths.items():
         if not isinstance(path, str) or not isinstance(path_item, dict):
@@ -178,17 +180,17 @@ def operation_for_id(document: dict[str, Any], operation_id: str, *, use_case_id
     """부분 이름 비교 없이 operationId 하나를 OpenAPI 호출 하나로 확정한다."""
     matches = _index(document).get(operation_id, [])
     if len(matches) != 1:
-        detail = "찾을 수 없습니다" if not matches else "중복됩니다"
-        raise UpstreamAmbiguity(f"OpenAPI operationId가 {detail}: {operation_id}")
+        detail = "was not found" if not matches else "is duplicated"
+        raise UpstreamAmbiguity(f"OpenAPI operationId {operation_id} {detail}.")
     operation = matches[0]
     trace = operation.value.get("x-easydep-use-case-ids")
     if not isinstance(trace, list) or not all(
         isinstance(item, str) and item.strip() for item in trace
     ):
-        raise UpstreamAmbiguity(f"OpenAPI operation trace가 비어 있습니다: {operation_id}")
+        raise UpstreamAmbiguity(f"OpenAPI operation trace is empty: {operation_id}")
     if use_case_id not in trace:
         raise UpstreamAmbiguity(
-            f"OpenAPI operation trace가 유스케이스와 맞지 않습니다: {operation_id} → {use_case_id}"
+            f"OpenAPI operation trace does not match the use case: {operation_id} -> {use_case_id}"
         )
     return operation
 
@@ -198,7 +200,7 @@ def _response_schema(
 ) -> dict[str, Any] | None:
     responses = operation.value.get("responses")
     if not isinstance(responses, dict):
-        raise UpstreamAmbiguity(f"OpenAPI responses가 비어 있습니다: {operation.operation_id}")
+        raise UpstreamAmbiguity(f"OpenAPI responses are empty: {operation.operation_id}")
     if status is None:
         candidates = [
             value
@@ -207,7 +209,7 @@ def _response_schema(
         ]
         if len(candidates) != 1:
             raise UpstreamAmbiguity(
-                f"OpenAPI success response schema를 하나로 정할 수 없습니다: {operation.operation_id}"
+                f"OpenAPI success response schema is ambiguous: {operation.operation_id}"
             )
         response = candidates[0]
     else:
@@ -218,7 +220,7 @@ def _response_schema(
         )
     if not isinstance(response, dict):
         raise UpstreamAmbiguity(
-            f"OpenAPI success response가 비어 있습니다: {operation.operation_id}"
+            f"OpenAPI success response is missing: {operation.operation_id}"
         )
     content = response.get("content")
     # 204처럼 본문이 없는 성공 응답은 schema가 없는 것이 정상이다. ``content``를
@@ -229,7 +231,7 @@ def _response_schema(
     schema = json_content.get("schema") if isinstance(json_content, dict) else None
     if not isinstance(schema, dict):
         raise UpstreamAmbiguity(
-            f"OpenAPI response schema가 비어 있습니다: {operation.operation_id}"
+            f"OpenAPI response schema is missing: {operation.operation_id}"
         )
     _type(document, schema)
     return schema
@@ -255,7 +257,7 @@ def _leaves(
     if kind == "array":
         items = resolved.get("items")
         if not isinstance(items, dict):
-            raise UpstreamAmbiguity("array OpenAPI schema에 items가 없습니다.")
+            raise UpstreamAmbiguity("An array OpenAPI schema has no items.")
         first = value[0] if isinstance(value, list) and value else None
         return _leaves(document, items, first, path + "[]")
     return [(path.rsplit(".", 1)[-1].replace("[]", ""), kind, value, path)]
@@ -294,7 +296,7 @@ def _inputs(
             seen.add((where, name))
             if where not in {"path", "query", "header"} or not name or not isinstance(schema, dict):
                 raise UpstreamAmbiguity(
-                    f"OpenAPI parameter schema가 불완전합니다: {operation.operation_id}"
+                    f"OpenAPI parameter schema is incomplete: {operation.operation_id}"
                 )
             value = transferred(name, schema, f"{where}.{name}")
             if where == "path":
@@ -336,35 +338,6 @@ def _basic_auth() -> tuple[str, str]:
     )
 
 
-def _request_fields(document: dict[str, Any], operation: Operation) -> list[dict[str, str]]:
-    """LLM이 값 대신 순서를 판단할 수 있도록 필수 field 이름과 type만 보인다."""
-    result: list[dict[str, str]] = []
-    for owner in (operation.path_item, operation.value):
-        for parameter in owner.get("parameters") or []:
-            if (
-                isinstance(parameter, dict)
-                and (parameter.get("required") or parameter.get("in") == "path")
-                and isinstance(parameter.get("schema"), dict)
-            ):
-                result.append(
-                    {
-                        "name": str(parameter.get("name") or ""),
-                        "type": _type(document, parameter["schema"]),
-                    }
-                )
-    body = operation.value.get("requestBody")
-    schema = (
-        ((body.get("content") or {}).get("application/json") or {}).get("schema")
-        if isinstance(body, dict) and body.get("required")
-        else None
-    )
-    if isinstance(schema, dict):
-        result.extend(
-            {"name": name, "type": kind} for name, kind, _value, _path in _leaves(document, schema)
-        )
-    return result
-
-
 def _url(
     target_url: str, operation: Operation, values: dict[str, Any], query: dict[str, Any]
 ) -> str:
@@ -372,7 +345,9 @@ def _url(
     for name, value in values.items():
         path = path.replace("{" + name + "}", quote(str(value), safe=""))
     if "{" in path or "}" in path:
-        raise UpstreamAmbiguity(f"필수 path parameter를 채울 수 없습니다: {operation.path}")
+        raise UpstreamAmbiguity(
+            f"A required path parameter cannot be populated: {operation.path}"
+        )
     return urljoin(target_url.rstrip("/") + "/", path.lstrip("/")) + (
         ("?" + urlencode(query, doseq=True)) if query else ""
     )
@@ -493,7 +468,9 @@ def execute_functional_plan(
             schema = _response_schema(openapi, operation, response.status_code)
             if schema is None:
                 if response.content:
-                    raise ValueError("OpenAPI에는 없는 성공 응답 본문이 반환되었습니다.")
+                    raise ValueError(
+                        "The response contains a success body that is absent from OpenAPI."
+                    )
                 reports.append(report)
                 continue
             payload = response.json()
@@ -540,32 +517,8 @@ def execute_functional_plan(
     }
 
 
-def operation_prompt_projection(
-    document: dict[str, Any], operation_ids: list[str], *, use_case_id: str
-) -> list[dict[str, Any]]:
-    """LLM에는 operationId와 입출력 schema leaf만 보낸다."""
-    result = []
-    for operation_id in operation_ids:
-        operation = operation_for_id(document, operation_id, use_case_id=use_case_id)
-        response = _response_schema(document, operation)
-        result.append(
-            {
-                "operationId": operation_id,
-                "requiredRequestFields": _request_fields(document, operation),
-                "successResponseFields": [
-                    {"name": name, "type": kind}
-                    for name, kind, _value, _path in (
-                        _leaves(document, response) if response is not None else []
-                    )
-                ],
-            }
-        )
-    return result
-
-
 __all__ = [
     "UpstreamAmbiguity",
     "execute_functional_plan",
     "operation_for_id",
-    "operation_prompt_projection",
 ]

@@ -22,7 +22,6 @@ from app.testing.utils.functional_executor import (
     UpstreamAmbiguity,
     execute_functional_plan,
     operation_for_id,
-    operation_prompt_projection,
 )
 from app.validation import stable_digest
 
@@ -87,7 +86,7 @@ def _functional_requirement_ids(value: Any) -> set[str]:
     """고정 요구사항에서 기능 요구사항 ID만 읽는다."""
 
     if not isinstance(value, list):
-        raise UpstreamAmbiguity("TestingContracts.requirements content가 list가 아닙니다.")
+        raise UpstreamAmbiguity("TestingContracts.requirements content must be a list.")
     result: set[str] = set()
     for item in value:
         if not isinstance(item, dict):
@@ -129,7 +128,7 @@ def _functional_requirements(value: Any, requirement_trace: dict[str, Any]) -> s
 def _operation_ids(openapi: dict[str, Any], use_case_id: str) -> list[str]:
     paths = openapi.get("paths")
     if not isinstance(paths, dict):
-        raise UpstreamAmbiguity("고정 OpenAPI paths가 비어 있습니다.")
+        raise UpstreamAmbiguity("The frozen OpenAPI document has no paths.")
     result: list[str] = []
     for path_item in paths.values():
         if not isinstance(path_item, dict):
@@ -151,7 +150,7 @@ def _operation_ids(openapi: dict[str, Any], use_case_id: str) -> list[str]:
                 result.append(operation_id)
     if not result:
         raise UpstreamAmbiguity(
-            f"유스케이스와 연결된 OpenAPI operation trace가 없습니다: {use_case_id}"
+            f"No OpenAPI operation trace is linked to use case {use_case_id}."
         )
     return result
 
@@ -160,21 +159,21 @@ def build_functional_cases(requirements: Any, use_cases: Any, openapi: Any) -> l
     """canonical requirement/spec/OpenAPI 직접 연결만 LLM 입력으로 만든다."""
     specs = use_cases.get("use_case_specs") if isinstance(use_cases, dict) else None
     if not isinstance(specs, list):
-        raise UpstreamAmbiguity("TestingContracts.use_cases에 use_case_specs가 없습니다.")
+        raise UpstreamAmbiguity("TestingContracts.use_cases has no use_case_specs list.")
     traceability = use_cases.get("traceability") if isinstance(use_cases, dict) else None
     requirement_trace = traceability.get("requirements") if isinstance(traceability, dict) else {}
     if not isinstance(requirement_trace, dict):
-        raise UpstreamAmbiguity("TestingContracts.use_cases의 requirement trace가 잘못되었습니다.")
+        raise UpstreamAmbiguity("TestingContracts.use_cases has an invalid requirement trace.")
     requirement_ids = _functional_requirements(requirements, requirement_trace)
     if not requirement_ids:
         return []
     if not isinstance(openapi, dict):
-        raise UpstreamAmbiguity("TestingContracts.openapi content가 object가 아닙니다.")
+        raise UpstreamAmbiguity("TestingContracts.openapi content must be an object.")
     cases: list[dict[str, Any]] = []
     covered: set[str] = set()
     for spec in specs:
         if not isinstance(spec, dict):
-            raise UpstreamAmbiguity("use_case_specs 항목이 object가 아닙니다.")
+            raise UpstreamAmbiguity("Each use_case_specs item must be an object.")
         use_case_id = str(spec.get("use_case_id") or "").strip()
         linked = spec.get("requirement_ids")
         if (
@@ -183,7 +182,7 @@ def build_functional_cases(requirements: Any, use_cases: Any, openapi: Any) -> l
             or not all(isinstance(item, str) and item.strip() for item in linked)
         ):
             raise UpstreamAmbiguity(
-                "use_case_specs의 use_case_id 또는 requirement_ids가 비어 있습니다."
+                "A use_case_specs item has an empty use_case_id or requirement_ids list."
             )
         selected = [item for item in linked if item in requirement_ids]
         # 시나리오 한 단계가 아니라 여러 유스케이스를 제한하는 동시성 같은 요구사항도
@@ -203,27 +202,33 @@ def build_functional_cases(requirements: Any, use_cases: Any, openapi: Any) -> l
         if not selected:
             continue
         if len(set(selected)) != len(selected):
-            raise UpstreamAmbiguity(f"use-case requirement_ids가 중복됩니다: {use_case_id}")
+            raise UpstreamAmbiguity(
+                f"Duplicate requirement_ids were found for use case {use_case_id}."
+            )
         operation_ids = _operation_ids(openapi, use_case_id)
         cases.append(
             {
                 "case_id": use_case_id,
                 "requirement_ids": selected,
                 "use_case_id": use_case_id,
-                "use_case": spec,
-                "operations": operation_prompt_projection(
-                    openapi, operation_ids, use_case_id=use_case_id
-                ),
+                # LLM은 정상 흐름에 필요한 API의 선택과 순서만 정한다. 실패 분기와
+                # OpenAPI field는 실행기가 이미 처리하므로 같은 정보를 다시 보내지 않는다.
+                "use_case_flow": {
+                    key: spec[key]
+                    for key in ("name", "preconditions", "trigger", "main_scenario")
+                    if key in spec
+                },
+                "allowed_operation_ids": operation_ids,
             }
         )
         covered.update(selected)
     missing = sorted(requirement_ids - covered)
     if missing:
         raise UpstreamAmbiguity(
-            "기능 requirement의 use-case 또는 OpenAPI trace가 없습니다: " + ", ".join(missing)
+            "Functional requirements have no use-case or OpenAPI trace: " + ", ".join(missing)
         )
     if not cases:
-        raise UpstreamAmbiguity("실행할 requirement → use case → OpenAPI 연결이 없습니다.")
+        raise UpstreamAmbiguity("No executable requirement-to-use-case-to-OpenAPI trace exists.")
     return cases
 
 
@@ -244,10 +249,10 @@ def _prompt(candidate: dict[str, Any]) -> str:
         PLAN_SYSTEM_PROMPT
         + "\nRequired plan header:\n"
         + json.dumps(header, ensure_ascii=False)
-        + "\n\nUse-case specification:\n"
-        + json.dumps(candidate["use_case"], ensure_ascii=False)
-        + "\n\nAllowed OpenAPI operation schemas:\n"
-        + json.dumps(candidate["operations"], ensure_ascii=False)
+        + "\n\nEnglish happy-path flow:\n"
+        + json.dumps(candidate["use_case_flow"], ensure_ascii=False)
+        + "\n\nAllowed operationId values:\n"
+        + json.dumps(candidate["allowed_operation_ids"], ensure_ascii=False)
     )
 
 
@@ -258,7 +263,7 @@ def _validate(case: FunctionalTestCase, candidate: dict[str, Any]) -> None:
         or case.requirement_ids != candidate["requirement_ids"]
     ):
         raise ValueError("Generated plan header does not match the frozen test case.")
-    allowed = {operation["operationId"] for operation in candidate["operations"]}
+    allowed = set(candidate["allowed_operation_ids"])
     if any(step.operation_id not in allowed for step in case.steps):
         raise ValueError("Generated plan selected an untraced operationId.")
 

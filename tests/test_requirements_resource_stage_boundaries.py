@@ -43,8 +43,7 @@ def test_decision_questions_use_the_current_depkb_condition_contract() -> None:
     questions = input_registry.asks_for("gcp", ("vm",))
     decision = next(item for item in questions if item.id.startswith("decision.gcp."))
 
-    assert decision.question.startswith("How should subnet be selected for nic?")
-    assert "custom에선 필수" in decision.question
+    assert decision.question == "How should subnet be selected for nic?"
 
 
 def test_capability_public_seam_preserves_sample_call_count_and_output_shape() -> None:
@@ -86,6 +85,28 @@ def test_capability_public_seam_preserves_sample_call_count_and_output_shape() -
     contract = result["capability_contract"]
     assert set(contract) == {"schemaVersion", "capabilities", "questions"}
     assert contract["schemaVersion"] == "CapabilityContract/v1"
+
+
+def test_empty_capability_input_has_zero_proposal_calls() -> None:
+    """근거 요구사항이 없으면 배포 capability LLM을 호출하지 않는다."""
+
+    def unexpected(_listing: list[dict], _seed: int) -> DeploymentNeedsResult:
+        raise AssertionError("empty capability input must not call the proposal adapter")
+
+    result = capability_extraction.derive_deployment_needs(
+        {"classified": []},
+        proposal_call=unexpected,
+    )
+
+    assert result == {
+        "deployment_needs": {},
+        "capability_contract": {
+            "schemaVersion": "CapabilityContract/v1",
+            "capabilities": [],
+            "questions": [],
+        },
+        "phase": "deployment_needs",
+    }
 
 
 def test_resource_proposal_is_called_once_then_cached_projection_calls_zero(
@@ -181,6 +202,24 @@ def test_disabled_resource_extraction_has_zero_proposal_calls(monkeypatch) -> No
             ),
         }
     }
+
+
+def test_empty_resource_extraction_has_zero_proposal_calls(monkeypatch) -> None:
+    """읽을 자연어가 없으면 빈 proposal을 만들기 위한 LLM 호출도 하지 않는다."""
+
+    monkeypatch.setattr(service.settings, "resource_agent_llm", True)
+
+    def unexpected(_briefing: str) -> CloudConstraintExtraction:
+        raise AssertionError("empty extraction must not call the proposal adapter")
+
+    result = service.extract_resource_constraints(
+        cast(AgentState, {"classified": [], "initial_cloud_constraints": {"provider": "aws"}}),
+        proposal_call=unexpected,
+    )
+
+    extraction = cast(dict[str, object], result["resource_constraint_extraction"])
+    assert extraction["status"] == "completed"
+    assert extraction["result"] == CloudConstraintExtraction().model_dump(mode="json")
 
 
 def test_cloud_input_public_seam_overlaps_branches_and_propagates_context() -> None:

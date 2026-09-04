@@ -90,7 +90,7 @@ def test_generate_workload_graph_uses_one_name_only_proposal() -> None:
         return {"components": [{"id": "application", "name": "Order Service"}]}
 
     generated = generate_workload_graph(
-        "UC1: 고객이 주문 목록을 조회한다.",
+        "UC1: A customer views the order list.",
         {"openapi": "3.1.0", "paths": {"/orders": {}}},
         refined_requirements=[{"id": "R1"}],
         capability_contract={"capabilities": []},
@@ -115,7 +115,7 @@ def test_generate_workload_graph_uses_one_name_only_proposal() -> None:
     assert serialized == {
         "components": [{"id": "application", "name": "Application"}],
         "context": {
-            "useCaseSummary": "UC1: 고객이 주문 목록을 조회한다.",
+            "useCaseSummary": "UC1: A customer views the order list.",
         },
     }
 
@@ -395,7 +395,7 @@ def test_revision_can_change_only_existing_component_names() -> None:
         prompt_input = json.loads(messages[-1]["content"])
         assert prompt_input == {
             "components": [{"id": "web", "name": "Web"}],
-            "feedback": "web workload 이름을 명확히 한다.",
+            "feedback": "Clarify the web workload name.",
             "targetIds": ["web"],
         }
         calls.append(schema)
@@ -409,7 +409,7 @@ def test_revision_can_change_only_existing_component_names() -> None:
 
     revised = revise_workload_graph(
         current,
-        "web workload 이름을 명확히 한다.",
+        "Clarify the web workload name.",
         {"web"},
         proposal_call=propose,
     )
@@ -506,7 +506,7 @@ def test_public_graph_spec_validates_and_dumps_typed_workload_graph(
         return current
 
     state: ArchitectureState = {
-        "usecase_spec": {"use_cases": [{"id": "UC1", "name": "주문 조회"}]},
+        "usecase_spec": {"use_cases": [{"id": "UC1", "name": "View orders"}]},
         "api_spec": {"openapi": "3.1.0", "paths": {}},
         "refined_requirements": {"requirements": [{"id": "R1"}]},
         "capability_contract": {"capabilities": []},
@@ -522,7 +522,7 @@ def test_public_graph_spec_validates_and_dumps_typed_workload_graph(
     stored = design_subgraphs.DEPLOYMENT_DIAGRAM_SPEC.extract(state)
     revised = design_subgraphs.DEPLOYMENT_DIAGRAM_SPEC.revise(
         stored,
-        "web workload를 유지한다.",
+        "Keep the web workload unchanged.",
         state,
         {"web"},
     )
@@ -545,7 +545,7 @@ def test_public_graph_spec_validates_and_dumps_typed_workload_graph(
     current, feedback, targets = captured_revision[0]
     assert isinstance(current, WorkloadGraph)
     assert current.model_dump() == stored
-    assert (feedback, targets) == ("web workload를 유지한다.", {"web"})
+    assert (feedback, targets) == ("Keep the web workload unchanged.", {"web"})
 
 
 def test_public_graph_spec_rejects_invalid_raw_candidate(

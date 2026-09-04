@@ -277,7 +277,7 @@ SEED = {"usecase_spec": {
 
 def test_revision_context_does_not_duplicate_current_or_irrelevant_artifacts():
     state = {
-        "usecase_spec": {"use_cases": [{"id": "UC1", "name": "주문"}]},
+        "usecase_spec": {"use_cases": [{"id": "UC1", "name": "Order"}]},
         "class_diagram_puml": "CLASS_CONTEXT",
         "sequence_diagram_puml": "SEQUENCE_CONTEXT",
         "api_spec": {"marker": "API_CONTEXT"},

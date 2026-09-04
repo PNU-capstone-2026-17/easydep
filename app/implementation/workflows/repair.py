@@ -16,7 +16,7 @@ from pathlib import Path
 REPAIR_SCHEMA = "implementation-repair-plan/v4"
 REPAIR_PLAN = Path("reports/repair-plan.json")
 REPAIR_PROMPT_DIR = Path("reports/implementation-tasks")
-REPAIR_PROMPT_HEADING = "## 자동 수리 작업"
+REPAIR_PROMPT_HEADING = "## Automatic repair task"
 REPAIR_PROMPT_START = "<!-- easydep:repair-directives:start -->"
 REPAIR_PROMPT_END = "<!-- easydep:repair-directives:end -->"
 
@@ -197,37 +197,37 @@ def apply_repair_directives(run_root: Path) -> None:
             current = relevant[-1]
             previous = relevant[-4:-1]
             plan_history = "\n".join(
-                f"- {entry.get('strategy', '기존 방식')}: "
+                f"- {entry.get('strategy', 'previous approach')}: "
                 + _first_evidence_line(str(entry.get("evidence", "")))
                 for entry in previous
-            ) or "- 이전 실패 없음"
+            ) or "- No previous failures"
             execution_history = _recent_execution_history(run_root, task_id)
             history = plan_history
             if execution_history:
-                history += "\n\n### 실제 변경과 검사 결과\n\n" + execution_history
+                history += "\n\n### Previous changes and verification results\n\n" + execution_history
             editable = "\n".join(
                 f"- `{path}`" for path in current.get("repairPaths", [])
-            ) or "- 작업 정의에 있는 기존 편집 파일"
+            ) or "- Existing editable files from the task definition"
             immutable = "\n".join(
                 f"- `{path}`" for path in task.get("immutable_paths", [])
-            ) or "- 없음"
+            ) or "- None"
             repair_prompt = (
                 f"# {REPAIR_PROMPT_HEADING.removeprefix('## ')}\n\n"
-                "아래 기술 오류를 해결한다. 맡은 파일 안에서는 구현 방법, 테스트 추가와 "
-                "수정 순서를 스스로 결정해도 된다. 관련 없는 기능과 생성된 공개 계약은 "
-                "바꾸지 않는다. 필요한 source는 파일 편집기로 직접 읽는다.\n\n"
-                "먼저 `run_task_check`를 한 번 실행해 현재 source에서도 오류가 재현되는지 "
-                "확인한다. 아래 이력은 이미 바뀐 source에서 나온 참고 기록일 수 있으므로, "
-                "현재 검사와 현재 파일에 없는 이름을 찾느라 시간을 쓰지 않는다.\n\n"
-                f"## 이번 접근 방법\n\n{current.get('strategy', 'focused-fix')}\n\n"
-                f"## 수정 가능한 파일\n\n{editable}\n\n"
-                f"## 읽기 전용 공개 계약\n\n{immutable}\n\n"
-                f"## 최근 실패 방법\n\n{history}\n\n"
-                "## 현재 실패\n\n```text\n"
+                "Resolve the technical failure below. Within the assigned files, choose the "
+                "implementation, tests, and edit order autonomously. Do not change unrelated "
+                "features or generated public contracts. Read needed source with the file editor.\n\n"
+                "Run `run_task_check` once first to reproduce the failure against the current "
+                "source. The history below may describe source that has already changed; do not "
+                "waste time searching for names absent from the current check and files.\n\n"
+                f"## Current approach\n\n{current.get('strategy', 'focused-fix')}\n\n"
+                f"## Editable files\n\n{editable}\n\n"
+                f"## Read-only public contracts\n\n{immutable}\n\n"
+                f"## Previous failed approaches\n\n{history}\n\n"
+                "## Current failure\n\n```text\n"
                 f"{current.get('evidence', '')}\n```\n\n"
-                "수정을 마치면 `run_task_check`를 실행하고, 실패하면 같은 대화 안에서 "
-                "원인을 읽어 계속 고친다. 같은 source와 같은 오류가 다시 나오면 EasyDep이 "
-                "성공 source에서 새 대화를 시작한다.\n"
+                "After editing, run `run_task_check`. If it fails, inspect the cause and continue "
+                "repairing in this conversation. If the same source produces the same failure, "
+                "EasyDep will start a fresh conversation from the last accepted source.\n"
             )
             repair_prompt_path.write_text(repair_prompt, encoding="utf-8")
             task["repair_prompt_file"] = str(
@@ -368,10 +368,10 @@ def _source_digest(run_root: Path, paths: list[str]) -> str:
 def _repair_strategy(repeated_count: int) -> str:
     """같은 기준 source에서도 바로 전과 다른 방식으로 새 대화를 시작한다."""
     strategies = (
-        "오류가 가리킨 파일과 검사 결과부터 직접 수정",
-        "검사를 먼저 재현하고 호출 흐름을 따라 원인을 진단한 뒤 수정",
-        "공개 계약을 유지하는 가장 작은 변경으로 다시 구현",
-        "담당 기능 내부 구현을 다시 읽고 실패한 부분만 일관되게 재구성",
+        "Edit the files named by the failure using the verification result",
+        "Reproduce the failure, trace the call path, diagnose the cause, and then edit",
+        "Reimplement the smallest failing part while preserving public contracts",
+        "Reread the assigned feature and consistently rebuild only the failing part",
     )
     if repeated_count < len(strategies):
         strategy = strategies[repeated_count]
@@ -380,10 +380,10 @@ def _repair_strategy(repeated_count: int) -> str:
         # 변경 파일과 검사 결과가 prompt에 함께 들어가므로, 이후에는 아직 시험하지 않은
         # 가설을 먼저 세우고 그 가설을 확인하는 새 접근을 선택하게 한다.
         strategy = (
-            f"새 진단 가설 {repeated_count - len(strategies) + 1}을 먼저 제시하고, "
-            "기록된 이전 변경과 겹치지 않는 근거를 확인한 뒤 수정"
+            f"State new diagnostic hypothesis {repeated_count - len(strategies) + 1}, "
+            "verify evidence not covered by prior changes, and then edit"
         )
-    return f"{strategy} (새 대화 {repeated_count + 1})"
+    return f"{strategy} (fresh conversation {repeated_count + 1})"
 
 
 def _recent_execution_history(run_root: Path, task_id: str) -> str:
@@ -413,10 +413,10 @@ def _recent_execution_history(run_root: Path, task_id: str) -> str:
     for index, attempt in enumerate(attempts, 1):
         detail = _representative_diagnostic(str(attempt.get("detail", "")))
         lines.append(
-            f"- 실행 {index}: 전략={attempt.get('strategy_key', '알 수 없음')}, "
-            f"결과={attempt.get('outcome', '알 수 없음')}, "
-            f"후보={str(attempt.get('candidate_digest', ''))[:12] or '없음'}, "
-            f"근거={detail or '기록 없음'}"
+            f"- Run {index}: strategy={attempt.get('strategy_key', 'unknown')}, "
+            f"outcome={attempt.get('outcome', 'unknown')}, "
+            f"candidate={str(attempt.get('candidate_digest', ''))[:12] or 'none'}, "
+            f"evidence={detail or 'not recorded'}"
         )
     return "\n".join(lines)
 
@@ -483,12 +483,12 @@ def _bounded_evidence(value: str, limit: int = 8000) -> str:
     if len(value) <= limit:
         return value
     half = limit // 2
-    return value[:half] + "\n... 중간 로그 생략 ...\n" + value[-half:]
+    return value[:half] + "\n... middle of log omitted ...\n" + value[-half:]
 
 
 def _first_evidence_line(value: str) -> str:
     """이전 실패 목록에는 첫 번째 읽을 수 있는 한 줄만 사용한다."""
-    return next((line.strip() for line in value.splitlines() if line.strip()), "실패 기록")
+    return next((line.strip() for line in value.splitlines() if line.strip()), "Failure recorded")
 
 
 def _evidence_text(evidence: dict[str, object]) -> str:

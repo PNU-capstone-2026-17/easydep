@@ -54,15 +54,15 @@ class FakeTools:
 def test_general_reply_does_not_read_project_state() -> None:
     def propose(schema, _messages):
         assert schema.__name__ == "_ConversationPlan"
-        return schema(kind="reply", reply="안녕하세요. 무엇을 함께 살펴볼까요?")
+        return schema(kind="reply", reply="Hello. What would you like to review?")
 
     tools = FakeTools()
     result = ConversationAgent(propose).respond(
-        "app-1", "안녕", context(), tools=tools
+        "app-1", "Hello", context(), tools=tools
     )
 
     assert isinstance(result, Reply)
-    assert result.text.startswith("안녕하세요")
+    assert result.text.startswith("Hello")
     assert tools.calls == []
 
 
@@ -70,11 +70,11 @@ def test_project_question_is_answered_from_read_only_tool_evidence() -> None:
     def propose(schema, _messages):
         if schema.__name__ == "_ConversationPlan":
             return schema(kind="project_question", query="OrderService operations")
-        return schema(text="OrderService에는 placeOrder 연산이 있습니다.")
+        return schema(text="OrderService has a placeOrder operation.")
 
     tools = FakeTools()
     result = ConversationAgent(propose).respond(
-        "app-1", "주문 서비스에 어떤 연산이 있어?", context(), tools=tools
+        "app-1", "Which operations does OrderService have?", context(), tools=tools
     )
 
     assert isinstance(result, Reply)
@@ -96,7 +96,7 @@ def test_revision_can_only_select_a_finite_validated_ref() -> None:
     tools = FakeTools()
     result = ConversationAgent(propose).respond(
         "app-1",
-        "OrderService의 주문 메서드를 바꿔줘",
+        "Change the order method in OrderService.",
         context(),
         tools=tools,
     )
@@ -116,7 +116,7 @@ def test_ambiguous_revision_returns_clarification_without_execution() -> None:
     tools = FakeTools()
     tools.matches = []
     result = ConversationAgent(propose).respond(
-        "app-1", "저 부분을 고쳐줘", context(), tools=tools
+        "app-1", "Fix that part.", context(), tools=tools
     )
 
     assert isinstance(result, Clarification)
@@ -143,14 +143,14 @@ def test_natural_advance_uses_the_same_published_transition(monkeypatch) -> None
     monkeypatch.setattr(
         workspace_module.conversation_agent,
         "respond",
-        lambda *_a, **_k: CommandIntent(intent="advance", instruction="다음으로 가자"),
+        lambda *_a, **_k: CommandIntent(intent="advance", instruction="Continue."),
     )
     service = WorkspaceService()
     try:
         action, payload, stage = service._prepare_conversational_message(
             "app-1",
             action="message",
-            payload={"text": "다음으로 가자", "action_id": latest["command_id"]},
+            payload={"text": "Continue.", "action_id": latest["command_id"]},
             stage=None,
         )
     finally:
@@ -170,14 +170,14 @@ def test_general_reply_preserves_the_underlying_workflow_actions(monkeypatch) ->
     monkeypatch.setattr(
         workspace_module.conversation_agent,
         "respond",
-        lambda *_a, **_k: Reply(text="현재 설계를 함께 살펴볼 수 있습니다."),
+        lambda *_a, **_k: Reply(text="I can help review the current design."),
     )
     service = WorkspaceService()
     try:
         action, payload, stage = service._prepare_conversational_message(
             "app-1",
             action="message",
-            payload={"text": "도와줄 수 있어?", "action_id": latest["command_id"]},
+            payload={"text": "Can you help?", "action_id": latest["command_id"]},
             stage=None,
         )
     finally:

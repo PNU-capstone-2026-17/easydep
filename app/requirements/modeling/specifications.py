@@ -412,7 +412,10 @@ def generate_specification(
             json.dumps(previous_spec, ensure_ascii=False, indent=2),
             item["issues"],
             strategy=strategy,
-            repair_history=ledger.prompt_context(),
+            repair_history=ledger.prompt_context_for_state(
+                input_digest=input_digest,
+                finding_keys=finding_keys_before,
+            ),
         )
         attempts += 1
         try:

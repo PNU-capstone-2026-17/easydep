@@ -55,7 +55,18 @@ def test_functional_cases_follow_realization_edges_and_skip_unscoped_policy() ->
         {"id": "FR-POLICY", "type": "FR"},
     ]
     use_cases = {
-        "use_case_specs": [{"use_case_id": "UC-1", "requirement_ids": ["FR-1"]}],
+        "use_case_specs": [
+            {
+                "use_case_id": "UC-1",
+                "name": "List orders",
+                "requirement_ids": ["FR-1"],
+                "preconditions": ["The customer is authenticated."],
+                "trigger": "The customer requests the order list.",
+                "main_scenario": [
+                    {"step_number": 1, "sentence": "System returns the customer's orders."}
+                ],
+            }
+        ],
         "traceability": {
             "requirements": {
                 "FR-1": {"use_cases": ["UC-1"], "modeled_as_constraint": False},
@@ -88,6 +99,15 @@ def test_functional_cases_follow_realization_edges_and_skip_unscoped_policy() ->
     cases = build_functional_cases(requirements, use_cases, openapi)
 
     assert cases[0]["requirement_ids"] == ["FR-1", "FR-2"]
+    assert cases[0]["allowed_operation_ids"] == ["listOrders"]
+    assert cases[0]["use_case_flow"] == {
+        "name": "List orders",
+        "preconditions": ["The customer is authenticated."],
+        "trigger": "The customer requests the order list.",
+        "main_scenario": [
+            {"step_number": 1, "sentence": "System returns the customer's orders."}
+        ],
+    }
 
 
 def test_operation_id_resolves_to_exact_path_and_method() -> None:

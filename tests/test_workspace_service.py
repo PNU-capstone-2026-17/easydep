@@ -1632,7 +1632,7 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     assert "Most recent implementation repair outcomes" in str(observed["feedback"])
     assert "Do not repeat the same edit" in str(observed["feedback"])
     assert '"job_id": "implementation-1"' in str(observed["feedback"])
-    assert "Changed the service, but the runtime still failed." in str(
+    assert "Changed the service, but the runtime still failed." not in str(
         observed["feedback"]
     )
     assert "Older implementation repair outcomes" in str(observed["feedback"])
@@ -1743,7 +1743,7 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
                 "verification": {"exitCode": 0},
                 "repairHistory": {"attempts": []},
                 "eventJournal": "reports/agent-executions/boundary.events.jsonl",
-                "rawResponse": "Boundary adapter 구현을 완료했습니다.",
+                "rawResponse": "The boundary adapter implementation is complete.",
             }
         ),
         encoding="utf-8",
@@ -1772,7 +1772,7 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
             "task_id": "use-cases-1",
             "task_type": "use-case",
             "status": "SUCCEEDED",
-            "raw_response": "Boundary adapter 구현을 완료했습니다.",
+            "raw_response": "The boundary adapter implementation is complete.",
             "changed_files": ["application/src/main/java/BoundaryAdapter.java"],
             "verification": {"exitCode": 0},
             "repair_history": {"attempts": []},

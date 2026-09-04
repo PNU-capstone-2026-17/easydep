@@ -205,12 +205,8 @@ def _ground_application_state_metadata(
             "retain",
             "not be lost",
             "without data loss",
-            "영속",
-            "보존",
-            "유실",
-            "손실",
         ),
-        "ephemeral": ("ephemeral", "temporary", "volatile", "휘발", "임시"),
+        "ephemeral": ("ephemeral", "temporary", "volatile"),
     }
     if durability:
         if durability in durability_evidence and any(
@@ -232,9 +228,6 @@ def _ground_application_state_metadata(
             "local filesystem",
             "local disk",
             "on the vm",
-            "vm 로컬",
-            "노드 파일",
-            "로컬 파일",
         ),
         "shared-service": (
             "shared state",
@@ -244,10 +237,6 @@ def _ground_application_state_metadata(
             "external state",
             "external storage",
             "external database",
-            "공유 상태",
-            "공유 저장",
-            "외부 상태",
-            "외부 저장",
         ),
     }
     if access_scope:
@@ -307,6 +296,16 @@ def derive_deployment_needs(
         유지한다. proposal은 근거·경계 검증을 통과하기 전까지 수락하지 않는다.
     """
     classified = list(state.get("classified") or [])
+    if not classified:
+        return {
+            "deployment_needs": {},
+            "capability_contract": {
+                "schemaVersion": "CapabilityContract/v1",
+                "capabilities": [],
+                "questions": [],
+            },
+            "phase": "deployment_needs",
+        }
     known = {str(item.get("id")) for item in classified if item.get("id")}
     listing: list[dict[str, object]] = [
         {"id": item.get("id"), "text": item.get("text", ""), "type": item.get("type")}

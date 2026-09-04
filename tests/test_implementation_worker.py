@@ -636,7 +636,7 @@ def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -
         json.dumps(
             {
                 "status": "VERIFYING",
-                "message": "생성된 백엔드를 컴파일하고 패키징하고 있습니다.",
+                "message": "Compiling and packaging the generated backend.",
                 "updatedAt": "2026-08-16T00:00:00+00:00",
             }
         ),
@@ -650,7 +650,7 @@ def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -
     )
 
     assert public["status"] == "VERIFYING"
-    assert public["progress"]["message"].startswith("생성된 백엔드")
+    assert public["progress"]["message"].startswith("Compiling and packaging")
     assert "job_path" not in public
 
 
@@ -873,7 +873,14 @@ def test_feedback_orchestrator_restores_snapshot_without_generation_tools(
         "apply-source-feedback"
     ]
     feedback_task = manifest["implementation_tasks"][0]
-    assert feedback_task["llm"]["chatTemplateKwargs"]["enable_thinking"] is True
+    assert set(feedback_task["llm"]) == {
+        "provider",
+        "model",
+        "baseUrl",
+        "temperature",
+        "maxOutputTokens",
+        "reasoningEffort",
+    }
 
 
 def test_prepare_job_rejects_work_root_outside_repository(tmp_path: Path) -> None:

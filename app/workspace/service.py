@@ -1031,10 +1031,9 @@ class WorkspaceService:
                         for blocker in blockers
                     )
                     original_implementation = implementation_worker.get(implementation_job_id)
-                    # Testing 이력에는 HTTP 실패 자체는 남지만, 직전 OpenHands가 실제로 어떤
-                    # 파일을 바꾸고 무엇을 해결했다고 판단했는지는 들어 있지 않다. 이 정보가
-                    # 빠지면 다음 수리가 같은 코드를 다시 고치고 같은 응답을 만들 수 있다.
-                    # 화면에도 쓰는 짧은 작업 결과를 재사용해 직전 시도의 변경과 결론만 넘긴다.
+                    # Testing 이력에는 HTTP 실패가 남고 최신 source에는 이전 수정 결과가
+                    # 반영돼 있다. 다음 수리에는 자유형 agent 답변을 반복하지 않고, 이전
+                    # 작업의 변경 파일만 알려 현재 source와 정확한 실패 증거를 읽게 한다.
                     previous_repair_results, older_repair_summaries = (
                         self._implementation_repair_outcomes(original_implementation)
                     )
@@ -2575,11 +2574,12 @@ class WorkspaceService:
         self,
         latest_job: dict[str, Any],
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """부모 작업을 따라가며 최근 상세 이력과 오래된 압축 이력을 만든다.
+        """부모 작업을 따라가며 이전 수리의 변경 범위를 짧게 만든다.
 
-        최근 세 번은 OpenHands의 결론을 충분히 보여 주고, 그보다 오래된 결과는 같은
-        변경·결론끼리 묶어 횟수만 센다. 별도 LLM 요약을 호출하지 않으므로 원문에 없던
-        해석이 섞이지 않고, 수리 횟수가 늘어도 프롬프트 크기는 반복 종류에 비례한다.
+        OpenHands의 마지막 답변은 화면과 실행 기록에 그대로 남는다. 다음 수리 LLM은 최신
+        source를 직접 읽을 수 있고 현재 실패 증거도 따로 받으므로, 자유형 자기 설명을 다시
+        보내지 않는다. 어떤 작업이 어떤 파일을 바꿨는지만 알려 주면 같은 범위를 살피면서도
+        이미 존재하는 코드를 기준으로 다른 해결책을 찾을 수 있다.
         """
 
         recent: list[dict[str, Any]] = []
@@ -2607,24 +2607,16 @@ class WorkspaceService:
                     if isinstance(path, str) and path
                 }
             )
-            responses = [
-                str(item.get("raw_response") or "").strip()
-                for item in agent_results
-                if str(item.get("raw_response") or "").strip()
-            ]
-            summary = responses[-1] if responses else ""
             outcome = {
                 "job_id": job_id,
                 "status": str(current.get("status") or ""),
                 "changed_files": changed_files,
-                "summary": summary[-2000:],
             }
             if len(recent) < 3:
                 recent.append(outcome)
             else:
                 compact = {
                     "changed_files": changed_files,
-                    "summary": summary[-300:],
                     "status": str(current.get("status") or ""),
                 }
                 signature = stable_digest(compact)
@@ -2731,17 +2723,11 @@ class WorkspaceService:
         for previous in previous_repair_results or []:
             if not isinstance(previous, dict):
                 continue
-            response = str(
-                previous.get("summary") or previous.get("raw_response") or ""
-            ).strip()
             previous_outcomes.append(
                 {
                     "job_id": str(previous.get("job_id") or ""),
                     "status": str(previous.get("status") or ""),
                     "changed_files": list(previous.get("changed_files") or []),
-                    # OpenHands의 최종 설명은 보통 짧지만, 비정상적으로 긴 응답 하나가 다음
-                    # 수리의 입력 대부분을 차지하지 않도록 마지막 2,000자만 전달한다.
-                    "summary": response[-2000:],
                 }
             )
         if previous_outcomes:

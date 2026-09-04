@@ -80,6 +80,7 @@ _PROFILES: dict[str, NimModelProfile] = {
         reasoning_budget=None,
         default_max_tokens=4096,
         max_tokens=4096,
+        preserve_reasoning_on_tool_turn=True,
     ),
     "nvidia/nemotron-3-super-120b-a12b": NimModelProfile(
         model_id="nvidia/nemotron-3-super-120b-a12b",
@@ -168,6 +169,7 @@ def profile_for(
         reasoning_budget=None,
         default_max_tokens=max(1, int(fallback_max_tokens)),
         max_tokens=max(1, int(fallback_max_tokens)),
+        preserve_reasoning_on_tool_turn=is_gpt_oss,
     )
 
 

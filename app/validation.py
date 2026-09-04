@@ -267,6 +267,40 @@ class RepairLedger(BaseModel):
             indent=2,
         )
 
+    def prompt_context_for_state(
+        self,
+        *,
+        input_digest: str,
+        finding_keys: Sequence[str],
+    ) -> str:
+        """현재 산출물과 같은 실패 상태에서 이미 시도한 내용만 LLM에 보여 준다.
+
+        전체 ledger는 종료 판정과 실행 기록에 계속 사용한다. LLM에는 현재 명세를 고치는
+        데 직접 도움이 되는 시도만 보내, 이전에 이미 개선한 상태의 오류와 해시 문자열이
+        다음 수리를 방해하지 않게 한다.
+        """
+
+        signature = tuple(sorted(set(finding_keys)))
+        attempts = [
+            {
+                "strategy": attempt.strategy_key,
+                "outcome": attempt.outcome,
+                "findingsAfter": list(attempt.finding_keys_after),
+            }
+            for attempt in self.attempts
+            if (
+                attempt.input_digest == input_digest
+                and attempt.finding_keys_before == signature
+            )
+        ]
+        if not attempts:
+            return ""
+        return json.dumps(
+            {"previousAttempts": attempts},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
 
 def stable_digest(value: Any) -> str:
     """JSON-compatible 값의 정규화 SHA-256 digest."""

@@ -111,13 +111,11 @@ def load_job(path: Path) -> JobSpec:
         agent_temperature=float(
             agent.get("temperature", settings.implementation_agent_temperature)
         ),
-        agent_top_p=float(agent.get("topP", 0.7)),
         agent_max_output_tokens=int(
             agent.get(
                 "maxOutputTokens", settings.implementation_agent_max_output_tokens
             )
         ),
-        agent_reasoning_budget=int(agent.get("reasoningBudget", 2048)),
         progress_path=(
             resolve(data["progressPath"])
             if isinstance(data.get("progressPath"), str)
@@ -187,7 +185,7 @@ class PrototypeOrchestrator:
                 self.manifest.tools.update(buffer.tools)
 
     def run(self) -> Path:
-        self._set_status("VALIDATING_INPUT", "입력 산출물을 검증하고 있습니다.")
+        self._set_status("VALIDATING_INPUT", "Validating input artifacts.")
         self._validate_inputs()
         self.manifest.input_hash = self._combined_input_hash()
         staging, final = self._select_run_paths()
@@ -197,13 +195,13 @@ class PrototypeOrchestrator:
         # destination would correctly be rejected by _promote, but only after
         # spending time on every generator again.
         if final.exists():
-            self._set_status("REUSING_GENERATED_RUN", "동일 입력의 생성 결과를 재사용하고 있습니다.")
+            self._set_status("REUSING_GENERATED_RUN", "Reusing generated output for the same input.")
             return final
         self._reset_target(staging)
         staging.mkdir(parents=True, exist_ok=True)
 
         if any(item.severity == "ERROR" for item in self.manifest.diagnostics):
-            self._set_status("NEEDS_INPUT", "생성 전에 입력 보완이 필요합니다.")
+            self._set_status("NEEDS_INPUT", "More input is required before generation.")
             self._write_reports(staging)
             self._promote(staging, final)
             return final
@@ -214,9 +212,9 @@ class PrototypeOrchestrator:
 
         try:
             if self.spec.job_type == "FEEDBACK_REVISION":
-                self._set_status("PREPARING_FEEDBACK", "기존 산출물과 피드백을 준비하고 있습니다.")
+                self._set_status("PREPARING_FEEDBACK", "Preparing existing artifacts and feedback.")
                 self._prepare_feedback_revision(staging)
-                self._set_status("SUCCEEDED", "피드백 적용 준비가 완료되었습니다.")
+                self._set_status("SUCCEEDED", "Feedback preparation completed.")
                 self.manifest.generated_files = sorted(
                     str(path.relative_to(staging)).replace("\\", "/")
                     for path in staging.rglob("*")
@@ -227,10 +225,10 @@ class PrototypeOrchestrator:
                 return final
             self._set_status(
                 "GENERATING_SOURCES",
-                "BCE·OpenAPI·Frontend 코드를 생성하고 있습니다.",
+                "Generating BCE, OpenAPI, and frontend code.",
             )
             self._generate_sources(application, java_root)
-            self._set_status("PREPARING_BUILD", "생성된 애플리케이션 프로젝트를 준비하고 있습니다.")
+            self._set_status("PREPARING_BUILD", "Preparing the generated application project.")
             self._write_gradle_project(application)
             self._write_application_entrypoint(java_root)
             self._write_runtime_configuration(application)
@@ -239,11 +237,11 @@ class PrototypeOrchestrator:
             capture_generated_contracts(staging, self.spec.base_package)
 
             if self.spec.verify_compile:
-                self._set_status("VERIFYING", "생성된 백엔드를 컴파일하고 있습니다.")
+                self._set_status("VERIFYING", "Compiling the generated backend.")
                 self._compile(application)
 
             self._generate_openapi_controllers(application)
-            self._set_status("PLANNING", "구현 작업과 의존 관계를 계획하고 있습니다.")
+            self._set_status("PLANNING", "Planning implementation tasks and dependencies.")
             self.manifest.implementation_tasks = []
             self.manifest.agent_execution = write_execution_plan(
                 staging,
@@ -251,9 +249,9 @@ class PrototypeOrchestrator:
                 self.spec.agent_mode,
             )
 
-            self._set_status("SUCCEEDED", "초기 생성과 구현 계획 준비가 완료되었습니다.")
+            self._set_status("SUCCEEDED", "Initial generation and implementation planning completed.")
         except Exception as error:  # evidence is written before returning the failed run
-            self._set_status("FAILED", "초기 생성 또는 검증에 실패했습니다.")
+            self._set_status("FAILED", "Initial generation or verification failed.")
             self.manifest.diagnostics.append(
                 Diagnostic("GENERATION_FAILED", "ERROR", str(error))
             )
@@ -505,9 +503,7 @@ class PrototypeOrchestrator:
         digest.update(connection.model.encode())
         digest.update(connection.base_url.encode())
         digest.update(str(self.spec.agent_temperature).encode())
-        digest.update(str(self.spec.agent_top_p).encode())
         digest.update(str(self.spec.agent_max_output_tokens).encode())
-        digest.update(str(self.spec.agent_reasoning_budget).encode())
         digest.update(JAVA_SCAFFOLDER_VERSION.encode())
         digest.update(OPENAPI_GENERATOR_IMAGE.encode())
         digest.update(IMPLEMENTATION_PIPELINE_VERSION.encode())
@@ -926,8 +922,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
- * 설계에 인증 요구가 있을 때 사용하는 최소 HTTP 보안 설정이다.
- * 운영 계정은 SPRING_SECURITY_USER_NAME/PASSWORD/ROLES 환경 변수로 전달한다.
+ * Minimal HTTP security configuration used when the design requires authentication.
+ * Supply production credentials through SPRING_SECURITY_USER_NAME/PASSWORD/ROLES.
  */
 @Configuration
 public class SecurityConfiguration {{

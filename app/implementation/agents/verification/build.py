@@ -46,7 +46,7 @@ class WorkspaceVerificationError(RuntimeError):
             "No verification output was captured",
         )
         if len(output) > 1000:
-            output = output[:600] + "\n... 출력 생략 ...\n" + output[-350:]
+            output = output[:600] + "\n... output omitted ...\n" + output[-350:]
         super().__init__("Agent workspace verification failed: " + output)
 
 
@@ -529,7 +529,7 @@ def compact_verification_evidence(
 def _truncate_log_snippet(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
-    marker = "\n... 출력 중간 생략 ...\n"
+    marker = "\n... middle of output omitted ...\n"
     remaining = max_chars - len(marker)
     head = remaining // 2
     return text[:head] + marker + text[-(remaining - head) :]

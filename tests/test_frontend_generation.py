@@ -273,9 +273,7 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
         output_root=tmp_path / "runs",
         agent_mode="plan-only",
         agent_temperature=0.0,
-        agent_top_p=1.0,
         agent_max_output_tokens=1000,
-        agent_reasoning_budget=0,
     )
     application = tmp_path / "application"
 
@@ -334,9 +332,7 @@ def test_backend_openapi_generation_uses_a_pinned_docker_image(tmp_path: Path) -
         output_root=tmp_path / "runs",
         agent_mode="plan-only",
         agent_temperature=0.0,
-        agent_top_p=1.0,
         agent_max_output_tokens=1000,
-        agent_reasoning_budget=0,
     )
     orchestrator = PrototypeOrchestrator(spec)
     commands: list[list[str]] = []
@@ -432,9 +428,7 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
         output_root=tmp_path / "runs",
         agent_mode="plan-only",
         agent_temperature=0.0,
-        agent_top_p=1.0,
         agent_max_output_tokens=1000,
-        agent_reasoning_budget=0,
     )
 
     task = generate_frontend_tasks(spec, run)[0]
@@ -819,9 +813,7 @@ def test_cli_run_to_completion_reuses_one_scoped_approval(
         output_root=tmp_path,
         agent_mode="plan-only",
         agent_temperature=0,
-        agent_top_p=1,
         agent_max_output_tokens=1,
-        agent_reasoning_budget=0,
     )
     approvals: list[dict[str, object]] = []
     states = iter([{"status": "READY"}, {"status": "COMPLETE"}])

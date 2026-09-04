@@ -16,6 +16,7 @@ def test_screening_profiles_respect_common_bounds(model: str) -> None:
 
 def test_profiles_translate_reasoning_without_sending_unsupported_values() -> None:
     assert profile_for("openai/gpt-oss-20b").resolve_reasoning("medium") == "medium"
+    assert profile_for("@cf/openai/gpt-oss-120b").preserve_reasoning_on_tool_turn is True
     assert (
         profile_for("nvidia/nemotron-3-super-120b-a12b").resolve_reasoning("medium")
         == "high"

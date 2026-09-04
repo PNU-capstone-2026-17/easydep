@@ -49,9 +49,7 @@ def _orchestrator(tmp_path: Path) -> PrototypeOrchestrator:
         output_root=tmp_path / ".easydep" / "implementation-runs" / "orders" / "generated" / "runs",
         agent_mode="plan-only",
         agent_temperature=0.0,
-        agent_top_p=1.0,
         agent_max_output_tokens=1000,
-        agent_reasoning_budget=0,
     )
     return PrototypeOrchestrator(spec)
 

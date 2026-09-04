@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+import app.implementation.agents.runtime as agent_runtime
 from app.design.services.erd.mapping import build_logical_model
 from app.implementation.agents import execute_openhands_task
 from app.implementation.agents.runtime import create_openhands_conversation
@@ -403,14 +404,9 @@ def _write_minimal_agent_task(tmp_path: Path) -> tuple[Path, str, str, Path]:
         "required_output_paths": [source_path],
         "immutable_paths": [],
         "llm": {
-            "model": "ignored/task-model",
-            "baseUrl": "http://localhost",
             "temperature": 0.2,
-            "topP": 1.0,
             "maxOutputTokens": 1024,
-            "reasoningBudget": 0,
             "reasoningEffort": "medium",
-            "chatTemplateKwargs": {},
         },
     }
     (tasks / "order.task.json").write_text(json.dumps(task), encoding="utf-8")
@@ -580,21 +576,19 @@ def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(
 
 def test_openhands_conversation_enables_stuck_detection_and_condensation(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """공식 SDK의 반복 감지와 context condenser를 기본 실행에 연결한다."""
     source = tmp_path / "OrderService.java"
     source.write_text("class OrderService {}", encoding="utf-8")
     missing_source = tmp_path / "RequiredService.java"
     llm = {
-        "model": "ignored/task-model",
-        "baseUrl": "http://localhost",
         "temperature": 0.2,
-        "topP": 1.0,
         "maxOutputTokens": 1024,
-        "reasoningBudget": 0,
-        "chatTemplateKwargs": {},
     }
 
+    model = "@cf/openai/gpt-oss-120b"
+    monkeypatch.setattr(agent_runtime, "configured_model", lambda: model)
     conversation, agent = create_openhands_conversation(
         tmp_path,
         [str(source.resolve()), str(missing_source.resolve())],
@@ -605,6 +599,9 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         conversation.send_message("Initialize tools without running the model.")
         assert conversation.stuck_detector is not None
         assert agent.condenser.__class__.__name__ == "LLMSummarizingCondenser"
+        from openhands.sdk.llm.utils.model_features import get_features
+
+        assert get_features(model).send_reasoning_content is True
         assert "grep" in agent._tools
         from openhands.tools.grep import GrepAction
 
@@ -632,13 +629,8 @@ def test_restricted_editor_reads_utf8_korean_source_as_text(tmp_path: Path) -> N
         encoding="utf-8",
     )
     llm = {
-        "model": "ignored/task-model",
-        "baseUrl": "http://localhost",
         "temperature": 0.2,
-        "topP": 1.0,
         "maxOutputTokens": 1024,
-        "reasoningBudget": 0,
-        "chatTemplateKwargs": {},
     }
     conversation, agent = create_openhands_conversation(
         tmp_path,
@@ -673,13 +665,8 @@ def test_restricted_editor_rejects_generated_build_reports(tmp_path: Path) -> No
     source.parent.mkdir(parents=True)
     source.write_text("class Service {}", encoding="utf-8")
     llm = {
-        "model": "ignored/task-model",
-        "baseUrl": "http://localhost",
         "temperature": 0.2,
-        "topP": 1.0,
         "maxOutputTokens": 1024,
-        "reasoningBudget": 0,
-        "chatTemplateKwargs": {},
     }
     conversation, agent = create_openhands_conversation(
         tmp_path,
@@ -1034,9 +1021,7 @@ class Order <<Entity>> { - id: UUID }
         output_root=tmp_path / "generated-runs",
         agent_mode="plan-only",
         agent_temperature=0.0,
-        agent_top_p=1.0,
         agent_max_output_tokens=1000,
-        agent_reasoning_budget=0,
     )
 
     state = plan_workflow(run, spec)
@@ -1362,7 +1347,9 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
                             "strategy_key": "verification_correction",
                             "outcome": "no_improvement",
                             "candidate_digest": "candidate-401",
-                            "detail": "SecurityConfiguration.java를 수정했지만 401이 계속됨",
+                            "detail": (
+                                "SecurityConfiguration.java was changed, but HTTP 401 persists"
+                            ),
                         }
                     ]
                 }
@@ -1391,9 +1378,9 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     assert prompt_path.read_text(encoding="utf-8") == initial_prompt
     assert "INITIAL IMPLEMENTATION CONTEXT" not in repair_prompt
     assert "401 Unauthorized" in repair_prompt
-    assert "SecurityConfiguration.java를 수정했지만 401이 계속됨" in repair_prompt
-    assert "먼저 `run_task_check`를 한 번 실행" in repair_prompt
-    assert "새 진단 가설 2" in repair_prompt
+    assert "SecurityConfiguration.java was changed, but HTTP 401 persists" in repair_prompt
+    assert "Run `run_task_check` once first" in repair_prompt
+    assert "State new diagnostic hypothesis 2" in repair_prompt
     assert len({item["strategy"] for item in repeated_entries}) == 6
     assert source_path in repair_prompt
     assert entry["acceptedSourceRoot"] == "application"
