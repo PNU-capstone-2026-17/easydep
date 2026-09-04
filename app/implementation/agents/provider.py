@@ -4,19 +4,33 @@ import importlib.util
 import sys
 
 from app.config import settings
+from app.llm_connection import build_llm_connection
 
 MAX_PROVIDER_RETRIES = 3
 
 
 def configured_api_key() -> str:
-    return settings.api_key
+    return build_llm_connection().api_key
 
 
 def configured_model() -> str:
     """루트 `.env`의 MODEL을 OpenHands/LiteLLM용 NIM 이름으로 바꾼다."""
 
-    model = settings.model
+    connection = build_llm_connection()
+    model = connection.model
+    if connection.provider == "cloudflare-ai-gateway":
+        # OpenHands의 LiteLLM에는 adapter 이름이 앞에 필요하다. 실제 Cloudflare
+        # 요청에는 뒤의 @cf/... 모델 ID가 전달된다.
+        return model if model.startswith("openai/") else f"openai/{model}"
     return model if model.startswith("nvidia_nim/") else f"nvidia_nim/{model}"
+
+
+def configured_base_url() -> str:
+    return build_llm_connection().base_url
+
+
+def configured_headers() -> dict[str, str]:
+    return build_llm_connection().default_headers()
 
 
 def configured_max_output_tokens(default: int) -> int:

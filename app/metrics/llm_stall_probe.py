@@ -8,6 +8,8 @@ import threading
 from time import perf_counter
 
 from app.config import settings
+from app.llm_connection import build_llm_connection
+from app.llm_profiles import profile_for
 
 
 def _emit(event: str, **fields: object) -> None:
@@ -26,19 +28,30 @@ def _probe(operation: str, timeout_seconds: float) -> None:
     status_code: int | None = None
     _emit("llmStallProbeStarted", stalledOperation=operation)
     try:
+        connection = build_llm_connection()
         client = OpenAI(
-            base_url=settings.base_url,
-            api_key=settings.api_key,
+            base_url=connection.base_url,
+            api_key=connection.api_key,
+            default_headers=connection.default_headers(),
             max_retries=0,
             timeout=timeout_seconds,
         )
+        profile = profile_for(
+            connection.model,
+            fallback_temperature=settings.temperature,
+            fallback_max_tokens=32,
+        )
         stream = client.chat.completions.create(
-            model=settings.model,
+            model=connection.model,
             messages=[{"role": "user", "content": "Reply with exactly: pong"}],
-            temperature=0,
+            # 진단 호출도 실제 제품과 같은 sampling 하한을 지킨다. 0을 쓰면 본 호출과
+            # 다른 조건을 측정하게 되어 endpoint 응답성 비교가 왜곡될 수 있다.
+            temperature=profile.temperature,
             seed=42,
             stream=True,
-            max_completion_tokens=32,
+            # Probe는 첫 event만 확인한다. 본 작업의 큰 reasoning budget까지 복제하면
+            # 진단 호출 자체가 느려지므로 작은 출력 상한 외의 추론 설정은 보내지 않는다.
+            max_tokens=32,
         )
         for _chunk in stream:
             if first_event is None:

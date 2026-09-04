@@ -37,6 +37,8 @@ from app.design.services.class_diagram.validation.collaboration import (
 )
 from app.design.services.class_diagram.validation.model import validate_class_model
 from app.design.services.common.structured import bind_context, parse_structured
+from app.llm_connection import build_llm_connection
+from app.llm_profiles import effective_temperature
 from app.validation import run_checks, stable_digest
 
 _COMBINED_PROMPT = operations.operation_prompt() + """
@@ -526,10 +528,10 @@ def _model_cache_key(index: ScenarioIndex, inventory: AcceptedInventory) -> str:
         feedback={},
         prompt=_COMBINED_PROMPT,
         schema=BCEModel,
-        provider=configured_provider_identity(settings.base_url),
+        provider=configured_provider_identity(build_llm_connection().base_url),
         model=settings.model,
         seed=settings.seed,
-        temperature=settings.temperature,
+        temperature=effective_temperature(settings.model, settings.temperature),
         reasoning_effort=operations.operation_reasoning_effort(),
         max_completion_tokens=operations.operation_max_completion_tokens(),
         extra={

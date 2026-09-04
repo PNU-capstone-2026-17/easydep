@@ -39,6 +39,8 @@ from app.design.services.class_diagram.type_system import (
 from app.design.services.class_diagram.validation.inventory import INVENTORY_CHECKS
 from app.design.services.class_diagram.validation.model import class_name
 from app.design.services.common.structured import parse_structured
+from app.llm_connection import build_llm_connection
+from app.llm_profiles import effective_temperature
 from app.validation import run_checks
 
 
@@ -505,10 +507,10 @@ def propose_inventory_revision(
             },
             prompt=inventory.INVENTORY_PROMPT,
             schema=InventoryProposal,
-            provider=configured_provider_identity(settings.base_url),
+            provider=configured_provider_identity(build_llm_connection().base_url),
             model=settings.model,
             seed=settings.seed,
-            temperature=settings.temperature,
+            temperature=effective_temperature(settings.model, settings.temperature),
             reasoning_effort=inventory.inventory_reasoning_effort(),
             max_completion_tokens=inventory.inventory_max_completion_tokens(),
         )

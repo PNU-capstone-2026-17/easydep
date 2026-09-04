@@ -20,6 +20,7 @@ from typing import Any
 from app.config import settings
 from app.design.contracts.erd import project_logical_model
 from app.design.schemas.class_model import BCEModel
+from app.llm_connection import llm_subprocess_environment
 
 from ..config import ImplementationSettings
 from ..runtime.linux_runner_transport import (
@@ -358,11 +359,7 @@ class PrototypeClient:
             if retry_failed:
                 container_args.append("--retry-failed")
             environment = os.environ.copy()
-            environment.update({
-                "API_KEY": settings.api_key,
-                "BASE_URL": settings.base_url,
-                "MODEL": settings.model,
-            })
+            environment.update(llm_subprocess_environment())
             command = runner_command(
                 image=runner_image,
                 repository_root=self.settings.repository_root,
@@ -471,11 +468,7 @@ class PrototypeClient:
     def _call(self, args: list[str], operation_id: str | None = None) -> dict[str, Any]:
         """구현 CLI를 UTF-8 하위 프로세스로 실행하고 마지막 JSON 응답을 반환한다."""
         env = os.environ.copy()
-        env.update({
-            "API_KEY": settings.api_key,
-            "BASE_URL": settings.base_url,
-            "MODEL": settings.model,
-        })
+        env.update(llm_subprocess_environment())
         # Windows 기본 code page와 관계없이 한글 설계 파일과 JSON 로그를 읽도록 강제한다.
         env["PYTHONUTF8"] = "1"
         env.setdefault(

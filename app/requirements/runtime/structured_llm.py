@@ -18,7 +18,7 @@ NIM(OpenAI 호환) 엔드포인트를 langchain-openai의 ChatOpenAI로 감싼�
 
 ## 재현성 — 여기서 얻을 수 없는 것
 
-`temperature=0` + `seed` 고정은 같은 표본을 **요청**하는 것이고, **이 모델에서는 보장이
+낮은 `temperature` + `seed` 고정은 같은 표본을 **요청**하는 것이고, **이 모델에서는 보장이
 되지 않는다.** 이유가 우연이 아니라 구조적이다:
 
   - GPT-OSS 계열은 MoE다. 어느 전문가로 라우팅되는지가 **함께 배치된 다른 요청들에
@@ -38,13 +38,15 @@ telemetry에 모으는 이유도 "지문이 같으면 재현된다"가 아니라
 from __future__ import annotations
 
 import json
-from typing import Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, SecretStr
 
 from app.config import settings as llm_settings
+from app.llm_connection import build_llm_connection
+from app.llm_profiles import profile_for
 from app.requirements.config import settings
 from app.requirements.runtime import telemetry
 
@@ -69,22 +71,26 @@ def build_llm(*, seed_override: int | None = None) -> ChatOpenAI:
     """NIM(OpenAI 호환) 채팅 모델을 반환한다(프로세스당 1회 생성, 이후 재사용)."""
     global _llm
     if _llm is None or seed_override is not None:
-        instance = ChatOpenAI(
-            model=llm_settings.model,
-            base_url=llm_settings.base_url,
-            api_key=SecretStr(llm_settings.api_key),
-            temperature=settings.temperature,
+        connection = build_llm_connection()
+        profile = profile_for(
+            connection.model,
+            fallback_temperature=settings.temperature,
+            fallback_max_tokens=settings.requirements_max_completion_tokens,
+        )
+        options: dict[str, Any] = {
+            "model": connection.model,
+            "base_url": connection.base_url,
+            "api_key": SecretStr(connection.api_key),
+            "default_headers": connection.default_headers(),
+            "temperature": profile.temperature,
             # 같은 입력에 같은 표본을 **요청**한다. 보장은 아니다 — 서버가 seed를
             # 무시할 수도 있고, 백엔드 구성이 바뀌면(system_fingerprint) 같은 seed라도
             # 결과가 달라진다. 그래서 지문을 telemetry에 남겨 사후에 확인할 수 있게 한다.
             # None이면 파라미터 자체를 안 보낸다.
-            seed=settings.seed if seed_override is None else seed_override,
-            reasoning_effort=(
-                settings.requirements_reasoning_effort
-                if "gpt-oss" in llm_settings.model.lower()
-                else None
+            "seed": settings.seed if seed_override is None else seed_override,
+            "max_completion_tokens": profile.completion_limit(
+                settings.requirements_max_completion_tokens
             ),
-            max_completion_tokens=settings.requirements_max_completion_tokens,
             # 진짜 멈춘 호출이 무한 대기하지 않도록 두는 상한.
             #
             # **600에서 90으로 내렸다(2026-07-27). 근거는 실측 분포다** — 위 주석이
@@ -102,11 +108,20 @@ def build_llm(*, seed_override: int | None = None) -> ChatOpenAI:
             # "위반 없음" 한 표로 세고 있었기 때문에, 상한을 내릴수록 규칙이 깨끗해 보이는
             # 상태였다(`evaluation/semantic.py`의 `ask`). 순서를 바꾸면 이 변경이 곧
             # 측정 편향이 된다.
-            timeout=90,
-            # 기존 production 계약을 유지한다. 논리 수리 이력과 transport 재시도는
-            # 서로 다른 층이며, 일시적인 연결 오류 두 번은 SDK가 처리한다.
-            max_retries=2,
-        )
+            "timeout": 90,
+            # 후보 모델의 endpoint 오류와 모델 출력 실패를 섞지 않도록 SDK가 같은 요청을
+            # 몰래 반복하지 않는다. 재개 여부는 호출 결과를 기록한 상위 실행기가 정한다.
+            "max_retries": llm_settings.llm_max_retries,
+        }
+        if profile.top_p is not None:
+            options["top_p"] = profile.top_p
+        if reasoning_effort := profile.resolve_reasoning(
+            settings.requirements_reasoning_effort
+        ):
+            options["reasoning_effort"] = reasoning_effort
+        if extra_body := profile.extra_body():
+            options["extra_body"] = extra_body
+        instance = ChatOpenAI(**options)
         if seed_override is not None:
             return instance
         _llm = instance

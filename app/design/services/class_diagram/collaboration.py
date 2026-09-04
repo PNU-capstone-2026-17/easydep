@@ -38,6 +38,8 @@ from app.design.services.class_diagram.validation.model import (
     type_can_default,
 )
 from app.design.services.common.structured import parse_structured
+from app.llm_connection import build_llm_connection
+from app.llm_profiles import effective_temperature
 from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, stable_digest
 
 CALL_PLAN_PROMPT = """
@@ -578,10 +580,10 @@ def _cache_key(
         feedback=" ".join(directive.split()),
         prompt=CALL_PLAN_PROMPT,
         schema=CallPlanProposal,
-        provider=configured_provider_identity(settings.base_url),
+        provider=configured_provider_identity(build_llm_connection().base_url),
         model=settings.model,
         seed=settings.seed,
-        temperature=settings.temperature,
+        temperature=effective_temperature(settings.model, settings.temperature),
         reasoning_effort=call_plan_reasoning_effort(),
         max_completion_tokens=call_plan_max_completion_tokens(),
         extra={

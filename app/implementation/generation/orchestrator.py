@@ -19,6 +19,7 @@ from app.config import settings
 from app.design.contracts.api_spec import ApiSpecModel
 from app.design.contracts.application_runtime import application_security_required
 from app.design.schemas.class_model import BCEModel
+from app.llm_connection import build_llm_connection
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
@@ -493,6 +494,7 @@ class PrototypeOrchestrator:
                     )
 
     def _combined_input_hash(self) -> str:
+        connection = build_llm_connection()
         digest = hashlib.sha256()
         digest.update(self.spec.name.encode())
         digest.update(self.spec.job_type.encode())
@@ -500,8 +502,8 @@ class PrototypeOrchestrator:
         digest.update(self.spec.base_package.encode())
         digest.update(str(self.spec.allow_assumptions).encode())
         digest.update(str(self.spec.verify_compile).encode())
-        digest.update(settings.model.encode())
-        digest.update(settings.base_url.encode())
+        digest.update(connection.model.encode())
+        digest.update(connection.base_url.encode())
         digest.update(str(self.spec.agent_temperature).encode())
         digest.update(str(self.spec.agent_top_p).encode())
         digest.update(str(self.spec.agent_max_output_tokens).encode())

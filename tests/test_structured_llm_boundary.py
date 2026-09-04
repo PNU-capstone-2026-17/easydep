@@ -282,7 +282,7 @@ def test_streaming_structured_output_accepts_an_explicit_completion_limit(monkey
     )
 
     assert parsed.answer == "ok"
-    assert captured["max_completion_tokens"] == 1024
+    assert captured["max_tokens"] == 1024
     assert captured["reasoning_effort"] == "medium"
     assert captured["temperature"] == settings.temperature
     assert captured["seed"] == settings.seed

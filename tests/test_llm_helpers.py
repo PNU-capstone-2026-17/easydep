@@ -13,6 +13,8 @@ import httpx
 import pytest
 from pydantic import BaseModel, SecretStr
 
+from app.config import settings as llm_settings
+from app.llm_profiles import profile_for
 from app.requirements.config import settings
 from app.requirements.runtime import structured_llm, telemetry
 
@@ -80,10 +82,10 @@ def fresh_client() -> Any:
     structured_llm.reset_llm()
 
 
-def test_default_sampling_is_reproducible() -> None:
-    """temperature와 seed의 재현성 기본값을 고정한다."""
+def test_default_sampling_matches_screened_setting() -> None:
+    """실제 구조화 작업으로 비교한 temperature와 seed를 고정한다."""
 
-    assert settings.temperature == 0.2
+    assert settings.temperature == 0.6
     assert settings.seed is not None
 
 
@@ -99,15 +101,24 @@ def test_client_preserves_sampling_timeout_and_retry_configuration(monkeypatch) 
     monkeypatch.setattr(structured_llm, "ChatOpenAI", make_client)
 
     client = structured_llm.build_llm()
+    profile = profile_for(
+        llm_settings.model,
+        fallback_temperature=settings.temperature,
+        fallback_max_tokens=settings.requirements_max_completion_tokens,
+    )
 
     assert structured_llm.build_llm() is client
     assert len(created) == 1
-    assert created[0]["temperature"] == settings.temperature
+    assert created[0]["temperature"] == profile.temperature
     assert created[0]["seed"] == settings.seed
-    assert created[0]["reasoning_effort"] == settings.requirements_reasoning_effort
-    assert created[0]["max_completion_tokens"] == settings.requirements_max_completion_tokens
+    assert created[0]["reasoning_effort"] == profile.resolve_reasoning(
+        settings.requirements_reasoning_effort
+    )
+    assert created[0]["max_completion_tokens"] == profile.completion_limit(
+        settings.requirements_max_completion_tokens
+    )
     assert created[0]["timeout"] == 90
-    assert created[0]["max_retries"] == 2
+    assert created[0]["max_retries"] == llm_settings.llm_max_retries
 
 
 def test_transient_provider_failures_use_two_sdk_retries_in_one_logical_call(

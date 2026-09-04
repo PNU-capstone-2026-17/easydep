@@ -4,7 +4,10 @@ LLM은 작은 proposal만 답하고, 코드는 실행 연결이 추가된 저장
 렌더된 OpenAPI가 아니라 이 두 Pydantic 모델을 생성과 수정의 기준으로 삼는다.
 설계 서비스뿐 아니라 구현 단계도 이 파일의 승인된 저장 모델만 참조한다.
 """
+
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -58,34 +61,23 @@ class ApiControlBinding(ApiSpecRecord):
 
 
 class ApiEndpointProposal(ApiSpecRecord):
-    """LLM이 고르는 HTTP 표현이다. 실행 연결은 포함하지 않는다."""
+    """LLM이 고르는 최소 HTTP 표현이다.
+
+    이미 BCE에 있는 parameter, return type, Control 연결을 다시 출력하게 하지 않는다.
+    ``interaction_id``로 기존 계약을 고르고 HTTP에서만 의미가 있는 값만 답한다.
+    """
 
     interaction_id: str = Field(min_length=1)
     path: str = Field(default="/")
-    method: str = Field(default="get")
+    method: Literal["get", "post", "put", "patch", "delete"] = "get"
     summary: str = Field(default="")
-    operation_id: str = Field(default="")
-    path_params: list[ApiField] = Field(default_factory=list)
-    query_params: list[ApiField] = Field(default_factory=list)
-    request_schema: str = Field(default="")
     responses: list[ApiResponseProposal] = Field(default_factory=list)
 
 
-class ApiSchemaProposal(ApiSpecRecord):
-    """LLM이 제안하는 HTTP 요청 body 스키마다."""
-
-    name: str
-    description: str = Field(default="")
-    fields: list[ApiField] = Field(default_factory=list)
-
-
 class ApiSpecProposal(ApiSpecRecord):
-    """Control 연결과 추적 필드를 제외한 작은 LLM 응답 계약이다."""
+    """각 상호작용의 HTTP 표현만 담는 일시적인 LLM 응답이다."""
 
-    title: str = Field(default="API")
-    version: str = Field(default="1.0.0")
     Endpoints: list[ApiEndpointProposal] = Field(default_factory=list)
-    Schemas: list[ApiSchemaProposal] = Field(default_factory=list)
 
 
 class ApiEndpoint(ApiSpecRecord):

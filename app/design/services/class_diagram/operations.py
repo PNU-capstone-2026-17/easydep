@@ -3,6 +3,7 @@
 생성 순서와 collaboration은 ``generation``이 맡는다. 이 모듈은 operation payload,
 피드백 수리, 결정론적 정규화·검사·compose와 진행 preview만 제공한다.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,12 +49,15 @@ from app.design.services.class_diagram.validation.model import (
 )
 from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
+from app.llm_connection import build_llm_connection
+from app.llm_profiles import effective_temperature
 from app.validation import RepairAttempt, RepairLedger, run_checks, stable_digest
 
 logger = logging.getLogger(__name__)
 
 
-_OPERATION_PROMPT = ("""
+_OPERATION_PROMPT = (
+    """
 Build the complete operation fragment for exactly one use case. Use only
 fixedClasses, fixedDataTypes, reserved contracts, and locally declared DataTypes.
 Cover every allowedStepRef. Return only the fields required by the response
@@ -89,7 +93,10 @@ Reuse fixed and reserved DataTypes by name. A new DataType must have resolved
 fields or enum values and must be referenced by an operation signature. Use
 kind=valueObject with non-empty fields and no values, or kind=enumeration with
 non-empty values and no fields.
-""".strip() + "\n\n" + structure_type_contract())
+""".strip()
+    + "\n\n"
+    + structure_type_contract()
+)
 
 
 def operation_prompt() -> str:
@@ -99,23 +106,27 @@ def operation_prompt() -> str:
 
 
 def operation_reasoning_effort() -> str:
-    """연산 전용 reasoning 설정이 없던 실행은 기존 정책으로 유지한다."""
+    """한 유스케이스 연산에 적용할 reasoning 수준을 반환한다."""
 
-    return str(getattr(
-        settings,
-        "design_class_operation_reasoning_effort",
-        settings.design_reasoning_effort,
-    ))
+    return str(
+        getattr(
+            settings,
+            "design_class_operation_reasoning_effort",
+            settings.design_reasoning_effort,
+        )
+    )
 
 
 def operation_max_completion_tokens() -> int:
-    """연산 전용 output cap이 없던 실행은 기존 collaboration cap을 유지한다."""
+    """한 유스케이스 연산의 reasoning과 JSON을 합친 출력 상한을 반환한다."""
 
-    return int(getattr(
-        settings,
-        "design_class_operation_max_completion_tokens",
-        settings.design_class_collaboration_max_completion_tokens,
-    ))
+    return int(
+        getattr(
+            settings,
+            "design_class_operation_max_completion_tokens",
+            settings.design_class_collaboration_max_completion_tokens,
+        )
+    )
 
 
 def _reserved_operations(model: dict[str, Any]) -> list[dict[str, Any]]:
@@ -146,10 +157,14 @@ def _operation_payload(
     ``allowedStepRefs``는 현재 unit이 소유할 수 있는 단계만 담는다. ``previousFragment``와
     ``findings``는 최초 실패 뒤 full replacement를 요청할 때만 추가한다.
     """
-    source_summary = next((
-        item for item in index.raw.get("use_cases") or []
-        if isinstance(item, dict) and text(item.get("id")) == use_case.id
-    ), {})
+    source_summary = next(
+        (
+            item
+            for item in index.raw.get("use_cases") or []
+            if isinstance(item, dict) and text(item.get("id")) == use_case.id
+        ),
+        {},
+    )
     # 원문 시나리오 본문은 executionSlice.steps로만 전달한다. 하지만 goal, actor,
     # pre/postcondition, business rule 같은 use-case 문맥은 operation 설계에 필요하므로
     # specification 전체를 버리지 않고 main/extension flow만 제거한다.
@@ -173,25 +188,42 @@ def _operation_payload(
         # raw use-case의 goal·actor 문맥은 top-level에 유지한다. specification 안에만 있던
         # pre/postcondition과 business rule은 아래 compact specification에 한 번만 남긴다.
         summary["specification"] = compact_specification
-    scoped_classes = [
-        {
-            key: value for key, value in item.items()
-            if key not in {"useCaseIds", "values"}
+    scoped_classes = []
+    for item in inventory.get("Classes") or []:
+        if use_case.id not in set(item.get("useCaseIds") or []):
+            continue
+        role = text(item.get("stereotype"))
+        compact = {
+            "className": class_name(item),
+            "stereotype": role,
+            "description": text(item.get("description")),
         }
-        for item in inventory.get("Classes") or []
-        if use_case.id in set(item.get("useCaseIds") or [])
-    ]
+        # Boundary와 Control은 상태를 소유하지 않는다. Entity를 고를 때만 실제 상태와
+        # 식별자가 필요하므로 다른 역할에 빈 배열까지 반복 전송하지 않는다.
+        if role == "Entity":
+            compact["fields"] = list(item.get("fields") or [])
+            compact["identifier"] = list(item.get("identifier") or [])
+        scoped_classes.append(compact)
     scoped_types = [
-        {
-            key: value for key, value in item.items()
-            if key not in {"useCaseIds", "identifier"}
-        }
+        {key: value for key, value in item.items() if key not in {"useCaseIds", "identifier"}}
         for item in inventory.get("DataTypes") or []
         if use_case.id in set(item.get("useCaseIds") or [])
     ]
     scoped_names = {class_name(item) for item in scoped_classes}
     scoped_reserved = [
-        item for item in (reserved or [])
+        {
+            "className": text(item.get("className")),
+            "operations": [
+                {
+                    "name": text(operation.get("name")),
+                    "parameters": list(operation.get("parameters") or []),
+                    "returnType": text(operation.get("returnType")),
+                }
+                for operation in item.get("operations") or []
+                if isinstance(operation, dict)
+            ],
+        }
+        for item in (reserved or [])
         if text(item.get("className")) in scoped_names
     ]
     allowed = set(allowed_step_ids) or {step.id for step in use_case.steps}
@@ -206,7 +238,8 @@ def _operation_payload(
                     "sentence": step.sentence,
                     "condition": step.condition,
                 }
-                for step in use_case.steps if step.id in allowed
+                for step in use_case.steps
+                if step.id in allowed
             ],
         },
         "allowedStepRefs": sorted(allowed, key=id_key),
@@ -227,7 +260,8 @@ def _operation_payload(
 
 
 def _canonicalize_downstream_input_types(
-    candidate: dict[str, Any], inventory: dict[str, Any],
+    candidate: dict[str, Any],
+    inventory: dict[str, Any],
 ) -> dict[str, Any]:
     """호출할 수 없는 layer별 DTO 대신 근거 있는 upstream DTO를 재사용하도록 정규화한다."""
 
@@ -239,11 +273,15 @@ def _canonicalize_downstream_input_types(
             for operation in class_set.get("operations") or []
             if isinstance(operation, dict)
             and re.sub(
-                r"[^a-z0-9]", "", text(operation.get("name")).casefold(),
-            ) not in {"none", "noop", "notapplicable"}
+                r"[^a-z0-9]",
+                "",
+                text(operation.get("name")).casefold(),
+            )
+            not in {"none", "noop", "notapplicable"}
         ]
     candidate["Classes"] = [
-        class_set for class_set in candidate.get("Classes") or []
+        class_set
+        for class_set in candidate.get("Classes") or []
         if isinstance(class_set, dict) and class_set.get("operations")
     ]
     local_types = {
@@ -253,31 +291,34 @@ def _canonicalize_downstream_input_types(
     }
     if not local_types:
         return candidate
-    fields_by_type = structured_field_types({
-        "Classes": inventory.get("Classes") or [],
-        "DataTypes": [
-            *(inventory.get("DataTypes") or []),
-            *(candidate.get("DataTypes") or []),
-        ],
-    })
+    fields_by_type = structured_field_types(
+        {
+            "Classes": inventory.get("Classes") or [],
+            "DataTypes": [
+                *(inventory.get("DataTypes") or []),
+                *(candidate.get("DataTypes") or []),
+            ],
+        }
+    )
     stereotypes = {
         class_name(item): text(item.get("stereotype"))
-        for item in inventory.get("Classes") or [] if isinstance(item, dict)
+        for item in inventory.get("Classes") or []
+        if isinstance(item, dict)
     }
-    class_sets = [
-        item for item in candidate.get("Classes") or [] if isinstance(item, dict)
-    ]
+    class_sets = [item for item in candidate.get("Classes") or [] if isinstance(item, dict)]
 
     def parameter_types(allowed: set[str]) -> list[str]:
-        return list(dict.fromkeys(
-            text(parameter.get("type"))
-            for class_set in class_sets
-            if stereotypes.get(text(class_set.get("className"))) in allowed
-            for operation in class_set.get("operations") or []
-            if isinstance(operation, dict)
-            for parameter in operation.get("parameters") or []
-            if isinstance(parameter, dict) and text(parameter.get("type"))
-        ))
+        return list(
+            dict.fromkeys(
+                text(parameter.get("type"))
+                for class_set in class_sets
+                if stereotypes.get(text(class_set.get("className"))) in allowed
+                for operation in class_set.get("operations") or []
+                if isinstance(operation, dict)
+                for parameter in operation.get("parameters") or []
+                if isinstance(parameter, dict) and text(parameter.get("type"))
+            )
+        )
 
     for class_set in class_sets:
         stereotype = stereotypes.get(text(class_set.get("className")), "")
@@ -326,9 +367,7 @@ def _canonicalize_downstream_input_types(
                 if not replacements:
                     continue
                 best_size = max(size for size, _source in replacements)
-                best = sorted({
-                    source for size, source in replacements if size == best_size
-                })
+                best = sorted({source for size, source in replacements if size == best_size})
                 if len(best) == 1:
                     parameter["type"] = best[0]
 
@@ -353,8 +392,7 @@ def _canonicalize_downstream_input_types(
                     referenced.add(target)
                     pending.append(target)
     candidate["DataTypes"] = [
-        item for item in candidate.get("DataTypes") or []
-        if text(item.get("name")) in referenced
+        item for item in candidate.get("DataTypes") or [] if text(item.get("name")) in referenced
     ]
     return candidate
 
@@ -376,12 +414,11 @@ def _canonicalize_step_ownership(
 
     normalized = deepcopy(candidate)
     allowed_refs = set(allowed_step_ids)
-    allowed_use_cases = {
-        ref.split(":", 1)[0] for ref in allowed_refs
-    }
+    allowed_use_cases = {ref.split(":", 1)[0] for ref in allowed_refs}
     stereotypes = {
         class_name(item): text(item.get("stereotype")).casefold()
-        for item in inventory.get("Classes") or [] if isinstance(item, dict)
+        for item in inventory.get("Classes") or []
+        if isinstance(item, dict)
     }
     class_sets: list[dict[str, Any]] = []
     for class_set in normalized.get("Classes") or []:
@@ -395,17 +432,16 @@ def _canonicalize_step_ownership(
             owned = deepcopy(operation)
             if allowed_refs:
                 owned["stepRefs"] = [
-                    ref for ref in owned.get("stepRefs") or []
+                    ref
+                    for ref in owned.get("stepRefs") or []
                     if text(ref) in allowed_refs
                     or text(ref).split(":", 1)[0] not in allowed_use_cases
                 ]
             if stereotypes.get(owner) != "boundary":
                 owned["stepRefs"] = [
-                    ref for ref in owned.get("stepRefs") or []
-                    if (
-                        text(ref) not in actor_entry_refs
-                        or text(ref) in shared_actor_entry_refs
-                    )
+                    ref
+                    for ref in owned.get("stepRefs") or []
+                    if (text(ref) not in actor_entry_refs or text(ref) in shared_actor_entry_refs)
                 ]
             if owned.get("stepRefs"):
                 operations.append(owned)
@@ -437,15 +473,16 @@ def _fold_same_boundary_responses(
     normalized = deepcopy(candidate)
     stereotypes = {
         class_name(item): text(item.get("stereotype")).casefold()
-        for item in inventory.get("Classes") or [] if isinstance(item, dict)
+        for item in inventory.get("Classes") or []
+        if isinstance(item, dict)
     }
     class_sets = {
         text(item.get("className")): item
-        for item in normalized.get("Classes") or [] if isinstance(item, dict)
+        for item in normalized.get("Classes") or []
+        if isinstance(item, dict)
     }
     groups = tuple(
-        group for group in index.groups
-        if group.use_case_id == use_case.id and group.actor_step
+        group for group in index.groups if group.use_case_id == use_case.id and group.actor_step
     )
     actor_entries = {group.actor_step for group in groups}
 
@@ -455,10 +492,9 @@ def _fold_same_boundary_responses(
             if stereotypes.get(owner) != "boundary":
                 continue
             for operation in class_set.get("operations") or []:
-                if (
-                    isinstance(operation, dict)
-                    and group.actor_step in {text(ref) for ref in operation.get("stepRefs") or []}
-                ):
+                if isinstance(operation, dict) and group.actor_step in {
+                    text(ref) for ref in operation.get("stepRefs") or []
+                }:
                     root = owner, operation
                     break
             if root is not None:
@@ -478,22 +514,25 @@ def _fold_same_boundary_responses(
             if operation_ref not in operation_refs:
                 continue
             refs = [text(ref) for ref in operation.get("stepRefs") or []]
-            response_refs = [
-                ref for ref in refs if ref in required and ref not in actor_entries
-            ]
+            response_refs = [ref for ref in refs if ref in required and ref not in actor_entries]
             if not response_refs:
                 continue
-            root_operation["stepRefs"] = list(dict.fromkeys([
-                *(text(ref) for ref in root_operation.get("stepRefs") or []),
-                *response_refs,
-            ]))
+            root_operation["stepRefs"] = list(
+                dict.fromkeys(
+                    [
+                        *(text(ref) for ref in root_operation.get("stepRefs") or []),
+                        *response_refs,
+                    ]
+                )
+            )
             operation["stepRefs"] = [ref for ref in refs if ref not in response_refs]
 
     normalized["Classes"] = [
         {
             **class_set,
             "operations": [
-                operation for operation in class_set.get("operations") or []
+                operation
+                for operation in class_set.get("operations") or []
                 if isinstance(operation, dict) and operation.get("stepRefs")
             ],
         }
@@ -532,16 +571,19 @@ def normalize_operation_fragment(
 
     inventory_payload = inventory.as_payload()
     candidate = OperationFragment.model_validate(proposal).model_dump(by_alias=True)
-    fixed_names = {
-        class_name(item) for item in inventory_payload.get("Classes") or []
-        if isinstance(item, dict)
-    } | {
-        text(item.get("name")) for item in inventory_payload.get("DataTypes") or []
-        if isinstance(item, dict)
-    } | {
-        text(item.get("name")) for item in reserved_types or []
-        if isinstance(item, dict)
-    }
+    fixed_names = (
+        {
+            class_name(item)
+            for item in inventory_payload.get("Classes") or []
+            if isinstance(item, dict)
+        }
+        | {
+            text(item.get("name"))
+            for item in inventory_payload.get("DataTypes") or []
+            if isinstance(item, dict)
+        }
+        | {text(item.get("name")) for item in reserved_types or [] if isinstance(item, dict)}
+    )
     candidate["DataTypes"] = [
         {
             **item,
@@ -555,11 +597,13 @@ def normalize_operation_fragment(
     ]
     candidate = _canonicalize_downstream_input_types(candidate, inventory_payload)
     actor_entry_refs = {
-        group.actor_step for group in index.groups
+        group.actor_step
+        for group in index.groups
         if group.use_case_id == use_case.id and group.actor_step
     }
     shared_actor_entry_refs = {
-        group.actor_step for group in index.groups
+        group.actor_step
+        for group in index.groups
         if group.use_case_id == use_case.id
         and group.actor_step
         and len(group.required_step_ids) == 1
@@ -630,16 +674,15 @@ def _propose_fragment(
     )
     # 2. 설명문이나 임의 필드를 거부하고 일시적 proposal schema만 수락한다.
     candidate = OperationFragment.model_validate(parsed).model_dump(by_alias=True)
-    fixed_names = {
-        class_name(item) for item in inventory.get("Classes") or []
-        if isinstance(item, dict)
-    } | {
-        text(item.get("name")) for item in inventory.get("DataTypes") or []
-        if isinstance(item, dict)
-    } | {
-        text(item.get("name")) for item in reserved_types or []
-        if isinstance(item, dict)
-    }
+    fixed_names = (
+        {class_name(item) for item in inventory.get("Classes") or [] if isinstance(item, dict)}
+        | {
+            text(item.get("name"))
+            for item in inventory.get("DataTypes") or []
+            if isinstance(item, dict)
+        }
+        | {text(item.get("name")) for item in reserved_types or [] if isinstance(item, dict)}
+    )
     # 3. 전역·앞서 수락된 타입은 지역 선언에서 제거한다. 같은 이름의 다른
     # 정의는 compose 시 충돌로 드러나며 조용히 덮어쓰지 않는다.
     candidate["DataTypes"] = [
@@ -702,9 +745,11 @@ def _checked_fragment_uncached(
         "DataTypes": [
             *(inventory.get("DataTypes") or []),
             *(
-                item for item in (reserved_types or [])
+                item
+                for item in (reserved_types or [])
                 if isinstance(item, dict)
-                and text(item.get("name")) not in {
+                and text(item.get("name"))
+                not in {
                     text(existing.get("name"))
                     for existing in inventory.get("DataTypes") or []
                     if isinstance(existing, dict)
@@ -721,14 +766,16 @@ def _checked_fragment_uncached(
         allowed_step_ids,
     )
     ledger = RepairLedger()
-    input_digest = stable_digest({
-        "useCaseId": use_case.id,
-        "inventory": inventory,
-        "reserved": reserved or [],
-        "reservedTypes": reserved_types or [],
-        "allowedStepIds": allowed_step_ids,
-        "initialFindings": findings or [],
-    })
+    input_digest = stable_digest(
+        {
+            "useCaseId": use_case.id,
+            "inventory": inventory,
+            "reserved": reserved or [],
+            "reservedTypes": reserved_types or [],
+            "allowedStepIds": allowed_step_ids,
+            "initialFindings": findings or [],
+        }
+    )
     candidate = previous
     repair_findings = list(findings or [])
     attempt = 0
@@ -758,27 +805,26 @@ def _checked_fragment_uncached(
 
         current_findings = tuple(sorted(set(finding_text(report.findings))))
         candidate_digest = stable_digest(candidate)
-        repeated = (
-            ledger.candidate_seen(
-                input_digest=input_digest,
-                candidate_digest=candidate_digest,
-            )
-            or ledger.failure_seen(
-                input_digest=input_digest,
-                finding_keys=current_findings,
-            )
-        )
-        ledger.record(RepairAttempt(
-            stage="design.class.operations",
-            target_ids=(use_case.id,),
-            strategy_key=f"full-fragment-replacement-{attempt + 1}",
+        repeated = ledger.candidate_seen(
             input_digest=input_digest,
             candidate_digest=candidate_digest,
-            finding_keys_before=current_findings,
-            finding_keys_after=current_findings,
-            outcome="repeated_candidate" if repeated else "no_improvement",
-            detail="; ".join(current_findings),
-        ))
+        ) or ledger.failure_seen(
+            input_digest=input_digest,
+            finding_keys=current_findings,
+        )
+        ledger.record(
+            RepairAttempt(
+                stage="design.class.operations",
+                target_ids=(use_case.id,),
+                strategy_key=f"full-fragment-replacement-{attempt + 1}",
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+                finding_keys_before=current_findings,
+                finding_keys_after=current_findings,
+                outcome="repeated_candidate" if repeated else "no_improvement",
+                detail="; ".join(current_findings),
+            )
+        )
         repair_findings = [
             *current_findings,
             *(
@@ -786,7 +832,8 @@ def _checked_fragment_uncached(
                     "The previous candidate repeated the same rejected state. "
                     "Return a materially different complete fragment."
                 ]
-                if repeated else []
+                if repeated
+                else []
             ),
             (
                 "Accumulated repair history (do not repeat any strategy or candidate):\n"
@@ -821,9 +868,7 @@ def _operation_cache_key(
         allowed_step_ids=allowed_step_ids,
     )
     if isinstance(payload.get("findings"), list):
-        payload["findings"] = [
-            " ".join(str(item).split()) for item in payload["findings"]
-        ]
+        payload["findings"] = [" ".join(str(item).split()) for item in payload["findings"]]
     return accepted_unit_key(
         "operation-fragment",
         unit_slice=payload,
@@ -834,10 +879,10 @@ def _operation_cache_key(
         },
         prompt=_OPERATION_PROMPT,
         schema=OperationFragment,
-        provider=configured_provider_identity(settings.base_url),
+        provider=configured_provider_identity(build_llm_connection().base_url),
         model=settings.model,
         seed=settings.seed,
-        temperature=settings.temperature,
+        temperature=effective_temperature(settings.model, settings.temperature),
         reasoning_effort=operation_reasoning_effort(),
         max_completion_tokens=operation_max_completion_tokens(),
     )
@@ -863,7 +908,8 @@ def _validate_accepted_fragment(
             continue
         item["fields"] = [
             fields.normalize_java_field(f"{field['name']} : {field['type']}")
-            if isinstance(field, dict) else field
+            if isinstance(field, dict)
+            else field
             for field in item.get("fields") or []
         ]
     try:
@@ -877,9 +923,11 @@ def _validate_accepted_fragment(
         "DataTypes": [
             *(inventory.get("DataTypes") or []),
             *(
-                item for item in (reserved_types or [])
+                item
+                for item in (reserved_types or [])
                 if isinstance(item, dict)
-                and text(item.get("name")) not in {
+                and text(item.get("name"))
+                not in {
                     text(existing.get("name"))
                     for existing in inventory.get("DataTypes") or []
                     if isinstance(existing, dict)
@@ -917,7 +965,10 @@ def validate_operation_fragment(
     """정규화한 fragment에 최소 operation 검사를 다시 실행한다."""
 
     payload = _validate_accepted_fragment(
-        fragment.as_payload(), index, inventory.as_payload(), use_case,
+        fragment.as_payload(),
+        index,
+        inventory.as_payload(),
+        use_case,
         reserved_types=reserved_types,
         allowed_step_ids=allowed_step_ids,
     )
@@ -951,6 +1002,7 @@ def _checked_fragment(
             allowed_step_ids=allowed_step_ids,
             operation=operation,
         )
+
     prompt_payload = _operation_payload(
         index,
         inventory,
@@ -1010,7 +1062,8 @@ def _operation_signature(operation: dict[str, Any]) -> tuple[Any, ...]:
     return (
         tuple(
             (text(parameter.get("name")), text(parameter.get("type")))
-            for parameter in operation.get("parameters") or [] if isinstance(parameter, dict)
+            for parameter in operation.get("parameters") or []
+            if isinstance(parameter, dict)
         ),
         text(operation.get("returnType")),
     )
@@ -1039,20 +1092,24 @@ def _compose(
     classes = {
         class_name(item): {
             **{
-                key: deepcopy(value) for key, value in item.items()
+                key: deepcopy(value)
+                for key, value in item.items()
                 if key not in {"useCaseIds", "values"}
             },
             "use_case_ids": [],
             "operations": [],
         }
-        for item in inventory.get("Classes") or [] if isinstance(item, dict)
+        for item in inventory.get("Classes") or []
+        if isinstance(item, dict)
     }
     data_type_index = {
         text(item.get("name")): {
-            key: deepcopy(value) for key, value in item.items()
+            key: deepcopy(value)
+            for key, value in item.items()
             if key not in {"useCaseIds", "identifier"}
         }
-        for item in inventory.get("DataTypes") or [] if isinstance(item, dict)
+        for item in inventory.get("DataTypes") or []
+        if isinstance(item, dict)
     }
     # 입력 순서가 곧 충돌 소유권이다. 앞서 수락된 fragment는 고정하고 현재 fragment가
     # 충돌을 해결해야 병렬 완료 순서와 무관한 모델을 얻는다.
@@ -1077,25 +1134,37 @@ def _compose(
             for proposed in class_set.get("operations") or []:
                 if not isinstance(proposed, dict):
                     continue
-                existing = next((
-                    item for item in target["operations"]
-                    if text(item.get("name")) == text(proposed.get("name"))
-                ), None)
+                existing = next(
+                    (
+                        item
+                        for item in target["operations"]
+                        if text(item.get("name")) == text(proposed.get("name"))
+                    ),
+                    None,
+                )
                 if existing is not None:
                     if _operation_signature(existing) != _operation_signature(proposed):
                         raise _Collision(owner, text(proposed.get("name")))
-                    existing["stepRefs"] = list(dict.fromkeys([
-                        *(existing.get("stepRefs") or []),
-                        *(proposed.get("stepRefs") or []),
-                    ]))
+                    existing["stepRefs"] = list(
+                        dict.fromkeys(
+                            [
+                                *(existing.get("stepRefs") or []),
+                                *(proposed.get("stepRefs") or []),
+                            ]
+                        )
+                    )
                     continue
                 parameters = list(proposed.get("parameters") or [])
-                target["operations"].append({
-                    "operationId": canonical_operation_id(
-                        owner, text(proposed.get("name")), parameters,
-                    ),
-                    **deepcopy(proposed),
-                })
+                target["operations"].append(
+                    {
+                        "operationId": canonical_operation_id(
+                            owner,
+                            text(proposed.get("name")),
+                            parameters,
+                        ),
+                        **deepcopy(proposed),
+                    }
+                )
             if class_set.get("operations") and use_case_id not in target["use_case_ids"]:
                 target["use_case_ids"].append(use_case_id)
     result_classes = list(classes.values())
@@ -1104,9 +1173,7 @@ def _compose(
     if final:
         # 화면을 단순화하기 위한 임의 삭제가 아니다. 실제 operation 계약에서 도달할 수
         # 없는 구조만 제거해 API/sequence 소비자가 쓸 수 없는 타입을 저장하지 않는다.
-        retained = {
-            class_name(item) for item in result_classes if item.get("operations")
-        }
+        retained = {class_name(item) for item in result_classes if item.get("operations")}
         # operation이 없는 구조 클래스라도 수락된 class의 field나 signature가 참조하면
         # 타입 계약의 일부다. 이를 지우면 `RegistrationPeriod.term : AcademicTerm`처럼
         # 검증을 통과했던 선언이 최종 조립 과정에서 갑자기 미해소 타입이 된다.
@@ -1123,32 +1190,40 @@ def _compose(
                 referenced.update(referenced_type_names(text(operation.get("returnType"))))
                 for parameter in operation.get("parameters") or []:
                     if isinstance(parameter, dict):
-                        referenced.update(
-                            referenced_type_names(text(parameter.get("type")))
-                        )
+                        referenced.update(referenced_type_names(text(parameter.get("type"))))
             for name in referenced & class_index.keys() - retained:
                 retained.add(name)
                 pending.append(name)
         result_classes = [item for item in result_classes if class_name(item) in retained]
         relationships = [
-            item for item in relationships if isinstance(item, dict)
-            and text(item.get("source")) in retained and text(item.get("target")) in retained
+            item
+            for item in relationships
+            if isinstance(item, dict)
+            and text(item.get("source")) in retained
+            and text(item.get("target")) in retained
         ]
         reachable = reachable_data_type_names(result_classes, data_types)
         data_types = [
-            item for item in data_types if isinstance(item, dict)
-            and text(item.get("name")) in reachable
+            item
+            for item in data_types
+            if isinstance(item, dict) and text(item.get("name")) in reachable
         ]
-    return BCEModel.model_validate({
-        "Classes": result_classes,
-        "DataTypes": data_types,
-        "Relationships": relationships,
-        "Collaborations": [],
-    }).model_dump(by_alias=True)
+    return BCEModel.model_validate(
+        {
+            "Classes": result_classes,
+            "DataTypes": data_types,
+            "Relationships": relationships,
+            "Collaborations": [],
+        }
+    ).model_dump(by_alias=True)
 
 
 def emit_preview(
-    model: dict[str, Any], phase: str, unit: str, completed: int, total: int,
+    model: dict[str, Any],
+    phase: str,
+    unit: str,
+    completed: int,
+    total: int,
 ) -> None:
     """한 수락 경계의 BCE skeleton을 UI 진행 스냅샷으로 발행한다.
 
@@ -1173,7 +1248,8 @@ def emit_preview(
 
 
 def _compose_fragments(
-    inventory: dict[str, Any], fragments: dict[str, dict[str, Any]],
+    inventory: dict[str, Any],
+    fragments: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     return _compose(
         inventory,
@@ -1239,10 +1315,12 @@ def compose_fragments(
     Returns:
         collaboration이 비어 있고 도달 가능한 계약만 남은 ``BCEModel``이다.
     """
-    return BCEModel.model_validate(_compose_fragments(
-        inventory.as_payload(),
-        {key: value.as_payload() for key, value in fragments.items()},
-    ))
+    return BCEModel.model_validate(
+        _compose_fragments(
+            inventory.as_payload(),
+            {key: value.as_payload() for key, value in fragments.items()},
+        )
+    )
 
 
 def compose_operation_units(
@@ -1253,11 +1331,13 @@ def compose_operation_units(
 ) -> BCEModel:
     """유스케이스별 fragment를 입력 순서대로 조립한다."""
 
-    return BCEModel.model_validate(_compose(
-        inventory.as_payload(),
-        [(item.use_case_id, item.as_payload()) for item in fragments],
-        final=final,
-    ))
+    return BCEModel.model_validate(
+        _compose(
+            inventory.as_payload(),
+            [(item.use_case_id, item.as_payload()) for item in fragments],
+            final=final,
+        )
+    )
 
 
 __all__ = [

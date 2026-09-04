@@ -9,6 +9,7 @@ from pathlib import Path
 from app.artifact_trace import TraceRef
 from app.artifact_trace_projection import project_artifact_trace
 from app.config import settings
+from app.llm_connection import build_llm_connection
 
 from ..domain.implementation_ir import (
     ApiOperationIR,
@@ -1048,12 +1049,13 @@ def _prompt_json(value: object) -> str:
 def llm_config(spec: JobSpec) -> dict[str, object]:
     """모든 구현 작업이 공유하는 OpenHands LLM 설정을 만든다."""
 
+    connection = build_llm_connection()
     return {
-        "provider": "nvidia-nim",
+        "provider": connection.provider,
         # Stored as execution evidence. Runtime selection still reads the same
         # required root .env settings and never falls back to this snapshot.
-        "model": settings.model,
-        "baseUrl": settings.base_url,
+        "model": connection.model,
+        "baseUrl": connection.base_url,
         "temperature": spec.agent_temperature,
         "topP": spec.agent_top_p,
         "maxOutputTokens": spec.agent_max_output_tokens,

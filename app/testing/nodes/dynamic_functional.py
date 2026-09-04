@@ -9,8 +9,13 @@ from openai import OpenAI
 from pydantic import ValidationError
 
 from app.config import settings
-from app.testing.runtime.provider import configured_api_key, configured_model
-from app.testing.runtime.provider import settings as provider_settings
+from app.llm_profiles import profile_for
+from app.testing.runtime.provider import (
+    configured_api_key,
+    configured_base_url,
+    configured_headers,
+    configured_model,
+)
 from app.testing.schemas.functional_plan import FunctionalTestCase, FunctionalTestPlan
 from app.testing.schemas.testing_state import TestingState
 from app.testing.utils.functional_executor import (
@@ -277,12 +282,26 @@ def _without_repeated_operations(case: FunctionalTestCase) -> FunctionalTestCase
 
 
 def _generate(client: OpenAI, candidate: dict[str, Any]) -> FunctionalTestCase:
-    response = client.chat.completions.create(
-        model=configured_model(),
-        temperature=settings.temperature,
-        messages=[{"role": "user", "content": _prompt(candidate)}],
-        response_format=_response_format(),
+    model = configured_model()
+    profile = profile_for(
+        model,
+        fallback_temperature=settings.temperature,
+        fallback_max_tokens=settings.llm_max_completion_tokens or 16384,
     )
+    request: dict[str, Any] = {
+        "model": model,
+        "temperature": profile.temperature,
+        "messages": [{"role": "user", "content": _prompt(candidate)}],
+        "response_format": _response_format(),
+        "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens),
+    }
+    if profile.top_p is not None:
+        request["top_p"] = profile.top_p
+    if reasoning_effort := profile.resolve_reasoning():
+        request["reasoning_effort"] = reasoning_effort
+    if extra_body := profile.extra_body():
+        request["extra_body"] = extra_body
+    response = client.chat.completions.create(**request)
     case = _without_repeated_operations(
         FunctionalTestCase.model_validate_json(
             (response.choices[0].message.content if response.choices else "") or ""
@@ -401,9 +420,10 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 }
             client = OpenAI(
                 api_key=api_key,
-                base_url=provider_settings.base_url,
+                base_url=configured_base_url(),
+                default_headers=configured_headers(),
                 max_retries=0,
-                timeout=provider_settings.llm_timeout_seconds,
+                timeout=settings.llm_timeout_seconds,
             )
             plan = FunctionalTestPlan(
                 cases=[_generate(client, candidate) for candidate in candidates]

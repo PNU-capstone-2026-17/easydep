@@ -28,6 +28,8 @@ from typing import Any, ParamSpec, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from app.config import settings
+from app.llm_connection import LlmConnection, build_llm_connection
+from app.llm_profiles import profile_for
 from app.metrics import langsmith as langsmith_metrics
 from app.metrics.llm_stall_probe import start_stall_probe
 
@@ -283,18 +285,14 @@ def _response_format(schema: type[BaseModel]) -> dict[str, Any]:
 
 
 def _reasoning_effort(reasoning_effort: str | None) -> str | None:
-    """Validate an explicit per-call policy and gate it to GPT-OSS providers.
+    """단계별 reasoning 설정을 현재 NIM 모델이 받는 값으로 바꾼다."""
 
-    NVIDIA NIM exposes ``reasoning_effort`` for GPT-OSS through its
-    OpenAI-compatible endpoint.  Other configured models retain the same
-    request shape they used before this policy was introduced.
-    """
-    configured = (reasoning_effort or settings.design_reasoning_effort).strip().lower()
-    if configured not in {"low", "medium", "high"}:
-        raise ValueError(f"unsupported reasoning effort: {configured}")
-    if "gpt-oss" not in settings.model.lower():
-        return None
-    return configured
+    configured = reasoning_effort or settings.design_reasoning_effort
+    return profile_for(
+        settings.model,
+        fallback_temperature=settings.temperature,
+        fallback_max_tokens=settings.llm_max_completion_tokens or 16384,
+    ).resolve_reasoning(configured)
 
 
 def stream_structured_response(
@@ -312,6 +310,8 @@ def stream_structured_response(
     first_event: float | None = None
     first_output: float | None = None
     first_content: float | None = None
+    first_reasoning: float | None = None
+    last_reasoning: float | None = None
     max_inter_event = 0.0
     event_count = 0
     content_parts: list[str] = []
@@ -319,10 +319,16 @@ def stream_structured_response(
     content_characters = 0
     reasoning_characters = 0
     finish_reasons: list[str] = []
+    connection = build_llm_connection()
+    profile = profile_for(
+        connection.model,
+        fallback_temperature=settings.temperature,
+        fallback_max_tokens=settings.llm_max_completion_tokens or 16384,
+    )
     request: dict[str, Any] = {
-        "model": settings.model,
+        "model": connection.model,
         "messages": messages,
-        "temperature": settings.temperature,
+        "temperature": profile.temperature,
         "seed": settings.seed,
         "stream": True,
         # NVIDIA NIM documents this OpenAI-compatible option.  The final stream
@@ -331,22 +337,29 @@ def stream_structured_response(
         "stream_options": {"include_usage": True},
         "response_format": _response_format(schema),
     }
-    completion_limit = (
+    requested_completion_limit = (
         max_completion_tokens
         if max_completion_tokens is not None
         else settings.llm_max_completion_tokens
     )
-    if completion_limit:
-        request["max_completion_tokens"] = int(completion_limit)
+    completion_limit = profile.completion_limit(requested_completion_limit)
+    request["max_tokens"] = completion_limit
+    if profile.top_p is not None:
+        request["top_p"] = profile.top_p
     provider_reasoning_effort = _reasoning_effort(reasoning_effort)
     if provider_reasoning_effort:
         request["reasoning_effort"] = provider_reasoning_effort
+    if extra_body := profile.extra_body():
+        request["extra_body"] = extra_body
     observation.update(
         schema=schema.__name__,
-        provider="nvidia-nim",
-        model=settings.model,
+        provider=connection.provider,
+        model=connection.model,
+        temperature=profile.temperature,
+        topP=profile.top_p,
         reasoningEffort=provider_reasoning_effort,
-        maxCompletionTokens=int(completion_limit) if completion_limit else None,
+        reasoningBudget=profile.reasoning_budget,
+        maxCompletionTokens=completion_limit,
     )
     stream = client.chat.completions.create(
         **request,
@@ -375,6 +388,9 @@ def stream_structured_response(
                 content_parts.append(content)
                 content_characters += len(content)
             if reasoning:
+                if first_reasoning is None:
+                    first_reasoning = now - started
+                last_reasoning = now - started
                 reasoning_parts.append(reasoning)
             reasoning_characters += len(reasoning)
             if choice.finish_reason:
@@ -402,6 +418,17 @@ def stream_structured_response(
         ttftSeconds=round(first_output, 6) if first_output is not None else None,
         firstContentSeconds=(
             round(first_content, 6) if first_content is not None else None
+        ),
+        firstReasoningSeconds=(
+            round(first_reasoning, 6) if first_reasoning is not None else None
+        ),
+        lastReasoningSeconds=(
+            round(last_reasoning, 6) if last_reasoning is not None else None
+        ),
+        reasoningLeadSeconds=(
+            round(first_content - first_reasoning, 6)
+            if first_content is not None and first_reasoning is not None
+            else None
         ),
         maxInterEventSeconds=round(max_inter_event, 6),
         eventCount=event_count,
@@ -493,10 +520,10 @@ def parse_structured(
     temperature/seed를 고정하는 것은 같은 입력이 같은 모델을 내도록 하기 위해서다 —
     산출물이 재현되지 않으면 피드백이 무엇을 고쳤는지 알 수 없다.
     """
+    connection = build_llm_connection()
     parsed = parse_with_schema_repair(
         _structured_client(
-            settings.base_url,
-            settings.api_key,
+            connection,
             float(settings.llm_timeout_seconds),
             int(settings.llm_max_retries),
         ),
@@ -513,8 +540,7 @@ def parse_structured(
 
 @lru_cache(maxsize=4)
 def _structured_client(
-    base_url: str | None,
-    api_key: str | None,
+    connection: LlmConnection,
     timeout_seconds: float,
     max_retries: int,
 ):
@@ -525,8 +551,9 @@ def _structured_client(
 
     load_dotenv()
     return OpenAI(
-        base_url=base_url,
-        api_key=api_key,
+        base_url=connection.base_url,
+        api_key=connection.api_key,
+        default_headers=connection.default_headers(),
         timeout=timeout_seconds,
         max_retries=max_retries,
     )

@@ -13,7 +13,16 @@ class Settings(BaseSettings):
     api_key: str
     base_url: str
     model: str
-    temperature: float = 0.2
+    # Cloudflare AI Gateway를 쓰는 경우 URL 안에 계정 ID가 들어가고, 인증 토큰도
+    # 기존 provider 키와 다르다. 세 값을 루트 .env에 따로 두면 아래 연결 함수가
+    # OpenAI 호환 클라이언트에 필요한 URL과 헤더를 한 번만 조립한다.
+    cloudflare_account_id: str | None = None
+    cloudflare_api_token: str | None = None
+    cloudflare_ai_gateway_id: str | None = None
+    # gpt-oss의 공식 일반 권장값 1.0과 구조화 작업용 저분산 값 0.2 사이를 실제
+    # 요구사항·클래스 실험으로 비교했다. 0.6이 1.0보다 필요한 동작을 덜 생략했고
+    # 0.2보다 복합 요구사항을 잘 나눠, 품질과 속도의 공통 기본값으로 사용한다.
+    temperature: float = 0.6
     seed: int = 42
 
     @field_validator("api_key", "base_url", "model")
@@ -31,13 +40,12 @@ class Settings(BaseSettings):
     llm_max_completion_tokens: int | None = 16384
     design_reasoning_effort: str = "medium"
     design_selector_reasoning_effort: str = "low"
-    # Class authoring stages keep the former medium policy by default. Separate
-    # settings let the frozen E1 experiment lower one stage without changing the
-    # inventory, selectors, or repair scope.
+    # 전역 inventory는 여러 유스케이스를 함께 판단하므로 medium을 유지한다. 한
+    # 유스케이스의 operation은 후보와 step이 이미 제한되어 low로도 충분했다.
     design_class_inventory_reasoning_effort: str = "medium"
-    design_class_operation_reasoning_effort: str = "medium"
+    design_class_operation_reasoning_effort: str = "low"
     design_class_call_plan_reasoning_effort: str = "medium"
-    design_class_compact_operation_payload: bool = False
+    design_class_compact_operation_payload: bool = True
     llm_timeout_seconds: float = 300.0
     llm_wall_timeout_seconds: float = 330.0
     llm_max_retries: int = 0
@@ -83,9 +91,9 @@ class Settings(BaseSettings):
     # Stage-specific caps retain the former broad defaults until the frozen E1
     # experiment justifies a lower 2K/4K/8K/16K tier.
     design_class_inventory_max_completion_tokens: int = 16384
-    # E1의 결합 operation 수리 응답이 8,192 토큰에서 실제로 잘렸으므로 다음
-    # provider tier인 16,384를 사용한다. 짧은 call plan은 기존 상한이면 충분하다.
-    design_class_operation_max_completion_tokens: int = 16384
+    # low reasoning의 UC2·UC3·UC10 출력은 2K 미만이었고 compact UC2도 4K에서
+    # finish_reason=stop으로 끝났다. 예상 밖 수리를 위한 여유를 포함해 4K로 제한한다.
+    design_class_operation_max_completion_tokens: int = 4096
     design_class_call_plan_max_completion_tokens: int = 8192
     # The global inventory needs enough combined reasoning/output budget to
     # finish strict JSON.  Choice-space reduction happens in its compact input,

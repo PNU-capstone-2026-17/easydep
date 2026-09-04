@@ -363,8 +363,10 @@ inventory, operation, call-plan은 각각 `design_class_inventory_reasoning_effo
 `design_class_operation_reasoning_effort`, `design_class_call_plan_reasoning_effort`를
 읽는다. 값이 없는 구버전 설정은 기존 `design_reasoning_effort`로 fallback한다. 이 설정은
 수리 종료 조건, handoff 범위와 병렬도 정책을 바꾸지 않는다.
-`design_class_compact_operation_payload`의 운영 기본값은 평가 채택 전까지 `false`이며,
-live protocol의 compact/candidate cell에서만 명시적으로 활성화한다.
+수강신청 UC2·UC3·UC10 실험에서 operation은 `low`로도 모두 수락됐으므로 기본값이
+`low`다. `design_class_compact_operation_payload`도 기본으로 켜서 같은 main/extension
+본문을 `useCase`와 `executionSlice`에 두 번 싣지 않는다. 4K 출력 상한 실험도
+`finish_reason=stop`으로 끝났으며 schema repair가 없었다.
 
 모든 호출은 `capture_llm_timings()`의 invocation별 ContextVar 수집기를 사용한다. worker는
 `bind_context`로 collector를 전달하고, concurrent event는 유실 없이 합쳐진다. cache event는

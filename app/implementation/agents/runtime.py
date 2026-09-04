@@ -8,8 +8,11 @@ import threading
 import time
 import warnings
 from pathlib import Path
+from typing import Any
 
 from app.config import settings
+from app.llm_connection import build_llm_connection
+from app.llm_profiles import profile_for
 from app.metrics import langsmith as langsmith_metrics
 from app.validation import RepairAttempt, RepairLedger, stable_digest
 
@@ -24,6 +27,8 @@ from .prompts import (
 from .provider import (
     MAX_PROVIDER_RETRIES,
     configured_api_key,
+    configured_base_url,
+    configured_headers,
     configured_max_output_tokens,
     configured_model,
     openhands_compatibility,
@@ -55,7 +60,6 @@ from .workspace import (
 # focused 검사까지 진행할 만큼의 tool turn을 준다. 이 값은 전체 수리 횟수 상한이 아니다.
 # 한도나 context에 닿으면 workspace는 유지하고 짧은 인계문으로 새 Conversation을 연다.
 MAX_AGENT_TURN_ITERATIONS = 32
-MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
 _RESTRICTED_GREP_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
@@ -129,6 +133,7 @@ def write_execution_plan(
     requested_mode: str,
 ) -> dict[str, object]:
     compatibility = openhands_compatibility()
+    connection = build_llm_connection()
     plan = {
         "schemaVersion": "openhands-execution-plan/v1alpha1",
         "mode": requested_mode,
@@ -138,9 +143,9 @@ def write_execution_plan(
         ),
         "compatibility": compatibility,
         "llm": {
-            "provider": "nvidia-nim",
-            "model": settings.model,
-            "baseUrl": settings.base_url,
+            "provider": connection.provider,
+            "model": connection.model,
+            "baseUrl": connection.base_url,
         },
         "taskOrder": [task["task_id"] for task in tasks],
         "isolation": "copy source-only application to an ASCII temp workspace, edit only assigned implementation paths, run focused checks inside OpenHands, protect generated contracts, promote verified files only",
@@ -1128,6 +1133,17 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         or not file_path_alias_accepted
     ):
         raise RuntimeError("Restricted FileEditorTool was not initialized with the exact allowlist")
+    profile = profile_for(
+        configured_model(),
+        fallback_temperature=settings.implementation_agent_temperature,
+        fallback_max_tokens=settings.implementation_agent_max_output_tokens,
+    )
+    task_llm = task.get("llm")
+    configured_reasoning = (
+        task_llm.get("reasoningEffort", settings.implementation_reasoning_effort)
+        if isinstance(task_llm, dict)
+        else settings.implementation_reasoning_effort
+    )
     result = {
         "taskId": task_id,
         "status": "READY",
@@ -1142,9 +1158,11 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "stuckDetection": True,
         "contextCondenser": "LLMSummarizingCondenser",
         "verificationRepairPolicy": "history-and-progress/v1",
-        "reasoningBudgetCap": MAX_REASONING_BUDGET,
-        "reasoningEffort": task["llm"].get(
-            "reasoningEffort", settings.implementation_reasoning_effort
+        "reasoningBudget": profile.reasoning_budget,
+        "reasoningEffort": profile.resolve_reasoning(str(configured_reasoning)),
+        "temperature": profile.temperature,
+        "maxOutputTokens": profile.completion_limit(
+            settings.implementation_agent_max_output_tokens
         ),
         "systemPrompt": (
             "focused-frontend-implementation"
@@ -1486,35 +1504,38 @@ def create_openhands_conversation(
                 _RESTRICTED_GREP_REGISTERED = True
     task_check_tool_name = register_task_check_tool()
     model = configured_model()
-    is_qwen_coder = "qwen3-coder" in model.lower()
-    is_gpt_oss = "gpt-oss" in model.lower()
-    chat_template_kwargs = dict(llm_config["chatTemplateKwargs"])
-    chat_template_kwargs.update({"enable_thinking": True, "low_effort": True})
-    reasoning_budget = min(
-        int(llm_config.get("reasoningBudget", MAX_REASONING_BUDGET)),
-        MAX_REASONING_BUDGET,
+    raw_temperature = llm_config["temperature"]
+    raw_max_output = llm_config["maxOutputTokens"]
+    if not isinstance(raw_temperature, (int, float, str)):
+        raise TypeError("implementation LLM temperature must be numeric")
+    if not isinstance(raw_max_output, (int, str)):
+        raise TypeError("implementation LLM maxOutputTokens must be an integer")
+    profile = profile_for(
+        model,
+        fallback_temperature=float(raw_temperature),
+        fallback_max_tokens=int(raw_max_output),
     )
-    llm_options: dict[str, object] = {
+    is_qwen_coder = "qwen3-coder" in model.lower()
+    requested_output = configured_max_output_tokens(int(raw_max_output))
+    llm_options: dict[str, Any] = {
         "model": model,
         "api_key": SecretStr(api_key),
-        "base_url": settings.base_url,
-        "temperature": 0.2 if is_qwen_coder else float(llm_config["temperature"]),
-        "max_output_tokens": configured_max_output_tokens(int(llm_config["maxOutputTokens"])),
+        "base_url": configured_base_url(),
+        "extra_headers": configured_headers(),
+        "temperature": profile.temperature,
+        "max_output_tokens": profile.completion_limit(requested_output),
     }
-    if is_gpt_oss:
-        # GPT-OSS exposes native reasoning_effort and tool calling. Nemotron's
-        # chat_template_kwargs/reasoning_budget are not valid for this model.
-        llm_options["reasoning_effort"] = reasoning_effort
-    elif is_qwen_coder:
+    if is_qwen_coder:
         # NVIDIA documents Qwen3-Coder as a non-thinking model and recommends not
         # overriding both temperature and top_p in the same request.
         pass
     else:
-        llm_options["top_p"] = float(llm_config["topP"])
-        llm_options["litellm_extra_body"] = {
-            "chat_template_kwargs": chat_template_kwargs,
-            "reasoning_budget": reasoning_budget,
-        }
+        if profile.top_p is not None:
+            llm_options["top_p"] = profile.top_p
+        if resolved_reasoning := profile.resolve_reasoning(reasoning_effort):
+            llm_options["reasoning_effort"] = resolved_reasoning
+        if extra_body := profile.extra_body():
+            llm_options["litellm_extra_body"] = extra_body
     warnings.filterwarnings(
         "ignore",
         message=r"Cost calculation failed:.*",

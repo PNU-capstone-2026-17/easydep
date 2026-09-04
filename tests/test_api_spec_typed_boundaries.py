@@ -18,7 +18,6 @@ from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec import service
 from app.design.services.api_spec.normalization import (
     normalize_api_spec_model,
-    normalize_stored_api_spec_model,
 )
 from app.design.services.api_spec.projection import build_openapi_from_model
 from app.design.services.sequence_diagram.projection import SequenceCollection
@@ -37,9 +36,7 @@ def _bce_model() -> BCEModel:
                         {
                             "operationId": "proposal-id",
                             "name": "browseCatalog",
-                            "parameters": [
-                                {"name": "filter", "type": "CourseFilter"}
-                            ],
+                            "parameters": [{"name": "filter", "type": "CourseFilter"}],
                             "returnType": "List<Course>",
                             "stepRefs": ["UC1:main:1"],
                         }
@@ -53,9 +50,7 @@ def _bce_model() -> BCEModel:
                         {
                             "operationId": "proposal-id",
                             "name": "searchCatalog",
-                            "parameters": [
-                                {"name": "filter", "type": "CourseFilter"}
-                            ],
+                            "parameters": [{"name": "filter", "type": "CourseFilter"}],
                             "returnType": "List<Course>",
                             "stepRefs": ["UC1:main:1", "UC1:main:2"],
                         }
@@ -77,28 +72,30 @@ def _bce_model() -> BCEModel:
                 }
             ],
             "Relationships": [],
-            "Collaborations": [{
-                "collaborationId": "UC1",
-                "useCaseIds": ["UC1"],
-                "entryActor": "Student",
-                "calls": [
-                    {
-                        "callId": "UC1::call:1",
-                        "receiverOperationId": (
-                            "CatalogBoundary::browseCatalog(filter:CourseFilter)"
-                        ),
-                        "stepRefs": ["UC1:main:1"],
-                    },
-                    {
-                        "callId": "UC1::call:2",
-                        "parentCallId": "UC1::call:1",
-                        "receiverOperationId": (
-                            "CatalogControl::searchCatalog(filter:CourseFilter)"
-                        ),
-                        "stepRefs": ["UC1:main:1", "UC1:main:2"],
-                    },
-                ],
-            }],
+            "Collaborations": [
+                {
+                    "collaborationId": "UC1",
+                    "useCaseIds": ["UC1"],
+                    "entryActor": "Student",
+                    "calls": [
+                        {
+                            "callId": "UC1::call:1",
+                            "receiverOperationId": (
+                                "CatalogBoundary::browseCatalog(filter:CourseFilter)"
+                            ),
+                            "stepRefs": ["UC1:main:1"],
+                        },
+                        {
+                            "callId": "UC1::call:2",
+                            "parentCallId": "UC1::call:1",
+                            "receiverOperationId": (
+                                "CatalogControl::searchCatalog(filter:CourseFilter)"
+                            ),
+                            "stepRefs": ["UC1:main:1", "UC1:main:2"],
+                        },
+                    ],
+                }
+            ],
         }
     )
 
@@ -189,22 +186,7 @@ def _proposal() -> ApiSpecProposal:
                     "path": "/courses",
                     "method": "get",
                     "summary": "Browse courses",
-                    "operation_id": "browseCourses",
-                    "query_params": [
-                        {"name": "filter", "type": "CourseFilter"}
-                    ],
-                    "responses": [
-                        {"status": 200, "description": "Matching courses"}
-                    ],
-                }
-            ],
-            "Schemas": [
-                {
-                    "name": "Course",
-                    "fields": [
-                        {"name": "courseId", "type": "string"},
-                        {"name": "title", "type": "string"},
-                    ],
+                    "responses": [{"status": 200, "description": "Matching courses"}],
                 }
             ],
         }
@@ -223,7 +205,7 @@ def test_typed_normalization_uses_exact_bce_contract_without_plantuml() -> None:
     assert endpoint.responses[0].schema_name == "Course"
     assert endpoint.responses[0].is_array is True
     assert endpoint.source_classes == ["CatalogBoundary", "CatalogControl"]
-    assert proposal.Endpoints[0].query_params[0].type == "CourseFilter"
+    assert endpoint.operation_id == "browseCatalog"
 
 
 def test_openapi_preserves_bce_string_formats() -> None:
@@ -257,22 +239,21 @@ def test_bce_enumeration_is_an_executable_openapi_schema() -> None:
     payload = _bce_model().model_dump(by_alias=True)
     for class_payload in payload["Classes"][:2]:
         class_payload["operations"][0]["returnType"] = "ValidationOutcome"
-    payload["DataTypes"].append({
-        "name": "ValidationOutcome",
-        "kind": "enumeration",
-        "fields": [],
-        "values": ["VALID", "REJECTED"],
-    })
-
-    normalized = normalize_api_spec_model(
-        _proposal(), BCEModel.model_validate(payload)
+    payload["DataTypes"].append(
+        {
+            "name": "ValidationOutcome",
+            "kind": "enumeration",
+            "fields": [],
+            "values": ["VALID", "REJECTED"],
+        }
     )
+
+    normalized = normalize_api_spec_model(_proposal(), BCEModel.model_validate(payload))
     openapi = build_openapi_from_model(normalized)
     model_payload = normalized.model_dump()
 
     enum_schema = next(
-        schema for schema in normalized.Schemas
-        if schema.name == "ValidationOutcome"
+        schema for schema in normalized.Schemas if schema.name == "ValidationOutcome"
     )
     assert enum_schema.values == ["VALID", "REJECTED"]
     assert openapi["components"]["schemas"]["ValidationOutcome"] == {
@@ -314,96 +295,44 @@ def test_void_control_canonicalizes_success_response_to_no_content() -> None:
         },
     )
     assert not [
-        finding
-        for finding in findings
-        if finding.rule_id == "api.control-outcomes-cover-responses"
+        finding for finding in findings if finding.rule_id == "api.control-outcomes-cover-responses"
     ]
 
 
-def test_body_field_keeps_the_custom_control_parameter_type() -> None:
-    """enum이나 값 객체를 요청 본문에서 일반 문자열로 바꾸지 않는다."""
+def test_body_uses_the_existing_control_parameter_type() -> None:
+    """POST body는 LLM 재선언 없이 기존 값 객체를 그대로 사용한다."""
+
+    bce_payload = _bce_model().model_dump(by_alias=True)
+    boundary = bce_payload["Classes"][0]["operations"][0]
+    boundary["name"] = "createCatalogSearch"
+    boundary_call = bce_payload["Collaborations"][0]["calls"][0]
+    boundary_call["receiverOperationId"] = (
+        "CatalogBoundary::createCatalogSearch(filter:CourseFilter)"
+    )
+    bce_model = BCEModel.model_validate(bce_payload)
 
     payload = _proposal().model_dump()
     endpoint = payload["Endpoints"][0]
+    # HTTP 메서드는 정규화 코드가 이름으로 추측하지 않는다. 이 테스트는 LLM이
+    # POST를 선택한 결과를 입력으로 주고, 이후 요청 본문 연결만 검증한다.
     endpoint["method"] = "post"
-    endpoint["query_params"] = []
-    endpoint["request_schema"] = "CatalogSearchRequest"
-
-    normalized = normalize_api_spec_model(
-        ApiSpecProposal.model_validate(payload), _bce_model(),
-    )
-
-    request = next(
-        schema for schema in normalized.Schemas
-        if schema.name == "CatalogSearchRequest"
-    )
-    assert request.fields[0].type == "CourseFilter"
-
-
-def test_openapi_component_ref_is_canonicalized_before_body_binding() -> None:
-    """렌더링된 component ref도 BCE DTO body parameter에 연결된다."""
-
-    payload = _proposal().model_dump()
-    endpoint = payload["Endpoints"][0]
-    endpoint["method"] = "post"
-    endpoint["query_params"] = []
-    endpoint["request_schema"] = "#/components/schemas/CourseFilter"
-    payload["Schemas"].append(
-        {
-            "name": "#/components/schemas/CourseFilter",
-            "fields": [{"name": "keyword", "type": "string"}],
-        }
+    endpoint["interaction_id"] = (
+        "CatalogBoundary::createCatalogSearch(filter:CourseFilter) -> "
+        "CatalogControl::searchCatalog(filter:CourseFilter)"
     )
 
     normalized = normalize_api_spec_model(
-        ApiSpecProposal.model_validate(payload), _bce_model(),
+        ApiSpecProposal.model_validate(payload),
+        bce_model,
     )
 
-    endpoint = normalized.Endpoints[0]
-    assert endpoint.request_schema == "CourseFilter"
-    assert endpoint.control_binding is not None
-    assert [argument.model_dump() for argument in endpoint.control_binding.arguments] == [
-        {"name": "filter", "source": "$body"}
-    ]
-    assert [schema.name for schema in normalized.Schemas].count("CourseFilter") == 1
-    openapi = build_openapi_from_model(normalized)
-    assert openapi["paths"]["/courses"]["post"]["requestBody"]["content"][
-        "application/json"
-    ]["schema"] == {"$ref": "#/components/schemas/CourseFilter"}
-
-
-def test_stored_api_model_rebuilds_legacy_body_binding() -> None:
-    """과거 checkpoint의 빈 binding도 현재 BCE 계약으로 복구된다."""
-
-    payload = _proposal().model_dump()
-    endpoint = payload["Endpoints"][0]
-    endpoint["method"] = "post"
-    endpoint["query_params"] = []
-    endpoint["request_schema"] = "#/components/schemas/CourseFilter"
-    endpoint["control_binding"] = {
-        "control": "CatalogControl",
-        "method": "searchCatalog",
-        "arguments": [],
-        "outcomes": [{"status": 200, "outcome": "ok"}],
-    }
-    payload["Schemas"].append(
-        {
-            "name": "#/components/schemas/CourseFilter",
-            "fields": [{"name": "keyword", "type": "string"}],
-        }
-    )
-
-    restored = normalize_stored_api_spec_model(
-        ApiSpecModel.model_validate(payload),
-        _bce_model(),
-    )
-
-    endpoint = restored.Endpoints[0]
-    assert endpoint.request_schema == "CourseFilter"
-    assert endpoint.control_binding is not None
-    assert [argument.model_dump() for argument in endpoint.control_binding.arguments] == [
-        {"name": "filter", "source": "$body"}
-    ]
+    request = next(schema for schema in normalized.Schemas if schema.name == "CourseFilter")
+    assert request.fields[0].type == "string"
+    assert normalized.Endpoints[0].request_schema == "CourseFilter"
+    assert normalized.Endpoints[0].control_binding is not None
+    assert [
+        argument.model_dump() for argument in normalized.Endpoints[0].control_binding.arguments
+    ] == [{"name": "filter", "source": "$body"}]
 
 
 def test_generation_service_accepts_typed_inputs_and_returns_normalized_model(
@@ -417,9 +346,7 @@ def test_generation_service_accepts_typed_inputs_and_returns_normalized_model(
 
     monkeypatch.setattr(service, "parse_structured", propose)
 
-    result = service.generate_api_spec_model(
-        "UC1: A student browses the catalog.", _bce_model()
-    )
+    result = service.generate_api_spec_model("UC1: A student browses the catalog.", _bce_model())
 
     assert calls == [ApiSpecProposal]
     assert isinstance(result, ApiSpecModel)
@@ -464,7 +391,7 @@ def test_revision_service_uses_one_structured_call_and_returns_typed_model(
         "Clarify the endpoint summary.",
         "UC1: A student browses the catalog.",
         _bce_model(),
-        {"browseCourses"},
+        {"browseCatalog"},
     )
 
     assert calls == [ApiSpecProposal]
@@ -491,9 +418,7 @@ def test_accepted_model_round_trips_existing_json_and_openapi_contract() -> None
             "schema": {"$ref": "#/components/schemas/CourseFilter"},
         }
     ]
-    assert operation["responses"]["200"]["content"]["application/json"][
-        "schema"
-    ] == {
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
         "type": "array",
         "items": {"$ref": "#/components/schemas/Course"},
     }
@@ -512,9 +437,7 @@ def test_accepted_api_model_keeps_rtm_traceability_shape() -> None:
     sequence_model = _sequence_model()
     normalized = normalize_api_spec_model(_proposal(), bce_model)
     state = {
-        "usecase_spec": {
-            "use_cases": [{"id": "UC1", "name": "Browse catalog"}]
-        },
+        "usecase_spec": {"use_cases": [{"id": "UC1", "name": "Browse catalog"}]},
         "extracted_bce_classes": bce_model.model_dump(by_alias=True),
         "sequence_diagram_model": sequence_model.model_dump(),
         "api_spec_model": normalized.model_dump(),
@@ -524,7 +447,7 @@ def test_accepted_api_model_keeps_rtm_traceability_shape() -> None:
     endpoint = next(
         row
         for row in rtm["rows"]
-        if row["stage"] == "api_spec" and row["element"] == "browseCourses"
+        if row["stage"] == "api_spec" and row["element"] == "browseCatalog"
     )
 
     assert endpoint["sources"] == {
@@ -545,9 +468,7 @@ def test_graph_spec_validates_raw_inputs_and_dumps_typed_result(monkeypatch) -> 
 
     monkeypatch.setattr(design_subgraphs, "extract_api_spec_model", generate)
     state = {
-        "usecase_spec": {
-            "use_cases": [{"id": "UC1", "name": "Browse catalog"}]
-        },
+        "usecase_spec": {"use_cases": [{"id": "UC1", "name": "Browse catalog"}]},
         "extracted_bce_classes": _bce_model().model_dump(by_alias=True),
         "sequence_diagram_model": _sequence_model().model_dump(),
     }

@@ -102,12 +102,21 @@ def test_normalized_inventory_propagates_entity_scope_through_structural_types()
                 "useCaseIds": [],
             },
         ],
-        "Relationships": [],
+        "Relationships": [
+            {
+                "source": "Order",
+                "target": "OrderDetails",
+                "type": "Composition",
+                "sourceMultiplicity": "1",
+                "targetMultiplicity": "1",
+            }
+        ],
     })
 
     normalized = inventory.normalize_inventory(proposal)
     details = next(item for item in normalized.data_types if item["name"] == "OrderDetails")
     assert details["useCaseIds"] == ["UC1"]
+    assert normalized.relationships == ()
 
 
 def test_class_design_reasoning_effort_is_independent_per_owned_stage(monkeypatch):

@@ -26,15 +26,16 @@ LLM은 HTTP 설계에 필요한 선택만 제안하고, 이미 클래스 모델�
 LLM은 제공된 `interaction_id`마다 다음 HTTP 표현을 고른다.
 
 - path와 HTTP method
-- path/query/body 입력 위치
-- operation ID와 설명
-- 성공·실패 status와 HTTP 전용 schema
+- 짧은 설명
+- 성공·실패 status
 
 코드는 `BCEModel.Collaborations`와 Control operation 선언에서 다음 값을 계산한다.
 
 - endpoint가 호출하는 Control 클래스와 메서드
+- operation ID
+- path placeholder와 Control parameter를 바탕으로 한 path/query/body 입력 위치
 - HTTP 입력과 Control parameter의 연결
-- 빠진 요청 body schema와 그 필드 타입
+- 요청 body schema와 그 필드 타입
 - 성공 응답 타입과 배열 여부
 - Boundary·Control 및 유스케이스 추적 정보
 - status에 대응하는 결과 이름

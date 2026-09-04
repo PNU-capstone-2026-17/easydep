@@ -8,6 +8,7 @@
 상한은 두지 않지만 같은 후보를 다시 받으면 반복 실패로 중단한다. 연산, 협업, graph state와
 저장소를 직접 참조하지 않는다.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,9 +34,12 @@ from app.design.services.class_diagram.type_system import (
 from app.design.services.class_diagram.validation.inventory import INVENTORY_CHECKS
 from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
+from app.llm_connection import build_llm_connection
+from app.llm_profiles import effective_temperature
 from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, stable_digest
 
-INVENTORY_PROMPT = ("""
+INVENTORY_PROMPT = (
+    """
 Build one fixed BCE inventory for the supplied accepted use-case
 specifications. Return only items and Entity structural relationships. Classify
 each item once as Boundary, Control, Entity, valueObject, or enumeration.
@@ -75,27 +79,34 @@ For Entity items, useCaseIds means that the main or extension flow directly
 reads or changes that Entity. Authentication, actor presence, a precondition,
 or indirect domain context alone does not justify assigning an Entity to a use
 case. Candidate scope does not force the later operation task to select it.
-""".strip() + "\n\n" + structure_type_contract())
+""".strip()
+    + "\n\n"
+    + structure_type_contract()
+)
 
 
 def inventory_reasoning_effort() -> str:
     """inventory 전용 reasoning 설정이 없던 실행도 기존 정책으로 유지한다."""
 
-    return str(getattr(
-        settings,
-        "design_class_inventory_reasoning_effort",
-        settings.design_reasoning_effort,
-    ))
+    return str(
+        getattr(
+            settings,
+            "design_class_inventory_reasoning_effort",
+            settings.design_reasoning_effort,
+        )
+    )
 
 
 def inventory_max_completion_tokens() -> int:
     """inventory 전용 output cap이 없던 실행은 기존 구조 단계 cap을 유지한다."""
 
-    return int(getattr(
-        settings,
-        "design_class_inventory_max_completion_tokens",
-        settings.design_class_structure_max_completion_tokens,
-    ))
+    return int(
+        getattr(
+            settings,
+            "design_class_inventory_max_completion_tokens",
+            settings.design_class_structure_max_completion_tokens,
+        )
+    )
 
 
 def finding_text(findings: tuple[Finding, ...]) -> list[str]:
@@ -115,32 +126,38 @@ def _normalize_inventory(proposal: InventoryProposal) -> dict[str, Any]:
     않고 Entity 필드의 전이 참조에서 다시 계산한다.
     """
 
+    raw = proposal.model_dump(by_alias=True)
+    kinds = {item["name"]: item["kind"] for item in raw["items"]}
     classes: list[dict[str, Any]] = []
     data_types: list[dict[str, Any]] = []
-    for item in proposal.model_dump(by_alias=True)["items"]:
+    for item in raw["items"]:
         typed_fields = [
             fields.normalize_java_field(f"{field['name']} : {field['type']}")
             for field in item["fields"]
         ]
         if item["kind"] in {"Boundary", "Control", "Entity"}:
-            classes.append({
-                "className": item["name"],
-                "stereotype": item["kind"],
-                "description": item["description"],
-                "fields": typed_fields,
-                "identifier": list(item["identifier"]),
-                "values": list(item["values"]),
-                "useCaseIds": list(item["useCaseIds"]),
-            })
+            classes.append(
+                {
+                    "className": item["name"],
+                    "stereotype": item["kind"],
+                    "description": item["description"],
+                    "fields": typed_fields,
+                    "identifier": list(item["identifier"]),
+                    "values": list(item["values"]),
+                    "useCaseIds": list(item["useCaseIds"]),
+                }
+            )
         else:
-            data_types.append({
-                "name": item["name"],
-                "kind": item["kind"],
-                "fields": typed_fields,
-                "values": list(item["values"]),
-                "identifier": list(item["identifier"]),
-                "useCaseIds": [],
-            })
+            data_types.append(
+                {
+                    "name": item["name"],
+                    "kind": item["kind"],
+                    "fields": typed_fields,
+                    "values": list(item["values"]),
+                    "identifier": list(item["identifier"]),
+                    "useCaseIds": [],
+                }
+            )
     # 구조 타입은 독립된 행동 소유자가 아니다. 사용 범위를 Entity 필드 참조에서
     # 유도해야 operation 단계가 관련 없는 DTO 후보를 받지 않는다.
     scopes = {item["className"]: set(item.get("useCaseIds") or []) for item in classes}
@@ -166,7 +183,21 @@ def _normalize_inventory(proposal: InventoryProposal) -> dict[str, Any]:
     return {
         "Classes": classes,
         "DataTypes": data_types,
-        "Relationships": proposal.model_dump(by_alias=True)["Relationships"],
+        # 값 객체는 Entity field의 타입으로 이미 연결된다. 모델이 같은 포함 관계를
+        # structural relationship으로 한 번 더 적어도 버리고, 독립 Entity 사이의
+        # 관계만 저장한다. 알 수 없는 이름은 검사기가 정확한 오류를 보고하도록 남긴다.
+        "Relationships": [
+            relationship
+            for relationship in raw["Relationships"]
+            if (
+                relationship["source"] not in kinds
+                or relationship["target"] not in kinds
+                or (
+                    kinds[relationship["source"]] == "Entity"
+                    and kinds[relationship["target"]] == "Entity"
+                )
+            )
+        ],
     }
 
 
@@ -196,15 +227,15 @@ def inventory_payload(index: ScenarioIndex) -> dict[str, Any]:
                 "name": use_case.name,
                 "goal": text(summaries.get(use_case.id, {}).get("goal")),
                 "primaryActor": use_case.primary_actor,
-                "supportingActors": list(summaries.get(use_case.id, {}).get("supporting_actors") or []),
+                "supportingActors": list(
+                    summaries.get(use_case.id, {}).get("supporting_actors") or []
+                ),
                 # 단계 문장만으로는 "저장 후에도 남아야 하는 상태"와 단순 응답 값을
                 # 구별하기 어렵다. 성공 후 상태와 사전 조건은 그 판단에 직접 필요한
                 # 근거이므로 중복되는 main/extension 본문 없이 작게 전달한다.
                 "context": {
                     "trigger": deepcopy(use_case.specification.get("trigger")),
-                    "preconditions": deepcopy(
-                        use_case.specification.get("preconditions") or []
-                    ),
+                    "preconditions": deepcopy(use_case.specification.get("preconditions") or []),
                     "successGuarantee": deepcopy(
                         use_case.specification.get("success_guarantee") or []
                     ),
@@ -213,17 +244,25 @@ def inventory_payload(index: ScenarioIndex) -> dict[str, Any]:
                     ),
                 },
                 "steps": [
-                    {"stepRef": step.id, "branch": step.branch, "subject": step.subject,
-                     "sentence": step.sentence, "condition": step.condition}
+                    {
+                        "stepRef": step.id,
+                        "branch": step.branch,
+                        "subject": step.subject,
+                        "sentence": step.sentence,
+                        "condition": step.condition,
+                    }
                     for step in use_case.steps
                 ],
             }
             for use_case in index.use_cases
         ],
         "relationships": [
-            {"kind": relationship.kind, "baseUseCaseId": relationship.base_id,
-             "relatedUseCaseId": relationship.child_id,
-             "anchorStepRefs": list(relationship.anchor_step_ids)}
+            {
+                "kind": relationship.kind,
+                "baseUseCaseId": relationship.base_id,
+                "relatedUseCaseId": relationship.child_id,
+                "anchorStepRefs": list(relationship.anchor_step_ids),
+            }
             for relationship in index.relationships
         ],
     }
@@ -262,18 +301,27 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
         prompt = messages
         if candidate is not None:
             repeated_state = ledger.attempts[-1].outcome == "repeated_candidate"
-            prompt = [*messages, {"role": "user", "content": json.dumps({
-                "task": (
-                    "The previous response repeated the same rejected state. Choose a "
-                    "materially different structure and return the complete inventory."
-                    if repeated_state else
-                    "Return one materially different full repaired inventory. Preserve valid "
-                    "decisions, resolve every finding, and do not repeat a rejected candidate."
-                ),
-                "candidate": candidate,
-                "findings": list(ledger.attempts[-1].finding_keys_after),
-                "repairHistory": json.loads(ledger.prompt_context()),
-            }, ensure_ascii=False)}]
+            prompt = [
+                *messages,
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "task": (
+                                "The previous response repeated the same rejected state. Choose a "
+                                "materially different structure and return the complete inventory."
+                                if repeated_state
+                                else "Return one materially different full repaired inventory. Preserve valid "
+                                "decisions, resolve every finding, and do not repeat a rejected candidate."
+                            ),
+                            "candidate": candidate,
+                            "findings": list(ledger.attempts[-1].finding_keys_after),
+                            "repairHistory": json.loads(ledger.prompt_context()),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ]
         parsed = parse_structured(
             prompt,
             InventoryProposal,
@@ -300,27 +348,26 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
 
         findings = tuple(sorted(set(finding_text(report.findings))))
         candidate_digest = stable_digest(candidate)
-        repeated = (
-            ledger.candidate_seen(
-                input_digest=input_digest,
-                candidate_digest=candidate_digest,
-            )
-            or ledger.failure_seen(
-                input_digest=input_digest,
-                finding_keys=findings,
-            )
-        )
-        ledger.record(RepairAttempt(
-            stage="design.class.inventory",
-            target_ids=("inventory",),
-            strategy_key=f"full-replacement-{attempt + 1}",
+        repeated = ledger.candidate_seen(
             input_digest=input_digest,
             candidate_digest=candidate_digest,
-            finding_keys_before=findings,
-            finding_keys_after=findings,
-            outcome="repeated_candidate" if repeated else "no_improvement",
-            detail="; ".join(findings),
-        ))
+        ) or ledger.failure_seen(
+            input_digest=input_digest,
+            finding_keys=findings,
+        )
+        ledger.record(
+            RepairAttempt(
+                stage="design.class.inventory",
+                target_ids=("inventory",),
+                strategy_key=f"full-replacement-{attempt + 1}",
+                input_digest=input_digest,
+                candidate_digest=candidate_digest,
+                finding_keys_before=findings,
+                finding_keys_after=findings,
+                outcome="repeated_candidate" if repeated else "no_improvement",
+                detail="; ".join(findings),
+            )
+        )
         attempt += 1
 
 
@@ -334,17 +381,18 @@ def _inventory_cache_key(index: ScenarioIndex) -> str:
         feedback="",
         prompt=INVENTORY_PROMPT,
         schema=InventoryProposal,
-        provider=configured_provider_identity(settings.base_url),
+        provider=configured_provider_identity(build_llm_connection().base_url),
         model=settings.model,
         seed=settings.seed,
-        temperature=settings.temperature,
+        temperature=effective_temperature(settings.model, settings.temperature),
         reasoning_effort=inventory_reasoning_effort(),
         max_completion_tokens=inventory_max_completion_tokens(),
     )
 
 
 def _accepted_inventory_from_cache(
-    payload: dict[str, Any], index: ScenarioIndex,
+    payload: dict[str, Any],
+    index: ScenarioIndex,
 ) -> AcceptedInventory:
     """cache value도 schema와 inventory checks를 다시 통과시킨다."""
 
@@ -353,14 +401,17 @@ def _accepted_inventory_from_cache(
     inventory_model(accepted)
     report = run_checks(INVENTORY_CHECKS, accepted.as_payload(), index)
     if report.errors or report.findings:
-        raise ValueError("cached class inventory is invalid: " + "; ".join(
-            [*report.errors, *finding_text(report.findings)]
-        ))
+        raise ValueError(
+            "cached class inventory is invalid: "
+            + "; ".join([*report.errors, *finding_text(report.findings)])
+        )
     return accepted
 
 
 def inventory_proposal(
-    index: ScenarioIndex, *, cache: AcceptedUnitCache | None = None,
+    index: ScenarioIndex,
+    *,
+    cache: AcceptedUnitCache | None = None,
 ) -> AcceptedInventory:
     """전역 inventory를 수락하고 지정 cache가 있으면 완성 단위만 재사용한다.
 
@@ -429,11 +480,30 @@ def inventory_model(inventory: AcceptedInventory) -> BCEModel:
     """
 
     payload = inventory.as_payload()
-    return BCEModel.model_validate({
-        "Classes": [{**{key: value for key, value in item.items() if key not in {"useCaseIds", "values"}},
-                     "use_case_ids": [], "operations": []}
-                    for item in payload["Classes"]],
-        "DataTypes": [{key: value for key, value in item.items() if key not in {"useCaseIds", "identifier"}}
-                      for item in payload["DataTypes"] if isinstance(item, dict)],
-        "Relationships": payload["Relationships"], "Collaborations": [],
-    })
+    return BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    **{
+                        key: value
+                        for key, value in item.items()
+                        if key not in {"useCaseIds", "values"}
+                    },
+                    "use_case_ids": [],
+                    "operations": [],
+                }
+                for item in payload["Classes"]
+            ],
+            "DataTypes": [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"useCaseIds", "identifier"}
+                }
+                for item in payload["DataTypes"]
+                if isinstance(item, dict)
+            ],
+            "Relationships": payload["Relationships"],
+            "Collaborations": [],
+        }
+    )

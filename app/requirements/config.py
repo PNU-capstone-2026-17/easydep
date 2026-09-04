@@ -3,8 +3,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # 분류·구조화 작업이라 표본을 넓힐 이유가 없다. 0으로 둔다(2026-07-26까지 0.2였다).
-    temperature: float = 0.0
+    # 같은 입력에서 0.2와 0.6을 비교했을 때 0.6이 복합 요구사항을 더 잘 분리했고
+    # 호출 실패나 구조화 fallback은 없었다. 전역 LLM 설정과 같은 기본값을 사용한다.
+    temperature: float = 0.6
     requirements_reasoning_effort: str = "medium"
     requirements_max_completion_tokens: int = 8192
     # 같은 입력에 같은 표본을 **요청**한다. None이면 파라미터를 보내지 않는다.

@@ -10,6 +10,7 @@ from app.config import Settings, settings
 from app.design.services.deployment_diagram import extractor as deployment_extractor
 from app.implementation.generation.orchestrator import load_job
 from app.implementation.planning.design_context import llm_config
+from app.llm_connection import build_llm_connection
 
 
 def test_llm_connection_settings_have_no_code_fallback(monkeypatch) -> None:
@@ -43,8 +44,31 @@ def test_implementation_job_uses_only_root_environment_llm_settings(tmp_path: Pa
 
     assert spec.agent_temperature == settings.implementation_agent_temperature
     assert spec.agent_max_output_tokens == settings.implementation_agent_max_output_tokens
-    assert llm_config(spec)["model"] == settings.model
-    assert llm_config(spec)["baseUrl"] == settings.base_url
+    connection = build_llm_connection()
+    assert llm_config(spec)["model"] == connection.model
+    assert llm_config(spec)["baseUrl"] == connection.base_url
+
+
+def test_cloudflare_connection_is_assembled_from_small_env_values() -> None:
+    config = Settings(
+        _env_file=None,
+        api_key="fallback-key",
+        base_url="https://fallback.invalid/v1",
+        model="@cf/openai/gpt-oss-120b",
+        cloudflare_account_id="account",
+        cloudflare_api_token="cloudflare-token",  # noqa: S106 - 가짜 설정값
+        cloudflare_ai_gateway_id="easydep",
+    )
+
+    connection = build_llm_connection(config)
+
+    assert connection.provider == "cloudflare-ai-gateway"
+    assert connection.api_key == "cloudflare-token"
+    assert connection.base_url == (
+        "https://api.cloudflare.com/client/v4/accounts/account/ai/v1"
+    )
+    assert connection.model == "@cf/openai/gpt-oss-120b"
+    assert connection.default_headers() == {"cf-aig-gateway-id": "easydep"}
 
 
 def test_deployment_prompt_prefers_structured_models_over_rendered_duplicates(
