@@ -295,6 +295,44 @@ def _reasoning_effort(reasoning_effort: str | None) -> str | None:
     ).resolve_reasoning(configured)
 
 
+STRUCTURED_STREAM_WHITESPACE_LIMIT = 16_384
+
+
+def _json_whitespace_cutoff(
+    content: str,
+    *,
+    in_string: bool,
+    escaped: bool,
+    whitespace_run: int,
+) -> tuple[bool, bool, int, int | None]:
+    """JSON 문자열 밖의 비정상적으로 긴 연속 공백이 시작된 지점을 찾는다.
+
+    JSON 문자열 값에는 긴 공백이 합법적으로 들어갈 수 있으므로 따옴표와 escape 상태를
+    chunk 사이에서도 이어서 본다. 반환된 마지막 값이 ``None``이면 chunk 전체를 보존하고,
+    숫자이면 그 위치까지만 보존한 뒤 스트림을 닫는다.
+    """
+
+    for position, character in enumerate(content, start=1):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+            whitespace_run = 0
+        elif character in " \t\r\n":
+            whitespace_run += 1
+            if whitespace_run >= STRUCTURED_STREAM_WHITESPACE_LIMIT:
+                return in_string, escaped, whitespace_run, position
+        else:
+            whitespace_run = 0
+    return in_string, escaped, whitespace_run, None
+
+
 def stream_structured_response(
     client,
     messages: list[dict[str, str]],
@@ -319,6 +357,10 @@ def stream_structured_response(
     content_characters = 0
     reasoning_characters = 0
     finish_reasons: list[str] = []
+    json_string_open = False
+    json_escape_pending = False
+    outside_whitespace_run = 0
+    whitespace_limit_reached = False
     connection = build_llm_connection()
     profile = profile_for(
         connection.model,
@@ -385,6 +427,20 @@ def stream_structured_response(
             if content and first_content is None:
                 first_content = now - started
             if content:
+                (
+                    json_string_open,
+                    json_escape_pending,
+                    outside_whitespace_run,
+                    whitespace_cutoff,
+                ) = _json_whitespace_cutoff(
+                    content,
+                    in_string=json_string_open,
+                    escaped=json_escape_pending,
+                    whitespace_run=outside_whitespace_run,
+                )
+                if whitespace_cutoff is not None:
+                    content = content[:whitespace_cutoff]
+                    whitespace_limit_reached = True
                 content_parts.append(content)
                 content_characters += len(content)
             if reasoning:
@@ -395,6 +451,8 @@ def stream_structured_response(
             reasoning_characters += len(reasoning)
             if choice.finish_reason:
                 finish_reasons.append(str(choice.finish_reason))
+            if whitespace_limit_reached:
+                break
         # Keep only aggregate progress.  This dict is shared with the wall-timeout
         # observer, so a timeout retains evidence from the last received chunk
         # without persisting prompts, reasoning, or response content.
@@ -411,6 +469,17 @@ def stream_structured_response(
             finishReasonObserved=bool(finish_reasons),
             finishReasons=list(finish_reasons),
         )
+        if whitespace_limit_reached:
+            # 정상 JSON이 이미 닫혔다면 아래의 기존 검증이 그대로 수락한다. 아직 미완성이면
+            # 같은 검증이 _SchemaValidationFailure를 만들어 기존 schema repair로 이어진다.
+            observation.update(
+                streamAbortReason="repetitiveJsonWhitespace",
+                consecutiveWhitespaceCharacters=outside_whitespace_run,
+            )
+            close_stream = getattr(stream, "close", None)
+            if callable(close_stream):
+                close_stream()
+            break
     content_text = "".join(content_parts)
     reasoning_text = "".join(reasoning_parts)
     observation.update(

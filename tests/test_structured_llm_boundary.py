@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -248,6 +249,55 @@ def test_streaming_structured_output_records_progress_and_validates_schema(monke
     assert observation["finishReasons"] == ["stop"]
     assert observation["responseContent"] == '{"answer":"ok"}'
     assert observation["reasoningContent"] == "thinking"
+
+
+def test_streaming_whitespace_abort_uses_existing_schema_repair(monkeypatch):
+    class Result(BaseModel):
+        answer: str
+
+    class Stream:
+        def __init__(self, contents):
+            self.contents = iter(contents)
+            self.closed = False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            content = next(self.contents)
+            choice = SimpleNamespace(
+                delta=SimpleNamespace(content=content, reasoning_content=""),
+                finish_reason="stop" if content.endswith("}") else None,
+            )
+            return SimpleNamespace(choices=[choice], usage=None)
+
+        def close(self):
+            self.closed = True
+
+    first = Stream(('{"answer":', "\n" * 9, '"ignored"}'))
+    answer = " " * 12
+    second = Stream((json.dumps({"answer": answer}),))
+    streams = iter((first, second))
+    completions = type(
+        "Completions", (), {"create": lambda *_args, **_kwargs: next(streams)}
+    )()
+    client = type(
+        "Client", (), {"chat": type("Chat", (), {"completions": completions})()}
+    )()
+    monkeypatch.setattr(structured, "STRUCTURED_STREAM_WHITESPACE_LIMIT", 8)
+
+    with capture_llm_timings() as events:
+        parsed = parse_with_schema_repair(
+            client, [{"role": "user", "content": "generate"}], Result
+        )
+
+    # repair 결과의 JSON 문자열 안에는 제한보다 긴 공백이 있지만 정상 값이므로 허용한다.
+    assert parsed.answer == answer
+    assert first.closed is True
+    assert len(events) == 2
+    assert events[0]["streamAbortReason"] == "repetitiveJsonWhitespace"
+    assert events[0]["consecutiveWhitespaceCharacters"] == 8
+    assert events[1]["repairKind"] == "schema"
 
 
 def test_streaming_structured_output_accepts_an_explicit_completion_limit(monkeypatch):
