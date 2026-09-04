@@ -130,31 +130,6 @@ def _auto_result(action: str, payload: Mapping[str, Any], **result: Any) -> dict
                 "auto_approve_method_proposals": True,
             },
         ),
-        (
-            _command(
-                7,
-                "implementation",
-                "AWAITING_INPUT",
-                result=_auto_result(
-                    "approve_implementation",
-                    {
-                        "action_id": "command-7",
-                        "job_id": "i-1",
-                        "request_id": "r-1",
-                        "delegate_repair_approvals": True,
-                    },
-                    job_id="i-1",
-                    request_id="r-1",
-                ),
-            ),
-            {
-                "action": "approve_implementation",
-                "action_id": "command-7",
-                "job_id": "i-1",
-                "request_id": "r-1",
-                "delegate_repair_approvals": True,
-            },
-        ),
     ],
 )
 def test_auto_action_matches_frontend_buttons(
@@ -253,33 +228,17 @@ def test_runner_calls_only_the_public_product_flow() -> None:
         _command(
             4,
             "implementation",
-            "AWAITING_INPUT",
-            result=_auto_result(
-                "approve_implementation",
-                {
-                    "action_id": "command-4",
-                    "job_id": "implementation-1",
-                    "request_id": "approval-1",
-                    "delegate_repair_approvals": True,
-                },
-                job_id="implementation-1",
-                request_id="approval-1",
-            ),
-        ),
-        _command(
-            5,
-            "implementation",
             "COMPLETED",
             result=_auto_result(
                 "start_testing",
                 {
-                    "action_id": "command-5",
+                    "action_id": "command-4",
                     "implementation_job_id": "implementation-1",
                 },
                 job_id="implementation-1",
             ),
         ),
-        _command(6, "testing", "COMPLETED", result={"job_id": "testing-1"}),
+        _command(5, "testing", "COMPLETED", result={"job_id": "testing-1"}),
     ]
     transport = FakeTransport(snapshots)
     runner = ProductScenarioRunner(
@@ -292,12 +251,11 @@ def test_runner_calls_only_the_public_product_flow() -> None:
         "start_design",
         "delegate_repair",
         "start_implementation",
-        "approve_implementation",
         "start_testing",
     ]
-    assert transport.cursors == [0, 1, 2, 3, 4, 5]
+    assert transport.cursors == [0, 1, 2, 3, 4]
     assert result.location.stage == "testing"
-    assert result.location.event_cursor == 6
+    assert result.location.event_cursor == 5
     assert result.implementation_job_id == "implementation-1"
     assert result.testing_job_id == "testing-1"
     assert result.artifacts["artifacts"]["class_diagram"].startswith("@startuml")

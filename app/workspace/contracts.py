@@ -24,22 +24,38 @@ class WorkspaceAction(StrEnum):
     START_IMPLEMENTATION = "start_implementation"
     RETRY_IMPLEMENTATION = "retry_implementation"
     RERUN_IMPLEMENTATION = "rerun_implementation"
-    APPROVE_IMPLEMENTATION = "approve_implementation"
-    REJECT_IMPLEMENTATION = "reject_implementation"
     START_TESTING = "start_testing"
     APPLY_DEPLOYMENT_PREFERENCES = "apply_deployment_preferences"
+    BRANCH_CHECKPOINT = "branch_checkpoint"
+    RERUN_FROM_STAGE = "rerun_from_stage"
+
+
+class CheckpointStage(StrEnum):
+    """새 앱으로 보관할 수 있는 완료 시점."""
+
+    REQUIREMENTS = "requirements"
+    DESIGN = "design"
+    IMPLEMENTATION = "implementation"
+
+
+class RestartStage(StrEnum):
+    """새 분기에서 다시 시작할 수 있는 작업."""
+
+    REQUIREMENTS = "requirements"
+    DESIGN = "design"
+    IMPLEMENTATION = "implementation"
+    TESTING = "testing"
 
 
 class WaitReason(StrEnum):
     REVIEW = "review"
     QUESTION = "question"
     REPAIR = "repair"
-    APPROVAL = "approval"
     EXTERNAL_WAIT = "external_wait"
 
 
 class ActionOffer(BaseModel):
-    """모든 client가 같은 방식으로 표시할 서버 승인 명령 한 건이다."""
+    """모든 client가 같은 방식으로 표시할 서버 제공 명령 한 건이다."""
 
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
 

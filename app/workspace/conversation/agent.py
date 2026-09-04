@@ -32,11 +32,17 @@ class _ConversationPlan(BaseModel):
     query: str = ""
     reply: str = ""
     question: str = ""
+    stage: Literal["", "requirements", "design", "implementation", "testing"] = ""
 
     @model_validator(mode="after")
     def validate_kind_fields(self) -> _ConversationPlan:
         if self.kind == "command" and self.intent is None:
             raise ValueError("command plans require an intent")
+        if self.kind == "command" and self.intent in {
+            ConversationIntent.BRANCH,
+            ConversationIntent.RERUN,
+        } and not self.stage:
+            raise ValueError("branch and rerun commands require a stage")
         if self.kind == "project_question" and not self.query.strip():
             raise ValueError("project questions require a search query")
         if self.kind == "reply" and not self.reply.strip():
@@ -65,10 +71,12 @@ Classify the user's utterance without inventing state or artifact references.
 - project_question: a question about this project's current state or artifacts. Supply a concise
   search query, not an answer from memory.
 - command: an explicit request to advance, answer a pending question, revise project content,
-  or delegate an offered repair. Select only the corresponding allowed intent.
+  delegate an offered repair, create a checkpoint branch, or rerun a delivery stage. Select only
+  the corresponding allowed intent. Branch supports requirements, design, and implementation;
+  rerun also supports testing. Choose only one of those named stages.
 - clarification: the utterance is ambiguous between those categories.
-Never infer a stage, file, impact scope, or target reference. Buttons and explicit action payloads
-do not pass through this classifier."""
+Never infer a file, impact scope, or target reference. A stage may be selected only for an explicit
+branch or rerun request. Buttons and explicit action payloads do not pass through this classifier."""
 
 
 class ConversationAgent:
@@ -127,9 +135,13 @@ class ConversationAgent:
             return self._answer_project_question(utterance, plan.query, project_tools)
 
         assert plan.intent is not None
-        if plan.intent != ConversationIntent.REVISE:
-            return CommandIntent(intent=plan.intent, instruction=utterance)
-        return self._resolve_revision(utterance, plan.query or utterance, project_tools)
+        if plan.intent == ConversationIntent.REVISE:
+            return self._resolve_revision(utterance, plan.query or utterance, project_tools)
+        return CommandIntent(
+            intent=plan.intent,
+            instruction=utterance,
+            stage=plan.stage,
+        )
 
     def _resolve_revision(
         self, text: str, query: str, tools: ProjectTools

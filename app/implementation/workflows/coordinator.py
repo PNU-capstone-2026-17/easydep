@@ -13,7 +13,6 @@ from pathlib import Path
 
 from app.config import settings
 from app.design.contracts import bind_runtime_contract, build_provider_resource_plan
-from app.llm_connection import build_llm_connection
 from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import execute_openhands_task
@@ -46,7 +45,6 @@ from .repair import (
 from .traceability import build_rtm_traceability_map
 
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
-TRANSMISSION_SCHEMA = "external-transmission-request/v1alpha1"
 PHASES = (
     ("persistence", (), {"persistence"}),
     # ``control`` remains only for the existing feedback-revision task; newly
@@ -217,11 +215,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         "nextRunnableTasks": _next_runnable_tasks(tasks, phases),
         "blockingReason": None,
         "blockingDetails": [],
-        "approval": previous.get("approval"),
     }
-    _write_json_atomic(state_path, state)
-    request = write_transmission_request(run_root, state)
-    state["transmissionRequest"] = request["requestFile"] if request else None
     _write_json_atomic(state_path, state)
     return state
 
@@ -229,7 +223,6 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
 def run_workflow(
     run_root: Path,
     spec: JobSpec,
-    approval_path: Path | None,
     *,
     retry_failed: bool = False,
     executor: Callable[[Path, str], dict[str, object]] = execute_openhands_task,
@@ -249,7 +242,6 @@ def run_workflow(
         return _run_workflow(
             run_root,
             spec,
-            approval_path,
             retry_failed=retry_failed,
             executor=executor,
             auditor=auditor,
@@ -259,7 +251,6 @@ def run_workflow(
 def _run_workflow(
     run_root: Path,
     spec: JobSpec,
-    approval_path: Path | None,
     *,
     retry_failed: bool = False,
     executor: Callable[[Path, str], dict[str, object]] = execute_openhands_task,
@@ -287,11 +278,9 @@ def _run_workflow(
             auditor=auditor,
         )
 
-    request = _read_json(run_root / "reports" / "external-transmission-request.json")
-    approval = validate_workflow_approval(approval_path, request, state, run_root)
-    approval["authorizedTaskIds"] = sorted(str(item["taskId"]) for item in request.get("tasks", []))
-    authorized_task_ids = set(approval["authorizedTaskIds"])
-    state["approval"] = approval
+    # 구현 단계 진입이 곧 실행 요청이다. 별도의 승인 파일 없이 현재 dependency가
+    # 충족된 작업만 실행하고, 다음 묶음은 갱신된 workflow에서 이어서 고른다.
+    authorized_task_ids = set(runnable)
     state["status"] = "RUNNING"
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
 
@@ -354,13 +343,13 @@ def _run_workflow(
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
     state.pop("currentPhases", None)
 
-    # 방금 끝난 작업의 결과와 수리 지시를 checkpoint에 반영한 뒤 다음 승인 요청을 만든다.
+    # 방금 끝난 작업의 결과와 수리 지시를 checkpoint에 반영한다.
     # wiring은 실패가 있을 때만 짧은 별도 수리 prompt를 받으므로 전체 source 계약을 여기서
     # 다시 직렬화하지 않는다.
     final_state = plan_workflow(run_root, spec)
     if final_state.get("nextRunnableTasks"):
         # Every work unit performs its own focused verification.  Do not scan
-        # the incomplete application after each approval; the final audit and
+        # the incomplete application after each work unit; the final audit and
         # full workspace build run only when no work unit remains.
         final_state["status"] = "READY"
         final_state["blockingReason"] = None
@@ -663,7 +652,7 @@ def _continue_after_incomplete_audit(
     """마지막 감사가 기존 task의 부족한 산출물을 찾으면 그 task부터 다시 실행한다.
 
     감사 결과에는 이미 담당 ``task_id``가 들어 있다. 새 planner나 사용자 선택을
-    요구하지 않고, 해당 task에 감사 근거를 붙인 뒤 기존 승인 범위에서 자동 수리한다.
+    요구하지 않고, 해당 task에 감사 근거를 붙인 뒤 같은 실행에서 자동 수리한다.
     아직 구현 task가 없는 새 종류의 작업만 기존 ``NEEDS_PLANNER`` 상태로 남는다.
     """
 
@@ -706,68 +695,29 @@ def run_workflow_to_completion(
     run_root: Path,
     spec: JobSpec,
     *,
-    approved_by: str,
     retry_failed: bool = False,
     max_cycles: int | None = None,
 ) -> dict[str, object]:
-    """한 번의 위임 승인으로 완료 또는 명확한 중단 상태까지 실행한다.
+    """완료 또는 명확한 중단 상태까지 실행한다.
 
     기본 실행에는 repair 횟수 상한이 없다. 각 repair 계획은 실패 지문, 수정 전 코드와 사용한
     전략을 저장하며, 같은 결과가 반복되어도 이 이력을 다음 요청에 포함해 다른 수정을 시도한다.
-    ``max_cycles``는 테스트와 멤버 프로세스가 승인 한 주기만 실행할 때 쓰는 선택 사항이다.
+    ``max_cycles``는 테스트가 실행 주기를 제한할 때 쓰는 선택 사항이다.
     """
     run_root = run_root.resolve()
-    request_path = run_root / "reports" / "external-transmission-request.json"
-    approval_path = run_root / "reports" / "one-time-run-approval.json"
     cycle = 0
     while True:
         cycle += 1
         state = plan_workflow(run_root, spec)
         if state.get("status") == "COMPLETE":
             return state
-        request = _read_json(request_path) if request_path.is_file() else {}
-        execution_approval: Path | None = None
-        if request.get("status") == "AWAITING_APPROVAL":
-            manifest = _read_json(run_root / "reports" / "run-manifest.json")
-            existing = _read_json(approval_path) if approval_path.is_file() else {}
-            scope = existing.get("delegationScope")
-            reusable = (
-                existing.get("approved") is True
-                and existing.get("delegatedRepairApprovals") is True
-                and isinstance(scope, dict)
-                and scope.get("runId") == run_root.name
-                and scope.get("inputHash") == manifest.get("input_hash")
-            )
-            if not reusable:
-                approval = {
-                    "requestId": request["requestId"],
-                    "approved": True,
-                    "approvedAt": _now(),
-                    "approvedBy": approved_by,
-                    "delegatedRepairApprovals": True,
-                    "delegationScope": {
-                        "runId": run_root.name,
-                        "inputHash": manifest.get("input_hash"),
-                        "initialTaskIds": sorted(
-                            str(task["task_id"])
-                            for task in manifest.get("implementation_tasks", [])
-                        ),
-                    },
-                }
-                _write_json_atomic(approval_path, approval)
-            execution_approval = approval_path
-        elif state.get("status") != "READY_TO_FINALIZE":
-            raise PermissionError("No external transmission request is available to approve")
         state = run_workflow(
             run_root,
             spec,
-            execution_approval,
             retry_failed=retry_failed,
         )
         status = str(state.get("status", ""))
         if status == "COMPLETE":
-            if approval_path.is_file():
-                state["oneTimeApproval"] = approval_path.relative_to(run_root).as_posix()
             _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
             return state
         if status in {"FAILED", "NEEDS_INPUT", "NEEDS_PLANNER"}:
@@ -996,219 +946,11 @@ def _continue_after_feedback_regression_failure(
     return state
 
 
-def write_transmission_request(
-    run_root: Path, state: dict[str, object]
-) -> dict[str, object] | None:
-    next_runnable = state.get("nextRunnableTasks")
-    if next_runnable is not None:
-        pending_ids = sorted(str(task_id) for task_id in next_runnable)
-    else:
-        pending_ids = sorted(
-            str(task["task_id"])
-            for task in state["tasks"]
-            if task["status"] in {"PENDING", "INTERRUPTED", "FAILED"}
-        )
-    if not pending_ids:
-        request_path = run_root / "reports" / "external-transmission-request.json"
-        if request_path.is_file():
-            previous = _read_json(request_path)
-            if previous.get("status") == "AWAITING_APPROVAL":
-                previous["status"] = "CLOSED"
-                previous["closedAt"] = _now()
-                _write_json_atomic(request_path, previous)
-        return None
-    manifest = _read_json(run_root / "reports" / "run-manifest.json")
-    task_by_id = {item["task_id"]: item for item in manifest.get("implementation_tasks", [])}
-    payload = _transmission_payload(task_by_id, pending_ids)
-    request_id = _transmission_request_id(payload)
-    request = {
-        "schemaVersion": TRANSMISSION_SCHEMA,
-        "requestId": request_id,
-        "status": "AWAITING_APPROVAL",
-        "createdAt": _now(),
-        "provider": build_llm_connection().display_name(),
-        "notice": (
-            "The listed design context, generated contracts, source artifacts, "
-            "verification diagnostics, and repair sources may leave the local machine."
-        ),
-        "apiKeyIncluded": False,
-        "tasks": payload,
-        "requestFile": "reports/external-transmission-request.json",
-    }
-    _write_json_atomic(run_root / "reports" / "external-transmission-request.json", request)
-    return request
-
-
-def validate_approval(path: Path | None, request_id: str) -> dict[str, object]:
-    if path is None or not path.is_file():
-        raise PermissionError(
-            "External transmission approval is required; provide an approval JSON file"
-        )
-    approval = _read_json(path)
-    if approval.get("requestId") != request_id or approval.get("approved") is not True:
-        raise PermissionError("Approval does not match the current transmission request")
-    result = {
-        "requestId": request_id,
-        "approved": True,
-        "approvedAt": approval.get("approvedAt"),
-        "approvedBy": approval.get("approvedBy"),
-    }
-    if approval.get("delegatedRepairApprovals") is True:
-        result["delegatedRepairApprovals"] = True
-        result["delegationScope"] = approval.get("delegationScope", {})
-    return result
-
-
-def validate_workflow_approval(
-    path: Path | None,
-    request: dict[str, object],
-    state: dict[str, object],
-    run_root: Path,
-) -> dict[str, object]:
-    """Accept an exact approval or a remaining subset of an already approved run scope."""
-    try:
-        return validate_approval(path, str(request["requestId"]))
-    except PermissionError:
-        if path is None or not path.is_file():
-            raise
-        approval = _read_json(path)
-        approved_request_id = str(approval.get("requestId", ""))
-        if approval.get("approved") is not True:
-            raise
-        if _valid_delegated_execution_approval(approval, request, state, run_root):
-            return {
-                "requestId": str(request["requestId"]),
-                "approvedRequestId": str(approval.get("requestId")),
-                "approved": True,
-                "authorization": "DELEGATED_RUN_SCOPE",
-                "delegatedRepairApprovals": True,
-                "approvedAt": approval.get("approvedAt"),
-                "approvedBy": approval.get("approvedBy"),
-            }
-        current_ids = {str(item["taskId"]) for item in request.get("tasks", [])}
-        candidate_ids = set(current_ids)
-        current_phases = {
-            task.get("phase")
-            for task in state.get("tasks", [])
-            if str(task.get("task_id")) in current_ids
-        }
-        for task in state.get("tasks", []):
-            # An approval covers the originally requested phase, not every task
-            # that happened to succeed earlier in the run. Including earlier
-            # phases changes the reconstructed request ID and wrongly rejects a
-            # retry of an unchanged remaining task.
-            if task.get("phase") not in current_phases:
-                continue
-            if task.get("status") != "SUCCEEDED" or int(task.get("attempts", 0)) < 1:
-                continue
-            result_file = task.get("resultFile")
-            if not result_file or not (run_root / str(result_file)).is_file():
-                continue
-            result = _read_json(run_root / str(result_file))
-            if result.get("promptSha256") == task.get("promptSha256"):
-                candidate_ids.add(str(task["task_id"]))
-        manifest = _read_json(run_root / "reports" / "run-manifest.json")
-        task_by_id = {item["task_id"]: item for item in manifest.get("implementation_tasks", [])}
-        payload = _transmission_payload(task_by_id, sorted(candidate_ids))
-        if (
-            current_ids
-            and current_ids.issubset(candidate_ids)
-            and _transmission_request_id(payload) == approved_request_id
-        ):
-            return {
-                "requestId": str(request["requestId"]),
-                "approvedRequestId": approved_request_id,
-                "approved": True,
-                "authorization": "APPROVED_SCOPE_SUBSET",
-                "approvedAt": approval.get("approvedAt"),
-                "approvedBy": approval.get("approvedBy"),
-            }
-        raise
-
-
-def _valid_delegated_execution_approval(
-    approval: dict[str, object],
-    request: dict[str, object],
-    state: dict[str, object],
-    run_root: Path,
-) -> bool:
-    if approval.get("delegatedRepairApprovals") is not True:
-        return False
-    scope = approval.get("delegationScope")
-    if not isinstance(scope, dict) or scope.get("runId") != run_root.name:
-        return False
-    manifest = _read_json(run_root / "reports" / "run-manifest.json")
-    if scope.get("inputHash") != manifest.get("input_hash"):
-        return False
-    plan_path = run_root / "reports" / "repair-plan.json"
-    plan = _read_json(plan_path) if plan_path.is_file() else {}
-    if plan.get("status") == "STALLED":
-        return False
-    planned_ids = {
-        str(task_id)
-        for entry in plan.get("entries", [])
-        if isinstance(entry, dict)
-        for task_id in [
-            *entry.get("ownerTaskIds", []),
-            *entry.get("revalidationTaskIds", []),
-        ]
-    }
-    current_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
-    initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
-    return bool(current_ids) and (
-        current_ids.issubset(initial_ids) or current_ids.issubset(planned_ids)
-    )
-
-
 def phase_for_task(task_type: str) -> str:
     for phase_id, _, types in PHASES:
         if task_type in types:
             return phase_id
     return "unclassified"
-
-
-def _transmission_payload(
-    task_by_id: dict[str, dict[str, object]], task_ids: list[str]
-) -> list[dict[str, object]]:
-    payload: list[dict[str, object]] = []
-    for task_id in sorted(task_ids):
-        task = task_by_id[task_id]
-        sources = task.get("source_artifacts", {})
-        source_hashes = (
-            {str(name): _file_sha256(Path(str(path))) for name, path in sources.items()}
-            if isinstance(sources, dict)
-            else {}
-        )
-        payload.append(
-            {
-                "taskId": task_id,
-                "taskType": task.get("task_type"),
-                "promptSha256": task.get("prompt_sha256"),
-                "sourceArtifacts": sources,
-                "sourceArtifactHashes": source_hashes,
-                "allowedWritePaths": task.get("allowed_write_paths", []),
-                "requiredOutputPaths": task.get(
-                    "required_output_paths", task.get("allowed_write_paths", [])
-                ),
-            }
-        )
-    return payload
-
-
-def _file_sha256(path: Path) -> str | None:
-    if not path.is_file():
-        return None
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _transmission_request_id(payload: list[dict[str, object]]) -> str:
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()
 
 
 def _phase_states(tasks: list[dict[str, object]]) -> list[dict[str, object]]:

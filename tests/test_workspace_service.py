@@ -71,7 +71,7 @@ def test_reconcile_implementation_command_closes_stale_running_command(
 ) -> None:
     command = {
         "command_id": "command-1",
-        "action": "approve_implementation",
+        "action": "start_implementation",
         "stage": "implementation",
         "status": "RUNNING",
         "payload": {"job_id": "job-1"},
@@ -106,7 +106,7 @@ def test_reconcile_implementation_command_restores_progress_after_restart(
 ) -> None:
     command = {
         "command_id": "command-1",
-        "action": "approve_implementation",
+        "action": "start_implementation",
         "stage": "implementation",
         "status": "RUNNING",
         "payload": {"job_id": "job-1"},
@@ -188,7 +188,7 @@ def test_reconcile_stopped_implementation_exposes_checkpoint_retry(
     command = {
         "command_id": "command-1",
         "app_id": "app-1",
-        "action": "approve_implementation",
+        "action": "start_implementation",
         "stage": "implementation",
         "status": command_status,
         "payload": {"job_id": "job-1"},
@@ -1585,8 +1585,7 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
         ),
     )
 
-    def monitor_implementation(_self, job, *, command_id=None, auto_approve=False):
-        observed["auto_approve"] = auto_approve
+    def monitor_implementation(_self, job, *, command_id=None):
         return {"job_id": job["job_id"], "job": {**job, "status": "COMPLETED"}}
 
     monkeypatch.setattr(
@@ -1624,7 +1623,6 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     finally:
         service.shutdown()
 
-    assert observed["auto_approve"] is True
     assert "Preserved functional test plan" in str(observed["feedback"])
     assert "api:submitRegistration" in str(observed["feedback"])
     assert "RegistrationService.java" in str(observed["feedback"])

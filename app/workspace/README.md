@@ -21,6 +21,7 @@
 | `actions.py` | action 이름·payload·단계 정책과 다음 action registry |
 | `service.py` | 명령 실행, 단계 전환, 복구, 진행 event와 결과 요약 |
 | `repository.py` | workspace command/event의 MySQL 읽기·쓰기 |
+| `checkpoints.py` | 완료된 단계까지의 최신 산출물을 새 앱으로 복사 |
 | `live_preview.py` | process-local 중간 다이어그램과 SVG cache |
 | `conversation/` | 자연어 의도, 영속 대화 문맥과 읽기 전용 프로젝트 도구 |
 
@@ -71,6 +72,13 @@ RTM을 읽는 도구 결과로 답한다.
 artifact version, 하류 영향은 코드가 검증한다. 검증된 명령은 공개 action registry와 같은
 실행 경로로 들어가므로 자연어 명령을 위한 별도 stage router는 없다.
 
+## 분기와 단계 재실행
+
+분기는 요구사항·설계·구현 중 선택한 단계까지의 최신 산출물을 새 `app_id`로 복사한다.
+재실행은 같은 복사를 사용해 선택한 단계의 직전까지만 보관한 뒤 기존 단계 시작 action을
+호출한다. 따라서 별도 파이프라인은 없으며 요구사항·설계·구현·테스팅의 실제 사용 경로를
+그대로 탄다. 원본 앱, 과거 명령과 실행 중이던 내부 checkpoint는 바꾸거나 복사하지 않는다.
+
 ## LLM 사용량 관찰
 
 요구사항 단계는 각 LLM 호출의 완료 event에 시간과 token 사용량을 넣는다. 설계 단계는 기존
@@ -81,7 +89,7 @@ logical/physical 요청 구분, token, schema·의미 repair와 cache 결과가 
 
 ## 계약
 
-- **입력:** `app_id`, action, 메시지·선택·승인 payload.
+- **입력:** `app_id`, action, 메시지·선택 payload.
 - **출력:** command snapshot, `wait_reason`, 실행 가능한 `actions`, 뒤에만 추가하는 진행 event.
 - **실행하면서 바꾸는 것:** 데이터베이스 쓰기, background worker 실행, 단계 API 호출, SSE 알림.
 - **이 패키지에서 직접 사용하지 않는 것:** 단계의 private helper와 단계 내부 state 모델.

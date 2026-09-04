@@ -27,7 +27,7 @@ from app.repositories import artifact_repository
 from app.requirements.schemas import DeploymentPreferences
 
 from . import repository
-from .contracts import WorkspaceAction
+from .contracts import CheckpointStage, RestartStage, WorkspaceAction
 from .live_preview import live_previews
 from .service import workspace_service
 
@@ -122,14 +122,14 @@ class WorkspaceCommandRequest(BaseModel):
     context: dict[str, Any] | None = None
     action_id: str | None = None
     job_id: str | None = None
-    request_id: str | None = None
     implementation_job_id: str | None = None
     base_package: str = "com.easydep.app"
     allow_assumptions: bool = True
     retry_failed: bool = False
-    delegate_repair_approvals: bool = True
     auto_approve_method_proposals: bool = False
     deployment_preferences: dict[str, Any] | None = None
+    checkpoint_stage: CheckpointStage | None = None
+    restart_stage: RestartStage | None = None
 
 
 class ComputeSizingSelectionRequest(BaseModel):

@@ -15,6 +15,8 @@ class ConversationIntent(StrEnum):
     ANSWER = "answer"
     REVISE = "revise"
     DELEGATE_REPAIR = "delegate_repair"
+    BRANCH = "branch"
+    RERUN = "rerun"
 
 
 class Reply(BaseModel):
@@ -52,11 +54,14 @@ class CommandIntent(BaseModel):
     intent: ConversationIntent
     targets: Annotated[list[str], Field(max_length=20)] = Field(default_factory=list)
     instruction: Annotated[str, Field(max_length=8_000)] = ""
+    # 분기/재실행 routing에만 쓰며 기존 수정 명령의 저장 형식에는 추가하지 않는다.
+    stage: str = Field(default="", exclude=True)
 
     @model_validator(mode="after")
     def validate_intent_payload(self) -> CommandIntent:
         self.targets = [target.strip() for target in self.targets]
         self.instruction = self.instruction.strip()
+        self.stage = self.stage.strip()
         if any(not target for target in self.targets):
             raise ValueError("command targets must not be empty")
         if len(set(self.targets)) != len(self.targets):
@@ -68,6 +73,17 @@ class CommandIntent(BaseModel):
                 raise ValueError("revise intent requires an instruction")
         if self.intent == ConversationIntent.ANSWER.value and not self.instruction:
             raise ValueError("answer intent requires an instruction")
+        allowed_stages = {
+            ConversationIntent.BRANCH.value: {"requirements", "design", "implementation"},
+            ConversationIntent.RERUN.value: {
+                "requirements",
+                "design",
+                "implementation",
+                "testing",
+            },
+        }
+        if self.intent in allowed_stages and self.stage not in allowed_stages[self.intent]:
+            raise ValueError(f"{self.intent} intent requires a supported stage")
         return self
 
 

@@ -62,8 +62,7 @@ flowchart LR
 3. 사용자가 진행을 선택하면 `start_design` 명령이 설계 그래프를 시작한다.
 4. 설계는 클래스 → 시퀀스 → API → ERD → 배포 다이어그램 순서로 실행된다. 각 설계
    단계가 끝날 때 검토 지점에서 멈춘다.
-5. `start_implementation` 명령은 저장된 최신 설계를 읽어 구현 작업을 만든다. 외부 LLM으로
-   코드를 보내기 전에는 전송 승인 요청이 화면에 나타난다.
+5. `start_implementation` 명령은 저장된 최신 설계를 읽어 구현 작업을 만들고 바로 실행한다.
 6. 구현 작업이 끝나면 생성 파일을 MySQL의 버전이 고정된 파일 묶음으로 저장한다.
 7. `start_testing` 명령은 그 구현 작업이 저장한 파일 버전을 고정하고, 같은 파일 묶음으로
    배포 정적 검사·IaC 검사·HTTP 기능 검사를 실행한다. compile, 단위 테스트와 작은 통합
@@ -101,7 +100,7 @@ type CreateAppInput = {
 | `GET /api/workspace/cloud-options` | CSP와 리전 선택지 조회 | provider·region 목록 |
 | `GET /api/workspace/apps/{app_id}` | 새로고침 후 작업대 전체 복원 | 단계, 명령, 이벤트, 산출물 상태 |
 | `PUT /api/workspace/apps/{app_id}/deployment-preferences` | 배포 대안과 예산 저장 | 저장된 선택값 |
-| `POST /api/workspace/apps/{app_id}/commands` | 메시지·진행·수리·승인·테스트 요청 | 새 `WorkspaceCommand` |
+| `POST /api/workspace/apps/{app_id}/commands` | 메시지·진행·수리·테스트 요청 | 새 `WorkspaceCommand` |
 | `GET /api/workspace/apps/{app_id}/events?after={event_id}` | 진행 이벤트를 SSE로 받음 | `WorkspaceEvent` 연속 전송 |
 | `GET /api/workspace/apps/{app_id}/commands/{command_id}/previews/class_diagram` | 클래스 생성 중 임시 그림 조회 | `LiveDiagramPreview` |
 | `GET /api/apps/{app_id}` | 저장된 요구사항·설계 산출물 조회 | 산출물·검증·상태 |
@@ -134,7 +133,7 @@ type WorkspaceCommand = {
   status: CommandStatus;
   payload: Record<string, unknown>;
   result?: {
-    wait_reason?: "review" | "question" | "repair" | "approval" | "external_wait";
+    wait_reason?: "review" | "question" | "repair" | "external_wait";
     actions: ActionOffer[];
   } & Record<string, unknown>;
   error?: string;
@@ -156,13 +155,12 @@ type ActionOffer = {
 message, advance, delegate_repair,
 confirm_change, dismiss_change,
 start_design, retry_requirements, retry_design,
-  start_implementation, retry_implementation, rerun_implementation,
-approve_implementation, reject_implementation, cancel_implementation,
+start_implementation, retry_implementation, rerun_implementation,
 start_testing, apply_deployment_preferences
 ```
 
 명령에는 필요에 따라 `text`, `context`, `action_id`, 구현·테스트 작업 ID,
-`base_package`, `allow_assumptions`, `retry_failed`, `delegate_repair_approvals`,
+`base_package`, `allow_assumptions`, `retry_failed`,
 `auto_approve_method_proposals`, `deployment_preferences`가 들어간다.
 
 한 앱에서는 `QUEUED` 또는 `RUNNING` 명령을 동시에 두 개 실행하지 않는다.
@@ -632,14 +630,6 @@ type ArtifactValidation = {
 class CreateImplementationJobRequest(BaseModel):
     base_package: str = "com.example.generated"
     allow_assumptions: bool = True
-
-
-class ApprovalRequest(BaseModel):
-    request_id: str  # SHA-256 길이의 64자 ID
-    approved: bool
-    approved_by: str = "EasyDep user"
-    retry_failed: bool = False
-    delegate_repair_approvals: bool = True
 ```
 
 Workspace 기본 package는 `com.easydep.app`이다. 구현기는 다음 설계 결과를 읽는다.
@@ -658,14 +648,12 @@ HTTP operation이 하나도 없거나, 클래스 operation이 선언되지 않�
 flowchart LR
     Q[QUEUED] --> G[GENERATING]
     G --> P[PLANNING]
-    P --> A[AWAITING_APPROVAL]
-    A -->|승인| R[RUNNING]
+    P --> R[RUNNING]
     R --> C[COMPLETED]
     G --> N[NEEDS_INPUT]
     P --> NP[NEEDS_PLANNER]
     G --> F[FAILED]
     R --> F
-    A --> X[REJECTED]
     Q --> K[CANCELLED]
 ```
 
@@ -681,10 +669,9 @@ flowchart LR
 3. OpenAPI에서 API adapter와 TypeScript client의 기본 구조를 만든다.
 4. React/Vite 프론트엔드의 package와 기본 파일을 코드로 만든다.
 5. 남은 업무 로직, acceptance test, frontend 구현, 통합 작업을 task로 계획한다.
-6. 외부 LLM에 보낼 task와 입력 파일 목록을 `external-transmission-request`로 만든다.
-7. 사용자가 현재 `request_id`를 승인하면 task를 제한된 병렬도로 실행한다.
-8. compile·test·frontend build·container 검증 결과에 따라 성공 또는 수리 task를 계획한다.
-9. 완료된 파일을 종류별로 나누어 MySQL에 저장한다.
+6. 계획된 task를 제한된 병렬도로 바로 실행한다.
+7. compile·test·frontend build·container 검증 결과에 따라 성공 또는 수리 task를 계획한다.
+8. 완료된 파일을 종류별로 나누어 MySQL에 저장한다.
 
 자체 Java scaffolder가 Node.js를 사용하지 않는 것과 EasyDep 전체에서 Node.js가 사라지는 것은
 다르다. EasyDep 작업대와 생성 애플리케이션의 React 프론트엔드를 build하는 데에는 현재도
@@ -707,14 +694,11 @@ class ImplementationIR:
     e2e_scenarios: tuple[E2EScenarioIR, ...]
 ```
 
-### 5.4 전송 승인과 자동 수리 승인
+### 5.4 자동 실행과 수리
 
-승인 대상에는 task ID, 설명, 사용 모델, 입력 파일 이름, 예상 출력 파일이 들어간다.
-`request_id`는 그 내용에서 계산하므로 오래된 화면의 승인을 새 task에 적용할 수 없다.
-
-`delegate_repair_approvals=true`이면 최초 승인 범위와 같은 실행에서 검증 실패로 새로 생긴
-수리 task를 사용자가 매번 누르지 않아도 실행할 수 있다. 새 입력이나 전혀 다른 task로 범위가
-넓어지면 새 승인 요청이 필요하다.
+사용자가 구현 단계를 시작하면 계획된 OpenHands 작업과 그 수리 작업까지 자동으로 실행한다.
+구현 단계는 실제 클라우드 배포를 수행하지 않으므로 별도 승인 상태나 승인 파일을 만들지 않는다.
+중단 후 재개에는 run manifest와 workflow checkpoint를 사용한다.
 
 ### 5.5 구현 산출물
 
@@ -860,7 +844,7 @@ class RepairStateSummary(BaseModel):
 - 배포: LLM graph의 Pydantic 검증과 이후 planner 검증이 있으나, API·ERD와 같은 공통 의미
   검사 수리 노드는 연결되어 있지 않다.
 - 구현: compile·test 실패의 파일과 task 소유자를 찾아 원인 task와 그 아래 검증 task를 다시
-  계획한다. 최초 전송 승인 범위를 벗어나지 않으면 위임 승인으로 계속한다.
+  계획하고 같은 실행에서 자동으로 이어 간다.
 - 테스트: 계획 문제면 해당 계획만 다시 만들고, 생성 앱 문제면 고정 계획과 정확한 HTTP·RTM
   근거를 구현 agent에 전달한다. 환경 문제면 같은 Testing 작업을 재시도한다.
 
@@ -918,7 +902,7 @@ checkpoint 본문, 각 상태 채널의 값, 아직 반영되지 않은 쓰기�
 | 요구사항·설계 진행 위치 | MySQL 체크포인트 | 동일 앱 ID로 재개 가능 |
 | 클래스 중간 preview | 프로세스 메모리 | 사라짐 |
 | 클래스 accepted-unit cache | 프로세스 메모리 | 사라짐 |
-| 구현 작업 | 구현 work root의 `easydep-job-state.json` | 승인 파일이 있으면 실행 재개, 없으면 실패 처리 |
+| 구현 작업 | 구현 work root의 `easydep-job-state.json` | run manifest와 workflow 상태로 실행 재개 |
 | 구현 생성 run | 구현 work root의 immutable run directory | 완료된 run 재사용 가능 |
 | 테스트 진행 위치와 고정 입력 | MySQL `workspace_commands.payload` | 고정 입력이 있으면 같은 명령에서 재개 가능 |
 
@@ -1012,8 +996,7 @@ agent 한 대화가 끝나지 않는 것을 막기 위한 제한까지 없앤 �
 2. 같은 command의 마지막 progress event와 LLM metrics event를 본다.
 3. `GET /api/apps/{app_id}`에서 실제 저장된 마지막 산출물과 검증 지적을 본다.
 4. 요구사항 또는 설계라면 MySQL 체크포인트가 같은 `app_id`로 남아 있는지 본다.
-5. 구현이라면 job 상태 JSON의 `status`, `workflow.blockingReason`, `transmission_request`,
-   승인 파일, run manifest를 본다.
+5. 구현이라면 job 상태 JSON의 `status`, `workflow.blockingReason`, run manifest를 본다.
 6. 테스트라면 command의 `payload.testing_checkpoint`에서 고정 입력·현재 node를 확인한다.
 7. 외부 호출 오류는 sandbox의 네트워크 차단, HTTP 429, stream 미종료, 실제 timeout을 구분한다.
 8. 환경만 고쳤다면 저장된 체크포인트나 구현 run에서 실패 단계만 재개한다.
@@ -1022,7 +1005,7 @@ agent 한 대화가 끝나지 않는 것을 막기 위한 제한까지 없앤 �
 
 | 상태 | 뜻 | 다음 행동 |
 |---|---|---|
-| `AWAITING_INPUT` | 질문·검토·수리·승인·외부 대기 | `wait_reason`과 공개 `actions` 확인 |
+| `AWAITING_INPUT` | 질문·검토·수리·외부 대기 | `wait_reason`과 공개 `actions` 확인 |
 | `NEEDS_INPUT` | 입력 또는 앞 단계 설계를 고쳐야 함 | blocking details가 지목한 단계 수정 |
 | `NEEDS_PLANNER` | 구현 planner가 처리하지 못한 task가 남음 | task 종류와 provider 지원 확인 |
 | `STALLED` | 같은 상태에서 쓸 새 수리 전략이 없음 | 입력·모델·검증 규칙 중 원인 수정 |
@@ -1051,7 +1034,7 @@ LogicalErd → ERD PlantUML
 WorkloadGraph → ResourcePlan → deployment bundle
   ↓
 ImplementationIR + Java/React/Docker/Terraform 생성 task
-  ↓ 승인된 LLM task와 compile/test
+  ↓ LLM task와 compile/test
 ArtifactVersion IDs: SOURCE_CODE, FRONTEND_SOURCE_CODE, ...
   ↓ 같은 ID 묶음 고정
 TestingInput → unit/static/dynamic reports → passed 또는 blocking findings

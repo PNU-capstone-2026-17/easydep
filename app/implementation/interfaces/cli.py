@@ -26,7 +26,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("command", choices=("plan-workflow", "run-workflow"))
         parser.add_argument("run", type=Path)
         parser.add_argument("job", type=Path)
-        parser.add_argument("--approval", type=Path)
         parser.add_argument("--retry-failed", action="store_true")
         args = parser.parse_args(arguments)
         spec = load_job(args.job.resolve())
@@ -36,7 +35,6 @@ def main(argv: list[str] | None = None) -> int:
             result = run_workflow(
                 args.run.resolve(),
                 spec,
-                args.approval.resolve() if args.approval else None,
                 retry_failed=args.retry_failed,
             )
         print(json.dumps(result, ensure_ascii=False))

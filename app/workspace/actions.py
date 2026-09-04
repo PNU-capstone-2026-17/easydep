@@ -94,18 +94,6 @@ _SPECS = (
         ("action_id",),
     ),
     ActionSpec(
-        WorkspaceAction.APPROVE_IMPLEMENTATION,
-        "implementation_approval",
-        StagePolicy.IMPLEMENTATION,
-        ("action_id", "job_id", "request_id"),
-    ),
-    ActionSpec(
-        WorkspaceAction.REJECT_IMPLEMENTATION,
-        "implementation_approval",
-        StagePolicy.IMPLEMENTATION,
-        ("action_id", "job_id", "request_id"),
-    ),
-    ActionSpec(
         WorkspaceAction.START_TESTING,
         "start_testing",
         StagePolicy.TESTING,
@@ -117,19 +105,30 @@ _SPECS = (
         StagePolicy.REQUIREMENTS,
         ("action_id", "deployment_preferences"),
     ),
+    ActionSpec(
+        WorkspaceAction.BRANCH_CHECKPOINT,
+        "branch_checkpoint",
+        StagePolicy.CURRENT,
+        ("checkpoint_stage",),
+    ),
+    ActionSpec(
+        WorkspaceAction.RERUN_FROM_STAGE,
+        "rerun_from_stage",
+        StagePolicy.CURRENT,
+        ("restart_stage",),
+    ),
 )
 
 ACTION_REGISTRY = {spec.action.value: spec for spec in _SPECS}
 
 # HTTP request model이 채우는 수동 실행 기본값이다. 공개 offer에 없는 값이라도 이 값과
-# 같으면 실행 의미를 바꾸지 않으므로 허용한다. 반대로 retry, 승인 위임처럼 기본값에서 벗어난
+# 같으면 실행 의미를 바꾸지 않으므로 허용한다. 반대로 retry처럼 기본값에서 벗어난
 # 옵션은 offer가 명시한 경우에만 받을 수 있다.
 _PASSIVE_REQUEST_DEFAULTS: dict[str, Any] = {
     "text": "",
     "base_package": "com.easydep.app",
     "allow_assumptions": True,
     "retry_failed": False,
-    "delegate_repair_approvals": True,
     "auto_approve_method_proposals": False,
 }
 _INTERNAL_CONVERSATION_FIELDS = {
@@ -213,30 +212,6 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             actions=[
                 _offer(WorkspaceAction.CONFIRM_CHANGE, "Apply change", common),
                 _offer(WorkspaceAction.DISMISS_CHANGE, "Dismiss change", common),
-            ],
-        )
-
-    if result.get("request_id") and result.get("job_id"):
-        approval = {
-            **common,
-            "job_id": str(result["job_id"]),
-            "request_id": str(result["request_id"]),
-        }
-        return AwaitingOutcome(
-            wait_reason=WaitReason.APPROVAL,
-            actions=[
-                _offer(
-                    WorkspaceAction.APPROVE_IMPLEMENTATION,
-                    "Approve and continue",
-                    {**approval, "delegate_repair_approvals": False},
-                ),
-                _offer(
-                    WorkspaceAction.APPROVE_IMPLEMENTATION,
-                    "Delegate future approvals",
-                    {**approval, "delegate_repair_approvals": True},
-                    auto=True,
-                ),
-                _offer(WorkspaceAction.REJECT_IMPLEMENTATION, "Reject", approval),
             ],
         )
 

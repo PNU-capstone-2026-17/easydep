@@ -8,7 +8,7 @@ port, health 경로, 환경 변수와 mount 사용을 읽어 배포 단계에 �
 ## 계약
 
 - **입력:** 실행할 command, cwd/env, encoding과 timeout, 작업공간·container 경로,
-  member scaffold 요청과 runtime 설정, 승인된 workload graph와 생성 애플리케이션 경로.
+  member scaffold 요청과 runtime 설정, 검증된 workload graph와 생성 애플리케이션 경로.
 - **출력:** `CompletedProcess` 또는 명시적인 timeout/exit 오류, worker가 만든
   scaffold·로그·검증 artifact, 실제 생성 파일에서 확인한 workload별 실행값. 종료된
   프로세스의 stdout/stderr는 호출자가 요청한 경우에만 전달한다.
@@ -20,7 +20,7 @@ port, health 경로, 환경 변수와 mount 사용을 읽어 배포 단계에 �
   경로가 아닌 `easydep-member-gradle-cache` Docker volume에 두고 여러 workflow가 재사용한다.
   volume이 처음 비어 있으면 개발 환경 준비 스크립트가 만든 `.easydep/gradle-cache`를 한 번
   복사한다. 툴체인에는 고정 Gradle이 이미 설치되어 있어 wrapper 배포본은 다시 받지 않는다.
-- `EASYDEP_TOOLCHAIN_IMAGE`가 설정되면 서버가 승인한 구현 phase는 같은 API 흐름을
+- `EASYDEP_TOOLCHAIN_IMAGE`가 설정되면 서버가 계획한 구현 phase는 같은 API 흐름을
   유지한 채 Linux runner에서 실행한다. 이미지가 설정되지 않은 개발 환경에서만 호스트
   Python 실행 경로를 사용한다.
 - Linux runner에는 Docker 소켓을 공유하지 않는다. 각 작업은 수정 범위에 맞는 빠른 검사를

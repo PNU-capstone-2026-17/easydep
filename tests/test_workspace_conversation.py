@@ -123,6 +123,19 @@ def test_ambiguous_revision_returns_clarification_without_execution() -> None:
     assert result.candidates == []
 
 
+def test_natural_checkpoint_request_returns_only_action_and_stage() -> None:
+    def propose(schema, _messages):
+        return schema(kind="command", intent="branch", stage="design")
+
+    result = ConversationAgent(propose).respond(
+        "app-1", "Create a branch after design.", context(), tools=FakeTools()
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.intent == "branch"
+    assert result.stage == "design"
+
+
 def _completed_command(stage: str = "requirements") -> dict[str, Any]:
     return {
         "command_id": f"{stage}-command",

@@ -124,16 +124,6 @@
     const lastProgressId = latestProgress?.event_id;
     return events.filter(
       (event) =>
-        // The implementation approval is represented by the action controls
-        // in Composer.  Rendering the backend's action_required event in the
-        // chat timeline as well makes each implementation phase look like a
-        // separate approval request (especially when a later phase is queued).
-        // Keep the command/result intact so the approval control remains
-        // available, but suppress this redundant chatbot message.
-        !(
-          event.stage === 'implementation' &&
-          event.kind === 'action_required'
-        ) &&
         !(
           event.stage === 'implementation' &&
           implementationTimelineResetId > 0 &&

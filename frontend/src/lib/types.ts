@@ -7,7 +7,7 @@ export type CommandStatus =
   | 'FAILED'
   | 'INTERRUPTED';
 
-export type WaitReason = 'review' | 'question' | 'repair' | 'approval' | 'external_wait';
+export type WaitReason = 'review' | 'question' | 'repair' | 'external_wait';
 
 export interface ActionOffer {
   action: string;
@@ -224,9 +224,10 @@ export interface CommandPayload {
   context?: Record<string, unknown> | null;
   action_id?: string;
   job_id?: string;
-  request_id?: string;
   implementation_job_id?: string;
   repair_testing_job_id?: string;
+  checkpoint_stage?: 'requirements' | 'design' | 'implementation';
+  restart_stage?: Stage;
 }
 
 export interface LiveSourceFile {

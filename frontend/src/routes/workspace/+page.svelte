@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { PanelRightClose, PanelRightOpen, RefreshCw, Wifi, WifiOff } from '@lucide/svelte';
+  import { GitBranch, PanelRightClose, PanelRightOpen, RefreshCw, Wifi, WifiOff } from '@lucide/svelte';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import ArtifactPane from '$lib/components/ArtifactPane.svelte';
   import ChatTimeline from '$lib/components/ChatTimeline.svelte';
@@ -55,6 +55,10 @@
   let preferenceSaving = $state(false);
   let autoMode = $state(false);
   let autoActionKey = '';
+  let checkpointMenuOpen = $state(false);
+  let checkpointMode = $state<'branch' | 'rerun'>('branch');
+  let checkpointStage = $state<Stage>('requirements');
+  let openedCheckpointCommand = '';
 
   let implementationErrors = $derived.by(() => {
     const messages = events
@@ -261,6 +265,18 @@
     command = nextCommand;
     deploymentPreferences = snapshot.deployment_preferences ?? null;
     currentStage = (command?.stage ?? snapshot.current_stage ?? currentStage) as Stage;
+    const targetAppId = nextCommand?.result?.target_app_id;
+    if (
+      nextCommand?.status === 'COMPLETED' &&
+      typeof targetAppId === 'string' &&
+      targetAppId &&
+      openedCheckpointCommand !== nextCommand.command_id
+    ) {
+      openedCheckpointCommand = nextCommand.command_id;
+      await refreshApps();
+      chooseApp(targetAppId);
+      return;
+    }
     let nextFileArtifacts = fileArtifacts;
     const completionKey = implementationCompletionArtifactLoadKey(previousCommand, nextCommand);
     const artifactLoadKey = completionKey ? `${id}:${completionKey}` : null;
@@ -463,6 +479,16 @@
     window.localStorage.setItem(AUTO_MODE_STORAGE_KEY, String(autoMode));
   }
 
+  async function runCheckpointTool() {
+    checkpointMenuOpen = false;
+    if (checkpointMode === 'branch') {
+      const stage = checkpointStage === 'testing' ? 'implementation' : checkpointStage;
+      await act('branch_checkpoint', { checkpoint_stage: stage });
+      return;
+    }
+    await act('rerun_from_stage', { restart_stage: checkpointStage });
+  }
+
   function chooseApp(id: string) {
     if (id !== appId) {
       appId = id;
@@ -490,7 +516,7 @@
   />
 
   <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-    <header class="flex min-h-16 shrink-0 items-center justify-between gap-4 border-b border-[#deded7] bg-white/90 px-5 backdrop-blur">
+    <header class="relative z-40 flex min-h-16 shrink-0 items-center justify-between gap-4 overflow-visible border-b border-[#deded7] bg-white/90 px-5 backdrop-blur">
       <div class="min-w-0">
         <h1 class="truncate text-sm font-semibold">{apps.find((app) => app.app_id === appId)?.title ?? 'Development workspace'}</h1>
         <div class="mt-1 flex items-center gap-2 text-[10px] text-[#85877e]">
@@ -501,7 +527,33 @@
       <div class="hidden md:block"><StageRail current={currentStage} {command} /></div>
       <div class="flex items-center gap-2">
         <Badge tone={command?.status === 'FAILED' ? 'danger' : busy ? 'warning' : 'success'}>{command?.status ?? 'READY'}</Badge>
-        <Button size="icon" variant="ghost" onclick={() => refreshState()} aria-label="Refresh"><RefreshCw size={15} /></Button>
+        <div class="relative">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onclick={() => (checkpointMenuOpen = !checkpointMenuOpen)}
+            aria-label="Branch or rerun a stage"
+          ><GitBranch size={14} /></Button>
+          {#if checkpointMenuOpen}
+            <div class="absolute right-0 top-10 z-50 w-64 rounded-lg border border-[#deded7] bg-white p-3 shadow-lg">
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-[#777970]" for="checkpoint-mode">Action</label>
+              <select id="checkpoint-mode" bind:value={checkpointMode} class="mb-3 w-full rounded border border-[#d5d5cd] bg-white px-2 py-1.5 text-xs">
+                <option value="branch">Create branch after stage</option>
+                <option value="rerun">Rerun stage in new branch</option>
+              </select>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-[#777970]" for="checkpoint-stage">Stage</label>
+              <select id="checkpoint-stage" bind:value={checkpointStage} class="mb-3 w-full rounded border border-[#d5d5cd] bg-white px-2 py-1.5 text-xs">
+                <option value="requirements">Requirements</option>
+                <option value="design">Design</option>
+                <option value="implementation">Implementation</option>
+                {#if checkpointMode === 'rerun'}<option value="testing">Testing</option>{/if}
+              </select>
+              <p class="mb-3 text-[10px] leading-4 text-[#777970]">The original app stays unchanged. Rerun starts the selected stage in the new branch.</p>
+              <Button size="sm" class="w-full" onclick={runCheckpointTool}>{checkpointMode === 'branch' ? 'Create branch' : 'Create and rerun'}</Button>
+            </div>
+          {/if}
+        </div>
         <Button size="icon" variant="ghost" onclick={() => (artifactOpen = !artifactOpen)} aria-label="Toggle artifact panel">
           {#if artifactOpen}<PanelRightClose size={17} />{:else}<PanelRightOpen size={17} />{/if}
         </Button>

@@ -13,8 +13,6 @@ from pathlib import Path
 from app.implementation.application.prototype import PrototypeClient
 from app.implementation.config import ImplementationSettings
 
-APPROVAL_MISMATCH = "Approval does not match the current transmission request"
-ONE_CYCLE_EXHAUSTED = "Run-to-completion exceeded 1 workflow cycles"
 CHECKPOINT_RUN_ENV = "EASYDEP_MEMBER_CHECKPOINT_RUN"
 
 
@@ -99,35 +97,20 @@ def _preserve_failed_generation_cache(job_path: Path) -> list[str]:
     return preserved
 
 
-def _run_member_workflow_with_current_approvals(
+def _run_member_workflow(
     run_root: Path,
     job: object,
     *,
-    approved_by: str,
     retry_failed: bool = False,
 ) -> dict[str, object]:
-    """새 transmission request마다 멤버의 공개 일괄 실행 경계를 다시 호출한다.
-
-    횟수로 중단하지 않는다. 같은 실패와 같은 repair 전략이 반복되면 repair planner가
-    ``STALLED`` 상태를 기록하므로, 여기서는 새 요청이 있는 동안 승인만 갱신한다.
-    """
+    """멤버 구현을 완료하거나 수리할 수 없는 상태가 될 때까지 실행한다."""
     from app.implementation.workflows.coordinator import run_workflow_to_completion
 
-    while True:
-        try:
-            return run_workflow_to_completion(
-                run_root,
-                job,
-                approved_by=approved_by,
-                max_cycles=1,
-                retry_failed=retry_failed,
-            )
-        except PermissionError as error:
-            if str(error) != APPROVAL_MISMATCH:
-                raise
-        except RuntimeError as error:
-            if str(error) != ONE_CYCLE_EXHAUSTED:
-                raise
+    return run_workflow_to_completion(
+        run_root,
+        job,
+        retry_failed=retry_failed,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -163,10 +146,9 @@ def main(argv: list[str] | None = None) -> int:
         from app.implementation.workflows.coordinator import workflow_status
 
         try:
-            workflow = _run_member_workflow_with_current_approvals(
+            workflow = _run_member_workflow(
                 run_root,
                 load_job(job_path),
-                approved_by="EasyDep orchestration explicit batch approval",
                 retry_failed="--retry-failed-generation" in flags,
             )
         except RuntimeError:

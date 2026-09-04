@@ -2,10 +2,9 @@ import json
 from pathlib import Path
 
 from app.implementation.runtime.scaffold_worker import (
-    APPROVAL_MISMATCH,
     _explicit_checkpoint,
     _preserve_failed_generation_cache,
-    _run_member_workflow_with_current_approvals,
+    _run_member_workflow,
 )
 
 
@@ -100,40 +99,15 @@ def test_scaffold_retry_quarantines_failed_generation_but_keeps_task_checkpoint(
     assert all(Path(path, "reports", "run-manifest.json").is_file() for path in preserved)
 
 
-def test_member_workflow_refreshes_only_stale_transmission_approval(monkeypatch, tmp_path):
-    calls = []
-
+def test_member_workflow_runs_to_completion(monkeypatch, tmp_path):
     def run(*_args, **kwargs):
-        assert kwargs["max_cycles"] == 1
         assert kwargs["retry_failed"] is True
-        calls.append(1)
-        if len(calls) == 1:
-            raise PermissionError(APPROVAL_MISMATCH)
         return {"status": "COMPLETE"}
 
     monkeypatch.setattr(
         "app.implementation.workflows.coordinator.run_workflow_to_completion", run
     )
 
-    result = _run_member_workflow_with_current_approvals(
-        tmp_path, object(), approved_by="tester", retry_failed=True
-    )
+    result = _run_member_workflow(tmp_path, object(), retry_failed=True)
 
     assert result["status"] == "COMPLETE"
-    assert len(calls) == 2
-
-
-def test_member_workflow_does_not_hide_other_approval_failures(monkeypatch, tmp_path):
-    def run(*_args, **_kwargs):
-        raise PermissionError("approval scope mismatch")
-
-    monkeypatch.setattr(
-        "app.implementation.workflows.coordinator.run_workflow_to_completion", run
-    )
-
-    import pytest
-
-    with pytest.raises(PermissionError, match="scope mismatch"):
-        _run_member_workflow_with_current_approvals(
-            tmp_path, object(), approved_by="tester"
-        )

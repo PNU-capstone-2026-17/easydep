@@ -48,12 +48,12 @@
   let repairStallReason = $derived(String(result?.repair_state?.stall_reason ?? '').trim());
   let implementationAction = $derived(
     command?.stage === 'implementation' &&
-      ['approve_implementation', 'retry_implementation', 'rerun_implementation', 'start_implementation'].includes(command.action)
+      ['retry_implementation', 'rerun_implementation', 'start_implementation'].includes(command.action)
       ? command.action
       : null
   );
   let implementationResponse = $derived(
-    implementationAction && implementationAction !== 'approve_implementation' && ['QUEUED', 'RUNNING'].includes(command?.status ?? '')
+    implementationAction && ['QUEUED', 'RUNNING'].includes(command?.status ?? '')
       ? null
       : implementationAction && command?.status === 'COMPLETED'
         ? String(result?.message ?? 'Implementation request completed.')

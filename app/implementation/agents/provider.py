@@ -20,7 +20,7 @@ def configured_model() -> str:
 
 
 def configured_provider_name() -> str:
-    """오류와 승인 화면에 실제 LLM 제공자 이름을 표시한다."""
+    """오류와 실행 기록에 표시할 실제 LLM 제공자 이름을 반환한다."""
 
     return build_llm_connection().display_name()
 

@@ -1,9 +1,9 @@
-"""구현 작업의 생성, 승인, 실행, 결과 저장을 관리한다.
+"""구현 작업의 생성, 실행, 결과 저장을 관리한다.
 
 설계 단계가 완료한 산출물의 입력 형태를 확인한 뒤 별도 프로세스에서 코드 생성과 구현 작업을
 실행한다. 설계 의미 검사는 설계 단계가 소유하며 여기서 반복하지 않는다. 각 작업의 상태는
 ``easydep-job-state.json``에 저장하므로 서버가
-재시작되어도 승인 정보가 남아 있는 작업은 이어서 실행할 수 있다. 여러 요청이 동시에
+재시작되어도 workflow checkpoint가 남아 있는 작업은 이어서 실행할 수 있다. 여러 요청이 동시에
 들어올 수 있어 실제 실행은 크기가 제한된 thread pool에 맡긴다.
 """
 
@@ -375,7 +375,7 @@ class ImplementationWorker:
             "design_validation": readiness,
             "testing_contracts": build_testing_contracts(design),
             "trace_artifact_versions": _trace_artifact_versions(design),
-            "transmission_request": None, "error": None, "created_at": _now(), "updated_at": _now(),
+            "error": None, "created_at": _now(), "updated_at": _now(),
         }
         self._write(record)
         self.executor.submit(langsmith_metrics.bind_context(self._plan), job_id)
@@ -413,7 +413,6 @@ class ImplementationWorker:
                 "blockingReason": "Resolve the design mismatches before implementation can start.",
             },
             "design_validation": readiness,
-            "transmission_request": None,
             "error": (
                 "The implementation job did not start because design inconsistencies remain. "
                 + summary
@@ -565,7 +564,6 @@ class ImplementationWorker:
             "job_path": str(job_path),
             "run_root": None,
             "workflow": None,
-            "transmission_request": None,
             "error": None,
             "created_at": _now(),
             "updated_at": _now(),
@@ -704,7 +702,7 @@ class ImplementationWorker:
         }
 
     def retry_failed(self, job_id: str) -> dict[str, Any]:
-        """승인된 checkpoint에서 실패했거나 감사에 멈춘 단계만 다시 시작한다."""
+        """저장된 checkpoint에서 실패했거나 감사에 멈춘 단계만 다시 시작한다."""
         record = self._read(job_id)
         if record.get("status") not in {"FAILED", "NEEDS_PLANNER"}:
             raise InvalidJobState(
@@ -713,11 +711,10 @@ class ImplementationWorker:
             )
         if not self._checkpoint_retryable(record):
             raise InvalidJobState(
-                "The failed implementation job has no approved execution checkpoint; "
+                "The failed implementation job has no reusable execution checkpoint; "
                 "start a fresh implementation run instead."
             )
 
-        approval_path = Path(record["job_path"]).parent / "approval.json"
         record["status"] = "QUEUED"
         record["checkpoint_retry_count"] = int(
             record.get("checkpoint_retry_count", 0)
@@ -729,7 +726,6 @@ class ImplementationWorker:
         self.executor.submit(
             langsmith_metrics.bind_context(self._run),
             job_id,
-            str(approval_path),
             True,
         )
         record["checkpoint_retryable"] = False
@@ -737,7 +733,7 @@ class ImplementationWorker:
 
     @staticmethod
     def _checkpoint_retryable(record: dict[str, Any]) -> bool:
-        """승인된 실행 checkpoint를 같은 Job에서 안전하게 재사용할 수 있는지 확인한다."""
+        """실행 checkpoint를 같은 Job에서 안전하게 재사용할 수 있는지 확인한다."""
         if record.get("status") not in {"FAILED", "NEEDS_PLANNER"}:
             return False
         job_path_value = record.get("job_path")
@@ -748,7 +744,6 @@ class ImplementationWorker:
         run_root = Path(run_root_value)
         return (
             job_path.is_file()
-            and (job_path.parent / "approval.json").is_file()
             and (run_root / "reports" / "run-manifest.json").is_file()
             and (run_root / "reports" / "workflow-state.json").is_file()
         )
@@ -772,10 +767,45 @@ class ImplementationWorker:
             "contract_artifacts": dict(record.get("testing_contracts") or {}),
         }
 
+    def register_snapshot(
+        self,
+        app_id: str,
+        artifact_version_ids: dict[str, int],
+        testing_contracts: dict[str, dict[str, Any]],
+        *,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
+        """복사된 구현 산출물을 Testing이 읽을 수 있는 완료 작업으로 등록한다.
+
+        분기는 OpenHands 실행 폴더를 복사하지 않는다. Testing에는 실제 파일이 들어 있는
+        ``ArtifactVersion`` ID와 구현 때 고정한 설계 계약만 필요하므로, 이 작은 작업 기록을
+        새로 만든다. 실행 중 체크포인트는 만들지 않아 이 작업을 재개 대상으로
+        잘못 취급하지 않는다.
+        """
+
+        snapshot_job_id = job_id or uuid.uuid4().hex
+        if self._record_path(snapshot_job_id).exists():
+            raise InvalidJobState(f"Implementation snapshot job already exists: {snapshot_job_id}")
+        timestamp = _now()
+        record = {
+            "job_id": snapshot_job_id,
+            "job_type": "CHECKPOINT_BRANCH",
+            "app_id": app_id,
+            "status": "COMPLETED",
+            "artifact_version_ids": dict(artifact_version_ids),
+            "testing_contracts": dict(testing_contracts),
+            "workflow": None,
+            "error": None,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        self._write(record)
+        return self.public_record(record)
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         """종료되지 않은 작업을 취소하고 실행 중인 하위 프로세스도 중지한다."""
         record = self._read(job_id)
-        if record["status"] in {"COMPLETED", "FAILED", "CANCELLED", "REJECTED"}:
+        if record["status"] in {"COMPLETED", "FAILED", "CANCELLED"}:
             raise InvalidJobState(f"Job is already in a terminal state: {record['status']}")
         record["status"] = "CANCELLED"
         record["error"] = "Job execution was cancelled by user request."
@@ -784,54 +814,13 @@ class ImplementationWorker:
         self.client.cancel(job_id)
         return self.public_record(record)
 
-    def approve(self, job_id: str, request_id: str, approved: bool, approved_by: str, retry_failed: bool, delegate_repair_approvals: bool = True) -> dict[str, Any]:
-        """현재 전송 요청을 승인하거나 거절하고, 승인 시 실행 phase를 시작한다.
-
-        ``request_id``가 현재 요청과 같은지 확인해 오래된 화면에서 누른 승인이 새 요청에
-        적용되지 않게 한다. 자동 repair 승인 범위도 파일에 기록해 재시작 뒤 검증할 수 있다.
-        """
-        record = self._read(job_id)
-        request = record.get("transmission_request") or {}
-        if record["status"] != "AWAITING_APPROVAL":
-            raise InvalidJobState(f"Job is not awaiting approval: {record['status']}")
-        if request.get("requestId") != request_id:
-            raise InvalidJobState("Approval does not match the current transmission request")
-        if not approved:
-            record["status"] = "REJECTED"
-            record["updated_at"] = _now()
-            self._write(record)
-            return self.public_record(record)
-        approval_path = Path(record["job_path"]).parent / "approval.json"
-        manifest = json.loads((Path(record["run_root"]) / "reports" / "run-manifest.json").read_text(encoding="utf-8"))
-        approval_path.write_text(json.dumps({
-            "requestId": request_id, "approved": True, "approvedAt": _now(), "approvedBy": approved_by,
-            "delegatedRepairApprovals": delegate_repair_approvals,
-            "delegationScope": {
-                "runId": Path(record["run_root"]).name,
-                "inputHash": manifest.get("input_hash"),
-                "initialTaskIds": sorted(
-                    str(task["task_id"])
-                    for task in manifest.get("implementation_tasks", [])
-                ),
-            },
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-        record["status"] = "QUEUED"
-        record["updated_at"] = _now()
-        self._write(record)
-        self.executor.submit(
-            langsmith_metrics.bind_context(self._run),
-            job_id,
-            str(approval_path),
-            retry_failed,
-        )
-        return self.public_record(record)
-
     def _plan(self, job_id: str) -> None:
         """하위 프로세스에서 코드를 생성한 뒤 실행할 task와 phase를 계획한다."""
         lease_token = self._claim_job_execution(job_id)
         if lease_token is None:
             return
         record = self._read(job_id)
+        run_after_plan = False
         try:
             self._set_status(record, "GENERATING")
             run_root = self.client.generate(Path(record["job_path"]))
@@ -870,13 +859,20 @@ class ImplementationWorker:
             if self._read(job_id).get("status") == "CANCELLED":
                 return
             self._apply_workflow(record, workflow)
+            run_after_plan = record["status"] == "QUEUED"
         except Exception as error:
             self._fail(record, error)
         finally:
             self._release_job_execution(job_id, lease_token)
+        if run_after_plan:
+            self.executor.submit(
+                langsmith_metrics.bind_context(self._run),
+                job_id,
+                False,
+            )
 
-    def _run(self, job_id: str, approval_path: str, retry_failed: bool) -> None:
-        """승인된 workflow를 실행하고 완료된 파일을 산출물 저장소에 보관한다."""
+    def _run(self, job_id: str, retry_failed: bool) -> None:
+        """실행 가능한 workflow 작업을 수행하고 완료된 파일을 보관한다."""
         lease_token = self._claim_job_execution(job_id)
         if lease_token is None:
             return
@@ -884,26 +880,17 @@ class ImplementationWorker:
         requeue = False
         try:
             self._set_status(record, "RUNNING")
-            workflow = self.client.run_phase(Path(record["run_root"]), Path(record["job_path"]), Path(approval_path), retry_failed)
-            # 수리 결과로 새 task 묶음이 생기면 workflow는 다음 전송 요청과 함께 READY를
-            # 반환한다. 위임 범위 안의 요청은 AWAITING_APPROVAL로 저장하지 않고 바로 큐에
-            # 넣어, 화면이 순간적으로 사용자 승인을 요구하거나 monitor가 먼저 종료하지
-            # 않게 한다. 이전 실패 task도 다시 실행해야 하므로 retry_failed는 True가 된다.
-            request = self.client.transmission_request(Path(record["run_root"]))
-            if request:
-                record["workflow"] = workflow
-                record["transmission_request"] = request
-                if self._delegated_execution_is_active(record, approval_path):
-                    record["status"] = "QUEUED"
-                    record["updated_at"] = _now()
-                    self._write(record)
-                    requeue = True
-            if not requeue:
-                self._apply_workflow(record, workflow, write=False)
-                if record["status"] == "COMPLETED":
-                    self._persist_outputs(record)
-                else:
-                    self._write(record)
+            workflow = self.client.run_phase(
+                Path(record["run_root"]),
+                Path(record["job_path"]),
+                retry_failed,
+            )
+            self._apply_workflow(record, workflow, write=False)
+            requeue = record["status"] == "QUEUED"
+            if record["status"] == "COMPLETED":
+                self._persist_outputs(record)
+            else:
+                self._write(record)
         except Exception as error:
             self._fail(record, error)
         finally:
@@ -914,7 +901,6 @@ class ImplementationWorker:
             self.executor.submit(
                 langsmith_metrics.bind_context(self._run),
                 job_id,
-                approval_path,
                 True,
             )
 
@@ -927,15 +913,13 @@ class ImplementationWorker:
     ) -> None:
         """외부 실행기의 workflow 상태를 EasyDep 구현 작업 상태로 변환한다."""
         record["workflow"] = workflow
-        request = self.client.transmission_request(Path(record["run_root"]))
-        record["transmission_request"] = request
         status = str(workflow.get("status", "FAILED"))
-        if request:
-            record["status"] = "AWAITING_APPROVAL"
-        elif status == "COMPLETE" or (
+        if status == "COMPLETE" or (
             status == "READY" and self._workflow_is_complete(workflow)
         ):
             record["status"] = "COMPLETED"
+        elif status in {"READY", "READY_TO_FINALIZE"}:
+            record["status"] = "QUEUED"
         elif status in {"NEEDS_INPUT", "NEEDS_PLANNER", "FAILED"}:
             record["status"] = status
             record["error"] = str(
@@ -1085,49 +1069,6 @@ class ImplementationWorker:
         record["updated_at"] = _now()
         self._write(record)
 
-    @staticmethod
-    def _delegated_execution_is_active(record: dict[str, Any], approval_path: str) -> bool:
-        """현재 repair 요청이 사용자가 위임한 자동 승인 범위 안인지 확인한다.
-
-        승인 파일의 run ID와 입력 hash가 현재 실행과 같아야 한다. 최초 task 또는 검증된
-        repair plan에 포함된 task만 허용해 이전 실행의 승인이 다른 코드에 재사용되지 않게 한다.
-        """
-        try:
-            approval = json.loads(Path(approval_path).read_text(encoding="utf-8"))
-            if approval.get("delegatedRepairApprovals") is not True:
-                return False
-            scope = approval.get("delegationScope")
-            run_root = Path(str(record.get("run_root", "")))
-            request = record.get("transmission_request") or {}
-            if not isinstance(scope, dict) or scope.get("runId") != run_root.name:
-                return False
-            manifest = json.loads(
-                (run_root / "reports" / "run-manifest.json").read_text(encoding="utf-8")
-            )
-            if scope.get("inputHash") != manifest.get("input_hash"):
-                return False
-            plan_path = run_root / "reports" / "repair-plan.json"
-            plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path.is_file() else {}
-            if plan.get("status") == "STALLED":
-                return False
-            entries = [item for item in plan.get("entries", []) if isinstance(item, dict)]
-            planned_ids = {
-                str(task_id)
-                for entry in entries
-                for task_id in [*entry.get("ownerTaskIds", []), *entry.get("revalidationTaskIds", [])]
-            }
-            request_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
-            initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
-            return (
-                bool(request_ids)
-                and (
-                    request_ids.issubset(initial_ids)
-                    or request_ids.issubset(planned_ids)
-                )
-            )
-        except (OSError, json.JSONDecodeError):
-            return False
-
     def _set_status(self, record: dict[str, Any], status: str) -> None:
         """상태와 수정 시각을 함께 바꾸고 즉시 디스크에 저장한다."""
         record["status"] = status
@@ -1239,11 +1180,7 @@ class ImplementationWorker:
             print(f"[startup] 구현 런타임 워밍업 실패(요청 시 재시도): {error}")
 
     def _recover_pending_jobs(self) -> None:
-        """서버 재시작 뒤 디스크에 남은 승인 파일을 확인해 중단된 작업을 재개한다.
-
-        실행을 이미 시작한 작업은 승인 파일이 있을 때만 이어 간다. 메모리에만 있던 승인을
-        추측해 실행하지 않으며, 승인 파일이 없으면 이유를 남기고 실패 처리한다.
-        """
+        """서버 재시작 뒤 디스크 checkpoint에서 중단된 작업을 재개한다."""
         for path in self.settings.work_root.glob("*/easydep-job-state.json"):
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
@@ -1253,18 +1190,11 @@ class ImplementationWorker:
             if status not in {"QUEUED", "GENERATING", "PLANNING", "RUNNING"}:
                 continue
             if record.get("run_root"):
-                approval = Path(record["job_path"]).parent / "approval.json"
-                if approval.is_file():
-                    self.executor.submit(
-                        langsmith_metrics.bind_context(self._run),
-                        record["job_id"],
-                        str(approval),
-                        True,
-                    )
-                else:
-                    record["status"] = "FAILED"
-                    record["error"] = "Interrupted run has no durable approval file"
-                    self._write(record)
+                self.executor.submit(
+                    langsmith_metrics.bind_context(self._run),
+                    record["job_id"],
+                    True,
+                )
             else:
                 self.executor.submit(
                     langsmith_metrics.bind_context(self._plan), record["job_id"]
@@ -1366,18 +1296,6 @@ class ImplementationWorker:
                     public_task["taskId"] = task_id
                 public_tasks.append(public_task)
             result["workflow"] = {**workflow, "tasks": public_tasks}
-        request = result.get("transmission_request")
-        if isinstance(request, dict):
-            result["transmission_request"] = {
-                **{key: value for key, value in request.items() if key != "tasks"},
-                "tasks": [
-                    {
-                        **{key: value for key, value in task.items() if key != "sourceArtifacts"},
-                        "sourceArtifacts": sorted((task.get("sourceArtifacts") or {}).keys()),
-                    }
-                    for task in request.get("tasks", [])
-                ],
-            }
         return result
 
     def shutdown(self) -> None:

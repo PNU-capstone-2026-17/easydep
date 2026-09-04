@@ -67,7 +67,7 @@ def _worker(arguments: list[str]) -> int:
 
 
 def _cli(arguments: list[str]) -> int:
-    """호스트가 승인한 workflow phase를 현재 Linux 환경에서 그대로 실행한다."""
+    """호스트가 계획한 workflow phase를 현재 Linux 환경에서 그대로 실행한다."""
     _configure_runner_tools()
     from app.implementation.interfaces.cli import main as cli_main
 

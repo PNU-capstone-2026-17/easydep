@@ -63,6 +63,12 @@ from .actions import (
     result_with_contract,
     validate_payload,
 )
+from .checkpoints import (
+    checkpoint_options,
+    create_checkpoint_branch,
+    create_restart_branch,
+)
+from .contracts import RestartStage
 from .conversation.agent import conversation_agent
 from .conversation.context import build_conversation_context
 from .conversation.contracts import Clarification, CommandIntent, ConversationIntent, Reply
@@ -237,7 +243,6 @@ class WorkspaceService:
             "start_implementation",
             "retry_implementation",
             "rerun_implementation",
-            "approve_implementation",
         }:
             return command
         payload = command.get("payload") or {}
@@ -391,6 +396,19 @@ class WorkspaceService:
             payload=payload,
             stage=stage,
         )
+        # 분기와 재실행은 원본 앱의 개발 상태를 바꾸지 않는다. 관리 명령이 최신 명령으로
+        # 보이더라도 그전에 제공되던 진행 버튼을 그대로 유지한다.
+        if action in {"branch_checkpoint", "rerun_from_stage"}:
+            previous = repository.latest_command(app_id)
+            if previous is not None:
+                payload = {
+                    **payload,
+                    "_conversation_actions": [
+                        item.model_dump(mode="json", exclude_none=True)
+                        for item in offered_actions(previous)
+                    ],
+                }
+                stage = stage or str(previous.get("stage") or "requirements")
         resolved_stage = stage or self.infer_stage(app_id, action, payload)
         self._validate_payload(action, payload)
         self._validate_action_reference(app_id, action, payload)
@@ -579,6 +597,42 @@ class WorkspaceService:
 
         offered = offered_actions(latest)
         intent_name = str(intent.intent)
+        if intent_name in {
+            ConversationIntent.BRANCH.value,
+            ConversationIntent.RERUN.value,
+        }:
+            option_kind = "branch" if intent_name == ConversationIntent.BRANCH.value else "rerun"
+            choices = checkpoint_options(app_id)[option_kind]
+            available = {
+                str(item["stage"])
+                for item in choices
+                if item.get("available") is True
+            }
+            if intent.stage not in available:
+                return self._clarification_message(
+                    payload,
+                    Clarification(
+                        question="Choose a stage that has all required checkpoint artifacts.",
+                        candidates=[
+                            str(item["label"])
+                            for item in choices
+                            if item.get("available") is True
+                        ],
+                    ),
+                    None,
+                    latest,
+                )
+            field = "checkpoint_stage" if option_kind == "branch" else "restart_stage"
+            action = "branch_checkpoint" if option_kind == "branch" else "rerun_from_stage"
+            return (
+                action,
+                {
+                    **payload,
+                    field: intent.stage,
+                    "conversation_intent": intent.model_dump(mode="json"),
+                },
+                None,
+            )
         if intent_name == ConversationIntent.REVISE.value:
             tools = ProjectTools(app_id)
             validation = tools.validate_targets(intent.targets)
@@ -1078,7 +1132,6 @@ class WorkspaceService:
                     repaired = self._monitor_implementation(
                         repair_job,
                         command_id=str(command["command_id"]),
-                        auto_approve=True,
                     )
                     repaired_job = repaired.get("job") or {}
                     repaired_job_id = str(
@@ -1235,38 +1288,74 @@ class WorkspaceService:
                 previous_job=previous_job,
                 preserve_test=preserve_test,
             )
-        if handler == "implementation_approval":
-            payload = command["payload"]
-            app_id = str(command["app_id"])
-            approved = action == "approve_implementation"
-            repository.append_event(
-                app_id,
-                command_id=str(command["command_id"]),
-                stage="implementation",
-                kind="status",
-                actor="system",
-                text=(
-                    "Implementation approval received; resuming execution."
-                    if approved
-                    else "Implementation execution rejected."
-                ),
-                metadata={"status": "APPROVAL_RECEIVED" if approved else "REJECTED"},
-            )
-            job = implementation_worker.approve(
-                str(payload["job_id"]),
-                str(payload["request_id"]),
-                approved,
-                "EasyDep Workspace",
-                bool(payload.get("retry_failed", False)),
-                bool(payload.get("delegate_repair_approvals", True)),
-            )
-            return self._monitor_implementation(job, command_id=str(command["command_id"]))
         if handler == "start_testing":
             return self._run_testing_command(
                 command,
                 str(command["payload"]["implementation_job_id"]),
             )
+        if handler == "branch_checkpoint":
+            branch = create_checkpoint_branch(
+                str(command["app_id"]),
+                str(command["payload"]["checkpoint_stage"]),
+            )
+            return {
+                **branch,
+                "message": (
+                    f"Created a new app branch after {branch['checkpoint_stage']}."
+                ),
+            }
+        if handler == "rerun_from_stage":
+            return self._rerun_from_stage(command)
         raise ValueError(f"Unsupported workspace command: {action}")
+
+    def _rerun_from_stage(self, command: dict[str, Any]) -> dict[str, Any]:
+        """선택 단계 직전까지 분기한 새 앱에서 정식 실행 경로를 시작한다."""
+
+        restart_stage = RestartStage(str(command["payload"]["restart_stage"]))
+        branch = create_restart_branch(str(command["app_id"]), restart_stage)
+        target_app_id = str(branch["target_app_id"])
+        entry_command_id = str(branch.get("entry_command_id") or "")
+
+        if restart_stage == RestartStage.REQUIREMENTS:
+            state = artifact_repository.load_state(target_app_id)
+            next_command = self.submit(
+                target_app_id,
+                action="message",
+                stage="requirements",
+                payload={
+                    "text": str(state.get("requirements_text") or ""),
+                    "resource_constraints_text": str(
+                        state.get("resource_constraints_text") or ""
+                    ),
+                },
+            )
+        elif restart_stage == RestartStage.DESIGN:
+            next_command = self.submit(
+                target_app_id,
+                action="start_design",
+                payload={"action_id": entry_command_id},
+            )
+        elif restart_stage == RestartStage.IMPLEMENTATION:
+            next_command = self.submit(
+                target_app_id,
+                action="start_implementation",
+                payload={"action_id": entry_command_id},
+            )
+        else:
+            next_command = self.submit(
+                target_app_id,
+                action="start_testing",
+                payload={
+                    "action_id": entry_command_id,
+                    "implementation_job_id": str(branch["implementation_job_id"]),
+                },
+            )
+        return {
+            **branch,
+            "restart_stage": restart_stage.value,
+            "started_command_id": next_command["command_id"],
+            "message": f"Created a new branch and started {restart_stage.value} again.",
+        }
 
     def _stage_message(self, command: dict[str, Any], *, advance: bool) -> dict[str, Any]:
         app_id = str(command["app_id"])
@@ -2755,7 +2844,6 @@ class WorkspaceService:
         job: dict[str, Any],
         *,
         command_id: str | None = None,
-        auto_approve: bool = False,
     ) -> dict[str, Any]:
         job_id = str(job["job_id"])
         app_id = str(job.get("app_id") or "")
@@ -2766,7 +2854,7 @@ class WorkspaceService:
             current = implementation_worker.get(job_id)
             status = str(current.get("status") or "")
             if app_id and command_id:
-                if status and status != last_status and status not in {"AWAITING_APPROVAL"}:
+                if status and status != last_status:
                     repository.append_event(
                         app_id,
                         command_id=command_id,
@@ -2840,31 +2928,6 @@ class WorkspaceService:
                         },
                     )
                     last_agent_results[task_id] = fingerprint
-            if status == "AWAITING_APPROVAL":
-                request = current.get("transmission_request") or {}
-                if auto_approve:
-                    request_id = str(request.get("requestId") or "")
-                    if not request_id:
-                        raise RuntimeError(
-                            "Automatic implementation repair has no transmission request ID."
-                        )
-                    implementation_worker.approve(
-                        job_id,
-                        request_id,
-                        True,
-                        "EasyDep automatic Testing repair",
-                        True,
-                        True,
-                    )
-                    continue
-                return {
-                    "awaiting_input": True,
-                    "kind": "action_required",
-                    "message": "Implementation execution requires approval.",
-                    "job_id": job_id,
-                    "request_id": request.get("requestId"),
-                    "tasks": request.get("tasks") or [],
-                }
             if status in TERMINAL_JOB_STATUSES:
                 if status != "COMPLETED":
                     raise RuntimeError(str(current.get("error") or f"Implementation job {status}"))

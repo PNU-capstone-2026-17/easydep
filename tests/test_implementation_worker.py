@@ -131,7 +131,7 @@ def test_ready_workflow_with_all_tasks_succeeded_is_completed(tmp_path: Path) ->
     assert record["status"] == "COMPLETED"
 
 
-def test_ready_workflow_with_pending_tasks_remains_ready(tmp_path: Path) -> None:
+def test_ready_workflow_with_pending_tasks_is_queued(tmp_path: Path) -> None:
     implementation_worker = ImplementationWorker(settings(tmp_path))
     record = {
         "job_id": "job-planned",
@@ -152,7 +152,7 @@ def test_ready_workflow_with_pending_tasks_remains_ready(tmp_path: Path) -> None
     finally:
         implementation_worker.shutdown()
 
-    assert record["status"] == "READY"
+    assert record["status"] == "QUEUED"
 
 
 def test_completed_job_is_not_published_before_artifacts_are_persisted(
@@ -177,10 +177,6 @@ def test_completed_job_is_not_published_before_artifacts_are_persisted(
             }
 
         @staticmethod
-        def transmission_request(_run_root: Path) -> None:
-            return None
-
-        @staticmethod
         def cancel_all() -> None:
             return None
 
@@ -192,7 +188,7 @@ def test_completed_job_is_not_published_before_artifacts_are_persisted(
     worker._fail = lambda _record, error: pytest.fail(str(error))
 
     try:
-        worker._run("job-completed", "approval.json", False)
+        worker._run("job-completed", False)
     finally:
         worker.shutdown()
 
@@ -336,99 +332,6 @@ def test_feedback_job_restores_frontend_snapshot_under_frontend_directory(
     assert "package.json" not in captured
 
 
-def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path) -> None:
-    run = tmp_path / "run_repair"
-    reports = run / "reports"
-    reports.mkdir(parents=True)
-    (reports / "run-manifest.json").write_text(
-        json.dumps(
-            {
-                "input_hash": "input-hash",
-                "implementation_tasks": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (reports / "repair-plan.json").write_text(
-        json.dumps(
-            {
-                "entries": [
-                    {
-                        "revision": 1,
-                        "ownerTaskIds": ["repair-api"],
-                        "revalidationTaskIds": ["repair-e2e"],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    approval = tmp_path / "approval.json"
-    approval.write_text(
-        json.dumps(
-            {
-                "delegatedRepairApprovals": True,
-                "delegationScope": {
-                    "runId": run.name,
-                    "inputHash": "input-hash",
-                    "initialTaskIds": ["initial-wiring"],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    record = {
-        "run_root": str(run),
-        "transmission_request": {"tasks": [{"taskId": "repair-api"}, {"taskId": "repair-e2e"}]},
-        "workflow": {"tasks": [{"attempts": 200}]},
-    }
-
-    assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
-    record["transmission_request"] = {"tasks": [{"taskId": "initial-wiring"}]}
-    assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
-    (reports / "repair-plan.json").write_text(
-        json.dumps({"status": "STALLED", "entries": []}), encoding="utf-8"
-    )
-    assert not ImplementationWorker._delegated_execution_is_active(record, str(approval))
-
-    # 자동 승인된 다음 묶음은 AWAITING_APPROVAL을 외부에 노출하지 않고, 앞선 실패
-    # task를 실제로 재실행할 수 있도록 retry_failed=True로 이어져야 한다.
-    (reports / "repair-plan.json").write_text(
-        json.dumps(
-            {
-                "entries": [{"ownerTaskIds": ["repair-api"], "revalidationTaskIds": []}],
-            }
-        ),
-        encoding="utf-8",
-    )
-    worker = ImplementationWorker(settings(tmp_path))
-    submitted: list[tuple[object, ...]] = []
-    worker.executor.submit = lambda *args: submitted.append(args)  # type: ignore[method-assign]
-    worker.client.run_phase = lambda *_args: {"status": "READY"}
-    worker.client.transmission_request = lambda *_args: {
-        "tasks": [{"taskId": "repair-api"}],
-    }
-    job = {
-        "job_id": "delegated-job",
-        "app_id": "app-1",
-        "job_path": str(tmp_path / "job.json"),
-        "run_root": str(run),
-        "status": "READY",
-        "transmission_request": None,
-        "created_at": "now",
-        "updated_at": "now",
-    }
-    worker._write(job)
-    try:
-        worker._run("delegated-job", str(approval), False)
-        resumed = worker._read("delegated-job")
-    finally:
-        worker.shutdown()
-
-    assert resumed["status"] == "QUEUED"
-    assert submitted and submitted[0][-1] is True
-
-
 def test_cancel_terminates_active_process_and_preserves_cancelled_status(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -446,7 +349,6 @@ def test_cancel_terminates_active_process_and_preserves_cancelled_status(
         "job_path": str(tmp_path / "job.json"),
         "run_root": None,
         "workflow": None,
-        "transmission_request": None,
         "error": None,
         "created_at": "now",
         "updated_at": "now",
@@ -511,11 +413,9 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     client = PrototypeClient(settings(tmp_path))
     run_root = tmp_path / ".easydep" / "run_123"
     job_path = tmp_path / ".easydep" / "job" / "job.json"
-    approval_path = job_path.with_name("approval.json")
     for path in (run_root, job_path.parent):
         path.mkdir(parents=True, exist_ok=True)
     job_path.write_text("{}", encoding="utf-8")
-    approval_path.write_text("{}", encoding="utf-8")
     reports = run_root / "reports"
     reports.mkdir()
     (reports / "run-manifest.json").write_text(
@@ -551,17 +451,15 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
 
     monkeypatch.setattr(client, "_call_command", fake_call)
 
-    result = client.run_phase(run_root, job_path, approval_path, retry_failed=True)
+    result = client.run_phase(run_root, job_path, retry_failed=True)
 
     command = observed["command"]
     assert isinstance(command, list)
-    assert command[-7:] == [
+    assert command[-5:] == [
         "cli",
         "run-workflow",
         "/easydep-workspace/.easydep/run_123",
         "/easydep-workspace/.easydep/job/job.json",
-        "--approval",
-        "/easydep-workspace/.easydep/job/approval.json",
         "--retry-failed",
     ]
     assert observed["operation_id"] == "job"
@@ -655,7 +553,7 @@ def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("terminal_status", ["FAILED", "NEEDS_PLANNER"])
-def test_stopped_job_retries_the_same_approved_checkpoint(
+def test_stopped_job_retries_the_same_checkpoint(
     tmp_path: Path,
     terminal_status: str,
 ) -> None:
@@ -667,10 +565,6 @@ def test_stopped_job_retries_the_same_approved_checkpoint(
     reports = run_root / "reports"
     reports.mkdir(parents=True)
     job_path.write_text("{}", encoding="utf-8")
-    (job_dir / "approval.json").write_text(
-        json.dumps({"requestId": "request", "approved": True}),
-        encoding="utf-8",
-    )
     (reports / "run-manifest.json").write_text(
         json.dumps({"status": "SUCCEEDED"}),
         encoding="utf-8",
@@ -712,10 +606,10 @@ def test_stopped_job_retries_the_same_approved_checkpoint(
     assert len(submitted) == 1
     submitted_call, *submitted_args = submitted[0]
     assert getattr(submitted_call, "__wrapped__", None) == implementation_worker._run
-    assert submitted_args == [job_id, str(job_dir / "approval.json"), True]
+    assert submitted_args == [job_id, True]
 
 
-def test_failed_job_without_approved_checkpoint_requires_a_fresh_run(
+def test_failed_job_without_checkpoint_requires_a_fresh_run(
     tmp_path: Path,
 ) -> None:
     implementation_worker = ImplementationWorker(settings(tmp_path))
@@ -732,7 +626,7 @@ def test_failed_job_without_approved_checkpoint_requires_a_fresh_run(
     )
     try:
         assert implementation_worker.get(job_id)["checkpoint_retryable"] is False
-        with pytest.raises(RuntimeError, match="no approved execution checkpoint"):
+        with pytest.raises(RuntimeError, match="no reusable execution checkpoint"):
             implementation_worker.retry_failed(job_id)
     finally:
         implementation_worker.shutdown()
@@ -796,7 +690,6 @@ def test_planning_keeps_validation_needs_input_outcome_resumable(
         "job_path": str(job_path),
         "run_root": None,
         "workflow": None,
-        "transmission_request": None,
         "error": None,
         "created_at": "now",
         "updated_at": "now",
@@ -896,19 +789,9 @@ def test_public_job_record_hides_host_source_paths() -> None:
     record = {
         "job_path": "C:/secret/job.json",
         "run_root": "C:/secret/run",
-        "status": "AWAITING_APPROVAL",
+        "status": "RUNNING",
         "workflow": {
             "tasks": [{"task_id": "control", "status": "RUNNING"}],
-        },
-        "transmission_request": {
-            "requestId": "a" * 64,
-            "tasks": [
-                {
-                    "taskId": "control",
-                    "sourceArtifacts": {"class": "C:/secret/class.puml"},
-                    "sourceArtifactHashes": {"class": "hash"},
-                }
-            ],
         },
     }
     public = ImplementationWorker.public_record(record)
@@ -916,7 +799,6 @@ def test_public_job_record_hides_host_source_paths() -> None:
     assert public["workflow"]["tasks"] == [
         {"taskId": "control", "status": "RUNNING"}
     ]
-    assert public["transmission_request"]["tasks"][0]["sourceArtifacts"] == ["class"]
 
 
 def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> None:

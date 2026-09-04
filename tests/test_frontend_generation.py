@@ -776,30 +776,12 @@ def test_completed_job_persists_frontend_as_its_own_file_artifact(
     }
 
 
-def test_cli_run_to_completion_reuses_one_scoped_approval(
+def test_cli_run_to_completion_continues_ready_work(
     monkeypatch, tmp_path: Path
 ) -> None:
     from app.implementation.domain.models import JobSpec
     from app.implementation.workflows.coordinator import run_workflow_to_completion
 
-    reports = tmp_path / "reports"
-    reports.mkdir()
-    (reports / "run-manifest.json").write_text(
-        json.dumps(
-            {
-                "input_hash": "input-hash",
-                "implementation_tasks": [
-                    {"task_id": "backend"},
-                    {"task_id": "implement-frontend-application"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (reports / "external-transmission-request.json").write_text(
-        json.dumps({"requestId": "a" * 64, "status": "AWAITING_APPROVAL"}),
-        encoding="utf-8",
-    )
     spec = JobSpec(
         job_type="INITIAL_IMPLEMENTATION",
         feedback="",
@@ -815,28 +797,20 @@ def test_cli_run_to_completion_reuses_one_scoped_approval(
         agent_temperature=0,
         agent_max_output_tokens=1,
     )
-    approvals: list[dict[str, object]] = []
+    calls: list[dict[str, object]] = []
     states = iter([{"status": "READY"}, {"status": "COMPLETE"}])
     monkeypatch.setattr(
         "app.implementation.workflows.coordinator.plan_workflow",
         lambda *_args: {"status": "READY"},
     )
 
-    def run(_root: Path, _spec: JobSpec, approval: Path, **_kwargs: object):
-        approvals.append(json.loads(approval.read_text(encoding="utf-8")))
+    def run(_root: Path, _spec: JobSpec, **kwargs: object):
+        calls.append(kwargs)
         return next(states)
 
     monkeypatch.setattr("app.implementation.workflows.coordinator.run_workflow", run)
 
-    result = run_workflow_to_completion(
-        tmp_path, spec, approved_by="CLI user"
-    )
+    result = run_workflow_to_completion(tmp_path, spec)
 
     assert result["status"] == "COMPLETE"
-    assert len(approvals) == 2
-    assert approvals[0] == approvals[1]
-    assert approvals[0]["delegatedRepairApprovals"] is True
-    assert approvals[0]["delegationScope"]["initialTaskIds"] == [
-        "backend",
-        "implement-frontend-application",
-    ]
+    assert calls == [{"retry_failed": False}, {"retry_failed": False}]

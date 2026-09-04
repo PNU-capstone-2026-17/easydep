@@ -974,11 +974,11 @@ public class SecurityConfiguration {{
             application,
             timeout_seconds=GRADLE_COMMAND_TIMEOUT_SECONDS,
         )
-        # Deliberately `compileJava` only.  This pre-approval gate proves the
+        # Deliberately `compileJava` only.  This pre-execution gate proves the
         # generated scaffold compiles; nothing consumes a jar yet.  `bootJar`
         # resolves the runtime classpath and copies every dependency into
         # BOOT-INF/lib through the bind mount, and the result is discarded:
-        # agents/verification/build.py repackages after approval, the delivery
+        # agents/verification/build.py repackages after implementation, the delivery
         # images build their own jar from source, and _persist_outputs skips
         # every `build/` path.
         local_state = application / ".gradle"

@@ -337,10 +337,10 @@ class PrototypeClient:
         return run_root, self.plan_workflow(run_root, job_path)
 
     def run_phase(
-        self, run_root: Path, job_path: Path, approval_path: Path, retry_failed: bool
+        self, run_root: Path, job_path: Path, retry_failed: bool
     ) -> dict[str, Any]:
-        """승인 파일을 전달해 workflow의 실행 가능한 phase를 수행한다."""
-        args = ["run-workflow", str(run_root), str(job_path), "--approval", str(approval_path)]
+        """workflow에서 현재 실행 가능한 phase를 수행한다."""
+        args = ["run-workflow", str(run_root), str(job_path)]
         if retry_failed:
             args.append("--retry-failed")
         runner_image = configured_runner_image()
@@ -353,8 +353,6 @@ class PrototypeClient:
                 "run-workflow",
                 str(to_container_path(run_root, self.settings.repository_root)),
                 str(to_container_path(job_path, self.settings.repository_root)),
-                "--approval",
-                str(to_container_path(approval_path, self.settings.repository_root)),
             ]
             if retry_failed:
                 container_args.append("--retry-failed")
@@ -371,14 +369,6 @@ class PrototypeClient:
             )
             return self._call_command(command, job_path.parent.name, environment)
         return self._call(args, job_path.parent.name)
-
-    def transmission_request(self, run_root: Path) -> dict[str, Any] | None:
-        """외부 전송 승인이 필요한 현재 요청을 읽으며, 없으면 ``None``을 반환한다."""
-        path = run_root / "reports" / "external-transmission-request.json"
-        if not path.is_file():
-            return None
-        value = json.loads(path.read_text(encoding="utf-8"))
-        return value if value.get("status") == "AWAITING_APPROVAL" else None
 
     def warmup_runtime(self) -> dict[str, Any]:
         """첫 작업 전에 도구와 공용 dependency cache를 미리 준비한다."""

@@ -1149,7 +1149,6 @@ def test_completed_workflow_hands_full_verification_to_testing(
             inputs={},
             job_type="INITIAL_IMPLEMENTATION",
         ),
-        None,
         auditor=lambda _run: {"status": "COMPLETE"},
     )
 
@@ -1212,7 +1211,6 @@ def test_feedback_revision_runs_one_full_backend_test_gate_before_complete(
     result = run_workflow(
         run,
         SimpleNamespace(job_type="FEEDBACK_REVISION", app_id="app-1", inputs={}),
-        None,
         auditor=lambda _run: {"status": "COMPLETE"},
     )
 
@@ -1288,7 +1286,6 @@ def test_feedback_revision_test_gate_failure_returns_to_source_feedback_repair(
     result = run_workflow(
         run,
         SimpleNamespace(job_type="FEEDBACK_REVISION", app_id="app-1", inputs={}),
-        None,
         auditor=lambda _run: {"status": "COMPLETE"},
     )
 
