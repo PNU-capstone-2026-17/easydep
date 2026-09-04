@@ -66,6 +66,36 @@ _RESTRICTED_GREP_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
 
 
+def _cloudflare_tool_call_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Cloudflare가 다시 받을 수 있는 assistant tool-call 메시지를 만든다.
+
+    OpenHands는 assistant가 설명 없이 도구만 호출하면 빈 ``content`` key를 제거한다.
+    OpenAI Chat Completions에서는 허용되는 표현이지만, Cloudflare Workers AI의 현재
+    endpoint는 다음 tool 결과를 보낼 때 assistant 메시지에도 ``content``를 요구한다.
+    EasyDep은 Cloudflare 경로에서 모든 text content를 문자열로 직렬화한다. 실제
+    endpoint에서도 빈 문자열을 포함한 tool-call 왕복이 허용되므로, 해당 경우에만 새
+    dict를 만들어 같은 문자열 형식을 보충한다.
+
+    다른 role이나 일반 assistant 답변은 그대로 두어 OpenHands의 직렬화 결과를 가능한
+    한 보존한다. 입력 dict도 수정하지 않으므로 SDK가 같은 메시지를 다시 사용할 때
+    provider 전용 값이 대화 기록에 섞이지 않는다.
+    """
+
+    compatible: list[dict[str, Any]] = []
+    for message in messages:
+        if (
+            message.get("role") == "assistant"
+            and message.get("tool_calls")
+            and message.get("content") is None
+        ):
+            compatible.append({**message, "content": ""})
+        else:
+            compatible.append(message)
+    return compatible
+
+
 def _configure_openhands_profile_store() -> None:
     """Keep OpenHands' implicit profile lock out of the user's home directory.
 
@@ -1536,6 +1566,12 @@ def create_openhands_conversation(
         "temperature": profile.temperature,
         "max_output_tokens": profile.completion_limit(requested_output),
     }
+    connection = build_llm_connection()
+    if connection.provider == "cloudflare-ai-gateway":
+        # Workers AI의 tool-call 입력 schema는 일반 OpenAI endpoint보다 content
+        # 배열 처리의 편차가 크다. 텍스트만 사용하는 구현 에이전트는 공식 예제와 같은
+        # 문자열 형식으로 고정해 여러 번의 도구 왕복에서도 요청 모양을 유지한다.
+        llm_options["force_string_serializer"] = True
     if is_qwen_coder:
         # NVIDIA documents Qwen3-Coder as a non-thinking model and recommends not
         # overriding both temperature and top_p in the same request.
@@ -1552,7 +1588,23 @@ def create_openhands_conversation(
         message=r"Cost calculation failed:.*",
         module=r"openhands\.sdk\.llm\.utils\.telemetry",
     )
-    llm = LLM(**llm_options)
+    llm_class = LLM
+    if connection.provider == "cloudflare-ai-gateway":
+
+        class CloudflareCompatibleLLM(LLM):
+            """OpenHands의 대화를 Cloudflare Chat Completions 형식에 맞춘다."""
+
+            def format_messages_for_llm(self, messages):
+                formatted = super().format_messages_for_llm(messages)
+                return _cloudflare_tool_call_messages(formatted)
+
+            async def aformat_messages_for_llm(self, messages):
+                formatted = await super().aformat_messages_for_llm(messages)
+                return _cloudflare_tool_call_messages(formatted)
+
+        llm_class = CloudflareCompatibleLLM
+
+    llm = llm_class(**llm_options)
     agent = Agent(
         llm=llm,
         tools=[

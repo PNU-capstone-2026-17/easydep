@@ -621,6 +621,30 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         conversation.close()
 
 
+def test_cloudflare_tool_call_message_keeps_required_content() -> None:
+    """도구 결과를 돌려줄 때 Cloudflare가 요구하는 assistant content를 보충한다."""
+    original = [
+        {"role": "system", "content": [{"type": "text", "text": "rules"}]},
+        {
+            "role": "assistant",
+            "tool_calls": [{"id": "call-1", "type": "function"}],
+            "reasoning_content": "inspect the source",
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "content": [{"type": "text", "text": "source"}],
+        },
+    ]
+
+    compatible = agent_runtime._cloudflare_tool_call_messages(original)
+
+    assert compatible[1]["content"] == ""
+    assert "content" not in original[1]
+    assert compatible[0] is original[0]
+    assert compatible[2] is original[2]
+
+
 def test_restricted_editor_reads_utf8_korean_source_as_text(tmp_path: Path) -> None:
     """한글 주석이 많은 Java source를 binary로 오인하지 않는다."""
     source = tmp_path / "Offering.java"
