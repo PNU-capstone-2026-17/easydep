@@ -141,6 +141,7 @@ def test_reference_validation_rejects_unoffered_execution_options() -> None:
         "start_design",
         {
             "action_id": "command-1",
+            "text": "",
             "retry_failed": False,
             "delegate_repair_approvals": True,
         },

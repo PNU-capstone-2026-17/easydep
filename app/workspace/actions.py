@@ -125,6 +125,7 @@ ACTION_REGISTRY = {spec.action.value: spec for spec in _SPECS}
 # 같으면 실행 의미를 바꾸지 않으므로 허용한다. 반대로 retry, 승인 위임처럼 기본값에서 벗어난
 # 옵션은 offer가 명시한 경우에만 받을 수 있다.
 _PASSIVE_REQUEST_DEFAULTS: dict[str, Any] = {
+    "text": "",
     "base_package": "com.easydep.app",
     "allow_assumptions": True,
     "retry_failed": False,
