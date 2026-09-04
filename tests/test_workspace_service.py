@@ -28,6 +28,74 @@ class RejectingExecutor:
         return None
 
 
+@pytest.mark.parametrize(
+    ("defect_class", "repairable", "expected_submit_count"),
+    [
+        ("SUT_DEFECT", True, 1),
+        ("ENVIRONMENT_DEFECT", False, 0),
+    ],
+)
+def test_testing_failure_starts_only_repairable_work_automatically(
+    monkeypatch,
+    defect_class: str,
+    repairable: bool,
+    expected_submit_count: int,
+) -> None:
+    """Testing 결함은 자동 수리하고 실행 환경 오류는 사용자 복구를 기다린다."""
+    command = {
+        "command_id": "testing-command",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "payload": {"implementation_job_id": "implementation-1"},
+    }
+    result = {
+        "awaiting_input": True,
+        "kind": "action_required",
+        "message": "Testing found a blocking failure.",
+        "requires_revision": True,
+        "can_delegate_repair": repairable,
+        "job_id": "testing-command",
+        "blocking_findings": [
+            {
+                "message": "runtime check failed",
+                "repairable": repairable,
+                "defect_class": defect_class,
+            }
+        ],
+    }
+    updates: list[dict[str, Any]] = []
+    submissions: list[dict[str, Any]] = []
+    monkeypatch.setattr(repository, "update_command", lambda _id, **kw: updates.append(kw))
+    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repository, "now", lambda: datetime.now(UTC).replace(tzinfo=None))
+
+    service = WorkspaceService()
+    monkeypatch.setattr(service, "_dispatch", lambda _command: dict(result))
+    monkeypatch.setattr(service, "_complete_referenced_action", lambda _command: None)
+    monkeypatch.setattr(
+        service,
+        "submit",
+        lambda app_id, *, action, stage, payload: submissions.append(
+            {"app_id": app_id, "action": action, "stage": stage, "payload": payload}
+        ),
+    )
+    try:
+        service._execute_command("testing-command", command)
+    finally:
+        service.shutdown()
+
+    assert updates[-1]["status"] == "AWAITING_INPUT"
+    assert len(submissions) == expected_submit_count
+    if repairable:
+        assert submissions[0] == {
+            "app_id": "app-1",
+            "action": "delegate_repair",
+            "stage": "testing",
+            "payload": {"action_id": "testing-command"},
+        }
+
+
 def test_workspace_tables_are_part_of_the_shared_database_schema() -> None:
     assert "workspace_commands" in Base.metadata.tables
     assert "workspace_events" not in Base.metadata.tables

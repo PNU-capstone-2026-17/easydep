@@ -899,10 +899,14 @@ class WorkspaceService:
                     metadata=result,
                 )
                 # 의미 검사로 발견한 기술 결함은 사용자가 버튼을 눌러야만 고쳐지는
-                # 질문이 아니다. 각 단계가 공개하던 ``delegate_repair`` 선택을 백엔드가
-                # 곧바로 실행한다. 요구사항 선택·확인 질문은 그대로 사용자에게 남긴다.
+                # 질문이 아니다. 이미 시작된 수리뿐 아니라 Testing이 처음 발견한 제품·테스트
+                # 결함도 ``delegate_repair``로 곧바로 이어 간다. 요구사항 선택·확인 질문과
+                # 실행 환경 복구가 필요한 오류는 그대로 사용자에게 남긴다.
                 if (
-                    command.get("action") == "delegate_repair"
+                    (
+                        command.get("action") == "delegate_repair"
+                        or stage == "testing"
+                    )
                     and result.get("requires_revision") is True
                     and result.get("can_delegate_repair") is True
                     and not result.get("resource_question")
