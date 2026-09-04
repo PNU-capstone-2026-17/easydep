@@ -31,12 +31,30 @@ from tests.class_design_fixtures import (
 def test_generate_uses_one_combined_call_and_keeps_the_public_model(monkeypatch):
     schemas: list[type] = []
 
-    def fake_parse(_messages, schema, **_kwargs):
+    def fake_parse(messages, schema, **_kwargs):
         schemas.append(schema)
         if schema is InventoryProposal:
             return inventory_proposal()
         if schema is CombinedUnitProposal:
+            payload = json.loads(messages[-1]["content"])
+            assert payload["actorEntries"] == [
+                {
+                    "actorStepRef": "UC1:main:1",
+                    "actor": "Member",
+                    "requiredStepRefs": ["UC1:main:1", "UC1:main:2"],
+                },
+                {
+                    "actorStepRef": "UC1:main:3",
+                    "actor": "Member",
+                    "requiredStepRefs": ["UC1:main:3", "UC1:main:4"],
+                },
+            ]
             proposal = multiple_root_combined_proposal()
+            # 두 번째 사용자 입력 뒤의 Control이 첫 번째 입력값도 다시 쓰는 경우를
+            # 포함한다. 같은 유스케이스의 앞 root 입력은 별도 LLM 수리 없이 연결된다.
+            proposal["fragment"]["Classes"][1]["operations"][1]["parameters"].append({
+                "name": "request", "type": "RequestData",
+            })
             proposal["fragment"]["Classes"][0]["operations"].append({
                 "name": "showResult",
                 "parameters": [{"name": "result", "type": "RequestResult"}],
@@ -61,7 +79,10 @@ def test_generate_uses_one_combined_call_and_keeps_the_public_model(monkeypatch)
     assert collaboration.use_case_ids == ["UC1"]
     roots = [call for call in collaboration.calls if call.parent_call_id is None]
     assert len(roots) == 2
-    assert collaboration.calls[3].argument_bindings[0].source_ref == "UC1::call:2#result"
+    assert [binding.source_ref for binding in collaboration.calls[3].argument_bindings] == [
+        "UC1::call:2#result",
+        "UC1::call:1#request",
+    ]
     boundary = next(item for item in model.Classes if item.class_name == "RequestBoundary")
     assert [operation.name for operation in boundary.operations] == [
         "submit", "requestReceipt",

@@ -51,6 +51,8 @@ Each actorEntry creates exactly one root in the supplied order; no other root is
 allowed. A root has no parent. Every non-root uses the one-based position of an
 earlier call in the same root as parentCallIndex. The position is counted in the
 complete flat calls array and never restarts after a new root. A root is Boundary and
+represents actorEntry.actor when that value is present. Do not use a supporting actor
+or external-system Boundary as that root; call it downstream from Control. The root
 delegates to Control, which may delegate state work to Entity. Ordinary results
 return through the existing call chain. Use a Control-to-Boundary call only when
 the scenario explicitly requires the system to initiate a separate interaction
@@ -136,6 +138,7 @@ def _use_case_payload(
         "actorEntries": [
             {
                 "actorStepRef": group.actor_step,
+                "actor": group.entry_actor,
                 "requiredStepRefs": list(group.required_step_ids),
             }
             for group in groups
@@ -310,6 +313,34 @@ def _binding_candidates(
                 projected = projected_field_type(source_type, field_path, fields_by_type)
                 field_ref = f"{source_ref}.{field_path}"
                 add_named(field_path, projected, field_ref)
+                if types_compatible(projected, target_type):
+                    candidates.append(field_ref)
+                elif types_compatible(optional_inner_type(projected), target_type):
+                    candidates.append(field_ref + ".unwrap")
+    # 하나의 유스케이스가 여러 사용자 입력으로 나뉘면 뒤 입력에서 앞 입력의 값을
+    # 다시 사용할 수 있다. 예를 들어 첫 요청에서 받은 주문 ID를 다음 선택 요청 뒤의
+    # Control 호출에 전달하는 경우다. 이전 root의 입력 중 이름과 타입이 모두 맞는
+    # 값만 후보에 넣어, 같은 uuid 타입이라는 이유만으로 무관한 ID를 연결하지 않는다.
+    for earlier in calls[:call_index]:
+        if text(earlier.get("parentCallId")):
+            continue
+        operation = operations[text(earlier.get("receiverOperationId"))]
+        for source in operation.get("parameters") or []:
+            if not isinstance(source, dict):
+                continue
+            source_name = text(source.get("name"))
+            source_type = text(source.get("type"))
+            source_ref = f"{earlier['callId']}#{source_name}"
+            if (
+                source_name.casefold() == name.casefold()
+                and types_compatible(source_type, target_type)
+            ):
+                candidates.append(source_ref)
+            for field_path in fields_by_type.get(source_type, {}):
+                projected = projected_field_type(source_type, field_path, fields_by_type)
+                if not _field_matches_parameter(name, source_type, field_path):
+                    continue
+                field_ref = f"{source_ref}.{field_path}"
                 if types_compatible(projected, target_type):
                     candidates.append(field_ref)
                 elif types_compatible(optional_inner_type(projected), target_type):

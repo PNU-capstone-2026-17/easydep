@@ -49,6 +49,9 @@ Boundary root in the same order; no other root is allowed. Each non-root uses
 the one-based position of an earlier call in the latest root as parentCallIndex.
 The position is counted in the complete flat calls array and never restarts
 after a new root.
+When actorEntry.actor is present, its root Boundary must represent that actor's
+interface. Do not use a supporting actor or external-system Boundary as that
+root; those Boundaries are downstream calls from Control.
 Always include parentCallIndex: use null for each root and an integer for every
 non-root.
 Ordinary results return through the existing call chain. Use a Control-to-
@@ -111,6 +114,7 @@ def _payload(
     payload["actorEntries"] = [
         {
             "actorStepRef": group.actor_step,
+            "actor": group.entry_actor,
             "requiredStepRefs": list(group.required_step_ids),
         }
         for group in _groups(index, use_case)

@@ -64,6 +64,12 @@ Cover every allowedStepRef. Return only the fields required by the response
 schema; do not return bindings, relationships, operation IDs, or classes outside
 the fixed inventory.
 
+Add new operations to fixedClasses when the current use case needs them.
+reservedOperations are signatures already accepted for other use cases, not an
+exhaustive list of allowed operations. Reuse an exact reserved signature when it
+has the required behavior; otherwise add a distinct operation for this use case.
+Never edit an existing reserved signature.
+
 Follow the standard BCE roles: Boundary receives actor-facing input, Control
 coordinates the use-case flow, and Entity owns persistent state behavior. Close
 an ordinary request-response flow through return values: the root Boundary
@@ -195,7 +201,7 @@ def _operation_payload(
         if use_case.id not in set(item.get("useCaseIds") or []):
             continue
         role = text(item.get("stereotype"))
-        compact = {
+        compact: dict[str, Any] = {
             "className": class_name(item),
             "stereotype": role,
             "description": text(item.get("description")),
