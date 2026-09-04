@@ -231,17 +231,10 @@ def _design_context(state: ArchitectureState, stage: str) -> str:
     다시 보내게 된다.
     """
     sections = ["[Use Case Specification]\n" + usecase_spec_text(state)]
-    if stage in {"sequence_diagram", "api_spec", "deployment_diagram"}:
+    if stage in {"sequence_diagram", "api_spec"}:
         sections.append("[Class Diagram]\n" + state.get("class_diagram_puml", ""))
-    if stage in {"api_spec", "deployment_diagram"}:
+    if stage == "api_spec":
         sections.append("[Sequence Diagrams]\n" + state.get("sequence_diagram_puml", ""))
-    if stage == "deployment_diagram":
-        sections.extend(
-            [
-                "[API Spec]\n" + str(state.get("api_spec", {})),
-                "[ERD]\n" + state.get("erd_puml", ""),
-            ]
-        )
     return "\n\n".join(sections)
 
 
@@ -649,7 +642,6 @@ def _revise_deployment_state(
     revised = revise_deployment_model(
         _stored_workload_graph(current),
         feedback,
-        _design_context(state, "deployment_diagram"),
         targets,
     )
     return _stored_workload_graph(revised).model_dump()

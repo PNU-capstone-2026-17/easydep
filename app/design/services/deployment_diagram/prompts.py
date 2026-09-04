@@ -37,3 +37,21 @@ def generation_messages(payload: dict[str, Any]) -> list[dict[str, str]]:
         {"role": "system", "content": DEPLOYMENT_LABEL_SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
     ]
+
+
+def label_revision_messages(
+    components: list[dict[str, str]],
+    feedback: str,
+    targets: set[str] | None,
+) -> list[dict[str, str]]:
+    """이름 수정에 실제로 쓰는 컴포넌트·피드백·대상 ID만 전달한다."""
+
+    payload = {
+        "components": components,
+        "feedback": feedback,
+        "targetIds": sorted(targets or ()),
+    }
+    return [
+        {"role": "system", "content": DEPLOYMENT_LABEL_REVISION_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
+    ]

@@ -335,46 +335,44 @@ def test_body_uses_the_existing_control_parameter_type() -> None:
     ] == [{"name": "filter", "source": "$body"}]
 
 
-def test_generation_service_accepts_typed_inputs_and_returns_normalized_model(
-    monkeypatch,
-) -> None:
+def test_generation_service_accepts_typed_inputs_and_returns_normalized_model() -> None:
     calls: list[type[ApiSpecProposal]] = []
 
     def propose(_messages, schema):
         calls.append(schema)
         return _proposal().model_dump()
 
-    monkeypatch.setattr(service, "parse_structured", propose)
+    result = service.generate_api_spec_model(
+        "UC1: A student browses the catalog.",
+        _bce_model(),
+        proposal_call=propose,
+    )
 
-    result = service.generate_api_spec_model("UC1: A student browses the catalog.", _bce_model())
-
-    assert calls == [ApiSpecProposal]
+    assert len(calls) == 1
+    assert issubclass(calls[0], ApiSpecProposal)
     assert isinstance(result, ApiSpecModel)
     assert result.Endpoints[0].query_params[0].type == "CourseFilter"
     assert result.Endpoints[0].responses[0].is_array is True
 
 
-def test_empty_feedback_preserves_model_without_an_llm_call(monkeypatch) -> None:
+def test_empty_feedback_preserves_model_without_an_llm_call() -> None:
     current = normalize_api_spec_model(_proposal(), _bce_model())
 
     def unexpected_call(*_args, **_kwargs):
         raise AssertionError("empty feedback must not call structured LLM")
-
-    monkeypatch.setattr(service, "parse_structured", unexpected_call)
 
     revised = service.revise_api_spec_model(
         current,
         "",
         "UC1: A student browses the catalog.",
         _bce_model(),
+        proposal_call=unexpected_call,
     )
 
     assert revised is current
 
 
-def test_revision_service_uses_one_structured_call_and_returns_typed_model(
-    monkeypatch,
-) -> None:
+def test_revision_service_uses_one_structured_call_and_returns_typed_model() -> None:
     current = normalize_api_spec_model(_proposal(), _bce_model())
     calls: list[type[ApiSpecProposal]] = []
 
@@ -384,17 +382,17 @@ def test_revision_service_uses_one_structured_call_and_returns_typed_model(
         payload["Endpoints"][0]["summary"] = "Browse the current catalog"
         return payload
 
-    monkeypatch.setattr(service, "parse_structured", revise)
-
     revised = service.revise_api_spec_model(
         current,
         "Clarify the endpoint summary.",
         "UC1: A student browses the catalog.",
         _bce_model(),
         {"browseCatalog"},
+        proposal_call=revise,
     )
 
-    assert calls == [ApiSpecProposal]
+    assert len(calls) == 1
+    assert issubclass(calls[0], ApiSpecProposal)
     assert isinstance(revised, ApiSpecModel)
     assert revised.Endpoints[0].summary == "Browse the current catalog"
     assert revised.Endpoints[0].query_params[0].type == "CourseFilter"

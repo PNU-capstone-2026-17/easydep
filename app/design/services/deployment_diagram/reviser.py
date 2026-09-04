@@ -13,7 +13,6 @@ from app.design.services.deployment_diagram.service import revise_workload_graph
 def revise_deployment_model(
     current_model: dict[str, Any],
     feedback: str,
-    context_text: str = "",
     targets: set[str] | None = None,
 ) -> dict[str, Any]:
     """기존 dict 입력을 이름만 수정하는 typed service에 연결한다."""
@@ -23,7 +22,6 @@ def revise_deployment_model(
     revised = revise_workload_graph(
         WorkloadGraph.model_validate(current_model),
         feedback,
-        context_text,
         targets,
     )
     return revised.model_dump()

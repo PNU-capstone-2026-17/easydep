@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 
+from app.design.contracts.api_spec import (
+    ApiEndpointProposal,
+    ApiSpecModel,
+    ApiSpecProposal,
+)
 from app.design.schemas.class_model import BCEModel
-from app.design.contracts.api_spec import ApiSpecModel, ApiSpecProposal
 from app.design.services.api_spec.normalization import (
     api_spec_proposal_from_model,
+    interaction_contracts,
     normalize_api_spec_model,
 )
 from app.design.services.api_spec.prompts import (
@@ -20,6 +25,34 @@ from app.design.services.api_spec.prompts import (
 from app.design.services.common.structured import parse_structured, revision_messages
 
 ProposalCall = Callable[[list[dict[str, str]], type[BaseModel]], dict[str, Any]]
+
+
+def _finite_proposal_schema(bce_model: BCEModel) -> type[ApiSpecProposal]:
+    """이번 입력에 실제로 존재하는 상호작용만 고를 수 있는 응답 스키마를 만든다.
+
+    HTTP 메서드와 경로는 여전히 LLM이 판단한다. 코드는 후보 ID와 필요한 endpoint 개수만
+    알려 주어, 한 항목을 길게 쓰느라 나머지를 빠뜨리거나 같은 후보를 반복하지 못하게 한다.
+    """
+
+    interaction_ids = tuple(item.interaction_id for item in interaction_contracts(bce_model))
+    if not interaction_ids:
+        return ApiSpecProposal
+    finite_endpoint = create_model(
+        "FiniteApiEndpointProposal",
+        __base__=ApiEndpointProposal,
+        interaction_id=(
+            Literal.__getitem__(interaction_ids),
+            Field(description="One supplied interaction candidate copied exactly."),
+        ),
+    )
+    return create_model(
+        "FiniteApiSpecProposal",
+        __base__=ApiSpecProposal,
+        Endpoints=(
+            list[finite_endpoint],  # type: ignore[valid-type]
+            Field(min_length=len(interaction_ids), max_length=len(interaction_ids)),
+        ),
+    )
 
 
 def generate_api_spec_model(
@@ -45,10 +78,11 @@ def generate_api_spec_model(
 
     if not scenario_text:
         return ApiSpecModel()
+    proposal_schema = _finite_proposal_schema(bce_model)
     propose = proposal_call or parse_structured
     proposal = ApiSpecProposal.model_validate(
-        propose(
-            proposal_messages(scenario_text, bce_model), ApiSpecProposal
+        proposal_schema.model_validate(
+            propose(proposal_messages(scenario_text, bce_model), proposal_schema)
         )
     )
     return normalize_api_spec_model(proposal, bce_model)
@@ -83,20 +117,23 @@ def revise_api_spec_model(
 
     if not feedback:
         return current_model
-    propose = proposal_call or parse_structured
     current_proposal = api_spec_proposal_from_model(current_model, bce_model)
+    proposal_schema = _finite_proposal_schema(bce_model)
+    propose = proposal_call or parse_structured
     revised = ApiSpecProposal.model_validate(
-        propose(
-            revision_messages(
-                API_SPEC_REVISION_SYSTEM_PROMPT,
-                "Use Cases and Accepted Interaction Candidates",
-                revision_context(scenario_text, bce_model),
-                "Current HTTP Proposal",
-                current_proposal.model_dump(),
-                feedback,
-                targets,
-            ),
-            ApiSpecProposal,
+        proposal_schema.model_validate(
+            propose(
+                revision_messages(
+                    API_SPEC_REVISION_SYSTEM_PROMPT,
+                    "Use Cases and Accepted Interaction Candidates",
+                    revision_context(scenario_text, bce_model),
+                    "Current HTTP Proposal",
+                    current_proposal.model_dump(),
+                    feedback,
+                    targets,
+                ),
+                proposal_schema,
+            )
         )
     )
     return normalize_api_spec_model(revised, bce_model)

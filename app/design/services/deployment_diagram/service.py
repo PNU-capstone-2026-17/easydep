@@ -7,14 +7,14 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from app.design.services.common.structured import parse_structured, revision_messages
+from app.design.services.common.structured import parse_structured
 from app.design.services.deployment_diagram.models import (
     DeploymentComponentLabels,
     WorkloadGraph,
 )
 from app.design.services.deployment_diagram.prompts import (
-    DEPLOYMENT_LABEL_REVISION_SYSTEM_PROMPT,
     generation_messages,
+    label_revision_messages,
 )
 from app.design.services.deployment_diagram.template_topology import (
     build_template_workload_graph,
@@ -142,7 +142,6 @@ def generate_workload_graph(
 def revise_workload_graph(
     current_model: WorkloadGraph,
     feedback: str,
-    context_text: str = "",
     targets: set[str] | None = None,
     *,
     proposal_call: DeploymentLabelProposalCall | None = None,
@@ -157,15 +156,7 @@ def revise_workload_graph(
     propose = proposal_call or parse_structured
     labels = DeploymentComponentLabels.model_validate(
         propose(
-            revision_messages(
-                DEPLOYMENT_LABEL_REVISION_SYSTEM_PROMPT,
-                "Design Context",
-                context_text,
-                "Current Components",
-                {"components": components},
-                feedback,
-                targets,
-            ),
+            label_revision_messages(components, feedback, targets),
             DeploymentComponentLabels,
         )
     )

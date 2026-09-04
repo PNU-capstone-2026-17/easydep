@@ -7,9 +7,10 @@ LLM은 작은 proposal만 답하고, 코드는 실행 연결이 추가된 저장
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ApiSpecRecord(BaseModel):
@@ -33,8 +34,12 @@ class ApiResponse(ApiSpecRecord):
 class ApiResponseProposal(ApiSpecRecord):
     """LLM이 정하는 HTTP 상태다. 응답 데이터 타입은 코드가 채운다."""
 
-    status: int = Field(default=200)
-    description: str = Field(default="")
+    status: int = Field(ge=100, le=599, description="HTTP status selected for this outcome.")
+    description: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Short domain outcome represented by this status.",
+    )
 
 
 class ApiControlArgument(ApiSpecRecord):
@@ -67,17 +72,67 @@ class ApiEndpointProposal(ApiSpecRecord):
     ``interaction_id``로 기존 계약을 고르고 HTTP에서만 의미가 있는 값만 답한다.
     """
 
-    interaction_id: str = Field(min_length=1)
-    path: str = Field(default="/")
-    method: Literal["get", "post", "put", "patch", "delete"] = "get"
-    summary: str = Field(default="")
-    responses: list[ApiResponseProposal] = Field(default_factory=list)
+    interaction_id: str = Field(
+        min_length=1,
+        max_length=600,
+        description="One supplied interaction candidate copied exactly.",
+    )
+    path: str = Field(
+        max_length=200,
+        description=(
+            "Concrete resource-oriented absolute path, for example /registrations or "
+            "/offerings/{offeringId}; never a one-letter placeholder."
+        ),
+    )
+    method: Literal["get", "post", "put", "patch", "delete"] = Field(
+        description="HTTP method selected from the interaction's business meaning."
+    )
+    summary: str = Field(
+        min_length=1,
+        max_length=200,
+        description="One short sentence describing this endpoint.",
+    )
+    responses: list[ApiResponseProposal] = Field(
+        min_length=1,
+        max_length=8,
+        description="Success and use-case failure outcomes represented as HTTP statuses.",
+    )
 
 
 class ApiSpecProposal(ApiSpecRecord):
     """각 상호작용의 HTTP 표현만 담는 일시적인 LLM 응답이다."""
 
     Endpoints: list[ApiEndpointProposal] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def interaction_ids_are_unique(self) -> ApiSpecProposal:
+        """상호작용 누락과 OpenAPI에서 서로 덮어쓰는 중복 경로를 거부한다."""
+
+        ids = [endpoint.interaction_id for endpoint in self.Endpoints]
+        if len(ids) != len(set(ids)):
+            raise ValueError("API proposal interaction_id values must be unique")
+        invalid_paths = [
+            endpoint.path
+            for endpoint in self.Endpoints
+            if len(endpoint.path) < 2 or not endpoint.path.startswith("/")
+        ]
+        if invalid_paths:
+            raise ValueError(
+                "API proposal paths must be concrete absolute paths; invalid: "
+                + ", ".join(repr(path) for path in invalid_paths)
+            )
+        routes = [(endpoint.method, endpoint.path) for endpoint in self.Endpoints]
+        if len(routes) != len(set(routes)):
+            duplicates = [
+                f"{method.upper()} {path}"
+                for (method, path), count in Counter(routes).items()
+                if count > 1
+            ]
+            raise ValueError(
+                "API proposal method and path pairs must be unique; duplicates: "
+                + ", ".join(duplicates)
+            )
+        return self
 
 
 class ApiEndpoint(ApiSpecRecord):

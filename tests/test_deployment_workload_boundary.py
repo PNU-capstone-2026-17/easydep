@@ -392,6 +392,12 @@ def test_revision_can_change_only_existing_component_names() -> None:
         messages: list[dict[str, str]], schema: type[BaseModel]
     ) -> dict[str, Any]:
         assert messages
+        prompt_input = json.loads(messages[-1]["content"])
+        assert prompt_input == {
+            "components": [{"id": "web", "name": "Web"}],
+            "feedback": "web workload 이름을 명확히 한다.",
+            "targetIds": ["web"],
+        }
         calls.append(schema)
         assert schema is DeploymentComponentLabels
         return {
@@ -404,7 +410,6 @@ def test_revision_can_change_only_existing_component_names() -> None:
     revised = revise_workload_graph(
         current,
         "web workload 이름을 명확히 한다.",
-        "현재 설계 산출물",
         {"web"},
         proposal_call=propose,
     )
@@ -495,7 +500,6 @@ def test_public_graph_spec_validates_and_dumps_typed_workload_graph(
     def revise(
         current: WorkloadGraph,
         feedback: str,
-        _context_text: str,
         targets: set[str],
     ) -> WorkloadGraph:
         captured_revision.append((current, feedback, targets))

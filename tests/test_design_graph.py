@@ -286,7 +286,6 @@ def test_revision_context_does_not_duplicate_current_or_irrelevant_artifacts():
 
     sequence = sg._design_context(state, "sequence_diagram")
     api = sg._design_context(state, "api_spec")
-    deployment = sg._design_context(state, "deployment_diagram")
 
     assert "CLASS_CONTEXT" in sequence
     assert "SEQUENCE_CONTEXT" not in sequence
@@ -295,9 +294,6 @@ def test_revision_context_does_not_duplicate_current_or_irrelevant_artifacts():
     assert "SEQUENCE_CONTEXT" in api
     assert "API_CONTEXT" not in api
     assert "ERD_CONTEXT" not in api
-    assert all(marker in deployment for marker in (
-        "CLASS_CONTEXT", "SEQUENCE_CONTEXT", "API_CONTEXT", "ERD_CONTEXT"
-    ))
 
 
 def _stage_at_gate(result: dict) -> str | None:
