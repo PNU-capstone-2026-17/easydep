@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "location": {
+    "app_id": "9055d8f8-fb4a-4ed7-9f6c-61d6c9f52726",
+    "stage": "requirements",
+    "command_id": "8075f70e-de6b-4ac4-892e-1fdfe40c8e2e",
+    "status": "AWAITING_INPUT",
+    "event_cursor": 1788497330694550,
+    "reason": "사용자 선택이 필요합니다."
+  }
+}
