@@ -13,6 +13,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.design.contracts import bind_runtime_contract, build_provider_resource_plan
+from app.llm_connection import build_llm_connection
 from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import execute_openhands_task
@@ -1025,7 +1026,7 @@ def write_transmission_request(
         "requestId": request_id,
         "status": "AWAITING_APPROVAL",
         "createdAt": _now(),
-        "provider": "NVIDIA NIM",
+        "provider": build_llm_connection().display_name(),
         "notice": (
             "The listed design context, generated contracts, source artifacts, "
             "verification diagnostics, and repair sources may leave the local machine."

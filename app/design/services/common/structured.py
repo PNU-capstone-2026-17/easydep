@@ -171,14 +171,15 @@ def run_with_wall_timeout(
     """Trace one design-model call while retaining the existing timeout contract."""
 
     recorded_observation = observation if observation is not None else {}
+    connection = build_llm_connection()
     with langsmith_metrics.trace_scope(
         f"easydep.design.llm.{operation}",
         run_type="llm",
         metadata={
             "agent": "design",
             "operation": operation,
-            "ls_provider": "nvidia-nim",
-            "ls_model_name": settings.model,
+            "ls_provider": connection.provider,
+            "ls_model_name": connection.model,
         },
     ) as trace:
         try:

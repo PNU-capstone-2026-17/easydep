@@ -197,6 +197,11 @@ frontend production build와 container 검사를 반복하지 않는다. 마지�
 각 OpenHands 실행의 event journal에는 LLM 메시지와 도구 호출·검사 결과를 남긴다. 현재 source
 본문은 실제 작업 공간에 있으므로 수리 prompt마다 전체 파일을 다시 복사하지 않는다.
 
+OpenHands도 요구사항·설계·Testing과 같은 `app.llm_connection` 설정을 사용한다. 이 모듈이 만든
+환경변수 묶음 전체를 Docker runner에 전달하며, runner 안에 provider별 변수 목록을 다시 만들지
+않는다. 따라서 Cloudflare 계정 설정만 누락되어 OpenHands가 NVIDIA 형식으로 요청하는 문제를
+막는다.
+
 ```powershell
 python -X utf8 -m pytest -q tests/test_implementation_worker.py
 python -X utf8 -m pytest -q tests/test_implementation_engine.py

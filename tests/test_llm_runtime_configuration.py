@@ -10,7 +10,7 @@ from app.config import Settings, settings
 from app.design.services.deployment_diagram import extractor as deployment_extractor
 from app.implementation.generation.orchestrator import load_job
 from app.implementation.planning.design_context import llm_config
-from app.llm_connection import build_llm_connection
+from app.llm_connection import build_llm_connection, llm_subprocess_environment
 
 
 def test_llm_connection_settings_have_no_code_fallback(monkeypatch) -> None:
@@ -69,6 +69,24 @@ def test_cloudflare_connection_is_assembled_from_small_env_values() -> None:
     )
     assert connection.model == "@cf/openai/gpt-oss-120b"
     assert connection.default_headers() == {"cf-aig-gateway-id": "easydep"}
+    assert connection.litellm_model() == "openai/@cf/openai/gpt-oss-120b"
+    assert connection.display_name() == "Cloudflare AI Gateway"
+
+    # 구현 runner는 중앙 함수가 만든 환경변수 묶음을 빠짐없이 받는다. 하위 프로세스도
+    # 같은 provider, endpoint와 header를 복원해야 OpenHands의 후속 tool turn이 NVIDIA
+    # 형식으로 잘못 전송되지 않는다.
+    environment = llm_subprocess_environment(config)
+    child = build_llm_connection(Settings(
+        _env_file=None,
+        api_key=environment["API_KEY"],
+        base_url=environment["BASE_URL"],
+        model=environment["MODEL"],
+        cloudflare_account_id=environment["CLOUDFLARE_ACCOUNT_ID"],
+        cloudflare_api_token=environment["CLOUDFLARE_API_TOKEN"],
+        cloudflare_ai_gateway_id=environment["CLOUDFLARE_AI_GATEWAY_ID"],
+    ))
+    assert child == connection
+    assert child.litellm_model() == "openai/@cf/openai/gpt-oss-120b"
 
 
 def test_deployment_prompt_prefers_structured_models_over_rendered_duplicates(

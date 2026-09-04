@@ -174,11 +174,17 @@ def _nim_cache_key(dataset_path: str, model: str) -> str:
 
 @lru_cache(maxsize=1)
 def _nim_client():
-    """NIM(OpenAI 호환) 클라이언트를 1회 생성. base_url/api_key 는 settings 재사용."""
+    """공통 LLM 연결로 OpenAI 호환 임베딩 클라이언트를 한 번 만든다."""
     from openai import OpenAI
 
-    from app.config import settings
-    return OpenAI(api_key=settings.api_key, base_url=settings.base_url)
+    from app.llm_connection import build_llm_connection
+
+    connection = build_llm_connection()
+    return OpenAI(
+        api_key=connection.api_key,
+        base_url=connection.base_url,
+        default_headers=connection.default_headers(),
+    )
 
 
 def _nim_encode(texts: list[str], model: str, input_type: str,

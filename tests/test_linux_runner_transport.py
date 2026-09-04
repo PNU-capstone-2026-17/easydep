@@ -29,20 +29,24 @@ def test_runner_transport_round_trips_workspace_path(tmp_path: Path):
 
 
 def test_runner_command_transmits_only_named_environment(tmp_path: Path):
+    llm_environment = {
+        "API_KEY": "secret",
+        "BASE_URL": "https://llm.test.invalid/v1",
+        "MODEL": "test/provider-model",
+        "CLOUDFLARE_ACCOUNT_ID": "account",
+        "CLOUDFLARE_API_TOKEN": "cloudflare-secret",
+        "CLOUDFLARE_AI_GATEWAY_ID": "easydep",
+    }
     command = runner_command(
         image="runner:test",
         repository_root=tmp_path,
         operation="worker",
         arguments=["/easydep-workspace/job.json"],
-        environment={
-            "API_KEY": "secret",
-            "BASE_URL": "https://llm.test.invalid/v1",
-            "MODEL": "test/provider-model",
-            "UNRELATED_SECRET": "do-not-pass",
-        },
+        environment={**llm_environment, "UNRELATED_SECRET": "do-not-pass"},
+        llm_environment=llm_environment,
     )
 
-    assert all(name in command for name in ("API_KEY", "BASE_URL", "MODEL"))
+    assert all(name in command for name in llm_environment)
     assert "UNRELATED_SECRET" not in command
     assert "secret" not in command
     assert "https://llm.test.invalid/v1" not in command
@@ -69,6 +73,7 @@ def test_runner_command_transmits_verification_timeout(tmp_path: Path):
             "IMPLEMENTATION_MAX_TASK_ATTEMPTS": "5",
             "EASYDEP_MEMBER_CHECKPOINT_RUN": "run_abc123",
         },
+        llm_environment={},
     )
 
     assert "IMPLEMENTATION_VERIFICATION_TIMEOUT_SECONDS" in command
@@ -89,6 +94,7 @@ def test_runner_command_labels_the_experiment_session(tmp_path: Path):
         operation="worker",
         arguments=["/easydep-workspace/job.json"],
         environment={"EASYDEP_EXPERIMENT_SESSION": "session-123"},
+        llm_environment={},
     )
 
     assert "easydep.owner=member-runner" in command

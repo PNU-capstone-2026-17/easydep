@@ -13,10 +13,7 @@ RUNNER_IMAGE_ENV = "EASYDEP_TOOLCHAIN_IMAGE"
 RUNNER_GRADLE_CACHE_VOLUME = "easydep-member-gradle-cache"
 RUNNER_TOFU_CACHE_VOLUME = "easydep-tofu-provider-cache"
 RUNNER_TOFU_CACHE_PATH = "/app/.cache/opentofu"
-TRANSMITTED_ENVIRONMENT = (
-    "API_KEY",
-    "BASE_URL",
-    "MODEL",
+RUNTIME_ENVIRONMENT = (
     "OPENHANDS_MAX_OUTPUT_TOKENS",
     "OPENHANDS_PROVIDER_RETRY_BASE_SECONDS",
     "OPENHANDS_PROVIDER_RETRY_MAX_SECONDS",
@@ -57,6 +54,7 @@ def runner_command(
     operation: str,
     arguments: Iterable[str],
     environment: dict[str, str],
+    llm_environment: dict[str, str],
 ) -> list[str]:
     root = repository_root.resolve()
     command = [
@@ -96,7 +94,11 @@ def runner_command(
             "--label",
             f"easydep.experiment-session={experiment_session}",
         ]
-    for name in TRANSMITTED_ENVIRONMENT:
+    # 일반 실행 설정은 이 모듈이 관리하지만 LLM 설정 이름은 app.llm_connection이 만든
+    # 묶음을 그대로 사용한다. provider별 환경변수를 여기에 다시 나열하면 둘이 쉽게
+    # 어긋나므로 별도 목록을 두지 않는다.
+    transmitted_names = [*RUNTIME_ENVIRONMENT, *llm_environment]
+    for name in dict.fromkeys(transmitted_names):
         if environment.get(name):
             command.extend(["-e", name])
     # 이미지 태그가 이전 코드로 만들어졌더라도 ENTRYPOINT에 저장된 Python 모듈명은

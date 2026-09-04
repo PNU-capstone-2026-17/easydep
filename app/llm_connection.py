@@ -27,6 +27,29 @@ class LlmConnection:
 
         return dict(self.headers)
 
+    def litellm_model(self) -> str:
+        """OpenHands의 LiteLLM이 사용할 adapter 접두사를 붙인다.
+
+        Cloudflare REST API는 OpenAI 호환 형식이므로 ``openai/`` adapter를 사용한다.
+        직접 연결하는 기존 NVIDIA endpoint는 기존 ``nvidia_nim/`` adapter를 유지한다.
+        """
+
+        if self.provider == "cloudflare-ai-gateway":
+            return self.model if self.model.startswith("openai/") else f"openai/{self.model}"
+        return (
+            self.model
+            if self.model.startswith("nvidia_nim/")
+            else f"nvidia_nim/{self.model}"
+        )
+
+    def display_name(self) -> str:
+        """사용자에게 보여 줄 제공자 이름을 실제 연결과 맞춘다."""
+
+        if self.provider == "cloudflare-ai-gateway":
+            return "Cloudflare AI Gateway"
+        if "nvidia" in self.base_url.casefold():
+            return "NVIDIA NIM"
+        return "OpenAI-compatible LLM provider"
 
 def build_llm_connection(config: Settings = settings) -> LlmConnection:
     """Cloudflare 설정이 있으면 이를 우선하고, 없으면 기존 연결을 그대로 쓴다.
@@ -71,7 +94,11 @@ def build_llm_connection(config: Settings = settings) -> LlmConnection:
 
 
 def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
-    """하위 Python/Docker 프로세스가 부모와 같은 LLM 연결을 쓰게 한다."""
+    """하위 Python/Docker 프로세스가 같은 중앙 설정을 다시 읽게 한다.
+
+    반환된 dict의 key가 곧 전체 전달 목록이다. runner가 별도의 LLM 변수 목록을 갖지
+    않으므로 여기에 provider 설정을 추가해도 구현 단계만 빠뜨리는 일이 생기지 않는다.
+    """
 
     connection = build_llm_connection(config)
     environment = {
@@ -80,12 +107,12 @@ def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
         "MODEL": connection.model,
     }
     if connection.provider == "cloudflare-ai-gateway":
-        environment.update(
-            {
-                "CLOUDFLARE_ACCOUNT_ID": (config.cloudflare_account_id or "").strip(),
-                "CLOUDFLARE_API_TOKEN": (config.cloudflare_api_token or "").strip(),
-            }
-        )
+        environment.update({
+            "CLOUDFLARE_ACCOUNT_ID": (config.cloudflare_account_id or "").strip(),
+            "CLOUDFLARE_API_TOKEN": (config.cloudflare_api_token or "").strip(),
+        })
         if config.cloudflare_ai_gateway_id:
-            environment["CLOUDFLARE_AI_GATEWAY_ID"] = config.cloudflare_ai_gateway_id.strip()
+            environment["CLOUDFLARE_AI_GATEWAY_ID"] = (
+                config.cloudflare_ai_gateway_id.strip()
+            )
     return environment

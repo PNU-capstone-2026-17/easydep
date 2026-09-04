@@ -31,6 +31,7 @@ from .provider import (
     configured_headers,
     configured_max_output_tokens,
     configured_model,
+    configured_provider_name,
     openhands_compatibility,
     provider_retry_delay,
     transient_provider_error,
@@ -502,6 +503,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             while True:
                 conversation_error: Exception | None = None
                 usage_before = _conversation_token_usage(conversation) or (0, 0)
+                connection = build_llm_connection()
                 with langsmith_metrics.trace_scope(
                     "easydep.implementation.openhands_conversation",
                     run_type="llm",
@@ -512,8 +514,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         "task_id": task_id,
                         "app_id": app_id,
                         "repair_attempt": repair_attempt,
-                        "ls_provider": "nvidia-nim",
-                        "ls_model_name": configured_model(),
+                        "ls_provider": connection.provider,
+                        "ls_model_name": connection.model,
                     },
                 ) as trace:
                     try:
@@ -564,7 +566,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 provider_retries += 1
                 if provider_retries > MAX_PROVIDER_RETRIES:
                     raise RuntimeError(
-                        "NVIDIA NIM remained unavailable after "
+                        f"{configured_provider_name()} remained unavailable after "
                         f"{MAX_PROVIDER_RETRIES} transport retries"
                     ) from conversation_error
                 time.sleep(provider_retry_delay(provider_retries))

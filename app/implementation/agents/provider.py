@@ -14,15 +14,15 @@ def configured_api_key() -> str:
 
 
 def configured_model() -> str:
-    """루트 `.env`의 MODEL을 OpenHands/LiteLLM용 NIM 이름으로 바꾼다."""
+    """공통 연결이 정한 OpenHands/LiteLLM 모델 이름을 반환한다."""
 
-    connection = build_llm_connection()
-    model = connection.model
-    if connection.provider == "cloudflare-ai-gateway":
-        # OpenHands의 LiteLLM에는 adapter 이름이 앞에 필요하다. 실제 Cloudflare
-        # 요청에는 뒤의 @cf/... 모델 ID가 전달된다.
-        return model if model.startswith("openai/") else f"openai/{model}"
-    return model if model.startswith("nvidia_nim/") else f"nvidia_nim/{model}"
+    return build_llm_connection().litellm_model()
+
+
+def configured_provider_name() -> str:
+    """오류와 승인 화면에 실제 LLM 제공자 이름을 표시한다."""
+
+    return build_llm_connection().display_name()
 
 
 def configured_base_url() -> str:

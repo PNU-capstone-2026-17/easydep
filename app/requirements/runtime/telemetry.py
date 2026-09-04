@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.config import settings
+from app.llm_connection import build_llm_connection
 from app.metrics import langsmith as langsmith_metrics
 from app.metrics.llm_stall_probe import start_stall_probe
 
@@ -320,14 +321,15 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
     예외는 집계에 남기고 **그대로 다시 올린다** — 삼키는 것은 부르는 쪽의 결정이지
     계측의 결정이 아니다.
     """
+    connection = build_llm_connection()
     with langsmith_metrics.trace_scope(
         f"easydep.requirements.llm.{operation}",
         run_type="llm",
         metadata={
             "agent": "requirements",
             "operation": operation,
-            "ls_provider": "nvidia-nim",
-            "ls_model_name": settings.model,
+            "ls_provider": connection.provider,
+            "ls_model_name": connection.model,
         },
     ) as trace:
         call = LlmCall(operation)

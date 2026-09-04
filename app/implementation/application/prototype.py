@@ -358,14 +358,16 @@ class PrototypeClient:
             ]
             if retry_failed:
                 container_args.append("--retry-failed")
+            llm_environment = llm_subprocess_environment()
             environment = os.environ.copy()
-            environment.update(llm_subprocess_environment())
+            environment.update(llm_environment)
             command = runner_command(
                 image=runner_image,
                 repository_root=self.settings.repository_root,
                 operation="cli",
                 arguments=container_args,
                 environment=environment,
+                llm_environment=llm_environment,
             )
             return self._call_command(command, job_path.parent.name, environment)
         return self._call(args, job_path.parent.name)
