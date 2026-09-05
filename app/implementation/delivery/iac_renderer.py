@@ -45,6 +45,14 @@ def _quoted(value: Any) -> str:
     return json.dumps(str(value), ensure_ascii=False)
 
 
+def _shell_literal(value: Any) -> str:
+    """설정값을 Bash가 변수나 명령으로 다시 해석하지 않도록 감싼다."""
+
+    # POSIX 셸의 단일 인용부호 안에서는 $, 역따옴표, 역슬래시가 모두 문자로
+    # 유지된다. 값 안의 단일 인용부호만 잠깐 인용을 닫아 안전하게 이어 붙인다.
+    return "'" + str(value).replace("'", "'\"'\"'") + "'"
+
+
 def _attrs(node: dict[str, Any]) -> dict[str, Any]:
     return dict(node.get("attributes") or {})
 
@@ -774,7 +782,9 @@ def _runtime_files(
                             ]
                         )
                 elif config.get("value") is not None:
-                    lines.append(f"export {env_name}={_quoted(config.get('value'))}")
+                    lines.append(
+                        f"export {env_name}={_shell_literal(config.get('value'))}"
+                    )
                 environment_names.append(env_name)
             compose_lines.extend(
                 [

@@ -1134,7 +1134,7 @@ def test_ordinary_and_external_endpoint_configuration_are_injected_without_secre
             "id": "app-mode",
             "name": "APP_MODE",
             "kind": "value",
-            "value": "production",
+            "value": "EasyDep live check: spaces, equals=ok, dollar=$literal",
             "sourceRefs": ["requirement:MODE"],
         },
         {
@@ -1153,7 +1153,10 @@ def test_ordinary_and_external_endpoint_configuration_are_injected_without_secre
     files = render_open_tofu(resource_plan)
     bootstrap = files["bootstrap_compute_1.sh.tftpl"]
 
-    assert 'export APP_MODE="production"' in bootstrap
+    assert (
+        "export APP_MODE='EasyDep live check: spaces, equals=ok, dollar=$literal'"
+        in bootstrap
+    )
     assert 'export PAYMENTS_URL="${endpoint_web_payments_url}"' in bootstrap
     assert 'variable "external_endpoint_web_to_payments"' in files["variables.tf"]
     assert "    environment:" in bootstrap
