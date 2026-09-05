@@ -225,6 +225,25 @@ function Invoke-Checked([string]$Program, [string[]]$Arguments) {
   if ($LASTEXITCODE -ne 0) { throw "$Program failed with exit code $LASTEXITCODE." }
 }
 
+function New-AwsDockerConfig([string]$Region, [string]$RegistryHost) {
+  # 대화형 Windows PowerShell에서는 긴 ECR token을 `docker login`의 표준입력으로
+  # 넘기는 과정이 불안정할 수 있다. Docker가 기본으로 이해하는 임시 config.json을
+  # 만들면 shell pipeline에 의존하지 않고 같은 인증 정보를 사용할 수 있다.
+  if ($Region -notmatch '^[a-z0-9-]+$') { throw 'Invalid AWS region.' }
+  if ($RegistryHost -notmatch '^[a-z0-9.-]+$') { throw 'Invalid AWS registry host.' }
+  $password = (& aws ecr get-login-password --region $Region | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $password) { throw 'AWS registry login token failed.' }
+  $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("AWS:$password"))
+  $auths = @{}
+  $auths[$RegistryHost] = @{ auth = $auth }
+  $json = @{ auths = $auths } | ConvertTo-Json -Depth 4 -Compress
+  $configRoot = Join-Path ([IO.Path]::GetTempPath()) ('easydep-docker-' + [Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $configRoot | Out-Null
+  $utf8 = New-Object Text.UTF8Encoding($false)
+  [IO.File]::WriteAllText((Join-Path $configRoot 'config.json'), $json, $utf8)
+  return $configRoot
+}
+
 function Read-Required([string]$Prompt, [string]$Default = '') {
   while ($true) {
     $suffix = if ($Default) { " [$Default]" } else { '' }
@@ -373,27 +392,39 @@ function Initialize-Images {
     $registryUrl = (& tofu output -raw $target.output).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Cannot read registry output $($target.output)." }
     $registryHost = $registryUrl.Split('/')[0]
+    $previousDockerConfig = [Environment]::GetEnvironmentVariable('DOCKER_CONFIG', 'Process')
+    $temporaryDockerConfig = $null
     switch ($Config.provider) {
       'aws' {
-        $password = aws ecr get-login-password --region $Config.region
-        if ($LASTEXITCODE -ne 0) { throw 'AWS registry login token failed.' }
-        $password | docker login --username AWS --password-stdin $registryHost
+        $temporaryDockerConfig = New-AwsDockerConfig $Config.region $registryHost
+        $env:DOCKER_CONFIG = $temporaryDockerConfig
       }
       'azure' { az acr login --name $registryHost.Split('.')[0] }
       'gcp' { gcloud auth configure-docker $registryHost --quiet }
     }
     if ($LASTEXITCODE -ne 0) { throw 'Container registry login failed.' }
 
-    $tag = 'easydep-' + $target.workload + '-' + (Get-Date -Format 'yyyyMMddHHmmss')
-    $imageTag = $registryUrl + ':' + $tag
-    Invoke-Checked 'docker' @('build', '-t', $imageTag, $applicationRoot)
-    $pushOutput = docker push $imageTag 2>&1 | Out-String
-    $pushExitCode = $LASTEXITCODE
-    Write-Host $pushOutput
-    if ($pushExitCode -ne 0) { throw 'Docker image push failed.' }
-    $digest = [regex]::Match($pushOutput, 'digest: (sha256:[0-9a-f]{64})')
-    if (-not $digest.Success) { throw 'The registry did not report an immutable image digest.' }
-    $digestLines += "TF_VAR_image_digest_$($target.workload)=$($digest.Groups[1].Value)"
+    try {
+      $tag = 'easydep-' + $target.workload + '-' + (Get-Date -Format 'yyyyMMddHHmmss')
+      $imageTag = $registryUrl + ':' + $tag
+      Invoke-Checked 'docker' @('build', '-t', $imageTag, $applicationRoot)
+      $pushOutput = docker push $imageTag 2>&1 | Out-String
+      $pushExitCode = $LASTEXITCODE
+      Write-Host $pushOutput
+      if ($pushExitCode -ne 0) { throw 'Docker image push failed.' }
+      $digest = [regex]::Match($pushOutput, 'digest: (sha256:[0-9a-f]{64})')
+      if (-not $digest.Success) { throw 'The registry did not report an immutable image digest.' }
+      $digestLines += "TF_VAR_image_digest_$($target.workload)=$($digest.Groups[1].Value)"
+    } finally {
+      if ($temporaryDockerConfig) {
+        Remove-Item -LiteralPath $temporaryDockerConfig -Recurse -Force -ErrorAction SilentlyContinue
+        if ($previousDockerConfig) {
+          $env:DOCKER_CONFIG = $previousDockerConfig
+        } else {
+          Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue
+        }
+      }
+    }
   }
   $digestLines | Set-Content -Encoding UTF8 $DigestPath
   return $true
@@ -452,6 +483,17 @@ function Remove-Deployment {
   if ($answer -cne 'DESTROY') { Write-Host 'Destroy cancelled.'; return }
   Initialize-Tofu
   Import-RuntimeValues
+  if (-not (Test-Path $DigestPath)) {
+    # registry 생성 뒤 image push 전에 실패한 경우에도 destroy는 입력을 다시 묻지
+    # 않아야 한다. 아직 실제 image가 없으므로 유효한 형식의 임시 digest만 전달한다.
+    $placeholder = 'sha256:' + ('0' * 64)
+    foreach ($target in @($Config.registryTargets)) {
+      $name = 'TF_VAR_image_digest_' + $target.workload
+      if (-not (Test-Path ('Env:' + $name))) {
+        Set-Item -Path ('Env:' + $name) -Value $placeholder
+      }
+    }
+  }
   $retainedLog = Join-Path $Root 'retained-resources.txt'
   foreach ($address in @($Config.retainedResources)) {
     $stateAddresses = @(& tofu state list)

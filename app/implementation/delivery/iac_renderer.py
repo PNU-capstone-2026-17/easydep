@@ -537,7 +537,6 @@ def _runtime_files(
     provider = str(plan.get("provider") or "")
     # 컨테이너 레지스트리에 로그인할 때 필요한 명령만 VM에 함께 설치한다.
     # Ubuntu 24.04에는 awscli APT 후보가 없으므로 AWS 공식 설치 파일을 사용한다.
-    archive_package = " unzip" if provider == "aws" else ""
     files: dict[str, str] = {}
     vars_by_compute: dict[str, dict[str, str]] = {}
     # 같은 Compose 네트워크의 호출은 container DNS로 직접 들어가므로 host port가
@@ -556,10 +555,13 @@ def _runtime_files(
             "set -euo pipefail",
             "",
             "if command -v dnf >/dev/null 2>&1; then",
-            f"  dnf install -y docker nvme-cli docker-compose-plugin{archive_package} || dnf install -y docker nvme-cli docker-compose{archive_package}",
+            # Amazon Linux 2023에는 curl-minimal이 이미 설치되어 있다. curl 패키지를
+            # 다시 요청하면 두 패키지가 충돌하므로 기존 curl 명령을 그대로 사용한다.
+            "  dnf install -y docker nvme-cli jq unzip",
             "else",
             "  apt-get update",
-            f"  apt-get install -y docker.io docker-compose-v2 curl jq{archive_package} || apt-get install -y docker.io docker-compose curl jq{archive_package}",
+            "  apt-get install -y docker.io curl jq unzip",
+            "  apt-get install -y docker-compose-v2 || apt-get install -y docker-compose-plugin || apt-get install -y docker-compose || true",
             "fi",
         ]
         if provider == "aws":
@@ -577,6 +579,14 @@ def _runtime_files(
         lines.extend(
             [
                 "systemctl enable --now docker",
+                "if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then",
+                '  case "$(uname -m)" in x86_64) COMPOSE_ARCH=x86_64; COMPOSE_SHA=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 ;; aarch64|arm64) COMPOSE_ARCH=aarch64; COMPOSE_SHA=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; *) echo "unsupported Docker Compose architecture" >&2; exit 1 ;; esac',
+                "  COMPOSE_PLUGIN=/usr/local/lib/docker/cli-plugins/docker-compose",
+                '  mkdir -p "$(dirname "$COMPOSE_PLUGIN")"',
+                '  curl -fsSL "https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-$${COMPOSE_ARCH}" -o "$COMPOSE_PLUGIN"',
+                '  printf "%s  %s\\n" "$COMPOSE_SHA" "$COMPOSE_PLUGIN" | sha256sum -c -',
+                '  chmod +x "$COMPOSE_PLUGIN"',
+                "fi",
                 'compose() { if docker compose version >/dev/null 2>&1; then docker compose "$@"; else docker-compose "$@"; fi; }',
                 "[ ! -f /opt/easydep/runtime/.env ] || set -a; [ ! -f /opt/easydep/runtime/.env ] || . /opt/easydep/runtime/.env; set +a",
             ]
@@ -836,7 +846,7 @@ def _cloud_init_files(bootstrap_files: dict[str, str]) -> dict[str, str]:
             "  - path: /opt/easydep/runtime/.env\n"
             "    permissions: '0600'\n"
             "    encoding: b64\n"
-            "    content: ${runtime_env_b64}\n"
+            '    content: "${runtime_env_b64}"\n'
             "  - path: /opt/easydep/bootstrap.sh\n"
             "    permissions: '0755'\n"
             "    content: |\n"
