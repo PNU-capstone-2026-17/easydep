@@ -168,7 +168,8 @@ bootstrap 경로를 실제로 확인했다.
 
 수정된 주요 코드는
 [`app/implementation/delivery/iac_renderer.py`](../app/implementation/delivery/iac_renderer.py)와
-[`app/implementation/delivery/container.py`](../app/implementation/delivery/container.py)에 있다.
+[`app/implementation/delivery/container.py`](../app/implementation/delivery/container.py),
+[`app/implementation/delivery/package.py`](../app/implementation/delivery/package.py)에 있다.
 
 ## 5. 일시적인 외부 환경 오류
 
@@ -237,3 +238,97 @@ apply와 HTTP 상태 확인을 순서대로 수행했다. VM의
 같은 접두사의 로컬 Docker image와 시스템 임시 디렉터리도 남지 않았음을 확인했다.
 따라서 여러 배포 스크립트를 하나로 합친 변경이 실제 생성·배포·상태 확인·정리 경로를
 누락하지 않았음을 확인했다.
+
+## 9. 최신 API 산출물의 AWS 실배포 재검증
+
+2026-09-05에는 EasyDep API가 최신 코드로 다시 만든 산출물을 내려받아 AWS에 배포했다.
+내려받은 파일을 사람이 고치지 않았으며, 산출물에 포함된
+`deployment/easydep.ps1` 메뉴만 사용했다. 따라서 이 검증은 저장소의 테스트용 실행기가
+아니라 사용자가 실제로 받는 파일과 같은 경로를 확인한 것이다.
+
+검증 환경과 결과는 다음과 같다.
+
+| 항목 | 확인 내용 |
+|---|---|
+| 클라우드와 리전 | AWS `af-south-1` |
+| 인증 주체 | 루트 계정이 아닌 IAM 사용자 `easydep-deployer` |
+| 실행 접두사 | `easydep-live-0905-e901` |
+| 사용한 산출물 | API에서 내려받은 `DEPLOYMENT_FILE v7`, `IAC_CODE v6` |
+| 실행 방법 | 올인원 메뉴의 `배포/재개` 실행 |
+| 애플리케이션 확인 | 공개 `/healthz` 요청이 HTTP 200 반환 |
+| VM 초기 설정 확인 | AWS 직렬 콘솔에서 `EASYDEP_BOOTSTRAP_OK` 확인 |
+| 생성 자원 | OpenTofu 관리 자원 15개 |
+| 정리 결과 | 관리 자원 14개 삭제 후 보존 EBS 1개 별도 삭제, ECR·로컬 이미지·임시 디렉터리 잔여 없음 |
+
+### 9.1 이번 실행에서 발견하고 고친 문제
+
+하나의 실패가 발생할 때마다 처음부터 다시 생성하지 않았다. 같은 API 산출물과 OpenTofu
+상태를 사용해 실패한 배포 작업부터 재개했다. 수정 뒤에는 API에서 산출물을 다시 생성하고
+내려받아, 사람이 내려받은 파일을 직접 고쳐서 우연히 통과하는 일을 막았다.
+
+| 증상 | 원인 | 수정 내용 | 확인 결과 |
+|---|---|---|---|
+| Windows에서 ECR 로그인 뒤 Docker push를 시작하지 못함 | 긴 ECR 비밀번호를 PowerShell 파이프로 `docker login --password-stdin`에 넘기는 과정이 실행 환경에 따라 불안정했음 | AWS CLI로 받은 비밀번호를 Docker 표준 형식의 임시 `config.json`에 기록하고, build·push 동안만 `DOCKER_CONFIG`로 사용한 뒤 즉시 삭제 | 같은 올인원 도구에서 image build와 ECR push 성공. 임시 인증 디렉터리 잔여 없음 |
+| 환경 변수가 하나도 없는 앱에서 cloud-init이 시작되지 않음 | Base64 환경 파일 값이 빈 문자열이면 YAML의 `content:`가 값 없는 항목으로 생성되어 cloud-init이 파일 내용으로 받아들이지 못함 | 빈 값도 문자열로 해석되도록 `content: "${runtime_env_b64}"` 형태로 생성 | `cloud-init schema` 검사와 실제 VM bootstrap 통과 |
+| Amazon Linux 2023에서 Docker Compose 설치가 실패함 | 해당 배포판 저장소에는 요청한 Compose 패키지가 없었고, 한 번의 DNF 명령에 묶인 다른 필수 패키지 설치까지 함께 취소됨 | Docker와 기본 도구를 먼저 설치하고 Compose는 별도로 확인. 패키지가 없을 때는 공식 바이너리를 받아 SHA-256 checksum을 확인한 뒤 설치 | 실제 VM에서 Compose 실행과 애플리케이션 기동 성공 |
+| Amazon Linux 2023의 DNF 설치가 `curl` 충돌로 중단됨 | 기본 설치된 `curl-minimal`과 전체 `curl` 패키지를 동시에 설치할 수 없음 | DNF 목록에서 `curl`을 제외하고 이미 제공되는 명령을 사용 | cloud-init 완료 및 `/healthz` HTTP 200 확인 |
+| Registry만 생성된 실패 실행을 삭제할 때 image digest를 다시 요구함 | 정상 배포에 필요한 digest 파일이 image push 전에는 아직 없지만, 삭제용 OpenTofu 변수 검사도 같은 값을 요구했음 | 삭제할 때만 형식이 올바른 임시 digest를 전달. 실제 배포와 image 선택에는 사용하지 않음 | image push 전 실패한 실행도 추가 입력 없이 삭제 가능 |
+| 배포 파일만 갱신했는데 Gradle과 최종 JAR가 매번 다시 빌드됨 | 다운로드 ZIP의 루트 `manifest.json`에 배포 산출물 버전이 기록되지만 `.dockerignore`가 이 파일을 제외하지 않았음. 애플리케이션 소스가 그대로여도 `COPY . .`의 입력이 달라짐 | 생성하는 `.dockerignore`에 `/manifest.json` 추가 | 반복 실패 세 건이 만든 비공유 Gradle·JAR cache 약 1.10GB만 삭제하고 최신 성공 cache는 유지 |
+
+### 9.2 이 결과가 보장하는 범위
+
+이번 결과로 다음 경로는 최신 생성 코드에서 실제로 동작한다고 볼 수 있다.
+
+- EasyDep API가 배포 파일과 OpenTofu 파일을 다시 생성한다.
+- 사용자가 API 산출물을 내려받아 올인원 PowerShell 메뉴를 실행한다.
+- AWS Registry를 만들고 로컬 Docker image를 올린다.
+- Amazon Linux 2023 VM이 image를 내려받아 Compose로 실행한다.
+- cloud-init, 공개 상태 확인 URL, 애플리케이션 컨테이너가 차례로 동작한다.
+- 같은 로컬 OpenTofu 상태를 사용해 관리 자원을 삭제한다.
+- 보존 대상으로 상태에서 분리한 EBS의 식별 정보를 사용자에게 남긴다.
+
+반대로 이 한 번의 성공만으로 모든 클라우드, 모든 네트워크 배치, 모든 애플리케이션이
+항상 성공한다고 보장할 수는 없다. 이전 절의 실배포 결과는 각 템플릿이 동작한다는 근거지만,
+공통 bootstrap과 올인원 도구가 바뀌었으므로 아래 후보는 최신 산출물로 다시 확인할 가치가
+있다.
+
+## 10. 앞으로 확인할 후보
+
+전수 실배포를 매 변경마다 반복하면 시간과 비용이 지나치게 커진다. 공통 코드가 바뀌었을
+때는 먼저 정적 검사를 하고, 변경된 경로를 대표하는 소수의 실배포를 선택한다. 아래 순서는
+현재 남은 위험과 확인 비용을 함께 고려한 우선순위다.
+
+| 우선순위 | 확인 후보 | 확인하려는 내용 | 권장 방법 |
+|---|---|---|---|
+| 1 | Azure·GCP 공개 단일 VM | 이번에 바뀐 올인원 도구와 Ubuntu 계열 bootstrap이 두 공급자에서도 그대로 동작하는지 | 공급자별 1회 배포, HTTP 200 확인 후 즉시 삭제 |
+| 2 | AWS 분리 workload | 공개 VM에서 사설 VM으로 연결되는 주소·포트, NAT, Registry pull이 최신 산출물에서도 유지되는지 | 기존 설계 체크포인트를 복사해 `separated-two` 1회 실행 |
+| 3 | AWS 영속 디스크 | 마운트 경로에 쓴 데이터가 컨테이너 재시작 뒤에도 남고, 삭제 시 보존 EBS 안내가 충분한지 | 파일 기록, 컨테이너 또는 VM 재시작, 재조회 후 수동 볼륨 삭제 |
+| 4 | 부분 실패 뒤 재개 | Registry 생성 뒤 push 실패, OpenTofu apply 일부 성공, 상태 확인 시간 초과 뒤 같은 실행을 안전하게 재개할 수 있는지 | 의도적으로 한 지점만 실패시킨 뒤 전체 생성 없이 해당 작업 재실행 |
+| 5 | ARM64 AWS VM | Compose 공식 바이너리의 `aarch64` 선택과 checksum이 실제 ARM VM에서 맞는지 | 저비용 ARM 인스턴스로 단일 VM 1회 실행 |
+| 6 | 비어 있지 않은 환경 변수와 Secret | 일반 환경 변수, 줄바꿈·특수 문자가 있는 값, Secret 참조가 cloud-init과 Compose를 거쳐 정확히 전달되는지 | 실제 비밀값 대신 검증용 임시 값을 사용하고 앱 내부 비교 |
+| 7 | 별도 DB workload | 사설 주소·포트, DB 준비 순서, migration, 재연결과 디스크 보존이 함께 동작하는지 | DB가 분리된 설계 체크포인트를 한 번 만든 뒤 반복 재사용 |
+| 8 | 최소 IAM 권한 | 현재 실험의 넓은 관리자 권한 대신 문서화된 최소 권한으로 생성·조회·삭제가 가능한지 | 별도 검증 사용자 또는 역할에 후보 정책을 적용해 plan과 단일 배포 실행 |
+| 9 | 서로 다른 Windows 환경 | Windows PowerShell 5.1과 PowerShell 7에서 메뉴, 임시 Docker 인증, UTF-8 파일 처리가 같은지 | 같은 다운로드 패키지로 doctor와 image 준비까지만 비교 |
+| 10 | 원격 상태와 동시 실행 | 여러 사용자가 같은 이름이나 같은 상태를 사용했을 때 충돌하지 않는지 | 로컬 상태 지원 범위와 원격 backend 도입 여부를 먼저 결정한 뒤 별도 검증 |
+
+### 10.1 실배포 전에 계속 수행할 빠른 검사
+
+- 생성한 cloud-init 파일을 `cloud-init schema`로 검사한다.
+- OpenTofu `fmt`, `init -backend=false`, `validate`, `plan`을 실행한다.
+- Trivy로 생성된 IaC를 검사한다.
+- Dockerfile과 Compose 파일을 파싱하고 필요한 image·port·volume 값이 있는지 확인한다.
+- 배포 패키지의 애플리케이션 경로와 Docker build context가 일치하는지 확인한다.
+- 실패한 실행을 재개할 때 앱 ID, 실행 ID, OpenTofu 상태와 산출물 버전이 같은지 확인한다.
+
+### 10.2 실배포 완료 조건
+
+앞으로의 실배포 기록도 단순히 `tofu apply`가 끝난 시점을 성공으로 보지 않는다. 다음을
+모두 확인해야 해당 후보를 통과로 기록한다.
+
+1. Registry에 image가 digest와 함께 저장된다.
+2. 모든 대상 VM의 bootstrap이 완료된다.
+3. 공개 진입점 또는 내부 연쇄 상태 확인이 HTTP 200을 반환한다.
+4. 필요한 경우 디스크 기록과 Secret 전달을 애플리케이션 안에서 확인한다.
+5. 관리 자원 삭제 뒤 OpenTofu 상태가 비어 있다.
+6. 상태에서 분리한 보존 자원도 식별하여 사용자가 유지하거나 직접 삭제한다.
+7. 같은 접두사의 Registry, VM, network, 로컬 image와 임시 디렉터리가 남지 않는다.
