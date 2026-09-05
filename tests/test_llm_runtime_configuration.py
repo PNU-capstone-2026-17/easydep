@@ -218,6 +218,56 @@ def test_explicit_provider_wins_over_stale_cloudflare_environment() -> None:
     assert connection.litellm_model() == "openrouter/openai/gpt-4o-mini"
 
 
+def test_cloudflare_normalizes_openhands_assistant_tool_turn() -> None:
+    connection = build_llm_connection(
+        _provider_settings(
+            "cloudflare",
+            "https://api.cloudflare.com/client/v4/accounts/account/ai/v1",
+            "openai/gpt-oss-120b",
+        )
+    )
+    messages = [
+        {"role": "system", "content": "Use tools."},
+        {"role": "user", "content": "Implement the feature."},
+        {
+            "role": "assistant",
+            "content": None,
+            "reasoning_content": "Inspect the existing source first.",
+            "tool_calls": [{"id": "call-1", "type": "function"}],
+        },
+        {"role": "tool", "content": "source", "tool_call_id": "call-1"},
+    ]
+
+    formatted = connection.format_openhands_messages(messages)
+
+    assert formatted[2] == {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "call-1", "type": "function"}],
+    }
+    assert messages[2]["reasoning_content"] == "Inspect the existing source first."
+
+
+def test_other_providers_preserve_openhands_reasoning_content() -> None:
+    connection = build_llm_connection(
+        _provider_settings(
+            "openrouter",
+            "https://openrouter.ai/api/v1",
+            "openai/gpt-oss-20b",
+        )
+    )
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "reasoning_content": "Keep this for the next tool turn.",
+            "tool_calls": [{"id": "call-1", "type": "function"}],
+        }
+    ]
+
+    assert connection.format_openhands_messages(messages) is messages
+
+
 def test_cloudflare_accepts_a_final_url_but_rejects_partial_url_parts() -> None:
     direct = _provider_settings(
         "cloudflare",

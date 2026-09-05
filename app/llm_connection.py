@@ -64,23 +64,28 @@ class LlmConnection:
     def format_openhands_messages(
         self, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """공급자가 요구하는 경우에만 assistant tool-call 내용을 보충한다.
+        """공급자가 요구하는 OpenHands assistant 메시지 형식을 적용한다.
 
         OpenHands는 설명 없이 도구만 호출한 assistant 메시지의 ``content``를 없앨 수
         있다. Cloudflare Workers AI는 뒤따르는 tool 결과를 받을 때 빈 문자열이라도 이
-        key가 있어야 한다. 입력과 다른 공급자의 메시지는 그대로 보존한다.
+        key가 있어야 한다. 또한 응답에서 받은 ``reasoning_content``를 다음 요청에
+        재전송하면 Cloudflare의 OpenAI 호환 endpoint가 지원하지 않는 필드로 거부한다.
+        입력과 다른 공급자의 메시지는 그대로 보존한다.
         """
 
         if not self.requires_openhands_message_normalization:
             return messages
-        return [
-            {**message, "content": ""}
-            if message.get("role") == "assistant"
-            and message.get("tool_calls")
-            and message.get("content") is None
-            else message
-            for message in messages
-        ]
+        normalized: list[dict[str, Any]] = []
+        for message in messages:
+            if message.get("role") != "assistant":
+                normalized.append(message)
+                continue
+            assistant = dict(message)
+            assistant.pop("reasoning_content", None)
+            if assistant.get("tool_calls") and assistant.get("content") is None:
+                assistant["content"] = ""
+            normalized.append(assistant)
+        return normalized
 
 
 def _direct_model_id(model: str) -> str:
