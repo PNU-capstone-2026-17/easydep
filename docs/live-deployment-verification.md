@@ -332,3 +332,48 @@ apply와 HTTP 상태 확인을 순서대로 수행했다. VM의
 5. 관리 자원 삭제 뒤 OpenTofu 상태가 비어 있다.
 6. 상태에서 분리한 보존 자원도 식별하여 사용자가 유지하거나 직접 삭제한다.
 7. 같은 접두사의 Registry, VM, network, 로컬 image와 임시 디렉터리가 남지 않는다.
+
+## 11. 2026-09-05~06 후보별 재검증 결과
+
+10절의 후보를 서로 독립된 디렉터리에 준비하고, 실제 배포가 가능한 항목은 생성부터
+상태 확인과 삭제까지 실행했다. Azure·GCP·AWS의 서로 다른 후보는 서브에이전트가 결과와
+잔여 리소스를 독립적으로 다시 확인했다. 같은 AWS 상태를 사용하는 작업은 충돌을 피하려고
+순차 실행했다.
+
+| 후보 | 결과 | 확인 내용 |
+|---|---|---|
+| Azure 공개 단일 VM | 통과 | HTTP 200, 관리 리소스 11개 삭제, Azure 잔여 없음 |
+| GCP 공개 단일 VM | 통과 | HTTP 200, 관리 리소스 8개 삭제, GCP 잔여 없음 |
+| AWS 공개 web·사설 state 분리 | 통과 | public-to-private 연쇄 health HTTP 200, 관리 리소스 30개 삭제 |
+| AWS 영속 디스크 | 통과 | VM 재부팅 전 `ok:1`, 재부팅 후 `ok:2`, 관리 리소스 17개 삭제 |
+| AWS 부분 실패·재개 | 통과 | Registry 전·image push·최종 apply·health 실패를 각각 한 번 유도한 뒤 같은 상태에서 재개, 관리 리소스 13개 삭제 |
+| AWS 일반 설정·Secret | 통과 | 공백·등호·literal `$` 설정과 Secrets Manager 값을 함께 확인한 health HTTP 200, 관리 리소스 14개와 임시 Secret 삭제 |
+| AWS 최소 IAM | 안전상 중단 | 후보 정책은 Access Analyzer 오류 0건이었지만, 현재 무태그 EC2 생성에는 리전 전체 create/terminate 범위가 필요해 정책 연결 전 중단 |
+| PowerShell 호환성 | 부분 통과 | Windows PowerShell 5.1 실동작 확인, PowerShell 7은 실행 환경에 없어 미검증 |
+| ARM64·분리 PostgreSQL·원격 상태 | 제품 지원 전 차단 | 각각 다중 플랫폼 image, 실제 DB 동작 계약, remote backend/locking 구현이 먼저 필요 |
+
+### 11.1 이번 재검증에서 고친 문제
+
+- GCP 사전 점검이 정상적인 `gcloud auth login`을 거부하고 ADC만 요구했다. 기존 access
+  token 또는 일반 gcloud token을 먼저 사용하고 ADC도 대안으로 허용했다.
+- 일반 설정값의 literal `$`를 Bash 변수로 다시 해석해 `set -u`에서 bootstrap이 멈출 수
+  있었다. 일반 설정값을 POSIX 단일 인용부호로 출력하도록 바꿨고, 실제 애플리케이션의
+  HTTP 200으로 설정과 Secret이 모두 정확히 전달됨을 확인했다.
+- 분리 workload 최초 준비본은 두 workload 사이 연결이 없어 public-to-private 검증에
+  적합하지 않았다. 실제 `STATE_SERVICE_URL`과 내부 통신 규칙이 있는 사례로 다시 준비했다.
+
+부분 실패 후보에서는 새 package나 state를 만들지 않았다. 실패 직후 남은 ECR, image
+digest, plan, 인프라 state를 다음 실행이 그대로 사용했다. 따라서 올인원 메뉴의 “배포/재개”가
+완료된 작업은 건너뛰고 실패한 지점 이후를 이어가는 것을 실제로 확인했다.
+
+### 11.2 정리와 남은 조건
+
+실제 배포한 여섯 후보는 모두 동일 state로 삭제했고, 각 `tofu state list`는 0개였다.
+공급자별 exact-prefix 조회에서도 활성·과금 대상 리소스가 남지 않았다. 후보 전용 로컬
+Docker 태그와 임시 Docker 인증 디렉터리도 0개다. 공용 provider mirror는 유지하고,
+검증이 끝난 후보별 `.terraform` 복사본만 제거해 약 3.24GB를 회수했다.
+
+최소 IAM 후보를 계속하려면 VPC, subnet, VM, EIP 등 EC2 리소스에 배포 태그를 생성
+시점부터 붙여야 한다. 그 뒤 `aws:RequestTag`와 `ec2:ResourceTag` 조건으로 생성·삭제 범위를
+해당 배포에 한정할 수 있다. ARM64, 실제 PostgreSQL, remote state는 각각의 기능을 먼저
+구현한 뒤 별도 실배포로 확인한다.
