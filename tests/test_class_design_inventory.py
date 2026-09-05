@@ -8,6 +8,7 @@ from app.config import settings
 from app.design.services.class_diagram import collaboration, inventory, operations
 from app.design.services.class_diagram.proposals import InventoryProposal
 from app.design.services.class_diagram.scenario import build_scenario_index
+from app.llm_schema import strict_json_schema
 from tests.class_design_fixtures import (
     call_plan,
     inventory_proposal,
@@ -91,6 +92,35 @@ def test_inventory_contract_does_not_silently_default_structural_decisions():
         })
 
 
+def test_inventory_json_schema_is_strict_and_english_only():
+    schema = strict_json_schema(InventoryProposal)
+
+    def assert_object_properties_are_required(node):
+        if node.get("type") == "object" and "properties" in node:
+            assert set(node["properties"]).issubset(node.get("required", []))
+        for value in node.values():
+            if isinstance(value, dict):
+                assert_object_properties_are_required(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        assert_object_properties_are_required(item)
+
+    def assert_descriptions_are_ascii_english(node):
+        if isinstance(node, dict):
+            description = node.get("description")
+            if isinstance(description, str):
+                assert description.isascii(), description
+            for value in node.values():
+                assert_descriptions_are_ascii_english(value)
+        elif isinstance(node, list):
+            for item in node:
+                assert_descriptions_are_ascii_english(item)
+
+    assert_object_properties_are_required(schema)
+    assert_descriptions_are_ascii_english(schema)
+
+
 def test_normalized_inventory_propagates_entity_scope_through_structural_types():
     proposal = InventoryProposal.model_validate({
         "items": [
@@ -120,6 +150,7 @@ def test_normalized_inventory_propagates_entity_scope_through_structural_types()
                 "type": "Composition",
                 "sourceMultiplicity": "1",
                 "targetMultiplicity": "1",
+                "description": "Order owns its details.",
             }
         ],
     })

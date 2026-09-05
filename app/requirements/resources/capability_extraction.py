@@ -147,6 +147,7 @@ def propose_deployment_needs(
         DeploymentNeedsResult,
         deployment_need_messages(requirements),
         seed_override=seed,
+        strict=False,
     )
 
 

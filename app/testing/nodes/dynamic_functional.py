@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from app.config import settings
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import profile_for
+from app.llm_schema import remove_non_ascii_descriptions, strict_json_schema
 from app.testing.schemas.functional_plan import (
     FunctionalInputValue,
     FunctionalTestCase,
@@ -239,7 +240,7 @@ def _response_format() -> dict[str, Any]:
         "json_schema": {
             "name": "FunctionalTestCase",
             "strict": True,
-            "schema": FunctionalTestCase.model_json_schema(),
+            "schema": strict_json_schema(FunctionalTestCase),
         },
     }
 
@@ -330,7 +331,7 @@ def _input_prompt(request: InputValueRequest) -> str:
                 "operationId": request.operation_id,
                 "operationContext": request.operation_context,
                 "location": request.location,
-                "schema": request.schema,
+                "schema": remove_non_ascii_descriptions(request.schema),
             },
             ensure_ascii=False,
         )
@@ -347,12 +348,12 @@ def _propose_input(client: OpenAI, request: InputValueRequest) -> Any:
         fallback_temperature=settings.temperature,
         fallback_max_tokens=settings.llm_max_completion_tokens or 16384,
     )
-    response_schema = {
+    response_schema = remove_non_ascii_descriptions({
         "type": "object",
         "additionalProperties": False,
         "properties": {"value": request.schema},
         "required": ["value"],
-    }
+    })
     llm_request: dict[str, Any] = {
         "model": model,
         # 실행용 예시값은 다양성보다 재현성이 중요하지만 0도는 쓰지 않는다.

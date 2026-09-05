@@ -1,7 +1,8 @@
-"""LLM이 한정된 선택 공간에서 반환하는 일시적 제안 계약이다.
+"""Temporary proposal contracts returned from the LLM design decision space.
 
-``BCEModel``과 ``SequenceCollection``만 저장한다. 이 작은 계약들은 LLM의 결정 하나를
-유한한 후보로 제한하며 repair telemetry나 호환성 필드를 포함하지 않는다.
+``BCEModel`` and ``SequenceCollection`` are the only persistence boundaries. Each
+proposal contains one LLM decision and excludes repair telemetry and compatibility
+fields.
 """
 from __future__ import annotations
 
@@ -13,22 +14,22 @@ from app.design.schemas.class_model import ClassParameter
 
 
 class Proposal(BaseModel):
-    """설명되지 않은 LLM 필드를 거부하는 모든 일시 제안의 기반 계약이다."""
+    """Base contract that rejects unrecognized LLM fields in every proposal."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
 class InventoryField(Proposal):
-    """inventory item이 선언하는 이름과 타입 하나다."""
+    """One name-and-type field declared by an inventory item."""
     name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     type: str = Field(min_length=1)
 
 
 class InventoryItem(Proposal):
-    """BCE class 또는 구조 DataType 후보 하나다."""
+    """One candidate BCE class or structural data type."""
     name: str = Field(pattern=r"^[A-Z][A-Za-z0-9]*$")
     kind: Literal["Boundary", "Control", "Entity", "valueObject", "enumeration"]
-    description: str = ""
+    description: str
     fields: list[InventoryField]
     identifier: list[str]
     values: list[str]
@@ -40,17 +41,17 @@ class InventoryItem(Proposal):
         return list(dict.fromkeys(str(value).strip() for value in values))
 
 class InventoryRelationship(Proposal):
-    """inventory 안의 유한 구조 관계 후보다. 호출 dependency는 허용하지 않는다."""
+    """One finite structural relationship candidate; call dependencies are excluded."""
     source: str = Field(min_length=1)
     target: str = Field(min_length=1)
     type: Literal["Association", "Aggregation", "Composition", "Inheritance"]
     source_multiplicity: str = Field(alias="sourceMultiplicity", min_length=1)
     target_multiplicity: str = Field(alias="targetMultiplicity", min_length=1)
-    description: str = ""
+    description: str
 
 
 class InventoryProposal(Proposal):
-    """구조 LLM이 반환하는 전체 교체 inventory다."""
+    """Complete replacement inventory returned by the structural LLM."""
     items: list[InventoryItem] = Field(min_length=1)
     Relationships: list[InventoryRelationship]
 
@@ -69,7 +70,7 @@ StepRef = Annotated[
 
 
 class OperationProposal(Proposal):
-    """한 클래스에 추가할 method contract와 그 근거 step 목록이다."""
+    """Method contract to add to one class and its supporting step references."""
     name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     parameters: list[ClassParameter] = Field(default_factory=list)
     return_type: str = Field(alias="returnType", min_length=1)
@@ -89,7 +90,7 @@ class OperationProposal(Proposal):
 
 
 class ClassOperations(Proposal):
-    """한 operation fragment에서 같은 owner class에 속하는 method 묶음이다."""
+    """Methods grouped by owner class in one operation fragment."""
     class_name: str = Field(alias="className", min_length=1)
     operations: list[OperationProposal] = Field(min_length=1)
 
@@ -102,7 +103,7 @@ class ClassOperations(Proposal):
 
 
 class FragmentDataType(Proposal):
-    """한 유스케이스 operation signature가 소유하는 지역 DTO 또는 enum이다."""
+    """Local DTO or enum owned by one use-case operation signature."""
     name: str = Field(pattern=r"^[A-Z][A-Za-z0-9]*$")
     kind: Literal["valueObject", "enumeration"]
     fields: list[InventoryField]
@@ -110,7 +111,7 @@ class FragmentDataType(Proposal):
 
 
 class OperationFragment(Proposal):
-    """operation LLM이 한 유스케이스에 대해 반환하는 전체 교체 조각이다."""
+    """Complete replacement fragment returned by the operation LLM for one use case."""
     DataTypes: list[FragmentDataType]
     Classes: list[ClassOperations] = Field(min_length=1)
 
@@ -126,9 +127,10 @@ class OperationFragment(Proposal):
 
 
 class ProposedCall(Proposal):
-    """호출 operation과 앞선 부모 위치만 담는 최소 LLM 결정이다.
+    """Minimal LLM decision containing a called operation and flat parent position.
 
-    call ID, stepRefs, argument binding은 승인 모델에서 결정론적으로 계산한다.
+    Call IDs, step references, and argument bindings are derived deterministically
+    in the canonical model.
     """
     receiver_operation_id: str = Field(alias="receiverOperationId", min_length=1)
     # 루트도 null을 명시하게 한다. 필드를 선택 사항으로 두면 구조화 출력은 모든
@@ -144,12 +146,12 @@ class ProposedCall(Proposal):
 
 
 class CallPlanProposal(Proposal):
-    """한 유스케이스의 여러 actor entry를 순서대로 담은 최소 호출 계획이다."""
+    """Minimal ordered call plan for the actor entries in one use case."""
     calls: list[ProposedCall]
 
 
 class CombinedUnitCall(Proposal):
-    """한 결합 unit에서 operation을 짧은 owner.method 이름으로 고른 호출이다."""
+    """Call that selects an operation directly by its ``owner.method`` name."""
 
     operation_ref: str = Field(
         alias="operationRef",
@@ -166,13 +168,13 @@ class CombinedUnitCall(Proposal):
 
 
 class CombinedUnitProposal(Proposal):
-    """operation 조각과 그 조각을 쓰는 호출 트리를 함께 받는 일시 계약이다."""
+    """Temporary contract containing an operation fragment and its call tree."""
 
     fragment: OperationFragment
     calls: list[CombinedUnitCall]
 
 
 class FeedbackScope(Proposal):
-    """피드백을 한 단계 종류와 허용된 소유 ID 목록에 배정한 결과다."""
+    """Feedback assignment to one stage kind and its allowed owner IDs."""
     kind: Literal["inventory", "operation", "collaboration"]
     ids: list[str] = Field(default_factory=list)

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -17,6 +18,7 @@ from app.config import settings as llm_settings
 from app.llm_profiles import profile_for
 from app.requirements.config import Settings, settings
 from app.requirements.runtime import structured_llm, telemetry
+from app.requirements.schemas import DeploymentNeedsResult
 
 
 class StructuredResult(BaseModel):
@@ -63,14 +65,32 @@ class FakeLlm:
         self.fallback_result = fallback_result
         self.native_requests = 0
         self.json_requests = 0
+        self.structured_schema: dict[str, Any] | None = None
+        self.structured_options: dict[str, Any] | None = None
+        self.json_messages: list[Any] | None = None
 
-    def with_structured_output(self, _schema: type[BaseModel], **_kwargs: Any) -> Any:
+    def with_structured_output(self, schema: dict[str, Any], **_kwargs: Any) -> Any:
+        self.structured_schema = schema
+        self.structured_options = _kwargs
         return FakeStructuredInvoker(self)
 
-    def invoke(self, _messages: list[Any]) -> FakeMessage:
+    def invoke(self, messages: list[Any]) -> FakeMessage:
         self.json_requests += 1
+        self.json_messages = messages
         assert self.fallback_result is not None
         return self.fallback_result
+
+
+def _schema_descriptions(value: Any):
+    if isinstance(value, dict):
+        description = value.get("description")
+        if isinstance(description, str):
+            yield description
+        for item in value.values():
+            yield from _schema_descriptions(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _schema_descriptions(item)
 
 
 @pytest.fixture(autouse=True)
@@ -130,10 +150,12 @@ def test_transient_provider_failures_use_two_sdk_retries_in_one_logical_call(
     """두 번의 500 응답 뒤 성공할 때 SDK retry와 logical telemetry를 함께 고정한다."""
 
     attempts = 0
+    request_payloads: list[dict[str, Any]] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         nonlocal attempts
         attempts += 1
+        request_payloads.append(json.loads(request.content))
         if attempts < 3:
             return httpx.Response(
                 500,
@@ -188,6 +210,16 @@ def test_transient_provider_failures_use_two_sdk_retries_in_one_logical_call(
     assert attempts == 3
     assert stats.llm_calls == 1
     assert stats.structured_fallbacks == 0
+    response_format = request_payloads[0]["response_format"]["json_schema"]
+    transmitted_schema = response_format["schema"]
+    assert response_format["strict"] is True
+    assert transmitted_schema["additionalProperties"] is False
+    assert set(transmitted_schema["properties"]) == set(
+        transmitted_schema["required"]
+    )
+    assert "테스트에서 structured 경로" not in json.dumps(
+        transmitted_schema, ensure_ascii=False
+    )
 
 
 def test_native_structured_success_uses_one_physical_and_one_logical_call(
@@ -213,6 +245,26 @@ def test_native_structured_success_uses_one_physical_and_one_logical_call(
     assert summary["completion_tokens"] == 5
     assert summary["model_fingerprints"] == ["fp-native"]
     assert summary["llm_timing_events"][0]["operation"] == "structured:StructuredResult"
+
+
+def test_native_structured_uses_provider_safe_schema_and_validates_dict_result(
+    monkeypatch,
+) -> None:
+    fake = FakeLlm({"raw": FakeMessage(), "parsed": {"value": "native"}, "parsing_error": None})
+    monkeypatch.setattr(structured_llm, "build_llm", lambda **_kwargs: fake)
+
+    result = structured_llm.invoke_structured(StructuredResult, [])
+
+    assert result == StructuredResult(value="native")
+    assert fake.structured_schema is not None
+    assert fake.structured_schema["additionalProperties"] is False
+    assert set(fake.structured_schema["properties"]) == set(fake.structured_schema["required"])
+    assert "description" not in fake.structured_schema
+    assert fake.structured_options == {
+        "method": "json_schema",
+        "include_raw": True,
+        "strict": True,
+    }
 
 
 def test_empty_native_result_falls_back_once_and_preserves_telemetry_shape(
@@ -271,3 +323,55 @@ def test_empty_native_result_falls_back_once_and_preserves_telemetry_shape(
     assert event["operation"] == "structured:StructuredResult"
     assert event["status"] == "completed"
     assert event["structuredFallback"] is True
+    assert fake.json_messages is not None
+    assert "테스트에서 structured 경로" not in str(fake.json_messages[-1].content)
+
+
+def test_invalid_native_dict_uses_the_existing_json_fallback(monkeypatch) -> None:
+    fake = FakeLlm(
+        {"raw": FakeMessage(), "parsed": {"wrong": "value"}, "parsing_error": None},
+        FakeMessage('{"value":"fallback"}'),
+    )
+    monkeypatch.setattr(structured_llm, "build_llm", lambda **_kwargs: fake)
+
+    result = structured_llm.invoke_structured(StructuredResult, [])
+
+    assert result == StructuredResult(value="fallback")
+    assert (fake.native_requests, fake.json_requests) == (1, 1)
+
+
+def test_non_strict_structured_call_keeps_the_english_only_schema_boundary(
+    monkeypatch,
+) -> None:
+    fake = FakeLlm(
+        {
+            "raw": FakeMessage(),
+            "parsed": {"deploymentNeeds": {}},
+            "parsing_error": None,
+        }
+    )
+    monkeypatch.setattr(structured_llm, "build_llm", lambda **_kwargs: fake)
+
+    result = structured_llm.invoke_structured(
+        DeploymentNeedsResult, [], strict=False
+    )
+
+    assert result == DeploymentNeedsResult(deploymentNeeds={})
+    assert fake.structured_options is not None
+    assert fake.structured_options["strict"] is False
+    assert fake.structured_schema is not None
+    assert all(
+        description.isascii()
+        for description in _schema_descriptions(fake.structured_schema)
+    )
+
+
+def test_non_strict_mode_rejects_unapproved_schema(monkeypatch) -> None:
+    monkeypatch.setattr(
+        structured_llm,
+        "build_llm",
+        lambda **_kwargs: pytest.fail("policy rejection must happen before client creation"),
+    )
+
+    with pytest.raises(ValueError, match="Non-strict structured output"):
+        structured_llm.invoke_structured(StructuredResult, [], strict=False)

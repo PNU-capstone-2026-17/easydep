@@ -60,6 +60,27 @@ def test_functional_plan_schema_rejects_unknown_fields() -> None:
         FunctionalTestPlan.model_validate({"cases": [_case()], "target_url": "http://app"})
 
 
+def test_functional_plan_direct_sdk_schema_is_strict_and_english_only() -> None:
+    dynamic_module = importlib.import_module("app.testing.nodes.dynamic_functional")
+    schema = dynamic_module._response_format()["json_schema"]["schema"]
+
+    def walk(value):
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                assert set(value.get("properties", ())) == set(value.get("required", ()))
+                assert value["additionalProperties"] is False
+            description = value.get("description")
+            if isinstance(description, str):
+                assert description.isascii()
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(schema)
+
+
 def test_functional_plan_rejects_duplicate_step_ids() -> None:
     value = _case()
     value["steps"] = [

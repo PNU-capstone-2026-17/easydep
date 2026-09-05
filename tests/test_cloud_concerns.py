@@ -15,6 +15,22 @@ def _result(needs: dict[str, DeploymentNeed]) -> DeploymentNeedsResult:
     return DeploymentNeedsResult(deploymentNeeds=needs)
 
 
+def test_deployment_needs_is_the_only_non_strict_structured_request(monkeypatch):
+    captured = {}
+
+    def fake_invoke(schema, messages, **kwargs):
+        captured.update(schema=schema, messages=messages, kwargs=kwargs)
+        return _result({})
+
+    monkeypatch.setattr(step_cloud, "invoke_structured", fake_invoke)
+
+    result = step_cloud.propose_deployment_needs(CLASSIFIED, seed=17)
+
+    assert result == _result({})
+    assert captured["schema"] is DeploymentNeedsResult
+    assert captured["kwargs"] == {"seed_override": 17, "strict": False}
+
+
 def test_grounded_generic_needs_are_preserved(monkeypatch):
     monkeypatch.setattr(step_cloud, "invoke_structured", lambda *_args, **_kwargs: _result({
         "https_ingress": DeploymentNeed(

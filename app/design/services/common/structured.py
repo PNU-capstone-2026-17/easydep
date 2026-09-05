@@ -30,6 +30,7 @@ from pydantic import BaseModel, ValidationError
 from app.config import settings
 from app.llm_connection import LlmConnection, build_llm_connection
 from app.llm_profiles import profile_for
+from app.llm_schema import strict_json_schema
 from app.metrics import langsmith as langsmith_metrics
 from app.metrics.llm_stall_probe import start_stall_probe
 
@@ -280,7 +281,7 @@ def _response_format(schema: type[BaseModel]) -> dict[str, Any]:
         "json_schema": {
             "name": schema.__name__,
             "strict": True,
-            "schema": schema.model_json_schema(),
+            "schema": strict_json_schema(schema),
         },
     }
 
@@ -658,7 +659,7 @@ def _request_digests(
     return {
         "inputDigest": _stable_digest(user_content),
         "promptDigest": _stable_digest(system_content),
-        "schemaDigest": _stable_digest(schema.model_json_schema()),
+        "schemaDigest": _stable_digest(strict_json_schema(schema)),
     }
 
 
@@ -684,7 +685,7 @@ def parse_with_schema_repair(
         {
             "operation": operation_name,
             "messages": messages,
-            "schema": schema.model_json_schema(),
+            "schema": strict_json_schema(schema),
         }
     )
     observation: dict[str, Any] = {

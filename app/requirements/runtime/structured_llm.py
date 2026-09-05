@@ -38,15 +38,16 @@ telemetry에 모으는 이유도 "지문이 같으면 재현된다"가 아니라
 from __future__ import annotations
 
 import json
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar
 
 from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from app.config import settings as llm_settings
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import profile_for
+from app.llm_schema import json_schema, strict_json_schema
 from app.requirements.config import settings
 from app.requirements.runtime import telemetry
 
@@ -57,6 +58,9 @@ _log = telemetry.get_logger("llm")
 # with_structured_output에 쓸 method. "json_schema"=네이티브 parse 경로(권장),
 # "function_calling"=tool 호출 경로. NIM 모델 특성에 따라 교체 가능.
 _STRUCTURED_METHOD: Literal["json_schema"] = "json_schema"
+_NON_STRICT_SCHEMA_IDENTITIES = frozenset(
+    {"app.requirements.schemas.DeploymentNeedsResult"}
+)
 
 
 # 프로세스 전역 클라이언트 캐시 — 연결·세션 재사용 목적이다.
@@ -203,7 +207,12 @@ def extract_json_object(text: str) -> str:
 
 
 def invoke_native_structured(
-    llm: ChatOpenAI, schema: type[T], messages: list, call: telemetry.LlmCall
+    llm: ChatOpenAI,
+    schema: type[T],
+    messages: list,
+    call: telemetry.LlmCall,
+    *,
+    strict: bool = True,
 ) -> T | None:
     """네이티브 structured output을 한 번 호출한다.
 
@@ -212,6 +221,7 @@ def invoke_native_structured(
         schema: 검증할 Pydantic response model이다.
         messages: 기존 LangChain message 목록이다.
         call: 논리 호출 하나의 telemetry 기록지다.
+        strict: 공급자에게 닫힌 strict schema를 요구할지 여부다.
 
     Returns:
         파싱된 schema instance 또는 JSON fallback을 지시하는 ``None``이다.
@@ -220,7 +230,13 @@ def invoke_native_structured(
         예외와 parsing error는 삼키되 fallback 사유와 raw usage·fingerprint를 기록한다.
     """
     try:
-        structured = llm.with_structured_output(schema, method=_STRUCTURED_METHOD, include_raw=True)
+        normalized_schema = strict_json_schema(schema) if strict else json_schema(schema)
+        structured = llm.with_structured_output(
+            normalized_schema,
+            method=_STRUCTURED_METHOD,
+            include_raw=True,
+            strict=strict,
+        )
         result = structured.invoke(messages)
     except Exception as exc:  # noqa: BLE001 - 폴백으로 흡수, 사유는 기록한다
         call.mark_fallback(f"{type(exc).__name__}: {exc}")
@@ -229,14 +245,22 @@ def invoke_native_structured(
     # include_raw=True 면 {"raw", "parsed", "parsing_error"} 를 돌려준다. 구버전
     # langchain이 파싱된 모델을 그대로 주면 그대로 쓴다.
     if not isinstance(result, dict):
-        return cast(T, result)
+        try:
+            return schema.model_validate(result)
+        except ValidationError as exc:
+            call.mark_fallback(f"{type(exc).__name__}: {exc}")
+            return None
 
     raw = result.get("raw")
     call.observe_usage(getattr(raw, "usage_metadata", None))
     call.observe_metadata(getattr(raw, "response_metadata", None))
     parsed = result.get("parsed")
     if parsed is not None:
-        return cast(T, parsed)
+        try:
+            return schema.model_validate(parsed)
+        except ValidationError as exc:
+            call.mark_fallback(f"{type(exc).__name__}: {exc}")
+            return None
 
     error = result.get("parsing_error")
     call.mark_fallback(f"parsed 없음: {error!r}" if error else "parsed 없음(빈 응답)")
@@ -244,7 +268,12 @@ def invoke_native_structured(
 
 
 def invoke_json_mode(
-    llm: ChatOpenAI, schema: type[T], messages: list, call: telemetry.LlmCall
+    llm: ChatOpenAI,
+    schema: type[T],
+    messages: list,
+    call: telemetry.LlmCall,
+    *,
+    strict: bool = True,
 ) -> T:
     """JSON Schema prompt로 원문 응답을 직접 검증하는 fallback을 호출한다.
 
@@ -253,6 +282,7 @@ def invoke_json_mode(
         schema: 검증할 Pydantic response model이다.
         messages: 네이티브 호출과 동일한 message 목록이다.
         call: 같은 논리 호출의 telemetry 기록지다.
+        strict: fallback prompt에도 strict schema를 제시할지 여부다.
 
     Returns:
         JSON 원문을 검증한 schema instance다.
@@ -260,7 +290,8 @@ def invoke_json_mode(
     Notes:
         네이티브 요청과 fallback 요청의 token usage를 같은 logical call에 합산한다.
     """
-    schema_json = json.dumps(schema.model_json_schema())
+    normalized_schema = strict_json_schema(schema) if strict else json_schema(schema)
+    schema_json = json.dumps(normalized_schema)
     instr = SystemMessage(
         content=(
             "Respond with ONLY a single JSON object that conforms to this "
@@ -273,13 +304,21 @@ def invoke_json_mode(
     return schema.model_validate_json(extract_json_object(message_text(raw.content)))
 
 
-def invoke_structured(schema: type[T], messages: list, *, seed_override: int | None = None) -> T:
+def invoke_structured(
+    schema: type[T],
+    messages: list,
+    *,
+    seed_override: int | None = None,
+    strict: bool = True,
+) -> T:
     """네이티브 structured output과 JSON fallback을 한 logical call로 실행한다.
 
     Args:
         schema: 검증할 Pydantic response model이다.
         messages: LangChain message 목록이다.
         seed_override: 평가 호출이 명시할 선택적 seed다.
+        strict: 닫힌 공급자 schema를 사용할지 여부다. 자유형 capability map만
+            명시적으로 non-strict를 허용한다.
 
     Returns:
         schema 검증이 끝난 structured response다.
@@ -288,9 +327,16 @@ def invoke_structured(schema: type[T], messages: list, *, seed_override: int | N
         telemetry operation ``structured:{schema.__name__}``, 호출 순서와 retry 설정을
         기존과 동일하게 유지한다.
     """
+    schema_identity = f"{schema.__module__}.{schema.__qualname__}"
+    if not strict and schema_identity not in _NON_STRICT_SCHEMA_IDENTITIES:
+        raise ValueError(
+            "Non-strict structured output is allowed only for the open-ended "
+            f"deployment-needs contract, not {schema_identity}."
+        )
+
     llm = build_llm(seed_override=seed_override)
     with telemetry.record_llm_call(f"structured:{schema.__name__}") as call:
-        parsed = invoke_native_structured(llm, schema, messages, call)
+        parsed = invoke_native_structured(llm, schema, messages, call, strict=strict)
         if parsed is not None:
             return parsed
-        return invoke_json_mode(llm, schema, messages, call)
+        return invoke_json_mode(llm, schema, messages, call, strict=strict)
