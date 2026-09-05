@@ -40,6 +40,7 @@ from app.implementation.workflows.conformance import (
     verify_source_design_conformance,
 )
 from app.implementation.workflows.coordinator import (
+    _execute_task_batch,
     plan_workflow,
     reconcile_workflow_state,
     run_workflow,
@@ -853,6 +854,52 @@ def test_resume_keeps_previous_success_after_shared_file_changes(
 
     assert state["tasks"][0]["status"] == "SUCCEEDED"
     assert state["tasks"][0]["attempts"] == 1
+
+
+def test_retry_hides_previous_error_as_soon_as_task_is_running(tmp_path: Path) -> None:
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports/run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": "implement-use-case",
+                        "allowed_write_paths": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    task = {
+        "task_id": "implement-use-case",
+        "status": "FAILED",
+        "attempts": 1,
+        "lastError": "failure from the previous attempt",
+        "phase": "use-cases",
+    }
+    state = {"tasks": [task]}
+    observed: dict[str, object] = {}
+
+    def execute(_run_root: Path, _task_id: str) -> dict[str, object]:
+        live = json.loads(
+            (tmp_path / "reports/workflow-state.json").read_text(encoding="utf-8")
+        )
+        observed.update(live["tasks"][0])
+        return {"status": "SUCCEEDED"}
+
+    failures = _execute_task_batch(
+        tmp_path,
+        state,
+        [task],
+        execute,
+        max_workers=1,
+    )
+
+    assert failures == []
+    assert observed["status"] == "RUNNING"
+    assert observed["attempts"] == 2
+    assert observed["lastError"] is None
 
 
 def test_planned_manifest_uses_work_units_and_scopes_repairs_to_contracts(

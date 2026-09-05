@@ -551,6 +551,7 @@ def _execute_task_batch(
     def mark_started(task: dict[str, object]) -> None:
         task["status"] = "RUNNING"
         task["attempts"] = int(task.get("attempts", 0)) + 1
+        task["lastError"] = None
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
 
