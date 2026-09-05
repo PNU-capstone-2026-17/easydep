@@ -1,6 +1,6 @@
 # 클라우드 결정 질문 시점 및 배포 구성 UX 개선 계획
 
-- 상태: 1차 핵심 흐름 구현 완료 (2026-09-06)
+- 상태: 계획 범위 구현 완료 (2026-09-06)
 - 작성일: 2026-09-05
 - 범위: CSP·리전 입력, 배포 capability 질문, 기존 workload topology 계약 연결,
   deployment target·VM SKU·replica 선택, AZ 자동 배치, 배포 단계 UI gate
@@ -35,9 +35,19 @@ CSP·리전과 최종 VM SKU를 직접 선택하는 현재 절충안을 유지�
 - Luna는 조건부 카드·부분 prefill·완료 요약 UI를, Terra는 requirements 질문 경계·target별 projection·
   workload producer를 맡았고 메인 에이전트가 상태 전이와 통합 회귀를 검증했다.
 
-후속 범위는 “별도 DB는 필요하지만 엔진이 없는 경우”의 전용 topology 질문과, 최소 CPU·메모리가
-없는 경우 sizing panel에서 값을 보완하는 입력이다. 둘 다 새 영속 모델 없이 기존 question/planning
-fact 경계로 추가한다.
+후속 구현도 같은 날 완료했다.
+
+- ERD 승인 직후, 별도 DB 요구는 있으나 엔진이 없는 경우에만 DB 실행 방식을 묻는다. 답은 기존
+  `deployment_planning_facts`의 `dataExecutionMode` fact로 기록하고 완료된 설계 단계는 다시 만들지
+  않은 채 deployment stage를 이어서 실행한다.
+- PostgreSQL container를 고르면 기존 app + PostgreSQL workload/connection producer를 사용하고,
+  embedded를 고르면 기존 단일 VM H2 규칙을 유지한다. ERD 존재만으로는 질문하지 않는다.
+- compute unit의 최소 vCPU·메모리가 없거나 catalog 후보가 없을 때 sizing panel에서 값을 보완하고
+  같은 target의 후보를 다시 조회한다.
+- target·capacity·SKU·replica는 최종 요청 하나에서 모두 검증한 뒤 저장하며, capacity는
+  WorkloadGraph가 아니라 선택 projection의 DeploymentPlan에만 보존한다.
+- 이 후속 작업도 Terra가 결정·sizing backend를, Luna가 sizing UI를 맡고 메인 에이전트가
+  checkpoint 답변 경계와 통합 회귀를 검증했다.
 
 ## 1. 결론
 
@@ -727,7 +737,7 @@ Wave별 권장 분담은 다음과 같다.
 | 영속 데이터 요구가 없음 | generated application workload 하나만 생성 |
 | ERD + 단일 VM + replica 1, 별도 DB 요구 없음 | 기존 H2 file DB와 retained disk를 앱 workload에 적용 |
 | 별도 PostgreSQL이 요구사항에 명시됨 | 기존 계약으로 app + PostgreSQL workload와 내부 TCP 연결 생성 |
-| ERD만 있고 DB 실행 방식이 불명확함 | PostgreSQL을 추측하지 않고 배포 준비 질문 표시 |
+| 별도 DB 요구가 있으나 엔진이 없음 | PostgreSQL을 추측하지 않고 배포 준비 질문 표시 |
 | 같은 topology 답변으로 재개 | contract ID와 WorkloadGraph structure digest가 동일하고 중복 fact 없음 |
 | topology 질문 답변 후 재개 | class·sequence·API·ERD를 반복 생성하지 않고 WorkloadGraph부터 실행 |
 | DB 분리 수정 요청 | label reviser가 아니라 계약 변경 계획과 영향 범위 승인으로 라우팅 |

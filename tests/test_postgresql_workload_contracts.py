@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from app.design.services.deployment_diagram.normalization import (
+    normalize_workload_graph,
+)
 from app.design.services.deployment_diagram.placement import build_deployment_plan
 from app.design.services.deployment_diagram.template_topology import (
     build_template_workload_graph,
+)
+from app.design.services.deployment_diagram.workload_contracts import (
+    data_execution_mode_decision,
 )
 
 
@@ -43,6 +49,138 @@ def test_erd_only_input_keeps_the_single_vm_h2_fallback() -> None:
     assert {
         item["name"]: item.get("value") for item in application["configuration"]
     }["SPRING_DATASOURCE_URL"].startswith("jdbc:h2:file:")
+
+
+def test_erd_alone_is_not_a_data_execution_mode_question() -> None:
+    decision = data_execution_mode_decision(
+        [],
+        deployment_planning_facts=[
+            {
+                "id": "design-logical-data-model",
+                "kind": "persistentDataRequirement",
+                "value": {"schemaMigrationRequired": True},
+                "sourceRefs": ["erdModel"],
+                "authority": "derived",
+                "status": "accepted",
+            }
+        ],
+    )
+
+    assert decision == {"status": "notRequired", "sourceRefs": []}
+
+
+def test_accepted_data_execution_mode_fact_selects_postgres_contracts() -> None:
+    facts = [
+        {
+            "id": "data-mode",
+            "kind": "dataExecutionMode",
+            "value": "postgresql-container",
+            "sourceRefs": ["requirement:NFR-DB"],
+            "authority": "explicit",
+            "status": "accepted",
+        }
+    ]
+
+    decision = data_execution_mode_decision([], deployment_planning_facts=facts)
+    graph = build_template_workload_graph(
+        _inputs(deploymentPlanningFacts=facts)
+    ).model_dump()
+
+    assert decision == {
+        "status": "selected",
+        "value": "postgresql-container",
+        "sourceRefs": ["requirement:NFR-DB"],
+    }
+    assert [item["id"] for item in graph["workloads"]] == [
+        "application",
+        "postgresql",
+    ]
+
+
+def test_scalar_data_execution_mode_fact_is_not_a_topology_contract() -> None:
+    graph = normalize_workload_graph(
+        {
+            "schemaVersion": "easydep-workload-graph",
+            "workloads": [],
+            "externalDependencies": [],
+            "connections": [],
+            "constraints": [],
+            "derivations": [],
+        },
+        planning_facts={
+            "facts": [
+                {
+                    "id": "data-mode",
+                    "kind": "dataExecutionMode",
+                    "value": "postgresql-container",
+                    "sourceRefs": ["requirement:NFR-DB"],
+                    "authority": "explicit",
+                    "status": "accepted",
+                }
+            ]
+        },
+    )
+
+    assert graph["workloads"] == []
+    assert graph["connections"] == []
+
+
+def test_accepted_embedded_data_execution_mode_keeps_h2_fallback() -> None:
+    facts = [
+        {
+            "id": "data-mode",
+            "kind": "dataExecutionMode",
+            "value": "embedded",
+            "sourceRefs": ["requirement:NFR-DB"],
+            "authority": "explicit",
+            "status": "accepted",
+        }
+    ]
+
+    decision = data_execution_mode_decision([], deployment_planning_facts=facts)
+    graph = build_template_workload_graph(
+        _inputs(
+            erdModel={"tables": [{"name": "registrations"}]},
+            deploymentPlanningFacts=facts,
+        )
+    ).model_dump()
+
+    assert decision["value"] == "embedded"
+    assert [item["id"] for item in graph["workloads"]] == ["application"]
+    assert any(
+        item["name"] == "SPRING_DATASOURCE_URL"
+        and str(item.get("value")).startswith("jdbc:h2:file:")
+        for item in graph["workloads"][0]["configuration"]
+    )
+
+
+def test_external_database_without_an_engine_requires_input_and_blocks_h2() -> None:
+    requirements = [
+        {
+            "id": "NFR-DB",
+            "text": "Run an external database service for durable application data.",
+            "authority": "explicit",
+            "status": "accepted",
+        }
+    ]
+
+    decision = data_execution_mode_decision(requirements)
+    graph = build_template_workload_graph(
+        _inputs(
+            erdModel={"tables": [{"name": "registrations"}]},
+            refinedRequirements=requirements,
+        )
+    ).model_dump()
+
+    assert decision["status"] == "needsInput"
+    assert decision["question"]["field"] == "dataExecutionMode"
+    assert [item["id"] for item in graph["workloads"]] == ["application"]
+    assert graph["workloads"][0]["storage"] == []
+    assert not any(
+        item["name"] == "SPRING_DATASOURCE_URL"
+        for item in graph["workloads"][0]["configuration"]
+    )
+    assert graph["derivations"][-1]["question"] == decision["question"]
 
 
 def test_explicit_postgres_requirement_projects_existing_contract_topology() -> None:

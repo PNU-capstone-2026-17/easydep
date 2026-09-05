@@ -21,6 +21,7 @@ from app.design.observability import design_timing_context, log_design_timing
 from app.design.service import (
     BatchReviseRequest,
     ReviseRequest,
+    apply_deployment_topology_decision_session,
     resume_design_session,
     retry_design_session,
     revise_design_element,
@@ -1863,11 +1864,32 @@ class WorkspaceService:
                     "design": revised,
                 }
             current_stage = str(status.get("stage") or "")
+            action_id = str(payload.get("action_id") or "")
+            previous = repository.get_command(action_id) if action_id else None
+            previous_question = (
+                (previous.get("result") or {}).get("resource_question")
+                if previous is not None
+                and str(previous.get("app_id") or "") == app_id
+                and previous.get("stage") == "design"
+                else None
+            )
+            answers_data_execution_mode = (
+                command.get("action") == "message"
+                and isinstance(previous_question, dict)
+                and previous_question.get("field") == "dataExecutionMode"
+            )
             if text and command.get("action") == "message" and current_stage == "sequence_diagram":
                 raise ValueError(
                     "Select one or more use-case targets and provide feedback for each target."
                 )
-            if command.get("action") == "start_design":
+            if answers_data_execution_mode:
+                operation_stage = "deployment_diagram"
+                verb = "Generating"
+
+                def operation():
+                    return apply_deployment_topology_decision_session(app_id, text)
+
+            elif command.get("action") == "start_design":
                 # start_design은 현재 gate의 '다음' 버튼이 아니라 설계를 처음부터 다시
                 # 시작하는 공개 action이다. 기존 checkpoint가 남아 있어도 service가
                 # reset한 뒤 반드시 class diagram부터 실행해야 한다.
@@ -2398,6 +2420,20 @@ class WorkspaceService:
             or result.get("current_stage")
             or result.get("stage")
         )
+        resource_question = result.get("resource_question")
+        if isinstance(resource_question, dict):
+            return {
+                "awaiting_input": True,
+                "kind": "action_required",
+                "message": str(
+                    resource_question.get("question")
+                    or "Choose the missing deployment option."
+                ),
+                "current_stage": stage,
+                "resource_question": resource_question,
+                "resource_questions": [resource_question],
+                "design": result,
+            }
         stage_validation = (result.get("validation") or {}).get(stage) or {}
         findings = [
             *list(stage_validation.get("errors") or []),

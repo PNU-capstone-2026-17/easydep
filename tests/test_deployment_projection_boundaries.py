@@ -46,6 +46,7 @@ from app.design.services.deployment_diagram.runtime_renderer import (
     render_runtime_deployment,
 )
 from app.design.services.deployment_diagram.sizing import (
+    apply_capacity_overrides,
     apply_compute_selections,
     compute_sizing_guidance,
 )
@@ -452,6 +453,106 @@ def test_sizing_selections_are_stored_and_retrieved_per_target(monkeypatch) -> N
             selections,
             expected_structure_digest="stale-preview",
         )
+
+
+def test_capacity_overrides_reprice_and_persist_without_changing_topology(monkeypatch) -> None:
+    bundle = _projection_outputs("aws")["bundle"]
+    projection = bundle["projections"][0]
+    original_digest = projection["deploymentPlanStructureDigest"]
+    baseline = compute_sizing_guidance(
+        projection["deploymentPlan"],
+        provider="aws",
+        region=_PROVIDERS["aws"]["region"],
+        workload_graph=bundle["workloadGraph"],
+        limit=5,
+    )
+    first = baseline["computeUnits"][0]
+    candidate = first["candidates"][0]
+    overrides = [
+        {
+            "computeUnitId": first["computeUnitId"],
+            "minVCpu": candidate["vCPU"],
+            "minMemoryGiB": candidate["memoryGiB"],
+        }
+    ]
+    capacity_plan, _ = apply_capacity_overrides(projection["deploymentPlan"], overrides)
+    preview = compute_sizing_guidance(
+        projection["deploymentPlan"],
+        provider="aws",
+        region=_PROVIDERS["aws"]["region"],
+        workload_graph=bundle["workloadGraph"],
+        capacity_overrides=overrides,
+        limit=5,
+    )
+    selections = [
+        {
+            "computeUnitId": item["computeUnitId"],
+            "sku": item["candidates"][0]["sku"],
+            "replicaCount": item["minimumReplicaCount"],
+            "replicationConfirmed": False,
+        }
+        for item in preview["computeUnits"]
+    ]
+
+    updated = apply_compute_selections(
+        bundle,
+        selections,
+        capacity_overrides=overrides,
+    )
+    stored = updated["projections"][0]
+    stored_compute = next(
+        item
+        for item in stored["deploymentPlan"]["computeUnits"]
+        if item["id"] == first["computeUnitId"]
+    )
+
+    assert capacity_plan["structureDigest"] == original_digest
+    assert stored["deploymentPlanStructureDigest"] == stored["deploymentPlan"]["structureDigest"]
+    assert stored_compute["resourceRequirements"] == {
+        "minVCpu": candidate["vCPU"],
+        "minMemoryGiB": candidate["memoryGiB"],
+    }
+    assert stored["sizing"]["capacityOverrides"] == overrides
+    assert bundle["projections"][0].get("sizing") is None
+
+    monkeypatch.setattr(
+        design_service,
+        "_load_app",
+        lambda _app_id: {"deployment_diagram_bundle": updated},
+    )
+    retrieved = design_service.deployment_sizing_session(
+        "00000000-0000-4000-8000-000000000001", stored["target"]["id"]
+    )
+    retrieved_compute = next(
+        item
+        for item in retrieved["guidance"]["computeUnits"]
+        if item["computeUnitId"] == first["computeUnitId"]
+    )
+
+    assert retrieved["capacityOverrides"] == overrides
+    assert retrieved_compute["minimumRequirements"] == stored_compute["resourceRequirements"]
+
+
+@pytest.mark.parametrize(
+    "overrides, message",
+    [
+        ([{"computeUnitId": "unknown", "minVCpu": 1, "minMemoryGiB": 1}], "Unknown compute"),
+        (
+            [
+                {"computeUnitId": "compute-app", "minVCpu": 1, "minMemoryGiB": 1},
+                {"computeUnitId": "compute-app", "minVCpu": 2, "minMemoryGiB": 2},
+            ],
+            "only one capacity override",
+        ),
+        ([{"computeUnitId": "compute-app", "minVCpu": 0, "minMemoryGiB": 1}], "Invalid capacity"),
+        ([{"computeUnitId": "compute-app", "minVCpu": 1}], "Invalid capacity"),
+    ],
+)
+def test_capacity_overrides_reject_invalid_or_incomplete_values(overrides, message) -> None:
+    plan = _projection_outputs("aws")["bundle"]["projections"][0]["deploymentPlan"]
+
+    with pytest.raises(ValueError, match=message):
+        apply_capacity_overrides(plan, overrides)
 
 
 def test_split_projection_public_boundaries_match_compatibility_facades() -> None:

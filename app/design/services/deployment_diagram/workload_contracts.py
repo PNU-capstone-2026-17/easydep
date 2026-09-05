@@ -29,6 +29,9 @@ _SEPARATE_RUNTIME = re.compile(
     re.IGNORECASE,
 )
 _UNACCEPTED = {"rejected", "pending", "needsquestion", "unknown"}
+_MODE_FACT_KIND = "dataExecutionMode"
+_EMBEDDED_MODE = "embedded"
+_POSTGRESQL_CONTAINER_MODE = "postgresql-container"
 
 
 def _requirement_records(value: Any) -> Iterable[dict[str, Any]]:
@@ -119,6 +122,103 @@ def _accepted_explicit_postgres_refs(
     return _refs(refs)
 
 
+def _accepted_explicit_separate_database_refs(refined_requirements: Any) -> list[str]:
+    """Find an external DB requirement that deliberately leaves its engine open."""
+
+    refs: list[str] = []
+    for requirement in _requirement_records(refined_requirements):
+        source_refs = _requirement_source_refs(requirement)
+        if not source_refs:
+            continue
+        status = str(
+            requirement.get("status")
+            or requirement.get("decision")
+            or "accepted"
+        ).replace(" ", "").lower()
+        authority = str(requirement.get("authority") or "explicit").lower()
+        if status in _UNACCEPTED or status != "accepted" or authority != "explicit":
+            continue
+        text = " ".join(
+            str(requirement.get(key) or "")
+            for key in ("text", "requirement", "description", "title")
+        )
+        if _POSTGRES_NAME.search(text):
+            continue
+        if _DATABASE_RUNTIME.search(text) and _SEPARATE_RUNTIME.search(text):
+            refs.extend(source_refs)
+    return _refs(refs)
+
+
+def data_execution_mode_decision(
+    refined_requirements: Any,
+    *,
+    deployment_planning_facts: Iterable[dict[str, Any]] = (),
+    capability_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Select an already-approved data runtime or return one UI-ready question.
+
+    ``dataExecutionMode`` is an existing deployment planning fact.  Its
+    accepted value has precedence over text-derived evidence.  Logical ERD
+    facts intentionally never appear here: an ERD says that data exists, not
+    which runtime should execute it.
+    """
+
+    accepted_modes: list[tuple[str, list[str]]] = []
+    for fact in deployment_planning_facts or ():
+        if not isinstance(fact, dict):
+            continue
+        if fact.get("kind") != _MODE_FACT_KIND or fact.get("status") != "accepted":
+            continue
+        mode = str(fact.get("value") or "").strip().lower()
+        if mode not in {_EMBEDDED_MODE, _POSTGRESQL_CONTAINER_MODE}:
+            continue
+        accepted_modes.append((mode, _refs(fact.get("sourceRefs"))))
+    if accepted_modes:
+        modes = {mode for mode, _refs_value in accepted_modes}
+        source_refs = _refs(
+            reference for _mode, refs in accepted_modes for reference in refs
+        )
+        if len(modes) == 1:
+            return {
+                "status": "selected",
+                "value": accepted_modes[0][0],
+                "sourceRefs": source_refs,
+            }
+        return {
+            "status": "needsInput",
+            "sourceRefs": source_refs,
+            "question": {
+                "field": _MODE_FACT_KIND,
+                "reason": "Accepted deployment facts select conflicting data execution modes.",
+                "options": [_EMBEDDED_MODE, _POSTGRESQL_CONTAINER_MODE],
+            },
+        }
+
+    postgres_refs = _accepted_explicit_postgres_refs(
+        refined_requirements, capability_contract
+    )
+    if postgres_refs:
+        return {
+            "status": "selected",
+            "value": _POSTGRESQL_CONTAINER_MODE,
+            "sourceRefs": postgres_refs,
+        }
+    separate_database_refs = _accepted_explicit_separate_database_refs(
+        refined_requirements
+    )
+    if separate_database_refs:
+        return {
+            "status": "needsInput",
+            "sourceRefs": separate_database_refs,
+            "question": {
+                "field": _MODE_FACT_KIND,
+                "reason": "A separate database runtime is required, but its supported execution mode was not selected.",
+                "options": [_EMBEDDED_MODE, _POSTGRESQL_CONTAINER_MODE],
+            },
+        }
+    return {"status": "notRequired", "sourceRefs": []}
+
+
 def _caller_controls_topology(facts: Iterable[dict[str, Any]]) -> bool:
     """Caller contracts win over this narrow requirement-to-topology default."""
 
@@ -146,7 +246,9 @@ def postgresql_runtime_contracts(
     mention cannot enter through this producer.
     """
 
-    facts = [copy.deepcopy(item) for item in existing_facts if isinstance(item, dict)]
+    facts = [
+        copy.deepcopy(item) for item in (existing_facts or ()) if isinstance(item, dict)
+    ]
     if _caller_controls_topology(facts):
         return []
     generated_ids = {
@@ -160,11 +262,14 @@ def postgresql_runtime_contracts(
         "postgresql-runtime-connection",
     } <= generated_ids:
         return []
-    source_refs = _accepted_explicit_postgres_refs(
-        refined_requirements, capability_contract
+    decision = data_execution_mode_decision(
+        refined_requirements,
+        deployment_planning_facts=facts,
+        capability_contract=capability_contract,
     )
-    if not source_refs:
+    if decision.get("value") != _POSTGRESQL_CONTAINER_MODE:
         return []
+    source_refs = list(decision["sourceRefs"])
     requirements = {
         field: value
         for field in ("minVCpu", "minMemoryGiB")

@@ -9,6 +9,7 @@ import type {
   CloudRegionOption,
   DeploymentPreferences,
   DeploymentSizingResponse,
+  CapacityOverride,
   SequenceDiagramSummary,
   LiveDiagramPreview,
   LiveSourceSnapshot,
@@ -73,9 +74,14 @@ export function getArtifacts(appId: string) {
   return request<{ app_id: string } & ArtifactDocument>(`/api/apps/${appId}`);
 }
 
-export function getDeploymentSizing(appId: string, targetId: string) {
+export function getDeploymentSizing(
+  appId: string,
+  targetId: string,
+  capacity?: CapacityOverride[]
+) {
+  const capacityQuery = capacity?.length ? `&capacity=${encodeURIComponent(JSON.stringify(capacity))}` : '';
   return request<DeploymentSizingResponse>(
-    `/api/workspace/apps/${encodeURIComponent(appId)}/deployment-sizing?target=${encodeURIComponent(targetId)}`
+    `/api/workspace/apps/${encodeURIComponent(appId)}/deployment-sizing?target=${encodeURIComponent(targetId)}${capacityQuery}`
   );
 }
 
@@ -84,6 +90,7 @@ export function applyDeploymentSizing(
   input: {
     targetId: string;
     structureDigest: string;
+    capacityOverrides: CapacityOverride[];
     selections: Array<{
       computeUnitId: string;
       sku: string;

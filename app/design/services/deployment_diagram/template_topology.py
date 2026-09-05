@@ -13,6 +13,7 @@ from app.design.services.deployment_diagram.models import WorkloadGraph
 from app.design.services.deployment_diagram.normalization import normalize_workload_graph
 from app.design.services.deployment_diagram.planning_facts import extract_planning_facts
 from app.design.services.deployment_diagram.workload_contracts import (
+    data_execution_mode_decision,
     postgresql_runtime_contracts,
 )
 
@@ -204,6 +205,11 @@ def build_template_workload_graph(structured_inputs: dict[str, Any]) -> Workload
     """코드 템플릿과 승인 계약으로 WorkloadGraph 구조를 완성한다."""
 
     caller_facts = list(structured_inputs.get("deploymentPlanningFacts") or [])
+    data_execution_mode = data_execution_mode_decision(
+        structured_inputs.get("refinedRequirements"),
+        deployment_planning_facts=caller_facts,
+        capability_contract=structured_inputs.get("capabilityContract"),
+    )
     generated_contracts = postgresql_runtime_contracts(
         structured_inputs.get("refinedRequirements"),
         capability_contract=structured_inputs.get("capabilityContract"),
@@ -227,9 +233,39 @@ def build_template_workload_graph(structured_inputs: dict[str, Any]) -> Workload
         "derivations": [],
     }
     facts = _planning_facts(effective_inputs)
+    if data_execution_mode["status"] == "needsInput":
+        # An explicit external-DB requirement is incompatible with silently
+        # selecting the single-VM embedded H2 fallback.  Keep the logical ERD
+        # out of that fallback selector; the decision helper remains the
+        # UI-facing source for the question metadata.
+        facts["facts"] = [
+            item
+            for item in facts.get("facts") or []
+            if isinstance(item, dict)
+            and item.get("kind") != "persistentDataRequirement"
+            and item.get("kind") != "dataExecutionMode"
+        ]
+    else:
+        # The normalizer projects only object-valued topology contracts.  A
+        # string-valued dataExecutionMode fact has already been consumed by
+        # the decision helper above, so it must not be treated as one.
+        facts["facts"] = [
+            item
+            for item in facts.get("facts") or []
+            if not isinstance(item, dict) or item.get("kind") != "dataExecutionMode"
+        ]
     graph = normalize_workload_graph(seed, planning_facts=facts)
     _apply_capability_cases(graph, effective_inputs)
     _apply_application_security(graph, effective_inputs)
     # capability가 storage나 managed group을 더했으므로 같은 검증기를 한 번 더 적용한다.
     graph = normalize_workload_graph(graph, planning_facts=facts)
+    if data_execution_mode["status"] == "needsInput":
+        graph.setdefault("derivations", []).append(
+            {
+                "rule": "data-execution-mode-needs-input",
+                "decision": str(data_execution_mode["question"]["reason"]),
+                "sourceRefs": list(data_execution_mode["sourceRefs"]),
+                "question": data_execution_mode["question"],
+            }
+        )
     return WorkloadGraph.model_validate(graph)

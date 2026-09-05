@@ -308,10 +308,22 @@ def hydrate_deployment_diagram_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("unsupported deployment diagram schema")
     projections = [item for item in bundle.get("projections") or [] if isinstance(item, dict)]
     primary = _selected_projection(projections, bundle.get("selectedTarget")) or {}
-    return {
+    planning_facts = bundle.get("planningFacts") or {}
+    data_execution_facts = [
+        copy.deepcopy(item)
+        for item in planning_facts.get("facts") or []
+        if isinstance(item, dict)
+        and item.get("kind") == "dataExecutionMode"
+        and item.get("authority") == "explicit"
+        and item.get("status") == "accepted"
+    ]
+    hydrated = {
         "deployment_diagram_bundle": bundle,
         "deployment_diagram_model": dict(bundle.get("workloadGraph") or {}),
         "deployment_workload_graph": dict(bundle.get("workloadGraph") or {}),
         "deployment_plan": dict(primary.get("deploymentPlan") or {}),
         "deployment_resource_plan": dict(primary.get("resourcePlan") or {}),
     }
+    if data_execution_facts:
+        hydrated["deployment_planning_facts"] = data_execution_facts
+    return hydrated

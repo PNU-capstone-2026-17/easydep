@@ -141,12 +141,28 @@ class ComputeSizingSelectionRequest(BaseModel):
     replicationConfirmed: bool = False
 
 
+class CapacityOverrideRequest(BaseModel):
+    """Optional late capacity input for a provider-specific sizing preview."""
+
+    computeUnitId: str = Field(min_length=1, max_length=200)
+    minVCpu: float = Field(gt=0)
+    minMemoryGiB: float = Field(gt=0)
+
+    @field_validator("minVCpu", "minMemoryGiB", mode="before")
+    @classmethod
+    def reject_boolean_capacity(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise TypeError("capacity overrides must be numbers")
+        return value
+
+
 class ApplyDeploymentSizingRequest(BaseModel):
     """한 deployment target에 적용할 모든 compute 선택이다."""
 
     targetId: str = Field(min_length=1, max_length=1000)
     structureDigest: str | None = Field(default=None, min_length=1, max_length=128)
     selections: list[ComputeSizingSelectionRequest] = Field(min_length=1, max_length=50)
+    capacityOverrides: list[CapacityOverrideRequest] | None = Field(default=None, max_length=50)
 
 
 @router.get("/apps")
@@ -279,12 +295,24 @@ def save_deployment_preferences(
 
 
 @router.get("/apps/{app_id}/deployment-sizing")
-def get_deployment_sizing(app_id: str, target: str = Query(min_length=1)) -> dict[str, Any]:
+def get_deployment_sizing(
+    app_id: str,
+    target: str = Query(min_length=1),
+    capacity: str | None = Query(default=None),
+) -> dict[str, Any]:
     """저장된 target의 VM 후보와 compute-only 예상 비용을 반환한다."""
 
     validate_app_id(app_id)
     try:
-        return deployment_sizing_session(app_id, target)
+        parsed_capacity: list[dict[str, Any]] | None = None
+        if capacity is not None:
+            candidate = json.loads(capacity)
+            if not isinstance(candidate, list):
+                raise ValueError("capacity must be a JSON array.")
+            parsed_capacity = candidate
+        return deployment_sizing_session(app_id, target, parsed_capacity)
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=422, detail="capacity must be a JSON array.") from error
     except (ValueError, TypeError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -297,11 +325,17 @@ def apply_deployment_sizing(
 
     validate_app_id(app_id)
     try:
+        kwargs: dict[str, Any] = {}
+        if request.capacityOverrides is not None:
+            kwargs["capacity_overrides"] = [
+                override.model_dump() for override in request.capacityOverrides
+            ]
         result = apply_deployment_sizing_session(
             app_id,
             request.targetId,
             [selection.model_dump() for selection in request.selections],
             request.structureDigest,
+            **kwargs,
         )
         workspace_service.sync_deployment_configuration(app_id, result)
         return result

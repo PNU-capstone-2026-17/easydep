@@ -787,7 +787,12 @@ def _apply_explicit_contract_facts(
     allowed_constraint_kinds: dict[str, set[str]] = {}
     for fact in facts:
         authorized: set[str] = set()
-        value = dict(fact.get("value") or {})
+        raw_value = fact.get("value")
+        # Only the existing workload/connection/constraint contracts carry
+        # object values.  Accepted planning decisions such as
+        # dataExecutionMode deliberately use a scalar and are not topology
+        # contracts for this projector.
+        value = dict(raw_value) if isinstance(raw_value, dict) else {}
         if fact.get("kind") == "workloadContract" and value.get("replicaCount") is not None:
             authorized.add("replicaCount")
         if fact.get("kind") == "constraintContract" and value.get("kind"):

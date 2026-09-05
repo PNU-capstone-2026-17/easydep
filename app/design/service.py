@@ -41,8 +41,12 @@ from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_runtime_puml,
 )
 from app.design.services.deployment_diagram.sizing import (
+    apply_capacity_overrides,
     apply_compute_selections,
     compute_sizing_guidance,
+)
+from app.design.services.deployment_diagram.workload_contracts import (
+    data_execution_mode_decision,
 )
 from app.design.validation import design_readiness_report
 from app.repositories import artifact_repository
@@ -107,15 +111,106 @@ def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
     if not feedback.strip():
         active_stage = session_status(app_id).get("stage")
         if active_stage:
-            readiness = design_readiness_report(_load_app(app_id), stages=[str(active_stage)])
+            state = _load_app(app_id)
+            readiness = design_readiness_report(state, stages=[str(active_stage)])
             findings = list(readiness.get("findings") or [])
             if findings:
                 raise ValueError(
                     "Resolve the active design findings before advancing. "
                     f"Stage: {active_stage}. Findings: {findings}"
                 )
+            # ERD는 논리 데이터 모델일 뿐 실행 DB 엔진을 뜻하지 않는다. 별도 DB가
+            # 명시됐지만 엔진이 빠진 경우에만 배포 산출물을 만들기 직전에 물어본다.
+            if active_stage == "erd":
+                decision = data_execution_mode_decision(
+                    state.get("refined_requirements") or [],
+                    capability_contract=dict(state.get("capability_contract") or {}),
+                    deployment_planning_facts=(
+                        state.get("deployment_planning_facts") or []
+                    ),
+                )
+                if decision.get("status") == "needsInput":
+                    question = {
+                        "field": "dataExecutionMode",
+                        "kind": "choice",
+                        "question": "How should the application run its database?",
+                        "reason": (
+                            "A separate database runtime is required, but no supported "
+                            "engine was specified."
+                        ),
+                        "sourceRefs": list(decision.get("sourceRefs") or []),
+                        "choices": [
+                            {
+                                "value": "postgresql-container",
+                                "label": "PostgreSQL container",
+                                "description": (
+                                    "Run the application and PostgreSQL as separate "
+                                    "containers on the selected VM."
+                                ),
+                            },
+                            {
+                                "value": "embedded",
+                                "label": "Embedded database",
+                                "description": (
+                                    "Keep the database inside the application runtime."
+                                ),
+                            },
+                        ],
+                    }
+                    return {
+                        "app_id": app_id,
+                        **to_web_response(state),
+                        "status": "need_feedback",
+                        "stage": "deployment_diagram",
+                        "resource_question": question,
+                    }
     try:
         return resume_design(app_id, feedback)
+    except Exception as error:
+        raise RuntimeError(f"Design pipeline failed: {error}") from error
+
+
+def apply_deployment_topology_decision_session(
+    app_id: str, data_execution_mode: str
+) -> dict[str, Any]:
+    """배포 직전 DB 실행 방식 답을 기존 planning fact로 기록하고 계속한다."""
+
+    _validate_app_id(app_id)
+    _require_app_exists(app_id)
+    _require_active_session(app_id)
+    if session_status(app_id).get("stage") != "erd":
+        raise ValueError("A database runtime choice is only accepted before deployment design.")
+    mode = data_execution_mode.strip()
+    if mode not in {"embedded", "postgresql-container"}:
+        raise ValueError(f"Unsupported database runtime choice: {mode}")
+
+    state = _load_app(app_id)
+    decision = data_execution_mode_decision(
+        state.get("refined_requirements") or [],
+        capability_contract=dict(state.get("capability_contract") or {}),
+        deployment_planning_facts=state.get("deployment_planning_facts") or [],
+    )
+    if decision.get("status") != "needsInput":
+        raise ValueError("The current design does not need a database runtime choice.")
+    fact = {
+        "id": "user-data-execution-mode",
+        "kind": "dataExecutionMode",
+        "value": mode,
+        "sourceRefs": list(decision.get("sourceRefs") or []),
+        "derivationRule": "user-approved-data-execution-mode",
+        "authority": "explicit",
+        "status": "accepted",
+    }
+    facts = [
+        dict(item)
+        for item in state.get("deployment_planning_facts") or []
+        if isinstance(item, dict) and item.get("kind") != "dataExecutionMode"
+    ]
+    sync_design_state(app_id, {"deployment_planning_facts": [*facts, fact]})
+    try:
+        # 실제 graph는 아직 ERD gate에 멈춰 있다. 답을 일반 피드백으로 보내지 않고
+        # 승인으로 재개하면 deployment stage 하나만 정상 경로에서 생성·저장된다.
+        return resume_design(app_id, "")
     except Exception as error:
         raise RuntimeError(f"Design pipeline failed: {error}") from error
 
@@ -156,7 +251,11 @@ def select_deployment_target_session(app_id: str, target_id: str) -> dict[str, A
     return {"app_id": app_id, **to_web_response(current), "status": "completed"}
 
 
-def deployment_sizing_session(app_id: str, target_id: str) -> dict[str, Any]:
+def deployment_sizing_session(
+    app_id: str,
+    target_id: str,
+    capacity_overrides: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """선택 후보의 compute unit별 VM 크기와 compute-only 비용을 계산한다."""
 
     _validate_app_id(app_id)
@@ -170,8 +269,17 @@ def deployment_sizing_session(app_id: str, target_id: str) -> dict[str, Any]:
         for item in selected.get("projections") or []
         if isinstance(item, dict) and item.get("target") == selected.get("selectedTarget")
     )
+    stored_capacity_overrides = list(
+        (projection.get("sizing") or {}).get("capacityOverrides") or []
+    )
+    effective_capacity = (
+        stored_capacity_overrides if capacity_overrides is None else capacity_overrides
+    )
+    preview_plan, normalized_capacity = apply_capacity_overrides(
+        dict(projection.get("deploymentPlan") or {}), effective_capacity
+    )
     guidance = compute_sizing_guidance(
-        dict(projection.get("deploymentPlan") or {}),
+        preview_plan,
         provider=str(projection.get("provider") or ""),
         region=str(projection.get("region") or ""),
         workload_graph=dict(selected.get("workloadGraph") or {}),
@@ -184,6 +292,7 @@ def deployment_sizing_session(app_id: str, target_id: str) -> dict[str, Any]:
         # compatibility summary at bundle level describes only the last
         # selection, so never use it to prefill a different target.
         "selected": list((projection.get("sizing") or {}).get("selected") or []),
+        "capacityOverrides": [item.model_dump(by_alias=True) for item in normalized_capacity],
     }
 
 
@@ -192,6 +301,7 @@ def apply_deployment_sizing_session(
     target_id: str,
     selections: list[dict[str, Any]],
     expected_structure_digest: str | None = None,
+    capacity_overrides: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """VM 선택을 저장하고 같은 ResourcePlan에서 두 그림을 다시 만든다."""
 
@@ -216,6 +326,7 @@ def apply_deployment_sizing_session(
         bundle,
         selections,
         selected_target=target_id,
+        capacity_overrides=capacity_overrides,
     )
     if updated.get("status") != "completed":
         return {"app_id": app_id, "status": "needs_input", "sizing": updated.get("sizing")}

@@ -191,9 +191,16 @@ export interface ComputeSizingUnit {
   candidates: ComputeSizingCandidate[];
 }
 
+export interface CapacityOverride {
+  computeUnitId: string;
+  minVCpu: number;
+  minMemoryGiB: number;
+}
+
 export interface DeploymentSizingResponse {
   target: DeploymentTarget;
   structureDigest: string;
+  capacityOverrides?: CapacityOverride[];
   guidance: {
     provider: CloudProvider;
     region: string;

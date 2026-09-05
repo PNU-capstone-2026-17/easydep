@@ -7,7 +7,7 @@ import math
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.cloudkb.costkb.dataset import filter_specs, load_dataset
 from app.design.services.deployment_diagram.bundle import select_deployment_target
@@ -26,6 +26,96 @@ class ComputeSelection(BaseModel):
     sku: str = Field(min_length=1)
     replica_count: int = Field(alias="replicaCount", ge=1)
     replication_confirmed: bool = Field(default=False, alias="replicationConfirmed")
+
+
+class CapacityOverride(BaseModel):
+    """Late sizing minimums for one existing compute unit.
+
+    These values tune SKU guidance only.  They must not become workload-graph
+    requirements, because the graph remains the derived requirements artifact.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    compute_unit_id: str = Field(alias="computeUnitId", min_length=1)
+    min_vcpu: float = Field(alias="minVCpu", gt=0)
+    min_memory_gib: float = Field(alias="minMemoryGiB", gt=0)
+
+    @field_validator("min_vcpu", "min_memory_gib", mode="before")
+    @classmethod
+    def _finite_number(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise TypeError("capacity overrides must be numbers")
+        try:
+            number = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as error:
+            raise ValueError("capacity overrides must be numbers") from error
+        if not math.isfinite(number):
+            raise ValueError("capacity overrides must be finite")
+        return value
+
+
+def _parse_capacity_overrides(
+    deployment_plan: dict[str, Any], capacity_overrides: list[dict[str, Any] | CapacityOverride]
+) -> list[CapacityOverride]:
+    """Validate every late sizing override before a projection is changed."""
+
+    try:
+        parsed = [
+            item if isinstance(item, CapacityOverride) else CapacityOverride.model_validate(item)
+            for item in capacity_overrides
+        ]
+    except ValidationError as error:
+        raise ValueError(f"Invalid capacity override: {error}") from error
+    compute_ids = {
+        str(item.get("id") or "")
+        for item in deployment_plan.get("computeUnits") or []
+        if isinstance(item, dict)
+    }
+    override_ids = [item.compute_unit_id for item in parsed]
+    if len(override_ids) != len(set(override_ids)):
+        raise ValueError("Each compute unit can have only one capacity override.")
+    for override in parsed:
+        if override.compute_unit_id not in compute_ids:
+            raise ValueError(f"Unknown compute unit: {override.compute_unit_id}.")
+    return parsed
+
+
+def _apply_parsed_capacity_overrides(
+    deployment_plan: dict[str, Any], overrides: list[CapacityOverride]
+) -> dict[str, Any]:
+    """Return a plan copy with late minimums, leaving its topology digest intact."""
+
+    result = copy.deepcopy(deployment_plan)
+    compute_by_id = {
+        str(item.get("id") or ""): item
+        for item in result.get("computeUnits") or []
+        if isinstance(item, dict)
+    }
+    for override in overrides:
+        requirements = dict(compute_by_id[override.compute_unit_id].get("resourceRequirements") or {})
+        requirements.update(
+            {
+                "minVCpu": override.min_vcpu,
+                "minMemoryGiB": override.min_memory_gib,
+            }
+        )
+        compute_by_id[override.compute_unit_id]["resourceRequirements"] = requirements
+    return result
+
+
+def apply_capacity_overrides(
+    deployment_plan: dict[str, Any],
+    capacity_overrides: list[dict[str, Any] | CapacityOverride] | None,
+) -> tuple[dict[str, Any], list[CapacityOverride]]:
+    """Apply validated late sizing input to a copied deployment plan.
+
+    ``structureDigest`` intentionally remains the pre-capacity topology digest.  It
+    is the preview stale guard, not a digest of price/SKU tuning input.
+    """
+
+    overrides = _parse_capacity_overrides(deployment_plan, capacity_overrides or [])
+    return _apply_parsed_capacity_overrides(deployment_plan, overrides), overrides
 
 
 def _catalog_candidates(
@@ -64,6 +154,7 @@ def compute_sizing_guidance(
     provider: str,
     region: str,
     workload_graph: dict[str, Any] | None = None,
+    capacity_overrides: list[dict[str, Any] | CapacityOverride] | None = None,
     limit: int = 5,
 ) -> dict[str, Any]:
     """compute unit별 SKU 후보와 compute-only 월 예상치를 반환한다.
@@ -71,6 +162,9 @@ def compute_sizing_guidance(
     DB, disk, network, load balancer, tax, support, 할인은 계산에 포함하지 않는다.
     """
 
+    deployment_plan, _overrides = apply_capacity_overrides(
+        deployment_plan, capacity_overrides
+    )
     provider = provider.lower()
     guidance: list[dict[str, Any]] = []
     workloads = {
@@ -214,7 +308,11 @@ def _selection_issues(
 
 
 def apply_compute_selections(
-    bundle: dict[str, Any], selections: list[dict[str, Any]], *, selected_target: dict[str, Any] | str | None = None
+    bundle: dict[str, Any],
+    selections: list[dict[str, Any]],
+    *,
+    selected_target: dict[str, Any] | str | None = None,
+    capacity_overrides: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """선택 SKU·replica를 target ResourcePlan과 IaC 입력으로 다시 투영한다.
 
@@ -229,7 +327,14 @@ def apply_compute_selections(
         for item in result.get("projections") or []
         if isinstance(item, dict) and item.get("target") == result.get("selectedTarget")
     )
-    plan = dict(projection.get("deploymentPlan") or {})
+    original_plan = dict(projection.get("deploymentPlan") or {})
+    stored_capacity_overrides = list(
+        (projection.get("sizing") or {}).get("capacityOverrides") or []
+    )
+    plan, parsed_capacity = apply_capacity_overrides(
+        original_plan,
+        stored_capacity_overrides if capacity_overrides is None else capacity_overrides,
+    )
     graph = copy.deepcopy(result.get("workloadGraph") or {})
     parsed = [ComputeSelection.model_validate(item) for item in selections]
     issues = _selection_issues(graph, plan, parsed)
@@ -318,6 +423,10 @@ def apply_compute_selections(
                 )
     context = dict(projection.get("planningContext") or {})
     selected_plan = build_deployment_plan(graph, context)
+    # Capacity is deliberately not written back to WorkloadGraph. Reapply it only
+    # after topology has been regenerated so a design rebind keeps the same late
+    # sizing input without redefining requirements.
+    selected_plan = _apply_parsed_capacity_overrides(selected_plan, parsed_capacity)
     selected_by_workloads = _workloads_by_compute(selected_plan)
     for selection in parsed:
         selected_workloads = set(workloads_by_compute.get(selection.compute_unit_id, []))
@@ -347,6 +456,7 @@ def apply_compute_selections(
         "status": "completed",
         "guidance": guidance,
         "selected": [item.model_dump(by_alias=True) for item in parsed],
+        "capacityOverrides": [item.model_dump(by_alias=True) for item in parsed_capacity],
     }
     projection.update(
         {
@@ -365,4 +475,10 @@ def apply_compute_selections(
     return result
 
 
-__all__ = ["ComputeSelection", "apply_compute_selections", "compute_sizing_guidance"]
+__all__ = [
+    "CapacityOverride",
+    "ComputeSelection",
+    "apply_capacity_overrides",
+    "apply_compute_selections",
+    "compute_sizing_guidance",
+]

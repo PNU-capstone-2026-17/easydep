@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -171,6 +172,53 @@ def test_deployment_sizing_apply_checks_preview_and_completes_workspace_wait(
         "preview-digest",
     )
     assert calls["complete"] == (APP_ID, {"status": "completed"})
+
+
+def test_deployment_sizing_capacity_query_and_put_override_are_optional(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: dict[str, Any] = {}
+
+    def preview(app_id, target_id, capacity=None):
+        calls["preview"] = (app_id, target_id, capacity)
+        return {"target": target_id}
+
+    def apply(app_id, target_id, selections, structure_digest, *, capacity_overrides=None):
+        calls["apply"] = (app_id, target_id, selections, structure_digest, capacity_overrides)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(workspace_api, "deployment_sizing_session", preview)
+    monkeypatch.setattr(workspace_api, "apply_deployment_sizing_session", apply)
+    monkeypatch.setattr(
+        workspace_api.workspace_service,
+        "sync_deployment_configuration",
+        lambda *_args: None,
+    )
+    capacity = [{"computeUnitId": "compute-1", "minVCpu": 2, "minMemoryGiB": 4}]
+
+    preview_response = client.get(
+        f"/api/workspace/apps/{APP_ID}/deployment-sizing",
+        params={"target": "aws:ap-northeast-2", "capacity": json.dumps(capacity)},
+    )
+    apply_response = client.put(
+        f"/api/workspace/apps/{APP_ID}/deployment-sizing",
+        json={
+            "targetId": "aws:ap-northeast-2",
+            "selections": [
+                {
+                    "computeUnitId": "compute-1",
+                    "sku": "t3.small",
+                    "replicaCount": 1,
+                }
+            ],
+            "capacityOverrides": capacity,
+        },
+    )
+
+    assert preview_response.status_code == 200
+    assert calls["preview"] == (APP_ID, "aws:ap-northeast-2", capacity)
+    assert apply_response.status_code == 200
+    assert calls["apply"][-1] == capacity
 
 
 def test_llm_timing_details_are_loaded_one_page_at_a_time(
