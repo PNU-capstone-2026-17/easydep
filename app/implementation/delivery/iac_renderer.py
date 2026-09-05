@@ -877,7 +877,12 @@ def _aws_resources(
             # 생성 이미지는 소스에서 다시 만들 수 있으므로 사용자가 destroy를 실행했을 때
             # 비어 있지 않은 ECR도 함께 정리되어야 한다. 영구 데이터 디스크의 retain 정책과
             # 달리 registry 자체를 남기면 smoke test와 일반 정리가 모두 실패한다.
-            body = f'name = "${{var.resource_prefix}}-{label}"\nimage_tag_mutability = "IMMUTABLE"\nforce_delete = true'
+            body = (
+                f'name = "${{var.resource_prefix}}-{label}"\n'
+                'image_tag_mutability = "IMMUTABLE"\n'
+                "force_delete = true\n"
+                "image_scanning_configuration { scan_on_push = true }"
+            )
         elif kind == "aws_iam_role":
             body = (
                 f'name = "${{var.resource_prefix}}-{label}"\n'
@@ -909,10 +914,13 @@ def _aws_resources(
             elif nat:
                 body += f"\nnat_gateway_id = {context.ref(nat)}"
         elif kind == "aws_subnet":
+            # 공개 진입점도 별도 EIP 또는 Load Balancer가 담당한다. subnet 전체에
+            # public IP를 자동 배정하면 같은 subnet에 나중에 추가된 VM까지 의도치 않게
+            # 외부에 노출되므로, ResourcePlan의 명시적 public-address node만 사용한다.
             body = (
                 f"vpc_id = {context.dependency_ref(node_id, 'vpc_id')}\n"
                 f"cidr_block = {_quoted(attributes.get('cidr'))}\n"
-                f"map_public_ip_on_launch = {str(bool(attributes.get('public'))).lower()}"
+                "map_public_ip_on_launch = false"
             )
             if attributes.get("zone"):
                 body += f"\navailability_zone = {_quoted(attributes.get('zone'))}"
@@ -949,7 +957,22 @@ def _aws_resources(
                     f'\ningress {{ from_port = {port}; to_port = {port}; protocol = "tcp"; '
                     f"cidr_blocks = [{context.ref('network', 'cidr_block')}] }}"
                 )
-            body = f'name_prefix = "${{var.resource_prefix}}-{label}-"\nvpc_id = {context.dependency_ref(node_id, "vpc_id")}\negress {{ from_port = 0; to_port = 0; protocol = "-1"; cidr_blocks = ["0.0.0.0/0"] }}{ingress}'
+            # cloud-init의 package 설치와 container image pull에는 외부 HTTP/HTTPS가
+            # 필요하다. 모든 protocol을 여는 대신 이 두 TCP port만 허용한다. workload
+            # 사이 통신과 DNS는 VPC 내부 경로를 별도 규칙으로 표현한다.
+            egress = (
+                '\negress { from_port = 80; to_port = 80; protocol = "tcp"; '
+                'cidr_blocks = ["0.0.0.0/0"] }'
+                '\negress { from_port = 443; to_port = 443; protocol = "tcp"; '
+                'cidr_blocks = ["0.0.0.0/0"] }'
+                f'\negress {{ from_port = 0; to_port = 0; protocol = "-1"; '
+                f'cidr_blocks = [{context.ref("network", "cidr_block")}] }}'
+            )
+            body = (
+                f'name_prefix = "${{var.resource_prefix}}-{label}-"\n'
+                f'vpc_id = {context.dependency_ref(node_id, "vpc_id")}'
+                f"{egress}{ingress}"
+            )
         elif kind == "aws_instance":
             profile = context.target(node_id, "iam_instance_profile")
             private_route = private_route_for(node_id)
@@ -959,7 +982,9 @@ def _aws_resources(
                 f"instance_type = {_vm_sku(node)}\n"
                 f"subnet_id = {context.dependency_ref(node_id, 'subnet_id')}\n"
                 f"vpc_security_group_ids = [{', '.join(context.dependency_refs(node_id, 'vpc_security_group_ids[]'))}]\n"
-                f'user_data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars})'
+                f'user_data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars})\n'
+                'metadata_options { http_endpoint = "enabled"; http_tokens = "required" }\n'
+                'root_block_device { encrypted = true; volume_type = "gp3" }'
             )
             if attributes.get("privateIp"):
                 body += f"\nprivate_ip = {_quoted(attributes.get('privateIp'))}"
@@ -975,7 +1000,10 @@ def _aws_resources(
                 f"image_id = {context.dependency_ref(node_id, 'image_id')}\n"
                 f"instance_type = {_vm_sku(node)}\n"
                 f"vpc_security_group_ids = [{', '.join(context.dependency_refs(node_id, 'vpc_security_group_ids[]'))}]\n"
-                f'user_data = base64encode(templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}))'
+                f'user_data = base64encode(templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}))\n'
+                'metadata_options { http_endpoint = "enabled"; http_tokens = "required" }\n'
+                'block_device_mappings { device_name = "/dev/sda1"; '
+                'ebs { encrypted = true; volume_type = "gp3" } }'
             )
             for child_id, child in context.embedded_blocks.items():
                 if (
@@ -989,7 +1017,7 @@ def _aws_resources(
                 body += (
                     f'\nblock_device_mappings {{ device_name = "/dev/sd{device}"; '
                     f"ebs {{ volume_size = {int(child_attrs.get('capacityGiB') or 10)}; "
-                    'volume_type = "gp3"; delete_on_termination = '
+                    'volume_type = "gp3"; encrypted = true; delete_on_termination = '
                     f"{str(child_attrs.get('deletionPolicy') != 'retain').lower()} }} }}"
                 )
             if profile:
@@ -1038,7 +1066,8 @@ def _aws_resources(
                 "availability_zone = "
                 f"{context.dependency_ref(node_id, 'availability_zone')}\n"
                 f"size = {int(attributes.get('capacityGiB') or 10)}\n"
-                'type = "gp3"'
+                'type = "gp3"\n'
+                "encrypted = true"
             )
             if attributes.get("deletionPolicy") == "retain":
                 body += "\nlifecycle { prevent_destroy = true }"

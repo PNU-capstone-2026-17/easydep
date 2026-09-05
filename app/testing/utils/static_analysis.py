@@ -29,16 +29,33 @@ def _scan(directory: Path, subject: str) -> dict[str, Any]:
             "source": {"source": "application", "directory": str(directory)},
             "message": message,
         }
+    execution = getattr(issues, "evidence", {})
+    execution = execution if isinstance(execution, dict) else {}
     # The legacy helper returns strings. A tool-startup failure is not an application
     # misconfiguration and must not become a FAIL or a pass.
-    unavailable = any(
+    unavailable = bool(execution.get("environmentError")) or any(
         any(token in str(issue).lower() for token in ("실행 실패", "not found", "no such file", "timed out"))
         for issue in issues
     )
+    targets = [
+        str(target).replace("\\", "/").lstrip("/")
+        for target in execution.get("targets") or []
+        if isinstance(target, str) and target.strip()
+    ]
     return {
         "status": "UNAVAILABLE" if unavailable else "FAILED" if issues else "PASSED",
         "gateStatus": "INCONCLUSIVE" if unavailable else "FAIL" if issues else "PASS",
         "issues": issues,
+        "commands": [execution] if execution else [],
+        "tool": str(execution.get("tool") or "trivy"),
+        "targets": sorted(set(targets)),
+        # rule ID만이 아니라 Trivy가 가리킨 Terraform resource와 line을 보존한다.
+        # topology 예외는 이 값이 ResourcePlan의 한 리소스와 정확히 맞을 때만 적용한다.
+        "findings": [
+            dict(item)
+            for item in execution.get("findings") or []
+            if isinstance(item, dict)
+        ],
         "source": {"source": "application", "directory": str(directory)},
         "message": (
             f"Trivy could not complete the {subject} scan."

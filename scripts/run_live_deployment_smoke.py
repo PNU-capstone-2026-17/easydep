@@ -34,8 +34,8 @@ from app.design.services.deployment_diagram.bundle import (  # noqa: E402
 from app.implementation.delivery.iac_renderer import render_open_tofu  # noqa: E402
 from app.implementation.delivery.package import render_deployment_package  # noqa: E402
 from scripts.generate_deployment_diagram_examples import (  # noqa: E402
-    _graph,
-    _resource_spec,
+    deployment_case_graph,
+    deployment_resource_spec,
     semantic_case_id,
 )
 from scripts.validate_deployment_iac_examples import (  # noqa: E402
@@ -228,7 +228,7 @@ HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
 def _live_graph(case_name: str) -> dict[str, Any]:
     """실배포에 쓸 graph를 만들고 테스트 불가능한 예시 placeholder만 치환한다."""
 
-    graph = _graph(CASES[case_name])
+    graph = deployment_case_graph(CASES[case_name])
     if case_name in {
         "persistent-colocated",
         "persistent-separated",
@@ -795,7 +795,7 @@ def run_smoke(provider: str, application_source: Path | None, case_name: str) ->
             _copy_application(application_source.resolve(), application)
 
         bundle = build_deployment_diagram_bundle(
-            _live_graph(case_name), _resource_spec(provider)
+            _live_graph(case_name), deployment_resource_spec(provider)
         )
         resource_plan = bundle["projections"][0]["resourcePlan"]
         rendered = render_open_tofu(resource_plan)

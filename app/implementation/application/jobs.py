@@ -454,6 +454,9 @@ class ImplementationWorker:
         allow_assumptions: bool,
         *,
         confirmed_target_refs: list[str] | None = None,
+        repair_task_type: str = "control",
+        repair_file_hints: list[str] | None = None,
+        verification_profile: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """저장된 구현 파일에 사용자 피드백을 적용하는 새 작업을 만든다.
 
@@ -547,6 +550,9 @@ class ImplementationWorker:
             execution_feedback,
             base_package,
             allow_assumptions,
+            repair_task_type=repair_task_type,
+            repair_file_hints=repair_file_hints,
+            verification_profile=verification_profile,
         )
         record = {
             "job_id": job_id,
@@ -559,6 +565,8 @@ class ImplementationWorker:
             "feedback": feedback,
             "feedback_eligibility": eligibility,
             "feedback_targeting": targeting,
+            "repair_task_type": repair_task_type,
+            "repair_file_hints": list(repair_file_hints or []),
             "testing_contracts": build_testing_contracts(design),
             "trace_artifact_versions": _trace_artifact_versions(design),
             "job_path": str(job_path),
@@ -765,7 +773,53 @@ class ImplementationWorker:
             # 사용하는 공개 이름으로 넘긴다. 양쪽 이름을 동시에 노출해 소비자가 임의로
             # fallback하는 구조를 만들지 않는다.
             "contract_artifacts": dict(record.get("testing_contracts") or {}),
+            # 같은 파일 snapshot을 재사용해도 현재 Job이 만든 RTM을 Testing에
+            # 전달한다. 파일 내용 version과 실행별 추적 정보의 수명은 다르다.
+            "implementation_traceability": record.get(
+                "implementation_traceability"
+            ),
         }
+
+    def discard_feedback_candidate(
+        self,
+        job_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        """검사 결과를 개선하지 못한 feedback 산출물만 폐기한다.
+
+        구현 Job 기록에는 새로 만든 버전과 내용이 같아 재사용한 이전
+        버전 ID가 함께 들어 있을 수 있다. Repository가 실제 버전의 소유 Job을
+        다시 확인하므로 이 메서드는 이전 성공 결과를 지우지 않는다. 실행 중인
+        Job이 나중에 snapshot을 다시 저장하지 않도록 완료된 feedback Job만 받는다.
+        """
+
+        record = self._read(job_id)
+        if record.get("job_type") != "FEEDBACK_REVISION":
+            raise InvalidJobState(
+                "Only a feedback revision candidate can discard generated artifacts"
+            )
+        if record.get("status") != "COMPLETED":
+            raise InvalidJobState(
+                "Only a completed feedback revision can discard generated artifacts"
+            )
+        if record.get("artifact_status") == "DISCARDED":
+            return self.public_record(record)
+
+        version_ids = record.get("artifact_version_ids")
+        owned = artifact_repository.delete_file_snapshots_owned_by_job(
+            str(record["app_id"]),
+            version_ids if isinstance(version_ids, dict) else {},
+            implementation_job_id=str(record["job_id"]),
+        )
+        record["artifact_version_ids"] = {}
+        record["artifact_status"] = "DISCARDED"
+        record["discarded_artifact_types"] = sorted(owned)
+        record["artifacts_discarded_at"] = _now()
+        record["artifacts_discarded_reason"] = reason[-2000:]
+        record["updated_at"] = _now()
+        self._write(record)
+        return self.public_record(record)
 
     def register_snapshot(
         self,
@@ -1028,6 +1082,9 @@ class ImplementationWorker:
             str(record["job_id"]),
             implementation_trace if isinstance(implementation_trace, dict) else None,
             confirmed_refs,
+        )
+        record["implementation_traceability"] = (
+            implementation_trace if isinstance(implementation_trace, dict) else None
         )
         version_ids = {}
         for artifact_type, files in groups.items():

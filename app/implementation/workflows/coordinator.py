@@ -49,7 +49,21 @@ PHASES = (
     ("persistence", (), {"persistence"}),
     # ``control`` remains only for the existing feedback-revision task; newly
     # planned implementation work always uses the broader ``use-case`` type.
-    ("use-cases", ("persistence",), {"use-case", "control"}),
+    (
+        "use-cases",
+        ("persistence",),
+        {
+            "use-case",
+            "control",
+            # Testing에서 되돌아온 수리도 일반 구현 task와 같은 OpenHands 실행기를
+            # 사용한다. 별도 phase를 만들지 않고 기존 피드백 작업이 속하던 이 phase에
+            # 연결하여, 실패한 검사 종류별 run_task_check가 실제로 실행되게 한다.
+            "testing-static",
+            "testing-package",
+            "testing-iac",
+            "testing-dynamic-functional",
+        },
+    ),
     # generated OpenAPI client는 workflow planning 전에 이미 만들어진다. frontend source는
     # backend source와 경로도 겹치지 않으므로 두 작업은 persistence 준비 뒤 함께 실행한다.
     ("frontend", ("persistence",), {"frontend-implementation"}),
@@ -413,7 +427,10 @@ def _finalize_workflow(
         _record_workflow_failure(run_root, state, error)
         raise
 
-    if spec.job_type == "FEEDBACK_REVISION":
+    if (
+        spec.job_type == "FEEDBACK_REVISION"
+        and not str(getattr(spec, "repair_task_type", "")).startswith("testing-")
+    ):
         state["currentActivity"] = {
             "id": "feedback-regression",
             "label": "수정 후 단위 테스트",
@@ -950,7 +967,9 @@ def phase_for_task(task_type: str) -> str:
     for phase_id, _, types in PHASES:
         if task_type in types:
             return phase_id
-    return "unclassified"
+    # 모르는 task를 조용히 건너뛰면 기존 파일이 있다는 이유만으로 workflow가 완료될
+    # 수 있다. 새 task 종류를 추가할 때 실행 phase 연결도 함께 하도록 즉시 알린다.
+    raise ValueError(f"Unknown implementation task type: {task_type}")
 
 
 def _phase_states(tasks: list[dict[str, object]]) -> list[dict[str, object]]:

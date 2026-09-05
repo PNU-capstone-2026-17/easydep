@@ -30,6 +30,11 @@ class TestingState(TypedDict):
     preserved_case_results: list[dict[str, Any]]
     iac_expected: bool | None
     deployment_package_expected: bool | None
+    # ``None``은 최초 실행처럼 모든 gate를 검사한다. 수리 실행은 실패 원인과
+    # 직접 연결된 gate 이름만 넣고, 나머지는 입력 digest가 같은 이전 보고서를 쓴다.
+    gate_scope: list[str] | None
+    previous_reports: dict[str, Any]
+    previous_job_id: str
 
     # State
     current_node: str

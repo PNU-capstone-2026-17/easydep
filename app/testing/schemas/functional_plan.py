@@ -2,7 +2,30 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+
+
+class FunctionalInputValue(BaseModel):
+    """한 HTTP 입력에서 OpenAPI만으로 정할 수 없어 따로 제안받은 값이다.
+
+    테스트 계획과 입력값을 분리하면 LLM이 경로, 메서드, 본문 전체를 다시 만들지 않아도
+    된다. ``location``은 ``path.orderId``나 ``body.customer.email``처럼 실제 입력의
+    위치를 가리키므로, 수리 후 같은 테스트를 다시 실행할 때도 정확히 같은 값을 쓴다.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    operation_id: str = Field(min_length=1)
+    location: str = Field(min_length=1)
+    value: JsonValue
+
+    @field_validator("operation_id", "location")
+    @classmethod
+    def _strip_input_identifier(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("입력 식별자는 비어 있을 수 없습니다.")
+        return cleaned
 
 
 class FunctionalTestStep(BaseModel):
@@ -82,6 +105,7 @@ class FunctionalTestPlan(BaseModel):
 
 
 __all__ = [
+    "FunctionalInputValue",
     "FunctionalTestCase",
     "FunctionalTestPlan",
     "FunctionalTestStep",

@@ -431,6 +431,12 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             + "\n".join(f"- `{path}`" for path in missing_at_start)
         )
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
+    raw_verification_profile = task.get("verification_profile")
+    verification_profile = (
+        dict(raw_verification_profile)
+        if isinstance(raw_verification_profile, dict) and raw_verification_profile
+        else None
+    )
     read_source_paths = context.get("readSourcePaths", [])
     readable_absolute: list[str] = []
     if isinstance(read_source_paths, list):
@@ -509,6 +515,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 task["llm"],
                 task_type=task_type,
                 verification_paths=editable_paths,
+                verification_profile=verification_profile,
                 editable_roots=editable_root_absolute,
                 immutable_paths=immutable_absolute,
                 callbacks=[journal],
@@ -750,7 +757,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     sandbox,
                     task_type,
                     editable_paths,
-                ) or verify_agent_workspace(sandbox, task_type, editable_paths)
+                    verification_profile,
+                ) or verify_agent_workspace(
+                    sandbox,
+                    task_type,
+                    editable_paths,
+                    verification_profile,
+                )
                 changed = changed_files(before, snapshot_files(sandbox))
                 break
             except WorkspaceVerificationError as error:
@@ -1074,6 +1087,12 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
     if missing:
         raise RuntimeError("OpenHands SDK prerequisites are missing: " + ", ".join(missing))
     task_type = str(task.get("task_type", ""))
+    raw_verification_profile = task.get("verification_profile")
+    verification_profile = (
+        dict(raw_verification_profile)
+        if isinstance(raw_verification_profile, dict) and raw_verification_profile
+        else None
+    )
     active_repair = active_repair_for_task(run_root, task_id)
     validation_allowed, validation_roots, validation_immutable = _task_execution_scope(
         task, active_repair
@@ -1098,6 +1117,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         task["llm"],
         task_type=task_type,
         verification_paths=[str(path) for path in task.get("allowed_write_paths", [])],
+        verification_profile=verification_profile,
         editable_roots=allowed_roots,
         immutable_paths=immutable,
         callbacks=[validation_journal],
@@ -1220,6 +1240,7 @@ def create_openhands_conversation(
     *,
     task_type: str = "",
     verification_paths: list[str] | None = None,
+    verification_profile: dict[str, object] | None = None,
     editable_roots: list[str] | None = None,
     immutable_paths: list[str] | None = None,
     callbacks: list[object] | None = None,
@@ -1629,6 +1650,7 @@ def create_openhands_conversation(
                 params={
                     "task_type": task_type,
                     "allowed_write_paths": verification_paths or [],
+                    "verification_profile": verification_profile or {},
                 },
             ),
         ],

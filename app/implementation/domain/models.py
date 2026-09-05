@@ -44,6 +44,11 @@ class JobSpec:
     # run directory, which does not exist until generation completes.
     progress_path: Path | None = None
     app_id: str | None = None
+    # Testing 수리는 일반 구현 task와 달리 원래 실패한 gate를 그대로 다시 실행한다.
+    # 비어 있으면 기존 feedback 작업과 같은 control/Gradle 검사를 사용한다.
+    repair_task_type: str = "control"
+    repair_file_hints: list[str] = field(default_factory=list)
+    repair_verification_profile: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

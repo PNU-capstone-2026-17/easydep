@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy import func, select
@@ -450,17 +451,24 @@ def save_file_snapshot(
     origin: str = ORIGIN_GENERATED,
     metadata: dict[str, Any] | None = None,
 ) -> int:
-    """여러 파일을 한 묶음으로 저장하고 수정하지 않는 새 버전을 만든다.
+    """여러 파일을 한 묶음으로 저장하고 수정하지 않는 버전을 만든다.
 
     구현 코드처럼 파일이 여러 개인 산출물은 일부만 최신 버전으로 섞이면 실행할 수 없다.
     따라서 전체 파일 tree를 한 ``ArtifactVersion`` 아래에 저장하고 한 번에 교체한다.
+
+    단, 경로와 내용이 최신 snapshot과 모두 같으면 기존 ID를 반환한다.
+    수리 Job ID와 같은 metadata는 파일 결과의 내용이 아니므로 비교하지 않는다.
+    이렇게 해야 내용을 바꾸지 못한 수리가 DB 버전만 늘리지 않는다.
     """
     if not files:
         raise ValueError("A file artifact snapshot cannot be empty")
     normalized = {_normalize_file_path(path): content for path, content in files.items()}
     with session_scope() as session:
         _lock_app(session, app_id)
-        latest_version_no = _latest_version_no(session, app_id, artifact_type)
+        latest = _latest_version(session, app_id, artifact_type)
+        if latest is not None and _same_file_snapshot(latest, normalized):
+            return latest.id
+        latest_version_no = latest.version_no if latest is not None else 0
 
         version = ArtifactVersion(
             app_id=app_id,
@@ -482,6 +490,45 @@ def save_file_snapshot(
                 )
             )
         return version.id
+
+
+def delete_file_snapshots_owned_by_job(
+    app_id: str,
+    artifact_version_ids: Mapping[str, int],
+    *,
+    implementation_job_id: str,
+) -> dict[str, int]:
+    """지정한 구현 Job이 새로 만든 파일 snapshot만 삭제한다.
+
+    수리 Job이 기존 snapshot과 같은 내용을 내면 기존 ID를 공유한다.
+    그 ID를 삭제하면 이전에 완료된 구현까지 손상된다. 따라서 Job 기록에
+    있는 ID라도 실제 버전 metadata의 ``implementation_job_id``가 지정한
+    Job과 같은 경우에만 삭제한다. 버전 ID와 산출물 종류, 앱 ID도 함께
+    확인하므로 잘못된 작업 기록이 다른 산출물을 지울 수 없다.
+    """
+
+    deleted: dict[str, int] = {}
+    with session_scope() as session:
+        _lock_app(session, app_id)
+        for artifact_type, raw_version_id in sorted(artifact_version_ids.items()):
+            if (
+                not isinstance(raw_version_id, int)
+                or isinstance(raw_version_id, bool)
+                or raw_version_id < 1
+            ):
+                continue
+            version = session.get(ArtifactVersion, raw_version_id)
+            if version is None or (
+                version.app_id != app_id
+                or version.artifact_type != artifact_type
+                or not version.files
+                or _safe_json_object(version.content).get("implementation_job_id")
+                != implementation_job_id
+            ):
+                continue
+            session.delete(version)
+            deleted[artifact_type] = raw_version_id
+    return deleted
 
 
 def load_file_snapshot(
@@ -683,6 +730,24 @@ def _normalize_file_path(value: str) -> str:
     if not path or any(part in {"", ".", ".."} for part in path.split("/")):
         raise ValueError(f"Invalid artifact file path: {value}")
     return path
+
+
+def _same_file_snapshot(
+    version: ArtifactVersion,
+    expected: Mapping[str, str],
+) -> bool:
+    """경로와 UTF-8 text 내용이 모두 같은지 비교한다.
+
+    hash만 비교하지 않고 내용도 직접 비교한다. 파일 수가 같고 모든 경로가
+    일치해야 하므로 파일이 삭제되거나 추가된 변경도 놓치지 않는다.
+    """
+
+    if len(version.files) != len(expected):
+        return False
+    return all(
+        item.file_path in expected and expected[item.file_path] == item.content
+        for item in version.files
+    )
 
 
 def _safe_json_object(value: str) -> dict[str, Any]:

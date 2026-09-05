@@ -6,14 +6,13 @@
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
 
-from app.implementation.runtime.process import run_process_tree
+from app.testing.runtime.container_runner import run_toolchain_command
 
 _PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 _SECRET_ASSIGNMENT = re.compile(
@@ -45,31 +44,36 @@ def _command_result(
     environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     try:
-        completed = run_process_tree(
+        execution = run_toolchain_command(
             command,
             cwd=cwd,
-            env={**os.environ, **environment} if environment else None,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
             timeout=timeout,
+            environment=environment,
         )
     except Exception as error:  # subprocess and tool startup errors are inconclusive
-        return {"status": "INCONCLUSIVE", "command": command, "error": str(error)}
+        return {
+            "status": "INCONCLUSIVE",
+            "command": command,
+            "error": str(error),
+            "environmentError": True,
+        }
+    completed = execution.completed
     output = ((completed.stderr or "") + (completed.stdout or ""))[-4000:]
     return {
-        "name": " ".join(command[1:3]) if len(command) > 1 else command[0],
-        "status": "PASS" if completed.returncode == 0 else "FAIL",
+        "name": " ".join(command[:2]),
+        "status": (
+            "INCONCLUSIVE"
+            if execution.environment_error
+            else "PASS"
+            if completed.returncode == 0
+            else "FAIL"
+        ),
         "command": command,
+        "toolchain": execution.toolchain,
         "exitCode": completed.returncode,
         "output": output,
+        "environmentError": execution.environment_error,
     }
-
-
-def _tool(name: str) -> str | None:
-    return shutil.which(name)
 
 
 def _required_paths(root: Path) -> tuple[list[Path], list[str]]:
@@ -165,8 +169,20 @@ def check_deployment_package(
     resource_plan: dict[str, Any] | None = None,
     timeout_seconds: int = 120,
     include_plan: bool = False,
+    gate_scope: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
-    """Check package files and return legacy ``status`` plus canonical ``gateStatus``."""
+    """요청한 배포 검사만 실행하고 기존 보고서 모양으로 반환한다.
+
+    ``gate_scope``를 생략하면 이전처럼 package와 IaC를 모두 검사한다. 수리 뒤
+    선택 재검사에서는 ``package`` 또는 ``iac``만 넘겨, 예를 들어 Shell 파일만
+    고쳤는데 OpenTofu 초기화까지 되풀이하는 일을 피한다.
+    """
+    selected = frozenset(gate_scope or {"package", "iac"})
+    unknown = selected - {"package", "iac"}
+    if unknown:
+        raise ValueError(f"Unknown deployment gate scope: {sorted(unknown)}")
+    check_package = "package" in selected
+    check_iac = "iac" in selected
     application = Path(application_dir)
     root = _package_root(application)
     if root is None:
@@ -187,105 +203,122 @@ def check_deployment_package(
             "source": {"source": "none", "directory": str(application)},
         }
 
-    _required, missing = _required_paths(root)
-    issues = [f"Missing deployment package file: {item}" for item in missing]
-    issues.extend(_secret_findings(root))
-    issues.extend(_resource_references(root, resource_plan))
+    if check_package:
+        _required, missing = _required_paths(root)
+        issues = [f"Missing deployment package file: {item}" for item in missing]
+        issues.extend(_secret_findings(root))
+        issues.extend(_resource_references(root, resource_plan))
+    else:
+        issues = []
     commands: list[dict[str, Any]] = []
     tofu_commands: list[dict[str, Any]] = []
 
     tofu = root / "tofu"
-    if tofu.is_dir():
-        executable = _tool("tofu") or _tool("terraform")
-        if executable:
-            # init이 생성 패키지에 .terraform을 남기지 않도록 작은 임시 복사본에서
-            # 실행한다. apply와 실제 provider refresh는 하지 않는다.
-            with tempfile.TemporaryDirectory(prefix="easydep-tofu-check-") as temporary:
-                validation_tofu = Path(temporary) / "tofu"
-                shutil.copytree(tofu, validation_tofu)
-                tofu_checks = [
-                    [executable, "fmt", "-check", "-recursive"],
-                    [
-                        executable,
-                        "init",
-                        "-backend=false",
-                        "-input=false",
-                        "-no-color",
-                    ],
-                    [executable, "validate", "-no-color"],
-                ]
-                if include_plan:
-                    tofu_checks.append(
-                        [
-                            executable,
-                            "plan",
-                            "-refresh=false",
-                            "-input=false",
-                            "-lock=false",
-                            "-no-color",
-                        ]
-                    )
-                for command in tofu_checks:
-                    tofu_commands.append(
-                        _command_result(command, validation_tofu, timeout_seconds)
-                    )
+    if check_iac and not check_package:
+        if not tofu.is_dir():
+            issues.append("Missing deployment package file: tofu/")
         else:
-            tofu_commands.append(
-                {
-                    "name": "tofu",
-                    "status": "INCONCLUSIVE",
-                    "reason": "OpenTofu is unavailable.",
-                }
+            issues.extend(
+                f"Missing deployment package file: tofu/{name}"
+                for name in ("main.tf", "variables.tf", "outputs.tf")
+                if not (tofu / name).is_file()
             )
+    if check_iac and tofu.is_dir():
+        # init이 생성 패키지에 .terraform을 남기지 않도록 작은 임시 복사본에서
+        # 실행한다. apply와 실제 provider refresh는 하지 않는다.
+        with tempfile.TemporaryDirectory(prefix="easydep-tofu-check-") as temporary:
+            validation_tofu = Path(temporary) / "tofu"
+            shutil.copytree(tofu, validation_tofu)
+            tofu_checks = [
+                ["tofu", "fmt", "-check", "-recursive"],
+                [
+                    "tofu",
+                    "init",
+                    "-backend=false",
+                    "-input=false",
+                    "-no-color",
+                ],
+                ["tofu", "validate", "-no-color"],
+            ]
+            if include_plan:
+                tofu_checks.append(
+                    [
+                        "tofu",
+                        "plan",
+                        "-refresh=false",
+                        "-input=false",
+                        "-lock=false",
+                        "-no-color",
+                    ]
+                )
+            for command in tofu_checks:
+                tofu_commands.append(
+                    _command_result(command, validation_tofu, timeout_seconds)
+                )
     commands.extend(tofu_commands)
     cloud_init = next(
         (path for path in (tofu / "cloud-init.yaml", tofu / "cloud-init.yaml.tftpl") if path.is_file()),
         None,
     )
-    cloud = _tool("cloud-init")
-    if cloud_init and cloud:
-        commands.append(_command_result([cloud, "schema", "--config-file", str(cloud_init)], root, timeout_seconds))
-    elif cloud_init:
-        commands.append({"name": "cloud-init", "status": "INCONCLUSIVE", "reason": "cloud-init is unavailable."})
-
-    compose = root / "runtime" / "compose.yaml"
-    docker = _tool("docker")
-    if compose and compose.is_file() and docker:
+    if check_package and cloud_init:
         commands.append(
             _command_result(
-                [docker, "compose", "-f", str(compose), "config"],
+                [
+                    "cloud-init",
+                    "schema",
+                    "--config-file",
+                    cloud_init.relative_to(root).as_posix(),
+                ],
+                root,
+                timeout_seconds,
+            )
+        )
+
+    compose = root / "runtime" / "compose.yaml"
+    if check_package and compose and compose.is_file():
+        commands.append(
+            _command_result(
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    compose.relative_to(root).as_posix(),
+                    "config",
+                ],
                 root,
                 timeout_seconds,
                 environment=_compose_validation_environment(root),
             )
         )
-    elif compose.is_file():
-        commands.append({"name": "docker-compose", "status": "INCONCLUSIVE", "reason": "Docker is unavailable."})
+    for script in (
+        sorted((root / "scripts").glob("*.sh"))
+        if check_package and (root / "scripts").is_dir()
+        else []
+    ):
+        commands.append(
+            _command_result(["bash", "-n", script.name], script.parent, timeout_seconds)
+        )
 
-    bash = _tool("bash")
-    for script in sorted((root / "scripts").glob("*.sh")) if (root / "scripts").is_dir() else []:
-        if bash:
-            # Windows의 Git Bash/WSL Bash는 ``C:\\...`` 경로의 역슬래시를 escape로
-            # 해석한다. script 디렉터리를 작업 폴더로 쓰고 파일명만 넘기면 운영체제별
-            # 경로 변환 없이 같은 구문 검사를 실행할 수 있다.
-            commands.append(
-                _command_result([bash, "-n", script.name], script.parent, timeout_seconds)
+    for script in (
+        sorted((root / "scripts").glob("*.ps1"))
+        if check_package and (root / "scripts").is_dir()
+        else []
+    ):
+        # ParseFile은 스크립트를 실행하지 않고 구문 오류만 찾는다. 컨테이너
+        # 안에서도 읽을 수 있도록 host 절대 경로 대신 상대 경로를 넘긴다.
+        expression = (
+            "& { $tokens=$null; $errors=$null; "
+            "[System.Management.Automation.Language.Parser]::"
+            f"ParseFile('scripts/{script.name}',[ref]$tokens,[ref]$errors); "
+            "if($errors.Count -gt 0){exit 1} }"
+        )
+        commands.append(
+            _command_result(
+                ["pwsh", "-NoProfile", "-NonInteractive", "-Command", expression],
+                root,
+                timeout_seconds,
             )
-        else:
-            commands.append({"name": f"bash -n {script.name}", "status": "INCONCLUSIVE", "reason": "bash is unavailable."})
-
-    ps = _tool("pwsh") or _tool("powershell")
-    for script in sorted((root / "scripts").glob("*.ps1")) if (root / "scripts").is_dir() else []:
-        if ps:
-            # ParseFile catches syntax errors without executing the script.
-            expression = (
-                "& { $tokens=$null; $errors=$null; "
-                f"[System.Management.Automation.Language.Parser]::ParseFile('{script}',[ref]$tokens,[ref]$errors); "
-                "if($errors.Count -gt 0){exit 1} }"
-            )
-            commands.append(_command_result([ps, "-NoProfile", "-NonInteractive", "-Command", expression], root, timeout_seconds))
-        else:
-            commands.append({"name": f"powershell parser {script.name}", "status": "INCONCLUSIVE", "reason": "PowerShell is unavailable."})
+        )
 
     command_issues = [
         str(item.get("output") or item.get("error") or item.get("reason") or "")
@@ -319,6 +352,8 @@ def check_deployment_package(
                 if tofu_failed
                 else "UNAVAILABLE"
                 if tofu_inconclusive
+                else "SKIPPED"
+                if not check_iac
                 else "PASSED"
             ),
             "gateStatus": (
@@ -326,6 +361,8 @@ def check_deployment_package(
                 if tofu_failed
                 else "INCONCLUSIVE"
                 if tofu_inconclusive
+                else "NOT_APPLICABLE"
+                if not check_iac
                 else "PASS"
             ),
             "issues": tofu_issues,

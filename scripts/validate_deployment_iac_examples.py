@@ -29,8 +29,8 @@ from scripts.generate_deployment_diagram_examples import (  # noqa: E402
     CASE_EXPECTATIONS,
     DEPLOYMENT_CASES,
     TARGETS,
-    _graph,
-    _resource_spec,
+    deployment_case_graph,
+    deployment_resource_spec,
     semantic_case_id,
 )
 
@@ -209,7 +209,7 @@ def validate(
                     if path.is_file():
                         path.unlink()
                 bundle = build_deployment_diagram_bundle(
-                    _graph(case), _resource_spec(provider)
+                    deployment_case_graph(case), deployment_resource_spec(provider)
                 )
                 resource_plan = bundle["projections"][0]["resourcePlan"]
                 files = render_open_tofu(resource_plan)

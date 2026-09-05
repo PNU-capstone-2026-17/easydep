@@ -8,7 +8,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from app.artifact_trace import TraceRef
@@ -38,6 +42,42 @@ from app.validation import (
 )
 
 TestingProgress = Callable[[dict[str, Any]], None]
+
+_BRACKETED_TARGET = re.compile(r"\[([^\]]+)\]")
+_GATE_STAGE = {
+    "static": "testing.static",
+    "package": "testing.package",
+    "iac": "testing.iac",
+    "dynamicFunctional": "testing.dynamic-functional",
+}
+
+
+def _gate_scope_for_repair(repair_task_type: str | None) -> set[str] | None:
+    """구현 수리 종류를 실제로 다시 확인할 Testing gate로 바꾼다."""
+
+    if repair_task_type in {"testing-static", "testing-iac"}:
+        # tofu 변경은 Trivy 정책과 OpenTofu 문법을 함께 확인한다.
+        return {"static", "iac"}
+    if repair_task_type == "testing-package":
+        return {"package"}
+    if repair_task_type == "testing-dynamic-functional":
+        return {"dynamicFunctional"}
+    return None
+
+
+def _application_content_digest(application: Path) -> str:
+    """새 job ID가 아니라 실제 후보 파일 경로와 내용으로 같은 구현을 판별한다."""
+
+    return stable_digest(
+        [
+            {
+                "path": path.relative_to(application).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            for path in sorted(application.rglob("*"))
+            if path.is_file()
+        ]
+    )
 
 
 def _dynamic_target_ids(report: dict[str, Any]) -> list[str]:
@@ -70,11 +110,15 @@ def _trace_hints(
     metadata = snapshot.get("metadata") if isinstance(snapshot, dict) else None
     if not isinstance(snapshot, dict) or snapshot.get("version_id") != version_id:
         return [], []
-    implementation_rtm = (
-        metadata.get("implementation_traceability")
-        if isinstance(metadata, dict)
-        else None
-    )
+    # 실행별 RTM이 우선이다. 파일 내용이 같아 snapshot version을 재사용하면 그
+    # snapshot의 metadata는 이전 Job 것을 가리킬 수 있기 때문이다.
+    implementation_rtm = testing_input.implementation_traceability
+    if not isinstance(implementation_rtm, dict):
+        implementation_rtm = (
+            metadata.get("implementation_traceability")
+            if isinstance(metadata, dict)
+            else None
+        )
     if not isinstance(implementation_rtm, dict):
         return [], []
 
@@ -120,8 +164,115 @@ def _trace_hints(
     return sorted(files), sorted(related)
 
 
+def _text_issues(report: dict[str, Any]) -> list[str]:
+    """gate 보고서의 실제 오류를 정렬·중복 제거한다."""
+    values = report.get("issues") or []
+    if not isinstance(values, list):
+        values = [values]
+    result = [
+        " ".join(
+            (
+                json.dumps(value, ensure_ascii=False, sort_keys=True)
+                if isinstance(value, (dict, list))
+                else str(value)
+            ).split()
+        )
+        for value in values
+        if value not in (None, "")
+    ]
+    if not result:
+        finding = report.get("finding")
+        if isinstance(finding, dict):
+            message = finding.get("message")
+            if message:
+                result.append(" ".join(str(message).split()))
+    if not result:
+        reason = report.get("reason") or report.get("message")
+        if reason:
+            result.append(" ".join(str(reason).split()))
+    if not result:
+        result.extend(
+            " ".join(str(command.get(key)).split())
+            for command in _failed_commands(report)
+            for key in ("output", "error", "reason")
+            if command.get(key)
+        )
+    return sorted(set(result))
+
+
+def _failed_commands(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """PASS가 아닌 명령의 재현 정보만 복사한다."""
+    return [
+        dict(item)
+        for item in report.get("commands") or []
+        if isinstance(item, dict)
+        and str(item.get("status") or "").upper() not in {"PASS", "PASSED"}
+    ]
+
+
+def _verification_components(verification: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """합쳐진 static 보고서를 수리 담당이 다른 검사로 나눈다."""
+    reports = verification.get("reports") or {}
+    static = reports.get("static") or {}
+    result: list[tuple[str, dict[str, Any]]] = []
+
+    trivy = static.get("trivyScan") if isinstance(static, dict) else None
+    if isinstance(trivy, dict) and gate_status(trivy) not in {"PASS", "NOT_APPLICABLE"}:
+        result.append(("static", trivy))
+    elif not isinstance(trivy, dict) and gate_status(static) not in {"PASS", "NOT_APPLICABLE"}:
+        # 이전 checkpoint에는 Trivy와 package가 하나의 static 보고서였다.
+        result.append(("static", static))
+
+    package = static.get("deploymentPackage") if isinstance(static, dict) else None
+    if isinstance(package, dict) and gate_status(package) not in {"PASS", "NOT_APPLICABLE"}:
+        tofu_commands = {
+            json.dumps(item, ensure_ascii=False, sort_keys=True)
+            for item in ((package.get("openTofu") or {}).get("commands") or [])
+            if isinstance(item, dict)
+        }
+        commands = [
+            command
+            for command in _failed_commands(package)
+            if json.dumps(command, ensure_ascii=False, sort_keys=True) not in tofu_commands
+        ]
+        command_issues = {
+            " ".join(str(command.get(key) or "").split())
+            for command in package.get("commands") or []
+            if isinstance(command, dict)
+            for key in ("output", "error", "reason")
+            if command.get(key)
+        }
+        structural_issues = [
+            issue for issue in _text_issues(package) if issue not in command_issues
+        ]
+        if commands or structural_issues:
+            result.append(
+                (
+                    "package",
+                    {
+                        **package,
+                        "issues": structural_issues
+                        or [
+                            str(command.get("output") or command.get("error") or command.get("reason"))
+                            for command in commands
+                        ],
+                        "commands": commands,
+                    },
+                )
+            )
+
+    iac = reports.get("iac") or {}
+    if gate_status(iac) not in {"PASS", "NOT_APPLICABLE"}:
+        result.append(("iac", iac))
+
+    dynamic = reports.get("dynamicFunctional") or {}
+    if gate_status(dynamic) not in {"PASS", "NOT_APPLICABLE"}:
+        result.append(("dynamicFunctional", dynamic))
+    return result
+
+
 def _finding_keys(report: dict[str, Any]) -> tuple[str, ...]:
-    """형태가 다른 테스트 보고서를 비교 가능한 finding key 목록으로 정리한다."""
+    """요약 문장이 아닌 실제 issue로 반복 실패 키를 만든다."""
     findings: list[str] = []
     # 이전 결과를 읽을 때만 남아 있을 수 있는 항목이다. 새 Testing 실행은 구현 단계가
     # 이미 통과시킨 단위 테스트와 frontend build를 다시 실행하거나 판정하지 않는다.
@@ -135,26 +286,150 @@ def _finding_keys(report: dict[str, Any]) -> tuple[str, ...]:
     if frontend and frontend.get("status") not in {"passed", "not_applicable"}:
         findings.append("testing.frontend-build")
     verification = report.get("verification") or {}
-    for name, child in (verification.get("reports") or {}).items():
-        if gate_status(child) in {"PASS", "NOT_APPLICABLE"}:
-            continue
-        validation_issues = (
-            ((child or {}).get("validation") or {}).get("issues")
-            if name == "dynamicFunctional"
-            else None
-        )
-        reasons = validation_issues or [
-            (child or {}).get("reason")
-            or (child or {}).get("message")
-            or verification.get("blockingReason")
-            or f"{name} gate did not pass"
+    for name, child in _verification_components(verification):
+        stage = _GATE_STAGE[name]
+        issues = _text_issues(child) or [
+            str(verification.get("blockingReason") or f"{name} gate did not pass")
         ]
-        # LLM이 다음 후보에서 무엇을 바꿔야 하는지 알 수 있도록 “검사 실패”라는
-        # 요약 대신 실제 오류를 수리 이력에 각각 남긴다.
-        findings.extend(f"testing.{name}:{reason}" for reason in map(str, reasons))
+        findings.extend(f"{stage}:{issue}" for issue in issues)
     if not findings and not report.get("passed"):
         findings.append("testing.verification")
     return tuple(sorted(set(findings)))
+
+
+def _repair_attempt_stage(findings: tuple[str, ...]) -> str:
+    """repair ledger에 실제로 실패한 gate를 기록한다."""
+    stages = {
+        stage
+        for key in findings
+        for stage in _GATE_STAGE.values()
+        if key.startswith(stage + ":")
+    }
+    return next(iter(stages)) if len(stages) == 1 else "testing"
+
+
+def _normalized_file_hint(value: str) -> str | None:
+    """도구별 경로 표현을 implementation workspace 기준으로 바꾼다."""
+    normalized = value.replace("\\", "/").strip(" /`'\"")
+    if "/application/" in normalized:
+        normalized = "application/" + normalized.split("/application/", 1)[1]
+    elif normalized.startswith("src/"):
+        normalized = normalized[4:]
+    if normalized.startswith("application/"):
+        return normalized
+    if normalized.startswith(("deployment/", "Dockerfile", "k8s/")):
+        return f"application/{normalized}"
+    if normalized.startswith(("tofu/", "runtime/", "scripts/")):
+        return f"application/deployment/{normalized}"
+    return None
+
+
+def _evidence_for_gate(
+    name: str,
+    child: dict[str, Any],
+    *,
+    target_ids: list[str],
+) -> dict[str, Any]:
+    """수리 prompt가 요약 대신 원래 검사를 재현할 수 있게 한다."""
+    commands = _failed_commands(child)
+    targets = [str(item) for item in child.get("targets") or [] if str(item).strip()]
+    for issue in _text_issues(child):
+        targets.extend(_BRACKETED_TARGET.findall(issue))
+    evidence: dict[str, Any] = {
+        "gate": name,
+        "issues": _text_issues(child),
+        "commands": commands,
+        "tool": str(child.get("tool") or ("http" if name == "dynamicFunctional" else name)),
+        "targets": sorted(set(targets)),
+    }
+    if name == "dynamicFunctional":
+        finding = child.get("finding")
+        if isinstance(finding, dict):
+            evidence["finding"] = dict(finding)
+        http_commands = [
+            {
+                "name": f"HTTP {step.get('method', '')} {step.get('path', '')}".strip(),
+                "command": [step.get("method"), step.get("path")],
+                "statusCode": step.get("statusCode"),
+                "operationId": step.get("operationId"),
+            }
+            for step in child.get("steps") or []
+            if isinstance(step, dict)
+        ]
+        if http_commands:
+            evidence["commands"] = http_commands
+        evidence["targets"] = target_ids
+        evidence["caseId"] = child.get("caseId")
+    return evidence
+
+
+def _blocking_findings(
+    testing_input: TestingInput,
+    verification: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """각 검사 실패를 정확한 담당·파일·재현 근거와 연결한다."""
+    dynamic = (verification.get("reports") or {}).get("dynamicFunctional") or {}
+    dynamic_defect = dynamic.get("defect") or {}
+    dynamic_class = (
+        dynamic_defect.get("class")
+        or dynamic_defect.get("defectClass")
+        or dynamic.get("defectClass")
+        or "SUT_DEFECT"
+    )
+    route = {
+        "TEST_DEFECT": "testing",
+        "SUT_DEFECT": "implementation",
+        "ENVIRONMENT_DEFECT": "environment",
+        "UPSTREAM_AMBIGUITY": "requirements-or-design",
+    }
+    dynamic_owner = dynamic_defect.get("route") or route.get(dynamic_class, "testing")
+    dynamic_ids = _dynamic_target_ids(dynamic)
+    dynamic_files, related_refs = _trace_hints(testing_input, dynamic, dynamic_ids)
+    result: list[dict[str, Any]] = []
+    for name, child in _verification_components(verification):
+        stage = _GATE_STAGE[name]
+        status = gate_status(child)
+        is_dynamic = name == "dynamicFunctional"
+        defect_class = dynamic_class if is_dynamic else "SUT_DEFECT"
+        owner = dynamic_owner if is_dynamic else "implementation"
+        if status == "INCONCLUSIVE":
+            defect_class, owner = "ENVIRONMENT_DEFECT", "environment"
+        evidence = _evidence_for_gate(
+            name,
+            child,
+            target_ids=dynamic_ids if is_dynamic else [],
+        )
+        file_hints = dynamic_files if is_dynamic else sorted(
+            {
+                normalized
+                for target in evidence["targets"]
+                if (normalized := _normalized_file_hint(str(target))) is not None
+            }
+        )
+        issues = evidence["issues"]
+        result.append(
+            {
+                "code": stage,
+                "stage": stage,
+                "target_ids": dynamic_ids if is_dynamic else [],
+                "message": issues[0] if issues else f"{name} gate did not pass",
+                "severity": "error",
+                "repairable": defect_class != "ENVIRONMENT_DEFECT",
+                "defect_class": defect_class,
+                "repair_owner": owner,
+                "preserve_tests": (
+                    dynamic_defect.get("preserveTests", dynamic_class != "TEST_DEFECT")
+                    if is_dynamic
+                    else True
+                ),
+                "candidate_digest": dynamic.get("candidateDigest") if is_dynamic else None,
+                "candidate_plan": dynamic.get("candidatePlan") if is_dynamic else None,
+                "file_hints": file_hints,
+                "trace_refs": related_refs if is_dynamic else [],
+                "evidence": evidence,
+            }
+        )
+    return result
 
 
 def _repair_state(ledger: RepairLedger, *, passed: bool) -> dict[str, Any]:
@@ -173,17 +448,21 @@ def _repair_state(ledger: RepairLedger, *, passed: bool) -> dict[str, Any]:
         "accepted_count": sum(
             attempt.outcome in {"improved", "clean"} for attempt in ledger.attempts
         ),
-        # 전체 이력은 다음 repair 입력에 유지하지만 HTTP 응답에는 최근 다섯 건만 싣는다.
+        # 전체 이력은 내부 중복 판정에 유지하지만 HTTP/LLM 입력에는 최근 두 건만 싣는다.
         # 작업을 오래 반복해도 화면 응답이 계속 커지지 않게 하기 위해서다.
-        "recent_attempts": [attempt.model_dump(mode="json") for attempt in ledger.attempts[-5:]],
-        "tried_strategies": sorted({attempt.strategy_key for attempt in ledger.attempts}),
-        "rejected_candidate_digests": sorted(
+        "recent_attempts": [
             {
-                attempt.candidate_digest
-                for attempt in ledger.attempts
-                if attempt.candidate_digest and attempt.outcome not in {"improved", "clean"}
+                "stage": attempt.stage,
+                "target_ids": list(attempt.target_ids),
+                "strategy_key": attempt.strategy_key,
+                "finding_keys_before": list(attempt.finding_keys_before),
+                "finding_keys_after": list(attempt.finding_keys_after),
+                "outcome": attempt.outcome,
+                "detail": attempt.detail,
             }
-        ),
+            for attempt in ledger.attempts[-2:]
+        ],
+        "older_attempt_count": max(0, len(ledger.attempts) - 2),
         "finding_digest": stable_digest(
             ledger.attempts[-1].finding_keys_after if ledger.attempts else ()
         ),
@@ -198,6 +477,9 @@ def _run_test(
     repair_history: dict[str, Any] | None = None,
     previous_findings: tuple[str, ...] = (),
     partial_result: dict[str, Any] | None = None,
+    gate_scope: set[str] | None = None,
+    previous_reports: dict[str, Any] | None = None,
+    previous_job_id: str = "",
     progress: TestingProgress | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """고정된 구현 snapshot으로 검사를 실행하고 결과와 수리 이력을 반환한다.
@@ -258,6 +540,9 @@ def _run_test(
                 deployment_package_expected=None,
                 fixed_test_plan=preserved_test_plan,
                 preserved_case_results=preserved_case_results,
+                gate_scope=gate_scope,
+                previous_reports=previous_reports,
+                previous_job_id=previous_job_id,
             )
             aggregate = aggregate_gate_report({"verification": verification})
             report = {
@@ -269,15 +554,23 @@ def _run_test(
                 "diagnostics": list(verification["diagnostics"]),
                 "testingInput": testing_input.model_dump(mode="json"),
             }
+            application_digest = _application_content_digest(run_root / "application")
         findings = _finding_keys(report)
         dynamic = (verification.get("reports") or {}).get("dynamicFunctional") or {}
         plan_digest = str(dynamic.get("candidateDigest") or stable_digest(report))
-        # 같은 plan을 새 구현물에 실행하는 것이 정상적인 회귀 흐름이다. plan digest만
-        # 비교하면 실제 코드가 바뀌었어도 "같은 후보 반복"으로 오인하므로 둘을 함께 식별한다.
+        # 새 feedback job ID가 생겨도 파일이 같으면 같은 후보다. 반대로 같은 test plan을
+        # 유지하면서 실제 구현이 달라졌다면 새로운 후보로 검사해야 한다.
         execution_digest = stable_digest(
             {
                 "plan": plan_digest,
-                "implementation": testing_input.implementation_job_id,
+                "application": application_digest,
+                "gates": {
+                    "iacExpected": TYPE_IAC_CODE in testing_input.artifact_version_ids,
+                    "preservedCases": [
+                        str(item.get("caseId") or item.get("case_id") or "")
+                        for item in preserved_case_results
+                    ],
+                },
             }
         )
         # 최초 실패는 이후 repair와 비교할 기준으로 기록한다. 재시도라면 결과 digest와
@@ -285,7 +578,7 @@ def _run_test(
         if findings and not previous_findings:
             ledger.record(
                 RepairAttempt(
-                    stage="testing.dynamic-functional",
+                    stage=_repair_attempt_stage(findings),
                     strategy_key="initial_generation",
                     input_digest=stable_digest({"run": run_id, "findings": findings}),
                     candidate_digest=execution_digest,
@@ -303,12 +596,12 @@ def _run_test(
             improved = not repeated and repair_makes_progress(previous_findings, findings)
             ledger.record(
                 RepairAttempt(
-                    stage="testing.dynamic-functional",
+                    stage=_repair_attempt_stage(findings or previous_findings),
                     strategy_key="regenerate_from_accumulated_failures",
                     input_digest=stable_digest(
                         {
                             "findings": previous_findings,
-                            "history": ledger.prompt_context(),
+                            "stage": _repair_attempt_stage(previous_findings),
                         }
                     ),
                     candidate_digest=execution_digest,
@@ -332,67 +625,7 @@ def _run_test(
             # 후보와 전략을 피할 수 있게 하되, 자동 수리 자체를 STALLED로 닫지는 않는다.
             ledger.status = "ACTIVE"
             ledger.stall_reason = ""
-        dynamic_defect = dynamic.get("defect") or {}
-        defect_class = (
-            dynamic_defect.get("class")
-            or dynamic_defect.get("defectClass")
-            or dynamic.get("defectClass")
-            or "SUT_DEFECT"
-        )
-        defect_route = {
-            "TEST_DEFECT": "testing",
-            "SUT_DEFECT": "implementation",
-            "ENVIRONMENT_DEFECT": "environment",
-            "UPSTREAM_AMBIGUITY": "requirements-or-design",
-        }
-        repair_owner = dynamic_defect.get("route") or defect_route.get(defect_class, "testing")
-        preserve_tests = dynamic_defect.get("preserveTests", defect_class != "TEST_DEFECT")
-        report["blocking_findings"] = []
-        dynamic_target_ids = _dynamic_target_ids(dynamic)
-        file_hints, related_refs = _trace_hints(
-            testing_input,
-            dynamic,
-            dynamic_target_ids,
-        )
-        dynamic_evidence = dynamic.get("finding")
-        if not isinstance(dynamic_evidence, dict):
-            dynamic_evidence = {}
-        for key in findings:
-            is_dynamic = key.startswith("testing.dynamicFunctional:")
-            is_verification = key.startswith(("testing.static:", "testing.iac:"))
-            inferred_class = defect_class if is_dynamic else "SUT_DEFECT"
-            inferred_owner = repair_owner if is_dynamic else "implementation"
-            if is_verification:
-                child_name = key.split(".", 1)[1].split(":", 1)[0]
-                child_report = (verification.get("reports") or {}).get(child_name) or {}
-                if gate_status(child_report) == "INCONCLUSIVE":
-                    inferred_class = "ENVIRONMENT_DEFECT"
-                    inferred_owner = "environment"
-            if key == "testing.unit-tests" and any(
-                str(item.get("defectClass") or "") == "ENVIRONMENT_DEFECT"
-                for item in report.get("diagnostics") or []
-                if isinstance(item, dict)
-            ):
-                inferred_class = "ENVIRONMENT_DEFECT"
-                inferred_owner = "environment"
-            report["blocking_findings"].append(
-                {
-                    "code": key.split(":", 1)[0],
-                    "stage": "testing",
-                    "target_ids": dynamic_target_ids if is_dynamic else [],
-                    "message": key.split(":", 1)[-1].replace("testing.", ""),
-                    "severity": "error",
-                    "repairable": inferred_class != "ENVIRONMENT_DEFECT",
-                    "defect_class": inferred_class,
-                    "repair_owner": inferred_owner,
-                    "preserve_tests": preserve_tests if is_dynamic else True,
-                    "candidate_digest": dynamic.get("candidateDigest") if is_dynamic else None,
-                    "candidate_plan": dynamic.get("candidatePlan") if is_dynamic else None,
-                    "file_hints": file_hints if is_dynamic else [],
-                    "trace_refs": related_refs if is_dynamic else [],
-                    "evidence": dict(dynamic_evidence) if is_dynamic else {},
-                }
-            )
+        report["blocking_findings"] = _blocking_findings(testing_input, verification)
         report["repair_state"] = _repair_state(ledger, passed=bool(report["passed"]))
         completed_history = ledger.model_dump(mode="json")
         if progress is not None:
@@ -420,6 +653,7 @@ def run_testing(
     previous_job: dict[str, Any] | None = None,
     preserve_test: bool = False,
     checkpoint: dict[str, Any] | None = None,
+    repair_task_type: str | None = None,
     progress: TestingProgress | None = None,
 ) -> dict[str, Any]:
     """Workspace command 안에서 Testing 한 회차를 실행한다.
@@ -427,12 +661,15 @@ def run_testing(
     ``checkpoint``가 있으면 그 안의 고정 입력과 애플리케이션 검사 결과를 사용한다. 없으면
     구현 작업이 실제로 사용한 산출물을 한 번 고정한다. 이전 실패를 고치는 경우에는
     ``previous_job``의 수리 이력을 이어받으며, 구현 수리 뒤에는 ``preserve_test``로 기존
-    기능 테스트 계획을 보존한다. 다만 구현물이 바뀌었다면 이전 통과 결과는 재사용하지 않고
-    모든 사례를 다시 실행한다.
+    기능 테스트 계획을 보존한다. ``repair_task_type``이 있으면 그 수리와 관련된 gate만
+    실행하고, 관련 입력이 그대로인 나머지 gate 보고서는 이전 작업에서 가져온다.
     """
     repair_history: dict[str, Any] = RepairLedger().model_dump(mode="json")
     previous_findings: tuple[str, ...] = ()
     partial_result: dict[str, Any] = {}
+    gate_scope = _gate_scope_for_repair(repair_task_type)
+    previous_reports: dict[str, Any] = {}
+    previous_job_id = ""
 
     if checkpoint is not None:
         # 재시작 뒤 최신 DB 값을 다시 조합하지 않는다. command가 시작할 때 저장한 입력이
@@ -445,6 +682,14 @@ def run_testing(
         repair_history = dict(checkpoint.get("repair_history") or repair_history)
         previous_findings = tuple(checkpoint.get("previous_findings") or ())
         partial_result = dict(checkpoint.get("result") or {})
+        saved_scope = checkpoint.get("gate_scope")
+        gate_scope = (
+            {str(item) for item in saved_scope}
+            if isinstance(saved_scope, list)
+            else gate_scope
+        )
+        previous_reports = dict(checkpoint.get("previous_reports") or {})
+        previous_job_id = str(checkpoint.get("previous_job_id") or "")
     else:
         try:
             implementation = implementation_worker.get_testing_input(implementation_job_id)
@@ -460,6 +705,9 @@ def run_testing(
                 implementation_job_id,
                 artifact_version_ids=implementation.get("artifact_version_ids"),
                 contract_artifacts=implementation.get("contract_artifacts") or {},
+                implementation_traceability=implementation.get(
+                    "implementation_traceability"
+                ),
             )
         except (
             ArtifactSourceUnavailable,
@@ -472,6 +720,10 @@ def run_testing(
             if previous_job.get("app_id") != app_id:
                 raise ValueError("Previous Testing result does not belong to this app.")
             previous_result = previous_job.get("result") or {}
+            previous_job_id = str(previous_job.get("job_id") or "")
+            previous_reports = dict(
+                (previous_result.get("verification") or {}).get("reports") or {}
+            )
             if (
                 previous_job.get("status") != "COMPLETED"
                 or previous_result.get("passed") is not False
@@ -515,8 +767,9 @@ def run_testing(
                     raise ValueError("The previous Testing result has no executable test plan.")
                 partial_result["preservedCandidatePlan"] = dict(preserved_plan)
                 cases = dynamic.get("cases")
-                # 구현 산출물 ID가 바뀌면 이전 통과도 회귀 검증 대상이다. 같은 구현을
-                # 중단 지점부터 재개할 때만 이미 통과한 case를 건너뛴다.
+                # 일반 재검사는 새 구현에서 모든 case를 다시 본다. 다만 실패한 HTTP
+                # operation만 고치는 선택 수리는 같은 계획의 통과 case를 보존하고 실패
+                # case만 다시 실행한다.
                 partial_result["preservedCaseResults"] = (
                     [
                         dict(item)
@@ -525,7 +778,11 @@ def run_testing(
                         and str((item.get("result") or {}).get("gateStatus") or "").upper()
                         == "PASS"
                     ]
-                    if same_implementation and isinstance(cases, list)
+                    if (
+                        same_implementation
+                        or gate_scope == {"dynamicFunctional"}
+                    )
+                    and isinstance(cases, list)
                     else []
                 )
 
@@ -542,6 +799,9 @@ def run_testing(
                 "previous_findings": list(
                     state.get("previous_findings") or previous_findings
                 ),
+                "gate_scope": sorted(gate_scope) if gate_scope is not None else None,
+                "previous_reports": previous_reports,
+                "previous_job_id": previous_job_id,
             }
         )
 
@@ -554,6 +814,9 @@ def run_testing(
         repair_history=repair_history,
         previous_findings=previous_findings,
         partial_result=partial_result,
+        gate_scope=gate_scope,
+        previous_reports=previous_reports,
+        previous_job_id=previous_job_id,
         progress=save_progress,
     )
     return {

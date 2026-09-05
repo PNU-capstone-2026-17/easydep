@@ -91,6 +91,8 @@ def load_job(path: Path) -> JobSpec:
     inputs = {name: resolve(value) for name, value in data.get("inputs", {}).items()}
     generation = data.get("generation", {})
     agent = data.get("agent", {})
+    repair = data.get("repair", {})
+    repair = repair if isinstance(repair, dict) else {}
     return JobSpec(
         job_type=str(data.get("jobType", "INITIAL_IMPLEMENTATION")),
         feedback=str(data.get("feedback", "")),
@@ -122,6 +124,17 @@ def load_job(path: Path) -> JobSpec:
             else None
         ),
         app_id=str(data["appId"]) if data.get("appId") else None,
+        repair_task_type=str(repair.get("taskType") or "control"),
+        repair_file_hints=[
+            str(item)
+            for item in repair.get("fileHints") or []
+            if isinstance(item, str) and item
+        ],
+        repair_verification_profile=(
+            dict(repair.get("verificationProfile") or {})
+            if isinstance(repair.get("verificationProfile"), dict)
+            else {}
+        ),
     )
 
 
@@ -330,11 +343,35 @@ class PrototypeOrchestrator:
             if "/src/main/java/" in f"/{relative}"
             and any(token in f"/{relative}" for token in ("/bce/", "/api/"))
         ]
-        editable = [relative for relative in allowed if relative not in immutable]
+        editable_candidates = [relative for relative in allowed if relative not in immutable]
+        repair_hints = {
+            str(value).replace("\\", "/").strip("/")
+            for value in self.spec.repair_file_hints
+            if str(value).strip()
+        }
+        task_type = self.spec.repair_task_type or "control"
+        if task_type.startswith("testing-") and not repair_hints:
+            # Testing 수리는 RTM 또는 검사 target이 가리킨 파일만 편집해야 한다.
+            # 추적 결과가 비었다고 전체 소스를 열어 주면 한 HTTP 오류가 backend,
+            # frontend, 배포 파일 전체의 추측성 수정으로 번진다.
+            raise ValueError(
+                "Testing repair requires at least one trace-linked failing file. "
+                "Fix the Testing evidence or RTM routing before starting OpenHands."
+            )
+        editable = (
+            [relative for relative in editable_candidates if relative in repair_hints]
+            if repair_hints
+            else editable_candidates
+        )
+        if repair_hints and not editable:
+            raise ValueError(
+                "Testing repair file hints do not match the implementation snapshot: "
+                + ", ".join(sorted(repair_hints))
+            )
         context = {
             "schemaVersion": "implementation-feedback-context/v1alpha1",
             "taskId": "apply-source-feedback",
-            "taskType": "control",
+            "taskType": task_type,
             "feedback": self.spec.feedback,
             "editableFiles": editable,
             "immutableFiles": immutable,
@@ -343,6 +380,15 @@ class PrototypeOrchestrator:
         context_path.write_text(
             json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        testing_gate_rules = (
+            "- Reproduce the assigned Testing gate with run_task_check before editing.\n"
+            "- After editing, run the same check again and finish only when it passes.\n"
+            if task_type.startswith("testing-")
+            else (
+                "- Add or strengthen assertions in an existing test file when behavior changes.\n"
+                "- Finish only when compileJava and test pass.\n"
+            )
+        )
         prompt = (
             "Apply the user's natural-language feedback to the existing application.\n\n"
             f"## User feedback\n{self.spec.feedback}\n\n"
@@ -350,9 +396,9 @@ class PrototypeOrchestrator:
             "- Make a minimal, incremental change; preserve unrelated behavior.\n"
             "- Modify only the explicitly allowed existing files.\n"
             "- Do not weaken, delete, or disable tests to obtain a passing build.\n"
-            "- Add or strengthen assertions in an existing test file when behavior changes.\n"
             "- Generated API and BCE contracts are immutable. Do not edit them.\n"
-            "- Finish only when compileJava and test pass.\n\n"
+            + testing_gate_rules
+            + "\n"
             "## Editable files\n"
             + "\n".join(f"- `{path}`" for path in editable)
         )
@@ -370,7 +416,8 @@ class PrototypeOrchestrator:
             # 피드백 작업도 최초 구현과 같은 실행 설정을 사용한다. 일부 값만 복사하면
             # OpenHands가 대화를 시작하기 전에 필수 설정을 찾지 못해 실패할 수 있다.
             llm=llm_config(self.spec),
-            task_type="control",
+            task_type=task_type,
+            verification_profile=dict(self.spec.repair_verification_profile),
         )
         # OpenHands runtime은 실행 계획뿐 아니라 task별 JSON 계약에서 prompt와 쓰기 범위를
         # 읽는다. 피드백 task도 일반 구현 task와 같은 위치와 이름으로 저장해야 한다.

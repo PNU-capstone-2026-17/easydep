@@ -90,11 +90,53 @@ TERMINAL_JOB_STATUSES = {
 # 응답과 reasoning을 별도 ``responseContent``·``reasoningContent`` field로 기록하므로,
 # Workspace event에서도 같은 실행의 원문을 확인할 수 있다.
 _PRIVATE_DESIGN_TIMING_FIELDS = frozenset({"failureContentPrefix", "failureContentSuffix"})
+_REPEATED_REPAIR_OUTCOME = "repeated_candidate"
 
 
 def _public_design_timing_event(event: Mapping[str, Any]) -> dict[str, Any]:
     """설계 timing 한 건을 Workspace event로 옮기고 예전 중복 표본만 제거한다."""
     return {key: value for key, value in event.items() if key not in _PRIVATE_DESIGN_TIMING_FIELDS}
+
+
+def _latest_testing_repair_outcome(result: Mapping[str, Any]) -> str:
+    """Testing 공개 이력에서 방금 후보의 판정만 읽는다."""
+
+    repair_state = result.get("repair_state")
+    attempts = repair_state.get("recent_attempts") if isinstance(repair_state, dict) else None
+    latest = attempts[-1] if isinstance(attempts, list) and attempts else None
+    return str(latest.get("outcome") or "") if isinstance(latest, dict) else ""
+
+
+def _stop_repeated_testing_repair(result: dict[str, Any]) -> dict[str, Any]:
+    """파일까지 같은 수리 후보가 다시 나온 경우에만 시스템 오류로 끝낸다.
+
+    오류 목록이 그대로여도 파일 내용이 달라졌다면 다른 해결책일 수 있으므로 다음 수리를
+    허용한다. 반면 입력과 생성 파일까지 같은 후보가 재등장하면 같은 검사를 반복해도 새로
+    알 수 있는 것이 없다. 횟수 상한 없이 이 정확한 중복 조건만 사용한다.
+    """
+
+    repair_state = result.get("repair_state")
+    if not isinstance(repair_state, dict):
+        return result
+    if _latest_testing_repair_outcome(result) != _REPEATED_REPAIR_OUTCOME:
+        return result
+
+    reason = (
+        "Automatic repair did not reduce the same blocking findings. EasyDep stopped "
+        "starting new implementation jobs until the failing check or repair route is fixed."
+    )
+    return {
+        **result,
+        "kind": "system_error",
+        "message": reason,
+        "requires_revision": False,
+        "can_delegate_repair": False,
+        "repair_state": {
+            **repair_state,
+            "status": "STALLED",
+            "stall_reason": reason,
+        },
+    }
 
 
 def _implementation_agent_results(run_path: Path) -> list[dict[str, Any]]:
@@ -872,10 +914,67 @@ class WorkspaceService:
             metadata={"status": "RUNNING", "action": command["action"]},
         )
         try:
-            result = self._dispatch(command)
+            result = self._dispatch_automatic_testing_episode(command)
             self._complete_referenced_action(command)
             awaiting_input = result.pop("awaiting_input", False) is True
             if awaiting_input:
+                # 최초 Testing 실패는 자동 수리를 시작한다. 이미 한 번 수리한 뒤에도 같은
+                # finding이 줄지 않았다면 새 작업을 계속 만들지 않고 시스템 경계를 고친다.
+                # 실제로 개선된 결과에는 적용하지 않으므로 숫자 기반 재시도 상한은 없다.
+                if result.get("kind") == "system_error":
+                    # 새 사용자 입력으로 풀 수 없는 EasyDep 내부 문제는 대화 대기 상태로
+                    # 남기지 않는다. 실패 이유와 수리 이력은 보존하되 명령을 끝내야 화면도
+                    # 의미 없는 수리 버튼을 내놓지 않고 서버 재시작 시 재개하지 않는다.
+                    testing_job = result.get("job")
+                    candidate_job_id = (
+                        str(testing_job.get("implementation_job_id") or "")
+                        if isinstance(testing_job, dict)
+                        else ""
+                    )
+                    if candidate_job_id:
+                        try:
+                            discarded = implementation_worker.discard_feedback_candidate(
+                                candidate_job_id,
+                                reason=str(
+                                    result.get("message")
+                                    or "The Testing candidate did not improve its blockers."
+                                ),
+                            )
+                        except (KeyError, RuntimeError) as error:
+                            # 최초 구현이나 이미 정리된 후보는 폐기 대상이 아니다. 수리
+                            # 종료 자체를 실패시키지 않고 진단만 서버 로그에 남긴다.
+                            _log.info(
+                                "Testing candidate %s was not discarded: %s",
+                                candidate_job_id,
+                                error,
+                            )
+                        else:
+                            result["discarded_candidate"] = {
+                                "job_id": candidate_job_id,
+                                "artifact_types": list(
+                                    discarded.get("discarded_artifact_types") or []
+                                ),
+                            }
+                    result = result_with_contract(
+                        {**command, "status": "FAILED"}, result
+                    )
+                    repository.update_command(
+                        command_id,
+                        status="FAILED",
+                        result=result,
+                        error=str(result.get("message") or "Testing repair stalled."),
+                        completed_at=repository.now(),
+                    )
+                    repository.append_event(
+                        app_id,
+                        command_id=command_id,
+                        stage=stage,
+                        kind="system_error",
+                        actor="assistant",
+                        text=str(result.get("message") or "Testing repair stalled."),
+                        metadata={"status": "FAILED", **result},
+                    )
+                    return
                 result = result_with_contract(
                     {**command, "status": "AWAITING_INPUT"}, result
                 )
@@ -898,36 +997,6 @@ class WorkspaceService:
                     text=str(result.get("message") or "User input is required."),
                     metadata=result,
                 )
-                # 의미 검사로 발견한 기술 결함은 사용자가 버튼을 눌러야만 고쳐지는
-                # 질문이 아니다. 이미 시작된 수리뿐 아니라 Testing이 처음 발견한 제품·테스트
-                # 결함도 ``delegate_repair``로 곧바로 이어 간다. 요구사항 선택·확인 질문과
-                # 실행 환경 복구가 필요한 오류는 그대로 사용자에게 남긴다.
-                if (
-                    (
-                        command.get("action") == "delegate_repair"
-                        or stage == "testing"
-                    )
-                    and result.get("requires_revision") is True
-                    and result.get("can_delegate_repair") is True
-                    and not result.get("resource_question")
-                    and not result.get("resource_questions")
-                ):
-                    repository.append_event(
-                        app_id,
-                        command_id=command_id,
-                        stage=stage,
-                        kind="status",
-                        actor="system",
-                        text="Continuing automatic repair with the accumulated history.",
-                        metadata={"status": "AUTO_REPAIR_QUEUED"},
-                    )
-                    self.submit(
-                        app_id,
-                        action="delegate_repair",
-                        stage=stage,
-                        payload={"action_id": command_id},
-                    )
-                    return
                 if stage == "requirements":
                     self.apply_saved_deployment_preferences(app_id)
                 return
@@ -971,6 +1040,120 @@ class WorkspaceService:
                 metadata={"status": "FAILED", "error_type": type(error).__name__},
             )
             raise
+
+    def _dispatch_automatic_testing_episode(
+        self,
+        command: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Testing 수리를 새 command 없이 같은 실행 안에서 이어 간다.
+
+        화면에는 하나의 작업만 남기되 매 반복의 정확한 실패와 재검사 결과는 event로
+        누적한다. 횟수 제한은 사용하지 않는다. 실제 파일과 finding이 같아진 경우에는
+        ``_stop_repeated_testing_repair``가 시스템 결함으로 끝내므로 같은 LLM 작업을
+        무한히 만들지 않는다.
+        """
+
+        result = self._dispatch(command)
+        while result.get("awaiting_input") is True:
+            if command.get("action") == "delegate_repair" and command.get("stage") == "testing":
+                result = _stop_repeated_testing_repair(result)
+                # 파일은 달라졌지만 blocking finding이 줄지 않은 후보는 다음 수리의
+                # 출발점으로 채택하지 않는다. Job 이력은 남겨 에이전트가 이미 바꾼
+                # 파일을 볼 수 있게 하고, 실제 snapshot만 직전 수용본으로 되돌린다.
+                if (
+                    result.get("kind") != "system_error"
+                    and _latest_testing_repair_outcome(result) == "no_improvement"
+                ):
+                    testing_job = result.get("job")
+                    candidate_job_id = (
+                        str(testing_job.get("implementation_job_id") or "")
+                        if isinstance(testing_job, dict)
+                        else ""
+                    )
+                    if candidate_job_id:
+                        try:
+                            discarded = implementation_worker.discard_feedback_candidate(
+                                candidate_job_id,
+                                reason=(
+                                    "The candidate changed files but did not reduce the "
+                                    "blocking Testing findings."
+                                ),
+                            )
+                        except (KeyError, RuntimeError) as error:
+                            _log.info(
+                                "Testing candidate %s was not discarded: %s",
+                                candidate_job_id,
+                                error,
+                            )
+                        else:
+                            result["discarded_candidate"] = {
+                                "job_id": candidate_job_id,
+                                "artifact_types": list(
+                                    discarded.get("discarded_artifact_types") or []
+                                ),
+                            }
+            should_repair = (
+                command.get("stage") == "testing"
+                and result.get("requires_revision") is True
+                and result.get("can_delegate_repair") is True
+                and result.get("kind") != "system_error"
+                and not result.get("resource_question")
+                and not result.get("resource_questions")
+            )
+            if not should_repair:
+                return result
+
+            app_id = str(command["app_id"])
+            command_id = str(command["command_id"])
+            stage = str(command["stage"])
+            # 처음 Testing을 시작하게 한 이전 단계 command는 여기서 완료한다. 이후
+            # 반복은 현재 command 자신을 수리 근거로 참조하므로 새 DB 행이 필요 없다.
+            self._complete_referenced_action(command)
+            visible_result = result_with_contract(
+                {**command, "status": "RUNNING"},
+                {key: value for key, value in result.items() if key != "awaiting_input"},
+            )
+            repository.append_event(
+                app_id,
+                command_id=command_id,
+                stage=stage,
+                kind=str(result.get("kind") or "action_required"),
+                actor="assistant",
+                text=str(result.get("message") or "Testing found a repairable failure."),
+                metadata={"status": "REPAIR_ITERATION_FAILED", **visible_result},
+            )
+
+            # 이전 Testing checkpoint를 남겨 두면 dispatch가 구현 수리 대신 같은 검사를
+            # 즉시 재개한다. 실패 결과 자체는 command.result에 보존하고, 다음 구현 후보가
+            # 만든 checkpoint는 _run_testing_command가 다시 저장하게 한다.
+            payload = {
+                key: value
+                for key, value in dict(command.get("payload") or {}).items()
+                if key not in {"testing_checkpoint", "job_id"}
+            }
+            payload.setdefault("repair_episode_started_by", command.get("action"))
+            payload["action_id"] = command_id
+            command["action"] = "delegate_repair"
+            command["payload"] = payload
+            repository.update_command(
+                command_id,
+                action="delegate_repair",
+                stage=stage,
+                status="RUNNING",
+                result=visible_result,
+                payload=payload,
+            )
+            repository.append_event(
+                app_id,
+                command_id=command_id,
+                stage=stage,
+                kind="status",
+                actor="system",
+                text="Continuing automatic repair with the accumulated history.",
+                metadata={"status": "AUTO_REPAIR_RUNNING"},
+            )
+            result = self._dispatch(command)
+        return result
 
     def _complete_referenced_action(self, command: dict[str, Any]) -> None:
         if command["payload"].get("_conversation_outcome"):
@@ -1047,7 +1230,22 @@ class WorkspaceService:
                     for blocker in blockers
                     if isinstance(blocker, dict)
                 }
-                if "ENVIRONMENT_DEFECT" in defect_classes:
+                implementation_blockers = [
+                    blocker
+                    for blocker in blockers
+                    if isinstance(blocker, dict)
+                    and blocker.get("repairable") is not False
+                    and (
+                        blocker.get("repair_owner") == "implementation"
+                        or blocker.get("defect_class") == "SUT_DEFECT"
+                    )
+                ]
+                # 실행 환경 오류와 제품 오류가 함께 발견될 수 있다. 이때 환경 오류가
+                # 고칠 수 있는 Trivy/코드 오류까지 가리지 않게 하고, 환경 오류만 남은
+                # 경우에만 외부 복구를 기다린다.
+                if not implementation_blockers and defect_classes <= {
+                    "ENVIRONMENT_DEFECT"
+                }:
                     return {
                         "awaiting_input": True,
                         "kind": "external_action",
@@ -1067,7 +1265,7 @@ class WorkspaceService:
                         "job_id": previous_run_id,
                         "job": previous_job,
                     }
-                if "UPSTREAM_AMBIGUITY" in defect_classes:
+                if not implementation_blockers and "UPSTREAM_AMBIGUITY" in defect_classes:
                     # 이 분류는 고정 요구사항과 OpenAPI 사이에 추적 가능한 endpoint가 없을
                     # 때만 나온다. 가장 가까운 생산자인 API 명세부터 다시 만들고, 이후
                     # 설계 단계는 기존 그래프 순서대로 이어서 진행한다.
@@ -1079,14 +1277,44 @@ class WorkspaceService:
                         "regenerated the API specification from the preserved sequence design."
                     )
                     return shaped
-                if "SUT_DEFECT" in defect_classes:
+                if implementation_blockers:
+                    (
+                        selected_blockers,
+                        repair_task_type,
+                        repair_file_hints,
+                        verification_profile,
+                    ) = self._testing_repair_request(
+                        str(command["app_id"]),
+                        result,
+                        implementation_blockers,
+                    )
+                    if not repair_file_hints:
+                        return {
+                            "awaiting_input": True,
+                            "kind": "system_error",
+                            "message": (
+                                "Testing found an implementation failure but could not trace it "
+                                "to a generated file. Fix the Testing evidence or RTM routing; "
+                                "EasyDep did not open the whole application for speculative repair."
+                            ),
+                            "requires_revision": False,
+                            "can_delegate_repair": False,
+                            "blocking_findings": selected_blockers,
+                            "repair_state": {
+                                **dict(result.get("repair_state") or {}),
+                                "status": "STALLED",
+                                "stall_reason": "No trace-linked failing file was available.",
+                            },
+                            "job_id": previous_run_id,
+                            "job": previous_job,
+                        }
                     # 동적 테스트까지 실행된 실패라면 그 계획을 그대로 보존한다. 반대로
                     # 앱 실행처럼 계획이 생기기 전에 실패한 경우에는 보존할
                     # 대상이 없으므로, 고친 구현을 새 Testing 작업으로 검사해야 한다.
                     has_preserved_candidate = any(
                         isinstance(blocker.get("candidate_plan"), dict)
                         and bool(blocker.get("candidate_plan"))
-                        for blocker in blockers
+                        for blocker in selected_blockers
                     )
                     original_implementation = implementation_worker.get(implementation_job_id)
                     # Testing 이력에는 HTTP 실패가 남고 최신 source에는 이전 수정 결과가
@@ -1097,13 +1325,13 @@ class WorkspaceService:
                     )
                     feedback = self._testing_implementation_feedback(
                         result,
-                        blockers,
+                        selected_blockers,
                         previous_repair_results=previous_repair_results,
                         older_repair_summaries=older_repair_summaries,
                     )
                     confirmed_target_refs = list(dict.fromkeys(
                         str(target)
-                        for blocker in blockers
+                        for blocker in selected_blockers
                         if isinstance(blocker, dict)
                         for target in blocker.get("target_ids") or []
                         if isinstance(target, str) and target
@@ -1118,6 +1346,9 @@ class WorkspaceService:
                         str(original_implementation.get("base_package") or "com.easydep.app"),
                         True,
                         confirmed_target_refs=confirmed_target_refs,
+                        repair_task_type=repair_task_type,
+                        repair_file_hints=repair_file_hints,
+                        verification_profile=verification_profile,
                     )
                     repair_job_id = str(repair_job.get("job_id") or "")
                     if not repair_job_id:
@@ -1148,6 +1379,7 @@ class WorkspaceService:
                         repaired_job_id,
                         previous_job=previous_job,
                         preserve_test=has_preserved_candidate,
+                        repair_task_type=repair_task_type,
                     )
                 return self._run_testing_command(
                     command,
@@ -1286,11 +1518,15 @@ class WorkspaceService:
             repaired_job_id = str(
                 repaired.get("job_id") or repaired_job.get("job_id") or payload["job_id"]
             )
+            resumed_repair_task_type: str | None = (
+                str(current_job.get("repair_task_type") or "") or None
+            )
             return self._run_testing_command(
                 command,
                 repaired_job_id,
                 previous_job=previous_job,
                 preserve_test=preserve_test,
+                repair_task_type=resumed_repair_task_type,
             )
         if handler == "start_testing":
             return self._run_testing_command(
@@ -2705,7 +2941,7 @@ class WorkspaceService:
                 "status": str(current.get("status") or ""),
                 "changed_files": changed_files,
             }
-            if len(recent) < 3:
+            if len(recent) < 2:
                 recent.append(outcome)
             else:
                 compact = {
@@ -2715,7 +2951,7 @@ class WorkspaceService:
                 signature = stable_digest(compact)
                 stored = older_by_signature.setdefault(
                     signature,
-                    {"signature": signature, "repetitions": 0, **compact},
+                    {"repetitions": 0, **compact},
                 )
                 stored["repetitions"] = int(stored["repetitions"]) + 1
 
@@ -2728,6 +2964,78 @@ class WorkspaceService:
                 # 오래된 작업 파일이 정리됐더라도 현재 수리까지 막지는 않는다.
                 break
         return recent, list(older_by_signature.values())
+
+    @staticmethod
+    def _testing_repair_request(
+        app_id: str,
+        result: dict[str, Any],
+        blockers: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], str, list[str], dict[str, Any]]:
+        """같은 원인에 속한 finding을 한 구현 작업과 동일 재검사 입력으로 묶는다."""
+
+        gate_order = {
+            "testing.static": 0,
+            "testing.package": 1,
+            "testing.iac": 2,
+            "testing.dynamic-functional": 3,
+            "testing.dynamicFunctional": 3,
+        }
+        primary = min(
+            blockers,
+            key=lambda item: gate_order.get(
+                str(item.get("code") or item.get("stage") or ""), 99
+            ),
+        )
+        code = str(primary.get("code") or primary.get("stage") or "")
+        selected = [
+            item
+            for item in blockers
+            if str(item.get("code") or item.get("stage") or "") == code
+        ] or [primary]
+        task_type = {
+            "testing.static": "testing-static",
+            "testing.package": "testing-package",
+            "testing.iac": "testing-iac",
+            "testing.dynamic-functional": "testing-dynamic-functional",
+            "testing.dynamicFunctional": "testing-dynamic-functional",
+        }.get(code, "testing-dynamic-functional")
+        file_hints = list(
+            dict.fromkeys(
+                str(path)
+                for item in selected
+                for path in item.get("file_hints") or []
+                if isinstance(path, str) and path
+            )
+        )
+
+        job = result.get("job")
+        job = job if isinstance(job, dict) else {}
+        testing_result = job.get("result")
+        testing_result = testing_result if isinstance(testing_result, dict) else {}
+        testing_input = job.get("testing_input") or testing_result.get("testingInput") or {}
+        profile: dict[str, Any] = {
+            "app_id": app_id,
+            "testing_input": testing_input if isinstance(testing_input, dict) else {},
+        }
+        if task_type == "testing-dynamic-functional":
+            candidate_plan = primary.get("candidate_plan")
+            if isinstance(candidate_plan, dict):
+                profile["candidate_plan"] = candidate_plan
+            evidence = primary.get("evidence")
+            evidence = evidence if isinstance(evidence, dict) else {}
+            case_id = str(evidence.get("caseId") or evidence.get("case_id") or "")
+            if not case_id:
+                case_id = next(
+                    (
+                        str(target).rsplit(":", 1)[-1]
+                        for target in primary.get("target_ids") or []
+                        if isinstance(target, str) and target.startswith("test:")
+                    ),
+                    "",
+                )
+            if case_id:
+                profile["case_id"] = case_id
+        return selected, task_type, file_hints, profile
 
     @staticmethod
     def _testing_implementation_feedback(
@@ -2743,7 +3051,6 @@ class WorkspaceService:
         file_hints: list[str] = []
         trace_refs: list[str] = []
         execution_evidence: list[dict[str, Any]] = []
-        candidate_digests: list[str] = []
         candidate_plan: dict[str, Any] = {}
         for blocker in blockers:
             message = str(blocker.get("message") or "").strip()
@@ -2766,27 +3073,53 @@ class WorkspaceService:
             )
             if isinstance(blocker.get("evidence"), dict) and blocker["evidence"]:
                 execution_evidence.append(dict(blocker["evidence"]))
-            digest = str(blocker.get("candidate_digest") or "").strip()
-            if digest:
-                candidate_digests.append(digest)
             if not candidate_plan and isinstance(blocker.get("candidate_plan"), dict):
                 candidate_plan = dict(blocker["candidate_plan"])
-        history = dict(result.get("repair_state") or {})
+        raw_history = result.get("repair_state")
+        raw_history = raw_history if isinstance(raw_history, dict) else {}
+        history = {
+            "status": raw_history.get("status"),
+            "attempt_count": raw_history.get("attempt_count", 0),
+            "accepted_count": raw_history.get("accepted_count", 0),
+            "older_attempt_count": raw_history.get("older_attempt_count", 0),
+            "recent_attempts": list(raw_history.get("recent_attempts") or [])[-2:],
+        }
         needs_fixture = any(
             item.get("code") == "TEST_PROFILE_DATA_UNAVAILABLE"
             for item in execution_evidence
         )
-        parts = [
-            (
+        blocker_codes = {
+            str(blocker.get("code") or "")
+            for blocker in blockers
+            if isinstance(blocker, dict)
+        }
+        if blocker_codes and blocker_codes <= {"testing.static", "testing.iac"}:
+            opening = (
+                "The generated deployment infrastructure failed its assigned static or "
+                "OpenTofu check. Repair only the trace-linked IaC files. Keep the selected "
+                "deployment topology and application contracts unchanged."
+            )
+        elif blocker_codes == {"testing.package"}:
+            opening = (
+                "The generated deployment package failed its assigned syntax or package "
+                "check. Repair only the trace-linked deployment files and keep application "
+                "behavior unchanged."
+            )
+        elif needs_fixture:
+            opening = (
                 "The generated application's test profile lacks prerequisite data for a "
                 "preserved functional flow. Add the smallest test-profile-only fixture or "
                 "startup setup that makes the documented success path executable. Do not "
                 "change production behavior, API contracts, or test acceptance conditions."
-                if needs_fixture
-                else "The generated application failed a preserved functional test. Repair only "
+            )
+        else:
+            opening = (
+                "The generated application failed a preserved functional test. Repair only "
                 "the production implementation. Keep the existing contracts and test "
                 "acceptance conditions unchanged."
-            ),
+            )
+        parts = [
+            opening,
             "Failure evidence:\n- " + "\n- ".join(evidence or ["Testing gate failed."]),
         ]
         if target_ids:
@@ -2795,11 +3128,9 @@ class WorkspaceService:
             parts.append("Related artifact references:\n- " + "\n- ".join(dict.fromkeys(trace_refs)))
         if file_hints:
             parts.append("Start investigation with these trace-linked files:\n- " + "\n- ".join(dict.fromkeys(file_hints)))
-        if candidate_digests:
-            parts.append("Preserved test plan digest: " + ", ".join(dict.fromkeys(candidate_digests)))
         if execution_evidence:
             parts.append(
-                "Exact failing HTTP evidence:\n"
+                "Exact failing check evidence:\n"
                 + json.dumps(execution_evidence, ensure_ascii=False, sort_keys=True)
             )
         if candidate_plan:
@@ -2807,7 +3138,7 @@ class WorkspaceService:
                 "Preserved functional test plan:\n"
                 + json.dumps(candidate_plan, ensure_ascii=False, sort_keys=True)
             )
-        if history:
+        if raw_history:
             parts.append(
                 "Previous repair history:\n"
                 + json.dumps(history, ensure_ascii=False, sort_keys=True)
@@ -2950,6 +3281,7 @@ class WorkspaceService:
         *,
         previous_job: dict[str, Any] | None = None,
         preserve_test: bool = False,
+        repair_task_type: str | None = None,
     ) -> dict[str, Any]:
         """Testing을 실행하고 재시작 checkpoint를 현재 Workspace command에 저장한다."""
 
@@ -2976,6 +3308,7 @@ class WorkspaceService:
             previous_job=previous_job,
             preserve_test=preserve_test,
             checkpoint=checkpoint if isinstance(checkpoint, dict) else None,
+            repair_task_type=repair_task_type,
             progress=save_checkpoint,
         )
         return self._testing_result(job)

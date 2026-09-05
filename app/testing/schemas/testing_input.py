@@ -57,6 +57,9 @@ class TestingInput(BaseModel):
     implementation_job_id: str = Field(min_length=1)
     artifact_version_ids: dict[str, int]
     contract_artifacts: TestingContracts = Field(default_factory=TestingContracts)
+    # 파일 snapshot이 이전과 같아 version ID를 재사용해도 현재 구현 Job의 RTM은
+    # 달라질 수 있다. 파일 metadata에 기대지 않고 실행 입력에 함께 고정한다.
+    implementation_traceability: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _valid_artifact_ids(self) -> TestingInput:

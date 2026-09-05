@@ -6,7 +6,9 @@ Testing HTTP API와 전체 파이프라인은 모두 생성된 앱을 실행하�
 
 from __future__ import annotations
 
+import hashlib
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Any
 
 from app.metrics import langsmith as langsmith_metrics
@@ -16,6 +18,150 @@ from app.testing.runtime.app_container import (
     running_application,
 )
 from app.testing.utils.gates import aggregate_gate_report, gate_status
+from app.validation import stable_digest
+
+_ALL_GATES = frozenset({"static", "package", "iac", "dynamicFunctional"})
+
+
+def _files_digest(root: Path, files: list[Path], *, extra: object = None) -> str:
+    """선택 gate가 실제로 읽는 파일만 안정적인 digest로 만든다."""
+
+    entries = [
+        {
+            "path": path.relative_to(root).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        for path in sorted(files)
+        if path.is_file()
+    ]
+    return stable_digest({"files": entries, "extra": extra})
+
+
+def _gate_input_digests(
+    application_dir: str,
+    *,
+    testing_input: dict[str, Any] | None,
+) -> dict[str, str]:
+    """gate별 관련 파일을 나눠 무관한 수정 때문에 전체 검사가 반복되지 않게 한다."""
+
+    application = (
+        Path(application_dir)
+        if application_dir
+        else Path("__easydep_missing_application__")
+    )
+    all_files = (
+        [path for path in application.rglob("*") if path.is_file()]
+        if application.is_dir()
+        else []
+    )
+    deployment = application / "deployment"
+    tofu = deployment / "tofu"
+    static_files = [
+        path
+        for path in all_files
+        if path.name == "Dockerfile"
+        or path.suffix.lower() in {".tf", ".tfvars", ".yaml", ".yml", ".json"}
+    ]
+    tofu_files = [path for path in tofu.rglob("*") if path.is_file()] if tofu.is_dir() else []
+    package_files = [
+        path
+        for path in all_files
+        if deployment in path.parents and tofu not in path.parents
+    ]
+    # package 구조 검사는 tofu 파일 내용이 아니라 필수 파일의 존재 여부도 확인한다.
+    tofu_layout = sorted(path.relative_to(tofu).as_posix() for path in tofu_files)
+    dynamic_files = [
+        path
+        for path in all_files
+        if deployment not in path.parents
+        and "frontend" not in path.relative_to(application).parts
+        and path.name != "Dockerfile"
+    ]
+    frozen_input = testing_input or {}
+    contracts = frozen_input.get("contract_artifacts") or frozen_input.get(
+        "contractArtifacts"
+    )
+    contracts = contracts if isinstance(contracts, dict) else {}
+    deployment_contract = contracts.get("deployment") or {}
+    dynamic_contracts = {
+        key: contracts.get(key)
+        for key in ("requirements", "use_cases", "useCases", "openapi")
+        if contracts.get(key) is not None
+    }
+    return {
+        "static": _files_digest(
+            application, static_files, extra={"deployment": deployment_contract}
+        ),
+        "package": _files_digest(
+            application,
+            package_files,
+            extra={"tofuLayout": tofu_layout, "deployment": deployment_contract},
+        ),
+        "iac": _files_digest(
+            application, tofu_files, extra={"deployment": deployment_contract}
+        ),
+        "dynamicFunctional": _files_digest(
+            application,
+            dynamic_files,
+            # 계획은 이 gate의 출력이다. source와 고정 계약이 같으면 직전 실행 결과를
+            # 재사용할 수 있으며, 선택 재실행 때는 service가 그 계획을 별도로 넘긴다.
+            extra={"contracts": dynamic_contracts},
+        ),
+    }
+
+
+def _previous_input_digest(reports: dict[str, Any], gate: str) -> str:
+    """이전 통합 보고서에서 gate별 입력 digest를 읽는다."""
+
+    if gate == "static":
+        report = reports.get("static") or {}
+        report = report.get("trivyScan") or report
+    elif gate == "package":
+        report = (reports.get("static") or {}).get("deploymentPackage") or {}
+    else:
+        report = reports.get(gate) or {}
+    return str(report.get("inputDigest") or "") if isinstance(report, dict) else ""
+
+
+def _effective_scope(
+    requested: set[str] | None,
+    previous_reports: dict[str, Any],
+    input_digests: dict[str, str],
+) -> set[str] | None:
+    """관련 입력이 실제로 달라진 gate만 요청 범위에 추가한다."""
+
+    if requested is None:
+        return None
+    selected = set(requested)
+    for gate in _ALL_GATES - selected:
+        previous = _previous_input_digest(previous_reports, gate)
+        # 입력 digest가 없는 예전 보고서는 파일이 같은지 증명할 수 없다. 한 번 실제로
+        # 실행해 현재 형식의 digest를 만든 뒤에만 다음 수리에서 재사용한다.
+        if not previous or previous != input_digests[gate]:
+            selected.add(gate)
+    return selected
+
+
+def _attach_input_digests(result: dict[str, Any], digests: dict[str, str]) -> None:
+    """다음 선택 재검사가 안전하게 재사용 여부를 판단할 근거를 남긴다."""
+
+    static = result.get("static_report")
+    if isinstance(static, dict):
+        static["inputDigest"] = stable_digest(
+            {"static": digests["static"], "package": digests["package"]}
+        )
+        trivy = static.get("trivyScan")
+        if isinstance(trivy, dict):
+            trivy["inputDigest"] = digests["static"]
+        package = static.get("deploymentPackage")
+        if isinstance(package, dict):
+            package["inputDigest"] = digests["package"]
+    iac = result.get("iac_report")
+    if isinstance(iac, dict):
+        iac["inputDigest"] = digests["iac"]
+    dynamic = result.get("dynamic_functional_report")
+    if isinstance(dynamic, dict):
+        dynamic["inputDigest"] = digests["dynamicFunctional"]
 
 
 def _launch(
@@ -50,6 +196,9 @@ def run_verification_graph(
     testing_input: dict[str, Any] | None = None,
     iac_expected: bool | None = None,
     deployment_package_expected: bool | None = None,
+    gate_scope: set[str] | None = None,
+    previous_reports: dict[str, Any] | None = None,
+    previous_job_id: str = "",
 ) -> dict[str, Any]:
     with langsmith_metrics.trace_scope(
         "easydep.testing.verification",
@@ -59,6 +208,7 @@ def run_verification_graph(
             "run_id": run_id,
             "app_id": app_id,
             "implementation_job_id": implementation_job_id,
+            "gate_scope": sorted(gate_scope) if gate_scope is not None else "all",
         },
     ):
         return _run_verification_graph(
@@ -73,6 +223,9 @@ def run_verification_graph(
             testing_input=testing_input,
             iac_expected=iac_expected,
             deployment_package_expected=deployment_package_expected,
+            gate_scope=gate_scope,
+            previous_reports=previous_reports,
+            previous_job_id=previous_job_id,
         )
 
 
@@ -89,6 +242,9 @@ def _run_verification_graph(
     testing_input: dict[str, Any] | None = None,
     iac_expected: bool | None = None,
     deployment_package_expected: bool | None = None,
+    gate_scope: set[str] | None = None,
+    previous_reports: dict[str, Any] | None = None,
+    previous_job_id: str = "",
 ) -> dict[str, Any]:
     """저장된 애플리케이션을 실행한 뒤 testing graph를 호출한다.
 
@@ -97,38 +253,22 @@ def _run_verification_graph(
     차단 원인과 진단 정보에 명확히 기록한다.
     """
     graph = create_testing_graph()
+    previous_reports = dict(previous_reports or {})
+    input_digests = _gate_input_digests(
+        application_dir,
+        testing_input=testing_input,
+    )
+    selected = _effective_scope(gate_scope, previous_reports, input_digests)
     application: dict[str, Any] = {}
     launch_error: str | None = None
     launch_defect_class = "SUT_DEFECT"
 
-    try:
-        with _launch(
-            app_id,
-            target_url,
-            launch_id=run_id,
-            application_dir=application_dir,
-        ) as (url, application):
-            result = graph.invoke(
-                initial_state(
-                    run_id=run_id,
-                    app_id=app_id,
-                    target_url=url,
-                    application_dir=application_dir,
-                    repair_history=repair_history,
-                    fixed_test_plan=fixed_test_plan,
-                    preserved_case_results=preserved_case_results,
-                    testing_input=testing_input,
-                    iac_expected=iac_expected,
-                    deployment_package_expected=deployment_package_expected,
-                )
-            )
-    except ApplicationLaunchError as error:
-        launch_error = str(error)
-        launch_defect_class = error.defect_class
-        result = graph.invoke(
+    def invoke(url: str = "") -> dict[str, Any]:
+        return graph.invoke(
             initial_state(
                 run_id=run_id,
                 app_id=app_id,
+                target_url=url,
                 application_dir=application_dir,
                 repair_history=repair_history,
                 fixed_test_plan=fixed_test_plan,
@@ -136,8 +276,30 @@ def _run_verification_graph(
                 testing_input=testing_input,
                 iac_expected=iac_expected,
                 deployment_package_expected=deployment_package_expected,
+                gate_scope=sorted(selected) if selected is not None else None,
+                previous_reports=previous_reports,
+                previous_job_id=previous_job_id,
             )
         )
+
+    dynamic_selected = selected is None or "dynamicFunctional" in selected
+    try:
+        if not dynamic_selected:
+            # 정적 수리에서는 Spring/Gradle을 띄우지 않는다. graph의 dynamic node는
+            # 아래 고정 이전 보고서를 복사하므로 결과 shape와 전체 gate 판정은 유지된다.
+            result = invoke()
+        else:
+            with _launch(
+                app_id,
+                target_url,
+                launch_id=run_id,
+                application_dir=application_dir,
+            ) as (url, application):
+                result = invoke(url)
+    except ApplicationLaunchError as error:
+        launch_error = str(error)
+        launch_defect_class = error.defect_class
+        result = invoke()
 
         # 앱을 띄우지 못했는데 동적 검사를 NOT_APPLICABLE로 두면 최종 finding에서
         # 시작 실패가 사라진다. Docker 환경 문제는 재실행 대기, 생성 앱 문제는 구현
@@ -156,6 +318,7 @@ def _run_verification_graph(
             },
         }
 
+    _attach_input_digests(result, input_digests)
     reports = {
         "static": result.get("static_report"),
         "iac": result.get("iac_report"),

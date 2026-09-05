@@ -15,8 +15,11 @@ import pytest
 from app.db.models import (
     TYPE_DEPLOYMENT_FILE,
     TYPE_IAC_CODE,
+    TYPE_SOURCE_CODE,
 )
+from app.testing import service as testing_service
 from app.testing.graphs.testing_graph import create_testing_graph
+from app.testing.schemas.testing_input import TestingInput as FrozenTestingInput
 
 
 def _snapshot(files: dict[str, str], version_no: int = 3) -> dict:
@@ -258,6 +261,152 @@ def test_static_failure_blocks_the_testing_result():
     )
 
     assert reason == "배포 설정 정적 검사에 실패했습니다: Dockerfile runs as root"
+
+
+def test_testing_result_preserves_static_failure_evidence_for_repair(
+    tmp_path, monkeypatch
+):
+    """배포 수리가 규칙, 실행 명령과 실제 대상 파일을 모두 받는다."""
+    fixed_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+    )
+    issue = (
+        "[deployment/tofu/main.tf] AVD-AWS-0131: "
+        "EBS volume encryption is disabled (HIGH)"
+    )
+    command = {
+        "name": "trivy config",
+        "command": ["trivy", "config", "--format", "json", "/src"],
+        "exitCode": 1,
+        "status": "FAIL",
+        "tool": "trivy",
+        "toolchain": "easydep-toolchain:local",
+    }
+    verification = {
+        "passed": False,
+        "status": "FAIL",
+        "gateStatus": "FAIL",
+        "gateCounts": {"passed": 2, "failed": 1, "inconclusive": 0},
+        "blockingReason": issue,
+        "diagnostics": [],
+        "reports": {
+            "static": {
+                "status": "FAILED",
+                "gateStatus": "FAIL",
+                "issues": [issue],
+                "trivyScan": {
+                    "status": "FAILED",
+                    "gateStatus": "FAIL",
+                    "issues": [issue],
+                    "commands": [command],
+                    "targets": ["deployment/tofu/main.tf"],
+                    "tool": "trivy",
+                },
+                "deploymentPackage": {
+                    "status": "PASSED",
+                    "gateStatus": "PASS",
+                    "issues": [],
+                },
+            },
+            "iac": {"status": "SKIPPED", "gateStatus": "NOT_APPLICABLE"},
+            "dynamicFunctional": {"status": "passed", "gateStatus": "PASS"},
+        },
+    }
+
+    @contextmanager
+    def restored_application(_testing_input):
+        yield tmp_path
+
+    monkeypatch.setattr(
+        testing_service,
+        "materialized_testing_application",
+        restored_application,
+    )
+    monkeypatch.setattr(
+        testing_service,
+        "run_verification_graph",
+        lambda **_kwargs: verification,
+    )
+    monkeypatch.setattr(
+        testing_service,
+        "load_file_snapshot",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = testing_service.run_testing(
+        "app-1",
+        "implementation-1",
+        run_id="testing-command",
+        checkpoint={
+            "implementation_job_id": "implementation-1",
+            "testing_input": fixed_input.model_dump(mode="json"),
+        },
+    )["result"]
+
+    assert len(result["blocking_findings"]) == 1
+    finding = result["blocking_findings"][0]
+    assert finding["code"] == "testing.static"
+    assert finding["file_hints"] == ["application/deployment/tofu/main.tf"]
+    assert finding["evidence"]["issues"] == [issue]
+    assert finding["evidence"]["commands"] == [command]
+    assert finding["evidence"]["tool"] == "trivy"
+
+
+def test_static_repair_rechecks_static_gate_without_starting_the_application(
+    tmp_path, monkeypatch
+):
+    """Gradle 성공 여부가 아니라 원래 실패한 정적 검사가 수리 완료를 정한다."""
+    from app.implementation.agents import task_check
+    from app.implementation.agents.verification import build
+    from app.testing import repair_check
+
+    application = tmp_path / "application"
+    application.mkdir()
+    trivy_command = {
+        "name": "trivy config",
+        "command": ["trivy", "config", str(application)],
+        "exitCode": 1,
+        "status": "FAIL",
+    }
+    monkeypatch.setattr(
+        repair_check,
+        "static_verification_node",
+        lambda _state: {
+            "static_report": {
+                "status": "FAILED",
+                "gateStatus": "FAIL",
+                "issues": ["AVD-AWS-0131 is still present"],
+                "commands": [trivy_command],
+            },
+            "iac_report": {"status": "PASSED", "gateStatus": "PASS"},
+        },
+    )
+    monkeypatch.setattr(
+        repair_check,
+        "running_application",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a deployment-only repair must not start the Spring application"
+        ),
+    )
+    monkeypatch.setattr(
+        build.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a Gradle pass must not replace the failed static gate"
+        ),
+    )
+
+    passed, output = task_check.run_task_check(
+        tmp_path,
+        "testing-static",
+        ["application/deployment/tofu/main.tf"],
+        {"gate": "static"},
+    )
+
+    assert passed is False
+    assert "AVD-AWS-0131 is still present" in output
 
 
 # ---------------------------------------------------------------------------

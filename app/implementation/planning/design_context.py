@@ -56,6 +56,9 @@ class TaskSpec:
     # 다른 기능 작업과 겹치지 않는 package만 새 파일 생성을 허용한다. 기존 계약 파일은
     # immutable_paths가 계속 보호한다.
     allowed_write_roots: list[str] = field(default_factory=list)
+    # Testing feedback 작업만 사용한다. 실패 당시 고정한 OpenAPI·case 등을 같은
+    # run_task_check에 넘겨 수리 전후 검사가 달라지지 않게 한다.
+    verification_profile: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.required_output_paths is None:

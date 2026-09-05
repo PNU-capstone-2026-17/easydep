@@ -95,7 +95,7 @@ def verify_run_workspace(
             frontend_verification = cached_frontend or verify_frontend_workspace(sandbox)
             if cached_frontend is None:
                 store_frontend_build(run_root, sandbox, frontend_verification)
-        result = {
+        result: dict[str, object] = {
             "status": (
                 "SUCCEEDED"
                 # 피드백 수정 직후에는 구현 단계의 단위·작은 통합 테스트만 다시 실행한다.
@@ -140,12 +140,26 @@ def verify_agent_workspace(
     sandbox: Path,
     task_type: str = "",
     allowed_write_paths: list[str] | None = None,
+    verification_profile: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """기능 작업에는 관련 검사만, 최종 단계에는 전체 검사를 실행한다.
 
     같은 sandbox에서 수리할 때도 Gradle의 증분 결과와 build cache를 재사용한다. 바뀐
     source는 Gradle이 다시 compile하므로 ``--rerun-tasks``로 모든 task를 강제할 필요가 없다.
     """
+    if task_type.startswith("testing-"):
+        # Testing feedback job은 일반 Gradle 통과가 아니라 최초에 실패한
+        # Trivy/OpenTofu/package/HTTP gate의 재통과가 완료 조건이다.
+        from app.testing.repair_check import verify_testing_repair_gate
+
+        evidence = verify_testing_repair_gate(
+            sandbox,
+            task_type,
+            dict(verification_profile or {}),
+        )
+        if evidence.get("gateStatus") != "PASS":
+            raise WorkspaceVerificationError(evidence)
+        return evidence
     if task_type in {"frontend", "frontend-implementation"}:
         return verify_frontend_workspace(sandbox)
     if task_type == "use-case":
@@ -398,10 +412,13 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
                 "required_test_paths",
                 task.get("required_output_paths", task.get("allowed_write_paths", [])),
             )
+            or []
             if "/src/test/" in "/" + str(path).replace("\\", "/") and str(path).endswith(".java")
         ]
         use_case_ids = [
-            str(item) for item in task.get("use_case_ids", task.get("useCaseIds", [])) if str(item)
+            str(item)
+            for item in (task.get("use_case_ids", task.get("useCaseIds", [])) or [])
+            if str(item)
         ]
         covered_use_cases.update(use_case_ids)
         classes = [Path(path).stem for path in test_paths]
@@ -439,7 +456,7 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
     expected_use_cases = {
         str(use_case_id)
         for task in planned
-        for use_case_id in task.get("use_case_ids", task.get("useCaseIds", []))
+        for use_case_id in (task.get("use_case_ids", task.get("useCaseIds", [])) or [])
         if str(use_case_id)
     }
     if expected_use_cases and covered_use_cases != expected_use_cases:

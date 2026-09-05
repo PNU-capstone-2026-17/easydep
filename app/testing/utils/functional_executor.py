@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlencode, urljoin
@@ -11,14 +13,18 @@ from urllib.parse import quote, urlencode, urljoin
 import httpx
 import jsonschema
 
-from app.testing.schemas.functional_plan import FunctionalTestCase
+from app.testing.schemas.functional_plan import FunctionalInputValue, FunctionalTestCase
 
 _METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
-_EXAMPLE = "generated-example"
+_GENERATED = "generated-input"
 
 
 class UpstreamAmbiguity(ValueError):
     """고정 산출물에 실행을 정할 정보가 없을 때 사용한다."""
+
+
+class TestInputError(ValueError):
+    """테스트가 제안한 입력이 OpenAPI 계약을 통과하지 못할 때 사용한다."""
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,19 @@ class Operation:
     method: str
     value: dict[str, Any]
     path_item: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class InputValueRequest:
+    """LLM에 전체 요청이 아니라 값 하나만 물어보기 위한 최소 입력이다."""
+
+    operation_id: str
+    location: str
+    schema: dict[str, Any]
+    operation_context: str = ""
+
+
+InputValueProposer = Callable[[InputValueRequest], Any]
 
 
 def _ambiguity(reason: str, **extra: Any) -> dict[str, Any]:
@@ -121,39 +140,241 @@ def _fields(document: dict[str, Any], schema: Any) -> list[tuple[str, dict[str, 
     ]
 
 
-def _sample(document: dict[str, Any], schema: Any) -> Any:
-    """실재 데이터를 뜻하지 않는 타입 기반 안정 예시값을 만든다."""
+def _schema_errors(document: dict[str, Any], schema: dict[str, Any], value: Any) -> list[str]:
+    """제안값을 실제 OpenAPI leaf schema로 다시 검사한다."""
+
+    expanded = _inline_refs(document, schema)
+    try:
+        validator = jsonschema.Draft202012Validator(
+            expanded,
+            format_checker=jsonschema.FormatChecker(),
+        )
+        return [error.message for error in sorted(validator.iter_errors(value), key=str)]
+    except jsonschema.SchemaError as error:
+        raise UpstreamAmbiguity(f"The OpenAPI input schema is invalid: {error}") from error
+
+
+def _bounded_number(schema: dict[str, Any], kind: str) -> int | float | None:
+    """숫자 범위가 명시됐을 때 그 범위 안의 가장 단순한 값을 고른다."""
+
+    lower = schema.get("minimum")
+    upper = schema.get("maximum")
+    exclusive_lower = schema.get("exclusiveMinimum")
+    exclusive_upper = schema.get("exclusiveMaximum")
+    if isinstance(exclusive_lower, (int, float)) and not isinstance(exclusive_lower, bool):
+        lower = exclusive_lower + (1 if kind == "integer" else 0.1)
+    if isinstance(exclusive_upper, (int, float)) and not isinstance(exclusive_upper, bool):
+        upper = exclusive_upper - (1 if kind == "integer" else 0.1)
+    if lower is None and upper is None:
+        return None
+    candidate = lower if isinstance(lower, (int, float)) else upper
+    if not isinstance(candidate, (int, float)) or isinstance(candidate, bool):
+        return None
+    if kind == "integer":
+        candidate = math.ceil(candidate) if lower is not None else math.floor(candidate)
+    multiple = schema.get("multipleOf")
+    if isinstance(multiple, (int, float)) and multiple > 0:
+        if lower is not None:
+            candidate = math.ceil(float(candidate) / multiple) * multiple
+        else:
+            candidate = math.floor(float(candidate) / multiple) * multiple
+    return int(candidate) if kind == "integer" else float(candidate)
+
+
+def _suggest_value(
+    document: dict[str, Any],
+    schema: dict[str, Any],
+    *,
+    operation_id: str,
+    location: str,
+    proposer: InputValueProposer | None,
+    preserved: dict[tuple[str, str], FunctionalInputValue],
+    suggestions: list[FunctionalInputValue],
+    operation_context: str,
+) -> Any:
+    """근거가 없는 leaf 하나만 제안받고 OpenAPI로 검증한다."""
+
+    key = (operation_id, location)
+    if key in preserved:
+        proposed = preserved[key]
+        errors = _schema_errors(document, schema, proposed.value)
+        if errors:
+            raise TestInputError(
+                f"Preserved input {location} is invalid for {operation_id}: {errors[0]}"
+            )
+        suggestions.append(proposed)
+        return proposed.value
+    if proposer is None:
+        raise UpstreamAmbiguity(
+            f"OpenAPI has no success-path example for {operation_id} {location}."
+        )
+    try:
+        value = proposer(
+            InputValueRequest(
+                operation_id=operation_id,
+                location=location,
+                schema=_inline_refs(document, schema),
+                operation_context=operation_context,
+            )
+        )
+    except (TypeError, ValueError) as error:
+        raise TestInputError(
+            f"Input suggestion failed for {operation_id} {location}: {error}"
+        ) from error
+    errors = _schema_errors(document, schema, value)
+    if errors:
+        raise TestInputError(
+            f"Suggested input {location} is invalid for {operation_id}: {errors[0]}"
+        )
+    proposed = FunctionalInputValue(
+        operation_id=operation_id,
+        location=location,
+        value=value,
+    )
+    suggestions.append(proposed)
+    return value
+
+
+def _sample(
+    document: dict[str, Any],
+    schema: Any,
+    *,
+    operation_id: str,
+    location: str,
+    sources: dict[str, str],
+    proposer: InputValueProposer | None,
+    preserved: dict[tuple[str, str], FunctionalInputValue],
+    suggestions: list[FunctionalInputValue],
+    previous: dict[tuple[str, str], list[Any]],
+    operation_context: str,
+) -> Any:
+    """OpenAPI 근거를 먼저 쓰고, 근거 없는 leaf만 LLM에 제안받는다."""
+
     value = _ref(document, schema)
+    if "const" in value:
+        sources[location] = "openapi-const"
+        return value["const"]
     if isinstance(value.get("enum"), list) and value["enum"]:
+        sources[location] = "openapi-enum"
         return value["enum"][0]
-    if "example" in value:
-        return value["example"]
+    for key in ("example", "default"):
+        if key in value:
+            sources[location] = f"openapi-{key}"
+            return value[key]
+    examples = value.get("examples")
+    if isinstance(examples, list) and examples:
+        sources[location] = "openapi-example"
+        return examples[0]
+
     kind, fmt = _type(document, value), str(value.get("format") or "")
+    # 같은 이름과 타입의 응답값이 하나뿐이면 그것이 가장 강한 실행 근거다. body를
+    # 임시값으로 먼저 채웠다가 나중에 덮어쓰면 불필요한 LLM 호출이 생기므로 leaf에서
+    # 바로 이전 응답을 선택한다.
+    leaf_name = location.rsplit(".", 1)[-1].split("[", 1)[0]
+    transferred = previous.get((leaf_name, kind), [])
+    if len(transferred) == 1:
+        sources[location] = "previous-response"
+        return transferred[0]
     if kind == "string":
-        return {
+        by_format = {
             "date": "2026-01-02",
             "date-time": "2026-01-02T03:04:05Z",
             "email": "easydep@example.test",
+            "hostname": "example.test",
+            "ipv4": "192.0.2.1",
+            "ipv6": "2001:db8::1",
+            "uri": "https://example.test/resource",
             "uuid": "00000000-0000-4000-8000-000000000001",
-        }.get(fmt, "easydep-example")
-    if kind == "integer":
-        return 1
-    if kind == "number":
-        return 1.0
-    if kind == "boolean":
-        return True
-    if kind == "array":
+        }
+        if fmt in by_format:
+            sources[location] = "openapi-format"
+            return by_format[fmt]
+    elif kind in {"integer", "number"}:
+        if (candidate := _bounded_number(value, kind)) is not None:
+            if not _schema_errors(document, value, candidate):
+                sources[location] = "openapi-bound"
+                return candidate
+    elif kind == "array":
         items = value.get("items")
         if not isinstance(items, dict):
             raise UpstreamAmbiguity("An array OpenAPI schema has no items.")
-        return [_sample(document, items)]
-    if kind == "object":
+        minimum = value.get("minItems")
+        if isinstance(minimum, int) and minimum > 0:
+            sources[location] = "openapi-bound"
+            return [
+                _sample(
+                    document,
+                    items,
+                    operation_id=operation_id,
+                    location=f"{location}[{index}]",
+                    sources=sources,
+                    proposer=proposer,
+                    preserved=preserved,
+                    suggestions=suggestions,
+                    previous=previous,
+                    operation_context=operation_context,
+                )
+                for index in range(minimum)
+            ]
+        if value.get("maxItems") == 0:
+            sources[location] = "openapi-bound"
+            return []
+        # ``type: array``만으로는 빈 배열이 정상 흐름인지 알 수 없다. 예시나
+        # minItems가 없다면 임의로 []를 보내지 않고 이 배열 값 하나만 제안받는다.
+        # 특정 도메인의 원소 개수나 의미를 코드에 넣지 않아도 성공 입력을 만들 수 있다.
+        sources[location] = (
+            "preserved-suggestion"
+            if (operation_id, location) in preserved
+            else "llm-suggestion"
+        )
+        return _suggest_value(
+            document,
+            value,
+            operation_id=operation_id,
+            location=location,
+            proposer=proposer,
+            preserved=preserved,
+            suggestions=suggestions,
+            operation_context=operation_context,
+        )
+    elif kind == "object":
+        fields = _fields(document, value)
+        if not fields:
+            sources[location] = "openapi-type"
         return {
-            name: _sample(document, child)
-            for name, child, required in _fields(document, value)
+            name: _sample(
+                document,
+                child,
+                operation_id=operation_id,
+                location=f"{location}.{name}",
+                sources=sources,
+                proposer=proposer,
+                preserved=preserved,
+                suggestions=suggestions,
+                previous=previous,
+                operation_context=operation_context,
+            )
+            for name, child, required in fields
             if required
         }
-    raise UpstreamAmbiguity(f"No stable example value can be created for OpenAPI type {kind}.")
+    elif kind == "boolean":
+        # true/false 중 어느 쪽이 정상 흐름인지 type만으로는 알 수 없다.
+        pass
+    elif kind == "null":
+        sources[location] = "openapi-type"
+        return None
+
+    sources[location] = "preserved-suggestion" if (operation_id, location) in preserved else "llm-suggestion"
+    return _suggest_value(
+        document,
+        value,
+        operation_id=operation_id,
+        location=location,
+        proposer=proposer,
+        preserved=preserved,
+        suggestions=suggestions,
+        operation_context=operation_context,
+    )
 
 
 def _index(document: dict[str, Any]) -> dict[str, list[Operation]]:
@@ -201,6 +422,7 @@ def _response_schema(
     responses = operation.value.get("responses")
     if not isinstance(responses, dict):
         raise UpstreamAmbiguity(f"OpenAPI responses are empty: {operation.operation_id}")
+    response: Any
     if status is None:
         candidates = [
             value
@@ -264,21 +486,60 @@ def _leaves(
 
 
 def _inputs(
-    document: dict[str, Any], operation: Operation, previous: dict[tuple[str, str], list[Any]]
+    document: dict[str, Any],
+    operation: Operation,
+    previous: dict[tuple[str, str], list[Any]],
+    *,
+    proposer: InputValueProposer | None,
+    preserved: dict[tuple[str, str], FunctionalInputValue],
+    suggestions: list[FunctionalInputValue],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str], Any, dict[str, str]]:
     """필수 입력은 예시로 채우고 유일한 이전 response leaf만 덮어쓴다."""
     path_values: dict[str, Any] = {}
     query: dict[str, Any] = {}
     headers: dict[str, str] = {}
     sources: dict[str, str] = {}
+    context_parts = [
+        str(operation.value.get(key) or "").strip()
+        for key in ("summary", "description")
+    ]
+    # 업무 의미를 추론할 최소 근거만 보낸다. 유스케이스나 request body 전체는 leaf마다
+    # 반복하지 않으며, 지나치게 긴 설명이 테스트 생성의 중심이 되지 않게 제한한다.
+    operation_context = "\n".join(part for part in context_parts if part)[:1000]
+
+    def checked(schema: dict[str, Any], location: str, value: Any) -> Any:
+        """조립한 값도 leaf가 아닌 실제 parameter/body schema로 한 번 더 검사한다."""
+
+        errors = _schema_errors(document, schema, value)
+        if not errors:
+            return value
+        suggested = any(
+            key == location or key.startswith(location + ".") or key.startswith(location + "[")
+            for key, source in sources.items()
+            if source in {"llm-suggestion", "preserved-suggestion"}
+        )
+        error_type = TestInputError if suggested else UpstreamAmbiguity
+        raise error_type(
+            f"Input {location} is invalid for {operation.operation_id}: {errors[0]}"
+        )
 
     def transferred(name: str, schema: dict[str, Any], location: str) -> Any:
         values = previous.get((name, _type(document, schema)), [])
         if len(values) == 1:
             sources[location] = "previous-response"
             return values[0]
-        sources[location] = _EXAMPLE
-        return _sample(document, schema)
+        return _sample(
+            document,
+            schema,
+            operation_id=operation.operation_id,
+            location=location,
+            sources=sources,
+            proposer=proposer,
+            preserved=preserved,
+            suggestions=suggestions,
+            previous=previous,
+            operation_context=operation_context,
+        )
 
     seen: set[tuple[str, str]] = set()
     for owner in (operation.path_item, operation.value):
@@ -298,7 +559,8 @@ def _inputs(
                 raise UpstreamAmbiguity(
                     f"OpenAPI parameter schema is incomplete: {operation.operation_id}"
                 )
-            value = transferred(name, schema, f"{where}.{name}")
+            location = f"{where}.{name}"
+            value = checked(schema, location, transferred(name, schema, location))
             if where == "path":
                 path_values[name] = value
             elif where == "query":
@@ -313,22 +575,19 @@ def _inputs(
     )
     if not isinstance(body_schema, dict):
         return path_values, query, headers, None, sources
-    sample = _sample(document, body_schema)
-    for name, kind, _value, path in _leaves(document, body_schema):
-        values = previous.get((name, kind), [])
-        if len(values) != 1:
-            sources["body." + path] = _EXAMPLE
-            continue
-        cursor: Any = sample
-        for part in path.replace("[]", ".0").split(".")[:-1]:
-            cursor = cursor[int(part)] if part.isdigit() else cursor[part]
-        last = path.replace("[]", ".0").split(".")[-1]
-        if last.isdigit():
-            cursor[int(last)] = values[0]
-        else:
-            cursor[last] = values[0]
-        sources["body." + path] = "previous-response"
-    return path_values, query, headers, sample, sources
+    sample = _sample(
+        document,
+        body_schema,
+        operation_id=operation.operation_id,
+        location="body",
+        sources=sources,
+        proposer=proposer,
+        preserved=preserved,
+        suggestions=suggestions,
+        previous=previous,
+        operation_context=operation_context,
+    )
+    return path_values, query, headers, checked(body_schema, "body", sample), sources
 
 
 def _basic_auth() -> tuple[str, str]:
@@ -381,8 +640,25 @@ def execute_functional_plan(
     openapi: dict[str, Any],
     target_url: str,
     timeout_seconds: float = 30.0,
+    propose_input: InputValueProposer | None = None,
+    preserved_inputs: Sequence[FunctionalInputValue | dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """계획 순서대로 HTTP를 호출하고 첫 정확한 실패를 기록한다."""
+    try:
+        preserved_values = [
+            value
+            if isinstance(value, FunctionalInputValue)
+            else FunctionalInputValue.model_validate(value)
+            for value in preserved_inputs or []
+        ]
+    except ValueError as error:
+        return {
+            **_ambiguity(f"Preserved functional input is invalid: {error}"),
+            "defectClass": "TEST_DEFECT",
+            "failureClass": "TEST_DEFECT",
+        }
+    preserved = {(item.operation_id, item.location): item for item in preserved_values}
+    suggestions: list[FunctionalInputValue] = []
     try:
         operations = [
             (step, operation_for_id(openapi, step.operation_id, use_case_id=plan.use_case_id))
@@ -396,7 +672,14 @@ def execute_functional_plan(
     reports: list[dict[str, Any]] = []
     for step, operation in operations:
         try:
-            paths, query, headers, body, sources = _inputs(openapi, operation, previous)
+            paths, query, headers, body, sources = _inputs(
+                openapi,
+                operation,
+                previous,
+                proposer=propose_input,
+                preserved=preserved,
+                suggestions=suggestions,
+            )
             response = httpx.request(
                 operation.method,
                 _url(target_url, operation, paths, query),
@@ -406,10 +689,27 @@ def execute_functional_plan(
                 timeout=timeout_seconds,
                 follow_redirects=False,
             )
+        except TestInputError as error:
+            return {
+                "status": "failed",
+                "gateStatus": "FAIL",
+                "reason": str(error),
+                "defectClass": "TEST_DEFECT",
+                "failureClass": "TEST_DEFECT",
+                "steps": reports,
+                "inputValues": [item.model_dump(mode="json") for item in suggestions],
+                "finding": _finding(
+                    step.step_id,
+                    step.operation_id,
+                    "TEST_INPUT_INVALID",
+                    str(error),
+                ),
+            }
         except UpstreamAmbiguity as error:
             return _ambiguity(
                 str(error),
                 steps=reports,
+                inputValues=[item.model_dump(mode="json") for item in suggestions],
                 finding=_finding(step.step_id, step.operation_id, "UPSTREAM_AMBIGUITY", str(error)),
             )
         except httpx.RequestError as error:
@@ -434,9 +734,19 @@ def execute_functional_plan(
         }
         if not 200 <= response.status_code < 300:
             generated_inputs = sorted(
-                location for location, source in sources.items() if source == _EXAMPLE
+                location for location, source in sources.items() if source != "previous-response"
             )
-            needs_fixture = 400 <= response.status_code < 500 and bool(generated_inputs)
+            # 생성값이 있다는 사실만으로 4xx를 테스트 결함으로 보면 controller가 잘못된
+            # POST 400도 제품 수리를 건너뛴다. 생성한 path 식별자로 기존 resource를
+            # 조회했는데 404가 난 경우만 선행 fixture 부족으로 확정할 수 있다.
+            generated_path = [
+                location for location in generated_inputs if location.startswith("path.")
+            ]
+            needs_fixture = (
+                response.status_code == 404
+                and operation.method == "GET"
+                and bool(generated_path)
+            )
             message = (
                 f"{operation.method} {operation.path} could not reach its success path with "
                 "schema-generated values; the test profile needs valid prerequisite data."
@@ -455,13 +765,16 @@ def execute_functional_plan(
                 body=response.text,
             )
             if needs_fixture:
-                finding["generatedInputs"] = generated_inputs
+                finding["generatedInputs"] = generated_path
             return {
                 "status": "failed",
                 "gateStatus": "FAIL",
                 "reason": finding["message"],
-                "defectClass": "SUT_DEFECT",
+                # OpenAPI shape는 맞아도 실제 저장 데이터나 업무상 정상값이라는 증거는
+                # 없다. 이 경우 구현을 고치게 하지 않고 테스트 입력을 다시 보게 한다.
+                "defectClass": "TEST_DEFECT" if needs_fixture else "SUT_DEFECT",
                 "steps": reports + [report],
+                "inputValues": [item.model_dump(mode="json") for item in suggestions],
                 "finding": finding,
             }
         try:
@@ -482,6 +795,7 @@ def execute_functional_plan(
             return _ambiguity(
                 str(error),
                 steps=reports + [report],
+                inputValues=[item.model_dump(mode="json") for item in suggestions],
                 finding=_finding(step.step_id, step.operation_id, "UPSTREAM_AMBIGUITY", str(error)),
             )
         except (json.JSONDecodeError, ValueError, jsonschema.SchemaError) as error:
@@ -501,6 +815,7 @@ def execute_functional_plan(
                 "reason": finding["message"],
                 "defectClass": "SUT_DEFECT",
                 "steps": reports + [report],
+                "inputValues": [item.model_dump(mode="json") for item in suggestions],
                 "finding": finding,
             }
         for name, kind, value, _path in _leaves(openapi, schema, payload):
@@ -513,11 +828,15 @@ def execute_functional_plan(
         "status": "passed",
         "gateStatus": "PASS",
         "steps": reports,
-        "inputExampleMarker": _EXAMPLE,
+        "inputValues": [item.model_dump(mode="json") for item in suggestions],
+        "inputExampleMarker": _GENERATED,
     }
 
 
 __all__ = [
+    "InputValueProposer",
+    "InputValueRequest",
+    "TestInputError",
     "UpstreamAmbiguity",
     "execute_functional_plan",
     "operation_for_id",

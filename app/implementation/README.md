@@ -38,6 +38,11 @@ OpenHands는 관련 package 또는 디렉터리 안에서 `조사 → 여러 파
 작성하는 shell이 아니다. EasyDep이 현재 작업에 미리 정한 focused test나 compile만 실행한다.
 OpenHands가 실행한 검사가 성공했고 그 뒤 source가 바뀌지 않았다면 EasyDep은 그 결과를
 재사용한다. 모든 기능이 끝난 시점의 전체 검사는 별도로 한 번 실행한다.
+Testing에서 돌아온 수리는 별도 검사 종류를 가진다. `testing-static`은 Trivy,
+`testing-package`는 cloud-init·Compose·script, `testing-iac`는 OpenTofu,
+`testing-dynamic-functional`은 보존한 HTTP case를 실행한다. 따라서 Terraform 오류를 고친
+작업이 무관한 Gradle 테스트만 통과하고 완료되는 일은 없다. 오류 원문과 파일 경로도 같은
+작업에 전달되며, 수정 전후에 같은 검사를 실행한다.
 검사 실패 시 JUnit XML과 Gradle HTML 전체를 에이전트에게 열어 주지 않는다. 검증기가 대표
 실패와 가장 안쪽 원인을 먼저 추출해 ``run_task_check`` 결과로 돌려주며, 원본 보고서는 사람이
 실행 이력을 조사할 때만 사용한다. 이렇게 하면 에이전트가 수십만 자짜리 같은 보고서를 반복해

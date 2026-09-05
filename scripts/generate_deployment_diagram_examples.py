@@ -339,7 +339,9 @@ CASE_EXPECTATIONS: dict[str, dict[str, Any]] = dict(
 DEPLOYMENT_CASES = tuple(CASE_EXPECTATIONS)
 
 
-def _graph(case: str) -> dict[str, Any]:
+def deployment_case_graph(case: str) -> dict[str, Any]:
+    """공유 예제 목록의 한 경우를 production WorkloadGraph 입력으로 만든다."""
+
     if case not in DEPLOYMENT_CASES:
         raise ValueError(f"Unknown deployment example: {case}")
     expectation = CASE_EXPECTATIONS[case]
@@ -465,7 +467,9 @@ def _graph(case: str) -> dict[str, Any]:
     }
 
 
-def _resource_spec(provider: str) -> dict[str, Any]:
+def deployment_resource_spec(provider: str) -> dict[str, Any]:
+    """공유 예제에서 사용하는 provider별 최소 ResourceSpec을 만든다."""
+
     region, available_zones = TARGETS[provider]
     return {
         "schemaVersion": "4",
@@ -480,8 +484,8 @@ def _relative_sources() -> dict[Path, str]:
     outputs: dict[Path, str] = {}
     for provider in TARGETS:
         for case in DEPLOYMENT_CASES:
-            workload_graph = _graph(case)
-            resource_spec = _resource_spec(provider)
+            workload_graph = deployment_case_graph(case)
+            resource_spec = deployment_resource_spec(provider)
             first = build_deployment_diagram_bundle(workload_graph, resource_spec)
             second = build_deployment_diagram_bundle(workload_graph, resource_spec)
             if first != second:

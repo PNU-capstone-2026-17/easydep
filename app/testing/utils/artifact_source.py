@@ -17,7 +17,7 @@ from app.db.models import (
     TYPE_TEST_CODE,
 )
 from app.repositories.artifact_repository import AppNotFound, load_file_snapshot
-from app.testing.schemas.testing_input import TestingInput
+from app.testing.schemas.testing_input import TestingContracts, TestingInput
 
 # frontend 산출물은 저장할 때 ``frontend/`` 접두사를 떼므로 복원할 때 다시 붙인다.
 ARTIFACT_APPLICATION_PREFIXES: dict[str, str] = {
@@ -34,7 +34,7 @@ class ArtifactSourceUnavailable(Exception):
 
 
 class ArtifactSnapshotMismatch(Exception):
-    """파일 묶음이 요청한 구현 작업의 결과가 아니거나 손상됐을 때 발생한다."""
+    """파일 묶음의 경로·내용이 손상되었거나 서로 겹칠 때 발생한다."""
 
 
 def _safe_relative(file_path: str) -> Path:
@@ -53,6 +53,7 @@ def capture_testing_input(
     *,
     artifact_version_ids: Mapping[str, int] | None,
     contract_artifacts: Mapping[str, Any] | None = None,
+    implementation_traceability: Mapping[str, Any] | None = None,
 ) -> TestingInput:
     """구현 작업 기록의 파일 묶음 ID를 Testing 입력으로 고정한다."""
     if artifact_version_ids is None:
@@ -64,7 +65,14 @@ def capture_testing_input(
             app_id=app_id,
             implementation_job_id=implementation_job_id,
             artifact_version_ids=dict(artifact_version_ids),
-            contract_artifacts=dict(contract_artifacts or {}),
+            contract_artifacts=TestingContracts.model_validate(
+                dict(contract_artifacts or {})
+            ),
+            implementation_traceability=(
+                dict(implementation_traceability)
+                if implementation_traceability is not None
+                else None
+            ),
         )
     except ValueError as error:
         raise ArtifactSourceUnavailable(str(error)) from error
@@ -86,13 +94,10 @@ def _load_snapshot(testing_input: TestingInput, artifact_type: str) -> Mapping[s
         raise ArtifactSourceUnavailable(
             f"구현 산출물을 찾을 수 없습니다: type={artifact_type}, id={version_id}"
         )
-    actual_job_id = (snapshot.get("metadata") or {}).get("implementation_job_id")
-    if actual_job_id != testing_input.implementation_job_id:
-        raise ArtifactSnapshotMismatch(
-            f"{artifact_type}은 요청한 구현 작업의 결과가 아닙니다: "
-            f"expected={testing_input.implementation_job_id}, "
-            f"actual={actual_job_id or 'missing'}"
-        )
+    # Testing의 고정 출처는 Job 기록에 저장된 ``artifact_version_ids``다.
+    # 수리 Job이 이전과 동일한 파일 묶음을 내면 새 버전을 만들지 않고
+    # 기존 ID를 재사용한다. 이때 snapshot metadata에는 원래 Job ID가 남으므로,
+    # metadata를 현재 Job ID와 비교하면 정상적인 공유 snapshot을 거부하게 된다.
     return snapshot
 
 
@@ -134,7 +139,11 @@ def materialized_testing_application(testing_input: TestingInput) -> Iterator[Pa
 
                 target = destination / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content, encoding="utf-8")
+                # Windows의 write_text 기본값은 LF를 CRLF로 바꾼다. DB에 저장된 POSIX
+                # script를 그대로 복원하지 않으면 Linux toolchain의 ``bash -n``이 ``fi\r``나
+                # ``done\r``를 닫힘 문법으로 인식하지 못한다. 저장 문자열의 UTF-8 byte를
+                # 그대로 써서 구현 산출물과 Testing 입력을 동일하게 유지한다.
+                target.write_bytes(content.encode("utf-8"))
                 occupied_paths[restored] = artifact_type
 
         yield run_root

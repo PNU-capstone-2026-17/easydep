@@ -34,6 +34,9 @@ def initial_state(
     testing_input: dict | None = None,
     iac_expected: bool | None = None,
     deployment_package_expected: bool | None = None,
+    gate_scope: list[str] | None = None,
+    previous_reports: dict | None = None,
+    previous_job_id: str = "",
 ) -> dict:
     """호출 인자를 빠짐없이 채운 graph 시작 상태를 만든다."""
     return {
@@ -47,6 +50,9 @@ def initial_state(
         "preserved_case_results": preserved_case_results or [],
         "iac_expected": iac_expected,
         "deployment_package_expected": deployment_package_expected,
+        "gate_scope": gate_scope,
+        "previous_reports": previous_reports or {},
+        "previous_job_id": previous_job_id,
         "current_node": "",
         "errors": [],
         "static_report": None,

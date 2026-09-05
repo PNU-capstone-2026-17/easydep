@@ -16,7 +16,32 @@ from app.implementation.application.prototype import PrototypeClient, PrototypeE
 from app.implementation.config import ImplementationSettings
 from app.implementation.generation.orchestrator import PrototypeOrchestrator, load_job
 from app.implementation.interfaces.http import router
+from app.implementation.workflows.coordinator import phase_for_task
 from tests.class_design_fixtures import typed_class_model_payload
+
+
+@pytest.mark.parametrize(
+    "task_type",
+    [
+        "testing-static",
+        "testing-package",
+        "testing-iac",
+        "testing-dynamic-functional",
+    ],
+)
+def test_testing_repair_tasks_are_connected_to_an_executable_phase(
+    task_type: str,
+) -> None:
+    """Testing 수리 task가 계획만 남고 실행에서 빠지는 회귀를 막는다."""
+
+    assert phase_for_task(task_type) == "use-cases"
+
+
+def test_unknown_implementation_task_type_is_rejected() -> None:
+    """미등록 task를 완료된 것처럼 건너뛰지 않는다."""
+
+    with pytest.raises(ValueError, match="Unknown implementation task type"):
+        phase_for_task("unregistered-task")
 
 
 def test_initial_job_allows_void_control_with_transport_error_outcomes(
@@ -308,7 +333,7 @@ def test_feedback_job_restores_frontend_snapshot_under_frontend_directory(
     worker = ImplementationWorker(settings(tmp_path))
     captured: dict[str, str] = {}
 
-    def prepare(_job_id, _app_id, _design, files, *_args):
+    def prepare(_job_id, _app_id, _design, files, *_args, **_kwargs):
         captured.update(files)
         return tmp_path / "feedback-job.json"
 
@@ -774,6 +799,73 @@ def test_feedback_orchestrator_restores_snapshot_without_generation_tools(
         "maxOutputTokens",
         "reasoningEffort",
     }
+
+
+def test_testing_feedback_keeps_the_original_gate_and_file_scope(tmp_path: Path) -> None:
+    """Testing 수리는 전체 앱이 아니라 실패한 파일과 동일 gate만 작업으로 만든다."""
+
+    client = PrototypeClient(settings(tmp_path))
+    path = client.prepare_feedback_job(
+        "job-static-repair",
+        "12345678-0000-0000-0000-000000000000",
+        {},
+        {
+            "deployment/tofu/main.tf": 'resource "aws_instance" "app" {}',
+            "src/main/java/com/example/OrderService.java": "class OrderService {}",
+        },
+        "Fix AWS-0131 in deployment/tofu/main.tf.",
+        "com.example",
+        False,
+        repair_task_type="testing-static",
+        repair_file_hints=["application/deployment/tofu/main.tf"],
+        verification_profile={"app_id": "app-1", "testing_input": {}},
+    )
+
+    output = PrototypeOrchestrator(load_job(path)).run()
+    task = json.loads(
+        (
+            output
+            / "reports/implementation-tasks/apply-source-feedback.task.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert task["task_type"] == "testing-static"
+    assert task["allowed_write_paths"] == ["application/deployment/tofu/main.tf"]
+    assert task["verification_profile"] == {
+        "app_id": "app-1",
+        "testing_input": {},
+    }
+
+
+def test_testing_feedback_without_a_failing_file_does_not_open_the_whole_app(
+    tmp_path: Path,
+) -> None:
+    """추적할 파일이 없는 Testing 실패를 전체 소스 수정으로 확대하지 않는다."""
+
+    client = PrototypeClient(settings(tmp_path))
+    path = client.prepare_feedback_job(
+        "job-untraced-repair",
+        "12345678-0000-0000-0000-000000000000",
+        {},
+        {"src/main/java/com/example/OrderService.java": "class OrderService {}"},
+        "Fix the failed dynamic test.",
+        "com.example",
+        False,
+        repair_task_type="testing-dynamic-functional",
+        repair_file_hints=[],
+        verification_profile={"app_id": "app-1", "testing_input": {}},
+    )
+
+    output = PrototypeOrchestrator(load_job(path)).run()
+    manifest = json.loads(
+        (output / "reports" / "run-manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["status"] == "FAILED"
+    assert any(
+        "requires at least one trace-linked failing file" in item["message"]
+        for item in manifest["diagnostics"]
+    )
 
 
 def test_prepare_job_rejects_work_root_outside_repository(tmp_path: Path) -> None:

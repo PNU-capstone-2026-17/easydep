@@ -293,6 +293,10 @@ class PrototypeClient:
         feedback: str,
         base_package: str,
         allow_assumptions: bool,
+        *,
+        repair_task_type: str = "control",
+        repair_file_hints: list[str] | None = None,
+        verification_profile: dict[str, Any] | None = None,
     ) -> Path:
         """기존 파일 snapshot과 피드백을 사용하는 수정 작업의 ``job.json``을 만든다."""
         path = self.prepare_job(job_id, app_id, design, base_package, allow_assumptions)
@@ -319,6 +323,11 @@ class PrototypeClient:
             self.settings.repository_root
         ).as_posix()
         job["requiredInputs"] = ["baseSnapshot"]
+        job["repair"] = {
+            "taskType": repair_task_type,
+            "fileHints": list(repair_file_hints or []),
+            "verificationProfile": dict(verification_profile or {}),
+        }
         path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
 

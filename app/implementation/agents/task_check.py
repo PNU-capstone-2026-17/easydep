@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +32,7 @@ class _SuccessfulCheck:
     source_snapshot: dict[str, str]
     task_type: str
     allowed_paths: tuple[str, ...]
+    verification_profile_digest: str
     evidence: dict[str, object]
 
 
@@ -43,6 +46,7 @@ class TaskCheckSession:
     sandbox: Path
     task_type: str
     allowed_write_paths: list[str]
+    verification_profile: dict[str, object] | None = None
     _failed_source_snapshot: dict[str, str] | None = field(
         default=None,
         init=False,
@@ -67,6 +71,7 @@ class TaskCheckSession:
             self.sandbox,
             self.task_type,
             self.allowed_write_paths,
+            self.verification_profile,
         )
         self._failed_source_snapshot = None if passed else current_snapshot
         if passed and evidence is not None:
@@ -76,6 +81,7 @@ class TaskCheckSession:
                     source_snapshot=current_snapshot,
                     task_type=self.task_type,
                     allowed_paths=_normalized_paths(self.allowed_write_paths),
+                    verification_profile_digest=_profile_digest(self.verification_profile),
                     evidence=evidence,
                 )
         return passed, output
@@ -85,26 +91,42 @@ def run_task_check(
     sandbox: Path,
     task_type: str,
     allowed_write_paths: list[str],
+    verification_profile: dict[str, object] | None = None,
 ) -> tuple[bool, str]:
     """현재 작업에 정해진 검사를 실행하고 에이전트가 읽을 짧은 결과를 반환한다.
 
     ``allowed_write_paths``는 명령 인자가 아니라 EasyDep이 작업 계획에서 만든 값이다.
     LLM은 이 함수를 호출할 수만 있고 검사 종류나 Gradle 옵션을 바꿀 수 없다.
     """
-    return TaskCheckSession(sandbox, task_type, allowed_write_paths).run()
+    return TaskCheckSession(
+        sandbox,
+        task_type,
+        allowed_write_paths,
+        verification_profile,
+    ).run()
 
 
 def _execute_task_check(
     sandbox: Path,
     task_type: str,
     allowed_write_paths: list[str],
+    verification_profile: dict[str, object] | None = None,
 ) -> tuple[bool, str, dict[str, object] | None]:
     try:
-        evidence = verify_agent_workspace(
-            sandbox,
-            task_type,
-            allowed_write_paths,
-        )
+        if verification_profile is None:
+            # 기존 구현 task의 호출 계약은 그대로 유지한다.
+            evidence = verify_agent_workspace(
+                sandbox,
+                task_type,
+                allowed_write_paths,
+            )
+        else:
+            evidence = verify_agent_workspace(
+                sandbox,
+                task_type,
+                allowed_write_paths,
+                verification_profile,
+            )
     except WorkspaceVerificationError as error:
         return False, _render_check_result("FAILED", error.evidence), error.evidence
     except Exception as error:  # 도구 실행 자체의 문제도 대화 안에서 확인할 수 있게 한다.
@@ -119,6 +141,7 @@ def consume_successful_task_check(
     sandbox: Path,
     task_type: str,
     allowed_write_paths: list[str],
+    verification_profile: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
     """같은 source에서 방금 성공한 에이전트 내부 검사 결과를 한 번 재사용한다."""
     key = str(sandbox.resolve())
@@ -129,6 +152,7 @@ def consume_successful_task_check(
     if (
         cached.task_type != task_type
         or cached.allowed_paths != _normalized_paths(allowed_write_paths)
+        or cached.verification_profile_digest != _profile_digest(verification_profile)
         or cached.source_snapshot != snapshot_files(sandbox)
     ):
         return None
@@ -137,6 +161,11 @@ def consume_successful_task_check(
 
 def _normalized_paths(paths: list[str]) -> tuple[str, ...]:
     return tuple(sorted(str(path).replace("\\", "/") for path in paths))
+
+
+def _profile_digest(profile: dict[str, object] | None) -> str:
+    encoded = json.dumps(profile or {}, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def register_task_check_tool() -> str:
@@ -179,11 +208,13 @@ def register_task_check_tool() -> str:
                 sandbox: Path,
                 task_type: str,
                 allowed_write_paths: list[str],
+                verification_profile: dict[str, object] | None = None,
             ) -> None:
                 self.session = TaskCheckSession(
                     sandbox,
                     task_type,
                     list(allowed_write_paths),
+                    dict(verification_profile) if verification_profile else None,
                 )
 
             def __call__(self, _action, conversation=None):  # noqa: ANN001, ARG002
@@ -212,12 +243,14 @@ def register_task_check_tool() -> str:
                 *,
                 task_type: str,
                 allowed_write_paths: list[str],
+                verification_profile: dict[str, object] | None = None,
             ) -> Sequence[Self]:
                 sandbox = Path(conv_state.workspace.working_dir).resolve()
                 executor = TaskCheckExecutor(
                     sandbox,
                     task_type,
                     allowed_write_paths,
+                    verification_profile,
                 )
                 return [
                     cls(
