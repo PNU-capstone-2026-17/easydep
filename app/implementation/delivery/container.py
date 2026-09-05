@@ -59,12 +59,15 @@ ENTRYPOINT ["java", "-jar", "app.jar"]"""
 
 def dockerignore() -> str:
     """Docker 빌드에 들어가면 안 되는 로컬 파일 목록을 반환한다."""
+    # 다운로드 API가 만드는 manifest는 산출물 버전만 기록한다. 애플리케이션 소스가
+    # 그대로여도 배포 파일을 새로 만들 때마다 바뀌므로 빌드 입력에서는 제외한다.
     return """.git
 .gradle
 build
 reports
 deployment-bundle
 /deployment
+/manifest.json
 .env
 .env.*
 *.pem

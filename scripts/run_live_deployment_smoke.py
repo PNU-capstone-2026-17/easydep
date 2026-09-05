@@ -31,6 +31,7 @@ from app.cloudkb.depkb.provider_cache import (  # noqa: E402
 from app.design.services.deployment_diagram.bundle import (  # noqa: E402
     build_deployment_diagram_bundle,
 )
+from app.implementation.delivery.container import dockerignore  # noqa: E402
 from app.implementation.delivery.iac_renderer import render_open_tofu  # noqa: E402
 from app.implementation.delivery.package import render_deployment_package  # noqa: E402
 from scripts.generate_deployment_diagram_examples import (  # noqa: E402
@@ -224,6 +225,9 @@ HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
         ),
         encoding="utf-8",
         newline="\n",
+    )
+    (application / ".dockerignore").write_text(
+        dockerignore() + "\n", encoding="utf-8", newline="\n"
     )
 
 
@@ -559,13 +563,20 @@ def _copy_application(source: Path, destination: Path) -> None:
         destination,
         ignore=shutil.ignore_patterns("deployment", "build", "node_modules", ".gradle"),
     )
-    dockerignore = destination / ".dockerignore"
-    content = dockerignore.read_text(encoding="utf-8") if dockerignore.is_file() else ""
+    dockerignore_path = destination / ".dockerignore"
+    content = (
+        dockerignore_path.read_text(encoding="utf-8")
+        if dockerignore_path.is_file()
+        else ""
+    )
     patterns = content.splitlines()
-    if "/deployment" not in patterns:
+    missing = [
+        item for item in ("/deployment", "/manifest.json") if item not in patterns
+    ]
+    if missing:
         existing = content.rstrip()
-        dockerignore.write_text(
-            (existing + "\n" if existing else "") + "/deployment\n",
+        dockerignore_path.write_text(
+            (existing + "\n" if existing else "") + "\n".join(missing) + "\n",
             encoding="utf-8",
             newline="\n",
         )
