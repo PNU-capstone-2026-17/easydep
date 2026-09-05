@@ -374,8 +374,8 @@ def stream_structured_response(
         "temperature": profile.temperature,
         "seed": settings.seed,
         "stream": True,
-        # NVIDIA NIM documents this OpenAI-compatible option.  The final stream
-        # chunk carries provider-reported usage, which is needed for exact
+        # OpenAI 호환 stream의 마지막 chunk에서 provider가 보고한 사용량을 받는다.
+        # 이 값은 로컬 추정치가 아닌 정확한
         # LangSmith token/cost totals rather than a local estimate.
         "stream_options": {"include_usage": True},
         "response_format": _response_format(schema),
@@ -392,7 +392,7 @@ def stream_structured_response(
     provider_reasoning_effort = _reasoning_effort(reasoning_effort)
     if provider_reasoning_effort:
         request["reasoning_effort"] = provider_reasoning_effort
-    if extra_body := profile.extra_body():
+    if extra_body := profile.extra_body(connection.provider):
         request["extra_body"] = extra_body
     observation.update(
         schema=schema.__name__,
@@ -401,7 +401,7 @@ def stream_structured_response(
         temperature=profile.temperature,
         topP=profile.top_p,
         reasoningEffort=provider_reasoning_effort,
-        reasoningBudget=profile.reasoning_budget,
+        reasoningBudget=profile.reported_reasoning_budget(connection.provider),
         maxCompletionTokens=completion_limit,
     )
     stream = client.chat.completions.create(

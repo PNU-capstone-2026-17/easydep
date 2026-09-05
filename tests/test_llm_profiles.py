@@ -36,14 +36,18 @@ def test_profiles_translate_reasoning_without_sending_unsupported_values() -> No
 
 
 def test_only_models_that_need_provider_specific_body_receive_one() -> None:
-    assert profile_for("openai/gpt-oss-20b").extra_body() is None
-    assert profile_for("moonshotai/kimi-k3").extra_body() is None
-    assert profile_for("deepseek-ai/deepseek-v4-pro-0813").extra_body() is None
-    assert profile_for("poolside/laguna-xs-2.1").extra_body() is None
-    assert profile_for("nvidia/nemotron-3-super-120b-a12b").extra_body() == {
+    nim_profile = profile_for("nvidia/nemotron-3-super-120b-a12b")
+    assert profile_for("openai/gpt-oss-20b").extra_body("openai_compatible") is None
+    assert profile_for("moonshotai/kimi-k3").extra_body("openrouter") is None
+    assert profile_for("deepseek-ai/deepseek-v4-pro-0813").extra_body("openrouter") is None
+    assert profile_for("poolside/laguna-xs-2.1").extra_body("openrouter") is None
+    assert nim_profile.extra_body("nvidia_nim") == {
         "reasoning_budget": 16384
     }
-    assert profile_for("nvidia/nemotron-3.5-lightning-30b-a3b").extra_body() == {
+    assert nim_profile.extra_body("openrouter") is None
+    assert nim_profile.reported_reasoning_budget("nvidia_nim") == 16384
+    assert nim_profile.reported_reasoning_budget("openrouter") is None
+    assert profile_for("nvidia/nemotron-3.5-lightning-30b-a3b").extra_body("nvidia_nim") == {
         "chat_template_kwargs": {"enable_thinking": True},
         "reasoning_budget": 16384,
     }

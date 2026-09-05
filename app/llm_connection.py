@@ -1,25 +1,31 @@
-"""루트 설정을 실제 OpenAI 호환 LLM 연결 정보로 바꾼다.
+"""루트 설정을 모든 개발 단계가 공유하는 LLM 연결 정보로 바꾼다.
 
-NVIDIA NIM은 ``BASE_URL``과 ``API_KEY``만 있으면 되지만 Cloudflare AI Gateway는
-계정 ID가 URL에 들어가고, 특정 Gateway를 고르는 헤더도 필요하다. 호출 코드마다 이
-문자열을 조립하면 단계마다 서로 다른 endpoint를 쓰기 쉬우므로 이 작은 함수만 사용한다.
+직접 OpenAI 호환 SDK를 쓰는 단계와 LiteLLM을 쓰는 OpenHands는 모델 이름의 모양이
+다르다. 공급자를 URL로 추측하거나 호출부마다 접두사를 붙이지 않고, 이 모듈이 두 경로에
+필요한 값을 한 번만 계산한다.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Literal
 
 from app.config import Settings, settings
+
+LlmProvider = Literal[
+    "openrouter", "nvidia_nim", "cloudflare", "openai_compatible"
+]
 
 
 @dataclass(frozen=True, slots=True)
 class LlmConnection:
     """한 OpenAI 호환 클라이언트를 만드는 데 필요한 값이다."""
 
-    provider: str
+    provider: LlmProvider
     api_key: str
     base_url: str
     model: str
+    litellm_provider: str
     headers: tuple[tuple[str, str], ...] = ()
 
     def default_headers(self) -> dict[str, str]:
@@ -28,41 +34,77 @@ class LlmConnection:
         return dict(self.headers)
 
     def litellm_model(self) -> str:
-        """OpenHands의 LiteLLM이 사용할 adapter 접두사를 붙인다.
+        """직접 SDK용 모델 ID에 LiteLLM adapter를 정확히 한 번 붙인다."""
 
-        Cloudflare REST API는 OpenAI 호환 형식이므로 ``openai/`` adapter를 사용한다.
-        직접 연결하는 기존 NVIDIA endpoint는 기존 ``nvidia_nim/`` adapter를 유지한다.
-        """
-
-        if self.provider == "cloudflare-ai-gateway":
-            return self.model if self.model.startswith("openai/") else f"openai/{self.model}"
-        return (
-            self.model
-            if self.model.startswith("nvidia_nim/")
-            else f"nvidia_nim/{self.model}"
-        )
+        return f"{self.litellm_provider}/{self.model}"
 
     def display_name(self) -> str:
         """사용자에게 보여 줄 제공자 이름을 실제 연결과 맞춘다."""
 
-        if self.provider == "cloudflare-ai-gateway":
-            return "Cloudflare AI Gateway"
-        if "nvidia" in self.base_url.casefold():
-            return "NVIDIA NIM"
-        return "OpenAI-compatible LLM provider"
+        return {
+            "openrouter": "OpenRouter",
+            "nvidia_nim": "NVIDIA NIM",
+            "cloudflare": "Cloudflare AI Gateway",
+            "openai_compatible": "OpenAI-compatible LLM provider",
+        }[self.provider]
+
+    def openhands_options(self) -> dict[str, object]:
+        """선택한 공급자에서 OpenHands가 추가로 필요로 하는 옵션만 반환한다."""
+
+        if self.provider == "cloudflare":
+            return {"force_string_serializer": True}
+        return {}
+
+    @property
+    def requires_openhands_message_normalization(self) -> bool:
+        """Cloudflare tool-call 왕복에 빈 문자열 보정이 필요한지 알려 준다."""
+
+        return self.provider == "cloudflare"
+
+    def format_openhands_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """공급자가 요구하는 경우에만 assistant tool-call 내용을 보충한다.
+
+        OpenHands는 설명 없이 도구만 호출한 assistant 메시지의 ``content``를 없앨 수
+        있다. Cloudflare Workers AI는 뒤따르는 tool 결과를 받을 때 빈 문자열이라도 이
+        key가 있어야 한다. 입력과 다른 공급자의 메시지는 그대로 보존한다.
+        """
+
+        if not self.requires_openhands_message_normalization:
+            return messages
+        return [
+            {**message, "content": ""}
+            if message.get("role") == "assistant"
+            and message.get("tool_calls")
+            and message.get("content") is None
+            else message
+            for message in messages
+        ]
+
+
+def _direct_model_id(model: str) -> str:
+    """루트 MODEL에 LiteLLM 전용 접두사가 섞이지 않았는지 확인한다."""
+
+    value = model.strip()
+    forbidden = ("openrouter/", "nvidia_nim/")
+    if value.startswith(forbidden):
+        raise ValueError(
+            "MODEL must be the provider's direct model ID without a LiteLLM prefix"
+        )
+    return value
+
 
 def build_llm_connection(config: Settings = settings) -> LlmConnection:
-    """Cloudflare 설정이 있으면 이를 우선하고, 없으면 기존 연결을 그대로 쓴다.
+    """명시된 공급자와 공통 설정으로 하나의 연결을 만든다."""
 
-    계정이나 토큰 중 하나만 설정된 상태에서 조용히 NVIDIA로 요청하면 비용과 실험 결과를
-    잘못 해석할 수 있다. 따라서 Cloudflare 값이 하나라도 있으면 필수값을 함께 검사한다.
-    Gateway ID는 선택값이며, 없으면 Cloudflare의 기본 Gateway가 사용된다.
-    """
-
+    provider = config.llm_provider
+    model = _direct_model_id(config.model)
     account_id = (config.cloudflare_account_id or "").strip()
     api_token = (config.cloudflare_api_token or "").strip()
     gateway_id = (config.cloudflare_ai_gateway_id or "").strip()
-    if account_id or api_token or gateway_id:
+
+    if provider == "cloudflare" and (account_id or api_token):
         missing = [
             name
             for name, value in (
@@ -72,24 +114,33 @@ def build_llm_connection(config: Settings = settings) -> LlmConnection:
             if not value
         ]
         if missing:
-            raise ValueError(f"Cloudflare LLM configuration is incomplete: {', '.join(missing)}")
-        headers = (("cf-aig-gateway-id", gateway_id),) if gateway_id else ()
-        return LlmConnection(
-            provider="cloudflare-ai-gateway",
-            api_key=api_token,
-            base_url=(
-                "https://api.cloudflare.com/client/v4/accounts/"
-                f"{account_id}/ai/v1"
-            ),
-            model=config.model,
-            headers=headers,
-        )
+            names = ", ".join(missing)
+            raise ValueError(f"Cloudflare LLM configuration is incomplete: {names}")
+        api_key = api_token
+        base_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+    else:
+        # 다른 공급자를 선택하면 오래된 Cloudflare 값이 남아 있어도 읽지 않는다.
+        api_key = config.api_key
+        base_url = config.base_url
 
+    litellm_provider = {
+        "openrouter": "openrouter",
+        "nvidia_nim": "nvidia_nim",
+        "cloudflare": "openai",
+        "openai_compatible": "openai",
+    }[provider]
+    headers = (
+        (("cf-aig-gateway-id", gateway_id),)
+        if provider == "cloudflare" and gateway_id
+        else ()
+    )
     return LlmConnection(
-        provider="openai-compatible",
-        api_key=config.api_key,
-        base_url=config.base_url,
-        model=config.model,
+        provider=provider,
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        litellm_provider=litellm_provider,
+        headers=headers,
     )
 
 
@@ -102,17 +153,13 @@ def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
 
     connection = build_llm_connection(config)
     environment = {
+        "LLM_PROVIDER": connection.provider,
         "API_KEY": connection.api_key,
         "BASE_URL": connection.base_url,
         "MODEL": connection.model,
     }
-    if connection.provider == "cloudflare-ai-gateway":
-        environment.update({
-            "CLOUDFLARE_ACCOUNT_ID": (config.cloudflare_account_id or "").strip(),
-            "CLOUDFLARE_API_TOKEN": (config.cloudflare_api_token or "").strip(),
-        })
-        if config.cloudflare_ai_gateway_id:
-            environment["CLOUDFLARE_AI_GATEWAY_ID"] = (
-                config.cloudflare_ai_gateway_id.strip()
-            )
+    # URL과 key는 위에서 최종값으로 바꿨으므로 account/token을 중복 전달하지 않는다.
+    # Gateway 선택 header에 실제로 쓰이는 ID만 Cloudflare 하위 프로세스에 보낸다.
+    if connection.provider == "cloudflare" and config.cloudflare_ai_gateway_id:
+        environment["CLOUDFLARE_AI_GATEWAY_ID"] = config.cloudflare_ai_gateway_id.strip()
     return environment

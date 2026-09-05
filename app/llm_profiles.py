@@ -1,4 +1,4 @@
-"""NVIDIA hosted NIM 모델별 요청 차이를 한곳에서 설명한다.
+"""공급자와 무관한 모델별 요청 차이를 한곳에서 설명한다.
 
 EasyDep은 전 단계에서 하나의 ``MODEL``을 사용한다. 하지만 모델마다 허용하는 sampling,
 reasoning, 출력 상한이 다르므로 같은 요청 dict를 그대로 보낼 수는 없다. 이 모듈은 모델을
@@ -16,8 +16,8 @@ ReasoningMode = Literal["none", "low", "medium", "high", "max"]
 
 
 @dataclass(frozen=True, slots=True)
-class NimModelProfile:
-    """한 NVIDIA hosted NIM 모델이 받는 공통 생성 파라미터다."""
+class LlmModelProfile:
+    """한 모델이 받는 공통 생성 파라미터와 확인된 선택 기능이다."""
 
     model_id: str
     temperature: float
@@ -33,10 +33,10 @@ class NimModelProfile:
     def __post_init__(self) -> None:
         if self.temperature < MIN_TEMPERATURE:
             raise ValueError(
-                f"NIM temperature must be at least {MIN_TEMPERATURE}: {self.temperature}"
+                f"LLM temperature must be at least {MIN_TEMPERATURE}: {self.temperature}"
             )
         if self.default_max_tokens < 1 or self.max_tokens < self.default_max_tokens:
-            raise ValueError("NIM token limits must be positive and ordered")
+            raise ValueError("LLM token limits must be positive and ordered")
 
     def completion_limit(self, requested: int | None) -> int:
         """호출자가 원하는 상한을 provider의 실제 허용 범위 안으로 제한한다."""
@@ -59,9 +59,11 @@ class NimModelProfile:
             raise ValueError(f"unsupported reasoning effort: {candidate}")
         return self.reasoning_effort
 
-    def extra_body(self) -> dict[str, object] | None:
-        """OpenAI 표준 필드 밖의 NIM chat-template 설정만 반환한다."""
+    def extra_body(self, provider: str) -> dict[str, object] | None:
+        """NVIDIA NIM을 직접 선택했을 때만 전용 요청값을 반환한다."""
 
+        if provider != "nvidia_nim":
+            return None
         body: dict[str, object] = {}
         if self.thinking_via_chat_template:
             body["chat_template_kwargs"] = {"enable_thinking": True}
@@ -69,9 +71,14 @@ class NimModelProfile:
             body["reasoning_budget"] = self.reasoning_budget
         return body or None
 
+    def reported_reasoning_budget(self, provider: str) -> int | None:
+        """실제 요청에 포함된 경우에만 계측용 reasoning budget을 돌려준다."""
 
-_PROFILES: dict[str, NimModelProfile] = {
-    "openai/gpt-oss-20b": NimModelProfile(
+        return self.reasoning_budget if provider == "nvidia_nim" else None
+
+
+_PROFILES: dict[str, LlmModelProfile] = {
+    "openai/gpt-oss-20b": LlmModelProfile(
         model_id="openai/gpt-oss-20b",
         temperature=0.6,
         top_p=None,
@@ -82,7 +89,7 @@ _PROFILES: dict[str, NimModelProfile] = {
         max_tokens=4096,
         preserve_reasoning_on_tool_turn=True,
     ),
-    "nvidia/nemotron-3-super-120b-a12b": NimModelProfile(
+    "nvidia/nemotron-3-super-120b-a12b": LlmModelProfile(
         model_id="nvidia/nemotron-3-super-120b-a12b",
         temperature=1.0,
         top_p=0.95,
@@ -92,7 +99,7 @@ _PROFILES: dict[str, NimModelProfile] = {
         default_max_tokens=16384,
         max_tokens=32768,
     ),
-    "nvidia/nemotron-3.5-lightning-30b-a3b": NimModelProfile(
+    "nvidia/nemotron-3.5-lightning-30b-a3b": LlmModelProfile(
         model_id="nvidia/nemotron-3.5-lightning-30b-a3b",
         temperature=1.0,
         top_p=0.95,
@@ -103,7 +110,7 @@ _PROFILES: dict[str, NimModelProfile] = {
         max_tokens=32768,
         thinking_via_chat_template=True,
     ),
-    "moonshotai/kimi-k3": NimModelProfile(
+    "moonshotai/kimi-k3": LlmModelProfile(
         model_id="moonshotai/kimi-k3",
         temperature=1.0,
         top_p=None,
@@ -114,7 +121,7 @@ _PROFILES: dict[str, NimModelProfile] = {
         max_tokens=65536,
         preserve_reasoning_on_tool_turn=True,
     ),
-    "deepseek-ai/deepseek-v4-pro-0813": NimModelProfile(
+    "deepseek-ai/deepseek-v4-pro-0813": LlmModelProfile(
         model_id="deepseek-ai/deepseek-v4-pro-0813",
         temperature=1.0,
         top_p=0.95,
@@ -124,7 +131,7 @@ _PROFILES: dict[str, NimModelProfile] = {
         default_max_tokens=8192,
         max_tokens=16384,
     ),
-    "poolside/laguna-xs-2.1": NimModelProfile(
+    "poolside/laguna-xs-2.1": LlmModelProfile(
         model_id="poolside/laguna-xs-2.1",
         temperature=1.0,
         top_p=0.95,
@@ -142,7 +149,11 @@ def canonical_model_id(model: str) -> str:
     """전송 경로가 붙인 접두사를 제거하고 실제 모델 ID를 반환한다."""
 
     value = model.strip()
-    return value.removeprefix("nvidia_nim/").removeprefix("@cf/")
+    return (
+        value.removeprefix("openrouter/")
+        .removeprefix("nvidia_nim/")
+        .removeprefix("@cf/")
+    )
 
 
 def profile_for(
@@ -150,7 +161,7 @@ def profile_for(
     *,
     fallback_temperature: float = MIN_TEMPERATURE,
     fallback_max_tokens: int = 16384,
-) -> NimModelProfile:
+) -> LlmModelProfile:
     """알려진 모델은 공식 profile을, 그 밖의 모델은 안전한 공통 profile을 반환한다."""
 
     model_id = canonical_model_id(model)
@@ -160,7 +171,7 @@ def profile_for(
     # 등록 전의 GPT-OSS 배포 이름도 기존 reasoning 요청 형식을 유지한다. 실제 스크리닝
     # 후보의 sampling 값은 위의 정확한 ID profile에서만 정한다.
     is_gpt_oss = "gpt-oss" in model_id.lower()
-    return NimModelProfile(
+    return LlmModelProfile(
         model_id=model_id,
         temperature=max(MIN_TEMPERATURE, float(fallback_temperature)),
         top_p=None,

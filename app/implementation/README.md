@@ -203,8 +203,10 @@ frontend production build와 container 검사를 반복하지 않는다. 마지�
 
 OpenHands도 요구사항·설계·Testing과 같은 `app.llm_connection` 설정을 사용한다. 이 모듈이 만든
 환경변수 묶음 전체를 Docker runner에 전달하며, runner 안에 provider별 변수 목록을 다시 만들지
-않는다. 따라서 Cloudflare 계정 설정만 누락되어 OpenHands가 NVIDIA 형식으로 요청하는 문제를
-막는다.
+않는다. `LLM_PROVIDER`가 선택한 제공자와 `BASE_URL`, `MODEL`은 직접 SDK, OpenHands, 하위
+프로세스에서 동일하게 사용한다. OpenHands가 사용하는 LiteLLM용 접두사도 이 연결 객체에서만
+계산하므로, OpenRouter를 선택했는데 NVIDIA 형식으로 요청하는 식의 어긋남을 막는다. API key는
+실행 계획·manifest·로그에 기록하지 않는다.
 
 ```powershell
 python -X utf8 -m pytest -q tests/test_implementation_worker.py

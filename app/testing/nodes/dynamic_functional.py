@@ -10,13 +10,8 @@ from openai import OpenAI
 from pydantic import ValidationError
 
 from app.config import settings
+from app.llm_connection import build_llm_connection
 from app.llm_profiles import profile_for
-from app.testing.runtime.provider import (
-    configured_api_key,
-    configured_base_url,
-    configured_headers,
-    configured_model,
-)
 from app.testing.schemas.functional_plan import (
     FunctionalInputValue,
     FunctionalTestCase,
@@ -293,7 +288,8 @@ def _without_repeated_operations(case: FunctionalTestCase) -> FunctionalTestCase
 
 
 def _generate(client: OpenAI, candidate: dict[str, Any]) -> FunctionalTestCase:
-    model = configured_model()
+    connection = build_llm_connection()
+    model = connection.model
     profile = profile_for(
         model,
         fallback_temperature=settings.temperature,
@@ -310,7 +306,7 @@ def _generate(client: OpenAI, candidate: dict[str, Any]) -> FunctionalTestCase:
         request["top_p"] = profile.top_p
     if reasoning_effort := profile.resolve_reasoning():
         request["reasoning_effort"] = reasoning_effort
-    if extra_body := profile.extra_body():
+    if extra_body := profile.extra_body(connection.provider):
         request["extra_body"] = extra_body
     response = client.chat.completions.create(**request)
     case = _without_repeated_operations(
@@ -344,7 +340,8 @@ def _input_prompt(request: InputValueRequest) -> str:
 def _propose_input(client: OpenAI, request: InputValueRequest) -> Any:
     """공통 LLM 설정으로 OpenAPI 근거가 없는 leaf 값 하나만 제안받는다."""
 
-    model = configured_model()
+    connection = build_llm_connection()
+    model = connection.model
     profile = profile_for(
         model,
         fallback_temperature=settings.temperature,
@@ -376,7 +373,7 @@ def _propose_input(client: OpenAI, request: InputValueRequest) -> Any:
         llm_request["top_p"] = profile.top_p
     if reasoning_effort := profile.resolve_reasoning():
         llm_request["reasoning_effort"] = reasoning_effort
-    if extra_body := profile.extra_body():
+    if extra_body := profile.extra_body(connection.provider):
         llm_request["extra_body"] = extra_body
     response = client.chat.completions.create(**llm_request)
     content = (response.choices[0].message.content if response.choices else "") or ""
@@ -530,8 +527,8 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         if state.get("fixed_test_plan") is not None:
             plan, preserved_inputs = _preserved(state["fixed_test_plan"], candidates)
         else:
-            api_key = configured_api_key()
-            if not api_key:
+            connection = build_llm_connection()
+            if not connection.api_key:
                 return {
                     "current_node": "dynamic_functional",
                     "dynamic_functional_report": _report(
@@ -542,9 +539,9 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                     ),
                 }
             client = OpenAI(
-                api_key=api_key,
-                base_url=configured_base_url(),
-                default_headers=configured_headers(),
+                api_key=connection.api_key,
+                base_url=connection.base_url,
+                default_headers=connection.default_headers(),
                 max_retries=0,
                 timeout=settings.llm_timeout_seconds,
             )
@@ -596,15 +593,15 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
 
         nonlocal client
         if client is None:
-            api_key = configured_api_key()
-            if not api_key:
+            connection = build_llm_connection()
+            if not connection.api_key:
                 raise UpstreamAmbiguity(
                     "API key is not configured for an ambiguous functional test input."
                 )
             client = OpenAI(
-                api_key=api_key,
-                base_url=configured_base_url(),
-                default_headers=configured_headers(),
+                api_key=connection.api_key,
+                base_url=connection.base_url,
+                default_headers=connection.default_headers(),
                 max_retries=0,
                 timeout=settings.llm_timeout_seconds,
             )

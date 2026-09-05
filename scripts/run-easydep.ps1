@@ -566,7 +566,7 @@ if (-not (Test-Path -LiteralPath $environmentPath)) {
     Copy-Item -LiteralPath $environmentExamplePath -Destination $environmentPath
     Write-Host (
         "[EasyDep] Created .env from .env.example. " +
-        "Set API_KEY, BASE_URL and MODEL before running an LLM stage."
+        "Set LLM_PROVIDER, API_KEY, BASE_URL and MODEL before running an LLM stage."
     ) -ForegroundColor Yellow
 }
 $configuredToolchainImage = Read-DotEnvValue -Path $environmentPath -Name "EASYDEP_TOOLCHAIN_IMAGE"

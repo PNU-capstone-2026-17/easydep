@@ -1,4 +1,6 @@
 
+from typing import Literal
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,6 +9,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     # Core LLM settings
+    # 공급자는 URL이나 남아 있는 보조 환경변수로 추측하지 않는다. 이 값 하나가 직접
+    # SDK와 OpenHands 하위 프로세스가 사용할 연결 방식을 함께 결정한다.
+    llm_provider: Literal[
+        "openrouter", "nvidia_nim", "cloudflare", "openai_compatible"
+    ]
     # API_KEY, BASE_URL, MODEL have no code defaults. The root .env (or the
     # equivalent process environment in deployment) is the only configuration
     # source, so a missing or blank value fails during startup.
@@ -135,4 +142,6 @@ class Settings(BaseSettings):
     # Workflow approval
     easydep_approve_member_implementation: str = "0"
 
-settings = Settings()
+# 필수 연결값은 생성자 인자가 아니라 루트 ``.env``에서 읽는다. Pydantic은 이를
+# 실행 시점에 채우지만 mypy는 환경변수를 알 수 없으므로 이 한 줄만 예외로 둔다.
+settings = Settings()  # type: ignore[call-arg]

@@ -1,7 +1,7 @@
 """pytest 공통 설정 및 픽스처.
 
 앱 모듈을 임포트하기 전에 환경변수를 세팅해 테스트를 헤르메틱하게 만든다:
-  - API_KEY/BASE_URL/MODEL: 런타임과 같이 필수지만 네트워크에는 쓰지 않는 테스트 값.
+  - LLM_PROVIDER/API_KEY/BASE_URL/MODEL: 런타임과 같이 필수지만 네트워크에는 쓰지 않는 테스트 값.
   - ENABLE_BERT_VERIFY=false: torch 미설치/네트워크 없이도 그래프가 돌게.
 os.environ가 .env 값보다 우선하므로(pydantic-settings 우선순위) 여기 값이 이긴다.
 """
@@ -15,6 +15,7 @@ if os.getenv("RUN_LIVE_TESTS") != "1":
     os.environ.setdefault("API_KEY", "test-key-not-used")
     os.environ.setdefault("BASE_URL", "https://llm.test.invalid/v1")
     os.environ.setdefault("MODEL", "openai/gpt-oss-test")
+    os.environ.setdefault("LLM_PROVIDER", "openai_compatible")
     os.environ["ENABLE_BERT_VERIFY"] = "false"
     # 헤르메틱 테스트는 LLM 의미 검증을 끈다(정적 체크 + 반성 루프만 목킹으로 검증).
     os.environ["ENABLE_SEMANTIC_VALIDATOR"] = "false"

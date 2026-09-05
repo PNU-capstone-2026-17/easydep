@@ -301,8 +301,9 @@ class Extension(BaseModel):
     resume_at_step: int | None
 ```
 
-LLM 응답은 먼저 NIM의 JSON Schema 구조화 출력을 요청한다. 공급자가 구조화 결과를 주지
-못하거나 Pydantic 검증에 실패하면 JSON 문자열을 요구하는 보조 경로로 한 번 더 해석한다.
+LLM 응답은 먼저 선택한 provider의 JSON Schema 구조화 출력을 요청한다. provider가 구조화
+결과를 주지 못하거나 Pydantic 검증에 실패하면 JSON 문자열을 요구하는 보조 경로로 한 번 더
+해석한다.
 스키마를 통과했다고 내용까지 맞는 것은 아니므로 이후 정적 검사와 의미 검사를 따로 실행한다.
 
 ### 3.4 결정론적으로 확인하는 내용
@@ -943,21 +944,22 @@ class_diagram, sequence_diagram, api_spec, erd, deployment_diagram
 
 | 영역 | 모델 | temperature | reasoning | 출력 상한 | 동시 실행 |
 |---|---|---:|---|---:|---:|
-| 요구사항 일반 | `.env`의 `MODEL` | 0.0 | medium | 8,192 | 단계에 따라 다름 |
-| 요구사항 명세 | 같은 모델 | 0.0 | medium | 8,192 | 유스케이스 최대 8 |
-| 클래스 inventory | 같은 모델 | 0.0 | medium | 16,384 | 1 |
-| 클래스 operation | 같은 모델 | 0.0 | medium | 8,192 | 실행 묶음 최대 2 |
-| 클래스 call plan | 같은 모델 | 0.0 | medium | 8,192 | 실행 묶음 최대 2 |
-| 클래스 selector | 같은 모델 | 0.0 | low | 최대 2,048 또는 단계 cap | 작업 내부 |
-| API·ERD·배포 설계 | 같은 모델 | 0.0 | medium | 기본 16,384 | 설계 단계별 |
+| 요구사항 일반 | `.env`의 `MODEL` | 0.2 이상 | medium | 8,192 | 단계에 따라 다름 |
+| 요구사항 명세 | 같은 모델 | 0.2 이상 | medium | 8,192 | 유스케이스 최대 8 |
+| 클래스 inventory | 같은 모델 | 0.2 이상 | medium | 16,384 | 1 |
+| 클래스 operation | 같은 모델 | 0.2 이상 | medium | 8,192 | 실행 묶음 최대 2 |
+| 클래스 call plan | 같은 모델 | 0.2 이상 | medium | 8,192 | 실행 묶음 최대 2 |
+| 클래스 selector | 같은 모델 | 0.2 이상 | low | 최대 2,048 또는 단계 cap | 작업 내부 |
+| API·ERD·배포 설계 | 같은 모델 | 0.2 이상 | medium | 기본 16,384 | 설계 단계별 |
 | 구현 agent | 같은 모델(provider 접두사는 runtime에서 추가) | 0.2 | medium, 수리 high | 16,384 | task 최대 2 |
 | 구현 job | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 | job 최대 1 |
 | Workspace command | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 | worker 기본 2 |
 | 테스트 정적 검사 | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 | 최대 2 |
-| 테스트 동적 기능 생성 | provider 설정 | 0.0 | provider별 | provider별 | 1 graph |
+| 테스트 동적 기능 생성 | provider 설정 | 0.2 이상 | provider별 | provider별 | 1 graph |
 
-`seed=42`를 보내지만 NIM 모델 내부의 전문가 선택 방식(MoE)과 동시 요청 구성 때문에 같은
-입력도 같은 출력이 보장되지 않는다. temperature 0도 완전한 재현을 뜻하지 않는다.
+`seed=42`를 보내지만 provider와 모델 내부의 전문가 선택 방식(MoE), 동시 요청 구성 때문에
+같은 입력도 같은 출력이 보장되지 않는다. EasyDep은 모든 provider에서 temperature 0을
+사용하지 않으며, temperature와 seed는 재현을 돕는 입력일 뿐 결과를 고정하지 않는다.
 
 요구사항의 리소스 입력 도구 agent는 한 번의 실행에서 최대 12 turn을 사용한다. 이 값은 의미
 수리 횟수 제한이 아니라, provider·region·예산 같은 입력을 도구로 읽고 기록하는 대화 길이

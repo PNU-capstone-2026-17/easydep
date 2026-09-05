@@ -7,10 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
-import app.implementation.agents.runtime as agent_runtime
 from app.design.services.erd.mapping import build_logical_model
 from app.implementation.agents import execute_openhands_task
-from app.implementation.agents.runtime import create_openhands_conversation
+from app.implementation.agents.runtime import (
+    create_openhands_conversation,
+    validate_openhands_adapter,
+)
 from app.implementation.agents.task_check import (
     TaskCheckSession,
     consume_successful_task_check,
@@ -46,6 +48,7 @@ from app.implementation.workflows.repair import (
     apply_repair_directives,
     schedule_cross_phase_repair,
 )
+from app.llm_connection import LlmConnection
 from tests.class_design_fixtures import (
     typed_class_model_payload,
     typed_sequence_model_payload,
@@ -413,6 +416,32 @@ def _write_minimal_agent_task(tmp_path: Path) -> tuple[Path, str, str, Path]:
     return run, task_id, source_path, source
 
 
+def test_validate_openhands_adapter_uses_the_central_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """네트워크 없는 SDK 준비 검사도 문자열 key 대신 공통 연결 계약을 사용한다."""
+    run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="configured-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime.openhands_connection",
+        lambda: connection,
+    )
+
+    result = validate_openhands_adapter(run, task_id)
+    try:
+        assert result["status"] == "READY"
+        assert result["effectiveModel"] == "openrouter/openai/gpt-oss-20b"
+        assert result["modelCallMade"] is False
+    finally:
+        cleanup_agent_workspace(Path(str(result["workspace"])))
+
+
 def test_verification_failure_continues_the_same_openhands_conversation(
     tmp_path: Path,
 ) -> None:
@@ -465,8 +494,14 @@ def test_verification_failure_continues_the_same_openhands_conversation(
             },
         ),
         patch(
-            "app.implementation.agents.runtime.configured_api_key",
-            return_value="approved-key",
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=SimpleNamespace(
+                api_key="approved-key",
+                provider="openrouter",
+                model="openai/gpt-4o-mini",
+                display_name=lambda: "OpenRouter",
+                litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+            ),
         ),
         patch(
             "app.implementation.agents.runtime.create_openhands_conversation",
@@ -549,8 +584,14 @@ def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(
             },
         ),
         patch(
-            "app.implementation.agents.runtime.configured_api_key",
-            return_value="approved-key",
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=SimpleNamespace(
+                api_key="approved-key",
+                provider="openrouter",
+                model="openai/gpt-4o-mini",
+                display_name=lambda: "OpenRouter",
+                litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+            ),
         ),
         patch(
             "app.implementation.agents.runtime.create_openhands_conversation",
@@ -576,7 +617,6 @@ def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(
 
 def test_openhands_conversation_enables_stuck_detection_and_condensation(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """공식 SDK의 반복 감지와 context condenser를 기본 실행에 연결한다."""
     source = tmp_path / "OrderService.java"
@@ -587,18 +627,30 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         "maxOutputTokens": 1024,
     }
 
-    model = "@cf/openai/gpt-oss-120b"
-    monkeypatch.setattr(agent_runtime, "configured_model", lambda: model)
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="approved-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    model = connection.litellm_model()
     conversation, agent = create_openhands_conversation(
         tmp_path,
         [str(source.resolve()), str(missing_source.resolve())],
-        "approved-key",
+        connection,
         llm,
     )
     try:
         conversation.send_message("Initialize tools without running the model.")
         assert conversation.stuck_detector is not None
         assert agent.condenser.__class__.__name__ == "LLMSummarizingCondenser"
+        # OpenHands의 공개 LLM 설정이 중앙 연결의 모델·URL·key를 그대로 사용한다.
+        # OpenRouter 경로에는 NVIDIA 전용 extra body를 섞지 않는다.
+        assert agent.llm.model == model
+        assert agent.llm.base_url == "https://openrouter.ai/api/v1"
+        assert agent.llm.api_key.get_secret_value() == "approved-key"
+        assert agent.llm.litellm_extra_body == {}
         from openhands.sdk.llm.utils.model_features import get_features
 
         assert get_features(model).send_reasoning_content is True
@@ -621,30 +673,6 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         conversation.close()
 
 
-def test_cloudflare_tool_call_message_keeps_required_content() -> None:
-    """도구 결과를 돌려줄 때 Cloudflare가 요구하는 assistant content를 보충한다."""
-    original = [
-        {"role": "system", "content": [{"type": "text", "text": "rules"}]},
-        {
-            "role": "assistant",
-            "tool_calls": [{"id": "call-1", "type": "function"}],
-            "reasoning_content": "inspect the source",
-        },
-        {
-            "role": "tool",
-            "tool_call_id": "call-1",
-            "content": [{"type": "text", "text": "source"}],
-        },
-    ]
-
-    compatible = agent_runtime._cloudflare_tool_call_messages(original)
-
-    assert compatible[1]["content"] == ""
-    assert "content" not in original[1]
-    assert compatible[0] is original[0]
-    assert compatible[2] is original[2]
-
-
 def test_restricted_editor_reads_utf8_korean_source_as_text(tmp_path: Path) -> None:
     """한글 주석이 많은 Java source를 binary로 오인하지 않는다."""
     source = tmp_path / "Offering.java"
@@ -659,7 +687,13 @@ def test_restricted_editor_reads_utf8_korean_source_as_text(tmp_path: Path) -> N
     conversation, agent = create_openhands_conversation(
         tmp_path,
         [str(source.resolve())],
-        "validation-only-key",
+        LlmConnection(
+            provider="openrouter",
+            api_key="validation-only-key",
+            base_url="https://openrouter.ai/api/v1",
+            model="openai/gpt-oss-20b",
+            litellm_provider="openrouter",
+        ),
         llm,
     )
     try:
@@ -695,7 +729,13 @@ def test_restricted_editor_rejects_generated_build_reports(tmp_path: Path) -> No
     conversation, agent = create_openhands_conversation(
         tmp_path,
         [str(source.resolve())],
-        "validation-only-key",
+        LlmConnection(
+            provider="openrouter",
+            api_key="validation-only-key",
+            base_url="https://openrouter.ai/api/v1",
+            model="openai/gpt-oss-20b",
+            litellm_provider="openrouter",
+        ),
         llm,
     )
     try:

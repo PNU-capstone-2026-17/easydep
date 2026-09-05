@@ -89,3 +89,11 @@ Trivy, OpenTofu, cloud-init, Compose, Bash와 PowerShell 검사는 host에 우�
 Implementation은 코드를 만든 직후 compile, 단위 테스트, 작은 통합 테스트와 frontend build를
 실행하고 같은 작업에서 수리한다. Testing은 이를 다시 실행하지 않는다. Testing에 남은 runtime
 코드는 생성 앱 컨테이너 실행, HTTP 기능 검사, 배포 정적 검사와 IaC 검사만 담당한다.
+
+## LLM 연결
+
+동적 기능 계획에서 OpenAPI만으로 정할 수 없는 입력값이 있을 때만 LLM을 사용한다. 연결 정보는
+`app.llm_connection`에서 한 번 만든다. 따라서 `LLM_PROVIDER`, `API_KEY`, `BASE_URL`, `MODEL`은
+요구사항·설계·구현과 Testing이 함께 사용하며, Testing 코드가 NVIDIA나 특정 URL을 기본값으로
+추측하지 않는다. OpenHands처럼 LiteLLM adapter가 필요한 경로만 중앙 연결이 계산한 모델 이름을
+사용한다. API key는 요청에만 전달하고 테스트 계획·결과·로그에는 저장하지 않는다.

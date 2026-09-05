@@ -240,15 +240,6 @@ def test_application_start_timeout_does_not_trigger_source_repair(monkeypatch):
     assert raised.value.defect_class == "ENVIRONMENT_DEFECT"
 
 
-def test_dynamic_testing_uses_the_shared_llm_model(monkeypatch):
-    """Testing이 공통 MODEL 값을 그대로 사용한다."""
-    from app.testing.runtime import provider
-
-    monkeypatch.setattr(provider.settings, "model", "provider/test-model")
-
-    assert provider.configured_model() == "provider/test-model"
-
-
 def test_static_failure_blocks_the_testing_result():
     from app.testing.runtime.verification import blocking_reason
 

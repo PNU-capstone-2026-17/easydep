@@ -26,7 +26,7 @@ flowchart LR
     D --> I[3. 구현]
     I --> T[4. Testing]
 
-    R --> LLM[NVIDIA NIM<br/>OpenAI 호환 API]
+    R --> LLM[선택한 LLM provider<br/>OpenAI 호환 API]
     D --> LLM
     I --> LLM
     T --> LLM
@@ -65,7 +65,7 @@ flowchart LR
     B[브라우저] -->|5173| V[Vite 개발 서버]
     V -->|/api proxy| F[FastAPI :8100]
     F -->|33060| M[(MySQL 8.4 컨테이너)]
-    F --> N[NVIDIA NIM]
+    F --> N[선택한 LLM provider]
     F --> P[PlantUML PicoWeb JVM]
     F --> D[Docker Desktop]
     D --> IT[easydep-toolchain]

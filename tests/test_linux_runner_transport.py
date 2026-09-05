@@ -30,12 +30,10 @@ def test_runner_transport_round_trips_workspace_path(tmp_path: Path):
 
 def test_runner_command_transmits_only_named_environment(tmp_path: Path):
     llm_environment = {
+        "LLM_PROVIDER": "openrouter",
         "API_KEY": "secret",
         "BASE_URL": "https://llm.test.invalid/v1",
         "MODEL": "test/provider-model",
-        "CLOUDFLARE_ACCOUNT_ID": "account",
-        "CLOUDFLARE_API_TOKEN": "cloudflare-secret",
-        "CLOUDFLARE_AI_GATEWAY_ID": "easydep",
     }
     command = runner_command(
         image="runner:test",
@@ -47,6 +45,7 @@ def test_runner_command_transmits_only_named_environment(tmp_path: Path):
     )
 
     assert all(name in command for name in llm_environment)
+    assert "LLM_PROVIDER" in command
     assert "UNRELATED_SECRET" not in command
     assert "secret" not in command
     assert "https://llm.test.invalid/v1" not in command

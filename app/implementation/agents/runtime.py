@@ -7,11 +7,12 @@ import tempfile
 import threading
 import time
 import warnings
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from app.config import settings
-from app.llm_connection import build_llm_connection
+from app.llm_connection import LlmConnection
 from app.llm_profiles import canonical_model_id, profile_for
 from app.metrics import langsmith as langsmith_metrics
 from app.validation import RepairAttempt, RepairLedger, stable_digest
@@ -26,13 +27,9 @@ from .prompts import (
 )
 from .provider import (
     MAX_PROVIDER_RETRIES,
-    configured_api_key,
-    configured_base_url,
-    configured_headers,
     configured_max_output_tokens,
-    configured_model,
-    configured_provider_name,
     openhands_compatibility,
+    openhands_connection,
     provider_retry_delay,
     transient_provider_error,
 )
@@ -64,36 +61,6 @@ MAX_AGENT_TURN_ITERATIONS = 32
 _RESTRICTED_EDITOR_REGISTERED = False
 _RESTRICTED_GREP_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
-
-
-def _cloudflare_tool_call_messages(
-    messages: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Cloudflare가 다시 받을 수 있는 assistant tool-call 메시지를 만든다.
-
-    OpenHands는 assistant가 설명 없이 도구만 호출하면 빈 ``content`` key를 제거한다.
-    OpenAI Chat Completions에서는 허용되는 표현이지만, Cloudflare Workers AI의 현재
-    endpoint는 다음 tool 결과를 보낼 때 assistant 메시지에도 ``content``를 요구한다.
-    EasyDep은 Cloudflare 경로에서 모든 text content를 문자열로 직렬화한다. 실제
-    endpoint에서도 빈 문자열을 포함한 tool-call 왕복이 허용되므로, 해당 경우에만 새
-    dict를 만들어 같은 문자열 형식을 보충한다.
-
-    다른 role이나 일반 assistant 답변은 그대로 두어 OpenHands의 직렬화 결과를 가능한
-    한 보존한다. 입력 dict도 수정하지 않으므로 SDK가 같은 메시지를 다시 사용할 때
-    provider 전용 값이 대화 기록에 섞이지 않는다.
-    """
-
-    compatible: list[dict[str, Any]] = []
-    for message in messages:
-        if (
-            message.get("role") == "assistant"
-            and message.get("tool_calls")
-            and message.get("content") is None
-        ):
-            compatible.append({**message, "content": ""})
-        else:
-            compatible.append(message)
-    return compatible
 
 
 def _configure_openhands_profile_store() -> None:
@@ -163,8 +130,8 @@ def write_execution_plan(
     tasks: list[dict[str, object]],
     requested_mode: str,
 ) -> dict[str, object]:
-    compatibility = openhands_compatibility()
-    connection = build_llm_connection()
+    connection = openhands_connection()
+    compatibility = openhands_compatibility(connection)
     plan = {
         "schemaVersion": "openhands-execution-plan/v1alpha1",
         "mode": requested_mode,
@@ -393,7 +360,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "immutable_paths": immutable,
     }
 
-    compatibility = openhands_compatibility()
+    connection = openhands_connection()
+    compatibility = openhands_compatibility(connection)
     missing = [
         key
         for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured")
@@ -479,8 +447,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             f"- `{path}`" for path in readable_absolute
         )
 
-    api_key = configured_api_key()
-    assert api_key is not None
     execution_dir = run_root / "reports" / "agent-executions"
     attempt = execution_attempt(run_root, task_id)
     journal = EventJournal(execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl")
@@ -511,7 +477,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             return create_openhands_conversation(
                 sandbox,
                 allowed_absolute,
-                api_key,
+                connection,
                 task["llm"],
                 task_type=task_type,
                 verification_paths=editable_paths,
@@ -540,7 +506,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             while True:
                 conversation_error: Exception | None = None
                 usage_before = _conversation_token_usage(conversation) or (0, 0)
-                connection = build_llm_connection()
+                connection = openhands_connection()
                 with langsmith_metrics.trace_scope(
                     "easydep.implementation.openhands_conversation",
                     run_type="llm",
@@ -603,7 +569,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 provider_retries += 1
                 if provider_retries > MAX_PROVIDER_RETRIES:
                     raise RuntimeError(
-                        f"{configured_provider_name()} remained unavailable after "
+                        f"{connection.display_name()} remained unavailable after "
                         f"{MAX_PROVIDER_RETRIES} transport retries"
                     ) from conversation_error
                 time.sleep(provider_retry_delay(provider_retries))
@@ -847,7 +813,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "taskType": task.get("task_type", "control"),
             "promptSha256": task.get("prompt_sha256"),
             "status": "FAILED",
-            "effectiveModel": configured_model(),
+            "effectiveModel": connection.litellm_model(),
             "errorType": error.__class__.__name__,
             "error": str(error),
             "durationMs": int((time.monotonic() - started) * 1000),
@@ -876,7 +842,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "taskId": task_id,
         "taskType": task.get("task_type", "control"),
         "promptSha256": task.get("prompt_sha256"),
-        "effectiveModel": configured_model(),
+        "effectiveModel": connection.litellm_model(),
         "changedFiles": sorted(changed),
         "outputFiles": required_paths,
         "verification": verification,
@@ -1078,7 +1044,8 @@ def write_execution_result(
 def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object]:
     """Initialize the real SDK and restricted tool without making an LLM request."""
     task = load_task(run_root, task_id)
-    compatibility = openhands_compatibility()
+    connection = openhands_connection()
+    compatibility = openhands_compatibility(connection)
     missing = [
         key
         for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled")
@@ -1113,7 +1080,9 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
     conversation, agent = create_openhands_conversation(
         sandbox,
         allowed,
-        "validation-only-key",
+        # 준비 검사는 네트워크를 호출하지 않는다. 실제 key를 SDK 객체 안에 복사할
+        # 이유가 없으므로 provider·URL·모델은 그대로 두고 key만 검사값으로 바꾼다.
+        replace(connection, api_key="validation-only-key"),
         task["llm"],
         task_type=task_type,
         verification_paths=[str(path) for path in task.get("allowed_write_paths", [])],
@@ -1186,7 +1155,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
     ):
         raise RuntimeError("Restricted FileEditorTool was not initialized with the exact allowlist")
     profile = profile_for(
-        configured_model(),
+        connection.model,
         fallback_temperature=settings.implementation_agent_temperature,
         fallback_max_tokens=settings.implementation_agent_max_output_tokens,
     )
@@ -1210,7 +1179,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "stuckDetection": True,
         "contextCondenser": "LLMSummarizingCondenser",
         "verificationRepairPolicy": "history-and-progress/v1",
-        "reasoningBudget": profile.reasoning_budget,
+        "reasoningBudget": profile.reported_reasoning_budget(connection.provider),
         "reasoningEffort": profile.resolve_reasoning(str(configured_reasoning)),
         "temperature": profile.temperature,
         "maxOutputTokens": profile.completion_limit(
@@ -1224,7 +1193,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "validationEventCount": validation_journal.event_count,
         "allowedWritePaths": allowed,
         "modelCallMade": False,
-        "effectiveModel": configured_model(),
+        "effectiveModel": connection.litellm_model(),
         "llm": task["llm"],
     }
     report = run_root / "reports" / f"agent-validation-{task_id}.json"
@@ -1235,7 +1204,7 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
 def create_openhands_conversation(
     sandbox: Path,
     allowed_files: list[str],
-    api_key: str,
+    connection: LlmConnection,
     llm_config: dict[str, object],
     *,
     task_type: str = "",
@@ -1556,7 +1525,9 @@ def create_openhands_conversation(
                 register_tool(grep_registry_name, RestrictedGrepTool)
                 _RESTRICTED_GREP_REGISTERED = True
     task_check_tool_name = register_task_check_tool()
-    model = configured_model()
+    # OpenHands/LiteLLM만 adapter 접두사가 붙은 이름을 사용한다. profile과 실행
+    # 기록은 같은 중앙 연결의 원본 model ID를 기준으로 계산한다.
+    model = connection.litellm_model()
     raw_temperature = llm_config["temperature"]
     raw_max_output = llm_config["maxOutputTokens"]
     if not isinstance(raw_temperature, (int, float, str)):
@@ -1564,7 +1535,7 @@ def create_openhands_conversation(
     if not isinstance(raw_max_output, (int, str)):
         raise TypeError("implementation LLM maxOutputTokens must be an integer")
     profile = profile_for(
-        model,
+        connection.model,
         fallback_temperature=float(raw_temperature),
         fallback_max_tokens=int(raw_max_output),
     )
@@ -1574,56 +1545,47 @@ def create_openhands_conversation(
         # 수 있다. 실제 요청 모델은 바꾸지 않고 정확한 canonical ID만 기능 목록에 보탠다.
         from openhands.sdk.llm.utils.model_features import SEND_REASONING_CONTENT_MODELS
 
-        reasoning_model = canonical_model_id(model)
+        reasoning_model = canonical_model_id(connection.model)
         if reasoning_model not in SEND_REASONING_CONTENT_MODELS:
             SEND_REASONING_CONTENT_MODELS.append(reasoning_model)
-    is_qwen_coder = "qwen3-coder" in model.lower()
     requested_output = configured_max_output_tokens(int(raw_max_output))
     llm_options: dict[str, Any] = {
         "model": model,
-        "api_key": SecretStr(api_key),
-        "base_url": configured_base_url(),
-        "extra_headers": configured_headers(),
+        "api_key": SecretStr(connection.api_key),
+        "base_url": connection.base_url,
+        "extra_headers": connection.default_headers(),
         "temperature": profile.temperature,
         "max_output_tokens": profile.completion_limit(requested_output),
     }
-    connection = build_llm_connection()
-    if connection.provider == "cloudflare-ai-gateway":
-        # Workers AI의 tool-call 입력 schema는 일반 OpenAI endpoint보다 content
-        # 배열 처리의 편차가 크다. 텍스트만 사용하는 구현 에이전트는 공식 예제와 같은
-        # 문자열 형식으로 고정해 여러 번의 도구 왕복에서도 요청 모양을 유지한다.
-        llm_options["force_string_serializer"] = True
-    if is_qwen_coder:
-        # NVIDIA documents Qwen3-Coder as a non-thinking model and recommends not
-        # overriding both temperature and top_p in the same request.
-        pass
-    else:
-        if profile.top_p is not None:
-            llm_options["top_p"] = profile.top_p
-        if resolved_reasoning := profile.resolve_reasoning(reasoning_effort):
-            llm_options["reasoning_effort"] = resolved_reasoning
-        if extra_body := profile.extra_body():
-            llm_options["litellm_extra_body"] = extra_body
+    # Cloudflare의 serializer처럼 endpoint에만 필요한 옵션은 중앙 연결 객체가
+    # 소유한다. OpenRouter와 일반 OpenAI 호환 endpoint에는 전달되지 않는다.
+    llm_options.update(connection.openhands_options())
+    if profile.top_p is not None:
+        llm_options["top_p"] = profile.top_p
+    if resolved_reasoning := profile.resolve_reasoning(reasoning_effort):
+        llm_options["reasoning_effort"] = resolved_reasoning
+    if extra_body := profile.extra_body(connection.provider):
+        llm_options["litellm_extra_body"] = extra_body
     warnings.filterwarnings(
         "ignore",
         message=r"Cost calculation failed:.*",
         module=r"openhands\.sdk\.llm\.utils\.telemetry",
     )
     llm_class = LLM
-    if connection.provider == "cloudflare-ai-gateway":
+    if connection.requires_openhands_message_normalization:
 
-        class CloudflareCompatibleLLM(LLM):
-            """OpenHands의 대화를 Cloudflare Chat Completions 형식에 맞춘다."""
+        class ProviderCompatibleLLM(LLM):
+            """선택 provider가 요구하는 OpenHands 메시지 형식만 적용한다."""
 
             def format_messages_for_llm(self, messages):
                 formatted = super().format_messages_for_llm(messages)
-                return _cloudflare_tool_call_messages(formatted)
+                return connection.format_openhands_messages(formatted)
 
             async def aformat_messages_for_llm(self, messages):
                 formatted = await super().aformat_messages_for_llm(messages)
-                return _cloudflare_tool_call_messages(formatted)
+                return connection.format_openhands_messages(formatted)
 
-        llm_class = CloudflareCompatibleLLM
+        llm_class = ProviderCompatibleLLM
 
     llm = llm_class(**llm_options)
     agent = Agent(

@@ -67,8 +67,9 @@ Docker Desktop을 실행한 다음 저장소 루트에서 아래 명령 하나�
 powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
 ```
 
-첫 실행에서는 `.env.example`을 `.env`로 복사한다. LLM 단계를 실행하기 전 `API_KEY`,
-`BASE_URL`, `MODEL`을 사용할 엔드포인트에 맞게 수정한다. `MODEL`은 요구사항 분석, 설계
+첫 실행에서는 `.env.example`을 `.env`로 복사한다. LLM 단계를 실행하기 전
+`LLM_PROVIDER`, `API_KEY`, `BASE_URL`, `MODEL`을 사용할 엔드포인트에 맞게 수정한다.
+`MODEL`은 요구사항 분석, 설계
 구조화 호출, 구현 OpenHands, Testing 계획과 LLM 지연 진단에서 함께 사용한다. 실제 URL,
 인증 header, provider 구분과 OpenHands용 모델 이름은 `app.llm_connection` 한 곳에서 만든다.
 구현용 Docker runner도 이 함수가 만든 환경변수 묶음을 전부 전달하며 별도의 LLM 변수 목록을

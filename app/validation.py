@@ -330,7 +330,7 @@ def repair_makes_progress(
 
 
 def transient_llm_error(error: BaseException) -> bool:
-    """NIM/OpenAI 호환 transport·과부하 오류를 의미 결함과 구별한다."""
+    """LLM transport·과부하 오류를 의미 결함과 구별한다."""
     text = f"{type(error).__name__}: {error}".casefold()
     return any(
         marker in text

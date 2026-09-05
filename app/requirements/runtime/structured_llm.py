@@ -1,13 +1,13 @@
 """요구사항 runtime의 LLM 접근과 구조화 출력 adapter.
 
-NIM(OpenAI 호환) 엔드포인트를 langchain-openai의 ChatOpenAI로 감싼다.
+선택한 OpenAI 호환 엔드포인트를 langchain-openai의 ChatOpenAI로 감싼다.
 
 구조화 출력(structured output) 처리:
   - 1차: `ChatOpenAI.with_structured_output(schema, method="json_schema")`.
     이는 OpenAI 네이티브 Structured Outputs(`response_format={"type":"json_schema",
     strict:true}`)를 호출하는 경로로, raw SDK의 `client.chat.completions.parse(...)`
     와 동일한 메커니즘을 langchain이 감싼 것이다.
-  - 폴백: NIM에 서빙된 GPT-OSS 계열은 간헐적으로 빈 `parsed`(content='')를 반환한다.
+  - 폴백: 일부 GPT-OSS 배포는 간헐적으로 빈 `parsed`(content='')를 반환한다.
     이 경우 스키마(JSON Schema)를 프롬프트로 주고 원문 JSON을 직접 파싱한다.
 
 `include_raw=True`로 부르는 이유는 둘이다. 하나는 원본 메시지에 실린 토큰 사용량과
@@ -68,7 +68,7 @@ _llm: ChatOpenAI | None = None
 
 
 def build_llm(*, seed_override: int | None = None) -> ChatOpenAI:
-    """NIM(OpenAI 호환) 채팅 모델을 반환한다(프로세스당 1회 생성, 이후 재사용)."""
+    """선택한 OpenAI 호환 채팅 모델을 반환한다(프로세스당 1회 생성)."""
     global _llm
     if _llm is None or seed_override is not None:
         connection = build_llm_connection()
@@ -119,7 +119,7 @@ def build_llm(*, seed_override: int | None = None) -> ChatOpenAI:
             settings.requirements_reasoning_effort
         ):
             options["reasoning_effort"] = reasoning_effort
-        if extra_body := profile.extra_body():
+        if extra_body := profile.extra_body(connection.provider):
             options["extra_body"] = extra_body
         instance = ChatOpenAI(**options)
         if seed_override is not None:
