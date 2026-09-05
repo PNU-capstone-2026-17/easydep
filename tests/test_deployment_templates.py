@@ -24,9 +24,13 @@ from scripts.generate_deployment_diagram_examples import (
     CASE_EXPECTATIONS,
     DEPLOYMENT_CASES,
     TARGETS,
-    _graph,
-    _resource_spec,
     semantic_case_id,
+)
+from scripts.generate_deployment_diagram_examples import (
+    deployment_case_graph as _graph,
+)
+from scripts.generate_deployment_diagram_examples import (
+    deployment_resource_spec as _resource_spec,
 )
 
 
@@ -693,10 +697,10 @@ def test_generated_application_bootstrap_authenticates_to_registry(
         assert "ports = [tostring(var.container_port_web_http)]" in files["main.tf"]
 
 
-def test_user_package_can_bootstrap_images_plan_verify_and_destroy(
+def test_user_package_has_one_interactive_deployment_entrypoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """실제 사용자 package가 registry와 image의 선후 관계를 스스로 해결한다."""
+    """사용자는 내부 배포 단계를 나누어 실행하지 않고 한 메뉴에서 진행한다."""
 
     monkeypatch.setattr(
         "app.implementation.delivery.package._format_open_tofu", lambda _path: None
@@ -714,25 +718,17 @@ def test_user_package_can_bootstrap_images_plan_verify_and_destroy(
         tfvars = (package / "tofu/terraform.tfvars.example").read_text(
             encoding="utf-8"
         )
-        prepare = (package / "scripts/prepare-images.sh").read_text(
-            encoding="utf-8"
-        )
-        powershell_plan = (package / "scripts/plan.ps1").read_text(
-            encoding="utf-8"
-        )
-        destroy = (package / "scripts/destroy.sh").read_text(encoding="utf-8")
-        verify = (package / "scripts/verify.sh").read_text(encoding="utf-8")
+        script = (package / "easydep.ps1").read_text(encoding="utf-8")
 
         assert "container_port_web_http = 8000" in tfvars
         assert "image_digest_WEB" not in tfvars
-        assert "-target=" in prepare
-        assert "docker push" in prepare
-        assert "TF_VAR_image_digest_web=" in prepare
-        assert "$planArgs = @('plan', '-out=easydep.tfplan')" in powershell_plan
-        assert "runtime/image-digests.env" in destroy
-        assert "health_url_compute_1_http" in verify
-        assert (package / "scripts/smoke-test.sh").is_file()
-        assert (package / "scripts/smoke-test.ps1").is_file()
+        assert "1. Start or continue deployment" in script
+        assert "2. Destroy deployed resources" in script
+        assert "-target=$($target.address)" in script
+        assert "docker push" in script
+        assert "TF_VAR_image_digest_$($target.workload)" in script
+        assert "health_url_compute_1_http" in script
+        assert not (package / "scripts").exists()
 
 
 @pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])

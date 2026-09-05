@@ -26,6 +26,7 @@ from app.repositories import artifact_repository
 from app.repositories.artifact_repository import AppNotFound
 
 from ..application.jobs import JobNotFound, worker
+from ..domain.artifact_layout import application_artifact_path
 
 router = APIRouter(prefix="/api/implementation", tags=["implementation"])
 FILE_ARTIFACT_TYPES = {
@@ -79,6 +80,7 @@ def download_implementation_artifacts(app_id: str) -> StreamingResponse:
     # 어떤 산출물 버전이 들어갔는지 기록해 다운로드한 파일의 출처를 확인할 수 있게 한다.
     archive = io.BytesIO()
     manifest: dict[str, Any] = {"app_id": app_id, "artifacts": []}
+    occupied_paths: dict[str, str] = {}
     with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for snapshot in snapshots:
             artifact_type = str(snapshot["artifact_type"])
@@ -90,13 +92,26 @@ def download_implementation_artifacts(app_id: str) -> StreamingResponse:
             }
             manifest["artifacts"].append(artifact_entry)
             for path, item in files.items():
-                relative = str(path).replace("\\", "/").lstrip("/")
-                # 저장소에서도 경로를 검사하지만 ZIP을 만들 때 한 번 더 확인한다. ``..``가
-                # 들어간 경로를 허용하면 압축을 푸는 위치 밖에 파일이 써질 수 있다.
-                if not relative or relative == "." or ".." in relative.split("/"):
+                try:
+                    relative = application_artifact_path(
+                        artifact_type, str(path)
+                    ).as_posix()
+                except ValueError:
+                    # 저장소에서도 검사하지만 ZIP을 만들 때 한 번 더 막는다. 손상된 경로
+                    # 하나 때문에 압축을 푼 위치 밖에 파일이 만들어져서는 안 된다.
                     continue
+                previous_type = occupied_paths.get(relative)
+                if previous_type is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Implementation artifacts use the same application path: "
+                            f"{relative} ({previous_type}, {artifact_type})."
+                        ),
+                    )
                 content = item.get("content", "") if isinstance(item, dict) else str(item)
-                bundle.writestr(f"{artifact_type}/{relative}", content)
+                bundle.writestr(relative, content)
+                occupied_paths[relative] = artifact_type
         bundle.writestr(
             "manifest.json",
             json.dumps(manifest, ensure_ascii=False, indent=2),

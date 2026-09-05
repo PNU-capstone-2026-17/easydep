@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -68,18 +69,19 @@ def _compose(resource_plan: dict[str, Any]) -> tuple[str, list[tuple[str, str]]]
                 name = str(binding.get("environmentName") or "")
                 if name:
                     environment.append(f"      - {name}")
-                    envs.append((name, f"Runtime endpoint configuration for {workload_id}."))
             for configuration in container.get("configuration") or []:
                 name = str(configuration.get("name") or "")
                 if name:
                     environment.append(f"      - {name}")
                     kind = str(configuration.get("kind") or "")
-                    description = (
-                        f"Secret reference or value for {workload_id}; obtain it through the selected cloud secret service."
-                        if configuration.get("sensitive") or kind in {"secret", "secretBinding"}
-                        else f"Runtime configuration for {workload_id}."
-                    )
-                    envs.append((name, description))
+                    # resource binding과 Secret은 cloud-init이 공급한다. 이를 로컬
+                    # ``.env.example``에 다시 노출하면 사용자가 필수 입력으로 오해하거나
+                    # 비밀값을 평문 파일에 넣을 수 있으므로, 일반 설정만 예시에 싣는다.
+                    if not configuration.get("sensitive") and kind not in {
+                        "secret",
+                        "secretBinding",
+                    }:
+                        envs.append((name, f"Optional runtime setting for {workload_id}."))
             if environment:
                 lines.append("    environment:")
                 lines.extend(dict.fromkeys(environment))
@@ -118,7 +120,7 @@ def _tfvars_example(resource_plan: dict[str, Any]) -> str:
         if (workload.get("artifact") or {}).get("kind") == "generatedApplication":
             lines.append(
                 f"# image_digest_{workload_label} is written to "
-                "runtime/image-digests.env by prepare-images.*"
+                "runtime/image-digests.env by easydep.ps1."
             )
         for interface in workload.get("interfaces") or []:
             if isinstance(interface.get("port"), int):
@@ -177,277 +179,327 @@ def _health_outputs(rendered_tofu: dict[str, str]) -> list[str]:
     )
 
 
-def _shell_scripts(
+def _interactive_powershell_script(
     resource_plan: dict[str, Any], rendered_tofu: dict[str, str]
-) -> dict[str, str]:
-    root = 'ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"\ncd "$ROOT/tofu"\n'
-    prefix = "#!/usr/bin/env bash\nset -euo pipefail\n" + root
-    load_runtime = (
-        'if [ -f "$ROOT/runtime/.env" ]; then export TF_VAR_runtime_env="$(cat "$ROOT/runtime/.env")"; fi\n'
-        'if [ -f "$ROOT/runtime/image-digests.env" ]; then set -a; . "$ROOT/runtime/image-digests.env"; set +a; fi\n'
-    )
-    provider = str(resource_plan.get("provider") or "")
-    region = str(resource_plan.get("region") or "")
-    targets = _registry_bootstrap_targets(resource_plan)
-    prepare = [
-        prefix.rstrip(),
-        'APPLICATION_ROOT="$(CDPATH= cd -- "$ROOT/.." && pwd)"',
-        'DIGEST_FILE="$ROOT/runtime/image-digests.env"',
-        'PLACEHOLDER_DIGEST="sha256:' + "0" * 64 + '"',
-        "tofu init",
-    ]
-    if targets:
-        target_args = " ".join(f"-target={address}" for _, address, _ in targets)
-        variable_args = " ".join(
-            f'-var=image_digest_{workload}="$PLACEHOLDER_DIGEST"'
-            for workload, _, _ in targets
-        )
-        prepare.append(f"tofu apply -auto-approve {target_args} {variable_args}")
-        prepare.extend(['mkdir -p "$ROOT/runtime"', ': > "$DIGEST_FILE"'])
-    for workload, _address, output in targets:
-        prepare.extend(
-            [
-                f'REGISTRY_URL=$(tofu output -raw {output})',
-                'REGISTRY_HOST=$(printf "%s" "$REGISTRY_URL" | cut -d/ -f1)',
-            ]
-        )
-        if provider == "aws":
-            prepare.append(
-                f'aws ecr get-login-password --region "{region}" | docker login --username AWS --password-stdin "$REGISTRY_HOST"'
-            )
-        elif provider == "azure":
-            prepare.append(
-                'az acr login --name "$(printf "%s" "$REGISTRY_HOST" | cut -d. -f1)"'
-            )
-        elif provider == "gcp":
-            prepare.append('gcloud auth configure-docker "$REGISTRY_HOST" --quiet')
-        prepare.extend(
-            [
-                f'IMAGE_TAG="$REGISTRY_URL:easydep-{workload}"',
-                'docker build --pull -t "$IMAGE_TAG" "$APPLICATION_ROOT"',
-                'PUSH_OUTPUT=$(docker push "$IMAGE_TAG" 2>&1)',
-                'printf "%s\\n" "$PUSH_OUTPUT"',
-                'IMAGE_DIGEST=$(printf "%s\\n" "$PUSH_OUTPUT" | sed -n "s/.*digest: \\(sha256:[0-9a-f]\\{64\\}\\).*/\\1/p" | tail -1)',
-                '[ -n "$IMAGE_DIGEST" ] || { echo "docker push did not report an immutable digest" >&2; exit 1; }',
-                f'printf "TF_VAR_image_digest_{workload}=%s\\n" "$IMAGE_DIGEST" >> "$DIGEST_FILE"',
-            ]
-        )
+) -> str:
+    """인자 없이 실행하는 단일 대화형 배포 스크립트를 만든다.
 
-    verify = [prefix.rstrip(), "tofu output -json"]
-    health_outputs = _health_outputs(rendered_tofu)
-    if health_outputs:
-        for output in health_outputs:
-            verify.extend(
-                [
-                    f'HEALTH_URL=$(tofu output -raw {output})',
-                    'ATTEMPT=0',
-                    'until curl --fail --silent --show-error "$HEALTH_URL"; do',
-                    "  ATTEMPT=$((ATTEMPT + 1))",
-                    '  [ "$ATTEMPT" -lt 60 ] || { echo "health check timed out: $HEALTH_URL" >&2; exit 1; }',
-                    "  sleep 10",
-                    "done",
-                ]
-            )
-    else:
-        verify.extend(
-            [
-                'echo "No public health URL is available; verify this private deployment from inside its network." >&2',
-                "exit 2",
-            ]
-        )
+    기존에는 내부 단계를 각각 별도 파일로 노출했다. 사용자는 어느 파일부터 실행하고
+    어디서 재개할지 직접 판단해야 했으므로, 여기서는 같은 단계를 함수로 감추고
+    ``배포/재개``와 ``삭제``만 선택하게 한다.
+    """
 
-    scripts = {
-        "doctor.sh": prefix
-        + "command -v tofu >/dev/null\ncommand -v docker >/dev/null\ncommand -v curl >/dev/null\n"
-        + {
-            "aws": "command -v aws >/dev/null\n",
-            "azure": "command -v az >/dev/null\n",
-            "gcp": "command -v gcloud >/dev/null\n",
-        }.get(provider, "")
-        + "tofu version\ndocker version\n",
-        "prepare-images.sh": "\n".join(prepare) + "\n",
-        "plan.sh": prefix
-        + load_runtime
-        + "tofu init\ntofu validate\ntofu plan -out=easydep.tfplan \"$@\"\n",
-        "deploy.sh": prefix
-        + '[ -f easydep.tfplan ] || { echo "Run scripts/plan.sh first." >&2; exit 1; }\n'
-        + "tofu apply \"$@\" easydep.tfplan\n",
-        "verify.sh": "\n".join(verify) + "\n",
-        "destroy.sh": prefix + load_runtime + "tofu destroy \"$@\"\n",
+    config = {
+        "provider": str(resource_plan.get("provider") or ""),
+        "region": str(resource_plan.get("region") or ""),
+        "registryTargets": [
+            {"workload": workload, "address": address, "output": output}
+            for workload, address, output in _registry_bootstrap_targets(resource_plan)
+        ],
+        "healthOutputs": _health_outputs(rendered_tofu),
+        "retainedResources": [
+            (
+                f"{next(iter(node.get('terraformTypes') or []), '')}."
+                f"{_tofu_label(node.get('id'))}"
+            )
+            for node in resource_plan.get("nodes") or []
+            if isinstance(node, dict)
+            and (node.get("attributes") or {}).get("deletionPolicy") == "retain"
+            and next(iter(node.get("terraformTypes") or []), "")
+        ],
     }
-    scripts["smoke-test.sh"] = (
-        "#!/usr/bin/env bash\nset -euo pipefail\n"
-        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\n'
-        'cleanup() { if [ "${KEEP_RESOURCES:-0}" != "1" ]; then "$SCRIPT_DIR/destroy.sh" -auto-approve || echo "Automatic cleanup failed; inspect the OpenTofu state." >&2; fi; }\n'
-        "trap cleanup EXIT\n"
-        '"$SCRIPT_DIR/doctor.sh"\n'
-        '"$SCRIPT_DIR/prepare-images.sh"\n'
-        '"$SCRIPT_DIR/plan.sh" -input=false\n'
-        '"$SCRIPT_DIR/deploy.sh" -auto-approve\n'
-        '"$SCRIPT_DIR/verify.sh"\n'
-    )
-    return scripts
+    config_json = json.dumps(config, ensure_ascii=True, separators=(",", ":"))
+    script = r'''$ErrorActionPreference = 'Stop'
+$Config = ConvertFrom-Json @'
+__CONFIG__
+'@
+$Root = $PSScriptRoot
+$TofuRoot = Join-Path $Root 'tofu'
+$RuntimeRoot = Join-Path $Root 'runtime'
+$TfvarsPath = Join-Path $TofuRoot 'terraform.tfvars'
+$DigestPath = Join-Path $RuntimeRoot 'image-digests.env'
+$PlanPath = Join-Path $TofuRoot 'easydep.tfplan'
 
+function Invoke-Checked([string]$Program, [string[]]$Arguments) {
+  & $Program @Arguments
+  if ($LASTEXITCODE -ne 0) { throw "$Program failed with exit code $LASTEXITCODE." }
+}
 
-def _powershell_scripts(
-    resource_plan: dict[str, Any], rendered_tofu: dict[str, str]
-) -> dict[str, str]:
-    root = '$root = Resolve-Path (Join-Path $PSScriptRoot "..")\nSet-Location (Join-Path $root "tofu")\n'
-    load_runtime = (
-        "$envFile = Join-Path $root 'runtime\\.env'\n"
-        "if (Test-Path $envFile) { $env:TF_VAR_runtime_env = [IO.File]::ReadAllText($envFile) }\n"
-        "$digestFile = Join-Path $root 'runtime\\image-digests.env'\n"
-        "if (Test-Path $digestFile) { Get-Content -Encoding UTF8 $digestFile | ForEach-Object { if ($_ -match '^(TF_VAR_[A-Za-z0-9_]+)=(.+)$') { Set-Item -Path (\"Env:\" + $matches[1]) -Value $matches[2] } } }\n"
-    )
-    provider = str(resource_plan.get("provider") or "")
-    region = str(resource_plan.get("region") or "").replace("'", "''")
-    targets = _registry_bootstrap_targets(resource_plan)
-    prepare = [
-        "$ErrorActionPreference = 'Stop'",
-        root.rstrip(),
-        '$applicationRoot = Resolve-Path (Join-Path $root "..")',
-        "$placeholderDigest = 'sha256:" + "0" * 64 + "'",
-        "tofu init",
-        "if ($LASTEXITCODE -ne 0) { throw 'tofu init failed.' }",
-    ]
-    if targets:
-        arguments = ["'apply'", "'-auto-approve'"]
-        arguments.extend(f"'-target={address}'" for _, address, _ in targets)
-        arguments.extend(
-            f"('-var=image_digest_{workload}=' + $placeholderDigest)"
-            for workload, _, _ in targets
-        )
-        prepare.extend(
-            [
-                "$bootstrapArgs = @(" + ", ".join(arguments) + ")",
-                "& tofu @bootstrapArgs",
-                "if ($LASTEXITCODE -ne 0) { throw 'Registry bootstrap failed.' }",
-                "$digestLines = @()",
-            ]
-        )
-    for workload, _address, output in targets:
-        prepare.extend(
-            [
-                f"$registryUrl = (& tofu output -raw {output}).Trim()",
-                "if ($LASTEXITCODE -ne 0) { throw 'Cannot read registry output.' }",
-                "$registryHost = $registryUrl.Split('/')[0]",
-            ]
-        )
-        if provider == "aws":
-            prepare.extend(
-                [
-                    f"$registryPassword = aws ecr get-login-password --region '{region}'",
-                    "if ($LASTEXITCODE -ne 0) { throw 'AWS registry login token failed.' }",
-                    "$registryPassword | docker login --username AWS --password-stdin $registryHost",
-                    "if ($LASTEXITCODE -ne 0) { throw 'Docker registry login failed.' }",
-                ]
-            )
-        elif provider == "azure":
-            prepare.extend(
-                [
-                    "$registryName = $registryHost.Split('.')[0]",
-                    "az acr login --name $registryName",
-                    "if ($LASTEXITCODE -ne 0) { throw 'Azure registry login failed.' }",
-                ]
-            )
-        elif provider == "gcp":
-            prepare.extend(
-                [
-                    "gcloud auth configure-docker $registryHost --quiet",
-                    "if ($LASTEXITCODE -ne 0) { throw 'GCP registry login failed.' }",
-                ]
-            )
-        prepare.extend(
-            [
-                f'$imageTag = $registryUrl + ":easydep-{workload}"',
-                "docker build --pull -t $imageTag $applicationRoot",
-                "if ($LASTEXITCODE -ne 0) { throw 'Docker image build failed.' }",
-                "$pushOutput = docker push $imageTag 2>&1 | Out-String",
-                "$pushExitCode = $LASTEXITCODE",
-                "Write-Host $pushOutput",
-                "if ($pushExitCode -ne 0) { throw 'Docker image push failed.' }",
-                "$digestMatch = [regex]::Match($pushOutput, 'digest: (sha256:[0-9a-f]{64})')",
-                "if (-not $digestMatch.Success) { throw 'docker push did not report an immutable digest.' }",
-                f'$digestLines += "TF_VAR_image_digest_{workload}=$($digestMatch.Groups[1].Value)"',
-            ]
-        )
-    if targets:
-        prepare.extend(
-            [
-                "$digestFile = Join-Path $root 'runtime\\image-digests.env'",
-                "$digestLines | Set-Content -Encoding UTF8 $digestFile",
-            ]
-        )
+function Read-Required([string]$Prompt, [string]$Default = '') {
+  while ($true) {
+    $suffix = if ($Default) { " [$Default]" } else { '' }
+    $value = Read-Host "$Prompt$suffix"
+    if (-not $value) { $value = $Default }
+    if ($value) { return $value }
+    Write-Host 'A value is required.' -ForegroundColor Yellow
+  }
+}
 
-    verify = [
-        "$ErrorActionPreference = 'Stop'",
-        root.rstrip(),
-        "tofu output -json",
-        "if ($LASTEXITCODE -ne 0) { throw 'Cannot read OpenTofu outputs.' }",
-    ]
-    health_outputs = _health_outputs(rendered_tofu)
-    if health_outputs:
-        output_names = ", ".join(f"'{name}'" for name in health_outputs)
-        verify.extend(
-            [
-                f"foreach ($outputName in @({output_names})) {{",
-                "  $healthUrl = (& tofu output -raw $outputName).Trim()",
-                "  $healthy = $false",
-                "  for ($attempt = 0; $attempt -lt 60; $attempt++) {",
-                "    try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -Uri $healthUrl | Out-Null; $healthy = $true; break } catch { Start-Sleep -Seconds 10 }",
-                "  }",
-                "  if (-not $healthy) { throw \"Health check timed out: $healthUrl\" }",
-                "}",
-            ]
-        )
-    else:
-        verify.append(
-            "throw 'No public health URL is available; verify this private deployment from inside its network.'"
-        )
+function Set-TfValue([string]$Name, [string]$Value) {
+  $escaped = $Value.Replace('\', '\\').Replace('"', '\"')
+  $content = Get-Content -Raw -Encoding UTF8 $TfvarsPath
+  $pattern = '(?m)^' + [regex]::Escape($Name) + '\s*=.*$'
+  $replacement = $Name + ' = "' + $escaped + '"'
+  if ([regex]::IsMatch($content, $pattern)) {
+    $content = [regex]::Replace($content, $pattern, $replacement)
+  } else {
+    $content = $content.TrimEnd() + [Environment]::NewLine + $replacement + [Environment]::NewLine
+  }
+  Set-Content -Encoding UTF8 -LiteralPath $TfvarsPath -Value $content
+}
 
-    provider_command = {"aws": "aws", "azure": "az", "gcp": "gcloud"}.get(
-        provider, ""
-    )
-    scripts = {
-        "doctor.ps1": "$ErrorActionPreference = 'Stop'\n"
-        + root
-        + "Get-Command tofu, docker | Out-Null\n"
-        + (f"Get-Command {provider_command} | Out-Null\n" if provider_command else "")
-        + "tofu version\ndocker version\n",
-        "prepare-images.ps1": "\n".join(prepare) + "\n",
-        "plan.ps1": "$ErrorActionPreference = 'Stop'\n"
-        + root
-        + load_runtime
-        + "tofu init\nif ($LASTEXITCODE -ne 0) { throw 'tofu init failed.' }\n"
-        + "tofu validate\nif ($LASTEXITCODE -ne 0) { throw 'tofu validate failed.' }\n"
-        + "$planArgs = @('plan', '-out=easydep.tfplan') + @($args)\n"
-        + "& tofu @planArgs\nif ($LASTEXITCODE -ne 0) { throw 'tofu plan failed.' }\n",
-        "deploy.ps1": "$ErrorActionPreference = 'Stop'\n"
-        + root
-        + "if (-not (Test-Path easydep.tfplan)) { throw 'Run scripts/plan.ps1 first.' }\n"
-        + "$applyArgs = @('apply') + @($args) + @('easydep.tfplan')\n"
-        + "& tofu @applyArgs\nif ($LASTEXITCODE -ne 0) { throw 'tofu apply failed.' }\n",
-        "verify.ps1": "\n".join(verify) + "\n",
-        "destroy.ps1": "$ErrorActionPreference = 'Stop'\n"
-        + root
-        + load_runtime
-        + "$destroyArgs = @('destroy') + @($args)\n"
-        + "& tofu @destroyArgs\nif ($LASTEXITCODE -ne 0) { throw 'tofu destroy failed.' }\n",
+function Test-CloudLogin {
+  switch ($Config.provider) {
+    'aws' {
+      $identityJson = & aws sts get-caller-identity --region $Config.region --output json
+      if ($LASTEXITCODE -ne 0) {
+        throw 'AWS authentication failed. Run aws configure or aws sso login, then run this script again.'
+      }
+      $identity = $identityJson | ConvertFrom-Json
+      if ($identity.Arn -like '*:root') {
+        throw 'Refusing to deploy with AWS root credentials. Configure a short-lived IAM or SSO identity.'
+      }
     }
-    scripts["smoke-test.ps1"] = (
-        "$ErrorActionPreference = 'Stop'\n"
-        "$scriptDir = $PSScriptRoot\n"
-        "try {\n"
-        "  & (Join-Path $scriptDir 'doctor.ps1')\n"
-        "  & (Join-Path $scriptDir 'prepare-images.ps1')\n"
-        "  & (Join-Path $scriptDir 'plan.ps1') '-input=false'\n"
-        "  & (Join-Path $scriptDir 'deploy.ps1') '-auto-approve'\n"
-        "  & (Join-Path $scriptDir 'verify.ps1')\n"
-        "} finally {\n"
-        "  if ($env:KEEP_RESOURCES -ne '1') { try { & (Join-Path $scriptDir 'destroy.ps1') '-auto-approve' } catch { Write-Error 'Automatic cleanup failed; inspect the OpenTofu state.' } }\n"
-        "}\n"
-    )
-    return scripts
+    'azure' {
+      & az account show --output none
+      if ($LASTEXITCODE -ne 0) {
+        throw 'Azure authentication failed. Run az login and select a subscription, then run this script again.'
+      }
+    }
+    'gcp' {
+      & gcloud auth application-default print-access-token | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        throw 'GCP credentials are unavailable. Run gcloud auth application-default login, then run this script again.'
+      }
+    }
+    default { throw "Unsupported cloud provider: $($Config.provider)" }
+  }
+}
+
+function Test-Prerequisites([bool]$NeedsDocker) {
+  Get-Command tofu -ErrorAction Stop | Out-Null
+  $cloudCommand = @{ aws = 'aws'; azure = 'az'; gcp = 'gcloud' }[$Config.provider]
+  Get-Command $cloudCommand -ErrorAction Stop | Out-Null
+  if ($NeedsDocker) {
+    Get-Command docker -ErrorAction Stop | Out-Null
+    & docker info | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Docker is installed but its daemon is not running.' }
+  }
+  Test-CloudLogin
+}
+
+function Initialize-Inputs {
+  if (Test-Path $TfvarsPath) { return }
+  Copy-Item (Join-Path $TofuRoot 'terraform.tfvars.example') $TfvarsPath
+  Write-Host 'Enter the deployment values. They remain only in this extracted folder.' -ForegroundColor Cyan
+  Set-TfValue 'resource_prefix' (Read-Required 'Unique resource prefix' 'easydep')
+
+  switch ($Config.provider) {
+    'aws' {
+      $ami = ''
+      try {
+        $ami = (& aws ssm get-parameter --region $Config.region --name '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64' --query 'Parameter.Value' --output text 2>$null).Trim()
+      } catch { $ami = '' }
+      if (-not $ami.StartsWith('ami-')) { $ami = '' }
+      Set-TfValue 'boot_image_id' (Read-Required "x86_64 Linux AMI in $($Config.region)" $ami)
+    }
+    'azure' {
+      $subscription = (& az account show --query id --output tsv).Trim()
+      Set-TfValue 'subscription_id' (Read-Required 'Azure subscription ID' $subscription)
+      $keyPath = Read-Required 'Path to an OpenSSH public key'
+      Set-TfValue 'ssh_public_key' (Get-Content -Raw -Encoding UTF8 $keyPath).Trim()
+    }
+    'gcp' {
+      $project = (& gcloud config get-value project 2>$null).Trim()
+      Set-TfValue 'project_id' (Read-Required 'GCP project ID' $project)
+    }
+  }
+
+  # Provider 기본값 이외에 외부 endpoint나 Secret 참조가 있으면 이름 그대로 묻는다.
+  $content = Get-Content -Raw -Encoding UTF8 $TfvarsPath
+  $emptyValues = [regex]::Matches($content, '(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*""\s*$')
+  foreach ($match in $emptyValues) {
+    $name = $match.Groups[1].Value
+    if ($Config.provider -eq 'aws' -and $name -eq 'ssh_public_key') { continue }
+    Set-TfValue $name (Read-Required "Value for $name")
+  }
+}
+
+function Import-RuntimeValues {
+  $envPath = Join-Path $RuntimeRoot '.env'
+  if (Test-Path $envPath) {
+    $env:TF_VAR_runtime_env = [IO.File]::ReadAllText($envPath)
+  }
+  if (Test-Path $DigestPath) {
+    Get-Content -Encoding UTF8 $DigestPath | ForEach-Object {
+      if ($_ -match '^(TF_VAR_[A-Za-z0-9_]+)=(.+)$') {
+        Set-Item -Path ('Env:' + $matches[1]) -Value $matches[2]
+      }
+    }
+  }
+}
+
+function Initialize-Tofu {
+  Set-Location $TofuRoot
+  Write-Host 'Initializing OpenTofu. The first provider download can take several minutes.' -ForegroundColor Cyan
+  Invoke-Checked 'tofu' @('init', '-input=false')
+}
+
+function Initialize-Images {
+  if (Test-Path $DigestPath) {
+    Write-Host 'Reusing the recorded application image digest.' -ForegroundColor Green
+    return $true
+  }
+  $answer = Read-Host 'Container registries will now be created and may incur cloud charges. Continue? [y/N]'
+  if ($answer -notmatch '^(?i)y(?:es)?$') {
+    Write-Host 'Deployment cancelled before creating cloud resources.' -ForegroundColor Yellow
+    return $false
+  }
+
+  Initialize-Tofu
+  $placeholder = 'sha256:' + ('0' * 64)
+  $targetArgs = @()
+  foreach ($target in @($Config.registryTargets)) {
+    $targetArgs += "-target=$($target.address)"
+    $targetArgs += "-var=image_digest_$($target.workload)=$placeholder"
+  }
+  if ($targetArgs.Count -gt 0) {
+    Invoke-Checked 'tofu' (@('apply', '-auto-approve') + $targetArgs)
+  }
+
+  $applicationRoot = Resolve-Path (Join-Path $Root '..')
+  $digestLines = @()
+  foreach ($target in @($Config.registryTargets)) {
+    $registryUrl = (& tofu output -raw $target.output).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Cannot read registry output $($target.output)." }
+    $registryHost = $registryUrl.Split('/')[0]
+    switch ($Config.provider) {
+      'aws' {
+        $password = aws ecr get-login-password --region $Config.region
+        if ($LASTEXITCODE -ne 0) { throw 'AWS registry login token failed.' }
+        $password | docker login --username AWS --password-stdin $registryHost
+      }
+      'azure' { az acr login --name $registryHost.Split('.')[0] }
+      'gcp' { gcloud auth configure-docker $registryHost --quiet }
+    }
+    if ($LASTEXITCODE -ne 0) { throw 'Container registry login failed.' }
+
+    $tag = 'easydep-' + $target.workload + '-' + (Get-Date -Format 'yyyyMMddHHmmss')
+    $imageTag = $registryUrl + ':' + $tag
+    Invoke-Checked 'docker' @('build', '-t', $imageTag, $applicationRoot)
+    $pushOutput = docker push $imageTag 2>&1 | Out-String
+    $pushExitCode = $LASTEXITCODE
+    Write-Host $pushOutput
+    if ($pushExitCode -ne 0) { throw 'Docker image push failed.' }
+    $digest = [regex]::Match($pushOutput, 'digest: (sha256:[0-9a-f]{64})')
+    if (-not $digest.Success) { throw 'The registry did not report an immutable image digest.' }
+    $digestLines += "TF_VAR_image_digest_$($target.workload)=$($digest.Groups[1].Value)"
+  }
+  $digestLines | Set-Content -Encoding UTF8 $DigestPath
+  return $true
+}
+
+function New-AndApplyPlan {
+  Set-Location $TofuRoot
+  Import-RuntimeValues
+  Invoke-Checked 'tofu' @('validate', '-no-color')
+  Invoke-Checked 'tofu' @('plan', '-input=false', '-out=easydep.tfplan')
+  Invoke-Checked 'tofu' @('show', '-no-color', 'easydep.tfplan')
+  $answer = Read-Host 'Apply the plan shown above? [y/N]'
+  if ($answer -notmatch '^(?i)y(?:es)?$') {
+    Write-Host 'The plan was saved but not applied.' -ForegroundColor Yellow
+    return $false
+  }
+  Invoke-Checked 'tofu' @('apply', 'easydep.tfplan')
+  return $true
+}
+
+function Test-DeployedApplication {
+  if (@($Config.healthOutputs).Count -eq 0) {
+    Write-Host 'Deployment completed. This private application has no public health URL; verify it from inside the cloud network.' -ForegroundColor Yellow
+    return
+  }
+  foreach ($outputName in @($Config.healthOutputs)) {
+    $healthUrl = (& tofu output -raw $outputName).Trim()
+    $healthy = $false
+    Write-Host "Waiting for $healthUrl"
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+      try {
+        Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -Uri $healthUrl | Out-Null
+        $healthy = $true
+        break
+      } catch { Start-Sleep -Seconds 10 }
+    }
+    if (-not $healthy) { throw "Health check timed out after ten minutes: $healthUrl" }
+  }
+  Write-Host 'Deployment and health verification completed.' -ForegroundColor Green
+}
+
+function Start-OrContinueDeployment {
+  Test-Prerequisites $true
+  Initialize-Inputs
+  if (-not (Initialize-Images)) { return }
+  if (New-AndApplyPlan) { Test-DeployedApplication }
+}
+
+function Remove-Deployment {
+  Test-Prerequisites $false
+  if (-not (Test-Path (Join-Path $TofuRoot 'terraform.tfstate'))) {
+    Write-Host 'No local OpenTofu state was found. Nothing can be destroyed from this folder.' -ForegroundColor Yellow
+    return
+  }
+  $answer = Read-Host 'Destroy resources managed by this deployment state? Type DESTROY to continue'
+  if ($answer -cne 'DESTROY') { Write-Host 'Destroy cancelled.'; return }
+  Initialize-Tofu
+  Import-RuntimeValues
+  $retainedLog = Join-Path $Root 'retained-resources.txt'
+  foreach ($address in @($Config.retainedResources)) {
+    $stateAddresses = @(& tofu state list)
+    if ($stateAddresses -contains $address) {
+      $stateText = (& tofu state show -no-color $address | Out-String)
+      $idMatch = [regex]::Match($stateText, '(?m)^\s*id\s*=\s*"?([^"\r\n]+)')
+      $cloudId = if ($idMatch.Success) { $idMatch.Groups[1].Value.Trim() } else { 'unknown' }
+      Add-Content -Encoding UTF8 -LiteralPath $retainedLog -Value "$address cloud_id=$cloudId"
+      Invoke-Checked 'tofu' @('state', 'rm', $address)
+      Write-Host "Retained $address. Its cloud ID was written to retained-resources.txt." -ForegroundColor Yellow
+    }
+  }
+  Invoke-Checked 'tofu' @('destroy', '-auto-approve')
+  Remove-Item -LiteralPath $DigestPath -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $PlanPath -ErrorAction SilentlyContinue
+  Write-Host 'Managed resources were destroyed.' -ForegroundColor Green
+}
+
+function Show-Status {
+  $image = if (Test-Path $DigestPath) { 'ready' } else { 'not prepared' }
+  $state = if (Test-Path (Join-Path $TofuRoot 'terraform.tfstate')) { 'present' } else { 'not created' }
+  Write-Host "Provider: $($Config.provider.ToUpper())  Region: $($Config.region)"
+  Write-Host "Local state: $state  Application image: $image"
+}
+
+while ($true) {
+  Write-Host ''
+  Write-Host 'EasyDep Deployment' -ForegroundColor Cyan
+  Show-Status
+  Write-Host ''
+  Write-Host '1. Start or continue deployment'
+  Write-Host '2. Destroy deployed resources'
+  Write-Host '0. Exit'
+  $choice = Read-Host 'Select'
+  try {
+    switch ($choice) {
+      '1' { Start-OrContinueDeployment }
+      '2' { Remove-Deployment }
+      '0' { return }
+      default { Write-Host 'Select 1, 2, or 0.' -ForegroundColor Yellow }
+    }
+  } catch {
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host 'Fix the reported cause and choose Start or continue deployment again.' -ForegroundColor Yellow
+  }
+}
+'''
+    return script.replace("__CONFIG__", config_json)
 
 
 def _format_open_tofu(directory: Path) -> None:
@@ -469,22 +521,48 @@ def _format_open_tofu(directory: Path) -> None:
         raise RuntimeError(f"OpenTofu formatting failed: {output}")
 
 
-def _readme(provider: str) -> str:
+def _readme(resource_plan: dict[str, Any]) -> str:
+    """패키지만 받은 사용자도 시작할 수 있는 짧은 공급자별 안내를 만든다."""
+
+    provider = str(resource_plan.get("provider") or "")
+    region = str(resource_plan.get("region") or "")
+    authentication = {
+        "aws": (
+            "Run `aws configure`, or run `aws sso login --profile <profile>` and set "
+            "`AWS_PROFILE`. The script verifies the identity with "
+            f"`aws sts get-caller-identity --region {region}`."
+        ),
+        "azure": (
+            "Run `az login`, then `az account set --subscription <subscription-id>`."
+        ),
+        "gcp": (
+            "Run `gcloud auth login`, `gcloud auth application-default login`, and "
+            "`gcloud config set project <project-id>`."
+        ),
+    }.get(provider, "Authenticate with the cloud provider CLI.")
     return f"""# EasyDep deployment package
 
-This package targets **{provider.upper()}** and contains a deterministic OpenTofu module, a cloud-init template, Docker Compose runtime definition, and matching PowerShell/POSIX scripts. EasyDep never applies this module for you.
+This package targets **{provider.upper()}** in **{region}**. Keep `Dockerfile`, `build.gradle`, `frontend/`, `src/`, and `deployment/` together after extracting the ZIP.
 
-1. Install OpenTofu, Docker, and the {provider.upper()} CLI; authenticate locally.
-2. Review `tofu/terraform.tfvars.example`, copy it to `tofu/terraform.tfvars`, choose a unique `resource_prefix`, and provide only local deployment inputs. Do not commit it.
-3. Copy `runtime/.env.example` to `runtime/.env` and place only non-secret runtime settings there. `plan.*` passes that file to the active cloud-init template. Use the selected cloud secret service for passwords, API keys, and private keys; never put them in `runtime/.env`, cloud-init, Compose, or `terraform.tfvars`.
-4. Run `scripts/doctor.*`, then `scripts/prepare-images.*`. The latter creates only the generated registries first, builds and pushes the application image, and records its immutable digest in `runtime/image-digests.env`.
-5. Run `scripts/plan.sh` or `scripts/plan.ps1`; it reads the recorded image digest and creates `tofu/easydep.tfplan`. Review that plan, then run `scripts/deploy.*` to apply that exact file.
-6. Run `scripts/verify.*`. It reads every generated public health URL and waits up to ten minutes for cloud-init and the application to become ready. Docker logs are available on the VM through `docker compose logs` and `/var/lib/docker/containers`.
-7. Run `scripts/destroy.*` when the environment is no longer required. Retained data disks are intentionally not deleted automatically.
+## Prerequisites
 
-For a disposable public-ingress environment without retained disks, `scripts/smoke-test.*` runs steps 4-7 and destroys resources even when verification fails. A private-only deployment must be verified from inside its network instead. Set `KEEP_RESOURCES=1` only when you intentionally want to inspect a failed deployment and accept its cost.
+Install PowerShell, OpenTofu 1.8 or newer, Docker with a running daemon, and the {provider.upper()} CLI. {authentication}
 
-The generated OpenTofu module passes the same selected ResourcePlan values (provider, region, zones, ports, health path, disks, image digests, VM SKU, and replica count) to AWS `user_data`, Azure `custom_data`, or GCP instance metadata.
+Use a short-lived, least-privilege cloud identity. Do not use a cloud account's root or owner identity. The first OpenTofu provider download can take several minutes; wait for it instead of starting another copy.
+
+## Deploy or resume
+
+Open PowerShell in this `deployment` directory and run:
+
+```powershell
+.\\easydep.ps1
+```
+
+Choose **Start or continue deployment**. The script checks the environment and login, asks only for missing deployment values, prepares and uploads the image, displays the OpenTofu plan, asks before applying it, and verifies the public health URL. It detects the local state and image digest when you run it again after a failure.
+
+The script clearly warns before it creates the first billable cloud resource. OpenTofu state, `terraform.tfvars`, and image digests stay in this extracted folder; do not commit or share them. Passwords, API keys, and private keys belong in the selected cloud secret service, not in these files or VM metadata.
+
+Choose **Destroy deployed resources** from the same menu when finished. Data marked for retention is removed from OpenTofu management before the other resources are destroyed. Its cloud ID is written to `retained-resources.txt`; you remain responsible for that resource and its charges.
 """
 
 
@@ -503,10 +581,8 @@ def render_deployment_package(
         package = staging / "deployment"
         tofu = package / "tofu"
         runtime = package / "runtime"
-        scripts = package / "scripts"
         tofu.mkdir(parents=True)
         runtime.mkdir()
-        scripts.mkdir()
         _write_text(package / ".easydep-managed", "easydep deployment package\n")
         # Keep every renderer-owned .tf/.tftpl file. main/variables/outputs are
         # the stable human entry points; auxiliary templates are referenced by it.
@@ -525,19 +601,22 @@ def render_deployment_package(
             raise TypeError("OpenTofu rendering did not produce an active cloud-init template")
         compose, envs = _compose(resource_plan)
         _write_text(runtime / "compose.yaml", compose)
-        env_example = "\n".join(f"# {description}\n{name}=" for name, description in envs) + "\n"
+        env_example = (
+            "# Optional non-secret overrides only. Resource bindings are supplied by cloud-init.\n"
+            + "\n".join(f"# {description}\n{name}=" for name, description in envs)
+            + "\n"
+        )
         _write_text(runtime / ".env.example", env_example)
         _write_text(tofu / "terraform.tfvars.example", _tfvars_example(resource_plan))
         # This stable filename is a copy of the exact per-compute template that
         # main.tf passes as user_data/custom_data/instance metadata.
         _write_text(tofu / "cloud-init.yaml.tftpl", cloud_init)
         _format_open_tofu(tofu)
-        for name, content in {
-            **_shell_scripts(resource_plan, rendered_tofu),
-            **_powershell_scripts(resource_plan, rendered_tofu),
-        }.items():
-            _write_text(scripts / name, content)
-        _write_text(package / "README.md", _readme(str(resource_plan.get("provider") or "")))
+        _write_text(
+            package / "easydep.ps1",
+            _interactive_powershell_script(resource_plan, rendered_tofu),
+        )
+        _write_text(package / "README.md", _readme(resource_plan))
         if destination.exists():
             if not marker.is_file():
                 raise ValueError(f"Refusing to replace unmanaged deployment package: {destination}")

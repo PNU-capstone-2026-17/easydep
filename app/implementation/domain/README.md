@@ -8,6 +8,8 @@
 - `ImplementationIR`은 `bceModel`, `apiModel`, `erdBceModel`에서 구현에 필요한 클래스,
   endpoint, persistence 대상과 대표 HTTP 시나리오만 골라 담는다.
 - `CommandEvidence`는 실제 build·test 명령과 종료 코드, 출력과 걸린 시간을 담는다.
+- `artifact_layout.py`는 DB에 종류별로 저장된 파일을 실행 가능한 앱 폴더로 합칠 때의
+  경로만 정의한다. Testing 임시 폴더와 사용자가 받는 ZIP이 이 규칙을 함께 사용한다.
 
 `implementation_ir.py`는 PlantUML이나 OpenAPI 표시 문자열을 다시 해석하지 않는다. 표시
 형식이 바뀌어도 저장된 typed 설계가 같으면 같은 구현 계획을 만든다.

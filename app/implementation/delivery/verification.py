@@ -79,8 +79,7 @@ def _command_result(
 def _required_paths(root: Path) -> tuple[list[Path], list[str]]:
     tofu = root / "tofu"
     runtime = root / "runtime"
-    scripts = root / "scripts"
-    required = [root / "README.md"]
+    required = [root / "README.md", root / "easydep.ps1"]
     missing: list[str] = []
     if tofu.is_dir():
         required.extend(tofu / name for name in ("main.tf", "variables.tf", "outputs.tf"))
@@ -91,17 +90,6 @@ def _required_paths(root: Path) -> tuple[list[Path], list[str]]:
         missing.append("tofu/")
     required.append(runtime / "compose.yaml")
     required.append(runtime / ".env.example")
-    for name in (
-        "doctor.sh",
-        "prepare-images.sh",
-        "plan.sh",
-        "deploy.sh",
-        "verify.sh",
-        "destroy.sh",
-        "smoke-test.sh",
-    ):
-        required.append(scripts / name)
-    # PowerShell is optional on POSIX packages, but if one exists it is checked too.
     for path in required:
         if not path.is_file():
             missing.append(path.relative_to(root).as_posix())
@@ -291,17 +279,8 @@ def check_deployment_package(
             )
         )
     for script in (
-        sorted((root / "scripts").glob("*.sh"))
-        if check_package and (root / "scripts").is_dir()
-        else []
-    ):
-        commands.append(
-            _command_result(["bash", "-n", script.name], script.parent, timeout_seconds)
-        )
-
-    for script in (
-        sorted((root / "scripts").glob("*.ps1"))
-        if check_package and (root / "scripts").is_dir()
+        [root / "easydep.ps1"]
+        if check_package and (root / "easydep.ps1").is_file()
         else []
     ):
         # ParseFile은 스크립트를 실행하지 않고 구문 오류만 찾는다. 컨테이너
@@ -309,7 +288,7 @@ def check_deployment_package(
         expression = (
             "& { $tokens=$null; $errors=$null; "
             "[System.Management.Automation.Language.Parser]::"
-            f"ParseFile('scripts/{script.name}',[ref]$tokens,[ref]$errors); "
+            f"ParseFile('{script.name}',[ref]$tokens,[ref]$errors); "
             "if($errors.Count -gt 0){exit 1} }"
         )
         commands.append(

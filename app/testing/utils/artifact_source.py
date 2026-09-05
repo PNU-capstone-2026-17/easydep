@@ -6,27 +6,12 @@ import hashlib
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
-from app.db.models import (
-    TYPE_DEPLOYMENT_FILE,
-    TYPE_FRONTEND_SOURCE_CODE,
-    TYPE_IAC_CODE,
-    TYPE_SOURCE_CODE,
-    TYPE_TEST_CODE,
-)
+from app.implementation.domain.artifact_layout import application_artifact_path
 from app.repositories.artifact_repository import AppNotFound, load_file_snapshot
 from app.testing.schemas.testing_input import TestingContracts, TestingInput
-
-# frontend 산출물은 저장할 때 ``frontend/`` 접두사를 떼므로 복원할 때 다시 붙인다.
-ARTIFACT_APPLICATION_PREFIXES: dict[str, str] = {
-    TYPE_SOURCE_CODE: "",
-    TYPE_FRONTEND_SOURCE_CODE: "frontend",
-    TYPE_TEST_CODE: "",
-    TYPE_DEPLOYMENT_FILE: "",
-    TYPE_IAC_CODE: "",
-}
 
 
 class ArtifactSourceUnavailable(Exception):
@@ -35,16 +20,6 @@ class ArtifactSourceUnavailable(Exception):
 
 class ArtifactSnapshotMismatch(Exception):
     """파일 묶음의 경로·내용이 손상되었거나 서로 겹칠 때 발생한다."""
-
-
-def _safe_relative(file_path: str) -> Path:
-    """임시 폴더 밖으로 나갈 수 있는 파일 경로를 거부한다."""
-    candidate = PurePosixPath(file_path.replace("\\", "/"))
-    if candidate.is_absolute() or any(
-        part in {"", ".", ".."} for part in candidate.parts
-    ):
-        raise ValueError(f"안전하지 않은 산출물 파일 경로입니다: {file_path}")
-    return Path(*candidate.parts)
 
 
 def capture_testing_input(
@@ -112,15 +87,11 @@ def materialized_testing_application(testing_input: TestingInput) -> Iterator[Pa
 
         for artifact_type in testing_input.artifact_version_ids:
             snapshot = _load_snapshot(testing_input, artifact_type)
-            prefix = ARTIFACT_APPLICATION_PREFIXES[artifact_type]
-            destination = application / prefix if prefix else application
             for raw_path, raw_item in sorted(snapshot["files"].items()):
-                relative = _safe_relative(str(raw_path))
-                restored = (
-                    (Path(prefix) / relative).as_posix()
-                    if prefix
-                    else relative.as_posix()
+                application_path = application_artifact_path(
+                    artifact_type, str(raw_path)
                 )
+                restored = application_path.as_posix()
                 previous_type = occupied_paths.get(restored)
                 if previous_type is not None:
                     raise ArtifactSnapshotMismatch(
@@ -137,7 +108,7 @@ def materialized_testing_application(testing_input: TestingInput) -> Iterator[Pa
                         f"{artifact_type} 파일 digest가 다릅니다: path={raw_path}"
                     )
 
-                target = destination / relative
+                target = application / Path(*application_path.parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 # Windows의 write_text 기본값은 LF를 CRLF로 바꾼다. DB에 저장된 POSIX
                 # script를 그대로 복원하지 않으면 Linux toolchain의 ``bash -n``이 ``fi\r``나

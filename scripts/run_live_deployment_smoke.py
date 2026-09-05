@@ -136,6 +136,7 @@ def _run(
     environment: dict[str, str] | None = None,
     capture: bool = False,
     check: bool = True,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """명령을 UTF-8로 실행하고 실패한 명령을 즉시 드러낸다."""
 
@@ -148,6 +149,7 @@ def _run(
         text=True,
         encoding="utf-8",
         errors="replace",
+        input=input_text,
     )
 
 
@@ -823,39 +825,24 @@ def run_smoke(provider: str, application_source: Path | None, case_name: str) ->
         if powershell is None:
             raise RuntimeError("PowerShell 실행 파일을 찾지 못했습니다.")
 
-        def run_script(name: str, *arguments: str) -> None:
-            _run(
-                [
-                    powershell,
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(package / "scripts" / name),
-                    *arguments,
-                ],
-                cwd=application,
-                environment=environment,
-            )
-
-        # 생성된 smoke script의 중간 cleanup을 잠시 미뤄 모든 사설 VM까지 확인한다.
-        # 이 함수의 finally가 같은 state를 사용해 항상 정리를 수행한다.
-        environment["KEEP_RESOURCES"] = "1"
+        # 사용자와 동일한 단일 TUI를 실행한다. tfvars는 위에서 준비했으므로 입력은
+        # 배포 시작, 최초 Registry 생성 동의, plan 적용 동의, 종료 순서뿐이다.
+        _run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(package / "easydep.ps1"),
+            ],
+            cwd=application,
+            environment=environment,
+            input_text="1\ny\ny\n0\n",
+        )
         if provider == "aws":
-            # 공개 health 요청은 cloud-init 실패도 10분 동안 기다릴 수 있다. AWS
-            # 콘솔 표식을 먼저 확인하면 사설 VM까지 보고 실패도 더 빨리 드러난다.
-            run_script("doctor.ps1")
-            run_script("prepare-images.ps1")
-            _load_image_digests(
-                package / "runtime" / "image-digests.env", environment
-            )
-            run_script("plan.ps1", "-input=false")
-            run_script("deploy.ps1", "-auto-approve")
+            # 공개 URL만으로 확인하기 어려운 사설 VM까지 bootstrap 표식을 확인한다.
             _wait_for_aws_bootstrap(package / "tofu", environment)
-            if case_name != "private-single":
-                run_script("verify.ps1")
-        else:
-            run_script("smoke-test.ps1")
     finally:
         tofu = application / "deployment" / "tofu"
         _load_image_digests(

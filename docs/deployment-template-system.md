@@ -457,6 +457,7 @@ PlantUML 산출물을 저장한 직후 SVG와 PNG를 미리 만든다. 앱·단�
 ```text
 application/deployment/
   README.md
+  easydep.ps1              # 인자 없이 실행하는 배포·재개·삭제 메뉴
   tofu/
     main.tf
     variables.tf
@@ -467,15 +468,7 @@ application/deployment/
   runtime/
     compose.yaml
     .env.example
-    image-digests.env        # prepare-images 실행 뒤 생성
-  scripts/
-    doctor.sh / doctor.ps1
-    prepare-images.sh / prepare-images.ps1
-    plan.sh / plan.ps1
-    deploy.sh / deploy.ps1
-    verify.sh / verify.ps1
-    destroy.sh / destroy.ps1
-    smoke-test.sh / smoke-test.ps1
+    image-digests.env        # easydep.ps1이 image push 뒤 생성
 ```
 
 Docker 빌드 문맥에는 `/deployment`를 포함하지 않는다. OpenTofu provider 파일과 배포
@@ -490,7 +483,7 @@ Docker 빌드 문맥에는 `/deployment`를 포함하지 않는다. OpenTofu pro
 | `resource_prefix` | 항상 | 사용자가 정하는 리소스 이름 접두사 |
 | `runtime_env` | 항상 | 비밀이 아닌 추가 runtime 환경 변수 |
 | `vm_sku` | 항상 | 기본값 또는 sizing 단계에서 선택한 VM 종류 |
-| `image_digest_<workload>` | 생성 앱마다 | `prepare-images`가 Registry push 뒤 기록한 SHA-256 digest |
+| `image_digest_<workload>` | 생성 앱마다 | `easydep.ps1`이 Registry push 뒤 기록한 SHA-256 digest |
 | `container_port_<workload>_<interface>` | 구현에서 port를 아직 확인하지 못한 경우 | 사용자 입력 |
 | `secret_reference_<workload>_<config>` | Secret 설정마다 | 기존 CSP Secret의 ARN·리소스 ID·이름 |
 | 외부 endpoint 변수 | EasyDep 밖의 시스템에 연결할 때 | 사용자가 제공한 주소 |
@@ -504,28 +497,13 @@ Docker 빌드 문맥에는 `/deployment`를 포함하지 않는다. OpenTofu pro
 
 ### 7.3 실행 순서
 
-```text
-doctor
-  → 로컬 Docker, OpenTofu, CSP CLI와 인증 상태 확인
-
-prepare-images
-  → Registry 리소스만 먼저 생성
-  → 애플리케이션 이미지 build
-  → Registry push
-  → 변경할 수 없는 image digest 기록
-
-plan
-  → runtime env와 image digest를 넣어 tofu plan 생성
-
-deploy
-  → 사용자가 검토한 plan을 그대로 apply
-
-verify
-  → 생성된 공개 health URL이 정상 응답할 때까지 확인
-
-destroy
-  → 같은 OpenTofu state가 소유한 리소스 정리
-```
+사용자는 `.\easydep.ps1`을 인자 없이 실행한다. 메뉴에는 `배포/재개`, `삭제`, `종료`만
+표시된다. `배포/재개`는 로컬 도구와 CSP 인증을 확인하고, 처음 실행할 때 필요한 값만
+질문한 뒤 Registry 준비, image build·push, plan 출력과 승인, apply, health 확인을
+순서대로 실행한다. 중간에 실패하면 같은 폴더의 state와 image digest를 읽어 완료된
+작업부터 반복하지 않는다. `삭제`는 같은 state가 소유한 리소스만 정리한다.
+`retain`으로 표시된 데이터 디스크는 삭제 전에 OpenTofu 관리 대상에서 제외하고 CSP ID를
+`retained-resources.txt`에 기록한다. 사용자는 해당 디스크와 이후 비용을 직접 관리한다.
 
 EasyDep 서버가 CSP 인증 정보나 Secret 실제 값을 보관하지 않는다. 사용자가 자신의 PC 또는
 배포용 실행 환경에서 CSP CLI로 로그인한 뒤 스크립트를 실행한다.
@@ -579,8 +557,8 @@ CSP별 참조 형식은 다음과 같다.
 
 ### 8.3 실배포 검사
 
-실배포 runner는 별도 배포 구현을 만들지 않고 사용자가 받는 `doctor → prepare-images → plan
-→ deploy → verify → destroy` 스크립트를 그대로 호출한다. 각 실행은 고유한
+실배포 검사는 별도 IaC 구현을 만들지 않고 사용자가 받는 것과 같은 OpenTofu, cloud-init,
+Compose를 사용한다. 각 실행은 고유한
 `easydep-live-<provider>-<id>` 접두사를 사용하고, 실패하더라도 기본적으로 같은 state로
 정리한다.
 

@@ -905,6 +905,24 @@ def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> 
             "version_no": 1,
             "files": {"src/test/AppTest.java": {"content": "class AppTest {}", "sha256": "b"}},
         },
+        "FRONTEND_SOURCE_CODE": {
+            "artifact_type": "FRONTEND_SOURCE_CODE",
+            "version_no": 1,
+            "files": {"package.json": {"content": "{}", "sha256": "c"}},
+        },
+        "DEPLOYMENT_FILE": {
+            "artifact_type": "DEPLOYMENT_FILE",
+            "version_no": 1,
+            "files": {
+                "Dockerfile": {"content": "FROM scratch", "sha256": "d"},
+                "deployment/easydep.ps1": {"content": "tofu plan", "sha256": "e"},
+            },
+        },
+        "IAC_CODE": {
+            "artifact_type": "IAC_CODE",
+            "version_no": 1,
+            "files": {"deployment/tofu/main.tf": {"content": "terraform {}", "sha256": "f"}},
+        },
     }
     monkeypatch.setattr(
         "app.implementation.interfaces.http.artifact_repository.load_file_snapshot",
@@ -918,12 +936,23 @@ def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/zip")
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-        assert archive.read("SOURCE_CODE/src/main/App.java") == b"class App {}"
-        assert archive.read("TEST_CODE/src/test/AppTest.java") == b"class AppTest {}"
+        assert archive.read("src/main/App.java") == b"class App {}"
+        assert archive.read("src/test/AppTest.java") == b"class AppTest {}"
+        assert archive.read("frontend/package.json") == b"{}"
+        assert archive.read("Dockerfile") == b"FROM scratch"
+        assert archive.read("deployment/easydep.ps1") == b"tofu plan"
+        assert archive.read("deployment/tofu/main.tf") == b"terraform {}"
+        assert not any(name.startswith("SOURCE_CODE/") for name in archive.namelist())
+        assert not any(
+            name.startswith("FRONTEND_SOURCE_CODE/") for name in archive.namelist()
+        )
         manifest = json.loads(archive.read("manifest.json"))
     assert {item["artifact_type"] for item in manifest["artifacts"]} == {
         "SOURCE_CODE",
         "TEST_CODE",
+        "FRONTEND_SOURCE_CODE",
+        "DEPLOYMENT_FILE",
+        "IAC_CODE",
     }
 
 

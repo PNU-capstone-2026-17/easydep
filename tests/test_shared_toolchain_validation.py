@@ -232,12 +232,11 @@ def test_deployment_check_treats_toolchain_start_failure_as_inconclusive(
     deployment = tmp_path / "deployment"
     tofu = deployment / "tofu"
     runtime = deployment / "runtime"
-    scripts = deployment / "scripts"
     tofu.mkdir(parents=True)
     runtime.mkdir()
-    scripts.mkdir()
     for path in (
         deployment / "README.md",
+        deployment / "easydep.ps1",
         tofu / "main.tf",
         tofu / "variables.tf",
         tofu / "outputs.tf",
@@ -246,16 +245,6 @@ def test_deployment_check_treats_toolchain_start_failure_as_inconclusive(
         runtime / ".env.example",
     ):
         path.write_text("# validation fixture\n", encoding="utf-8")
-    for name in (
-        "doctor.sh",
-        "prepare-images.sh",
-        "plan.sh",
-        "deploy.sh",
-        "verify.sh",
-        "destroy.sh",
-        "smoke-test.sh",
-    ):
-        (scripts / name).write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
     def unavailable(command, **_kwargs):
         return ToolchainExecution(

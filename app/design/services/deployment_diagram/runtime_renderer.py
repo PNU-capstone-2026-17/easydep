@@ -404,7 +404,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
         if generated_workloads:
             lines.extend(
                 [
-                    'actor "User-run deploy.sh\\n<<local CSP authentication>>" as user_deploy',
+                    'actor "User-run easydep.ps1\\n<<local CSP authentication>>" as user_deploy',
                     'frame "Application delivery dependencies" as delivery_dependencies {',
                     '  cloud "VM outbound path\\n(public address or managed NAT)" as workload_outbound_dependency',
                 ]

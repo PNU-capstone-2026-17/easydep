@@ -353,8 +353,8 @@ digest에 포함되지 않는 late binding이다.
 ### 9.3 OpenTofu와 bootstrap
 
 `render_open_tofu()`는 unresolved가 없는 ResourcePlan에서 provider/variable/main/output/
-locals `.tf`, compute별 bootstrap과 `doctor.sh`, `plan.sh`, `deploy.sh`, `status.sh`,
-`destroy.sh`를 만든다.
+locals `.tf`, compute별 bootstrap과 사용자가 인자 없이 실행하는 `easydep.ps1`을 만든다.
+이 스크립트 안에서 환경 검사, image 준비, plan, 배포, 상태 확인과 삭제를 함수로 나눈다.
 
 renderer는 생성된 Terraform resource type 집합과 ResourcePlan create node type 집합이
 정확히 같은지 비교한다. 모든 `references[]`가 실제 렌더 과정에서 소비됐는지도 확인한다.

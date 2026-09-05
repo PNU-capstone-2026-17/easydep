@@ -1,6 +1,7 @@
 # 3사 클라우드 실배포 검증 기록
 
 > 검증일: 2026-09-03
+> 올인원 배포 도구 추가 검증일: 2026-09-05
 > 대상: Docker-on-VM 배포 템플릿과 EasyDep이 생성한 OpenTofu·bootstrap 패키지
 
 배포 입력, 템플릿 선택 규칙, 다이어그램과 IaC 생성 과정까지 함께 보려면
@@ -14,8 +15,9 @@
 ## 1. 검증 방법
 
 실배포는 [`scripts/run_live_deployment_smoke.py`](../scripts/run_live_deployment_smoke.py)로
-실행했다. 이 스크립트는 별도의 배포 구현을 사용하지 않고 EasyDep이 사용자에게 제공하는
-다음 스크립트를 그대로 호출한다.
+실행했다. 이 검증 당시에는 사용자 배포 단계가 아래처럼 여러 파일로 제공되었다.
+현재 사용자 패키지는 같은 작업을 `deployment/easydep.ps1` 내부 함수로 옮기고,
+`배포/재개`와 `삭제`만 보이는 메뉴로 단순화했다.
 
 ```text
 doctor.ps1
@@ -221,3 +223,17 @@ datasource 환경 변수 3개와 보안 환경 변수 2개, `/var/lib/easydep/da
 Registry repository가 남지 않았다. 이번 검증에서 만든 AWS·GCP Secret, Azure Key Vault와
 soft-deleted vault도 남지 않았다. 같은 접두사의 로컬 Docker 이미지와 시스템 임시
 디렉터리도 남지 않았다.
+
+## 8. 올인원 배포 도구 실배포 재검증
+
+2026-09-05에 Azure `public-single` 사례를 새 `deployment/easydep.ps1` 메뉴로 다시
+검증했다. 실행 접두사는 `easydep-live-azure-38a66cbf`였다. 사용자가 보는 `배포/재개`
+항목 하나가 OpenTofu 초기화, Container Registry 생성, Docker image build·push, plan,
+apply와 HTTP 상태 확인을 순서대로 수행했다. VM의
+`http://20.194.21.16:8000/actuator/health`가 응답하여 배포 완료로 판정했다.
+
+검증 뒤 같은 OpenTofu 상태로 11개 리소스를 삭제했다. Azure에서
+`easydep-live-azure-38a66cbf-rg` Resource Group이 존재하지 않는 것을 다시 조회했고,
+같은 접두사의 로컬 Docker image와 시스템 임시 디렉터리도 남지 않았음을 확인했다.
+따라서 여러 배포 스크립트를 하나로 합친 변경이 실제 생성·배포·상태 확인·정리 경로를
+누락하지 않았음을 확인했다.
