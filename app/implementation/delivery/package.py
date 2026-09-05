@@ -286,9 +286,19 @@ function Test-CloudLogin {
       }
     }
     'gcp' {
-      & gcloud auth application-default print-access-token | Out-Null
-      if ($LASTEXITCODE -ne 0) {
-        throw 'GCP credentials are unavailable. Run gcloud auth application-default login, then run this script again.'
+      # Terraform은 명시적으로 전달한 access token, 일반 gcloud 로그인, ADC를 모두
+      # 사용할 수 있다. 사전 점검도 같은 선택지를 허용해야 정상 로그인을 막지 않는다.
+      if (-not $env:GOOGLE_OAUTH_ACCESS_TOKEN) {
+        $userToken = (& gcloud auth print-access-token --quiet 2>$null | Out-String).Trim()
+        $userTokenExit = $LASTEXITCODE
+        if ($userTokenExit -eq 0 -and $userToken) {
+          $env:GOOGLE_OAUTH_ACCESS_TOKEN = $userToken
+        } else {
+          & gcloud auth application-default print-access-token --quiet | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'GCP credentials are unavailable. Run gcloud auth login or gcloud auth application-default login, then run this script again.'
+          }
+        }
       }
     }
     default { throw "Unsupported cloud provider: $($Config.provider)" }
@@ -578,8 +588,9 @@ def _readme(resource_plan: dict[str, Any]) -> str:
             "Run `az login`, then `az account set --subscription <subscription-id>`."
         ),
         "gcp": (
-            "Run `gcloud auth login`, `gcloud auth application-default login`, and "
-            "`gcloud config set project <project-id>`."
+            "Run `gcloud auth login` and `gcloud config set project <project-id>`. "
+            "Service-account or ADC users may instead run "
+            "`gcloud auth application-default login`."
         ),
     }.get(provider, "Authenticate with the cloud provider CLI.")
     return f"""# EasyDep deployment package
