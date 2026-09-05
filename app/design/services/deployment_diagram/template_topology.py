@@ -12,6 +12,9 @@ from app.design.contracts.application_runtime import application_security_source
 from app.design.services.deployment_diagram.models import WorkloadGraph
 from app.design.services.deployment_diagram.normalization import normalize_workload_graph
 from app.design.services.deployment_diagram.planning_facts import extract_planning_facts
+from app.design.services.deployment_diagram.workload_contracts import (
+    postgresql_runtime_contracts,
+)
 
 
 def _has_explicit_workloads(structured_inputs: dict[str, Any]) -> bool:
@@ -22,6 +25,7 @@ def _has_explicit_workloads(structured_inputs: dict[str, Any]) -> bool:
         and item.get("kind") == "workloadContract"
         and item.get("authority") == "explicit"
         and item.get("status") == "accepted"
+        and item.get("derivationRule") != "explicit-postgresql-runtime-topology"
         and isinstance(item.get("value"), dict)
         and item["value"].get("workloadId")
         for item in structured_inputs.get("deploymentPlanningFacts") or []
@@ -199,6 +203,17 @@ def _apply_application_security(
 def build_template_workload_graph(structured_inputs: dict[str, Any]) -> WorkloadGraph:
     """코드 템플릿과 승인 계약으로 WorkloadGraph 구조를 완성한다."""
 
+    caller_facts = list(structured_inputs.get("deploymentPlanningFacts") or [])
+    generated_contracts = postgresql_runtime_contracts(
+        structured_inputs.get("refinedRequirements"),
+        capability_contract=structured_inputs.get("capabilityContract"),
+        existing_facts=caller_facts,
+        resource_spec=structured_inputs.get("resourceSpec"),
+    )
+    effective_inputs = {
+        **structured_inputs,
+        "deploymentPlanningFacts": [*caller_facts, *generated_contracts],
+    }
     seed = {
         "schemaVersion": "easydep-workload-graph",
         "workloads": (
@@ -211,10 +226,10 @@ def build_template_workload_graph(structured_inputs: dict[str, Any]) -> Workload
         "constraints": [],
         "derivations": [],
     }
-    facts = _planning_facts(structured_inputs)
+    facts = _planning_facts(effective_inputs)
     graph = normalize_workload_graph(seed, planning_facts=facts)
-    _apply_capability_cases(graph, structured_inputs)
-    _apply_application_security(graph, structured_inputs)
+    _apply_capability_cases(graph, effective_inputs)
+    _apply_application_security(graph, effective_inputs)
     # capability가 storage나 managed group을 더했으므로 같은 검증기를 한 번 더 적용한다.
     graph = normalize_workload_graph(graph, planning_facts=facts)
     return WorkloadGraph.model_validate(graph)

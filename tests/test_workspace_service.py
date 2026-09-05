@@ -1252,7 +1252,7 @@ def test_design_feedback_status_remains_a_workspace_review_gate() -> None:
     assert result["current_stage"] == "deployment_diagram"
 
 
-def test_multiple_completed_deployment_targets_use_the_existing_choice_gate() -> None:
+def test_multiple_completed_deployment_targets_use_the_artifact_configuration_gate() -> None:
     service = WorkspaceService()
     try:
         result = service._design_result(
@@ -1285,11 +1285,127 @@ def test_multiple_completed_deployment_targets_use_the_existing_choice_gate() ->
     finally:
         service.shutdown()
 
-    assert result["resource_question"]["field"] == "deployment.selectedTarget"
-    assert [choice["value"] for choice in result["resource_question"]["choices"]] == [
-        "aws-target",
-        "gcp-target",
+    assert result["deployment_configuration_required"] is True
+    assert "resource_question" not in result
+    assert "target, VM size, and replicas together" in result["message"]
+
+
+def test_single_deployment_target_requires_sizing_before_advance() -> None:
+    service = WorkspaceService()
+    try:
+        result = service._design_result(
+            {
+                "status": "need_feedback",
+                "stage": "deployment_diagram",
+                "artifact_metadata": {
+                    "deployment_diagram": {
+                        "selection": {"status": "selected"},
+                        "selectedTarget": {"id": "aws-target"},
+                        "targets": [{"id": "aws-target", "status": "completed"}],
+                    }
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["deployment_configuration_required"] is True
+
+
+def test_completed_deployment_sizing_allows_normal_review_actions() -> None:
+    service = WorkspaceService()
+    try:
+        result = service._design_result(
+            {
+                "status": "need_feedback",
+                "stage": "deployment_diagram",
+                "artifact_metadata": {
+                    "deployment_diagram": {
+                        "selection": {"status": "selected"},
+                        "selectedTarget": {"id": "aws-target"},
+                        "sizing": {
+                            "status": "completed",
+                            "target": {"id": "aws-target"},
+                        },
+                        "targets": [{"id": "aws-target", "status": "completed"}],
+                    }
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result.get("deployment_configuration_required") is None
+    assert result["awaiting_input"] is True
+
+
+def test_deployment_findings_are_repaired_before_sizing() -> None:
+    service = WorkspaceService()
+    try:
+        result = service._design_result(
+            {
+                "status": "need_feedback",
+                "stage": "deployment_diagram",
+                "validation": {
+                    "deployment_diagram": {"findings": ["topology needs repair"]}
+                },
+                "artifact_metadata": {
+                    "deployment_diagram": {
+                        "selection": {"status": "selected"},
+                        "selectedTarget": {"id": "aws-target"},
+                        "targets": [{"id": "aws-target", "status": "completed"}],
+                    }
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["requires_revision"] is True
+    assert result.get("deployment_configuration_required") is None
+
+
+def test_completed_deployment_configuration_finishes_workspace_wait(
+    monkeypatch,
+) -> None:
+    updates = []
+    events = []
+    monkeypatch.setattr(
+        repository,
+        "latest_command",
+        lambda _app_id: {
+            "command_id": "design-command",
+            "app_id": "app-1",
+            "stage": "design",
+            "status": "AWAITING_INPUT",
+            "payload": {},
+            "result": {"deployment_configuration_required": True},
+        },
+    )
+    monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda command_id, **changes: updates.append((command_id, changes)),
+    )
+    monkeypatch.setattr(
+        repository,
+        "append_event",
+        lambda app_id, **values: events.append((app_id, values)),
+    )
+    monkeypatch.setattr(repository, "now", lambda: "now")
+    service = WorkspaceService()
+    try:
+        service.sync_deployment_configuration("app-1", {"status": "completed"})
+    finally:
+        service.shutdown()
+
+    assert updates[0][0] == "design-command"
+    assert updates[0][1]["status"] == "COMPLETED"
+    assert [item["action"] for item in updates[0][1]["result"]["actions"]] == [
+        "message",
+        "start_implementation",
     ]
+    assert events[0][1]["metadata"]["status"] == "COMPLETED"
 
 
 def test_design_findings_without_an_artifact_require_revision() -> None:

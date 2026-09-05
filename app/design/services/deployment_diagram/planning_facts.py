@@ -250,6 +250,8 @@ def planning_context(resource_spec: dict[str, Any] | None) -> dict[str, Any]:
         "provider": spec.get("provider"),
         "region": spec.get("region"),
         "candidateZones": list(spec.get("candidateZones") or spec.get("selectedZones") or []),
+        "selectedZones": list(spec.get("selectedZones") or []),
+        "zoneSelectionSource": spec.get("zoneSelectionSource"),
         "deploymentTargets": targets,
         "monthlyBudgetUSD": spec.get("monthlyBudgetUSD"),
         "minVCpu": spec.get("minVCpu"),

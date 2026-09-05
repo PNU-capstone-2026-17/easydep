@@ -93,6 +93,43 @@
     command?.stage === 'implementation' &&
       ['QUEUED', 'RUNNING', 'AWAITING_INPUT'].includes(command?.status ?? '')
   );
+  let cloudPreferencesPending = $derived.by(() => {
+    if (command?.stage !== 'requirements' || command.status !== 'AWAITING_INPUT') return false;
+    const result = command.result ?? {};
+    const questions = [
+      ...(Array.isArray(result.resource_questions) ? result.resource_questions : []),
+      ...(result.resource_question ? [result.resource_question] : [])
+    ];
+    return questions.some((question) => {
+      if (!question || typeof question !== 'object') return false;
+      const item = question as Record<string, unknown>;
+      const field = String(item.field ?? '');
+      return item.kind !== 'suggested' &&
+        (field === 'provider' || field === 'region' || field === 'deploymentTargets');
+    });
+  });
+  let cloudQuestionProvider = $derived.by(() => {
+    if (!cloudPreferencesPending) return undefined;
+    const result = command?.result ?? {};
+    const questions = [
+      ...(Array.isArray(result.resource_questions) ? result.resource_questions : []),
+      ...(result.resource_question ? [result.resource_question] : [])
+    ];
+    const question = questions.find((item) => {
+      if (!item || typeof item !== 'object') return false;
+      const value = item as Record<string, unknown>;
+      return value.kind !== 'suggested' && value.field === 'region';
+    });
+    const ui = question && typeof question === 'object'
+      ? (question as Record<string, unknown>).ui
+      : null;
+    const knownProvider = ui && typeof ui === 'object'
+      ? String((ui as Record<string, unknown>).knownProvider ?? '').toLowerCase()
+      : '';
+    return ['aws', 'azure', 'gcp'].includes(knownProvider)
+      ? (knownProvider as CloudProvider)
+      : undefined;
+  });
   let selectedStage = $derived(
     selectedArtifact === 'LIVE_SOURCE' || fileArtifactTypes.includes(selectedArtifact)
       ? 'implementation'
@@ -580,7 +617,8 @@
                 {fileArtifacts}
                 implementationErrors={implementationErrors}
                 regions={cloudRegions}
-                showDeploymentPreferences={currentStage === 'requirements' && !deploymentPreferences}
+                showDeploymentPreferences={cloudPreferencesPending}
+                initialProvider={cloudQuestionProvider}
                 preferenceSaving={preferenceSaving}
                 onDeploymentPreferencesSave={saveCloudPreferences}
                 onArtifactSelect={reviewArtifact}

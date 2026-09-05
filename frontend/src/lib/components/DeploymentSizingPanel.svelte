@@ -27,6 +27,8 @@
   let saving = $state(false);
   let error = $state('');
   let loadedKey = '';
+  let editing = $state(false);
+  let hasSavedSizing = $derived(Boolean(response?.selected?.length));
 
   function initialSelection(unit: ComputeSizingUnit, stored: DeploymentSizingResponse['selected']) {
     const previous = stored.find((item) => item.computeUnitId === unit.computeUnitId);
@@ -42,6 +44,7 @@
     const key = `${appId}:${targetId}`;
     if (!appId || !targetId || loadedKey === key) return;
     loadedKey = key;
+    editing = false;
     loading = true;
     error = '';
     getDeploymentSizing(appId, targetId)
@@ -78,11 +81,27 @@
     }, 0);
   }
 
+  function savedMonthlyTotal() {
+    return (response?.selected ?? []).reduce((total, selection) => {
+      const unit = response?.guidance.computeUnits.find(
+        (candidate) => candidate.computeUnitId === selection.computeUnitId
+      );
+      const candidate = unit?.candidates.find((item) => item.sku === selection.sku);
+      return total + (candidate?.hourlyComputeUSD ?? 0) * 730 * selection.replicaCount;
+    }, 0);
+  }
+
   function canApply() {
     const units = response?.guidance.computeUnits ?? [];
     return units.length > 0 && units.every((unit) => {
       const selection = selections[unit.computeUnitId];
-      return Boolean(selection?.sku) && selection.replicaCount >= unit.minimumReplicaCount;
+      const replicationAccepted =
+        unit.replicationSafety !== 'unknown' ||
+        (selection?.replicaCount ?? 0) <= 1 ||
+        Boolean(selection?.replicationConfirmed);
+      return Boolean(selection?.sku) &&
+        (selection?.replicaCount ?? 0) >= unit.minimumReplicaCount &&
+        replicationAccepted;
     });
   }
 
@@ -93,9 +112,13 @@
     try {
       await applyDeploymentSizing(appId, {
         targetId,
+        structureDigest: response?.structureDigest ?? '',
         selections: Object.values(selections)
       });
       await onApplied?.();
+      // Re-read this target before showing the compact saved state. The GET
+      // response is the source of truth for whether sizing was persisted.
+      loadedKey = '';
     } catch (reason) {
       error = errorMessage(reason);
     } finally {
@@ -116,6 +139,32 @@
   {#if loading}
     <p class="mt-3 flex items-center gap-2 text-[11px] text-[#737970]"><LoaderCircle class="animate-spin" size={13} /> Loading VM candidates…</p>
   {:else if response}
+    {#if hasSavedSizing && !editing}
+      <div class="mt-3 rounded-md border border-[#e0e4de] bg-white p-2.5">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <strong class="block text-[11px] text-[#315641]">Saved deployment configuration</strong>
+            <p class="mt-1 text-[10px] text-[#737970]">{response.target.provider.toUpperCase()} · {response.target.region}</p>
+          </div>
+          <span class="shrink-0 text-[10px] font-semibold text-[#477058]">${savedMonthlyTotal().toFixed(2)}/month</span>
+        </div>
+        <div class="mt-2 space-y-1.5">
+          {#each response.selected as selection}
+            <div class="flex items-center justify-between gap-2 rounded-md bg-[#f6f8f4] px-2 py-1.5 text-[10px] text-[#59645b]">
+              <span class="min-w-0 truncate"><strong>{selection.computeUnitId}</strong> · {selection.sku}</span>
+              <span class="shrink-0">{selection.replicaCount} replica{selection.replicaCount === 1 ? '' : 's'}</span>
+            </div>
+          {/each}
+        </div>
+        <button
+          type="button"
+          class="focus-ring mt-3 w-full rounded-md border border-[#b7cbbd] bg-white px-2.5 py-1.5 text-[10px] font-semibold text-[#315f46] hover:bg-[#f1f7f2]"
+          onclick={() => (editing = true)}
+        >
+          Change deployment configuration
+        </button>
+      </div>
+    {:else}
     <div class="mt-3 space-y-2">
       {#each response.guidance.computeUnits as unit}
         <div class="rounded-md border border-[#e0e4de] bg-white p-2.5">
@@ -171,6 +220,7 @@
         Apply
       </button>
     </footer>
+    {/if}
   {/if}
   {#if error}<p class="mt-2 text-[10px] leading-4 text-[#a24037]">{error}</p>{/if}
 </section>

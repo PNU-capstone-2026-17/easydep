@@ -8,6 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
+from app.design import service as design_service
 from app.design.services.deployment_diagram import (
     provider_plantuml as plantuml_facade,
 )
@@ -342,6 +345,113 @@ def test_compute_choices_reproject_without_private_constraint_kind() -> None:
         for item in selected["workloadGraph"]["constraints"]
     )
     assert selected["sizing"]["status"] == "completed"
+
+
+def test_target_zones_replace_primary_zone_context_including_empty_target() -> None:
+    spec = _resource_spec("aws")
+    spec["candidateZones"] = ["primary-zone-a", "primary-zone-b"]
+    spec["selectedZones"] = ["primary-zone-a", "primary-zone-b"]
+    spec["deploymentTargets"] = [
+        {"provider": "aws", **_PROVIDERS["aws"]},
+        {"provider": "azure", "region": "koreacentral", "zones": []},
+    ]
+    bundle = build_deployment_diagram_bundle(
+        _candidate(),
+        spec,
+        planning_facts=extract_planning_facts(
+            capability_contract=_capability_contract(), resource_spec=spec
+        ),
+    )
+    projections = {
+        item["provider"]: item for item in bundle["projections"]
+    }
+
+    aws = projections["aws"]
+    assert aws["target"]["zones"] == _PROVIDERS["aws"]["zones"]
+    assert aws["planningContext"]["candidateZones"] == _PROVIDERS["aws"]["zones"]
+    assert aws["deploymentPlan"]["locationPlan"]["selectedZones"] == _PROVIDERS["aws"]["zones"]
+
+    azure = projections["azure"]
+    assert azure["target"]["zones"] == []
+    assert azure["planningContext"]["candidateZones"][:2] == ["1", "2"]
+    assert azure["deploymentPlan"]["locationPlan"]["selectedZones"] == ["1", "2"]
+    assert azure["deploymentPlan"]["locationPlan"]["zonePolicy"] == "catalogBased"
+    assert azure["status"] == "completed"
+
+
+def test_sizing_selections_are_stored_and_retrieved_per_target(monkeypatch) -> None:
+    spec = _resource_spec("aws")
+    spec["deploymentTargets"] = [
+        {"provider": provider, **target}
+        for provider, target in list(_PROVIDERS.items())[:2]
+    ]
+    bundle = build_deployment_diagram_bundle(
+        _candidate(),
+        spec,
+        planning_facts=extract_planning_facts(
+            capability_contract=_capability_contract(), resource_spec=spec
+        ),
+    )
+    aws_target = bundle["projections"][0]["target"]
+    aws_projection = bundle["projections"][0]
+    guidance = compute_sizing_guidance(
+        aws_projection["deploymentPlan"],
+        provider="aws",
+        region=_PROVIDERS["aws"]["region"],
+        workload_graph=bundle["workloadGraph"],
+        limit=1,
+    )
+    selections = [
+        {
+            "computeUnitId": item["computeUnitId"],
+            "sku": item["candidates"][0]["sku"],
+            "replicaCount": item["minimumReplicaCount"],
+            "replicationConfirmed": False,
+        }
+        for item in guidance["computeUnits"]
+    ]
+
+    updated = apply_compute_selections(
+        bundle, selections, selected_target=aws_target["id"]
+    )
+    # Application returns a new bundle only after every compute selection is
+    # accepted; the stored source is untouched until its caller persists it.
+    assert all("sizing" not in item for item in bundle["projections"])
+    aws_projection = next(
+        item for item in updated["projections"] if item["target"] == aws_target
+    )
+    azure_target = updated["projections"][1]["target"]
+    azure_projection = updated["projections"][1]
+    assert aws_projection["sizing"]["selected"] == selections
+    assert "sizing" not in azure_projection
+    assert updated["sizing"]["target"] == aws_target
+
+    monkeypatch.setattr(
+        design_service,
+        "_load_app",
+        lambda _app_id: {"deployment_diagram_bundle": updated},
+    )
+    retrieved = design_service.deployment_sizing_session(
+        "00000000-0000-4000-8000-000000000001", azure_target["id"]
+    )
+    assert retrieved["target"] == azure_target
+    assert retrieved["selected"] == []
+    selected_azure = select_deployment_target(updated, azure_target["id"])
+    selected_azure_projection = next(
+        item
+        for item in selected_azure["projections"]
+        if item["target"] == azure_target
+    )
+    assert retrieved["structureDigest"] == selected_azure_projection[
+        "deploymentPlanStructureDigest"
+    ]
+    with pytest.raises(ValueError, match="preview changed"):
+        design_service.apply_deployment_sizing_session(
+            "00000000-0000-4000-8000-000000000001",
+            azure_target["id"],
+            selections,
+            expected_structure_digest="stale-preview",
+        )
 
 
 def test_split_projection_public_boundaries_match_compatibility_facades() -> None:

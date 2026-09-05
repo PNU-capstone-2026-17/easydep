@@ -459,7 +459,14 @@ def build_deployment_plan(
         "runtimeBindings": runtime_bindings,
         "locationPlan": {
             "region": context.get("region"),
-            "zonePolicy": "explicit" if selected_zones else "providerSelectedSingleZone",
+            "zonePolicy": (
+                "catalogBased"
+                if selected_zones
+                and context.get("zoneSelectionSource") == "catalogBased"
+                else "explicit"
+                if selected_zones
+                else "providerSelectedSingleZone"
+            ),
             "selectedZones": selected_zones,
             "candidateZones": _refs(context.get("candidateZones")),
             "singleRegion": True,

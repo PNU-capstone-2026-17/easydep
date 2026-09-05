@@ -342,6 +342,27 @@ class ResourceIntakeSession:
         self.trace.append({"action": "record_field", "field": name, "rejected": why})
         return f"Rejected ({name}): {why}"
 
+    def _question_ui(self, field_name: str) -> dict[str, object]:
+        """Return the small amount of UI guidance only cloud-coordinate questions need.
+
+        The Workspace already retrieves the authoritative provider/region catalog.  A
+        question therefore carries only its control type and the dependency needed to
+        filter that catalog; copying choices here would create a second catalog.
+        """
+
+        if field_name == "provider":
+            return {"ui": {"control": "cloudProvider"}}
+        if field_name == "region":
+            ui: dict[str, str] = {
+                "control": "cloudRegion",
+                "dependsOn": "provider",
+            }
+            provider = self.draft.get("provider")
+            if isinstance(provider, str) and provider:
+                ui["knownProvider"] = provider
+            return {"ui": ui}
+        return {}
+
     def ask(self, field_name: str, question: str) -> str:
         """계약이 아는 field에 대한 사용자 질문만 pending 목록에 기록한다."""
 
@@ -356,6 +377,13 @@ class ResourceIntakeSession:
                 f"Rejected: {name!r} is not a field of the contract, so an answer "
                 "would have nowhere to go. Ask about a real field."
             )
+        # A proposal may resolve a field and also conservatively list it as
+        # ambiguous.  The normalized draft is the source of truth at this point;
+        # asking again would make a completed provider/region look unresolved.
+        # Rejected and unresolvable values never enter ``draft``, so their questions
+        # remain intact.
+        if self.draft.get(name) is not None:
+            return f"Skipped: {name} already has a normalized value."
         self.questions.append(
             {
                 "field": name,
@@ -363,6 +391,7 @@ class ResourceIntakeSession:
                 "why": cloud_contract.why(name),
                 "question": text,
                 "seen": [r for r in self.rejected if r["field"] == name],
+                **self._question_ui(name),
             }
         )
         self.trace.append({"action": "ask_user", "field": name, "question": text})
@@ -976,6 +1005,7 @@ def build_resource_spec(
                 "question": cloud_contract.question(name)
                 or f"A value for {name} is required: {cloud_contract.why(name)}",
                 "seen": [r for r in session.rejected if r["field"] == name],
+                **session._question_ui(name),
             }
         )
     # 권고 칸은 **막지 않는다.** 계약을 만족시키는 데는 필요 없고, 답하면 뒤 단계

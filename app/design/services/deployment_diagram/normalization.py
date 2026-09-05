@@ -878,6 +878,13 @@ def _apply_explicit_contract_facts(
                     if key in value
                 },
             }
+        resource_requirements = value.get("resourceRequirements")
+        if isinstance(resource_requirements, dict):
+            workload["resourceRequirements"] = {
+                field: resource_requirements[field]
+                for field in ("minVCpu", "minMemoryGiB")
+                if resource_requirements.get(field) is not None
+            }
         interface = value.get("interface")
         if isinstance(interface, dict):
             protocol = str(interface.get("protocol") or "interface")

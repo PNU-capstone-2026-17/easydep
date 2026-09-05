@@ -193,6 +193,7 @@ export interface ComputeSizingUnit {
 
 export interface DeploymentSizingResponse {
   target: DeploymentTarget;
+  structureDigest: string;
   guidance: {
     provider: CloudProvider;
     region: string;

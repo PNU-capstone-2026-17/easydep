@@ -125,6 +125,54 @@ def test_frontend_can_create_read_and_advance_a_workspace(
     assert [call["action"] for call in submitted] == ["message", "start_design"]
 
 
+def test_deployment_sizing_apply_checks_preview_and_completes_workspace_wait(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: dict[str, Any] = {}
+
+    def apply(app_id, target_id, selections, structure_digest):
+        calls["apply"] = (app_id, target_id, selections, structure_digest)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(workspace_api, "apply_deployment_sizing_session", apply)
+    monkeypatch.setattr(
+        workspace_api.workspace_service,
+        "sync_deployment_configuration",
+        lambda app_id, result: calls.update(complete=(app_id, result)),
+    )
+
+    response = client.put(
+        f"/api/workspace/apps/{APP_ID}/deployment-sizing",
+        json={
+            "targetId": "aws:ap-northeast-2",
+            "structureDigest": "preview-digest",
+            "selections": [
+                {
+                    "computeUnitId": "compute-1",
+                    "sku": "t3.small",
+                    "replicaCount": 1,
+                    "replicationConfirmed": False,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls["apply"][1:] == (
+        "aws:ap-northeast-2",
+        [
+            {
+                "computeUnitId": "compute-1",
+                "sku": "t3.small",
+                "replicaCount": 1,
+                "replicationConfirmed": False,
+            }
+        ],
+        "preview-digest",
+    )
+    assert calls["complete"] == (APP_ID, {"status": "completed"})
+
+
 def test_llm_timing_details_are_loaded_one_page_at_a_time(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

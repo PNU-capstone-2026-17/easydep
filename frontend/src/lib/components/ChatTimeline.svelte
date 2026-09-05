@@ -17,6 +17,7 @@
     implementationErrors = [],
     regions,
     showDeploymentPreferences = false,
+    initialProvider,
     preferenceSaving = false,
     onDeploymentPreferencesSave,
     onArtifactSelect
@@ -28,6 +29,7 @@
     implementationErrors?: string[];
     regions: Record<CloudProvider, CloudRegionOption[]>;
     showDeploymentPreferences?: boolean;
+    initialProvider?: CloudProvider;
     preferenceSaving?: boolean;
     onDeploymentPreferencesSave: (preferences: DeploymentPreferences) => Promise<void>;
     onArtifactSelect: (stage: string) => void;
@@ -399,10 +401,13 @@
     {/if}
   {/each}
   {#if showDeploymentPreferences && Object.values(regions).some((items) => items.length)}
-    <DeploymentPreferencesCard
-      {regions}
-      saving={preferenceSaving}
-      onSave={onDeploymentPreferencesSave}
-    />
+    {#key appId}
+      <DeploymentPreferencesCard
+        {regions}
+        {initialProvider}
+        saving={preferenceSaving}
+        onSave={onDeploymentPreferencesSave}
+      />
+    {/key}
   {/if}
 </div>

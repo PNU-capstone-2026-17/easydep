@@ -176,6 +176,7 @@ def to_web_response(result: Mapping[str, Any]) -> dict[str, Any]:
             "status": deployment_bundle.get("status"),
             "selection": deployment_bundle.get("selection"),
             "selectedTarget": deployment_bundle.get("selectedTarget"),
+            "sizing": deployment_bundle.get("sizing"),
             "targets": [
                 {
                     **dict(item["target"]),

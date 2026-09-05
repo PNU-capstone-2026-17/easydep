@@ -164,6 +164,9 @@ def bind_runtime_contract(
             "region": (deployment_plan.get("locationPlan") or {}).get("region"),
             "candidateZones": (deployment_plan.get("locationPlan") or {}).get("candidateZones")
             or [],
+            "zoneSelectionSource": (
+                deployment_plan.get("locationPlan") or {}
+            ).get("zonePolicy"),
         },
     )
     # Runtime observation may fill ports and image digests but must not discard

@@ -178,8 +178,12 @@ def deployment_sizing_session(app_id: str, target_id: str) -> dict[str, Any]:
     )
     return {
         "target": selected.get("selectedTarget"),
+        "structureDigest": projection.get("deploymentPlanStructureDigest", ""),
         "guidance": guidance,
-        "selected": list((bundle.get("sizing") or {}).get("selected") or []),
+        # Sizing choices belong to a provider/region/zone projection.  The
+        # compatibility summary at bundle level describes only the last
+        # selection, so never use it to prefill a different target.
+        "selected": list((projection.get("sizing") or {}).get("selected") or []),
     }
 
 
@@ -187,6 +191,7 @@ def apply_deployment_sizing_session(
     app_id: str,
     target_id: str,
     selections: list[dict[str, Any]],
+    expected_structure_digest: str | None = None,
 ) -> dict[str, Any]:
     """VM 선택을 저장하고 같은 ResourcePlan에서 두 그림을 다시 만든다."""
 
@@ -195,6 +200,18 @@ def apply_deployment_sizing_session(
     bundle = state.get("deployment_diagram_bundle")
     if not isinstance(bundle, dict) or not bundle:
         raise ValueError("A deployment bundle must exist before applying VM choices.")
+    if expected_structure_digest:
+        selected = select_deployment_target(bundle, target_id)
+        projection = next(
+            item
+            for item in selected.get("projections") or []
+            if isinstance(item, dict)
+            and item.get("target") == selected.get("selectedTarget")
+        )
+        if projection.get("deploymentPlanStructureDigest") != expected_structure_digest:
+            raise ValueError(
+                "The deployment preview changed. Reload VM choices before applying."
+            )
     updated = apply_compute_selections(
         bundle,
         selections,

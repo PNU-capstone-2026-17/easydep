@@ -145,6 +145,7 @@ class ApplyDeploymentSizingRequest(BaseModel):
     """한 deployment target에 적용할 모든 compute 선택이다."""
 
     targetId: str = Field(min_length=1, max_length=1000)
+    structureDigest: str | None = Field(default=None, min_length=1, max_length=128)
     selections: list[ComputeSizingSelectionRequest] = Field(min_length=1, max_length=50)
 
 
@@ -296,11 +297,14 @@ def apply_deployment_sizing(
 
     validate_app_id(app_id)
     try:
-        return apply_deployment_sizing_session(
+        result = apply_deployment_sizing_session(
             app_id,
             request.targetId,
             [selection.model_dump() for selection in request.selections],
+            request.structureDigest,
         )
+        workspace_service.sync_deployment_configuration(app_id, result)
+        return result
     except (ValueError, TypeError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 

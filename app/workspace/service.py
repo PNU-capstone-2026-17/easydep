@@ -26,7 +26,6 @@ from app.design.service import (
     revise_design_element,
     revise_design_elements,
     rewind_design_session,
-    select_deployment_target_session,
     start_design_session,
 )
 from app.design.services.common.plantuml import render_plantuml
@@ -775,6 +774,46 @@ class WorkspaceService:
         except RuntimeError:
             # A concurrent caller may already have queued the same resume operation.
             return None
+
+    def sync_deployment_configuration(
+        self, app_id: str, design_result: dict[str, Any]
+    ) -> None:
+        """Sync the Workspace command whose deployment gate was resumed externally."""
+
+        if design_result.get("status") not in {"completed", "need_feedback"}:
+            return
+        latest = repository.latest_command(app_id)
+        if (
+            latest is None
+            or latest.get("stage") != "design"
+            or latest.get("status") != "AWAITING_INPUT"
+            or not (latest.get("result") or {}).get(
+                "deployment_configuration_required"
+            )
+        ):
+            return
+        visible = self._design_result(design_result)
+        awaiting_input = visible.pop("awaiting_input", False) is True
+        status = "AWAITING_INPUT" if awaiting_input else "COMPLETED"
+        visible = result_with_contract(
+            {**latest, "status": status}, visible
+        )
+        repository.update_command(
+            latest["command_id"],
+            status=status,
+            result=visible,
+            completed_at=None if awaiting_input else repository.now(),
+            error=None,
+        )
+        repository.append_event(
+            app_id,
+            command_id=latest["command_id"],
+            stage="design",
+            kind=str(visible.get("kind") or "status"),
+            actor="assistant",
+            text=str(visible.get("message") or "Deployment configuration updated."),
+            metadata={"status": status, **visible},
+        )
 
     def present_command(self, app_id: str, command: dict[str, Any] | None) -> dict[str, Any] | None:
         """Return a display-ready command without mutating its stored snapshot."""
@@ -1758,19 +1797,6 @@ class WorkspaceService:
                     "starting or advancing the design pipeline."
                 )
             context = payload.get("context") or {}
-            action_id = str(payload.get("action_id") or "")
-            previous = repository.get_command(action_id) if action_id else None
-            previous_result = (previous or {}).get("result") or {}
-            resource_question = previous_result.get("resource_question") or {}
-            if text and resource_question.get("field") == "deployment.selectedTarget":
-                allowed = {
-                    str(choice.get("value") or "")
-                    for choice in resource_question.get("choices") or []
-                    if isinstance(choice, dict)
-                }
-                if text not in allowed:
-                    raise ValueError("Choose one of the stored deployment targets.")
-                return self._design_result(select_deployment_target_session(app_id, text))
             validated_feedbacks = context.get("validated_target_feedbacks")
             if validated_feedbacks is not None:
                 if not isinstance(validated_feedbacks, list) or not validated_feedbacks:
@@ -2372,47 +2398,47 @@ class WorkspaceService:
             or result.get("current_stage")
             or result.get("stage")
         )
-        deployment_meta = (result.get("artifact_metadata") or {}).get("deployment_diagram") or {}
-        target_choices = [
-            {
-                "value": str(target.get("id") or ""),
-                "label": (
-                    f"{str(target.get('provider') or '').upper()} {target.get('region') or ''!s}"
-                ).strip(),
-                "description": (
-                    "Zones: " + ", ".join(str(zone) for zone in target.get("zones") or [])
-                    if target.get("zones")
-                    else "Use this completed deployment projection."
-                ),
-            }
-            for target in deployment_meta.get("targets") or []
-            if isinstance(target, dict) and target.get("status") == "completed" and target.get("id")
-        ]
-        if (
-            stage == "deployment_diagram"
-            and (deployment_meta.get("selection") or {}).get("status") == "needsInput"
-            and target_choices
-        ):
-            question = {
-                "field": "deployment.selectedTarget",
-                "kind": "required",
-                "question": "Choose the deployment target to use for the final package.",
-                "choices": target_choices,
-            }
-            return {
-                "awaiting_input": True,
-                "kind": "question",
-                "message": question["question"],
-                "current_stage": stage,
-                "resource_question": question,
-                "resource_questions": [question],
-                "design": result,
-            }
         stage_validation = (result.get("validation") or {}).get(stage) or {}
         findings = [
             *list(stage_validation.get("errors") or []),
             *list(stage_validation.get("findings") or []),
         ]
+        deployment_meta = (result.get("artifact_metadata") or {}).get("deployment_diagram") or {}
+        has_completed_target = any(
+            isinstance(target, dict)
+            and target.get("status") == "completed"
+            and target.get("id")
+            for target in deployment_meta.get("targets") or []
+        )
+        selection = deployment_meta.get("selection") or {}
+        selected_target = deployment_meta.get("selectedTarget") or {}
+        sizing = deployment_meta.get("sizing") or {}
+        sizing_target = sizing.get("target") or {}
+        sizing_matches_target = not sizing_target or (
+            sizing_target.get("id") == selected_target.get("id")
+        )
+        deployment_configuration_complete = (
+            selection.get("status") == "selected"
+            and sizing.get("status") == "completed"
+            and sizing_matches_target
+        )
+        if (
+            stage == "deployment_diagram"
+            and not findings
+            and has_completed_target
+            and not deployment_configuration_complete
+        ):
+            return {
+                "awaiting_input": True,
+                "kind": "action_required",
+                "message": (
+                    "Compare the deployment targets in the artifact panel, then confirm the "
+                    "target, VM size, and replicas together."
+                ),
+                "current_stage": stage,
+                "deployment_configuration_required": True,
+                "design": result,
+            }
         method_proposals = list(stage_validation.get("method_proposals") or [])
         requires_revision = bool(findings)
         repair_history = stage_validation.get("repair_history") or {}

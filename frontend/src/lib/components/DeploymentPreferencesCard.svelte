@@ -12,10 +12,12 @@
 
   let {
     regions,
+    initialProvider,
     saving = false,
     onSave
   }: {
     regions: Record<CloudProvider, CloudRegionOption[]>;
+    initialProvider?: CloudProvider;
     saving?: boolean;
     onSave: (preferences: DeploymentPreferences) => Promise<void>;
   } = $props();
@@ -29,11 +31,11 @@
   let selectedProviders = $state<CloudProvider[]>([]);
   let activeProvider = $state<CloudProvider>('aws');
   let selectedRegions = $state<Record<CloudProvider, string>>({ aws: '', azure: '', gcp: '' });
-  let selectedZones = $state<Record<CloudProvider, string[]>>({ aws: [], azure: [], gcp: [] });
   let query = $state('');
   let error = $state('');
   let RegionMap = $state<RegionMapComponent | null>(null);
   let mapLoading = $state(false);
+  let appliedInitialProvider = '';
 
   let activeRegions = $derived(regions[activeProvider] ?? []);
   let activeRegion = $derived(
@@ -51,12 +53,22 @@
         const region = (regions[provider] ?? []).find(
           (candidate) => candidate.code === selectedRegions[provider]
         );
-        return Boolean(region) && (!region?.zones.length || selectedZones[provider].length > 0);
+        return Boolean(region);
       })
   );
-  let selectedZoneCount = $derived(
-    selectedProviders.reduce((total, provider) => total + selectedZones[provider].length, 0)
-  );
+
+  $effect(() => {
+    const provider = initialProvider ?? '';
+    if (!provider) {
+      appliedInitialProvider = '';
+      return;
+    }
+    if (open || provider === appliedInitialProvider) return;
+    selectedProviders = [provider];
+    activeProvider = provider;
+    query = '';
+    appliedInitialProvider = provider;
+  });
 
   $effect(() => {
     if (!open || RegionMap || mapLoading) return;
@@ -78,7 +90,6 @@
     if (selectedProviders.includes(provider)) {
       selectedProviders = selectedProviders.filter((item) => item !== provider);
       selectedRegions = { ...selectedRegions, [provider]: '' };
-      selectedZones = { ...selectedZones, [provider]: [] };
       activeProvider = selectedProviders[0] ?? providers.find((item) => item.id !== provider)?.id ?? 'aws';
     } else {
       selectedProviders = [...selectedProviders, provider];
@@ -87,20 +98,7 @@
   }
 
   function selectRegion(provider: CloudProvider, region: CloudRegionOption) {
-    if (selectedRegions[provider] !== region.code) {
-      selectedZones = { ...selectedZones, [provider]: [] };
-    }
     selectedRegions = { ...selectedRegions, [provider]: region.code };
-  }
-
-  function toggleZone(provider: CloudProvider, zone: string) {
-    const current = selectedZones[provider];
-    selectedZones = {
-      ...selectedZones,
-      [provider]: current.includes(zone)
-        ? current.filter((candidate) => candidate !== zone)
-        : [...current, zone]
-    };
   }
 
   async function save() {
@@ -112,7 +110,7 @@
         targets: selectedProviders.map((provider) => ({
           provider,
           region: selectedRegions[provider],
-          zones: selectedZones[provider]
+          zones: []
         }))
       });
       open = false;
@@ -131,7 +129,7 @@
       <div class="min-w-0 flex-1">
         <h3 class="text-sm font-semibold text-[#30342e]">Choose deployment alternatives</h3>
         <p class="mt-1 max-w-xl text-xs leading-5 text-[#73776f]">
-          Choose cloud providers, regions, and allowed availability zones while application analysis continues. Budget and topology decisions come later.
+          Choose cloud providers and regions while application analysis continues. Budget and topology decisions come later.
         </p>
       </div>
       <Dialog.Trigger class="focus-ring inline-flex h-9 shrink-0 items-center gap-2 rounded-xl bg-[#2d6b4d] px-3.5 text-xs font-semibold text-white hover:bg-[#245b41]">
@@ -150,7 +148,7 @@
         <div class="min-w-0 flex-1">
           <Dialog.Title class="text-sm font-semibold sm:text-base">Deployment alternatives</Dialog.Title>
           <Dialog.Description class="truncate text-[11px] text-[#777b73] sm:text-xs">
-            Choose one region and one or more allowed availability zones per CSP. CSP targets are alternatives, not one multi-cloud runtime.
+            Choose one region per CSP. CSP targets are alternatives, not one multi-cloud runtime.
           </Dialog.Description>
         </div>
         <Dialog.Close class="focus-ring flex size-9 items-center justify-center rounded-xl border border-[#dfe1db] bg-[#fafaf8] text-[#686c64] hover:bg-[#f0f2ed]" aria-label="Close deployment map">
@@ -251,39 +249,6 @@
               {/if}
             </section>
 
-            <section class="border-t border-[#eceee9] pt-4">
-              <div class="flex items-center justify-between gap-3">
-                <h3 class="text-xs font-bold uppercase tracking-[.12em] text-[#777b73]">Availability zones</h3>
-                {#if activeRegion}<span class="text-[11px] text-[#777b73]">Multiple allowed</span>{/if}
-              </div>
-              {#if activeRegion}
-                {#if activeRegion.zones.length}
-                  <div class="mt-2 grid grid-cols-2 gap-2">
-                    {#each activeRegion.zones as zone}
-                      <button
-                        type="button"
-                        aria-pressed={selectedZones[activeProvider].includes(zone)}
-                        class="focus-ring flex min-h-9 items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-xs transition-colors {selectedZones[activeProvider].includes(zone) ? 'border-[#91b09d] bg-[#eaf3ed] text-[#285b43]' : 'border-[#dfe1db] bg-[#fafaf8] text-[#686c64] hover:bg-[#f3f5f0]'}"
-                        onclick={() => toggleZone(activeProvider, zone)}
-                      >
-                        <span class="truncate">{zone}</span>
-                        <span class="flex size-4 shrink-0 items-center justify-center rounded border border-current/25">
-                          {#if selectedZones[activeProvider].includes(zone)}<Check size={11} />{/if}
-                        </span>
-                      </button>
-                    {/each}
-                  </div>
-                  <p class="mt-2 text-[11px] leading-4 text-[#858980]">
-                    These zones define where deployment may be placed. Replica count and high-availability behavior are decided during design.
-                  </p>
-                {:else}
-                  <p class="mt-2 rounded-xl bg-[#f5f6f2] p-3 text-xs text-[#7d8179]">This region does not publish selectable zones in the catalog.</p>
-                {/if}
-              {:else}
-                <p class="mt-2 rounded-xl bg-[#f5f6f2] p-3 text-xs text-[#7d8179]">Choose a region before selecting zones.</p>
-              {/if}
-            </section>
-
             <p class="border-t border-[#eceee9] pt-4 text-[11px] leading-5 text-[#777b73]">
               Monthly budget, VM count, availability behavior, ingress, workload placement, and resource sizing will be handled in later stages.
             </p>
@@ -294,9 +259,9 @@
       <footer class="flex min-h-16 shrink-0 items-center justify-between gap-3 border-t border-[#dfe2dc] bg-white px-4 py-3 sm:px-6">
         <div class="min-w-0 text-[11px] text-[#7d8179]">
           {#if selectedProviders.length}
-            {selectedProviders.length} provider{selectedProviders.length === 1 ? '' : 's'} · {selectedProviders.filter((provider) => selectedRegions[provider]).length} region{selectedProviders.filter((provider) => selectedRegions[provider]).length === 1 ? '' : 's'} · {selectedZoneCount} zone{selectedZoneCount === 1 ? '' : 's'}
+            {selectedProviders.length} provider{selectedProviders.length === 1 ? '' : 's'} · {selectedProviders.filter((provider) => selectedRegions[provider]).length} region{selectedProviders.filter((provider) => selectedRegions[provider]).length === 1 ? '' : 's'}
           {:else}
-            Select a provider, region, and availability zone to continue.
+            Select a provider and region to continue.
           {/if}
         </div>
         <div class="flex shrink-0 gap-2">

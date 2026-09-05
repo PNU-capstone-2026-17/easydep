@@ -78,6 +78,16 @@ def test_choice_actions_carry_the_answer_in_their_payload() -> None:
     assert shaped["actions"][0]["description"] == "AWS Seoul region"
 
 
+def test_deployment_configuration_wait_does_not_offer_early_advance() -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="design"),
+        {"deployment_configuration_required": True},
+    )
+
+    assert shaped["wait_reason"] == "review"
+    assert [item["action"] for item in shaped["actions"]] == ["message"]
+
+
 def test_repair_action_is_the_only_auto_selectable_repair_offer() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT", stage="design"),

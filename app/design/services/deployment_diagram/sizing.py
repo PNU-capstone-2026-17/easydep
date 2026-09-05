@@ -234,8 +234,14 @@ def apply_compute_selections(
     parsed = [ComputeSelection.model_validate(item) for item in selections]
     issues = _selection_issues(graph, plan, parsed)
     if issues:
+        sizing = {"status": "needsInput", "issues": issues}
+        projection["sizing"] = sizing
         result["status"] = "needsInput"
-        result["sizing"] = {"status": "needsInput", "issues": issues}
+        # Keep the old top-level field as a summary for callers that rendered
+        # it before projections gained their own sizing state.  The source of
+        # truth is the selected projection, so another target cannot consume
+        # these selections.
+        result["sizing"] = {"target": copy.deepcopy(result["selectedTarget"]), **sizing}
         return result
 
     compute_by_id = {
@@ -337,6 +343,11 @@ def apply_compute_selections(
         provider=str(projection.get("provider") or ""),
         region=str(projection.get("region") or ""),
     )
+    sizing = {
+        "status": "completed",
+        "guidance": guidance,
+        "selected": [item.model_dump(by_alias=True) for item in parsed],
+    }
     projection.update(
         {
             "status": "completed",
@@ -345,15 +356,12 @@ def apply_compute_selections(
             "resourcePlan": resource_plan,
             "resourcePlanStructureDigest": resource_plan.get("structureDigest", ""),
             "issues": [],
+            "sizing": sizing,
         }
     )
     result["workloadGraph"] = graph
     result["status"] = "completed"
-    result["sizing"] = {
-        "status": "completed",
-        "guidance": guidance,
-        "selected": [item.model_dump(by_alias=True) for item in parsed],
-    }
+    result["sizing"] = {"target": copy.deepcopy(result["selectedTarget"]), **sizing}
     return result
 
 

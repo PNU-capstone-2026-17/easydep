@@ -215,6 +215,18 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             ],
         )
 
+    if result.get("deployment_configuration_required"):
+        return AwaitingOutcome(
+            wait_reason=WaitReason.REVIEW,
+            actions=[
+                _offer(
+                    WorkspaceAction.MESSAGE,
+                    "Ask about deployment options",
+                    common,
+                )
+            ],
+        )
+
     if result.get("resource_question") or result.get("resource_questions"):
         question = result.get("resource_question") or {}
         if isinstance(question, dict) and question.get("kind") == "suggested":

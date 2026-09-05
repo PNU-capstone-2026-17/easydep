@@ -6,6 +6,7 @@ import copy
 import json
 from typing import Any
 
+from app.cloudkb import region_catalog
 from app.design.services.deployment_diagram.planner import (
     BLOCKING_CLASSES,
     build_deployment_plan,
@@ -14,6 +15,20 @@ from app.design.services.deployment_diagram.planner import (
     normalize_workload_graph,
     planning_context,
 )
+
+
+def _catalog_zones(provider: Any, region: Any) -> list[str]:
+    wanted_provider = str(provider or "").lower()
+    wanted_region = str(region or "").lower()
+    match = next(
+        (
+            item
+            for item in region_catalog.catalog(provider=wanted_provider)
+            if item.code.lower() == wanted_region
+        ),
+        None,
+    )
+    return list(match.zones) if match else []
 
 
 def _target_descriptor(value: dict[str, Any]) -> dict[str, Any]:
@@ -62,20 +77,42 @@ def _target_contexts(resource_spec: dict[str, Any]) -> list[dict[str, Any]]:
         for item in resource_spec.get("deploymentTargets") or []
         if isinstance(item, dict)
     ]
-    if not targets:
-        return [planning_context(resource_spec)]
-    return [
-        planning_context(
-            {
-                **resource_spec,
-                "provider": target.get("provider"),
-                "region": target.get("region"),
-                "selectedZones": list(target.get("zones") or []),
-                "deploymentTargets": [target],
-            }
+    contexts: list[dict[str, Any]] = []
+    for target in targets or [None]:
+        provider = (
+            target.get("provider") if target is not None else resource_spec.get("provider")
         )
-        for target in targets
-    ]
+        region = target.get("region") if target is not None else resource_spec.get("region")
+        explicit = list(
+            (target.get("zones") or [])
+            if target is not None
+            else resource_spec.get("selectedZones")
+            or resource_spec.get("candidateZones")
+            or []
+        )
+        catalog = _catalog_zones(provider, region)
+        values = {
+            **resource_spec,
+            "provider": provider,
+            "region": region,
+            "candidateZones": explicit or catalog,
+            "selectedZones": explicit,
+            "zoneSelectionSource": (
+                "explicit"
+                if explicit
+                else "catalogBased"
+                if catalog
+                else "providerSelected"
+            ),
+        }
+        if target is not None:
+            # Candidate zones are scoped to this target and never inherit the
+            # primary resource spec's zones.
+            values["deploymentTargets"] = [target]
+        contexts.append(
+            planning_context(values)
+        )
+    return contexts
 
 
 def build_deployment_diagram_bundle(
@@ -104,11 +141,16 @@ def build_deployment_diagram_bundle(
     ]
     projections: list[dict[str, Any]] = []
     for context in _target_contexts(spec):
+        target_zones = (
+            []
+            if context.get("zoneSelectionSource") != "explicit"
+            else context.get("selectedZones") or context.get("candidateZones")
+        )
         target = _target_descriptor(
             {
                 "provider": context.get("provider"),
                 "region": context.get("region"),
-                "zones": context.get("candidateZones") or context.get("selectedZones"),
+                "zones": target_zones,
             }
         )
         # A graph can originate from an older persisted artifact or another

@@ -97,6 +97,46 @@ def test_missing_required_constraints_are_asked_in_english(monkeypatch):
     assert "either the minimum vCPU or minimum memory" in sizing[0]["question"]
 
 
+def test_cloud_coordinate_questions_include_only_control_and_dependency_metadata(monkeypatch):
+    missing = _run(monkeypatch, CloudConstraintExtraction(), text="")["resource_intake"]
+    questions = {question["field"]: question for question in missing["questions"]}
+
+    assert questions["provider"]["ui"] == {"control": "cloudProvider"}
+    assert questions["region"]["ui"] == {
+        "control": "cloudRegion",
+        "dependsOn": "provider",
+    }
+
+    monkeypatch.setattr(sr.settings, "resource_agent_llm", False)
+    unresolved = sr.build_resource_spec(
+        {
+            "classified": [],
+            "initial_cloud_constraints": {"provider": "aws", "region": "Unknown place"},
+        }
+    )["resource_intake"]
+    region = next(question for question in unresolved["questions"] if question["field"] == "region")
+
+    assert region["ui"] == {
+        "control": "cloudRegion",
+        "dependsOn": "provider",
+        "knownProvider": "aws",
+    }
+
+
+def test_normalized_values_suppress_stale_ambiguity_questions(monkeypatch):
+    result = _run(
+        monkeypatch,
+        _extraction(ambiguous_fields=["provider", "region", "monthlyBudgetUSD"]),
+    )
+
+    assert result["resource_spec"]["provider"] == "aws"
+    assert result["resource_spec"]["region"] == "ap-northeast-2"
+    assert result["resource_spec"]["monthlyBudgetUSD"] == 100.0
+    assert not {
+        question["field"] for question in result["resource_intake"]["questions"]
+    }.intersection({"provider", "region", "monthlyBudgetUSD"})
+
+
 def test_structured_deployment_alternatives_are_preserved_without_budget(monkeypatch):
     monkeypatch.setattr(sr.settings, "resource_agent_llm", False)
     result = sr.build_resource_spec(

@@ -83,6 +83,7 @@ export function applyDeploymentSizing(
   appId: string,
   input: {
     targetId: string;
+    structureDigest: string;
     selections: Array<{
       computeUnitId: string;
       sku: string;
