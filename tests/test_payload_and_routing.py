@@ -88,7 +88,7 @@ def test_analyze_rejects_answer_and_edit_together():
         edit=FeedbackEdit(stage="specs", instruction="구조화"),
         thread_id="t",
     )
-    with pytest.raises(ValueError, match="함께 보낼 수 없습니다"):
+    with pytest.raises(ValueError, match="Send only one resume input"):
         analyze_requirements(req)
 
 
@@ -286,6 +286,141 @@ def test_retry_analysis_reuses_the_persistent_checkpoint_without_new_input(
     assert result["status"] == "completed"
 
 
+def test_revise_analysis_enters_the_exact_feedback_gate(monkeypatch):
+    from app.requirements.orchestration import graph
+    from app.requirements.schemas import FeedbackEdit
+
+    calls: list[object] = []
+
+    class Compiled:
+        @staticmethod
+        def get_state(_config):
+            return SimpleNamespace(
+                values={"classified": []},
+                next=(),
+                config={
+                    "configurable": {
+                        "thread_id": "app-1",
+                        "checkpoint_id": "checkpoint-1",
+                    }
+                },
+            )
+
+        @staticmethod
+        def update_state(_config, values, *, as_node):
+            calls.append(("update", values, as_node))
+
+        @staticmethod
+        def invoke(graph_input, _config):
+            calls.append(graph_input)
+            if graph_input is None:
+                return {
+                    "classified": [],
+                    "__interrupt__": [
+                        SimpleNamespace(
+                            value={
+                                "status": "need_feedback",
+                                "stage": "specs",
+                                "prompt": "Review specifications.",
+                            }
+                        )
+                    ],
+                }
+            return {"phase": "specs", "classified": []}
+
+    monkeypatch.setattr(graph, "_recall_mode", lambda *_args: True)
+    monkeypatch.setattr(graph, "_compiled", lambda *_args: Compiled())
+    edit = FeedbackEdit(
+        stage="specs",
+        scope="local",
+        target_ids=["UC1"],
+        instruction="Rename the success guarantee.",
+    )
+
+    result = graph.revise_analysis(edit, "app-1", persist=True)
+
+    assert calls[0] == ("update", {}, "write_specifications")
+    assert calls[1] is None
+    assert getattr(calls[2], "resume") is edit
+    assert result["status"] == "completed"
+
+
+def test_restore_analysis_checkpoint_branches_from_the_original_gate(monkeypatch):
+    from app.requirements.orchestration import graph
+
+    observed: dict[str, object] = {}
+    original_config = {
+        "configurable": {
+            "thread_id": "app-1",
+            "checkpoint_id": "checkpoint-before-revision",
+        }
+    }
+    restored_config = {
+        "configurable": {
+            "thread_id": "app-1",
+            "checkpoint_id": "checkpoint-restored",
+        }
+    }
+
+    class Compiled:
+        @staticmethod
+        def update_state(config, values, *, as_node):
+            observed.update(config=config, values=values, as_node=as_node)
+            return restored_config
+
+        @staticmethod
+        def invoke(graph_input, config):
+            observed.update(graph_input=graph_input, invoke_config=config)
+            return {
+                "__interrupt__": [
+                    SimpleNamespace(value={"status": "need_feedback", "stage": "specs"})
+                ]
+            }
+
+    monkeypatch.setattr(graph, "_recall_mode", lambda *_args: True)
+    monkeypatch.setattr(graph, "_compiled", lambda *_args: Compiled())
+
+    graph.restore_analysis_checkpoint(
+        "app-1",
+        {"config": original_config, "next": ["gate_specs"]},
+        persist=True,
+    )
+
+    assert observed == {
+        "config": original_config,
+        "values": {},
+        "as_node": "write_specifications",
+        "graph_input": None,
+        "invoke_config": restored_config,
+    }
+
+
+def test_capture_analysis_checkpoint_rejects_a_failed_gate_task(monkeypatch):
+    from app.requirements.orchestration import graph
+
+    class Compiled:
+        @staticmethod
+        def get_state(_config):
+            return SimpleNamespace(
+                values={"classified": []},
+                config={"configurable": {"thread_id": "app-1"}},
+                next=("gate_specs",),
+                tasks=(
+                    SimpleNamespace(
+                        name="gate_specs",
+                        error="gate failed",
+                        interrupts=(),
+                    ),
+                ),
+            )
+
+    monkeypatch.setattr(graph, "_recall_mode", lambda *_args: True)
+    monkeypatch.setattr(graph, "_compiled", lambda *_args: Compiled())
+
+    with pytest.raises(ValueError, match="not at a safe feedback checkpoint"):
+        graph.capture_analysis_checkpoint("app-1", persist=True)
+
+
 def test_retry_analysis_rejects_a_missing_checkpoint(monkeypatch):
     from app.requirements.orchestration import graph
 
@@ -322,6 +457,54 @@ def test_retry_analysis_service_persists_only_new_stage_versions(monkeypatch):
     result = service.retry_requirements_analysis("app-1", app_id="app-1")
 
     assert result["saved_stages"] == ["saved-for-app-1"]
+
+
+def test_requirement_revision_restores_checkpoint_when_artifact_save_fails(
+    monkeypatch,
+):
+    from app.requirements.orchestration import service
+    from app.requirements.schemas import FeedbackEdit
+
+    checkpoint = {
+        "config": {"configurable": {"thread_id": "app-1"}},
+        "next": [],
+    }
+    restored: dict[str, object] = {}
+    monkeypatch.setattr(
+        service,
+        "capture_analysis_checkpoint",
+        lambda *_args, **_kwargs: checkpoint,
+    )
+    monkeypatch.setattr(
+        service,
+        "revise_analysis",
+        lambda *_args, **_kwargs: {"status": "completed"},
+    )
+    monkeypatch.setattr(
+        service,
+        "persist_analysis",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("save failed")),
+    )
+    monkeypatch.setattr(
+        service,
+        "restore_analysis_checkpoint",
+        lambda thread_id, snapshot, *, persist: restored.update(
+            thread_id=thread_id,
+            snapshot=snapshot,
+            persist=persist,
+        ),
+    )
+    monkeypatch.setattr(service.settings, "enable_session_persistence", True)
+    edit = FeedbackEdit(stage="relationships", instruction="Add the association.")
+
+    with pytest.raises(RuntimeError, match="save failed"):
+        service.revise_requirements_analysis(edit, "app-1", app_id="app-1")
+
+    assert restored == {
+        "thread_id": "app-1",
+        "snapshot": checkpoint,
+        "persist": True,
+    }
 
 
 def test_feedback_payload_carries_the_resource_questions():

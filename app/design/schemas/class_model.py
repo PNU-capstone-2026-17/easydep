@@ -72,6 +72,10 @@ class ClassParameter(ClassModelBase):
 class ClassOperation(ClassModelBase):
     """BCE class가 소유하며 use-case step을 추적하는 수락 operation이다."""
     operation_id: str = Field(alias="operationId", min_length=1)
+    # ``operationId`` remains the renderer/collaboration signature.  A stable
+    # identity is deliberately optional at the schema boundary so artifacts
+    # written before stable identities were introduced still hydrate.
+    stable_id: str | None = Field(default=None, alias="stableId", min_length=1)
     name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     parameters: list[ClassParameter] = Field(default_factory=list)
     return_type: str = Field(default="void", alias="returnType", min_length=1)
@@ -165,6 +169,9 @@ class ArgumentBinding(ClassModelBase):
 class CollaborationCall(ClassModelBase):
     """한 execution group call tree의 canonical call node다."""
     call_id: str = Field(alias="callId", min_length=1)
+    # ``callId`` is position-based legacy identity; ``stableId`` is the
+    # application-managed identity used when a call is renamed/repositioned.
+    stable_id: str | None = Field(default=None, alias="stableId", min_length=1)
     parent_call_id: str | None = Field(default=None, alias="parentCallId")
     receiver_operation_id: str = Field(alias="receiverOperationId", min_length=1)
     step_refs: list[str] = Field(default_factory=list, alias="stepRefs")
@@ -213,4 +220,20 @@ class BCEModel(ClassModelBase):
         collaboration_ids = [item.collaboration_id for item in self.Collaborations]
         if len(collaboration_ids) != len(set(collaboration_ids)):
             raise ValueError("collaborationId values must be unique")
+        operation_stable_ids = [
+            operation.stable_id
+            for item in self.Classes
+            for operation in item.operations
+            if operation.stable_id is not None
+        ]
+        if len(operation_stable_ids) != len(set(operation_stable_ids)):
+            raise ValueError("operation stableId values must be unique")
+        call_stable_ids = [
+            call.stable_id
+            for item in self.Collaborations
+            for call in item.calls
+            if call.stable_id is not None
+        ]
+        if len(call_stable_ids) != len(set(call_stable_ids)):
+            raise ValueError("call stableId values must be unique")
         return self

@@ -39,17 +39,18 @@ class ConversationContext(BaseModel):
     pending_question: str | None = None
     actions: list[dict[str, Any]] = Field(default_factory=list)
     decisions: list[str] = Field(default_factory=list)
+    target_remap: dict[str, str] = Field(default_factory=dict)
 
 
-def _recent_message_commands(app_id: str, limit: int) -> list[dict[str, Any]]:
-    """event가 아니라 MySQL message command만 시간순으로 읽는다."""
+def _recent_conversation_commands(app_id: str, limit: int) -> list[dict[str, Any]]:
+    """Read messages plus revision approvals that carry conversational state."""
 
     with session_scope() as session:
         rows = session.scalars(
             select(WorkspaceCommand)
             .where(
                 WorkspaceCommand.app_id == app_id,
-                WorkspaceCommand.action == "message",
+                WorkspaceCommand.action.in_(("message", "confirm_change")),
             )
             .order_by(
                 WorkspaceCommand.created_at.desc(),
@@ -137,6 +138,26 @@ def _explicit_decision(command: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _revision_target_remap(command: Mapping[str, Any]) -> dict[str, str]:
+    """Read only the bounded rename map produced by a completed revision."""
+
+    result = command.get("result")
+    if not isinstance(result, Mapping):
+        return {}
+    execution = result.get("revision_execution")
+    if not isinstance(execution, Mapping):
+        execution = result
+    raw = execution.get("target_remap")
+    if not isinstance(raw, Mapping):
+        return {}
+    pairs = [
+        (str(source).strip(), str(target).strip())
+        for source, target in raw.items()
+        if str(source).strip() and str(target).strip()
+    ]
+    return dict(pairs[:50])
+
+
 def _bounded_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
@@ -167,19 +188,21 @@ def build_conversation_context(
 ) -> ConversationContext:
     """최근 message command와 최신 command 상태로 앱별 문맥을 만든다.
 
-    화면 진행용 event는 읽지 않는다. 과거 result의 ``awaiting_input`` flag도 보지 않고
-    command ``status``만 현재 대기 여부의 기준으로 사용한다.
+    화면 진행용 event는 읽지 않는다. Message command와 revision approval 결과만 대화
+    문맥으로 읽으며, 과거 result의 ``awaiting_input`` flag 대신 command ``status``만 현재
+    대기 여부의 기준으로 사용한다.
     """
 
     if limit < 1 or limit > 50:
         raise ValueError("conversation context limit must be between 1 and 50")
-    commands = _recent_message_commands(app_id, limit)
+    commands = _recent_conversation_commands(app_id, limit)
     turns: list[ConversationTurn] = []
     decisions: list[str] = []
+    target_remap: dict[str, str] = {}
     for command in commands:
         payload = command.get("payload")
         text = payload.get("text") if isinstance(payload, Mapping) else None
-        if isinstance(text, str) and text.strip():
+        if command.get("action") == "message" and isinstance(text, str) and text.strip():
             turns.append(
                 ConversationTurn(
                     role="user",
@@ -200,6 +223,12 @@ def build_conversation_context(
         decision = _explicit_decision(command)
         if decision:
             decisions.append(_bounded_text(decision, _MAX_DECISION_CHARS))
+        for source, target in _revision_target_remap(command).items():
+            # A later rename supersedes an earlier display ref while retaining old aliases.
+            target_remap[source] = target
+            for older, current in list(target_remap.items()):
+                if current == source:
+                    target_remap[older] = target
 
     turns = _bounded_turns(turns)
 
@@ -228,6 +257,7 @@ def build_conversation_context(
         ),
         actions=actions,
         decisions=decisions,
+        target_remap=target_remap,
     )
 
 

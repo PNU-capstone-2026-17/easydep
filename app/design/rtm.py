@@ -564,18 +564,56 @@ def linked_elements(rtm: dict, stage: str, element: str) -> list[str]:
     """
     ref = f"{stage}:{element}"
     linked = {
-        str(link.get("to") or "")
-        for link in rtm.get("links", []) or []
-        if isinstance(link, dict) and link.get("from") == ref
+        str(link["to"])
+        if link["from"] == ref
+        else str(link["from"])
+        for link in exact_contract_links(rtm, stage, element)
     }
-    linked.update(
-        str(link.get("from") or "")
-        for link in rtm.get("links", []) or []
-        if isinstance(link, dict) and link.get("to") == ref
-    )
     linked.discard("")
     linked.discard(ref)
     return sorted(linked)
+
+
+def exact_contract_links(
+    rtm: dict,
+    stage: str,
+    element: str,
+    *,
+    direction: str = "both",
+    relations: set[str] | None = None,
+) -> list[dict[str, str]]:
+    """Return exact RTM contract edges without losing their meaning.
+
+    ``linked_elements`` is intentionally convenient and symmetric, but that
+    shape is not sufficient for a revision planner: an API ``implements`` a
+    sequence call while it ``binds`` a class, and only the latter may justify a
+    reverse class edit.  This pure helper preserves the original ``from``,
+    ``to`` and ``relation`` values and lets callers ask for incoming, outgoing
+    or both directions.  It never infers a missing edge from names or order.
+    """
+    if direction not in {"incoming", "outgoing", "both"}:
+        raise ValueError("direction must be incoming, outgoing, or both")
+    ref = f"{stage}:{element}"
+    wanted_relations = set(relations) if relations is not None else None
+    result: list[dict[str, str]] = []
+    for candidate in rtm.get("links", []) or []:
+        if not isinstance(candidate, dict):
+            continue
+        source = str(candidate.get("from") or "")
+        target = str(candidate.get("to") or "")
+        relation = str(candidate.get("relation") or "")
+        if not source or not target or not relation:
+            continue
+        if direction == "outgoing" and source != ref:
+            continue
+        if direction == "incoming" and target != ref:
+            continue
+        if direction == "both" and source != ref and target != ref:
+            continue
+        if wanted_relations is not None and relation not in wanted_relations:
+            continue
+        result.append({"from": source, "to": target, "relation": relation})
+    return sorted(result, key=lambda link: (link["from"], link["to"], link["relation"]))
 
 
 def impacted_by(rtm: dict, kind: str, name: str) -> list[str]:

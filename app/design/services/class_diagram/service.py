@@ -10,6 +10,7 @@ from app.design.schemas.class_model import BCEModel, Collaboration
 from app.design.services.class_diagram import collaboration, generation, inventory, operations
 from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram.cache import AcceptedUnitCache
+from app.design.services.class_diagram.identity import reconcile_stable_ids
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, id_key
 from app.design.services.class_diagram.validation.collaboration import (
     COLLABORATION_CHECKS,
@@ -22,6 +23,20 @@ from app.validation import run_checks
 
 def _payload(model: BCEModel) -> dict[str, Any]:
     return model.model_dump(by_alias=True)
+
+
+def _accepted_model(
+    previous: BCEModel | None,
+    revised: BCEModel,
+    *,
+    targeted_refs: Any = None,
+) -> BCEModel:
+    """Cross the accepted-artifact boundary and persist app-managed IDs."""
+
+    model, _metadata = reconcile_stable_ids(
+        previous, revised, targeted_refs=targeted_refs,
+    )
+    return model
 
 
 def _standalone(index: ScenarioIndex) -> list[UseCase]:
@@ -202,7 +217,10 @@ def generate_class_model(
         "inventory", "inventory", 1, len(index.use_cases) + 1,
     )
     return _validated(
-        generation.build_model(index, accepted_inventory, cache=cache),
+        _accepted_model(
+            None,
+            generation.build_model(index, accepted_inventory, cache=cache),
+        ),
         index,
         "generated",
     )
@@ -232,11 +250,11 @@ def resume_class_model(
         if report.errors or report.findings:
             selected.append(use_case)
     if not selected:
-        return current
+        return _accepted_model(current, current)
     model = _complete_collaborations(
         index, current, existing, selected, cache=cache,
     )
-    return _validated(model, index, "resumed")
+    return _validated(_accepted_model(current, model), index, "resumed")
 
 
 def revise_class_model(
@@ -258,7 +276,11 @@ def revise_class_model(
             index, accepted_inventory, feedback, set(scope.ids), cache=cache,
         )
         return _validated(
-            generation.build_model(index, revised_inventory, cache=cache),
+            _accepted_model(
+                current,
+                generation.build_model(index, revised_inventory, cache=cache),
+                targeted_refs=targets,
+            ),
             index,
             "revised",
         )
@@ -307,7 +329,11 @@ def revise_class_model(
         feedback=directive,
         cache=cache,
     )
-    return _validated(revised, index, "revised")
+    return _validated(
+        _accepted_model(current, revised, targeted_refs=targets),
+        index,
+        "revised",
+    )
 
 
 __all__ = ["generate_class_model", "resume_class_model", "revise_class_model"]

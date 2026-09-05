@@ -27,7 +27,7 @@ add_conditional_edges로 advance(다음 스테이지)/loop(재생성 후 재질�
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
@@ -216,6 +216,88 @@ def rewind_design(app_id: str, stage: str) -> dict[str, Any]:
     )
     # resume이 아니라 그냥 이어서 실행한다 — 지금 걸려 있는 interrupt가 없다.
     return _result_payload(dict(graph.invoke(None, config)), app_id)
+
+
+def revise_design_stage(app_id: str, stage: str, feedback: str) -> dict[str, Any]:
+    """Re-enter an already produced stage gate and apply one revision.
+
+    Marking ``persist_{stage}`` complete makes the gate the next node without
+    running the generator or writing a preliminary artifact version.  Only the
+    resumed feedback branch can then produce and persist revised output.
+    """
+
+    if stage not in DESIGN_STAGES:
+        raise ValueError(f"Unknown design stage: {stage}")
+    status = session_status(app_id)
+    if not status["exists"]:
+        raise ValueError("No saved design checkpoint is available for revision.")
+    here = status.get("stage")
+    if here in DESIGN_STAGES and DESIGN_STAGES.index(stage) > DESIGN_STAGES.index(here):
+        raise StageNotReached(
+            f"{stage} has not been produced yet (the run is at {here})."
+        )
+
+    config: RunnableConfig = {"configurable": {"thread_id": app_id}}
+    snapshot = graph.get_state(config)
+    if not snapshot.config:
+        raise ValueError("No saved design checkpoint is available for revision.")
+    if snapshot.next:
+        next_nodes = [str(node) for node in snapshot.next]
+        tasks = list(snapshot.tasks)
+        safe_interrupt = (
+            len(next_nodes) == 1
+            and next_nodes[0].startswith("gate_")
+            and len(tasks) == 1
+            and str(tasks[0].name) == next_nodes[0]
+            and tasks[0].error is None
+            and len(tasks[0].interrupts) == 1
+        )
+        if not safe_interrupt:
+            raise ValueError(
+                "The design run is not at a safe feedback checkpoint; retry it first."
+            )
+    checkpoint_config = cast(RunnableConfig, dict(snapshot.config))
+    checkpoint_next = tuple(str(node) for node in snapshot.next)
+
+    def restore_checkpoint() -> None:
+        if not checkpoint_next:
+            graph.update_state(
+                checkpoint_config,
+                {},
+                as_node=f"gate_{DESIGN_STAGES[-1]}",
+            )
+            return
+        prior_gate = checkpoint_next[0]
+        prior_stage = prior_gate.removeprefix("gate_")
+        restored_config = graph.update_state(
+            checkpoint_config,
+            {},
+            as_node=f"persist_{prior_stage}",
+        )
+        waiting = dict(graph.invoke(None, restored_config))
+        interrupts = waiting.get("__interrupt__") or []
+        value = interrupts[0].value if interrupts else {}
+        if not isinstance(value, dict) or value.get("stage") != prior_stage:
+            raise RuntimeError(
+                f"Design checkpoint restoration did not re-enter {prior_gate}."
+            )
+
+    def invocation():
+        try:
+            graph.update_state(config, {}, as_node=f"persist_{stage}")
+            waiting = dict(graph.invoke(None, config))
+            interrupts = waiting.get("__interrupt__") or []
+            value = interrupts[0].value if interrupts else {}
+            if not isinstance(value, dict) or value.get("stage") != stage:
+                raise RuntimeError(
+                    f"Design revision could not enter the {stage} feedback gate."
+                )
+            return graph.invoke(Command(resume=feedback), config)
+        except Exception:
+            restore_checkpoint()
+            raise
+
+    return _invoke_traced_design_graph("revise_stage", app_id, invocation)
 
 
 def session_status(app_id: str) -> dict[str, Any]:

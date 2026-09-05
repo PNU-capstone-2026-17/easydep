@@ -17,7 +17,12 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.artifacts_api import to_web_response
 from app.db.models import ORIGIN_FEEDBACK_REVISED
-from app.design.cascade import UnknownTarget, persist_cascade, revise_and_cascade
+from app.design.cascade import (
+    UnapprovedScopeExpansion,
+    UnknownTarget,
+    persist_cascade,
+    revise_and_cascade,
+)
 from app.design.graphs.design_graph import (
     StageNotReached,
     has_active_session,
@@ -25,6 +30,7 @@ from app.design.graphs.design_graph import (
     reset_design,
     resume_design,
     retry_design,
+    revise_design_stage,
     rewind_design,
     session_status,
     start_design,
@@ -59,6 +65,10 @@ class ReviseRequest(BaseModel):
     # ``{stage}:{element}`` 형식이며, 화면이 선택한 대상을 그대로 전달한다.
     target: str
     feedback: str = ""
+    # Planner execution supplies these frozen sets.  ``None`` is meaningful:
+    # it is not the old implicit permission to discover an upstream authority.
+    approved_authority_targets: list[str] | None = None
+    approved_downstream_targets: list[str] | None = None
 
 
 class BatchReviseRequest(BaseModel):
@@ -397,22 +407,75 @@ def rewind_design_session(app_id: str, stage: str) -> dict[str, Any]:
         raise RuntimeError(f"Design pipeline failed: {error}") from error
 
 
-def revise_design_element(app_id: str, request: ReviseRequest) -> dict[str, Any]:
+def revise_design_stage_session(
+    app_id: str,
+    stage: str,
+    feedback: str,
+) -> dict[str, Any]:
+    """Apply feedback at an already produced stage without pre-regeneration."""
+
+    _validate_app_id(app_id)
+    _require_app_exists(app_id)
+    _require_design_run(app_id)
+    if not feedback.strip():
+        raise ValueError("Design stage revision feedback cannot be empty.")
+    try:
+        return revise_design_stage(app_id, stage, feedback)
+    except StageNotReached as error:
+        raise ValueError(str(error)) from error
+    except Exception as error:
+        raise RuntimeError(f"Design pipeline failed: {error}") from error
+
+
+def revise_design_element(
+    app_id: str,
+    request: ReviseRequest,
+    *,
+    approved_authority_targets: set[str] | None = None,
+    approved_downstream_targets: set[str] | None = None,
+) -> dict[str, Any]:
     """선택한 설계 요소와 추적 관계로 연결된 부분만 수정한다."""
-    return revise_design_elements(app_id, BatchReviseRequest(revisions=[request]))
+    return revise_design_elements(
+        app_id,
+        BatchReviseRequest(revisions=[request]),
+        approved_authority_targets=approved_authority_targets,
+        approved_downstream_targets=approved_downstream_targets,
+    )
 
 
-def revise_design_elements(app_id: str, request: BatchReviseRequest) -> dict[str, Any]:
+def revise_design_elements(
+    app_id: str,
+    request: BatchReviseRequest,
+    *,
+    approved_authority_targets: set[str] | None = None,
+    approved_downstream_targets: set[str] | None = None,
+) -> dict[str, Any]:
     """여러 설계 요소를 메모리에서 차례로 수정하고 모두 성공하면 저장한다."""
     _validate_app_id(app_id)
-    working = _load_app(app_id)
+    original = _load_app(app_id)
+    working = original
     changed: list[str] = []
     touched: dict[str, set[str]] = {}
     related: dict[str, list[str]] = {}
+    regenerated: dict[str, set[str]] = {}
 
     try:
         for revision in request.revisions:
-            result = revise_and_cascade(working, revision.target, revision.feedback)
+            result = revise_and_cascade(
+                working,
+                revision.target,
+                revision.feedback,
+                approved_authority_targets=(
+                    set(revision.approved_authority_targets)
+                    if revision.approved_authority_targets is not None
+                    else approved_authority_targets
+                ),
+                approved_downstream_targets=(
+                    set(revision.approved_downstream_targets)
+                    if revision.approved_downstream_targets is not None
+                    else approved_downstream_targets
+                ),
+            )
             working = result["state"]
             for stage in result["changed"]:
                 if stage not in changed:
@@ -420,8 +483,12 @@ def revise_design_elements(app_id: str, request: BatchReviseRequest) -> dict[str
             for stage, elements in result["touched"].items():
                 touched.setdefault(stage, set()).update(elements)
             related[revision.target] = result.get("related", [])
+            for regenerated_stage, elements in result.get("regenerated", {}).items():
+                regenerated.setdefault(regenerated_stage, set()).update(elements)
     except UnknownTarget as error:
         raise ValueError(str(error)) from error
+    except UnapprovedScopeExpansion as error:
+        raise ValueError(f"Revision requires an approved frozen scope: {error}") from error
     except Exception as error:
         raise RuntimeError(f"Revision failed; no batch changes were saved: {error}") from error
 
@@ -430,10 +497,15 @@ def revise_design_elements(app_id: str, request: BatchReviseRequest) -> dict[str
         "changed": changed,
         "touched": {stage: sorted(elements) for stage, elements in touched.items()},
     }
-    persist_cascade(app_id, combined)
-    # 수정은 상위 설계 그래프 밖에서 실행되므로 체크포인트도 함께 갱신한다. 그렇지
-    # 않으면 다음 재개에서 수정 전 상태가 다시 나타날 수 있다.
+    # Update the checkpoint first. If artifact persistence then fails, restore
+    # the prior checkpoint so a partial database batch cannot become visible.
+    # Artifact versions themselves are committed by one repository transaction.
     sync_design_state(app_id, cast(dict[str, Any], working))
+    try:
+        persist_cascade(app_id, combined)
+    except Exception:
+        sync_design_state(app_id, cast(dict[str, Any], original))
+        raise
 
     return {
         "app_id": app_id,
@@ -441,6 +513,7 @@ def revise_design_elements(app_id: str, request: BatchReviseRequest) -> dict[str
         "changed": changed,
         "touched": combined["touched"],
         "related": related,
+        "regenerated": {stage: sorted(elements) for stage, elements in regenerated.items()},
     }
 
 

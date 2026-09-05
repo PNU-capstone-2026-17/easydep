@@ -21,8 +21,11 @@ from app.requirements.contracts.request import (
     ResourceAnswer,
 )
 from app.requirements.orchestration.graph import (
+    capture_analysis_checkpoint,
+    restore_analysis_checkpoint,
     resume_analysis,
     retry_analysis,
+    revise_analysis,
     start_analysis,
 )
 from app.requirements.runtime import telemetry
@@ -52,20 +55,19 @@ def persist_analysis(app_id: str, payload: dict[str, object]) -> list[str]:
 
     stored = cast(dict[str, object], artifact_repository.load_state(app_id))
     saved: list[str] = []
+    updates: dict[str, object] = {}
 
-    def save(stage: str, state_key: str, content: object) -> None:
+    def collect(stage: str, state_key: str, content: object) -> None:
         # 내용이 그대로면 건너뛴다. 피드백 없이 다음 단계로 넘어갈 때마다 같은
         # 산출물이 새 버전으로 쌓이는 것을 막는다(응답은 누적 산출물을 매번 싣는다).
         if not content or stored.get(state_key) == content:
             return
-        artifact_repository.save_stage(
-            app_id, stage, {state_key: content}  # type: ignore[misc]
-        )
+        updates[state_key] = content
         saved.append(stage)
 
-    save("refined_requirements", "refined_requirements", payload.get("requirements"))
-    save("capability_contract", "capability_contract", payload.get("capability_contract"))
-    save("resource_intake", "resource_intake", payload.get("resource_intake"))
+    collect("refined_requirements", "refined_requirements", payload.get("requirements"))
+    collect("capability_contract", "capability_contract", payload.get("capability_contract"))
+    collect("resource_intake", "resource_intake", payload.get("resource_intake"))
 
     actors = payload.get("actors") or []
     use_cases = payload.get("use_cases") or []
@@ -81,13 +83,19 @@ def persist_analysis(app_id: str, payload: dict[str, object]) -> list[str]:
         }
         if traceability:
             usecase_artifact["traceability"] = traceability
-        save("usecase_spec", "usecase_spec", usecase_artifact)
+        collect("usecase_spec", "usecase_spec", usecase_artifact)
 
-    save("usecase_diagram", "usecase_diagram_puml", payload.get("diagram"))
+    collect("usecase_diagram", "usecase_diagram_puml", payload.get("diagram"))
     # `RESOURCE_SPEC`. **계약을 만족한 것만 온다** — `build_resource_spec`이 통과하지
     # 못한 초안은 `resource_intake`에만 남기고 이 키를 아예 내지 않는다. 그래서 여기서
     # 다시 검사하지 않는다(같은 판정을 두 곳에 두면 한쪽만 고쳐진다).
-    save("resource_spec", "resource_spec", payload.get("resource_spec"))
+    collect("resource_spec", "resource_spec", payload.get("resource_spec"))
+    if saved:
+        artifact_repository.save_stages(
+            app_id,
+            saved,
+            cast(dict, {**stored, **updates}),
+        )
     return saved
 
 
@@ -118,7 +126,7 @@ def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
     ]
     if len(given) > 1:
         raise ValueError(
-            f"{' / '.join(given)} 은 함께 보낼 수 없습니다. 하나만 보내세요."
+            f"Send only one resume input, not all of: {' / '.join(given)}."
         )
 
     # 재개 경로 — 자연어(answer) · 구조화 편집(edit) · 되묻기의 답(resource_answers).
@@ -135,7 +143,7 @@ def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
         if resume is not None:
             if not req.thread_id:
                 raise ValueError(
-                    "answer/edit/resource_answers 에는 thread_id가 필요합니다."
+                    "answer, edit, and resource_answers require a thread_id."
                 )
             payload = resume_analysis(
                 resume, req.thread_id, persist=settings.enable_session_persistence
@@ -144,7 +152,7 @@ def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
             # 신규 분석 시작 경로
             if not req.requirements:
                 raise ValueError(
-                    "requirements(요구사항 문장 배열) 또는 answer+thread_id가 필요합니다."
+                    "Provide requirements, or provide an answer with a thread_id."
                 )
             thread_id = req.thread_id or str(uuid.uuid4())
             payload = start_analysis(
@@ -168,7 +176,7 @@ def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
         try:
             payload["saved_stages"] = persist_analysis(req.app_id, payload)
         except artifact_repository.AppNotFound as error:
-            raise ValueError(f"app_id {req.app_id} 를 찾을 수 없습니다.") from error
+            raise ValueError(f"App {req.app_id} was not found.") from error
 
     return payload
 
@@ -186,5 +194,41 @@ def retry_requirements_analysis(
         try:
             payload["saved_stages"] = persist_analysis(app_id, payload)
         except artifact_repository.AppNotFound as error:
-            raise ValueError(f"app_id {app_id} 를 찾을 수 없습니다.") from error
+            raise ValueError(f"App {app_id} was not found.") from error
+    return payload
+
+
+def revise_requirements_analysis(
+    edit: FeedbackEdit,
+    thread_id: str,
+    *,
+    app_id: str,
+) -> dict[str, object]:
+    """Apply a validated edit by re-entering its persisted feedback gate."""
+
+    checkpoint = capture_analysis_checkpoint(
+        thread_id,
+        persist=settings.enable_session_persistence,
+    )
+    payload = revise_analysis(
+        edit,
+        thread_id,
+        persist=settings.enable_session_persistence,
+    )
+    try:
+        payload["saved_stages"] = persist_analysis(app_id, payload)
+    except artifact_repository.AppNotFound as error:
+        restore_analysis_checkpoint(
+            thread_id,
+            checkpoint,
+            persist=settings.enable_session_persistence,
+        )
+        raise ValueError(f"App {app_id} was not found.") from error
+    except Exception:
+        restore_analysis_checkpoint(
+            thread_id,
+            checkpoint,
+            persist=settings.enable_session_persistence,
+        )
+        raise
     return payload

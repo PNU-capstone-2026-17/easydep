@@ -541,13 +541,29 @@ class ImplementationWorker:
             if isinstance(raw_related_files, list)
             else []
         )
+        effective_file_hints = list(repair_file_hints or [])
+        if confirmed_target_refs:
+            if set(confirmed_refs) != set(confirmed_target_refs):
+                raise ValueError(
+                    "Implementation feedback targets no longer match the current RTM."
+                )
+            if not related_files:
+                raise ValueError(
+                    "Implementation feedback targets have no trace-linked writable files."
+                )
+            if repair_file_hints is None:
+                effective_file_hints = related_files
+            elif not set(effective_file_hints) <= set(related_files):
+                raise ValueError(
+                    "Repair file hints exceed the confirmed implementation target scope."
+                )
         execution_feedback = feedback
         if confirmed_refs or related_files:
             execution_feedback += (
                 "\n\n## RTM-confirmed repair scope\n"
                 "Confirmed refs:\n"
                 + "\n".join(f"- {item}" for item in confirmed_refs)
-                + "\nRelated files (investigation hints, not a write restriction):\n"
+                + "\nAllowed write files:\n"
                 + "\n".join(f"- {item}" for item in related_files)
             )
 
@@ -587,7 +603,7 @@ class ImplementationWorker:
             base_package,
             allow_assumptions,
             repair_task_type=repair_task_type,
-            repair_file_hints=repair_file_hints,
+            repair_file_hints=effective_file_hints,
             verification_profile=verification_profile,
         )
         record = {
@@ -602,7 +618,7 @@ class ImplementationWorker:
             "feedback_eligibility": eligibility,
             "feedback_targeting": targeting,
             "repair_task_type": repair_task_type,
-            "repair_file_hints": list(repair_file_hints or []),
+            "repair_file_hints": effective_file_hints,
             "testing_contracts": build_testing_contracts(design),
             "trace_artifact_versions": _trace_artifact_versions(design),
             "job_path": str(job_path),
@@ -1122,7 +1138,10 @@ class ImplementationWorker:
         record["implementation_traceability"] = (
             implementation_trace if isinstance(implementation_trace, dict) else None
         )
-        version_ids = {}
+        snapshots_to_save: dict[
+            str,
+            tuple[dict[str, str], dict[str, Any]],
+        ] = {}
         for artifact_type, files in groups.items():
             if files:
                 snapshot_metadata = dict(metadata)
@@ -1153,9 +1172,10 @@ class ImplementationWorker:
                     snapshot_metadata["implementation_verification"] = (
                         implementation_verification
                     )
-                version_ids[artifact_type] = artifact_repository.save_file_snapshot(
-                    record["app_id"], artifact_type, files, metadata=snapshot_metadata
-                )
+                snapshots_to_save[artifact_type] = (files, snapshot_metadata)
+        version_ids = artifact_repository.save_file_snapshots(
+            record["app_id"], snapshots_to_save
+        )
         # ``save_file_snapshot``이 반환한 DB 식별자만 Testing API에 넘긴다. Testing은
         # 이 ID가 가리키는 파일 묶음을 한 번 복원하고 모든 검사를 같은 폴더에서 실행한다.
         record["artifact_version_ids"] = version_ids

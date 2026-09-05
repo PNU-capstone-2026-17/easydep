@@ -356,6 +356,105 @@ def _has_checkpoint(gates: bool, thread_id: str, persistent: bool) -> bool:
     return bool(snapshot.values)
 
 
+def capture_analysis_checkpoint(
+    thread_id: str,
+    *,
+    persist: bool = False,
+) -> dict[str, object]:
+    """Capture the current graph position for compensating a failed revision."""
+
+    gates = _recall_mode(thread_id, persist)
+    compiled = _compiled(gates, persist)
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    snapshot = compiled.get_state(config)  # type: ignore[attr-defined]
+    if not snapshot.values or not snapshot.config:
+        raise ValueError(
+            f"No saved checkpoint was found for requirements run {thread_id!r}."
+        )
+    next_nodes = [str(node) for node in snapshot.next]
+    if next_nodes:
+        tasks = list(snapshot.tasks)
+        safe_interrupt = (
+            len(next_nodes) == 1
+            and next_nodes[0].startswith("gate_")
+            and len(tasks) == 1
+            and str(tasks[0].name) == next_nodes[0]
+            and tasks[0].error is None
+            and len(tasks[0].interrupts) == 1
+        )
+        if not safe_interrupt:
+            raise ValueError(
+                "The requirements run is not at a safe feedback checkpoint; retry it first."
+            )
+    return {
+        "config": dict(snapshot.config),
+        "next": next_nodes,
+    }
+
+
+def restore_analysis_checkpoint(
+    thread_id: str,
+    checkpoint: dict[str, object],
+    *,
+    persist: bool = False,
+) -> None:
+    """Restore a completed or feedback-gated requirements checkpoint."""
+
+    base_config = checkpoint.get("config")
+    if not isinstance(base_config, dict) or not base_config:
+        raise ValueError("A requirements checkpoint snapshot is required for restoration.")
+    next_nodes = [str(node) for node in checkpoint.get("next") or []]
+    if len(next_nodes) > 1:
+        raise ValueError("A requirements checkpoint with parallel next nodes cannot be restored.")
+
+    gates = _recall_mode(thread_id, persist)
+    compiled = _compiled(gates, persist)
+    configurable = base_config.get("configurable")
+    if not isinstance(configurable, dict) or configurable.get("thread_id") != thread_id:
+        raise ValueError("The requirements checkpoint belongs to a different run.")
+    config = cast(RunnableConfig, base_config)
+
+    if not next_nodes:
+        compiled.update_state(  # type: ignore[attr-defined]
+            config,
+            {},
+            as_node="gate_handoff",
+        )
+        return
+
+    node = next_nodes[0]
+    predecessor = {
+        "gate_requirements": "structure_constraints",
+        "gate_use_cases": "model_use_cases",
+        "gate_specs": "write_specifications",
+        "gate_relationships": "draw_diagram",
+        "gate_handoff": "gate_relationships",
+    }.get(node)
+    if predecessor is None:
+        raise ValueError(
+            f"Cannot restore a requirements revision from non-gate node {node!r}."
+        )
+    restored_config = compiled.update_state(  # type: ignore[attr-defined]
+        config,
+        {},
+        as_node=predecessor,
+    )
+    waiting = cast(  # type: ignore[attr-defined]
+        dict[str, object], compiled.invoke(None, restored_config)
+    )
+    interrupts = cast(list[Interrupt], waiting.get("__interrupt__") or [])
+    value = interrupts[0].value if interrupts else {}
+    expected_stage = {
+        "gate_requirements": "requirements",
+        "gate_use_cases": "use_cases",
+        "gate_specs": "specs",
+        "gate_relationships": "relationships",
+        "gate_handoff": "requirements_handoff",
+    }[node]
+    if not isinstance(value, dict) or value.get("stage") != expected_stage:
+        raise RuntimeError(f"Requirements checkpoint restoration did not re-enter {node}.")
+
+
 # ----------------------------------------------------------------------------
 # 서빙 헬퍼 (main.py에서 사용)
 # ----------------------------------------------------------------------------
@@ -505,6 +604,43 @@ def resume_analysis(
     with telemetry.run_scope(f"resume:{thread_id}") as stats:
         result = _invoke(gates, thread_id, Command(resume=answer), persist)
         return result_payload(cast(dict[str, object], result), thread_id, stats)
+
+
+def revise_analysis(
+    edit: FeedbackEdit,
+    thread_id: str,
+    *,
+    persist: bool = False,
+) -> dict[str, object]:
+    """Re-enter the exact requirements feedback gate for a completed run."""
+
+    gates = _recall_mode(thread_id, persist)
+    if not gates:
+        raise ValueError(
+            "A completed requirements revision requires a feedback-gated checkpoint."
+        )
+    compiled = _compiled(gates, persist)
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    checkpoint = capture_analysis_checkpoint(thread_id, persist=persist)
+    predecessor = {
+        "actors": "model_use_cases",
+        "use_cases": "model_use_cases",
+        "specs": "write_specifications",
+        "relationships": "draw_diagram",
+    }[edit.stage]
+    with telemetry.run_scope(f"revise:{thread_id}") as stats:
+        try:
+            compiled.update_state(config, {}, as_node=predecessor)  # type: ignore[attr-defined]
+            waiting = cast(dict[str, object], compiled.invoke(None, config))  # type: ignore[attr-defined]
+            if not waiting.get("__interrupt__"):
+                raise RuntimeError(
+                    f"Requirements revision could not enter the {edit.stage} feedback gate."
+                )
+            result = compiled.invoke(Command(resume=edit), config)  # type: ignore[attr-defined]
+            return result_payload(cast(dict[str, object], result), thread_id, stats)
+        except Exception:
+            restore_analysis_checkpoint(thread_id, checkpoint, persist=persist)
+            raise
 
 
 def retry_analysis(thread_id: str, *, persist: bool = False) -> dict[str, object]:

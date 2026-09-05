@@ -129,7 +129,7 @@ def test_targeted_sequence_batch_persists_once_after_every_revision_succeeds(mon
         lambda _app_id, state: synced.append(state),
     )
 
-    def cascade(state, target, feedback):
+    def cascade(state, target, feedback, **_scope):
         return {
             "state": {**state, "revision_count": state["revision_count"] + 1, target: feedback},
             "changed": ["sequence_diagram"],
@@ -172,7 +172,7 @@ def test_failed_targeted_batch_does_not_persist_an_earlier_target(monkeypatch) -
         lambda _app_id, result: persisted.append(result),
     )
 
-    def cascade(state, target, feedback):
+    def cascade(state, target, feedback, **_scope):
         if target.endswith("UC6"):
             raise RuntimeError("second target failed")
         return {
@@ -199,6 +199,53 @@ def test_failed_targeted_batch_does_not_persist_an_earlier_target(monkeypatch) -
         )
 
     assert persisted == []
+
+
+def test_artifact_persistence_failure_restores_the_previous_design_checkpoint(
+    monkeypatch,
+) -> None:
+    original = {"revision_count": 0}
+    synced: list[dict] = []
+    monkeypatch.setattr(
+        design_service.artifact_repository,
+        "load_state",
+        lambda _app_id: original,
+    )
+    monkeypatch.setattr(
+        design_service,
+        "sync_design_state",
+        lambda _app_id, state: synced.append(state),
+    )
+    monkeypatch.setattr(
+        design_service,
+        "revise_and_cascade",
+        lambda state, _target, _feedback, **_scope: {
+            "state": {**state, "revision_count": 1},
+            "changed": ["sequence_diagram"],
+            "touched": {"sequence_diagram": ["UC5"]},
+            "related": [],
+        },
+    )
+
+    def fail_persistence(_app_id, _result):
+        raise RuntimeError("database write failed")
+
+    monkeypatch.setattr(design_service, "persist_cascade", fail_persistence)
+
+    with pytest.raises(RuntimeError, match="database write failed"):
+        design_service.revise_design_elements(
+            "00000000-0000-0000-0000-000000000001",
+            design_service.BatchReviseRequest(
+                revisions=[
+                    design_service.ReviseRequest(
+                        target="sequence_diagram:UC5",
+                        feedback="first",
+                    )
+                ]
+            ),
+        )
+
+    assert synced == [{"revision_count": 1}, original]
 
 
 def test_design_review_result_exposes_pending_method_proposals_for_manual_approval() -> None:

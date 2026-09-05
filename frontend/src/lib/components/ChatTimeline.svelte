@@ -1,6 +1,18 @@
 <script lang="ts">
   import { AlertTriangle, Bot, CheckCircle2, CircleHelp, LoaderCircle, UserRound } from '@lucide/svelte';
-  import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, WorkspaceEvent } from '$lib/types';
+  import {
+    hasPendingRevisionPlan,
+    hasCompletedRevisionExecution,
+    revisionPlanTargetLabel,
+    type ArtifactDocument,
+    type CloudProvider,
+    type CloudRegionOption,
+    type DeploymentPreferences,
+    type FileArtifactSnapshot,
+    type RevisionPlanTarget,
+    type RevisionExecution,
+    type WorkspaceEvent
+  } from '$lib/types';
   import { formatTime } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import ArtifactConversationCard from '$lib/components/ArtifactConversationCard.svelte';
@@ -215,6 +227,26 @@
     }
     return event.text;
   }
+
+  function revisionPlanTargets(event: WorkspaceEvent, key: string): RevisionPlanTarget[] {
+    const targets = event.metadata?.[key];
+    return Array.isArray(targets) ? targets : [];
+  }
+
+  function revisionExecution(event: WorkspaceEvent): RevisionExecution {
+    const execution = event.metadata?.revision_execution;
+    return execution && typeof execution === 'object' ? (execution as RevisionExecution) : {};
+  }
+
+  function executionGroups(execution: RevisionExecution, key: keyof Pick<
+    RevisionExecution,
+    'touched_targets' | 'regenerated_targets' | 'stale_targets'
+  >): Array<[string, string[]]> {
+    const groups = execution[key];
+    return groups && typeof groups === 'object'
+      ? Object.entries(groups).filter(([, refs]) => Array.isArray(refs) && refs.length > 0)
+      : [];
+  }
 </script>
 
 <div class="mx-auto w-full max-w-3xl px-5 pb-8 pt-6">
@@ -359,6 +391,80 @@
                 : 'py-3 border-[#e3e3dd] bg-white'}"
         >
           {eventText(event)}
+          {#if hasCompletedRevisionExecution(event.kind, event.metadata)}
+            {@const execution = revisionExecution(event)}
+            {@const touchedTargets = executionGroups(execution, 'touched_targets')}
+            {@const regeneratedTargets = executionGroups(execution, 'regenerated_targets')}
+            {@const staleTargets = executionGroups(execution, 'stale_targets')}
+            {@const targetRemap = Object.entries(execution.target_remap ?? {})}
+            <section
+              class="mt-3 border-t border-[#dce9df] pt-2.5 text-xs leading-5 text-[#536158]"
+              aria-label="Revision execution"
+            >
+              <div class="mb-1.5 font-semibold text-[#34463a]">Revision execution</div>
+              {#if execution.changed_stages?.length}
+                <div>
+                  <span class="font-medium text-[#34463a]">Changed stages:</span>
+                  <span class="ml-1">{execution.changed_stages.join(', ')}</span>
+                </div>
+              {/if}
+              {#if touchedTargets.length}
+                <div class="mt-1">
+                  <span class="font-medium text-[#34463a]">Touched targets:</span>
+                  <span class="ml-1">{touchedTargets.map(([stage, refs]) => `${stage}: ${refs.join(', ')}`).join('; ')}</span>
+                </div>
+              {/if}
+              {#if regeneratedTargets.length}
+                <div class="mt-1">
+                  <span class="font-medium text-[#34463a]">Regenerated targets:</span>
+                  <span class="ml-1">{regeneratedTargets.map(([stage, refs]) => `${stage}: ${refs.join(', ')}`).join('; ')}</span>
+                </div>
+              {/if}
+              {#if staleTargets.length}
+                <div class="mt-1">
+                  <span class="font-medium text-[#34463a]">Stale targets:</span>
+                  <span class="ml-1">{staleTargets.map(([stage, refs]) => `${stage}: ${refs.join(', ')}`).join('; ')}</span>
+                </div>
+              {/if}
+              {#if targetRemap.length}
+                <div class="mt-1">
+                  <span class="font-medium text-[#34463a]">Target remap:</span>
+                  <span class="ml-1">{targetRemap.map(([source, target]) => `${source} → ${target}`).join('; ')}</span>
+                </div>
+              {/if}
+            </section>
+          {/if}
+          {#if hasPendingRevisionPlan(event.kind, event.metadata)}
+            {@const requestedTargets = revisionPlanTargets(event, 'requested_targets')}
+            {@const authorityTargets = revisionPlanTargets(event, 'authority_targets')}
+            {@const downstreamTargets = revisionPlanTargets(event, 'downstream_targets')}
+            <section
+              class="mt-3 border-t border-[#ece8dc] pt-2.5 text-xs leading-5 text-[#5d625a]"
+              aria-label="Revision plan"
+            >
+              <div class="mb-1.5 font-semibold text-[#343831]">Revision plan</div>
+              <dl class="space-y-1.5">
+                <div>
+                  <dt class="font-medium text-[#343831]">Requested change</dt>
+                  {#if requestedTargets.length}
+                    <dd class="ml-3">{requestedTargets.map(revisionPlanTargetLabel).filter(Boolean).join(', ')}</dd>
+                  {/if}
+                </div>
+                <div>
+                  <dt class="font-medium text-[#343831]">Will edit (authority)</dt>
+                  {#if authorityTargets.length}
+                    <dd class="ml-3">{authorityTargets.map(revisionPlanTargetLabel).filter(Boolean).join(', ')}</dd>
+                  {/if}
+                </div>
+                <div>
+                  <dt class="font-medium text-[#343831]">Will update (downstream)</dt>
+                  {#if downstreamTargets.length}
+                    <dd class="ml-3">{downstreamTargets.map(revisionPlanTargetLabel).filter(Boolean).join(', ')}</dd>
+                  {/if}
+                </div>
+              </dl>
+            </section>
+          {/if}
           {#if event.event_id === latestImplementationError && implementationErrors.length}
             <ImplementationErrorPanel errors={implementationErrors} />
           {/if}

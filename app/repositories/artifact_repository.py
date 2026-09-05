@@ -394,6 +394,48 @@ def save_stage(
     return version_id
 
 
+def save_stages(
+    app_id: str,
+    stages: list[str] | tuple[str, ...],
+    state: ArchitectureState,
+    origin: str = ORIGIN_GENERATED,
+) -> dict[str, int]:
+    """Persist a validated multi-stage revision in one database transaction.
+
+    Targeted cascade computes and validates every patch before calling this function.
+    Keeping all version inserts under one app-row lock prevents a later-stage write
+    failure from leaving an earlier artifact committed on its own. Image warming stays
+    post-commit because images are derived caches rather than source artifacts.
+    """
+
+    ordered = list(dict.fromkeys(str(stage).strip() for stage in stages if str(stage).strip()))
+    unknown = [stage for stage in ordered if stage not in STAGE_ARTIFACTS]
+    if unknown:
+        raise ValueError(f"Unknown artifact stages: {', '.join(unknown)}")
+    if not ordered:
+        return {}
+
+    version_ids: dict[str, int] = {}
+    with session_scope() as session:
+        app = _lock_app(session, app_id)
+        for stage in ordered:
+            version_id = _write_version(session, app_id, stage, state, origin)
+            if version_id is not None:
+                version_ids[stage] = version_id
+        app.current_stage = ordered[-1]
+
+    for stage in version_ids:
+        try:
+            warm_artifact_images(app_id, stage, state)
+        except Exception:
+            logger.exception(
+                "PlantUML image warmup failed after saving app=%s stage=%s",
+                app_id,
+                stage,
+            )
+    return version_ids
+
+
 def list_versions(app_id: str, stage: str) -> list[dict[str, Any]]:
     """한 산출물의 변경 이력을 오래된 버전부터 반환한다."""
     config = STAGE_ARTIFACTS[stage]
@@ -465,31 +507,90 @@ def save_file_snapshot(
     normalized = {_normalize_file_path(path): content for path, content in files.items()}
     with session_scope() as session:
         _lock_app(session, app_id)
-        latest = _latest_version(session, app_id, artifact_type)
-        if latest is not None and _same_file_snapshot(latest, normalized):
-            return latest.id
-        latest_version_no = latest.version_no if latest is not None else 0
-
-        version = ArtifactVersion(
-            app_id=app_id,
-            artifact_type=artifact_type,
-            version_no=latest_version_no + 1,
-            content=json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
-            syntax_valid=True,
+        return _write_file_snapshot(
+            session,
+            app_id,
+            artifact_type,
+            normalized,
             origin=origin,
+            metadata=metadata,
         )
-        session.add(version)
-        session.flush()
-        for path, content in sorted(normalized.items()):
-            session.add(
-                ArtifactFile(
-                    artifact_version_id=version.id,
-                    file_path=path,
-                    content=content,
-                    sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
-                )
+
+
+def save_file_snapshots(
+    app_id: str,
+    snapshots: Mapping[
+        str,
+        tuple[Mapping[str, str], Mapping[str, Any] | None],
+    ],
+    *,
+    origin: str = ORIGIN_GENERATED,
+) -> dict[str, int]:
+    """Persist multiple file-artifact snapshots in one database transaction."""
+
+    normalized: dict[str, tuple[dict[str, str], Mapping[str, Any] | None]] = {}
+    for artifact_type, (files, metadata) in snapshots.items():
+        if not files:
+            raise ValueError(f"A file artifact snapshot cannot be empty: {artifact_type}")
+        normalized[artifact_type] = (
+            {_normalize_file_path(path): content for path, content in files.items()},
+            metadata,
+        )
+    if not normalized:
+        return {}
+
+    version_ids: dict[str, int] = {}
+    with session_scope() as session:
+        _lock_app(session, app_id)
+        for artifact_type in sorted(normalized):
+            files, metadata = normalized[artifact_type]
+            version_ids[artifact_type] = _write_file_snapshot(
+                session,
+                app_id,
+                artifact_type,
+                files,
+                origin=origin,
+                metadata=metadata,
             )
-        return version.id
+    return version_ids
+
+
+def _write_file_snapshot(
+    session: Session,
+    app_id: str,
+    artifact_type: str,
+    normalized: Mapping[str, str],
+    *,
+    origin: str,
+    metadata: Mapping[str, Any] | None,
+) -> int:
+    """Write one normalized file tree inside the caller-owned transaction."""
+
+    latest = _latest_version(session, app_id, artifact_type)
+    if latest is not None and _same_file_snapshot(latest, normalized):
+        return latest.id
+    latest_version_no = latest.version_no if latest is not None else 0
+
+    version = ArtifactVersion(
+        app_id=app_id,
+        artifact_type=artifact_type,
+        version_no=latest_version_no + 1,
+        content=json.dumps(dict(metadata or {}), ensure_ascii=False, sort_keys=True),
+        syntax_valid=True,
+        origin=origin,
+    )
+    session.add(version)
+    session.flush()
+    for path, content in sorted(normalized.items()):
+        session.add(
+            ArtifactFile(
+                artifact_version_id=version.id,
+                file_path=path,
+                content=content,
+                sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            )
+        )
+    return version.id
 
 
 def delete_file_snapshots_owned_by_job(

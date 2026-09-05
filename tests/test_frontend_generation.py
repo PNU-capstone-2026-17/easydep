@@ -743,15 +743,18 @@ def test_completed_job_persists_frontend_as_its_own_file_artifact(
     (backend / "Application.java").write_text("class Application {}", encoding="utf-8")
     persisted: dict[str, dict[str, str]] = {}
 
-    def save_snapshot(
-        _app_id: str, artifact_type: str, files: dict[str, str], **_kwargs: object
-    ) -> int:
-        persisted[artifact_type] = files
-        return 1
+    def save_snapshots(
+        _app_id: str,
+        snapshots: dict[str, tuple[dict[str, str], dict[str, object]]],
+        **_kwargs: object,
+    ) -> dict[str, int]:
+        for artifact_type, (files, _metadata) in snapshots.items():
+            persisted[artifact_type] = files
+        return dict.fromkeys(snapshots, 1)
 
     monkeypatch.setattr(
-        "app.implementation.application.jobs.artifact_repository.save_file_snapshot",
-        save_snapshot,
+        "app.implementation.application.jobs.artifact_repository.save_file_snapshots",
+        save_snapshots,
     )
     settings = ImplementationSettings(
         repository_root=tmp_path,

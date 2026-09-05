@@ -17,6 +17,55 @@ export interface ActionOffer {
   description?: string;
 }
 
+export interface RevisionPlanTarget {
+  ref?: string | null;
+  kind?: string | null;
+  element_id?: string | null;
+  owner?: string | null;
+  artifact_type?: string | null;
+  artifact_version_id?: number | null;
+  display_label?: string | null;
+}
+
+export interface RevisionPlanMetadata {
+  revision_plan?: unknown;
+  requested_targets?: RevisionPlanTarget[];
+  authority_targets?: RevisionPlanTarget[];
+  downstream_targets?: RevisionPlanTarget[];
+  message?: string | null;
+}
+
+export interface RevisionExecution {
+  changed_stages?: string[];
+  touched_targets?: Record<string, string[]>;
+  regenerated_targets?: Record<string, string[]>;
+  stale_targets?: Record<string, string[]>;
+  target_remap?: Record<string, string>;
+}
+
+export function hasPendingRevisionPlan(
+  kind: WorkspaceEvent['kind'],
+  metadata: RevisionPlanMetadata | Record<string, unknown> | null | undefined
+): boolean {
+  return kind === 'action_required' && Boolean(metadata?.revision_plan);
+}
+
+export function hasCompletedRevisionExecution(
+  kind: WorkspaceEvent['kind'],
+  metadata: Record<string, unknown> | null | undefined
+): boolean {
+  return (
+    kind === 'status' &&
+    String(metadata?.status ?? '').toUpperCase() === 'COMPLETED' &&
+    Boolean(metadata?.revision_execution)
+  );
+}
+
+export function revisionPlanTargetLabel(target: RevisionPlanTarget): string {
+  const displayLabel = String(target.display_label ?? '').trim();
+  return displayLabel || String(target.ref ?? '').trim();
+}
+
 export interface WorkspaceCommandResult extends Record<string, any> {
   wait_reason?: WaitReason;
   actions?: ActionOffer[];

@@ -15,6 +15,7 @@ from app.db.models import (
     TYPE_SOURCE_CODE,
     TYPE_USECASE_SPEC,
 )
+from app.design.services.class_diagram.identity import stable_operation_id
 from app.workspace.conversation import project_tools as project_tools_module
 from app.workspace.conversation.context import build_conversation_context
 from app.workspace.conversation.contracts import Clarification, CommandIntent, Reply
@@ -278,6 +279,19 @@ def test_validate_targets_requires_canonical_edit_ref_and_matching_version(
     assert entity["targets"][0]["editable"] is False
 
 
+def test_legacy_operation_target_freezes_the_acceptance_stable_identity(
+    tools: ProjectTools,
+) -> None:
+    target = tools.normalize_revision_targets(
+        ["class_diagram:OrderControl::placeOrder()"]
+    )[0]
+
+    assert target.kind == "operation"
+    assert target.element_id == stable_operation_id(
+        "OrderControl", "OrderControl::placeOrder()"
+    )
+
+
 def test_trace_views_do_not_mix_latest_editing_and_frozen_testing_evidence(
     tools: ProjectTools, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -305,6 +319,25 @@ def test_trace_views_do_not_mix_latest_editing_and_frozen_testing_evidence(
     assert frozen_calls == ["requirement:REQ-ORDER"]
 
 
+def test_stage_rewind_relations_include_exact_cross_delivery_downstream(
+    tools: ProjectTools,
+) -> None:
+    requirements = tools.revision_relations(["requirements_stage:actors"])
+    design = tools.revision_relations(["design_stage:class_diagram"])
+
+    requirement_downstream = set(
+        requirements["relations"]["requirements_stage:actors"]["downstream"]
+    )
+    design_downstream = set(
+        design["relations"]["design_stage:class_diagram"]["downstream"]
+    )
+
+    assert "class_diagram:OrderControl" in requirement_downstream
+    assert "file:application/src/OrderService.java" in requirement_downstream
+    assert "api_spec:placeOrder" in design_downstream
+    assert "file:application/src/OrderService.java" in design_downstream
+
+
 def test_context_is_rebuilt_from_message_commands_and_status_not_stale_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -326,7 +359,7 @@ def test_context_is_rebuilt_from_message_commands_and_status_not_stale_flags(
         "result": {"awaiting_input": True},
     }
     monkeypatch.setattr(
-        "app.workspace.conversation.context._recent_message_commands",
+        "app.workspace.conversation.context._recent_conversation_commands",
         lambda _app_id, _limit: messages,
     )
     monkeypatch.setattr(
@@ -365,7 +398,7 @@ def test_context_keeps_recent_turns_within_a_total_character_budget(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "app.workspace.conversation.context._recent_message_commands",
+        "app.workspace.conversation.context._recent_conversation_commands",
         lambda _app_id, _limit: messages,
     )
     monkeypatch.setattr(
@@ -382,3 +415,50 @@ def test_context_keeps_recent_turns_within_a_total_character_budget(
     assert sum(len(turn.text) for turn in context.turns) <= 24_000
     assert context.turns[-1].command_id == "m3"
     assert all(len(turn.text) <= 8_000 for turn in context.turns)
+
+
+def test_context_reads_target_remap_from_revision_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands = [
+        {
+            "command_id": "m1",
+            "action": "message",
+            "payload": {"text": "Rename the operation."},
+            "status": "COMPLETED",
+            "result": {},
+        },
+        {
+            "command_id": "c1",
+            "action": "confirm_change",
+            "payload": {"action_id": "m1"},
+            "status": "COMPLETED",
+            "result": {
+                "revision_execution": {
+                    "target_remap": {
+                        "class_diagram:Order::place()": "class_diagram:Order::submit()"
+                    }
+                }
+            },
+        },
+    ]
+    latest = {**commands[-1], "stage": "design"}
+    monkeypatch.setattr(
+        "app.workspace.conversation.context._recent_conversation_commands",
+        lambda _app_id, _limit: commands,
+    )
+    monkeypatch.setattr(
+        "app.workspace.conversation.context.repository.latest_command",
+        lambda _app_id: latest,
+    )
+    monkeypatch.setattr(
+        "app.workspace.conversation.context.offered_actions",
+        lambda _command: [],
+    )
+
+    context = build_conversation_context(APP_ID)
+
+    assert context.target_remap == {
+        "class_diagram:Order::place()": "class_diagram:Order::submit()"
+    }
+    assert [turn.command_id for turn in context.turns] == ["m1"]

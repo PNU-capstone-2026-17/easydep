@@ -14,6 +14,7 @@ from typing import Any, cast
 
 from fastapi import HTTPException
 
+from app.artifact_trace import TraceRef
 from app.design import progress as design_progress
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
@@ -26,6 +27,7 @@ from app.design.service import (
     retry_design_session,
     revise_design_element,
     revise_design_elements,
+    revise_design_stage_session,
     rewind_design_session,
     start_design_session,
 )
@@ -48,6 +50,7 @@ from app.requirements.contracts.request import (
 from app.requirements.orchestration.service import (
     analyze_requirements,
     retry_requirements_analysis,
+    revise_requirements_analysis,
 )
 from app.requirements.resources.capability_contract import capability_resource_questions
 from app.requirements.runtime import telemetry as requirements_telemetry
@@ -71,8 +74,24 @@ from .checkpoints import (
 from .contracts import RestartStage
 from .conversation.agent import conversation_agent
 from .conversation.context import build_conversation_context
-from .conversation.contracts import Clarification, CommandIntent, ConversationIntent, Reply
+from .conversation.contracts import (
+    Clarification,
+    CommandIntent,
+    ConversationIntent,
+    Reply,
+    RevisionExecutionResult,
+    RevisionInterpretation,
+    RevisionPlan,
+    RevisionTarget,
+)
+from .conversation.delivery import (
+    design_revision_payload,
+    implementation_revision_payload,
+    repair_payload_from_testing_evidence,
+    requirements_feedback_edit,
+)
 from .conversation.project_tools import ProjectTools
+from .conversation.revision_planner import plan_revision, validate_plan
 from .live_preview import live_previews
 
 _log = logging.getLogger(__name__)
@@ -462,6 +481,7 @@ class WorkspaceService:
             and context.get("artifact_stage") == "sequence_diagram"
             and not context.get("target_feedbacks")
             and not str(context.get("element_ref") or "").strip()
+            and not payload.get("revision_plan")
         ):
             raise ValueError(
                 "Select at least one use-case target and enter feedback for each selected target."
@@ -480,39 +500,6 @@ class WorkspaceService:
                 metadata={"context": payload.get("context")},
             )
 
-        if (
-            action == "message"
-            and not payload.get("_conversation_outcome")
-            and not payload.get("conversation_intent")
-            and context.get("stage")
-            and context.get("stage") != resolved_stage
-        ):
-            result = {
-                "action_id": command_id,
-                "action": "confirm_change",
-                "context": context,
-                "message": "This change may affect an earlier stage and its downstream artifacts.",
-            }
-            result = result_with_contract(
-                {**command, "status": "AWAITING_INPUT"}, result
-            )
-            repository.update_command(
-                command_id,
-                status="AWAITING_INPUT",
-                result=result,
-                started_at=repository.now(),
-            )
-            repository.append_event(
-                app_id,
-                command_id=command_id,
-                stage=str(context.get("stage") or resolved_stage),
-                kind="action_required",
-                actor="system",
-                text="Confirm whether to return to the earlier stage and apply the change.",
-                metadata=result,
-            )
-            return repository.get_command(command_id) or command
-
         self._executor.submit(self._execute, command_id)
         return command
 
@@ -526,43 +513,79 @@ class WorkspaceService:
     ) -> tuple[str, dict[str, Any], str | None]:
         """실행 command를 만들기 전에 자연어 발화를 해석한다.
 
-        명시적 버튼, 리소스 답변과 UI에서 대상을 고른 수정은 LLM을 거치지 않는다. 자연어
-        command는 backend가 이미 공개한 action과 payload로 바꾸고 답변과 clarification은
-        전문 단계를 실행하지 않는 message command로 남긴다.
+        명시적 버튼과 리소스 답변은 LLM을 거치지 않는다. UI가 대상을 고른 수정은 target을
+        다시 추측하지 않고 의미 범위만 structured output으로 해석한다. 자연어 command는
+        backend가 이미 공개한 action과 payload로 바꾸고 답변과 clarification은 전문 단계를
+        실행하지 않는 message command로 남긴다.
         """
 
         if action != "message":
             return action, payload, stage
         text = str(payload.get("text") or "").strip()
         latest = repository.latest_command(app_id)
-        if not text or latest is None:
+        if latest is None:
+            return action, payload, stage
+        selected = payload.get("context") or {}
+        if not text and selected.get("target_feedbacks") is None:
             return action, payload, stage
         if latest.get("status") in repository.ACTIVE_STATUSES:
             raise RuntimeError(
                 f"An active workspace command already exists: {latest['command_id']}"
             )
-        selected = payload.get("context") or {}
-        if any(
-            selected.get(key)
-            for key in ("element_ref", "target_feedbacks", "validated_target_feedbacks")
-        ):
-            return action, payload, stage
+        explicit_instructions: dict[str, str] = {}
+        element_ref = str(selected.get("element_ref") or "").strip()
+        if element_ref and text:
+            explicit_instructions[element_ref] = text
+        if selected.get("target_feedbacks") is not None:
+            for revision in self._sequence_target_feedbacks(dict(selected)):
+                explicit_instructions[revision.target] = revision.feedback
+        artifact_stage = str(selected.get("artifact_stage") or "").strip()
+        if text and artifact_stage and not explicit_instructions:
+            explicit_instructions[str(TraceRef("design_stage", artifact_stage))] = text
+        if explicit_instructions:
+            combined_instruction = "\n".join(
+                f"{target}: {instruction}"
+                for target, instruction in explicit_instructions.items()
+            )
+            try:
+                outcome = conversation_agent.interpret_revision(
+                    combined_instruction,
+                    list(explicit_instructions),
+                    tools=ProjectTools(app_id),
+                )
+            except Exception:
+                _log.exception("Failed to interpret selected revision feedback")
+                outcome = Clarification(
+                    question=(
+                        "I could not interpret that revision right now. "
+                        "Please retry with the same selected target."
+                    )
+                )
+            explicit_payload = {
+                **payload,
+                "text": combined_instruction,
+                "revision_instructions": explicit_instructions,
+            }
+            if isinstance(outcome, Clarification):
+                return self._clarification_message(
+                    explicit_payload, outcome, stage, latest
+                )
+            if not isinstance(outcome, CommandIntent):
+                raise ValueError("Selected revision feedback did not produce a command intent.")
+            return self._route_conversation_intent(
+                app_id, explicit_payload, outcome, latest
+            )
 
         action_id = str(payload.get("action_id") or "")
         prior = repository.get_command(action_id) if action_id else latest
-        prior_result = (prior or {}).get("result") or {}
-        # 전문 단계가 낸 구체적인 질문의 답은 그 단계의 typed 재개 경로를 유지한다.
-        # 대화형 clarification의 답만 저장된 문맥과 함께 대화형 에이전트로 돌려보낸다.
-        conversation = prior_result.get("conversation")
-        if (
-            prior is not None
-            and prior.get("status") == "AWAITING_INPUT"
-            and not isinstance(conversation, dict)
-            and (
-                prior_result.get("kind") == "question"
-                or prior_result.get("resource_question")
-                or prior_result.get("questions")
-            )
+        # A fixed choice emitted by a stage is already typed UI input. Free
+        # text still goes through ConversationAgent so a revision request made
+        # while a question is pending cannot bypass RevisionPlanner.
+        if prior is not None and any(
+            str(offer.action) == "message"
+            and "text" in offer.payload
+            and offer.payload.get("text") == text
+            for offer in offered_actions(prior)
         ):
             return action, payload, str(prior.get("stage") or stage or "requirements")
 
@@ -677,37 +700,94 @@ class WorkspaceService:
             )
         if intent_name == ConversationIntent.REVISE.value:
             tools = ProjectTools(app_id)
-            validation = tools.validate_targets(intent.targets)
-            targets = list(validation.get("targets") or [])
-            valid_refs = list(validation.get("valid_refs") or [])
-            owners = {str(item.get("owner") or "") for item in targets if item.get("valid")}
-            if not validation.get("valid") or not valid_refs or len(owners) != 1:
-                candidates = [str(item.get("canonical_ref") or item.get("ref") or "") for item in targets]
+            interpretation = intent.revision
+            if interpretation is None:
                 return self._clarification_message(
                     payload,
                     Clarification(
-                        question="Select editable targets owned by a single delivery stage.",
-                        candidates=list(dict.fromkeys(item for item in candidates if item)),
+                        question=(
+                            "Please clarify whether this changes presentation, a contract, "
+                            "behavior, implementation, or a test expectation."
+                        ),
+                        candidates=[],
+                    ),
+                    None,
+                    latest,
+                )
+            plan = plan_revision(tools, interpretation)
+            if plan.status in {"needs_clarification", "unsupported"}:
+                return self._clarification_message(
+                    payload,
+                    Clarification(
+                        question=plan.explanation,
+                        candidates=[
+                            target.display_label
+                            for target in plan.upstream_candidates
+                        ],
+                    ),
+                    None,
+                    latest,
+                )
+            execution_targets = plan.authority_targets or plan.requested_targets
+            owners = {target.owner for target in execution_targets}
+            if len(owners) != 1:
+                return self._clarification_message(
+                    payload,
+                    Clarification(
+                        question="Select targets owned by one delivery stage.",
+                        candidates=[target.display_label for target in execution_targets],
                     ),
                     None,
                     latest,
                 )
             owner = owners.pop()
             owner_command = repository.latest_command(app_id, stage=owner)
+            valid_refs = [target.ref for target in execution_targets]
+            targets = [target.model_dump(mode="json") for target in execution_targets]
             routed_payload = {
                 **payload,
                 "text": intent.instruction,
                 "action_id": str((owner_command or latest).get("command_id") or ""),
                 "conversation_intent": intent.model_dump(mode="json"),
+                "revision_interpretation": interpretation.model_dump(mode="json"),
+                "revision_plan": plan.model_dump(mode="json"),
                 "validated_targets": targets,
                 "validated_impact": tools.trace_impact(valid_refs, view="editing"),
             }
+            if owner == "implementation" and any(
+                target.kind == "finding" for target in plan.requested_targets
+            ):
+                finding = next(
+                    target for target in plan.requested_targets if target.kind == "finding"
+                )
+                evidence = tools.read_element(finding.ref).get("content") or {}
+                repair_payload_from_testing_evidence(evidence, execution_targets)
+            if plan.status == "needs_confirmation":
+                routed_payload["_conversation_outcome"] = {"kind": "revision_plan"}
+                return "message", routed_payload, owner
             if owner == "design":
+                revision_instructions = routed_payload.get("revision_instructions")
+                revision_instructions = (
+                    revision_instructions
+                    if isinstance(revision_instructions, dict)
+                    else {}
+                )
+                delivery = design_revision_payload(
+                    plan,
+                    intent.instruction,
+                    instructions_by_ref=revision_instructions,
+                )
                 routed_payload["context"] = {
                     "validated_target_feedbacks": [
-                        {"target": ref, "feedback": intent.instruction}
-                        for ref in valid_refs
-                    ]
+                        revision.model_dump(mode="json")
+                        for revision in delivery.revisions
+                    ],
+                    "approved_authority_targets": list(
+                        delivery.approved_authority_targets
+                    ),
+                    "approved_downstream_targets": list(
+                        delivery.approved_downstream_targets
+                    ),
                 }
             return "message", routed_payload, owner
 
@@ -720,6 +800,8 @@ class WorkspaceService:
             },
             ConversationIntent.ANSWER.value: {"message"},
             ConversationIntent.DELEGATE_REPAIR.value: {"delegate_repair"},
+            ConversationIntent.CONFIRM_REVISION.value: {"confirm_change"},
+            ConversationIntent.DISMISS_REVISION.value: {"dismiss_change"},
         }.get(intent_name, set())
         offer = next(
             (item for item in offered if str(item.action) in action_candidates),
@@ -1232,6 +1314,32 @@ class WorkspaceService:
                         "clarification": clarification.model_dump(mode="json")
                     },
                 }
+            if kind == "revision_plan":
+                plan = RevisionPlan.model_validate(
+                    command["payload"].get("revision_plan") or {}
+                )
+                if plan.status != "needs_confirmation":
+                    raise ValueError("Only a confirmation plan can wait for approval.")
+                return {
+                    "awaiting_input": True,
+                    "kind": "action_required",
+                    "action": "confirm_change",
+                    "action_id": str(command["command_id"]),
+                    "message": plan.explanation,
+                    "revision_plan": plan.model_dump(mode="json"),
+                    "requested_targets": [
+                        target.model_dump(mode="json")
+                        for target in plan.requested_targets
+                    ],
+                    "authority_targets": [
+                        target.model_dump(mode="json")
+                        for target in plan.authority_targets
+                    ],
+                    "downstream_targets": [
+                        target.model_dump(mode="json")
+                        for target in plan.downstream_targets
+                    ],
+                }
             raise ValueError("Unknown conversation outcome.")
         # 파일 복원이나 검사 도중 서버가 재시작되었다면 구현 수리부터 반복하지 않는다.
         # 현재 command에 저장한 Testing 체크포인트를 그대로 실행 서비스에 돌려준다.
@@ -1242,7 +1350,26 @@ class WorkspaceService:
                 raise ValueError("The Testing checkpoint has no implementation job ID.")
             return self._run_testing_command(command, implementation_job_id)
         if handler == "stage_message":
-            return self._stage_message(command, advance=action in {"advance", "start_design"})
+            raw_plan = command["payload"].get("revision_plan")
+            plan = RevisionPlan.model_validate(raw_plan) if isinstance(raw_plan, dict) else None
+            raw_interpretation = command["payload"].get("revision_interpretation")
+            interpretation = (
+                RevisionInterpretation.model_validate(raw_interpretation)
+                if isinstance(raw_interpretation, dict)
+                else None
+            )
+            if plan is not None and not validate_plan(
+                ProjectTools(str(command["app_id"])), plan, interpretation
+            ):
+                return self._stale_revision_result(plan)
+            result = self._stage_message(
+                command, advance=action in {"advance", "start_design"}
+            )
+            return (
+                self._attach_revision_execution(str(command["app_id"]), plan, result)
+                if plan is not None
+                else result
+            )
         if handler == "delegate_repair":
             action_id = str(command["payload"].get("action_id") or "")
             prior = repository.get_command(action_id) or {}
@@ -1680,86 +1807,70 @@ class WorkspaceService:
                     previous_result.get("resource_question") or selected_resource_question
                 )
                 resource_field = str((resource_question or {}).get("field") or "")
-                if text and resource_field:
+                conversation_intent = payload.get("conversation_intent")
+                if (
+                    isinstance(conversation_intent, dict)
+                    and conversation_intent.get("intent") == "revise"
+                ):
+                    targets = [
+                        RevisionTarget.model_validate(target)
+                        for target in payload.get("validated_targets") or []
+                    ]
+                    edit = requirements_feedback_edit(targets, text)
+                    progress = self._requirements_progress_reporter(
+                        app_id, str(command["command_id"])
+                    )
+                    with requirements_telemetry.progress_scope(progress):
+                        result = revise_requirements_analysis(
+                            edit,
+                            app_id,
+                            app_id=app_id,
+                        )
+                    return self._requirements_result(result)
+                elif command.get("action") == "delegate_repair":
+                    repairable = [
+                        blocker
+                        for blocker in previous_result.get("blocking_findings") or []
+                        if isinstance(blocker, dict) and blocker.get("repairable") is not False
+                    ]
+                    stage_order = {
+                        "actors": 0,
+                        "use_cases": 1,
+                        "specs": 2,
+                        "relationships": 3,
+                    }
+                    owner_value = min(
+                        (str(item.get("stage") or "relationships") for item in repairable),
+                        key=lambda value: stage_order.get(value, 99),
+                        default="relationships",
+                    )
+                    owner = cast(FeedbackStage, owner_value)
+                    targets = sorted(
+                        {
+                            str(target)
+                            for item in repairable
+                            if str(item.get("stage") or "") == owner
+                            for target in item.get("target_ids") or []
+                        }
+                    )
+                    request = AnalyzeRequest(
+                        edit=FeedbackEdit(
+                            stage=owner,
+                            scope="local" if targets else "broad",
+                            target_ids=targets,
+                            instruction=text,
+                        ),
+                        thread_id=app_id,
+                        app_id=app_id,
+                    )
+                elif text and resource_field:
                     request = AnalyzeRequest(
                         resource_answers={resource_field: text},
                         thread_id=app_id,
                         app_id=app_id,
                     )
                 else:
-                    conversation_intent = payload.get("conversation_intent")
-                    if (
-                        isinstance(conversation_intent, dict)
-                        and conversation_intent.get("intent") == "revise"
-                    ):
-                        refs = [
-                            str(ref)
-                            for ref in conversation_intent.get("targets") or []
-                            if isinstance(ref, str)
-                        ]
-                        prefixes = {ref.partition(":")[0] for ref in refs}
-                        owner_by_prefix: dict[str, FeedbackStage] = {
-                            "requirement": "actors",
-                            "actor": "actors",
-                            "use_case": "use_cases",
-                            "use_case_spec": "specs",
-                            "relationship": "relationships",
-                        }
-                        stages = {owner_by_prefix[prefix] for prefix in prefixes}
-                        if len(stages) != 1:
-                            raise ValueError(
-                                "A requirements revision must target one modeling stage."
-                            )
-                        owner = stages.pop()
-                        target_ids = [ref.partition(":")[2] for ref in refs]
-                        request = AnalyzeRequest(
-                            edit=FeedbackEdit(
-                                stage=owner,
-                                scope="local",
-                                target_ids=target_ids,
-                                instruction=text,
-                            ),
-                            thread_id=app_id,
-                            app_id=app_id,
-                        )
-                    elif command.get("action") == "delegate_repair":
-                        repairable = [
-                            blocker
-                            for blocker in previous_result.get("blocking_findings") or []
-                            if isinstance(blocker, dict) and blocker.get("repairable") is not False
-                        ]
-                        stage_order = {
-                            "actors": 0,
-                            "use_cases": 1,
-                            "specs": 2,
-                            "relationships": 3,
-                        }
-                        owner_value = min(
-                            (str(item.get("stage") or "relationships") for item in repairable),
-                            key=lambda value: stage_order.get(value, 99),
-                            default="relationships",
-                        )
-                        owner = cast(FeedbackStage, owner_value)
-                        targets = sorted(
-                            {
-                                str(target)
-                                for item in repairable
-                                if str(item.get("stage") or "") == owner
-                                for target in item.get("target_ids") or []
-                            }
-                        )
-                        request = AnalyzeRequest(
-                            edit=FeedbackEdit(
-                                stage=owner,
-                                scope="local" if targets else "broad",
-                                target_ids=targets,
-                                instruction=text,
-                            ),
-                            thread_id=app_id,
-                            app_id=app_id,
-                        )
-                    else:
-                        request = AnalyzeRequest(answer=text, thread_id=app_id, app_id=app_id)
+                    request = AnalyzeRequest(answer=text, thread_id=app_id, app_id=app_id)
             else:
                 provider = cast(CloudProvider, str(payload.get("provider") or ""))
                 region = str(payload.get("region") or "")
@@ -1808,6 +1919,24 @@ class WorkspaceService:
                 validated_revision = revise_design_elements(
                     app_id,
                     BatchReviseRequest(revisions=revisions),
+                    approved_authority_targets=(
+                        {
+                            str(ref)
+                            for ref in context.get("approved_authority_targets") or []
+                            if str(ref)
+                        }
+                        if "approved_authority_targets" in context
+                        else None
+                    ),
+                    approved_downstream_targets=(
+                        {
+                            str(ref)
+                            for ref in context.get("approved_downstream_targets") or []
+                            if str(ref)
+                        }
+                        if "approved_downstream_targets" in context
+                        else None
+                    ),
                 )
                 return {
                     "awaiting_input": True,
@@ -1933,18 +2062,21 @@ class WorkspaceService:
         if not text:
             raise ValueError("Enter implementation feedback.")
         conversation_intent = payload.get("conversation_intent")
-        confirmed_target_refs = (
-            [
-                str(ref)
-                for ref in conversation_intent.get("targets") or []
-                if isinstance(ref, str)
-            ]
-            if isinstance(conversation_intent, dict)
+        confirmed_target_refs: list[str] | None
+        if (
+            isinstance(conversation_intent, dict)
             and conversation_intent.get("intent") == "revise"
-            else []
-            if command.get("action") == "delegate_repair"
-            else None
-        )
+        ):
+            targets = [
+                RevisionTarget.model_validate(target)
+                for target in payload.get("validated_targets") or []
+            ]
+            delivery = implementation_revision_payload(targets)
+            confirmed_target_refs = list(delivery.confirmed_target_refs)
+        elif command.get("action") == "delegate_repair":
+            confirmed_target_refs = []
+        else:
+            confirmed_target_refs = None
         job = implementation_worker.create_feedback_job(
             app_id,
             cast(dict[str, Any], artifact_repository.load_state(app_id)),
@@ -2556,6 +2688,92 @@ class WorkspaceService:
         original = repository.get_command(action_id)
         if original is None or original["status"] != "AWAITING_INPUT":
             raise ValueError("The change request is missing or was already handled.")
+        raw_plan = original["payload"].get("revision_plan")
+        if isinstance(raw_plan, dict):
+            plan = RevisionPlan.model_validate(raw_plan)
+            app_id = str(command["app_id"])
+            if plan.status != "needs_confirmation":
+                raise ValueError("The stored revision plan is not awaiting confirmation.")
+            raw_interpretation = original["payload"].get("revision_interpretation")
+            interpretation = (
+                RevisionInterpretation.model_validate(raw_interpretation)
+                if isinstance(raw_interpretation, dict)
+                else None
+            )
+            if interpretation is None or not validate_plan(
+                ProjectTools(app_id), plan, interpretation
+            ):
+                return self._stale_revision_result(plan)
+            authority_targets = plan.authority_targets or plan.requested_targets
+            owners = {target.owner for target in authority_targets}
+            if len(owners) != 1:
+                raise ValueError("An approved revision plan must have one delivery owner.")
+            owner = owners.pop()
+            feedback = str(original["payload"].get("text") or "").strip()
+            if not feedback:
+                raise ValueError("The approved revision plan has no instruction.")
+            if (
+                plan.execution_mode == "stage_rewind"
+                and len(authority_targets) == 1
+                and authority_targets[0].kind == "design_stage"
+            ):
+                rewind_stage = authority_targets[0].element_id
+                revised = revise_design_stage_session(app_id, rewind_stage, feedback)
+                result = {
+                    "message": (
+                        f"Regenerated {rewind_stage.replace('_', ' ')} and applied the "
+                        "approved feedback."
+                    ),
+                    "design": revised,
+                }
+                return self._attach_revision_execution(app_id, plan, result)
+            refs = [target.ref for target in authority_targets]
+            delegated_payload = {
+                **dict(original["payload"]),
+                "text": feedback,
+                "action_id": action_id,
+                "conversation_intent": {
+                    "intent": "revise",
+                    "targets": refs,
+                    "instruction": feedback,
+                },
+                "validated_targets": [
+                    target.model_dump(mode="json") for target in authority_targets
+                ],
+            }
+            delegated_payload.pop("_conversation_outcome", None)
+            if owner == "design":
+                revision_instructions = delegated_payload.get("revision_instructions")
+                revision_instructions = (
+                    revision_instructions
+                    if isinstance(revision_instructions, dict)
+                    else {}
+                )
+                delivery = design_revision_payload(
+                    plan,
+                    feedback,
+                    instructions_by_ref=revision_instructions,
+                )
+                delegated_payload["context"] = {
+                    "validated_target_feedbacks": [
+                        revision.model_dump(mode="json")
+                        for revision in delivery.revisions
+                    ],
+                    "approved_authority_targets": list(
+                        delivery.approved_authority_targets
+                    ),
+                    "approved_downstream_targets": list(
+                        delivery.approved_downstream_targets
+                    ),
+                }
+            delegated = {
+                **command,
+                "action": "message",
+                "stage": owner,
+                "payload": delegated_payload,
+            }
+            result = self._stage_message(delegated, advance=False)
+            return self._attach_revision_execution(app_id, plan, result)
         context = original["payload"].get("context") or {}
         feedback = str(original["payload"].get("text") or "").strip()
         app_id = str(command["app_id"])
@@ -2585,11 +2803,91 @@ class WorkspaceService:
             raise ValueError(
                 "Only a traceable design element or design stage can currently be rewound."
             )
-        rewind_design_session(app_id, stage)
-        result = resume_design_session(app_id, feedback)
+        result = revise_design_stage_session(app_id, stage, feedback)
         return {
             "message": "Returned to the selected design stage and applied the feedback.",
             "design": result,
+        }
+
+    @staticmethod
+    def _stale_revision_result(plan: RevisionPlan) -> dict[str, Any]:
+        clarification = Clarification(
+            question=(
+                "The project artifacts changed after this revision plan was created. "
+                "Please submit the revision again so it can be planned from the latest version."
+            ),
+            candidates=[],
+        )
+        return {
+            "awaiting_input": True,
+            "kind": "question",
+            "message": clarification.question,
+            "conversation": {"clarification": clarification.model_dump(mode="json")},
+            "stale_revision_plan": plan.plan_digest,
+        }
+
+    @staticmethod
+    def _attach_revision_execution(
+        app_id: str,
+        plan: RevisionPlan,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        design = result.get("design")
+        design = design if isinstance(design, dict) else {}
+        fresh_tools = ProjectTools(app_id)
+        snapshot = fresh_tools.revision_snapshot()
+        changed = result.get("changed") or design.get("changed") or result.get("saved_stages")
+        changed_stages = [str(stage) for stage in changed or [] if str(stage)]
+        if not changed_stages:
+            changed_stages = [
+                artifact_repository.STAGE_BY_ARTIFACT_TYPE[artifact_type]
+                for artifact_type, current_version in snapshot.get(
+                    "artifact_versions", {}
+                ).items()
+                if plan.artifact_versions.get(artifact_type) != current_version
+                and artifact_type in artifact_repository.STAGE_BY_ARTIFACT_TYPE
+            ]
+        touched = result.get("touched") or design.get("touched")
+        touched_targets = (
+            {
+                str(stage): [str(ref) for ref in refs or []]
+                for stage, refs in touched.items()
+            }
+            if isinstance(touched, dict)
+            else {}
+        )
+        regenerated: dict[str, list[str]] = {}
+        stale: dict[str, list[str]] = {}
+        target_remap: dict[str, str] = {}
+        for target in [
+            *plan.requested_targets,
+            *plan.authority_targets,
+            *plan.downstream_targets,
+        ]:
+            current = fresh_tools.current_revision_target(target)
+            if current is not None and current.ref != target.ref:
+                target_remap[target.ref] = current.ref
+        for target in plan.downstream_targets:
+            current = fresh_tools.current_revision_target(target)
+            if (
+                current is not None
+                and current.artifact_version_id != target.artifact_version_id
+            ):
+                regenerated.setdefault(current.owner, []).append(current.ref)
+            else:
+                stale.setdefault(target.owner, []).append(target.ref)
+        execution = RevisionExecutionResult(
+            changed_stages=changed_stages,
+            touched_targets=touched_targets,
+            regenerated_targets=regenerated,
+            stale_targets=stale,
+            target_remap=target_remap,
+            artifact_versions=dict(snapshot.get("artifact_versions") or {}),
+        )
+        return {
+            **result,
+            "revision_plan": plan.model_dump(mode="json"),
+            "revision_execution": execution.model_dump(mode="json"),
         }
 
     @staticmethod

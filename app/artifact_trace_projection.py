@@ -49,8 +49,8 @@ def project_artifact_trace(
     requirement_refs = _requirements(nodes, state.get("refined_requirements"))
     specification = _map(state.get("usecase_spec"))
     _use_cases(nodes, specification)
-    operations = _bce(nodes, _map(state.get("extracted_bce_classes")))
-    _sequence(nodes, _map(state.get("sequence_diagram_model")))
+    operations, calls = _bce(nodes, _map(state.get("extracted_bce_classes")))
+    _sequence(nodes, _map(state.get("sequence_diagram_model")), calls)
     _api(nodes, _map(state.get("api_spec_model")), operations)
     _openapi(nodes, _map(state.get("openapi")))
     _erd(nodes, _map(state.get("erd_bce_classes")))
@@ -155,10 +155,13 @@ def _use_cases(nodes: list[TraceNode], specification: Mapping[str, Any]) -> None
             )
 
 
-def _bce(nodes: list[TraceNode], model: Mapping[str, Any]) -> dict[tuple[str, str], TraceRef]:
+def _bce(
+    nodes: list[TraceNode], model: Mapping[str, Any]
+) -> tuple[dict[tuple[str, str], TraceRef], dict[str, TraceRef]]:
     """BCE Classes/operations/Collaborations의 직접 ID만 투영한다."""
 
     candidates: dict[tuple[str, str], list[TraceRef]] = {}
+    operations_by_legacy: dict[str, TraceRef] = {}
     for item in _records(model.get("Classes")):
         class_name = _id(item, "className")
         if not class_name:
@@ -170,10 +173,13 @@ def _bce(nodes: list[TraceNode], model: Mapping[str, Any]) -> dict[tuple[str, st
             operation_id = _id(operation, "operationId")
             if not operation_id:
                 continue
-            operation_ref = TraceRef("operation", operation_id)
+            legacy_ref = TraceRef("operation", operation_id)
+            stable_id = _id(operation, "stableId")
+            operation_ref = TraceRef("operation", stable_id or operation_id)
+            operations_by_legacy[operation_id] = operation_ref
             _add(
                 nodes,
-                operation_ref,
+                legacy_ref,
                 [
                     class_ref,
                     *use_cases,
@@ -181,6 +187,8 @@ def _bce(nodes: list[TraceNode], model: Mapping[str, Any]) -> dict[tuple[str, st
                     *_refs(operation, "step", "stepRefs"),
                 ],
             )
+            if operation_ref != legacy_ref:
+                _add(nodes, operation_ref, [legacy_ref])
             name = _id(operation, "name")
             if name:
                 candidates.setdefault((class_name, name), []).append(operation_ref)
@@ -190,6 +198,12 @@ def _bce(nodes: list[TraceNode], model: Mapping[str, Any]) -> dict[tuple[str, st
         if name:
             _add(nodes, TraceRef("data_type", name), _source_refs(item))
 
+    calls_by_legacy = {
+        call_id: TraceRef("call", _id(call, "stableId") or call_id)
+        for item in _records(model.get("Collaborations"))
+        for call in _records(item.get("calls"))
+        if (call_id := _id(call, "callId"))
+    }
     for item in _records(model.get("Collaborations")):
         collaboration_id = _id(item, "collaborationId")
         if not collaboration_id:
@@ -200,23 +214,44 @@ def _bce(nodes: list[TraceNode], model: Mapping[str, Any]) -> dict[tuple[str, st
         for call in _records(item.get("calls")):
             call_id = _id(call, "callId")
             if call_id:
+                legacy_ref = TraceRef("call", call_id)
+                call_ref = calls_by_legacy[call_id]
+                receiver_id = _id(call, "receiverOperationId")
+                parent_id = _id(call, "parentCallId")
                 _add(
                     nodes,
-                    TraceRef("call", call_id),
+                    legacy_ref,
                     [
                         collaboration_ref,
                         *use_cases,
                         *_source_refs(call),
-                        *_refs(call, "operation", "receiverOperationId"),
-                        *_refs(call, "call", "parentCallId"),
+                        *(
+                            [operations_by_legacy.get(receiver_id, TraceRef("operation", receiver_id))]
+                            if receiver_id
+                            else []
+                        ),
+                        *(
+                            [calls_by_legacy.get(parent_id, TraceRef("call", parent_id))]
+                            if parent_id
+                            else []
+                        ),
                         *_refs(call, "step", "stepRefs"),
                     ],
                 )
+                if call_ref != legacy_ref:
+                    _add(nodes, call_ref, [legacy_ref])
 
-    return {key: values[0] for key, values in candidates.items() if len(values) == 1}
+    return (
+        {key: values[0] for key, values in candidates.items() if len(values) == 1},
+        calls_by_legacy,
+    )
 
 
-def _sequence(nodes: list[TraceNode], model: Mapping[str, Any]) -> None:
+def _sequence(
+    nodes: list[TraceNode],
+    model: Mapping[str, Any],
+    calls_by_legacy: Mapping[str, TraceRef],
+) -> None:
     """Diagrams/Messages의 UC·call/reply ID를 정확히 BCE call로 연결한다."""
 
     for diagram in _records(model.get("Diagrams")):
@@ -234,7 +269,7 @@ def _sequence(nodes: list[TraceNode], model: Mapping[str, Any]) -> None:
                 TraceRef("message", call_id),
                 [
                     sequence_ref,
-                    TraceRef("call", call_id),
+                    calls_by_legacy.get(call_id, TraceRef("call", call_id)),
                     *_source_refs(message),
                     *_refs(message, "use_case", "use_case_ids"),
                     *_refs(message, "step", "step_ids"),

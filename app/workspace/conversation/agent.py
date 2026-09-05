@@ -16,7 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.requirements.runtime.structured_llm import invoke_structured
 
 from .context import ConversationContext
-from .contracts import Clarification, CommandIntent, ConversationIntent, Reply
+from .contracts import (
+    Clarification,
+    CommandIntent,
+    ConversationIntent,
+    Reply,
+    RevisionInterpretation,
+)
 from .project_tools import ProjectTools
 
 T = TypeVar("T", bound=BaseModel)
@@ -52,13 +58,6 @@ class _ConversationPlan(BaseModel):
         return self
 
 
-class _TargetSelection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    targets: list[str] = Field(default_factory=list, max_length=12)
-    clarification: str = ""
-
-
 class _GroundedReply(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -71,9 +70,10 @@ Classify the user's utterance without inventing state or artifact references.
 - project_question: a question about this project's current state or artifacts. Supply a concise
   search query, not an answer from memory.
 - command: an explicit request to advance, answer a pending question, revise project content,
-  delegate an offered repair, create a checkpoint branch, or rerun a delivery stage. Select only
-  the corresponding allowed intent. Branch supports requirements, design, and implementation;
-  rerun also supports testing. Choose only one of those named stages.
+  delegate an offered repair, approve or dismiss a pending revision plan, create a checkpoint
+  branch, or rerun a delivery stage. Select confirm_revision or dismiss_revision only when the
+  corresponding pending-plan action is present in the supplied workspace context. Branch supports
+  requirements, design, and implementation; rerun also supports testing. Choose only one stage.
 - clarification: the utterance is ambiguous between those categories.
 Never infer a file, impact scope, or target reference. A stage may be selected only for an explicit
 branch or rerun request. Buttons and explicit action payloads do not pass through this classifier."""
@@ -107,6 +107,7 @@ class ConversationAgent:
                 for turn in context.turns[-4:]
             ],
             "recentDecisions": context.decisions[-3:],
+            "recentTargetRemap": context.target_remap,
         }
         context_json = json.dumps(
             planning_context,
@@ -136,7 +137,12 @@ class ConversationAgent:
 
         assert plan.intent is not None
         if plan.intent == ConversationIntent.REVISE:
-            return self._resolve_revision(utterance, plan.query or utterance, project_tools)
+            return self._resolve_revision(
+                utterance,
+                plan.query or utterance,
+                project_tools,
+                recent_refs=list(dict.fromkeys(context.target_remap.values())),
+            )
         return CommandIntent(
             intent=plan.intent,
             instruction=utterance,
@@ -144,24 +150,78 @@ class ConversationAgent:
         )
 
     def _resolve_revision(
-        self, text: str, query: str, tools: ProjectTools
+        self,
+        text: str,
+        query: str,
+        tools: ProjectTools,
+        *,
+        recent_refs: list[str] | None = None,
     ) -> CommandIntent | Clarification:
         candidates = tools.search_elements(query)
         if not candidates and query.strip() != text.strip():
             candidates = tools.search_elements(text)
+        if recent_refs:
+            validation = tools.validate_revision_selections(recent_refs[:12])
+            known_refs = {str(item.get("ref") or "") for item in candidates}
+            for ref in validation.get("valid_refs") or []:
+                normalized_ref = str(ref)
+                if normalized_ref in known_refs:
+                    continue
+                try:
+                    candidates.append(tools.read_element(normalized_ref))
+                    known_refs.add(normalized_ref)
+                except KeyError:
+                    continue
+        return self._select_revision(text, candidates, tools)
+
+    def interpret_revision(
+        self,
+        text: str,
+        target_refs: list[str],
+        *,
+        tools: ProjectTools,
+    ) -> CommandIntent | Clarification:
+        """Interpret semantics for UI-selected targets without reclassifying the command."""
+
+        validation = tools.validate_revision_selections(target_refs)
+        candidates: list[dict] = []
+        for ref in validation.get("valid_refs") or []:
+            try:
+                candidates.append(tools.read_element(str(ref)))
+            except KeyError:
+                continue
+        return self._select_revision(text, candidates, tools)
+
+    def _select_revision(
+        self,
+        text: str,
+        candidates: list[dict],
+        tools: ProjectTools,
+    ) -> CommandIntent | Clarification:
+        """Use one structured call for target selection and revision semantics."""
+
         if not candidates:
             return Clarification(
                 question="I could not find the artifact element to revise. Please specify the target.",
                 candidates=[],
             )
         selection = self._propose(
-            _TargetSelection,
+            RevisionInterpretation,
             [
                 SystemMessage(
                     content=(
                         "Select only refs from the supplied finite candidate list that are directly "
                         "targeted by the revision. If the target is ambiguous, return no targets and "
-                        "ask one concise clarification question. Never invent or rewrite a ref."
+                        "ask one concise clarification question. Never invent or rewrite a ref. "
+                        "Classify only the user's semantic scope as presentation, contract, behavior, "
+                        "implementation, test_expectation, or unknown. Use implementation for a "
+                        "testing finding that asks to repair trace-linked production code; use "
+                        "test_expectation only when the expected external behavior itself changes. "
+                        "requested_effect is a short "
+                        "description of what the user asked for, never an executable stage, file, "
+                        "owner, impact list, or inferred upstream target. Also classify change_type "
+                        "as modify, add, rename, remove, or unknown. Use unknown when the wording "
+                        "does not distinguish those meanings."
                     )
                 ),
                 HumanMessage(
@@ -174,7 +234,7 @@ class ConversationAgent:
         )
         available = {str(item.get("ref") or "") for item in candidates}
         selected = list(dict.fromkeys(ref for ref in selection.targets if ref in available))
-        validation = tools.validate_targets(selected)
+        validation = tools.validate_revision_selections(selected)
         valid = list(validation.get("valid_refs") or [])
         if not valid:
             labels = [
@@ -188,10 +248,20 @@ class ConversationAgent:
                 ),
                 candidates=[item for item in labels if item],
             )
+        interpretation = selection.model_copy(
+            update={
+                "targets": valid,
+                # The exact user instruction is frozen into the deterministic
+                # plan digest. The model may classify its semantics, but it
+                # cannot replace the instruction that will execute.
+                "requested_effect": text.strip(),
+            }
+        )
         return CommandIntent(
             intent=ConversationIntent.REVISE,
             targets=valid,
             instruction=text.strip(),
+            revision=interpretation,
         )
 
     def _answer_project_question(

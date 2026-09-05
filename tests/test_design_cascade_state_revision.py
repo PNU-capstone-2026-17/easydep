@@ -42,7 +42,7 @@ def test_apply_uses_state_revision_and_preserves_untargeted_diagrams() -> None:
         extract=lambda _state: {},
         revise=lambda *_args: (_ for _ in ()).throw(AssertionError("wrong revision path")),
         revise_state=revise_state,
-        render=lambda model: str(model),
+        render=str,
         validate=_validation,
         elements={"Diagrams": lambda item: item.get("use_case_id", "")},
     )
@@ -99,7 +99,7 @@ def test_targeted_class_merge_updates_dependent_collaboration() -> None:
         empty="",
         extract=lambda _state: {},
         revise=lambda *_args: revised,
-        render=lambda model: str(model),
+        render=str,
         validate=_validation,
         elements={
             "Classes": lambda item: item.get("className", ""),
@@ -152,7 +152,11 @@ def test_upstream_owned_sequence_revision_skips_second_reverse_class_edit(
         "build_design_rtm",
         lambda _state: {
             "rows": [{"stage": "sequence_diagram", "element": "UC9"}],
-            "links": [],
+            "links": [{
+                "from": "sequence_diagram:UC9",
+                "to": "class_diagram:UserBoundary",
+                "relation": "invokes",
+            }],
         },
     )
     monkeypatch.setattr(
@@ -164,7 +168,7 @@ def test_upstream_owned_sequence_revision_skips_second_reverse_class_edit(
     )
     monkeypatch.setattr(cascade, "affected_by_element", lambda *_args: [])
 
-    def apply(spec, _state, _feedback, _targets):
+    def apply(spec, _state, _feedback, _targets, **_kwargs):
         calls.append(spec.stage)
         if spec.stage == "sequence_diagram":
             return {
@@ -177,9 +181,10 @@ def test_upstream_owned_sequence_revision_skips_second_reverse_class_edit(
     monkeypatch.setattr(cascade, "_apply", apply)
 
     result = cascade.revise_and_cascade(
-        {"sequence_model": {}, "class_model": {}},
+        {"sequence_model": {}, "class_model": {"Classes": [{"className": "UserBoundary"}]}} ,
         "sequence_diagram:UC9",
         "Place extension 1a at its branch",
+        approved_authority_targets={"class_diagram:UserBoundary"},
     )
 
     assert calls == ["sequence_diagram"]

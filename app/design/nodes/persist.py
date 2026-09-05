@@ -15,7 +15,7 @@ persist 노드는 생성 쪽과 피드백 쪽 **양쪽에서** 들어온다. 그
 """
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from app.db.models import ORIGIN_FEEDBACK_REVISED, ORIGIN_GENERATED
 from app.design.schemas.architecture_state import ArchitectureState
@@ -48,12 +48,13 @@ def make_persist(stage: str) -> Callable[[ArchitectureState], dict]:
                 if state.get(ORIGIN_KEY) == "feedback"
                 else ORIGIN_GENERATED
             )
-            for upstream in state.get("revised_upstream_stages") or []:
-                if upstream != stage:
-                    artifact_repository.save_stage(
-                        app_id, upstream, state, origin=origin,
-                    )
-            artifact_repository.save_stage(app_id, stage, state, origin=origin)
+            stages = [
+                upstream
+                for upstream in state.get("revised_upstream_stages") or []
+                if upstream != stage
+            ]
+            stages.append(stage)
+            artifact_repository.save_stages(app_id, stages, state, origin=origin)
 
         return {
             "artifact_status": mark_implemented(state, stage),

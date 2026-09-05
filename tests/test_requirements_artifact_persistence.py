@@ -7,8 +7,8 @@ def test_first_review_gate_persists_all_three_reviewable_artifacts(monkeypatch) 
     monkeypatch.setattr(artifact_repository, "load_state", lambda _app_id: {})
     monkeypatch.setattr(
         artifact_repository,
-        "save_stage",
-        lambda app_id, stage, state: saved.append((app_id, stage, state)),
+        "save_stages",
+        lambda app_id, stages, state: saved.append((app_id, stages, state)),
     )
 
     stages = persist_analysis(
@@ -34,7 +34,9 @@ def test_first_review_gate_persists_all_three_reviewable_artifacts(monkeypatch) 
         "capability_contract",
         "resource_intake",
     ]
-    assert [stage for _app_id, stage, _state in saved] == stages
+    assert len(saved) == 1
+    assert saved[0][0] == "app-1"
+    assert saved[0][1] == stages
 
 
 def test_use_case_review_gate_persists_the_model_before_detailed_specs(
@@ -44,8 +46,8 @@ def test_use_case_review_gate_persists_the_model_before_detailed_specs(
     monkeypatch.setattr(artifact_repository, "load_state", lambda _app_id: {})
     monkeypatch.setattr(
         artifact_repository,
-        "save_stage",
-        lambda app_id, stage, state: saved.append((app_id, stage, state)),
+        "save_stages",
+        lambda app_id, stages, state: saved.append((app_id, stages, state)),
     )
 
     stages = persist_analysis(
@@ -62,7 +64,7 @@ def test_use_case_review_gate_persists_the_model_before_detailed_specs(
     assert saved == [
         (
             "app-1",
-            "usecase_spec",
+            ["usecase_spec"],
             {
                 "usecase_spec": {
                     "actors": [{"id": "ACT1", "name": "Student"}],

@@ -46,6 +46,8 @@ class FakeTools:
             "existing_refs": refs,
         }
 
+    validate_revision_selections = validate_targets
+
     def read_element(self, ref: str):
         self.calls.append(("read_element", ref))
         return {"ref": ref, "content": {"operations": ["placeOrder"]}}
@@ -91,7 +93,11 @@ def test_revision_can_only_select_a_finite_validated_ref() -> None:
     def propose(schema, _messages):
         if schema.__name__ == "_ConversationPlan":
             return schema(kind="command", intent="revise", query="OrderService")
-        return schema(targets=["invented:ref", "class_diagram:OrderService"])
+        return schema(
+            targets=["invented:ref", "class_diagram:OrderService"],
+            semantic_scope="behavior",
+            requested_effect="Change the order method.",
+        )
 
     tools = FakeTools()
     result = ConversationAgent(propose).respond(
@@ -105,6 +111,38 @@ def test_revision_can_only_select_a_finite_validated_ref() -> None:
     assert result.intent == "revise"
     assert result.targets == ["class_diagram:OrderService"]
     assert ("validate_targets", ["class_diagram:OrderService"]) in tools.calls
+
+
+def test_revision_candidates_include_recent_stable_target_remaps() -> None:
+    def propose(schema, messages):
+        if schema.__name__ == "_ConversationPlan":
+            return schema(kind="command", intent="revise", query="that method")
+        prompt = str(messages[-1].content)
+        assert "class_diagram:OrderControl:operation:stable-1" in prompt
+        return schema(
+            targets=["class_diagram:OrderControl:operation:stable-1"],
+            semantic_scope="behavior",
+            requested_effect="Change that method.",
+        )
+
+    tools = FakeTools()
+    result = ConversationAgent(propose).respond(
+        "app-1",
+        "Change that method.",
+        ConversationContext(
+            app_id="app-1",
+            workspace={"stage": "design", "status": "AWAITING_INPUT"},
+            target_remap={
+                "class_diagram:OrderControl:operation:old": (
+                    "class_diagram:OrderControl:operation:stable-1"
+                )
+            },
+        ),
+        tools=tools,
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == ["class_diagram:OrderControl:operation:stable-1"]
 
 
 def test_ambiguous_revision_returns_clarification_without_execution() -> None:

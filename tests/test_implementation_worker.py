@@ -956,6 +956,90 @@ def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> 
     }
 
 
+def test_confirmed_implementation_target_becomes_the_allowed_write_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target_file = "application/src/RegistrationService.java"
+    source = {
+        "version_no": 3,
+        "metadata": {
+            "implementation_job_id": "original-job",
+            "implementation_traceability": {
+                "mappings": [
+                    {
+                        "taskId": "implement-registration",
+                        "target_file": target_file,
+                        "sourceRefs": ["api:registerForOffering"],
+                    }
+                ]
+            },
+        },
+        "files": {target_file: {"content": "class RegistrationService {}"}},
+    }
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.artifact_repository.load_file_snapshot",
+        lambda _app_id, artifact_type: source if artifact_type == "SOURCE_CODE" else None,
+    )
+    worker = ImplementationWorker(settings(tmp_path))
+    observed: dict[str, object] = {}
+
+    def prepare(*_args, **kwargs):
+        observed.update(kwargs)
+        return tmp_path / "feedback-job.json"
+
+    worker.client.prepare_feedback_job = prepare
+    worker.executor.submit = lambda *_args, **_kwargs: None
+    try:
+        record = worker.create_feedback_job(
+            "app-1",
+            {},
+            "Update the registration implementation.",
+            "com.example",
+            False,
+            confirmed_target_refs=[f"file:{target_file}"],
+        )
+    finally:
+        worker.shutdown()
+
+    assert observed["repair_file_hints"] == [target_file]
+    assert record["repair_file_hints"] == [target_file]
+
+
+def test_confirmed_implementation_target_rejects_a_broader_file_hint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target_file = "application/src/RegistrationService.java"
+    source = {
+        "version_no": 3,
+        "metadata": {
+            "implementation_traceability": {
+                "mappings": [{"target_file": target_file, "sourceRefs": ["api:register"]}]
+            }
+        },
+        "files": {target_file: {"content": "class RegistrationService {}"}},
+    }
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.artifact_repository.load_file_snapshot",
+        lambda _app_id, artifact_type: source if artifact_type == "SOURCE_CODE" else None,
+    )
+    worker = ImplementationWorker(settings(tmp_path))
+    try:
+        with pytest.raises(ValueError, match="exceed the confirmed"):
+            worker.create_feedback_job(
+                "app-1",
+                {},
+                "Update registration.",
+                "com.example",
+                False,
+                confirmed_target_refs=[f"file:{target_file}"],
+                repair_file_hints=["application/src/Unrelated.java"],
+            )
+    finally:
+        worker.shutdown()
+
+
 def test_delivery_refresh_api_delegates_to_completed_job(monkeypatch) -> None:
     """배포 파일 갱신이 새 구현 작업을 시작하지 않고 worker에 전달되는지 확인한다."""
 

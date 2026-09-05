@@ -168,6 +168,70 @@ def test_projection_links_requirement_to_spec_step_bce_operation_and_exact_api_b
     assert {step} <= set(trace.sources(operation))
 
 
+def test_projection_uses_stable_operation_and_call_refs_with_legacy_aliases():
+    trace = project_artifact_trace(
+        {
+            "extracted_bce_classes": {
+                "Classes": [
+                    {
+                        "className": "OrderControl",
+                        "operations": [
+                            {
+                                "operationId": "OrderControl::createOrder()",
+                                "stableId": "op_stable",
+                                "name": "createOrder",
+                            }
+                        ],
+                    }
+                ],
+                "Collaborations": [
+                    {
+                        "collaborationId": "UC-1",
+                        "calls": [
+                            {
+                                "callId": "UC-1::call:1",
+                                "stableId": "call_stable",
+                                "receiverOperationId": "OrderControl::createOrder()",
+                            }
+                        ],
+                    }
+                ],
+            },
+            "sequence_diagram_model": {
+                "Diagrams": [
+                    {
+                        "use_case_id": "UC-1",
+                        "Messages": [{"call_id": "UC-1::call:1"}],
+                    }
+                ]
+            },
+            "api_spec_model": {
+                "Endpoints": [
+                    {
+                        "operation_id": "createOrder",
+                        "control_binding": {
+                            "control": "OrderControl",
+                            "method": "createOrder",
+                        },
+                    }
+                ]
+            },
+        }
+    )
+
+    legacy_operation = TraceRef("operation", "OrderControl::createOrder()")
+    stable_operation = TraceRef("operation", "op_stable")
+    legacy_call = TraceRef("call", "UC-1::call:1")
+    stable_call = TraceRef("call", "call_stable")
+
+    assert trace.sources(stable_operation) == (legacy_operation,)
+    assert stable_operation in trace.downstream(legacy_operation)
+    assert stable_operation in trace.sources(legacy_call)
+    assert trace.sources(stable_call) == (legacy_call,)
+    assert TraceRef("message", "UC-1::call:1") in trace.downstream(stable_call)
+    assert TraceRef("api", "createOrder") in trace.downstream(stable_operation)
+
+
 def test_projection_connects_requirement_source_refs_to_deployment_implementation_and_testing():
     requirement = TraceRef("requirement", "REQ-1")
     workload = TraceRef("workload", "orders-worker")

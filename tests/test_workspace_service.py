@@ -20,14 +20,6 @@ from app.workspace.live_preview import LivePreviewStore, live_previews
 from app.workspace.service import WorkspaceService
 
 
-class RejectingExecutor:
-    def submit(self, *_args, **_kwargs):
-        raise AssertionError("cross-stage feedback must wait for confirmation")
-
-    def shutdown(self, **_kwargs):
-        return None
-
-
 @pytest.mark.parametrize(
     ("defect_class", "repairable", "expected_status"),
     [
@@ -488,55 +480,60 @@ def test_artifact_stage_is_normalized_to_the_user_visible_workflow_stage() -> No
 
 
 def test_cross_stage_feedback_waits_before_mutating_artifacts(monkeypatch) -> None:
-    commands: dict[str, dict] = {}
-    events: list[dict] = []
-
-    monkeypatch.setattr(
-        workspace_module.artifact_repository, "ensure_app_exists", lambda _app_id: None
-    )
-
-    def create_command(command_id, app_id, action, stage, payload):
-        command = {
-            "command_id": command_id,
-            "app_id": app_id,
-            "action": action,
-            "stage": stage,
-            "status": "QUEUED",
-            "payload": payload,
-            "result": None,
-        }
-        commands[command_id] = command
-        return command.copy()
-
-    def update_command(command_id, **changes):
-        commands[command_id].update(changes)
-        return commands[command_id].copy()
-
-    def get_command(command_id):
-        return commands.get(command_id)
-
-    monkeypatch.setattr(repository, "create_command", create_command)
-    monkeypatch.setattr(repository, "update_command", update_command)
-    monkeypatch.setattr(repository, "get_command", get_command)
-    monkeypatch.setattr(repository, "latest_command", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
-
     service = WorkspaceService()
-    service._executor.shutdown(wait=False, cancel_futures=True)
-    service._executor = RejectingExecutor()
-    command = service.submit(
-        "app-1",
-        action="message",
-        stage="implementation",
-        payload={
-            "text": "ERD의 관계를 바꿔줘",
-            "context": {"stage": "design", "artifact_stage": "erd"},
-        },
+    service._stage_message = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("a pending revision plan must not mutate a stage")
     )
+    try:
+        result = service._dispatch(
+            {
+                "command_id": "revision-plan",
+                "app_id": "app-1",
+                "action": "message",
+                "stage": "design",
+                "payload": {
+                    "_conversation_outcome": {"kind": "revision_plan"},
+                    "revision_plan": {
+                        "plan_digest": "a" * 64,
+                        "status": "needs_confirmation",
+                        "requested_targets": [
+                            {
+                                "ref": "erd:Order",
+                                "kind": "erd_entity",
+                                "element_id": "Order",
+                                "owner": "design",
+                                "artifact_type": "ERD",
+                                "artifact_version_id": 4,
+                                "display_label": "Order",
+                            }
+                        ],
+                        "authority_targets": [
+                            {
+                                "ref": "class_diagram:Order",
+                                "kind": "class",
+                                "element_id": "Order",
+                                "owner": "design",
+                                "artifact_type": "CLASS_DIAGRAM",
+                                "artifact_version_id": 6,
+                                "display_label": "Order",
+                            }
+                        ],
+                        "upstream_candidates": [],
+                        "downstream_targets": [],
+                        "execution_mode": "targeted_revision",
+                        "reason_codes": ["upstream_authority"],
+                        "explanation": "Changing this projection requires approval.",
+                        "artifact_versions": {"CLASS_DIAGRAM": 6, "ERD": 4},
+                        "trace_digest": "b" * 64,
+                    },
+                },
+            }
+        )
+    finally:
+        service.shutdown()
 
-    assert commands[command["command_id"]]["status"] == "AWAITING_INPUT"
-    assert commands[command["command_id"]]["result"]["action"] == "confirm_change"
-    assert events[-1]["kind"] == "action_required"
+    assert result["awaiting_input"] is True
+    assert result["action"] == "confirm_change"
 
 
 def test_requirement_reply_uses_the_waiting_command_as_continuation(
@@ -565,14 +562,14 @@ def test_requirement_reply_uses_the_waiting_command_as_continuation(
                 "command_id": "reply",
                 "app_id": "app-1",
                 "stage": "requirements",
-                "payload": {"text": "서울 리전입니다", "action_id": "prior"},
+                "payload": {"text": "Use the Seoul region.", "action_id": "prior"},
             },
             advance=False,
         )
     finally:
         service.shutdown()
 
-    assert captured["request"].answer == "서울 리전입니다"
+    assert captured["request"].answer == "Use the Seoul region."
     assert captured["request"].requirements is None
     assert result["message"] == "Requirements analysis completed."
 
@@ -619,6 +616,68 @@ def test_requirement_reply_answers_the_resource_question_without_reclassificatio
 
     assert captured["request"].resource_answers == {"monthlyBudgetUSD": "100 USD"}
     assert captured["request"].answer is None
+
+
+def test_planned_requirement_revision_is_not_consumed_as_a_resource_answer(
+    monkeypatch,
+) -> None:
+    captured = {}
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda *_args, **_kwargs: {
+            "command_id": "prior",
+            "stage": "requirements",
+            "status": "AWAITING_INPUT",
+            "result": {
+                "resource_question": {
+                    "field": "monthlyBudgetUSD",
+                    "kind": "missing",
+                    "question": "What is the monthly budget?",
+                }
+            },
+        },
+    )
+
+    def revise(edit, thread_id, *, app_id):
+        captured.update(edit=edit, thread_id=thread_id, app_id=app_id)
+        return {"status": "completed", "saved_stages": []}
+
+    monkeypatch.setattr(workspace_module, "revise_requirements_analysis", revise)
+    service = WorkspaceService()
+    try:
+        service._stage_message(
+            {
+                "command_id": "revision",
+                "app_id": "app-1",
+                "action": "message",
+                "stage": "requirements",
+                "payload": {
+                    "text": "Rename the use case.",
+                    "action_id": "prior",
+                    "conversation_intent": {"intent": "revise"},
+                    "validated_targets": [
+                        {
+                            "ref": "use_case:UC-1",
+                            "kind": "use_case",
+                            "element_id": "UC-1",
+                            "owner": "requirements",
+                            "artifact_type": "USECASE_SPEC",
+                            "artifact_version_id": 5,
+                            "display_label": "Place order",
+                        }
+                    ],
+                },
+            },
+            advance=False,
+        )
+    finally:
+        service.shutdown()
+
+    assert captured["edit"].instruction == "Rename the use case."
+    assert captured["edit"].target_ids == ["UC-1"]
+    assert captured["thread_id"] == "app-1"
+    assert captured["app_id"] == "app-1"
 
 
 def test_legacy_handoff_checkpoint_backfills_and_routes_a_capability_choice(

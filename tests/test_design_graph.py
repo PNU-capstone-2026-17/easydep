@@ -362,8 +362,10 @@ def test_each_stage_is_persisted_when_it_completes(monkeypatch, graph):
     """
     saved: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "app.repositories.artifact_repository.save_stage",
-        lambda app_id, stage, state, origin=None: saved.append((stage, origin)),
+        "app.repositories.artifact_repository.save_stages",
+        lambda app_id, stages, state, origin=None: saved.extend(
+            (stage, origin) for stage in stages
+        ),
     )
 
     graph.invoke({**SEED, "app_id": "test-app"}, THREAD)
@@ -380,8 +382,10 @@ def test_each_stage_is_persisted_when_it_completes(monkeypatch, graph):
 def test_sequence_feedback_revises_and_persists_class_contract(monkeypatch, graph, stub_llm):
     saved: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "app.repositories.artifact_repository.save_stage",
-        lambda app_id, stage, state, origin=None: saved.append((stage, origin)),
+        "app.repositories.artifact_repository.save_stages",
+        lambda app_id, stages, state, origin=None: saved.extend(
+            (stage, origin) for stage in stages
+        ),
     )
     graph.invoke({**SEED, "app_id": "test-app"}, THREAD)
     graph.invoke(Command(resume=""), THREAD)
@@ -617,6 +621,53 @@ def test_rewind_remakes_that_stage_and_everything_after(graph, stub_llm):
     dg.resume_design("test-app", "")              # erd 로
     dg.resume_design("test-app", "")              # deployment 로
     assert "gen:deployment_diagram" in stub_llm
+
+
+def test_stage_revision_enters_feedback_gate_without_preliminary_generation(
+    graph, stub_llm
+):
+    graph.invoke(SEED, THREAD)
+    for _ in range(len(DESIGN_STAGES)):
+        graph.invoke(Command(resume=""), THREAD)
+    stub_llm.clear()
+
+    result = dg.revise_design_stage(
+        "test-app",
+        "class_diagram",
+        "Rename the selected operation.",
+    )
+
+    assert result["stage"] == "class_diagram"
+    assert "fb:class_diagram" in stub_llm
+    assert "gen:class_diagram" not in stub_llm
+
+
+def test_failed_stage_revision_restores_the_prior_completed_checkpoint(
+    graph, monkeypatch
+):
+    graph.invoke(SEED, THREAD)
+    for _ in range(len(DESIGN_STAGES)):
+        graph.invoke(Command(resume=""), THREAD)
+
+    def fail_revision(*_args, **_kwargs):
+        raise ValueError("revision failed")
+
+    monkeypatch.setattr(sg, "revise_class_model", fail_revision)
+
+    with pytest.raises(ValueError, match="revision failed"):
+        dg.revise_design_stage(
+            "test-app",
+            "class_diagram",
+            "Rename the selected operation.",
+        )
+
+    assert dg.session_status("test-app") == {
+        "exists": True,
+        "active": False,
+        "retryable": False,
+        "stage": None,
+        "node": None,
+    }
 
 
 def test_rewinding_to_the_first_stage_is_refused(graph):
