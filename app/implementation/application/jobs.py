@@ -39,6 +39,7 @@ from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
 
 from ..config import ImplementationSettings
+from ..delivery.refresh import refresh_delivery_artifacts
 from .feedback import resolve_feedback_targets
 from .prototype import PrototypeClient
 from .source_files import (
@@ -380,6 +381,41 @@ class ImplementationWorker:
         self._write(record)
         self.executor.submit(langsmith_metrics.bind_context(self._plan), job_id)
         return self.public_record(record)
+
+    def refresh_delivery(self, job_id: str, app_id: str) -> dict[str, Any]:
+        """완료된 구현의 코드와 workflow를 유지한 채 배포 산출물만 갱신한다."""
+
+        record = self._read(job_id)
+        if record.get("app_id") != app_id:
+            raise JobNotFound(job_id)
+        if record.get("status") != "COMPLETED":
+            raise InvalidJobState("Delivery files can be refreshed only after implementation.")
+
+        refreshed = refresh_delivery_artifacts(
+            app_id,
+            implementation_job_id=job_id,
+        )
+        with self.lock:
+            # renderer 실행 중 다른 요청이 작업을 바꾸었을 수 있으므로 저장 직전에 다시 읽는다.
+            record = self._read(job_id)
+            if record.get("app_id") != app_id or record.get("status") != "COMPLETED":
+                raise InvalidJobState("Implementation changed while refreshing delivery files.")
+            version_ids = dict(record.get("artifact_version_ids") or {})
+            version_ids.update(refreshed["artifact_version_ids"])
+            record["artifact_version_ids"] = version_ids
+            record["delivery_refresh"] = {
+                "updated_at": _now(),
+                "provider": refreshed.get("provider"),
+                "verification": refreshed.get("verification"),
+            }
+            record["updated_at"] = _now()
+            self._write(record)
+
+        return {
+            **refreshed,
+            "status": "COMPLETED",
+            "artifact_version_ids": version_ids,
+        }
 
     def _create_design_blocked_job(
         self, app_id: str, base_package: str, readiness: dict[str, Any]

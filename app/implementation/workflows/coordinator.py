@@ -745,15 +745,15 @@ def run_workflow_to_completion(
             raise RuntimeError(f"Run-to-completion exceeded {max_cycles} workflow cycles")
 
 
-def _bind_deployment_runtime(run_root: Path, spec: JobSpec) -> Path | None:
+def bind_deployment_runtime(run_root: Path, deployment_bundle: Path) -> Path | None:
     """완료된 배포 설계에 생성 앱의 실제 실행값을 넣어 새 bundle을 만든다.
 
     원래 설계 파일은 입력 snapshot이므로 수정하지 않는다. 배포 설계가 아직 질문을
     남긴 상태라면 로컬 Docker 검증만 계속하고, 완료된 설계에서 실행 계약이 다르면
     IaC를 만들지 않고 구현 오류로 보고한다.
     """
-    source = spec.inputs.get("deploymentBundle")
-    if source is None or not source.is_file():
+    source = deployment_bundle
+    if not source.is_file():
         return None
     try:
         bundle = json.loads(source.read_text(encoding="utf-8"))
@@ -882,7 +882,11 @@ def _render_deployment_if_configured(
         # observer가 실제 EXPOSE와 실행 사용자를 읽을 수 있도록 먼저 결정론적인
         # 로컬 Dockerfile을 만든다. 이후 IaC는 같은 파일과 bound bundle을 사용한다.
         render_local_container(run_root)
-    bound_bundle = _bind_deployment_runtime(run_root, spec) if has_bundle else None
+    bound_bundle = (
+        bind_deployment_runtime(run_root, deployment_bundle)
+        if has_bundle and deployment_bundle is not None
+        else None
+    )
     if (
         deployment
         and deployment.is_file()

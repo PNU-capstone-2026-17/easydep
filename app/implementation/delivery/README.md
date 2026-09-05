@@ -31,5 +31,10 @@ plan 확인과 health 검사는 스크립트 내부에서 순서대로 실행된
 정확한 image digest를 본 plan에 전달하므로 "registry가 아직 없어서 image를 push할 수
 없는" 순환이 생기지 않는다.
 
+이미 완료된 앱은
+`POST /api/implementation/apps/{app_id}/jobs/{job_id}/delivery/refresh`를 호출하면 코딩
+에이전트를 다시 실행하지 않고 배포 파일만 현재 renderer 결과로 갱신한다. Java·프론트엔드·
+테스트 산출물 버전은 그대로 유지된다.
+
 사설 배포는 공개 health URL이 없으므로 내부 네트워크에서 별도로 확인해야 한다. 정적
 검사는 실제 자원을 만들지 않으며, 실제 배포 성공과 별도로 기록한다.

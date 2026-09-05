@@ -956,6 +956,32 @@ def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> 
     }
 
 
+def test_delivery_refresh_api_delegates_to_completed_job(monkeypatch) -> None:
+    """배포 파일 갱신이 새 구현 작업을 시작하지 않고 worker에 전달되는지 확인한다."""
+
+    expected = {
+        "app_id": "app-1",
+        "implementation_job_id": "job-1",
+        "status": "COMPLETED",
+        "artifact_version_ids": {"DEPLOYMENT_FILE": 11, "IAC_CODE": 12},
+    }
+    monkeypatch.setattr(
+        "app.implementation.interfaces.http.worker.refresh_delivery",
+        lambda job_id, app_id: expected
+        if (job_id, app_id) == ("job-1", "app-1")
+        else None,
+    )
+    application = FastAPI()
+    application.include_router(router)
+
+    response = TestClient(application).post(
+        "/api/implementation/apps/app-1/jobs/job-1/delivery/refresh"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
 def test_live_source_api_reads_only_safe_files_for_the_matching_job(
     tmp_path: Path, monkeypatch
 ) -> None:

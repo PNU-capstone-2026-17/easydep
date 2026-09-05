@@ -25,7 +25,7 @@ from app.db.models import (
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import AppNotFound
 
-from ..application.jobs import JobNotFound, worker
+from ..application.jobs import InvalidJobState, JobNotFound, worker
 from ..domain.artifact_layout import application_artifact_path
 
 router = APIRouter(prefix="/api/implementation", tags=["implementation"])
@@ -60,6 +60,18 @@ def get_live_implementation_file(
         return worker.live_source_file(job_id, app_id, file_path)
     except (JobNotFound, FileNotFoundError) as error:
         raise HTTPException(status_code=404, detail="Live source file not found.") from error
+
+
+@router.post("/apps/{app_id}/jobs/{job_id}/delivery/refresh")
+def refresh_delivery_artifacts(app_id: str, job_id: str) -> dict[str, Any]:
+    """LLM 구현을 반복하지 않고 현재 renderer로 배포 파일만 다시 저장한다."""
+
+    try:
+        return worker.refresh_delivery(job_id, app_id)
+    except JobNotFound as error:
+        raise HTTPException(status_code=404, detail="Implementation job not found.") from error
+    except (InvalidJobState, ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/apps/{app_id}/download")
