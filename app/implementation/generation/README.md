@@ -34,18 +34,18 @@
 
 ## 타입 이름 처리
 
-설계 모델에는 사람이 자주 쓰는 타입 이름이 들어올 수 있다. 스캐폴더는 의미가 분명한 작은
-목록만 Java 타입으로 바꾼다.
+설계 모델에는 사람이 자주 쓰는 타입 별칭이 들어올 수 있다. 수락 경계와 스캐폴더는
+`app.design.contracts.type_system`의 같은 계약으로 이를 정규화하고 Java 타입으로 바꾼다.
 
 - `string`, `integer`, `boolean`, `decimal`은 `String`, `Integer`, `Boolean`, `BigDecimal`
   로 바꾼다.
 - `bytes`, `byte[]`, `bytes[]`는 `byte[]`로 바꾼다.
-- `List<T>`와 `Optional<T>`는 안쪽 타입에도 같은 규칙을 적용한다.
+- `List<T>`, `Set<T>`, `Collection<T>`, `Iterable<T>`, `Optional<T>`는 안쪽 타입에도
+  같은 규칙을 적용한다.
 - 같은 `BCEModel`에 선언된 class, record와 enum 이름은 그대로 사용한다.
 
-그 밖의 이름은 별도의 추론 규칙으로 맞히지 않는다. 우선 컴파일 가능한 `Object`를 쓰고 바로
-위에 `TODO(EasyDep)` 주석으로 원래 설계 타입을 남긴다. 이 표식은 뒤의 구현 작업에 타입을
-보완해야 한다는 사실과 원문을 전달한다.
+그 밖의 이름은 별도의 추론 규칙으로 맞히지 않으며 `Object`로 약화하지도 않는다. 선언되지
+않았거나 지원하지 않는 타입은 설계 수락 또는 스캐폴드 입력 검증에서 즉시 실패한다.
 
 Java에서 사용할 수 없는 패키지나 타입 이름은 파일을 일부 만든 뒤 실패시키지 않고 입력 검증
 단계에서 바로 거부한다. 따라서 호출자는 `ValidationError`를 사용자에게 입력 오류로 설명할 수

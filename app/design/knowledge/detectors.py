@@ -584,37 +584,30 @@ def _normalise_contract_type(value: str) -> str:
     JSON에서 UUID는 문자열로 전달되고, ``T[]``와 ``array<T>``는 같은 배열이다. 이
     차이는 HTTP 표현 차이일 뿐이므로 LLM에게 API 전체를 다시 쓰게 하지 않는다.
     """
-    token = re.sub(r"\s+", "", value or "").removesuffix("?").lower()
-    collection = re.fullmatch(
-        r"(?:java\.util\.)?(?:list|set|collection|iterable|array)<(.+)>",
-        token,
-    )
-    if collection:
-        return f"{_normalise_contract_type(collection.group(1))}[]"
-    if token.endswith("[]"):
-        return f"{_normalise_contract_type(token[:-2])}[]"
-    aliases = {
-        "string": "string", "str": "string",
-        "uuid": "string",
-        "integer": "integer", "int": "integer", "long": "integer", "short": "integer",
-        "float": "number", "double": "number", "bigdecimal": "number", "number": "number",
-        "bool": "boolean", "boolean": "boolean",
-    }
-    return aliases.get(token, token)
+    from app.design.contracts.type_system import wire_type_signature
+
+    token = re.sub(r"\s+", "", value or "")
+    if token.casefold() == "date-time":
+        return "date-time"
+    return wire_type_signature(token)
 
 
 def _contract_types_compatible(actual: str, expected: str) -> bool:
     """Treat inbound request DTO wrappers as the represented domain type."""
-    actual_normalized = _normalise_contract_type(actual)
-    expected_normalized = _normalise_contract_type(expected)
+    from app.design.contracts.type_system import DesignTypeError
+
+    try:
+        actual_normalized = _normalise_contract_type(actual)
+        expected_normalized = _normalise_contract_type(expected)
+    except DesignTypeError:
+        return False
     if actual_normalized == expected_normalized:
         return True
     # Java date/time values are serialized as ISO strings on the HTTP wire.
     # Treating them as incompatible would reject a valid JSON representation.
-    if actual_normalized == "string" and (
-        expected_normalized.startswith("java.time.")
-        or expected_normalized in {"localdate", "localdatetime", "instant"}
-    ):
+    if actual_normalized == "string" and expected_normalized in {
+        "uuid", "date", "date-time"
+    }:
         return True
     # Only inbound DTO conventions may stand in for a Control parameter.
     # Accepting ``Response`` here would hide a directionally-invalid mapping.
@@ -755,9 +748,7 @@ def api_control_arguments(model: dict, state: dict) -> list[Finding]:
                 continue
             if name not in expected:
                 continue
-            actual_type = _normalise_contract_type(available[source])
-            expected_type = _normalise_contract_type(expected[name])
-            if not _contract_types_compatible(actual_type, expected_type):
+            if not _contract_types_compatible(available[source], expected[name]):
                 found.append(Finding(
                     "api.control-arguments-match",
                     f"'{name}'의 원천 타입 {available[source]}이 Control 파라미터 타입 {expected[name]}과 호환되지 않음",

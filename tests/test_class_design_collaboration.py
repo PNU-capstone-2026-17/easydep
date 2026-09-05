@@ -293,7 +293,7 @@ def test_optional_results_use_explicit_unwrap_sources():
                 "parentCallIndex": 3,
             },
             {
-                "receiverOperationId": "Session::create(studentId:uuid)",
+                "receiverOperationId": "Session::create(studentId:UUID)",
                 "parentCallIndex": 2,
             },
         ],

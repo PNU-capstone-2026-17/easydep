@@ -14,6 +14,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.design.contracts.api_spec import ApiEndpoint, ApiSpecModel
+from app.design.contracts.type_system import (
+    java_type_for_design,
+    scalar_wire_types_equivalent,
+)
 from app.design.schemas.class_model import (
     AcceptedBCEClass,
     BCEModel,
@@ -21,7 +25,7 @@ from app.design.schemas.class_model import (
     DataType,
 )
 
-JAVA_SCAFFOLDER_VERSION = "1.3.2"
+JAVA_SCAFFOLDER_VERSION = "1.4.0"
 CONTROLLER_BODY_REQUIRED = "EASYDEP_CONTROLLER_BODY_REQUIRED"
 
 _JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
@@ -84,30 +88,20 @@ _JAVA_KEYWORDS = frozenset(
         "yield",
     }
 )
-_TYPE_ALIASES = {
-    "string": "String",
-    "integer": "Integer",
-    "int": "Integer",
-    "long": "Long",
-    "bigint": "Long",
-    "boolean": "Boolean",
-    "bool": "Boolean",
-    "bigdecimal": "BigDecimal",
-    "decimal": "BigDecimal",
-    "uuid": "UUID",
-    "localdate": "LocalDate",
-    "localdatetime": "LocalDateTime",
-    "localtime": "LocalTime",
-}
-_BINARY_TYPE_NAMES = frozenset({"bytes", "byte[]", "bytes[]"})
-_GENERIC_TYPES = {"list": "List", "array": "List", "optional": "Optional"}
 _IMPORTS = {
     "BigDecimal": "java.math.BigDecimal",
+    "BigInteger": "java.math.BigInteger",
+    "Instant": "java.time.Instant",
     "LocalDate": "java.time.LocalDate",
     "LocalDateTime": "java.time.LocalDateTime",
     "LocalTime": "java.time.LocalTime",
+    "OffsetDateTime": "java.time.OffsetDateTime",
+    "ZonedDateTime": "java.time.ZonedDateTime",
+    "Collection": "java.util.Collection",
+    "Iterable": "java.lang.Iterable",
     "List": "java.util.List",
     "Optional": "java.util.Optional",
+    "Set": "java.util.Set",
     "UUID": "java.util.UUID",
 }
 _JAVA_INTERFACE = re.compile(r"\bpublic\s+interface\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b[^\{]*\{")
@@ -737,34 +731,8 @@ def _types_are_structurally_compatible(
         return bce_container == "binary"
 
     api_name = api_item.casefold()
-    bce_name = bce_item.casefold()
-    scalar_pairs = (
-        ({"string"}, {"string", "uuid", "localdate", "localdatetime", "localtime"}),
-        ({"integer", "int"}, {"integer", "int"}),
-        ({"number", "decimal", "bigdecimal"}, {"decimal", "bigdecimal"}),
-        ({"boolean", "bool"}, {"boolean", "bool"}),
-    )
-    if any(
-        api_name in api_names and bce_name in bce_names for api_names, bce_names in scalar_pairs
-    ):
+    if scalar_wire_types_equivalent(api_item, bce_item):
         return True
-    if api_name == bce_name and api_name not in {"object", "any"}:
-        # 이름이 같은 값 객체는 아래에서 필드까지 확인하고, 알려진 Java scalar는 여기서 끝난다.
-        if api_name in {
-            "string",
-            "uuid",
-            "localdate",
-            "localdatetime",
-            "localtime",
-            "integer",
-            "int",
-            "number",
-            "decimal",
-            "bigdecimal",
-            "boolean",
-            "bool",
-        }:
-            return True
 
     bce_enum = next(
         (
@@ -884,16 +852,9 @@ def _render_data_type(package_name: str, data_type: DataType, declared_types: se
         _field(item, owner=data_type.name, declared_types=declared_types)
         for item in data_type.fields
     ]
-    imports = _render_imports(field_type for _name, field_type, _todo_type in fields)
-    if any(todo_type for _name, _field_type, todo_type in fields):
-        declarations = ",\n".join(
-            f"{_todo(todo_type, indent='    ')}    {field_type} {name}"
-            for name, field_type, todo_type in fields
-        )
-        record_body = f"(\n{declarations}\n)"
-    else:
-        declarations = ", ".join(f"{field_type} {name}" for name, field_type, _todo_type in fields)
-        record_body = f"({declarations})"
+    imports = _render_imports(field_type for _name, field_type in fields)
+    declarations = ", ".join(f"{field_type} {name}" for name, field_type in fields)
+    record_body = f"({declarations})"
     return (
         f"package {package_name};\n\n{imports}"
         "/** Java 21 record contract generated from the designed value type. */\n"
@@ -928,14 +889,11 @@ def _render_component(
         for operation in component.operations
         for parameter in operation.parameters
     ]
-    imports = _render_imports(
-        [*method_types, *(field_type for _name, field_type, _todo_type in fields)]
-    )
+    imports = _render_imports([*method_types, *(field_type for _name, field_type in fields)])
     header = f"package {package_name};\n\n{imports}"
     if component.stereotype in {"Boundary", "Control"}:
         interface_methods = "\n".join(
-            f"{_todo(todo_types, indent='    ')}    {declaration};"
-            for declaration, _return_type, todo_types in methods
+            f"    {declaration};" for declaration, _return_type in methods
         )
         if interface_methods:
             interface_methods += "\n"
@@ -949,11 +907,11 @@ def _render_component(
         header + "/** Initial entity source that preserves the designed state and operations. */",
         f"public class {component.class_name} {{",
     ]
-    for name, field_type, todo_type in fields:
-        lines.append(f"{_todo(todo_type, indent='    ')}    private {field_type} {name};")
-    for declaration, return_type, todo_types in methods:
+    for name, field_type in fields:
+        lines.append(f"    private {field_type} {name};")
+    for declaration, return_type in methods:
         lines.append("")
-        lines.append(f"{_todo(todo_types, indent='    ')}    public {declaration} {{")
+        lines.append(f"    public {declaration} {{")
         if return_type != "void":
             lines.append("        return null;")
         lines.append("    }")
@@ -965,62 +923,29 @@ def java_type(design_type: str, *, declared_types: set[str] | None = None) -> st
     """설계 타입 하나를 컴파일 가능한 Java 타입으로 바꾼다.
 
     ``declared_types``에는 같은 BCE 설계에 실제로 선언된 class·DataType 이름을 넣는다.
-    목록에 없는 타입은 추측하지 않고 ``Object``가 된다. 렌더러는 이때 함께 얻는 TODO
-    정보를 사용하지만, 이 공개 helper는 호출자가 바로 쓸 Java 타입 문자열만 반환한다.
+    목록에 없는 타입은 ``Object``로 약화하지 않고 즉시 거부한다.
     """
-    return _java_type(design_type, declared_types=declared_types or set())[0]
-
-
-def _java_type(design_type: str, *, declared_types: set[str]) -> tuple[str, str | None]:
-    """작은 변환표만 적용하고, 모르는 원문은 TODO를 위해 함께 돌려준다."""
-    source = re.sub(r"\s+", "", str(design_type))
-    if not source:
-        return "Object", "(empty design type)"
-    if source.casefold() in _BINARY_TYPE_NAMES:
-        return "byte[]", None
-    if source == "void":
-        return "void", None
-    if source.casefold() == "object":
-        return "Object", None
-
-    alias = _TYPE_ALIASES.get(source.casefold())
-    if alias is not None:
-        return alias, None
-
-    generic = re.fullmatch(
-        r"(?P<outer>List|Array|Optional)<(?P<argument>.+)>", source, re.IGNORECASE
-    )
-    if generic is not None:
-        argument, todo_type = _java_type(generic.group("argument"), declared_types=declared_types)
-        return f"{_GENERIC_TYPES[generic.group('outer').casefold()]}<{argument}>", (
-            source if todo_type else None
-        )
-
-    if source in declared_types:
-        return source, None
-    return "Object", source
+    return java_type_for_design(design_type, declared_types=declared_types or set())
 
 
 def _method_declaration(
     operation: ClassOperation, declared_types: set[str]
-) -> tuple[str, str, str | None]:
-    """operation의 Java 선언과 TODO가 필요한 원래 타입을 만든다."""
+) -> tuple[str, str]:
+    """operation의 검증된 Java 선언과 반환 타입을 만든다."""
     method_name = java_method_name(operation.name)
     parameters: list[str] = []
-    todo_types: list[str] = []
     for parameter in operation.parameters:
         _require_identifier(parameter.name, f"parameter in {operation.name}")
-        parameter_type, todo_type = _java_type(parameter.type, declared_types=declared_types)
+        parameter_type = java_type_for_design(
+            parameter.type, declared_types=declared_types
+        )
         parameters.append(f"{parameter_type} {parameter.name}")
-        if todo_type:
-            todo_types.append(todo_type)
-    return_type, todo_type = _java_type(operation.return_type, declared_types=declared_types)
-    if todo_type:
-        todo_types.append(todo_type)
+    return_type = java_type_for_design(
+        operation.return_type, declared_types=declared_types
+    )
     return (
         f"{return_type} {method_name}({', '.join(parameters)})",
         return_type,
-        ", ".join(dict.fromkeys(todo_types)) or None,
     )
 
 
@@ -1033,10 +958,9 @@ def _parse_field(value: str, *, owner: str) -> tuple[str, str]:
     return name, match.group("type")
 
 
-def _field(value: str, *, owner: str, declared_types: set[str]) -> tuple[str, str, str | None]:
+def _field(value: str, *, owner: str, declared_types: set[str]) -> tuple[str, str]:
     name, design_type = _parse_field(value, owner=owner)
-    field_type, todo_type = _java_type(design_type, declared_types=declared_types)
-    return name, field_type, todo_type
+    return name, java_type_for_design(design_type, declared_types=declared_types)
 
 
 def _render_imports(types: Any) -> str:
@@ -1052,15 +976,6 @@ def _render_imports(types: Any) -> str:
     if not imports:
         return ""
     return "".join(f"import {path};\n" for path in imports) + "\n"
-
-
-def _todo(design_type: str | None, *, indent: str) -> str:
-    if not design_type:
-        return ""
-    return (
-        f"{indent}// TODO(EasyDep): Replace Object with the Java type that matches "
-        f"the design type `{design_type}`.\n"
-    )
 
 
 def _valid_identifier(value: str) -> bool:

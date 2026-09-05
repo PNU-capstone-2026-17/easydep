@@ -69,8 +69,9 @@ def _payload() -> dict[str, object]:
                     "use_case_ids": ["UC-ORDER"],
                     "identifier": ["id"],
                     "fields": [
-                        "id : ExternalOrderId",
+                        "id : string",
                         "quantity : integer",
+                        "price : decimal",
                         "payload : bytes[]",
                         "status : OrderStatus",
                     ],
@@ -96,7 +97,7 @@ def _payload() -> dict[str, object]:
                 {
                     "name": "OrderRequest",
                     "kind": "valueObject",
-                    "fields": ["payload : bytes", "source : ExternalPayload"],
+                    "fields": ["payload : bytes", "source : string"],
                 },
                 {
                     "name": "OrderReceipt",
@@ -168,17 +169,15 @@ def test_java_keyword_operation_keeps_its_meaning_with_safe_method_name() -> Non
     assert "Integer recordAction()" in _source(files, "Order")
 
 
-def test_uses_small_type_map_and_marks_unknown_types() -> None:
+def test_uses_canonical_type_map_and_rejects_unknown_types() -> None:
     files = _render()
     request = _source(files, "OrderRequest")
     receipt = _source(files, "OrderReceipt")
     entity = _source(files, "Order")
 
     assert "byte[] payload" in request
-    assert "Object source" in request
-    assert "design type `ExternalPayload`" in request
-    assert "Object id" in entity
-    assert "design type `ExternalOrderId`" in entity
+    assert "String source" in request
+    assert "String id" in entity
     assert "TODO(EasyDep)" not in receipt
 
     expected = {
@@ -196,10 +195,11 @@ def test_uses_small_type_map_and_marks_unknown_types() -> None:
         "list<string>": "List<String>",
         "array<string>": "List<String>",
         "optional<integer>": "Optional<Integer>",
-        "UnclearType": "Object",
     }
     assert {source: java_type(source) for source in expected} == expected
     assert java_type("OrderReceipt", declared_types={"OrderReceipt"}) == "OrderReceipt"
+    with pytest.raises(ValueError, match="not a declared Class or DataType"):
+        java_type("UnclearType")
 
 
 def test_same_input_produces_identical_files() -> None:
@@ -221,11 +221,13 @@ def test_erd_entities_generate_persistence_without_an_llm_mapper() -> None:
     assert "@Entity" in entity
     assert "@Id" in entity
     assert "private String id;" in entity
-    assert "stored as an indexable string key" in entity
+    assert '@Column(name = "price", precision = 19, scale = 4)' in entity
+    assert "private BigDecimal price;" in entity
     assert "private OrderStatus status;" in entity
     assert "extends JpaRepository<OrderEntity, String>" in repository
     assert "CREATE TABLE easydep_order (" in migration
     assert "id VARCHAR(255) PRIMARY KEY" in migration
+    assert "price DECIMAL(19,4)" in migration
     assert all("BcePersistenceMapper" not in path for path in files)
     assert files == render_persistence_scaffold(model, "com.example.orders")
 

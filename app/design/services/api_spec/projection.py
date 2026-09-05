@@ -5,10 +5,9 @@ import re
 from typing import Any
 
 from app.design.contracts.api_spec import ApiSpecModel
+from app.design.contracts.type_system import openapi_schema_for_type
 
 OPENAPI_VERSION = "3.1.0"
-_PRIMITIVES = {"string", "integer", "number", "boolean", "array", "object"}
-_STRING_FORMATS = {"uuid": "uuid", "date": "date", "date-time": "date-time"}
 
 
 def sanitize_schema_name(name: str) -> str:
@@ -30,20 +29,7 @@ def sanitize_path(path: str) -> str:
 
 def _field_schema(field: dict[str, Any], known: set[str]) -> dict[str, Any]:
     raw = str(field.get("type", "string")).strip()
-    if raw.endswith("[]"):
-        item = _field_schema({"type": raw[:-2]}, known)
-        return {"type": "array", "items": item}
-    lowered = raw.lower()
-    if lowered in _STRING_FORMATS:
-        schema = {"type": "string", "format": _STRING_FORMATS[lowered]}
-    elif lowered in _PRIMITIVES:
-        schema: dict[str, Any] = {"type": lowered}
-        if lowered == "array":
-            schema["items"] = {}
-    elif sanitize_schema_name(raw) in known:
-        schema = {"$ref": f"#/components/schemas/{sanitize_schema_name(raw)}"}
-    else:
-        schema = {"type": "object"}
+    schema = openapi_schema_for_type(raw, declared_types=known)
     description = str(field.get("description", "")).strip()
     if description and "$ref" not in schema:
         schema["description"] = description
@@ -51,20 +37,8 @@ def _field_schema(field: dict[str, Any], known: set[str]) -> dict[str, Any]:
 
 
 def _body_schema(name: str, known: set[str], is_array: bool = False) -> dict[str, Any]:
-    ref_name = sanitize_schema_name(name)
-    primitive = ref_name.lower()
-    inner: dict[str, Any] = (
-        {"type": "string", "format": _STRING_FORMATS[primitive]}
-        if primitive in _STRING_FORMATS
-        else {"type": primitive}
-        if primitive in _PRIMITIVES - {"array", "object"}
-        else (
-            {"$ref": f"#/components/schemas/{ref_name}"}
-            if ref_name in known
-            else {"type": "object"}
-        )
-    )
-    return {"type": "array", "items": inner} if is_array else inner
+    type_name = f"{sanitize_schema_name(name)}[]" if is_array else sanitize_schema_name(name)
+    return openapi_schema_for_type(type_name, declared_types=known)
 
 
 def _parameters(endpoint: dict[str, Any], known: set[str]) -> list[dict[str, Any]]:

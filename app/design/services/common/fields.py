@@ -27,59 +27,12 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-#: BCE에서 쓰는 Java 자료형 → RDBMS 자료형. **없는 것은 지어내지 않는다** — 표에 없으면
-#: 원문 대문자, 타입이 아예 없으면 `None`.
-#:
-#: BCE는 Java 구현으로 이어지므로 SQL 이름(`INT`·`BIGINT`·`DECIMAL`)을 직접 적지 않는다.
-#: 정수는 Java `int`/`long`에서 각각 SQL `INT`/`BIGINT`로, 정확한 소수는 Java
-#: `BigDecimal`에서 SQL `DECIMAL(19,4)`로 간다. `decimal`은 Java 타입이 아니므로
-#: `canonical_java_type`가 `BigDecimal`로 정규화한다.
-SQL_TYPES: dict[str, str] = {
-    "string": "VARCHAR(255)",
-    "int": "INT",
-    "integer": "INT",
-    "long": "BIGINT",
-    "boolean": "BOOLEAN",
-    "bool": "BOOLEAN",
-    "date": "DATE",
-    # ``LocalDateTime`` has no offset.  Mapping it to a timezone-aware SQL
-    # column makes Hibernate schema validation fail even when the generated
-    # BCE model, mapper, and JPA entity agree on their Java type.
-    "datetime": "TIMESTAMP",
-    "float": "FLOAT",
-    "double": "DOUBLE",
-    "bigdecimal": "DECIMAL(19,4)",
-    # 이미 저장된 과거 BCE/외부 입력도 SQL 이름을 그대로 내보내지 않도록 방어한다.
-    "decimal": "DECIMAL(19,4)",
-    "localdate": "DATE",
-    "localdatetime": "TIMESTAMP",
-    "instant": "TIMESTAMP WITH TIME ZONE",
-    "offsetdatetime": "TIMESTAMP WITH TIME ZONE",
-    "zoneddatetime": "TIMESTAMP WITH TIME ZONE",
-    "localtime": "TIME",
-    "timestamp": "TIMESTAMP WITH TIME ZONE",
-}
-
-
-#: LLM이 흔히 쓰는 별칭을 BCE의 Java 타입 표기로 한 번만 모은다. 값이 아닌 도메인
-#: 클래스명은 건드리지 않기 위해 **전체 타입이 정확히 일치할 때만** 정규화한다.
-_JAVA_TYPE_ALIASES: dict[str, str] = {
-    "str": "String",
-    "string": "String",
-    "bool": "boolean",
-    "boolean": "boolean",
-    "integer": "int",
-    "int": "int",
-    "long": "long",
-    "float": "float",
-    "double": "double",
-    "decimal": "BigDecimal",
-    "bigdecimal": "BigDecimal",
-    "date": "LocalDate",
-    "datetime": "LocalDateTime",
-    "time": "LocalTime",
-    "timestamp": "Instant",
-}
+from app.design.contracts.type_system import (
+    DesignTypeError,
+    canonical_design_type,
+    parse_type_expression,
+    sql_type_for_design,
+)
 
 
 def _split_top_level_items(text: str) -> list[str]:
@@ -153,18 +106,7 @@ def canonical_java_type(raw_type: str | None) -> str | None:
     """
     if not raw_type:
         return None
-    text = raw_type.strip()
-    if text.endswith("[]"):
-        item_type = canonical_java_type(text[:-2])
-        return f"{item_type}[]" if item_type else text
-
-    generic = re.fullmatch(r"([^<>]+)<(.*)>", text)
-    if generic:
-        head, raw_items = generic.groups()
-        items = _split_top_level_items(raw_items)
-        normalized_items = [canonical_java_type(item.strip()) or item.strip() for item in items]
-        return f"{head.strip()}<{', '.join(normalized_items)}>"
-    return _JAVA_TYPE_ALIASES.get(text.lower(), text)
+    return canonical_design_type(raw_type)
 
 
 def normalize_java_field(raw: str) -> str:
@@ -220,12 +162,29 @@ def normalize_java_method(raw: str) -> str:
     return rendered
 
 
-def sql_type(raw_type: str | None) -> str | None:
-    """Java BCE 자료형 → RDBMS 자료형. 모르면 원문 대문자, 없으면 `None`."""
+def sql_type(
+    raw_type: str | None,
+    named_types: dict[str, str] | None = None,
+) -> str | None:
+    """지원되는 BCE scalar와 선언된 enum/value object를 SQL로 투영한다."""
     if not raw_type:
         return None
-    canonical = canonical_java_type(raw_type)
-    return SQL_TYPES.get(canonical.lower(), canonical.upper())
+    try:
+        return sql_type_for_design(raw_type)
+    except DesignTypeError:
+        expression = parse_type_expression(raw_type)
+        if expression.kind == "container" and expression.name == "optional":
+            expression = expression.arguments[0]
+        kind = (
+            (named_types or {}).get(expression.name)
+            if expression.kind == "named"
+            else None
+        )
+        if kind == "enumeration":
+            return "VARCHAR(255)"
+        if kind == "valueObject":
+            return "JSON"
+        raise
 
 
 def inner_type(raw_type: str) -> str | None:

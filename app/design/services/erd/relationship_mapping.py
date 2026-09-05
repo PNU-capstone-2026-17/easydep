@@ -24,7 +24,13 @@ UNMAPPED_DUPLICATE_JUNCTION = "duplicate-junction"
 UNMAPPED_DUPLICATE_RELATIONSHIP = "duplicate-relationship"
 UNMAPPED_MANDATORY_REFERENCE_CYCLE = "mandatory-reference-cycle"
 
-def build_multivalued_child(parent: dict, field_name: str, inner_type: str | None) -> dict:
+def build_multivalued_child(
+    parent: dict,
+    field_name: str,
+    inner_type: str | None,
+    *,
+    sql_type: str | None = None,
+) -> dict:
     """다중값 필드 하나를 제1정규화로 떼어낸 자식 표.
 
     Args:
@@ -54,7 +60,13 @@ def build_multivalued_child(parent: dict, field_name: str, inner_type: str | Non
     # 서로 다른 말을 했다.** 연결 표는 처음부터 필수였고 여기만 빠져 있었다.
     for fk in _foreign_key_columns(parent, child, mandatory=True):
         _add_column(child, fk)
-    _add_column(child, _column(f"{field_name}_value", fields.sql_type(inner_type)))
+    _add_column(
+        child,
+        _column(
+            f"{field_name}_value",
+            sql_type if sql_type is not None else fields.sql_type(inner_type),
+        ),
+    )
     return child
 
 

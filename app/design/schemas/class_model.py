@@ -16,6 +16,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.design.contracts.type_system import (
+    canonical_design_type,
+    parse_type_expression,
+    referenced_names,
+)
+
 
 def _parameter_value(parameter: object, name: str) -> str:
     if isinstance(parameter, dict):
@@ -206,6 +212,70 @@ class BCEModel(ClassModelBase):
     DataTypes: list[DataType] = Field(default_factory=list)
     Relationships: list[AcceptedBCERelationship] = Field(default_factory=list)
     Collaborations: list[Collaboration] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def canonicalize_and_resolve_types(self) -> BCEModel:
+        """Persist one type notation and reject references absent from this model."""
+
+        declared = {
+            *(item.class_name for item in self.Classes),
+            *(item.name for item in self.DataTypes),
+        }
+
+        def canonical(value: str, *, allow_void: bool) -> str:
+            expression = parse_type_expression(value)
+            if not allow_void and expression.kind == "scalar" and expression.name == "void":
+                raise ValueError("void is not a valid field or parameter type")
+            missing = referenced_names(expression) - declared
+            if missing:
+                raise ValueError(
+                    "type references must name a declared Class or DataType: "
+                    + ", ".join(sorted(missing))
+                )
+            return canonical_design_type(value)
+
+        operation_ids: dict[str, str] = {}
+        for class_item in self.Classes:
+            normalized_fields: list[str] = []
+            for declaration in class_item.fields:
+                name, separator, raw_type = declaration.partition(":")
+                if not separator or not name.strip() or not raw_type.strip():
+                    raise ValueError(
+                        f"{class_item.class_name} has an invalid field declaration: {declaration}"
+                    )
+                normalized_fields.append(
+                    f"{name.strip()} : {canonical(raw_type, allow_void=False)}"
+                )
+            class_item.fields = normalized_fields
+            for operation in class_item.operations:
+                previous_id = operation.operation_id
+                for parameter in operation.parameters:
+                    parameter.type = canonical(parameter.type, allow_void=False)
+                operation.return_type = canonical(operation.return_type, allow_void=True)
+                operation.operation_id = canonical_operation_id(
+                    class_item.class_name, operation.name, operation.parameters
+                )
+                operation_ids[previous_id] = operation.operation_id
+
+        for data_type in self.DataTypes:
+            normalized_fields = []
+            for declaration in data_type.fields:
+                name, separator, raw_type = declaration.partition(":")
+                if not separator or not name.strip() or not raw_type.strip():
+                    raise ValueError(
+                        f"{data_type.name} has an invalid field declaration: {declaration}"
+                    )
+                normalized_fields.append(
+                    f"{name.strip()} : {canonical(raw_type, allow_void=False)}"
+                )
+            data_type.fields = normalized_fields
+
+        for collaboration in self.Collaborations:
+            for call in collaboration.calls:
+                call.receiver_operation_id = operation_ids.get(
+                    call.receiver_operation_id, call.receiver_operation_id
+                )
+        return self
 
     @model_validator(mode="after")
     def unique_named_elements(self) -> BCEModel:

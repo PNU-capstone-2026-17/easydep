@@ -10,50 +10,28 @@ from __future__ import annotations
 import re
 from typing import Any
 
-PRIMITIVES = frozenset({
-    "any", "bigdecimal", "biginteger", "bool", "boolean", "byte", "char",
-    "character", "date", "datetime", "decimal", "double", "float", "guid",
-    "instant", "int", "integer", "localdate", "localdatetime", "localtime", "long",
-    "number", "object", "offsetdatetime", "short", "str", "string", "time",
-    "timestamp", "uuid", "void",
-})
-GENERIC_CONTAINERS = frozenset({
-    "array", "collection", "iterable", "list", "map", "optional", "page", "set",
-})
+from app.design.contracts.type_system import (
+    PROMPT_CONTAINERS,
+    PROMPT_PRIMITIVES,
+    DesignTypeError,
+    parse_type_expression,
+    referenced_names,
+    types_equivalent,
+)
+
+PRIMITIVES = PROMPT_PRIMITIVES
+GENERIC_CONTAINERS = PROMPT_CONTAINERS
 TYPE_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def type_expression_is_well_formed(type_name: str) -> bool:
     """중첩 generic, 배열과 optional suffix를 가진 설계 타입 구문인지 검사한다."""
 
-    value = re.sub(r"\s+", "", str(type_name or ""))
-    if not value:
+    try:
+        parse_type_expression(type_name)
+    except DesignTypeError:
         return False
-
-    def parse(position: int) -> int:
-        match = re.match(r"[A-Za-z_][A-Za-z0-9_.]*", value[position:])
-        if match is None:
-            return -1
-        position += len(match.group(0))
-        if position < len(value) and value[position] == "<":
-            position += 1
-            position = parse(position)
-            if position < 0:
-                return -1
-            while position < len(value) and value[position] == ",":
-                position = parse(position + 1)
-                if position < 0:
-                    return -1
-            if position >= len(value) or value[position] != ">":
-                return -1
-            position += 1
-        if value[position: position + 2] == "[]":
-            position += 2
-        if position < len(value) and value[position] == "?":
-            position += 1
-        return position
-
-    return parse(0) == len(value)
+    return True
 
 
 def structure_type_inventory() -> dict[str, tuple[str, ...] | str]:
@@ -81,10 +59,14 @@ def structure_type_contract() -> str:
 
 def referenced_type_names(type_name: str) -> set[str]:
     """primitive/container를 제외하고 선언 해소가 필요한 타입 이름만 반환한다."""
-    return {
-        token for token in TYPE_TOKEN.findall(type_name)
-        if token.casefold() not in PRIMITIVES | GENERIC_CONTAINERS
-    }
+
+    try:
+        return referenced_names(parse_type_expression(type_name))
+    except DesignTypeError:
+        return {
+            token for token in TYPE_TOKEN.findall(type_name)
+            if token.casefold() not in PRIMITIVES | GENERIC_CONTAINERS
+        }
 
 
 def reachable_data_type_names(
@@ -141,14 +123,16 @@ def reachable_data_type_names(
 
 def type_is_resolved(type_name: str, names: set[str], *, allow_void: bool) -> bool:
     """타입 구문이 유효하고 모든 사용자 정의 token이 허용 이름으로 해소되는지 검사한다."""
-    normalized = " ".join(str(type_name or "").split())
-    if not normalized or not type_expression_is_well_formed(normalized):
+
+    try:
+        expression = parse_type_expression(type_name)
+    except DesignTypeError:
         return False
-    if not allow_void and normalized.casefold() == "void":
+    if not allow_void and expression.kind == "scalar" and expression.name == "void":
         return False
-    if "unknownclass" in normalized.casefold().replace(" ", ""):
+    if "unknownclass" in str(type_name or "").casefold().replace(" ", ""):
         return False
-    return referenced_type_names(normalized) <= names
+    return referenced_names(expression) <= names
 
 
 def field_type(field: object) -> str:
@@ -190,12 +174,9 @@ def structured_field_types(model: dict[str, Any]) -> dict[str, dict[str, str]]:
 
 
 def types_compatible(left: str, right: str) -> bool:
-    """공백과 표기 대소문자를 새 의미로 취급하지 않고 설계 타입을 비교한다."""
+    """별칭과 표기 차이를 제거한 canonical 설계 타입 의미를 비교한다."""
 
-    def normalize(value: str) -> str:
-        return re.sub(r"\s+", "", str(value or "")).casefold()
-
-    return bool(normalize(left)) and normalize(left) == normalize(right)
+    return types_equivalent(left, right)
 
 
 def projected_field_type(

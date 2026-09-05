@@ -64,7 +64,10 @@ def build_logical_model(bce: dict[str, Any]) -> dict[str, Any]:
         for relationship in (bce.get("Relationships") or [])
         if isinstance(relationship, dict)
     ]
-    made, tables, children = build_entity_tables(classes)
+    data_types = [
+        item for item in (bce.get("DataTypes") or []) if isinstance(item, dict)
+    ]
+    made, tables, children = build_entity_tables(classes, data_types)
 
     relations: list[dict] = []
     unmapped: list[dict] = []
@@ -137,7 +140,10 @@ def build_logical_model(bce: dict[str, Any]) -> dict[str, Any]:
     child_tables: list[dict] = []
     for pending in children:
         child = build_multivalued_child(
-            pending["table"], pending["field"], pending["inner"]
+            pending["table"],
+            pending["field"],
+            pending["inner"],
+            sql_type=pending["innerSqlType"],
         )
         child_tables.append(child)
         relations.append(

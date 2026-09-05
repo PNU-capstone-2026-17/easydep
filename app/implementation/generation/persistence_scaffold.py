@@ -11,11 +11,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.design.contracts.type_system import DesignTypeError, sql_type_for_design
 from app.design.schemas.class_model import AcceptedBCEClass, BCEModel
 
 from .java_scaffold import java_type
 
-PERSISTENCE_SCAFFOLDER_VERSION = "1.3.0"
+PERSISTENCE_SCAFFOLDER_VERSION = "1.4.0"
 
 _FIELD = re.compile(r"^\s*[+#~\-]?\s*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?P<type>.+?)\s*$")
 _JAVA_IMPORTS = {
@@ -391,6 +392,8 @@ def _render_entity(
             column_parts.extend(["nullable = false", "updatable = false"])
         if _is_json_type(field_type, value_types):
             column_parts.append('columnDefinition = "json"')
+        elif field_type == "BigDecimal":
+            column_parts.extend(["precision = 19", "scale = 4"])
         lines.append(f"    @Column({', '.join(column_parts)})")
         lines.append(f"    private {field_type} {name};")
 
@@ -570,29 +573,21 @@ def _is_json_type(field_type: str, value_types: set[str]) -> bool:
 
 
 def _sql_type(field_type: str, enum_types: set[str], value_types: set[str]) -> str:
-    if field_type == "String" or field_type in enum_types:
+    if field_type in enum_types:
         return "VARCHAR(255)"
-    if field_type == "UUID":
-        return "BINARY(16)"
-    if field_type == "Integer":
-        return "INTEGER"
-    if field_type == "Long":
-        return "BIGINT"
-    if field_type == "Boolean":
-        return "BOOLEAN"
-    if field_type == "BigDecimal":
-        return "DECIMAL(38, 18)"
-    if field_type == "LocalDate":
-        return "DATE"
-    if field_type == "LocalDateTime":
-        return "TIMESTAMP"
-    if field_type == "LocalTime":
-        return "TIME"
-    if field_type == "byte[]":
-        return "LONGBLOB"
     if _is_json_type(field_type, value_types):
         return "JSON"
-    return "JSON"
+    # The logical contract remains vendor-neutral.  The generated application
+    # runs its migration in MySQL-compatible H2/MySQL, where these two physical
+    # encodings are the portable choices.
+    if field_type == "UUID":
+        return "BINARY(16)"
+    if field_type == "byte[]":
+        return "LONGBLOB"
+    try:
+        return sql_type_for_design(field_type)
+    except DesignTypeError:
+        return "JSON"
 
 
 def _snake_case(value: str) -> str:

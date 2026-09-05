@@ -68,6 +68,7 @@ def _add_column(table: dict, column: dict) -> None:
 # ---------------------------------------------------------------------------
 def build_entity_tables(
     classes: list[dict],
+    data_types: list[dict] | None = None,
 ) -> tuple[list[dict], dict[str, dict], list[dict]]:
     """Entity마다 표 하나 → (만든 표 전부, 이름으로 찾는 표, 제1정규화 자식들).
 
@@ -87,6 +88,11 @@ def build_entity_tables(
     made: list[dict] = []
     tables: dict[str, dict] = {}
     children: list[dict] = []
+    named_types = {
+        str(item.get("name") or "").strip(): str(item.get("kind") or "").strip()
+        for item in data_types or []
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    }
 
     for class_item in classes:
         if not fields.is_entity(class_item):
@@ -168,7 +174,12 @@ def build_entity_tables(
                     continue
                 # **여기서 만들지 않는다** — 자식이 들고 갈 부모 기본키를 상속이 바꾼다.
                 # 무엇을 만들지만 적어 두고 생성은 관계가 끝난 뒤로 미룬다.
-                children.append({"table": table, "field": field_name, "inner": inner})
+                children.append({
+                    "table": table,
+                    "field": field_name,
+                    "inner": inner,
+                    "innerSqlType": fields.sql_type(inner, named_types),
+                })
                 continue
             # 스칼라인데 타입이 Entity다 — **컬렉션과 똑같은 이유로** 컬럼이 아니다.
             # 한동안 여기만 빠져 있어서 `member : Member`가 관계에서 나온 `member_id`
@@ -178,6 +189,9 @@ def build_entity_tables(
             if fields.names_an_entity(raw_type, entity_names):
                 continue
             role = "pk" if field_name in table["primaryKey"] else "attribute"
-            _add_column(table, _column(field_name, fields.sql_type(raw_type), role=role))
+            _add_column(
+                table,
+                _column(field_name, fields.sql_type(raw_type, named_types), role=role),
+            )
 
     return made, tables, children

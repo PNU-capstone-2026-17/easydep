@@ -11,42 +11,13 @@ from app.design.contracts.api_spec import (
     ApiSpecModel,
     ApiSpecProposal,
 )
-from app.design.schemas.class_model import BCEModel
-from app.design.services.class_diagram.type_system import types_compatible
-
-_JSON_TYPES = {
-    "byte": "integer",
-    "short": "integer",
-    "int": "integer",
-    "integer": "integer",
-    "long": "integer",
-    "float": "number",
-    "double": "number",
-    "bigdecimal": "number",
-    "number": "number",
-    "boolean": "boolean",
-    "bool": "boolean",
-    "string": "string",
-    "str": "string",
-    "char": "string",
-    "character": "string",
-    "uuid": "string",
-    "localdate": "string",
-    "localdatetime": "string",
-    "instant": "string",
-}
-_WIRE_FORMATS = {
-    "uuid": "uuid",
-    "localdate": "date",
-    "localdatetime": "date-time",
-    "instant": "date-time",
-    "offsetdatetime": "date-time",
-}
-_COLLECTION = re.compile(
-    r"(?:java\.util\.)?(?:List|Set|Collection|Iterable|Array)<(.+)>",
-    re.IGNORECASE,
+from app.design.contracts.type_system import (
+    api_type_for_design,
+    parse_type_expression,
+    render_design_type,
+    wire_types_equivalent,
 )
-_OPTIONAL = re.compile(r"Optional[<\[](.+)[>\]]", re.IGNORECASE)
+from app.design.schemas.class_model import BCEModel
 
 
 @dataclass(frozen=True)
@@ -138,28 +109,20 @@ def interaction_context(bce_model: BCEModel) -> list[dict[str, Any]]:
 def _type_parts(type_name: str) -> tuple[str, bool]:
     """Optional과 collection 껍질을 제거한 내부 타입과 배열 여부를 반환한다."""
 
-    value = re.sub(r"\s+", "", type_name or "")
-    optional = _OPTIONAL.fullmatch(value)
-    if optional:
-        value = optional.group(1)
-    collection = _COLLECTION.fullmatch(value)
-    if collection:
-        return collection.group(1), True
-    if value.endswith("[]"):
-        return value[:-2], True
-    return value, False
+    if re.sub(r"\s+", "", str(type_name or "")).casefold() == "date-time":
+        return "date-time", False
+    expression = parse_type_expression(type_name)
+    if expression.kind == "container" and expression.name == "optional":
+        expression = expression.arguments[0]
+    if expression.kind == "container":
+        return render_design_type(expression.arguments[0]), True
+    return render_design_type(expression), False
 
 
 def api_input_type_for_control(type_name: str) -> str:
     """Control 타입을 JSON primitive 또는 도메인 schema 이름으로 바꾼다."""
 
-    item, is_array = _type_parts(type_name)
-    lowered = item.casefold()
-    if lowered.startswith("java.time."):
-        normalized = "string"
-    else:
-        normalized = _JSON_TYPES.get(lowered, item or "string")
-    return f"{normalized}[]" if is_array else normalized
+    return api_type_for_design(type_name)
 
 
 def _api_contract_type_for_control(type_name: str) -> str:
@@ -170,10 +133,7 @@ def _api_contract_type_for_control(type_name: str) -> str:
     예시값을 만들 수 있다. 그 밖의 타입 변환은 기존 규칙을 그대로 사용한다.
     """
 
-    item, is_array = _type_parts(type_name)
-    lowered = item.casefold().removeprefix("java.time.")
-    normalized = _WIRE_FORMATS.get(lowered, api_input_type_for_control(item))
-    return f"{normalized}[]" if is_array else normalized
+    return api_type_for_design(type_name)
 
 
 def response_contract_for_control(return_type: str) -> tuple[str, bool]:
@@ -349,14 +309,13 @@ def _domain_schemas(bce_model: BCEModel) -> dict[str, dict[str, Any]]:
             name, separator, type_name = str(raw_field).partition(":")
             if not separator or not name.strip() or not type_name.strip():
                 continue
-            optional = _OPTIONAL.fullmatch(type_name.strip())
+            expression = parse_type_expression(type_name)
+            optional = expression.kind == "container" and expression.name == "optional"
             projected.append(
                 {
                     "name": name.strip(),
-                    "type": _api_contract_type_for_control(
-                        optional.group(1) if optional else type_name
-                    ),
-                    "required": optional is None,
+                    "type": _api_contract_type_for_control(type_name),
+                    "required": not optional,
                     "description": "",
                 }
             )
@@ -568,9 +527,7 @@ def _control_arguments(
 
 
 def _input_types_compatible(actual: str, expected: str) -> bool:
-    return api_input_type_for_control(actual).casefold() == api_input_type_for_control(
-        expected
-    ).casefold() or types_compatible(actual, expected)
+    return wire_types_equivalent(actual, expected)
 
 
 def _outcome_name(status: int) -> str:
