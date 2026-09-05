@@ -170,8 +170,8 @@ def bind_runtime_contract(
         },
     )
     # Runtime observation may fill ports and image digests but must not discard
-    # the user's selected non-structural VM SKU.  The structure digest excludes
-    # this deployment input by contract.
+    # the user's late sizing inputs. The topology digest excludes these values;
+    # replicaCount itself still carries the structural scale decision.
     prior_compute = {
         str(item.get("id") or ""): item
         for item in deployment_plan.get("computeUnits") or []
@@ -179,7 +179,12 @@ def bind_runtime_contract(
     }
     for compute in bound_plan.get("computeUnits") or []:
         previous = prior_compute.get(str(compute.get("id") or ""), {})
-        for field in ("vmSku", "selectedVmSku", "selectedReplicaCount"):
+        for field in (
+            "resourceRequirements",
+            "vmSku",
+            "selectedVmSku",
+            "selectedReplicaCount",
+        ):
             if field in previous:
                 compute[field] = copy.deepcopy(previous[field])
     after_graph_digest = workload_graph_structure_digest(bound_graph)

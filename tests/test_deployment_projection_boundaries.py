@@ -21,6 +21,7 @@ from app.design.services.deployment_diagram.bundle import (
     build_deployment_diagram_bundle,
     select_deployment_target,
 )
+from app.design.services.deployment_diagram.digest import deployment_plan_structure_digest
 from app.design.services.deployment_diagram.models import WorkloadGraph
 from app.design.services.deployment_diagram.planner import extract_planning_facts
 from app.design.services.deployment_diagram.provider_plantuml import (
@@ -507,7 +508,12 @@ def test_capacity_overrides_reprice_and_persist_without_changing_topology(monkey
     )
 
     assert capacity_plan["structureDigest"] == original_digest
+    assert deployment_plan_structure_digest(capacity_plan) == original_digest
     assert stored["deploymentPlanStructureDigest"] == stored["deploymentPlan"]["structureDigest"]
+    assert (
+        deployment_plan_structure_digest(stored["deploymentPlan"])
+        == stored["deploymentPlanStructureDigest"]
+    )
     assert stored_compute["resourceRequirements"] == {
         "minVCpu": candidate["vCPU"],
         "minMemoryGiB": candidate["memoryGiB"],

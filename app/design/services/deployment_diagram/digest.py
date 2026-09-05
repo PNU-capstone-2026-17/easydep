@@ -88,7 +88,12 @@ def deployment_plan_structure_digest(plan: dict[str, Any]) -> str:
     for field in ("issues", "structureDigest"):
         structural.pop(field, None)
     for compute in structural.get("computeUnits") or []:
-        compute.pop("vmSku", None)
+        # SKU 선택과 sizing minimum은 topology가 확정된 뒤 같은 compute unit에
+        # 결합되는 값이다. replicaCount 자체는 구조에 남기되, 그 선택을 중복 기록한
+        # 필드와 capacity tuning 값은 preview stale guard에서 제외한다.
+        for field in ("vmSku", "selectedVmSku", "selectedReplicaCount"):
+            compute.pop(field, None)
+        compute["resourceRequirements"] = {}
     for path in structural.get("networkPaths") or []:
         path.pop("port", None)
     return _canonical_digest(structural)

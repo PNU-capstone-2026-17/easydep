@@ -21,6 +21,7 @@ from app.design.services.deployment_diagram.planner import (
     planning_inputs_stale,
     validate_provider_resource_plan,
 )
+from app.design.services.deployment_diagram.sizing import apply_capacity_overrides
 
 
 def workload(
@@ -454,6 +455,55 @@ def test_runtime_values_preserve_structure_digest_but_new_interface_requires_reg
         {"workloads": [{"workloadId": "web", "interfaces": [{"id": "admin"}]}]},
     )
     assert changed["status"] == "requiresDeploymentDesignRegeneration"
+
+
+def test_runtime_binding_preserves_late_sizing_without_changing_structure_digest() -> None:
+    model = normalized(graph(workload("web", public=True)))
+    plan = build_deployment_plan(model)
+    before = deployment_plan_structure_digest(plan)
+    compute_id = plan["computeUnits"][0]["id"]
+    sized, _overrides = apply_capacity_overrides(
+        plan,
+        [
+            {
+                "computeUnitId": compute_id,
+                "minVCpu": 2,
+                "minMemoryGiB": 4,
+            }
+        ],
+    )
+    sized_compute = sized["computeUnits"][0]
+    sized_compute["vmSku"] = "test.medium"
+    sized_compute["selectedVmSku"] = "test.medium"
+    sized_compute["selectedReplicaCount"] = 1
+
+    assert deployment_plan_structure_digest(sized) == before
+
+    bound = bind_runtime_contract(
+        model,
+        sized,
+        {
+            "workloads": [
+                {
+                    "workloadId": "web",
+                    "interfaces": [
+                        {"interfaceId": "http", "port": 8000, "healthPath": "/healthz"}
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert bound["status"] == "bound"
+    assert bound["structureDigest"] == before
+    rebound_compute = bound["deploymentPlan"]["computeUnits"][0]
+    assert rebound_compute["resourceRequirements"] == {
+        "minVCpu": 2.0,
+        "minMemoryGiB": 4.0,
+    }
+    assert rebound_compute["selectedVmSku"] == "test.medium"
+    assert rebound_compute["selectedReplicaCount"] == 1
+    assert deployment_plan_structure_digest(bound["deploymentPlan"]) == before
 
 
 def test_runtime_contract_must_implement_planned_environment_and_mount_contracts() -> None:
