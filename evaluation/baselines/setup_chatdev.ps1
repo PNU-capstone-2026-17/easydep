@@ -29,6 +29,12 @@ function Invoke-ChatDevImportValidation([string]$Python, [string]$Source) {
         if ($hadKey) { $env:OPENAI_API_KEY = $priorKey } else { Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue }
     }
 }
+
+function Invoke-ChatDevResponseFieldPatch([string]$Python, [string]$Source) {
+    $patchScript = Join-Path $PSScriptRoot "patch_chatdev_response_fields.py"
+    & $Python -X utf8 $patchScript --source $Source
+    if ($LASTEXITCODE -ne 0) { throw "ChatDev response-field compatibility patch failed." }
+}
 if (-not $PythonPath) {
     $PythonPath = (& (Join-Path $PSScriptRoot "ensure_python311.ps1") -InstallIfMissing $true | Select-Object -Last 1)
 }
@@ -36,6 +42,7 @@ $python311 = [System.IO.Path]::GetFullPath($PythonPath)
 $readyFile = Join-Path $venvPath ".easydep-ready-$revision-model-bridge-v1"
 $venvPython = Join-Path $venvPath "Scripts\python.exe"
 if (-not $Force -and (Test-Path -LiteralPath $readyFile) -and (Test-Path -LiteralPath $venvPython)) {
+    Invoke-ChatDevResponseFieldPatch $venvPython $sourcePath
     Invoke-ChatDevImportValidation $venvPython $sourcePath
     Write-Output $venvPath
     exit 0
@@ -95,6 +102,7 @@ if ($backendText -notmatch 'EASYDEP_COMPARISON_MODEL_BRIDGE') {
     )
     Set-Content -LiteralPath $modelBackend -Value $backendText -Encoding UTF8
 }
+Invoke-ChatDevResponseFieldPatch $venvPython $sourcePath
 Invoke-ChatDevImportValidation $venvPython $sourcePath
 Set-Content -LiteralPath $readyFile -Encoding UTF8 -Value "ChatDev 1.1.6 $revision"
 Write-Output $venvPath
