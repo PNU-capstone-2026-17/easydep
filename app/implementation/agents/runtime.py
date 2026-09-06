@@ -27,10 +27,12 @@ from .prompts import (
 )
 from .provider import (
     MAX_PROVIDER_RETRIES,
+    MAX_TOOL_PROTOCOL_RETRIES,
     configured_max_output_tokens,
     openhands_compatibility,
     openhands_connection,
     provider_retry_delay,
+    retryable_tool_protocol_error,
     transient_provider_error,
 )
 from .task_check import (
@@ -196,6 +198,18 @@ def _render_missing_output_repair_prompt(
         + task_hint
         + "\n\nRequired missing outputs (absolute paths):\n"
         + files
+    )
+
+
+def _render_tool_protocol_retry_prompt(prompt: str) -> str:
+    """Add a provider-neutral reminder when restarting a malformed tool call."""
+
+    return (
+        prompt
+        + "\n\n## Tool protocol retry\n\n"
+        "A previous execution attempt was discarded because its tool call was invalid. "
+        "Use only a registered tool name exactly as provided, without annotations or "
+        "formatting in the tool name. Continue the assigned task from the current files."
     )
 
 
@@ -461,6 +475,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         round_prompt = prompt
         round_allowed = allowed_absolute
         provider_retries = 0
+        tool_protocol_retries = 0
         repair_attempt = 0
         reasoning_effort = os.environ.get(
             "OPENHANDS_REASONING_EFFORT",
@@ -503,6 +518,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             # verification failure. 같은 Conversation의 현재 메시지부터 재개해 이미 읽은
             # source와 판단을 버리지 않는다.
             message_sent = False
+            conversation_prompt = round_prompt
             while True:
                 conversation_error: Exception | None = None
                 usage_before = _conversation_token_usage(conversation) or (0, 0)
@@ -517,13 +533,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         "task_id": task_id,
                         "app_id": app_id,
                         "repair_attempt": repair_attempt,
+                        "tool_protocol_retry_attempt": tool_protocol_retries,
                         "ls_provider": connection.provider,
                         "ls_model_name": connection.model,
                     },
                 ) as trace:
                     try:
                         if not message_sent:
-                            conversation.send_message(round_prompt)
+                            conversation.send_message(conversation_prompt)
                             message_sent = True
                         conversation.run()
                         # OpenHands 1.36은 iteration 한도와 반복 감지를 예외로 던지지
@@ -548,6 +565,25 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 if conversation_error is None:
                     provider_retries = 0
                     break
+                if retryable_tool_protocol_error(conversation_error):
+                    # The model, not the user or generated source, chose an invalid tool
+                    # protocol. Preserve any files already written, but discard the broken
+                    # conversation state before asking a fresh agent to continue.
+                    if not missing_required_outputs(sandbox, required_paths):
+                        restart_after_verification = True
+                        break
+                    tool_protocol_retries += 1
+                    if tool_protocol_retries > MAX_TOOL_PROTOCOL_RETRIES:
+                        raise RuntimeError(
+                            f"{connection.display_name()} returned invalid tool calls after "
+                            f"{MAX_TOOL_PROTOCOL_RETRIES} automatic retries"
+                        ) from conversation_error
+                    conversation.close()
+                    conversation, agent = open_conversation()
+                    _extend_conversation_write_files(agent, round_allowed)
+                    conversation_prompt = _render_tool_protocol_retry_prompt(round_prompt)
+                    message_sent = False
+                    continue
                 if not transient_provider_error(conversation_error):
                     # iteration/context/stuck 오류가 난 Conversation에는 메시지를 더 넣지 않는다.
                     # 이미 작성한 source가 있으면 아래 결정론적 검사로 살릴 수 있는지 먼저 보고,

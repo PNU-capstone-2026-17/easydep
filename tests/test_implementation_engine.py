@@ -9,6 +9,7 @@ import pytest
 
 from app.design.services.erd.mapping import build_logical_model
 from app.implementation.agents import execute_openhands_task
+from app.implementation.agents.provider import retryable_tool_protocol_error
 from app.implementation.agents.runtime import (
     create_openhands_conversation,
     validate_openhands_adapter,
@@ -441,6 +442,99 @@ def test_validate_openhands_adapter_uses_the_central_connection(
         assert result["modelCallMade"] is False
     finally:
         cleanup_agent_workspace(Path(str(result["workspace"])))
+
+
+def test_only_tool_protocol_bad_requests_are_retryable() -> None:
+    rejected_tool_call = RuntimeError(
+        "BadRequestError: Tool call validation failed: attempted to call tool "
+        "'made_up_tool' which was not in request.tools"
+    )
+
+    assert retryable_tool_protocol_error(rejected_tool_call) is True
+    assert (
+        retryable_tool_protocol_error(
+            RuntimeError("BadRequestError: Error code 400: invalid request body")
+        )
+        is False
+    )
+
+
+def test_invalid_tool_call_restarts_conversation_and_recovers_automatically(
+    tmp_path: Path,
+) -> None:
+    run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
+    source.unlink()
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path, number: int) -> None:
+            self.sandbox = sandbox
+            self.number = number
+            self.messages: list[str] = []
+            self.run_count = 0
+            self.close_count = 0
+
+        def send_message(self, message: str) -> None:
+            self.messages.append(message)
+
+        def run(self) -> None:
+            self.run_count += 1
+            if self.number == 1:
+                raise RuntimeError(
+                    "BadRequestError: Tool call validation failed: attempted to call "
+                    "tool 'made_up_tool' which was not in request.tools"
+                )
+            (self.sandbox / source_path).write_text(
+                "class OrderService { int recovered; }",
+                encoding="utf-8",
+            )
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    created: list[FakeConversation] = []
+
+    def create_conversation(sandbox: Path, *_args, **_kwargs):
+        conversation = FakeConversation(sandbox, len(created) + 1)
+        created.append(conversation)
+        return conversation, SimpleNamespace(_tools={})
+
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=SimpleNamespace(
+                api_key="approved-key",
+                provider="openrouter",
+                model="openai/gpt-4o-mini",
+                display_name=lambda: "OpenRouter",
+                litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=create_conversation,
+        ),
+        patch(
+            "app.implementation.agents.runtime.verify_agent_workspace",
+            return_value={"command": ["gradlew", "compileJava"], "exitCode": 0},
+        ),
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    assert result["status"] == "SUCCEEDED"
+    assert len(created) == 2
+    assert [item.run_count for item in created] == [1, 1]
+    assert [item.close_count for item in created] == [1, 1]
+    assert "Tool protocol retry" in created[1].messages[0]
+    assert "recovered" in source.read_text(encoding="utf-8")
 
 
 def test_verification_failure_continues_the_same_openhands_conversation(
