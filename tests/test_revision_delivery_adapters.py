@@ -129,7 +129,7 @@ def test_implementation_adapter_never_emits_a_broad_or_non_implementation_ref() 
         )
 
 
-def test_testing_bridge_requires_owner_trace_and_file_evidence() -> None:
+def test_testing_bridge_requires_implementation_owner_but_rtm_hints_are_optional() -> None:
     file_target = _target("file:application/src/Order.java", "file", "implementation")
     payload = repair_payload_from_testing_evidence(
         {
@@ -140,6 +140,13 @@ def test_testing_bridge_requires_owner_trace_and_file_evidence() -> None:
         [file_target],
     )
     assert payload.confirmed_target_refs == ("file:application/src/Order.java",)
+
+    untraced = repair_payload_from_testing_evidence(
+        {"repair_owner": "implementation", "trace_refs": [], "file_hints": []},
+        [],
+    )
+    assert untraced.confirmed_target_refs == ()
+    assert untraced.repair_file_hints == ()
 
     with pytest.raises(RevisionDeliveryError, match="assign repair"):
         repair_payload_from_testing_evidence(

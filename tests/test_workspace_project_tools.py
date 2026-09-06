@@ -190,6 +190,41 @@ def test_search_uses_latest_editing_catalog_and_returns_owner_and_version(
     assert source["artifact_version_id"] == 31
 
 
+def test_implementation_catalog_matches_workspace_rtm_to_application_snapshot_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RTM의 application/ 경로와 snapshot의 application-root 경로를 같은 파일로 본다."""
+
+    snapshot = _snapshot()
+    snapshot["files"] = {
+        "src/OrderService.java": {
+            "content": "class OrderService {}",
+            "sha256": "digest",
+        }
+    }
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_state",
+        lambda _app_id: _state(),
+    )
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_file_snapshot",
+        lambda _app_id, _artifact_type: snapshot,
+    )
+    monkeypatch.setattr(
+        project_tools_module.workspace_repository,
+        "latest_command",
+        lambda *_args, **_kwargs: None,
+    )
+
+    validation = ProjectTools(APP_ID).validate_targets(
+        ["file:application/src/OrderService.java"]
+    )
+
+    assert validation["valid_refs"] == ["file:application/src/OrderService.java"]
+
+
 def test_read_element_reads_only_the_selected_current_element(tools: ProjectTools) -> None:
     item = tools.read_element("requirement:REQ-ORDER")
 

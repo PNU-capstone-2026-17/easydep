@@ -15,9 +15,11 @@ from app.metrics import langsmith as langsmith_metrics
 from app.testing.graphs.testing_graph import create_testing_graph, initial_state
 from app.testing.runtime.app_container import (
     ApplicationLaunchError,
-    application_log_excerpt,
+    _log_excerpt,
+    application_log,
     running_application,
 )
+from app.testing.runtime.evidence_store import store_application_log
 from app.testing.utils.gates import aggregate_gate_report, gate_status
 from app.validation import stable_digest
 
@@ -182,7 +184,11 @@ def _runtime_evidence(runtime: dict[str, Any]) -> dict[str, Any]:
 
 
 def _attach_dynamic_failure_evidence(
-    result: dict[str, Any], runtime: dict[str, Any]
+    result: dict[str, Any],
+    runtime: dict[str, Any],
+    *,
+    app_id: str,
+    run_id: str,
 ) -> None:
     """컨텍스트 cleanup 전에 dynamic failure finding에 실행 증거를 붙인다."""
 
@@ -197,11 +203,12 @@ def _attach_dynamic_failure_evidence(
         }
         report["finding"] = finding
     finding["runtime"] = _runtime_evidence(runtime)
-    excerpt = application_log_excerpt(runtime)
+    logs = application_log(runtime)
     # 정상 4xx, schema/semantic failure처럼 stack trace가 없을 수 있다. 빈 로그를
     # 증거인 것처럼 넣지 않고 실제로 읽힌 내용만 보존한다.
-    if excerpt:
-        finding["applicationLogExcerpt"] = excerpt
+    if logs:
+        finding["applicationLogRef"] = store_application_log(app_id, run_id, logs)
+        finding["applicationLogExcerpt"] = _log_excerpt(logs, limit=6000)
 
 
 def _deferred_static_reports(reason: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -360,7 +367,12 @@ def _run_verification_graph(
                 application_dir=application_dir,
             ) as (url, application):
                 result = invoke(url)
-                _attach_dynamic_failure_evidence(result, application)
+                _attach_dynamic_failure_evidence(
+                    result,
+                    application,
+                    app_id=app_id,
+                    run_id=run_id,
+                )
     except ApplicationLaunchError as error:
         launch_error = str(error)
         launch_defect_class = error.defect_class
@@ -391,8 +403,13 @@ def _run_verification_graph(
             "message": launch_error,
             "runtime": launch_runtime,
         }
-        if error.log_excerpt:
-            launch_finding["applicationLogExcerpt"] = error.log_excerpt
+        if error.application_log:
+            launch_finding["applicationLogRef"] = store_application_log(
+                app_id, run_id, error.application_log
+            )
+            launch_finding["applicationLogExcerpt"] = _log_excerpt(
+                error.application_log, limit=6000
+            )
         result["dynamic_functional_report"] = {
             "status": "UNAVAILABLE" if environment_failure else "FAILED",
             "gateStatus": "INCONCLUSIVE" if environment_failure else "FAIL",

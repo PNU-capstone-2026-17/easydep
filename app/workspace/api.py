@@ -168,7 +168,15 @@ class ApplyDeploymentSizingRequest(BaseModel):
 @router.get("/apps")
 def list_apps(limit: int = Query(default=50, ge=1, le=100)) -> dict[str, Any]:
     """최근 생성한 앱을 최신순으로 조회한다."""
-    return {"apps": repository.list_workspace_apps(limit)}
+    apps = repository.list_workspace_apps(limit)
+    for item in apps:
+        command = workspace_service.present_command(
+            str(item.get("app_id") or ""), item.get("command")
+        )
+        item["command"] = command
+        if command is not None:
+            item["current_stage"] = command["stage"]
+    return {"apps": apps}
 
 
 @router.get("/cloud-options")
@@ -360,12 +368,17 @@ def get_workspace(app_id: str) -> dict[str, Any]:
         }
         for name, content in web.get("artifacts", {}).items()
     }
+    command = workspace_service.present_command(
+        app_id, repository.latest_command(app_id)
+    )
     return {
         "app_id": app_id,
-        "current_stage": repository.get_app_summary(app_id)["current_stage"],
-        "command": workspace_service.present_command(
-            app_id, repository.latest_command(app_id)
+        "current_stage": (
+            command["stage"]
+            if command is not None
+            else repository.get_app_summary(app_id)["current_stage"]
         ),
+        "command": command,
         "events": repository.list_events(app_id, include_llm_timings=False),
         "artifacts": artifacts,
         "deployment_preferences": repository.get_deployment_preferences(app_id),

@@ -366,7 +366,11 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
                 ),
             ]
         if stage == "implementation":
-            job_id = str(result.get("job_id") or (command.get("payload") or {}).get("job_id") or "")
+            job_id = str(
+                (command.get("payload") or {}).get("job_id")
+                or result.get("job_id")
+                or ""
+            )
             if job_id:
                 return [
                     discuss,

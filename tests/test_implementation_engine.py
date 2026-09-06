@@ -221,6 +221,41 @@ def test_feature_check_rejects_a_whole_application_test_before_gradle(
     run.assert_not_called()
 
 
+def test_dynamic_testing_repair_compile_checks_without_starting_docker(
+    tmp_path: Path,
+) -> None:
+    """동적 HTTP 재실행은 바깥 Testing에 맡기고 구현 sandbox에서는 compile만 한다."""
+
+    completed = SimpleNamespace(returncode=0, stdout="compiled", stderr="")
+    source_path = "application/src/main/java/com/example/OrderService.java"
+    (tmp_path / "application").mkdir()
+    with (
+        patch(
+            "app.implementation.agents.verification.build.gradle_command",
+            return_value=["gradlew"],
+        ),
+        patch(
+            "app.implementation.agents.verification.build.subprocess.run",
+            return_value=completed,
+        ) as run,
+        patch(
+            "app.testing.repair_check.verify_testing_repair_gate",
+            side_effect=AssertionError("dynamic repair must not start Docker"),
+        ) as dynamic_gate,
+    ):
+        result = verify_agent_workspace(
+            tmp_path,
+            "testing-dynamic-functional",
+            [source_path],
+            {"candidate_plan": {"cases": []}},
+        )
+
+    assert result["exitCode"] == 0
+    assert result["command"] == ["gradlew", "compileJava", "--build-cache"]
+    assert run.call_args.args[0] == ["gradlew", "compileJava", "--build-cache"]
+    dynamic_gate.assert_not_called()
+
+
 def test_agent_task_check_returns_real_focused_verification_result(
     tmp_path: Path,
 ) -> None:
@@ -618,6 +653,81 @@ def test_verification_failure_continues_the_same_openhands_conversation(
     assert created[0].run_count == 2
     assert created[0].close_count == 1
     assert "int repaired" in source.read_text(encoding="utf-8")
+
+
+def test_testing_repair_cannot_complete_without_a_source_change(tmp_path: Path) -> None:
+    """기존 compile 성공만으로 Testing 수리를 완료하지 못하게 한다."""
+
+    run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task["task_type"] = "testing-dynamic-functional"
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+            self.messages: list[str] = []
+            self.run_count = 0
+
+        def send_message(self, message: str) -> None:
+            self.messages.append(message)
+
+        def run(self) -> None:
+            self.run_count += 1
+            if self.run_count == 2:
+                (self.sandbox / source_path).write_text(
+                    "class OrderService { int repairedRuntimePath; }",
+                    encoding="utf-8",
+                )
+
+        def close(self) -> None:
+            pass
+
+    conversation: FakeConversation | None = None
+
+    def create_conversation(sandbox: Path, *_args, **_kwargs):
+        nonlocal conversation
+        conversation = FakeConversation(sandbox)
+        return conversation, SimpleNamespace(_tools={})
+
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=SimpleNamespace(
+                api_key="approved-key",
+                provider="openrouter",
+                model="openai/gpt-4o-mini",
+                display_name=lambda: "OpenRouter",
+                litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=create_conversation,
+        ),
+        patch(
+            "app.implementation.agents.runtime.verify_agent_workspace",
+            return_value={"command": ["gradlew", "compileJava"], "exitCode": 0},
+        ) as verify,
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    assert result["status"] == "SUCCEEDED"
+    assert conversation is not None
+    assert conversation.run_count == 2
+    assert "made no source change" in conversation.messages[1]
+    verify.assert_called_once()
+    assert "repairedRuntimePath" in source.read_text(encoding="utf-8")
 
 
 def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(

@@ -904,6 +904,17 @@ class WorkspaceService:
         if command is None:
             return None
         presented = dict(command)
+        payload = command.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+        # Testing이 만든 구현 feedback job이 실행되는 동안만 화면을 Implementation으로
+        # 표시한다. 구현이 끝나 Testing checkpoint가 생기면 같은 command가 다시 Testing을
+        # 나타낸다. 별도 상태나 DB migration 없이 이미 저장된 handoff 정보만 사용한다.
+        if (
+            command.get("action") == "delegate_repair"
+            and payload.get("job_id")
+            and not isinstance(payload.get("testing_checkpoint"), dict)
+        ):
+            presented["stage"] = "implementation"
         result = command.get("result")
         shaped_result = dict(result) if isinstance(result, dict) else {}
         shaped_result = _with_capability_handoff_questions(app_id, shaped_result)
@@ -1455,26 +1466,6 @@ class WorkspaceService:
                         result,
                         implementation_blockers,
                     )
-                    if not repair_file_hints:
-                        return {
-                            "awaiting_input": True,
-                            "kind": "system_error",
-                            "message": (
-                                "Testing found an implementation failure but could not trace it "
-                                "to a generated file. Fix the Testing evidence or RTM routing; "
-                                "EasyDep did not open the whole application for speculative repair."
-                            ),
-                            "requires_revision": False,
-                            "can_delegate_repair": False,
-                            "blocking_findings": selected_blockers,
-                            "repair_state": {
-                                **dict(result.get("repair_state") or {}),
-                                "status": "STALLED",
-                                "stall_reason": "No trace-linked failing file was available.",
-                            },
-                            "job_id": previous_run_id,
-                            "job": previous_job,
-                        }
                     # 동적 테스트까지 실행된 실패라면 그 계획을 그대로 보존한다. 반대로
                     # 앱 실행처럼 계획이 생기기 전에 실패한 경우에는 보존할
                     # 대상이 없으므로, 고친 구현을 새 Testing 작업으로 검사해야 한다.
@@ -3384,6 +3375,14 @@ class WorkspaceService:
                 profile["candidate_plan"] = candidate_plan
             evidence = primary.get("evidence")
             evidence = evidence if isinstance(evidence, dict) else {}
+            finding = evidence.get("finding")
+            finding = finding if isinstance(finding, dict) else {}
+            log_reference = finding.get("applicationLogRef")
+            if (
+                isinstance(log_reference, dict)
+                and isinstance(log_reference.get("ref"), str)
+            ):
+                profile["application_log_ref"] = log_reference["ref"]
             case_id = str(evidence.get("caseId") or evidence.get("case_id") or "")
             if not case_id:
                 case_id = next(
@@ -3484,7 +3483,18 @@ class WorkspaceService:
                 if isinstance(item, str) and item
             )
             if isinstance(blocker.get("evidence"), dict) and blocker["evidence"]:
-                execution_evidence.append(dict(blocker["evidence"]))
+                copied_evidence = dict(blocker["evidence"])
+                copied_finding = copied_evidence.get("finding")
+                if isinstance(copied_finding, dict):
+                    # 전체 application log는 별도 읽기 전용 파일로 전달한다. prompt에
+                    # 일부를 다시 붙이면 에이전트가 그 excerpt만 보고 파일을 조사하지 않는다.
+                    copied_evidence["finding"] = {
+                        key: value
+                        for key, value in copied_finding.items()
+                        if key != "applicationLogExcerpt"
+                    }
+                copied_evidence.pop("applicationLogExcerpt", None)
+                execution_evidence.append(copied_evidence)
             if not candidate_plan and isinstance(blocker.get("candidate_plan"), dict):
                 candidate_plan = dict(blocker["candidate_plan"])
         raw_history = result.get("repair_state")

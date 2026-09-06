@@ -14,6 +14,7 @@ from app.artifact_trace import TraceRef, format_ref, parse_ref
 from app.artifact_trace_projection import (
     project_artifact_trace,
     projection_state_from_testing_contracts,
+    same_implementation_contracts,
 )
 from app.db.models import TYPE_SOURCE_CODE
 from app.repositories import artifact_repository
@@ -194,7 +195,9 @@ def _snapshot_matches_testing_input(
     input_contracts = testing_input.contract_artifacts.model_dump(
         mode="json", exclude_none=True
     )
-    return not source_contracts or source_contracts == input_contracts
+    return not source_contracts or same_implementation_contracts(
+        source_contracts, input_contracts
+    )
 
 
 def _testing_result(command: Mapping[str, Any] | None) -> dict[str, Any]:

@@ -38,11 +38,15 @@ OpenHands는 관련 package 또는 디렉터리 안에서 `조사 → 여러 파
 작성하는 shell이 아니다. EasyDep이 현재 작업에 미리 정한 focused test나 compile만 실행한다.
 OpenHands가 실행한 검사가 성공했고 그 뒤 source가 바뀌지 않았다면 EasyDep은 그 결과를
 재사용한다. 모든 기능이 끝난 시점의 전체 검사는 별도로 한 번 실행한다.
-Testing에서 돌아온 수리는 별도 검사 종류를 가진다. `testing-static`은 Trivy,
+Testing에서 돌아온 수리는 별도 검사 종류를 가진다. RTM 파일 연결은 원인 조사의 시작점을
+알리는 힌트이며 수정 파일의 allowlist가 아니다. 계약 파일과 테스트는 보호하되, 증거가 공통
+설정이나 build 구성으로 이어지면 구현 에이전트가 그 관련 생산 코드까지 조사하고 수정한다.
+`testing-static`은 Trivy,
 `testing-package`는 cloud-init·Compose·script, `testing-iac`는 OpenTofu,
-`testing-dynamic-functional`은 보존한 HTTP case를 실행한다. 따라서 Terraform 오류를 고친
-작업이 무관한 Gradle 테스트만 통과하고 완료되는 일은 없다. 오류 원문과 파일 경로도 같은
-작업에 전달되며, 수정 전후에 같은 검사를 실행한다.
+`testing-dynamic-functional`은 보존한 전체 runtime log를 읽고 RTM에 연결된 backend 운영
+코드부터 조사한 뒤 compile을 확인한다. 동적 수리 결과의 HTTP case 재실행은 Docker runtime을
+소유한 바깥 Testing 단계가 담당한다. 따라서 구현 sandbox에서 Docker를 중복 실행하지 않으며,
+Terraform 같은 정적 수리는 여전히 원래 실패한 gate를 같은 작업에서 다시 확인한다.
 검사 실패 시 JUnit XML과 Gradle HTML 전체를 에이전트에게 열어 주지 않는다. 검증기가 대표
 실패와 가장 안쪽 원인을 먼저 추출해 ``run_task_check`` 결과로 돌려주며, 원본 보고서는 사람이
 실행 이력을 조사할 때만 사용한다. 이렇게 하면 에이전트가 수십만 자짜리 같은 보고서를 반복해

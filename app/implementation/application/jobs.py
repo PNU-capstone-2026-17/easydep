@@ -496,8 +496,8 @@ class ImplementationWorker:
     ) -> dict[str, Any]:
         """저장된 구현 파일에 사용자 피드백을 적용하는 새 작업을 만든다.
 
-        Workspace가 owner·version·편집 가능 여부를 검증한 RTM ref만 받는다. 상류 산출물
-        변경은 대화형 router가 해당 전문 단계로 보내므로 여기서 자연어를 다시 분류하지 않는다.
+        Workspace가 owner·version을 검증한 RTM ref를 조사 힌트로 받는다. 상류 산출물 변경은
+        대화형 router가 해당 전문 단계로 보내므로 여기서 자연어를 다시 분류하지 않는다.
         """
         source_snapshot = artifact_repository.load_file_snapshot(
             app_id, TYPE_SOURCE_CODE
@@ -517,8 +517,8 @@ class ImplementationWorker:
             raise ValueError(
                 "Implementation feedback requires Workspace-validated target refs."
             )
-        # 대화형 Workspace 또는 Testing이 이미 실제 RTM ref를 확정했다. 긴 자연어를
-        # 정규식으로 다시 분류하지 않고 이 유한한 대상만 구현 작업에 전달한다.
+        # 대화형 Workspace 또는 Testing이 실제 RTM ref를 확인했다. 이 값은 구현 에이전트가
+        # 조사할 시작점이며, 원인이 연결된 공통 코드에 있을 때 수정 범위를 막는 allowlist가 아니다.
         eligibility = {
             "status": "ELIGIBLE",
             "source": "confirmed_workspace_targets",
@@ -553,17 +553,13 @@ class ImplementationWorker:
                 )
             if repair_file_hints is None:
                 effective_file_hints = related_files
-            elif not set(effective_file_hints) <= set(related_files):
-                raise ValueError(
-                    "Repair file hints exceed the confirmed implementation target scope."
-                )
         execution_feedback = feedback
         if confirmed_refs or related_files:
             execution_feedback += (
-                "\n\n## RTM-confirmed repair scope\n"
+                "\n\n## RTM trace hints\n"
                 "Confirmed refs:\n"
                 + "\n".join(f"- {item}" for item in confirmed_refs)
-                + "\nAllowed write files:\n"
+                + "\nSuggested starting files:\n"
                 + "\n".join(f"- {item}" for item in related_files)
             )
 

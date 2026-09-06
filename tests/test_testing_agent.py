@@ -243,11 +243,16 @@ def test_application_log_excerpt_is_bounded(tmp_path, monkeypatch):
 
     (tmp_path / "Dockerfile").write_text("FROM scratch\nEXPOSE 8000\n", encoding="utf-8")
     log_text = (
-        "Caused by: database migration failure\n" + ("stack frame\n" * 5_000)
+        ("startup message\n" * 1_000)
+        + "InvalidDefinitionException: cannot map ResultDTO\n"
+        + ("stack frame\n" * 5_000)
     )
+
+    log_commands: list[list[str]] = []
 
     def docker(arguments, **_kwargs):
         if arguments and arguments[0] == "logs":
+            log_commands.append(arguments)
             return type("Completed", (), {"returncode": 0, "stdout": log_text, "stderr": ""})()
         return type("Completed", (), {"returncode": 0, "stdout": "id\n", "stderr": ""})()
 
@@ -260,7 +265,316 @@ def test_application_log_excerpt_is_bounded(tmp_path, monkeypatch):
 
     assert len(excerpt) <= 6000
     assert "... omitted ..." in excerpt
-    assert "database migration failure" in excerpt
+    assert "cannot map ResultDTO" in excerpt
+    assert log_commands == [["logs", runtime["container"]]]
+
+
+def test_complete_application_log_is_stored_behind_a_small_reference(tmp_path):
+    from app.testing.runtime.evidence_store import (
+        load_application_log,
+        store_application_log,
+    )
+
+    full_log = ("startup\n" * 2_000) + "root cause\n" + ("stack\n" * 2_000)
+    reference = store_application_log(
+        "app-1",
+        "testing-1",
+        full_log,
+        repository_root=tmp_path,
+    )
+
+    assert set(reference) == {"ref", "sha256", "bytes", "lineCount"}
+    assert load_application_log(
+        str(reference["ref"]), repository_root=tmp_path
+    ) == full_log
+
+
+def test_dynamic_failure_persists_full_log_and_keeps_only_a_preview_in_result(
+    tmp_path, monkeypatch
+):
+    from app.testing.runtime import evidence_store, verification
+
+    full_log = ("startup\n" * 2_000) + "InvalidDefinitionException: ResultDTO\n" + (
+        "stack\n" * 2_000
+    )
+    result = {
+        "dynamic_functional_report": {
+            "gateStatus": "FAIL",
+            "finding": {"statusCode": 500},
+        }
+    }
+    monkeypatch.setattr(verification, "application_log", lambda _runtime: full_log)
+    monkeypatch.setattr(
+        verification,
+        "store_application_log",
+        lambda app_id, run_id, content: evidence_store.store_application_log(
+            app_id,
+            run_id,
+            content,
+            repository_root=tmp_path,
+        ),
+    )
+
+    verification._attach_dynamic_failure_evidence(
+        result,
+        {"source": "application", "profile": "test"},
+        app_id="app-1",
+        run_id="testing-1",
+    )
+
+    finding = result["dynamic_functional_report"]["finding"]
+    assert len(finding["applicationLogExcerpt"]) <= 6000
+    assert "InvalidDefinitionException: ResultDTO" in finding["applicationLogExcerpt"]
+    assert evidence_store.load_application_log(
+        finding["applicationLogRef"]["ref"], repository_root=tmp_path
+    ) == full_log
+
+
+def test_implementation_contract_comparison_ignores_clone_ids_and_trace_extension():
+    original = {
+        "requirements": {"version_id": 10, "digest": "req", "content": {"id": "REQ-1"}},
+        "deployment": {
+            "version_id": 12,
+            "digest": "deployment",
+            "content": {"hourlyComputeUSD": 0.009399999864399433},
+        },
+        "openapi": {
+            "version_id": 11,
+            "digest": "old-digest",
+            "content": {"paths": {"/items": {"post": {"operationId": "createItem"}}}},
+        },
+    }
+    checkpoint = {
+        "requirements": {"version_id": 20, "digest": "req", "content": {"id": "REQ-1"}},
+        "deployment": {
+            "version_id": 22,
+            "digest": "deployment",
+            "content": {"hourlyComputeUSD": 0.009399999864399431},
+        },
+        "openapi": {
+            "version_id": 21,
+            "digest": "new-digest",
+            "content": {
+                "paths": {
+                    "/items": {
+                        "post": {
+                            "operationId": "createItem",
+                            "x-easydep-scenario-step-refs": ["test:plan:case:step"],
+                        }
+                    }
+                }
+            },
+        },
+    }
+
+    assert testing_service.same_implementation_contracts(original, checkpoint)
+
+
+def test_implementation_contract_comparison_rejects_executable_changes():
+    original = {
+        "openapi": {
+            "content": {"paths": {"/items": {"post": {"operationId": "createItem"}}}}
+        }
+    }
+    changed = {
+        "openapi": {
+            "content": {"paths": {"/items": {"delete": {"operationId": "deleteItem"}}}}
+        }
+    }
+
+    assert not testing_service.same_implementation_contracts(original, changed)
+
+
+def test_repaired_implementation_preserves_test_across_trace_only_contract_changes(
+    monkeypatch,
+):
+    """복제 ID·trace 확장·JSON float 왕복 차이는 보존된 HTTP case를 막지 않는다."""
+
+    previous_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+        contract_artifacts={
+            "requirements": {
+                "version_id": 10,
+                "digest": "requirements",
+                "content": [{"id": "REQ-1"}],
+            },
+            "deployment": {
+                "version_id": 12,
+                "digest": "deployment",
+                "content": {"hourlyComputeUSD": 0.009399999864399433},
+            },
+            "openapi": {
+                "version_id": 11,
+                "digest": "old-openapi",
+                "content": {
+                    "paths": {"/items": {"post": {"operationId": "createItem"}}}
+                },
+            },
+        },
+    )
+    repaired_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-2",
+        artifact_version_ids={TYPE_SOURCE_CODE: 3, TYPE_DEPLOYMENT_FILE: 4},
+        contract_artifacts={
+            "requirements": {
+                "version_id": 20,
+                "digest": "requirements",
+                "content": [{"id": "REQ-1"}],
+            },
+            "deployment": {
+                "version_id": 22,
+                "digest": "deployment",
+                "content": {"hourlyComputeUSD": 0.009399999864399431},
+            },
+            "openapi": {
+                "version_id": 21,
+                "digest": "new-openapi",
+                "content": {
+                    "paths": {
+                        "/items": {
+                            "post": {
+                                "operationId": "createItem",
+                                "x-easydep-scenario-step-refs": ["test:plan:case:step"],
+                            }
+                        }
+                    }
+                },
+            },
+        },
+    )
+    plan = {
+        "cases": [
+            {
+                "case_id": "case-1",
+                "use_case_id": "UC-1",
+                "requirement_ids": ["REQ-1"],
+                "steps": [{"step_id": "one", "operation_id": "createItem"}],
+            }
+        ]
+    }
+    previous_job = {
+        "job_id": "testing-1",
+        "app_id": "app-1",
+        "implementation_job_id": "implementation-1",
+        "status": "COMPLETED",
+        "testing_input": previous_input.model_dump(mode="json"),
+        "result": {
+            "passed": False,
+            "verification": {
+                "reports": {
+                    "dynamicFunctional": {
+                        "gateStatus": "FAIL",
+                        "candidatePlan": plan,
+                        "caseId": "case-1",
+                    }
+                }
+            },
+        },
+    }
+    monkeypatch.setattr(
+        testing_service.implementation_worker,
+        "get_testing_input",
+        lambda _job_id: {
+            "app_id": "app-1",
+            "status": "COMPLETED",
+            "artifact_version_ids": repaired_input.artifact_version_ids,
+            "contract_artifacts": repaired_input.contract_artifacts.model_dump(
+                mode="json", exclude_none=True
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        testing_service,
+        "capture_testing_input",
+        lambda *_args, **_kwargs: repaired_input,
+    )
+    observed: dict = {}
+
+    def run(_run_id, _testing_input, **kwargs):
+        observed.update(kwargs)
+        return {"passed": True}, {}
+
+    monkeypatch.setattr(testing_service, "_run_test", run)
+
+    result = testing_service.run_testing(
+        "app-1",
+        "implementation-2",
+        run_id="testing-2",
+        previous_job=previous_job,
+        preserve_test=True,
+        repair_task_type="testing-dynamic-functional",
+    )
+
+    assert result["status"] == "COMPLETED"
+    assert observed["partial_result"]["preservedCandidatePlan"] == plan
+
+
+def test_dynamic_trace_hints_keep_only_trace_linked_backend_runtime_files(monkeypatch):
+    """backend 직접 HTTP 실패는 frontend와 테스트 파일을 수정 후보로 열지 않는다."""
+
+    testing_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+        contract_artifacts={
+            "openapi": {
+                "content": {
+                    "openapi": "3.0.3",
+                    "paths": {
+                        "/orders": {
+                            "post": {
+                                "operationId": "createOrder",
+                                "responses": {"201": {"description": "Created"}},
+                            }
+                        }
+                    },
+                }
+            }
+        },
+        implementation_traceability={
+            "mappings": [
+                {
+                    "taskId": "backend-order",
+                    "target_file": "application/src/main/java/com/example/OrderService.java",
+                    "sourceRefs": ["api:createOrder"],
+                },
+                {
+                    "taskId": "backend-order",
+                    "target_file": "application/src/test/java/com/example/OrderServiceTest.java",
+                    "sourceRefs": ["api:createOrder"],
+                },
+                {
+                    "taskId": "frontend-order",
+                    "target_file": "application/frontend/src/pages/OrderPage.tsx",
+                    "sourceRefs": ["api:createOrder"],
+                },
+                {
+                    "taskId": "deployment-order",
+                    "target_file": "application/deployment/tofu/main.tf",
+                    "sourceRefs": ["api:createOrder"],
+                },
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        testing_service,
+        "load_file_snapshot",
+        lambda *_args, **_kwargs: {"version_id": 1, "metadata": {}},
+    )
+
+    files, refs = testing_service._trace_hints(
+        testing_input,
+        {},
+        ["api:createOrder"],
+    )
+
+    assert files == ["application/src/main/java/com/example/OrderService.java"]
+    assert "task:backend-order" in refs
+    assert "task:frontend-order" not in refs
+    assert "task:deployment-order" not in refs
 
 
 def test_running_application_does_not_rebuild_frontend_for_api_checks(
@@ -785,3 +1099,4 @@ def test_external_target_failure_does_not_collect_arbitrary_docker_logs(
     dynamic = result["reports"]["dynamicFunctional"]
     assert dynamic["finding"]["runtime"]["source"] == "caller"
     assert not dynamic["finding"].get("applicationLogExcerpt")
+    assert not dynamic["finding"].get("applicationLogRef")

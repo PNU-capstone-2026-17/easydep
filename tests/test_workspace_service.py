@@ -743,6 +743,44 @@ def test_legacy_handoff_checkpoint_backfills_and_routes_a_capability_choice(
     assert captured["request"].answer is None
 
 
+def test_testing_repair_presentation_tracks_implementation_then_testing() -> None:
+    """한 자동 복구 command가 실제 실행 중인 단계로 화면에 표시된다."""
+
+    command = {
+        "command_id": "repair-1",
+        "app_id": "app-1",
+        "action": "delegate_repair",
+        "stage": "testing",
+        "status": "FAILED",
+        "payload": {"job_id": "implementation-repair-1"},
+        "result": {"job_id": "testing-1"},
+    }
+    service = WorkspaceService()
+    try:
+        implementation = service.present_command("app-1", command)
+        testing = service.present_command(
+            "app-1",
+            {
+                **command,
+                "payload": {
+                    **command["payload"],
+                    "testing_checkpoint": {"current_node": "verification"},
+                },
+            },
+        )
+    finally:
+        service.shutdown()
+
+    assert implementation["stage"] == "implementation"
+    retry = next(
+        action
+        for action in implementation["result"]["actions"]
+        if action["action"] == "retry_implementation"
+    )
+    assert retry["payload"]["job_id"] == "implementation-repair-1"
+    assert testing["stage"] == "testing"
+
+
 def test_initial_workspace_request_accepts_provider_and_region_without_budget(
     monkeypatch,
 ) -> None:
@@ -1904,6 +1942,16 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
                     "evidence": {
                         "operationId": "submitRegistration",
                         "statusCode": 500,
+                        "finding": {
+                            "applicationLogRef": {
+                                "ref": ".easydep/testing-evidence/"
+                                + ("a" * 64)
+                                + ".log"
+                            },
+                            "applicationLogExcerpt": (
+                                "UNIQUE_LOG_PREVIEW_SHOULD_NOT_BE_IN_PROMPT"
+                            ),
+                        },
                     },
                     "candidate_plan": {
                         "cases": [
@@ -1974,6 +2022,7 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     def create_feedback(*args, **kwargs):
         observed["feedback"] = args[2]
         observed["confirmed_target_refs"] = kwargs.get("confirmed_target_refs")
+        observed["verification_profile"] = kwargs.get("verification_profile")
         return {"job_id": "implementation-2", "app_id": "app-1"}
 
     monkeypatch.setattr(
@@ -2069,6 +2118,9 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     assert "api:submitRegistration" in str(observed["feedback"])
     assert "RegistrationService.java" in str(observed["feedback"])
     assert '"statusCode": 500' in str(observed["feedback"])
+    assert "UNIQUE_LOG_PREVIEW_SHOULD_NOT_BE_IN_PROMPT" not in str(
+        observed["feedback"]
+    )
     assert "Most recent implementation repair outcomes" in str(observed["feedback"])
     assert "Do not repeat the same edit" in str(observed["feedback"])
     assert '"job_id": "implementation-1"' in str(observed["feedback"])
@@ -2081,6 +2133,9 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
         "task:implement-registration",
         "file:application/src/RegistrationService.java",
     ]
+    assert observed["verification_profile"]["application_log_ref"] == (
+        ".easydep/testing-evidence/" + ("a" * 64) + ".log"
+    )
     assert observed["confirmed_target_refs"] == [
         "file:application/src/RegistrationService.java",
         "task:implement-registration",

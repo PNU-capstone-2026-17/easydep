@@ -1,9 +1,9 @@
-"""Typed, fail-closed adapters from a revision plan to delivery inputs.
+"""Typed adapters from a revision plan to delivery inputs.
 
 The planner decides ownership.  This module only translates its already
 validated targets to the small input shapes accepted by the delivery services;
-it never parses a ref string to guess a stage, follows pipeline order, or
-widens scope from the instruction text.
+it never parses a ref string to guess a stage or follows pipeline order. RTM
+targets sent to Implementation are investigation hints, not write boundaries.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-from app.artifact_trace import TraceRef
 from app.design.service import BatchReviseRequest, ReviseRequest
 from app.requirements.contracts.request import FeedbackEdit
 
@@ -159,33 +158,29 @@ def repair_payload_from_testing_evidence(
     evidence: Mapping[str, object],
     targets: Iterable[RevisionTarget],
 ) -> TestingRepairPayload:
-    """Bridge a testing finding only when its existing repair evidence is exact.
+    """Bridge an implementation-owned testing finding with optional RTM hints.
 
     Testing itself has no target-mutation service.  This function therefore
-    exposes a repair payload only for an explicitly implementation-owned
-    finding with trace-backed file/task targets and file evidence.  It does
-    not mark a finding or a test projection editable.
+    validates any supplied file/task targets but treats them and file evidence
+    as investigation hints.  It does not mark a finding or a test projection
+    editable, and lack of a file-level trace does not block evidence-led repair.
     """
     if str(evidence.get("repair_owner") or "") != "implementation":
         raise RevisionDeliveryError("Testing evidence does not assign repair to implementation.")
-    implementation = implementation_revision_payload(targets)
-    trace_refs = _string_values(evidence.get("trace_refs"))
-    file_hints = _string_values(evidence.get("file_hints"))
-    confirmed = set(implementation.confirmed_target_refs)
-    trace_confirmed = confirmed.intersection(trace_refs)
-    file_confirmed = set()
-    for ref in confirmed:
-        parsed = TraceRef.parse(ref)
-        if parsed.kind == "file" and parsed.id in file_hints:
-            file_confirmed.add(ref)
-    if not trace_confirmed and not file_confirmed:
+    selected = _unique_targets(targets)
+    invalid = [
+        target.ref
+        for target in selected
+        if target.owner != "implementation" or target.kind not in {"file", "task"}
+    ]
+    if invalid:
         raise RevisionDeliveryError(
-            "Testing evidence does not prove an exact implementation repair target."
+            "Testing repair hints support only implementation file or task targets: "
+            + ", ".join(invalid)
         )
-    if not file_hints:
-        raise RevisionDeliveryError("Testing evidence has no trace-backed generated file.")
+    file_hints = _string_values(evidence.get("file_hints"))
     return TestingRepairPayload(
-        confirmed_target_refs=implementation.confirmed_target_refs,
+        confirmed_target_refs=_refs(selected),
         repair_file_hints=tuple(sorted(set(file_hints))),
     )
 

@@ -5,11 +5,16 @@ import json
 import os
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.implementation.agents.workspace import (
+    cleanup_agent_workspace,
+    prepare_agent_workspace,
+)
 from app.implementation.application.feedback import resolve_feedback_targets
 from app.implementation.application.jobs import ImplementationWorker
 from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
@@ -801,8 +806,8 @@ def test_feedback_orchestrator_restores_snapshot_without_generation_tools(
     }
 
 
-def test_testing_feedback_keeps_the_original_gate_and_file_scope(tmp_path: Path) -> None:
-    """Testing 수리는 전체 앱이 아니라 실패한 파일과 동일 gate만 작업으로 만든다."""
+def test_testing_feedback_keeps_gate_but_uses_rtm_file_as_a_hint(tmp_path: Path) -> None:
+    """Testing gate는 유지하되 RTM 파일은 전체 구현 수정 범위를 막지 않는다."""
 
     client = PrototypeClient(settings(tmp_path))
     path = client.prepare_feedback_job(
@@ -830,17 +835,79 @@ def test_testing_feedback_keeps_the_original_gate_and_file_scope(tmp_path: Path)
     )
 
     assert task["task_type"] == "testing-static"
-    assert task["allowed_write_paths"] == ["application/deployment/tofu/main.tf"]
+    assert task["allowed_write_paths"] == [
+        "application/deployment/tofu/main.tf",
+        "application/src/main/java/com/example/OrderService.java",
+    ]
     assert task["verification_profile"] == {
         "app_id": "app-1",
         "testing_input": {},
     }
+    context = json.loads(
+        (output / task["context_file"]).read_text(encoding="utf-8")
+    )
+    assert context["suggestedFiles"] == ["application/deployment/tofu/main.tf"]
 
 
-def test_testing_feedback_without_a_failing_file_does_not_open_the_whole_app(
+def test_testing_runtime_log_is_read_only_agent_context(tmp_path: Path) -> None:
+    """전체 runtime log는 prompt가 아니라 범위 조회 가능한 읽기 전용 파일로 전달한다."""
+
+    reference = ".easydep/testing-evidence/" + ("a" * 64) + ".log"
+    stored_log = tmp_path / reference
+    stored_log.parent.mkdir(parents=True)
+    stored_log.write_text("line 1\nInvalidDefinitionException: ResultDTO\nline 3\n", encoding="utf-8")
+    client = PrototypeClient(settings(tmp_path))
+    path = client.prepare_feedback_job(
+        "job-dynamic-repair",
+        "12345678-0000-0000-0000-000000000000",
+        {},
+        {"src/main/java/com/example/OrderService.java": "class OrderService {}"},
+        "Fix the failed HTTP operation.",
+        "com.example",
+        False,
+        repair_task_type="testing-dynamic-functional",
+        repair_file_hints=["application/src/main/java/com/example/OrderService.java"],
+        verification_profile={
+            "app_id": "app-1",
+            "application_log_ref": reference,
+        },
+    )
+
+    output = PrototypeOrchestrator(load_job(path)).run()
+    task_path = output / "reports/implementation-tasks/apply-source-feedback.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    context = json.loads(
+        (output / task["context_file"]).read_text(encoding="utf-8")
+    )
+
+    assert task["verification_profile"] == {"app_id": "app-1"}
+    assert context["readSourcePaths"] == ["reports/testing-runtime.log"]
+    assert context["suggestedFiles"] == [
+        "application/src/main/java/com/example/OrderService.java"
+    ]
+    prompt = (output / task["prompt_file"]).read_text(encoding="utf-8")
+    assert "The outer Testing stage will rerun the preserved HTTP case" in prompt
+    assert "They are investigation hints, not a write boundary" in prompt
+    assert "Reproduce the assigned Testing gate" not in prompt
+    assert (output / "reports/testing-runtime.log").read_text(encoding="utf-8") == (
+        stored_log.read_text(encoding="utf-8")
+    )
+
+    with patch(
+        "app.implementation.agents.workspace.tempfile.gettempdir",
+        return_value=str(tmp_path / "agent-temp"),
+    ):
+        sandbox = prepare_agent_workspace(output, task)
+        assert (sandbox / "reports/testing-runtime.log").read_text(encoding="utf-8") == (
+            stored_log.read_text(encoding="utf-8")
+        )
+        cleanup_agent_workspace(sandbox)
+
+
+def test_testing_feedback_without_an_rtm_file_uses_failure_evidence(
     tmp_path: Path,
 ) -> None:
-    """추적할 파일이 없는 Testing 실패를 전체 소스 수정으로 확대하지 않는다."""
+    """파일 RTM이 없어도 계약과 테스트를 보호한 채 구현 수리를 시작한다."""
 
     client = PrototypeClient(settings(tmp_path))
     path = client.prepare_feedback_job(
@@ -857,15 +924,21 @@ def test_testing_feedback_without_a_failing_file_does_not_open_the_whole_app(
     )
 
     output = PrototypeOrchestrator(load_job(path)).run()
-    manifest = json.loads(
-        (output / "reports" / "run-manifest.json").read_text(encoding="utf-8")
+    task = json.loads(
+        (
+            output / "reports/implementation-tasks/apply-source-feedback.task.json"
+        ).read_text(encoding="utf-8")
+    )
+    context = json.loads(
+        (output / task["context_file"]).read_text(encoding="utf-8")
     )
 
-    assert manifest["status"] == "FAILED"
-    assert any(
-        "requires at least one trace-linked failing file" in item["message"]
-        for item in manifest["diagnostics"]
-    )
+    assert task["allowed_write_paths"] == [
+        "application/src/main/java/com/example/OrderService.java"
+    ]
+    assert context["suggestedFiles"] == []
+    prompt = (output / task["prompt_file"]).read_text(encoding="utf-8")
+    assert "No file-level RTM hint was available" in prompt
 
 
 def test_prepare_job_rejects_work_root_outside_repository(tmp_path: Path) -> None:
@@ -1006,7 +1079,7 @@ def test_confirmed_implementation_target_becomes_the_allowed_write_set(
     assert record["repair_file_hints"] == [target_file]
 
 
-def test_confirmed_implementation_target_rejects_a_broader_file_hint(
+def test_confirmed_implementation_target_does_not_turn_rtm_hint_into_a_limit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1025,19 +1098,29 @@ def test_confirmed_implementation_target_rejects_a_broader_file_hint(
         lambda _app_id, artifact_type: source if artifact_type == "SOURCE_CODE" else None,
     )
     worker = ImplementationWorker(settings(tmp_path))
+    observed: dict[str, object] = {}
+
+    def prepare(*_args, **kwargs):
+        observed.update(kwargs)
+        return tmp_path / "feedback-job.json"
+
+    worker.client.prepare_feedback_job = prepare
+    worker.executor.submit = lambda *_args, **_kwargs: None
     try:
-        with pytest.raises(ValueError, match="exceed the confirmed"):
-            worker.create_feedback_job(
-                "app-1",
-                {},
-                "Update registration.",
-                "com.example",
-                False,
-                confirmed_target_refs=[f"file:{target_file}"],
-                repair_file_hints=["application/src/Unrelated.java"],
-            )
+        record = worker.create_feedback_job(
+            "app-1",
+            {},
+            "Update registration.",
+            "com.example",
+            False,
+            confirmed_target_refs=[f"file:{target_file}"],
+            repair_file_hints=["application/src/Unrelated.java"],
+        )
     finally:
         worker.shutdown()
+
+    assert observed["repair_file_hints"] == ["application/src/Unrelated.java"]
+    assert record["repair_file_hints"] == ["application/src/Unrelated.java"]
 
 
 def test_delivery_refresh_api_delegates_to_completed_job(monkeypatch) -> None:

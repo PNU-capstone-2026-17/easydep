@@ -490,8 +490,20 @@ def _add_implementation(catalog: _Catalog) -> None:
                 artifact_type=TYPE_SOURCE_CODE,
                 content=mapping,
             )
-        if target_file and target_file in files:
-            file_record = files[target_file]
+        # 저장 snapshot의 file key는 application root 기준이고 RTM은 workspace 기준이다.
+        # 공개 ref는 RTM 경로를 유지하되 내용 조회에만 같은 상대 경로를 사용한다.
+        snapshot_file = (
+            target_file.removeprefix("application/") if target_file else None
+        )
+        snapshot_key = (
+            target_file
+            if target_file in files
+            else snapshot_file
+            if snapshot_file in files
+            else None
+        )
+        if target_file and snapshot_key:
+            file_record = files[snapshot_key]
             file_content = (
                 file_record.get("content") if isinstance(file_record, Mapping) else file_record
             )

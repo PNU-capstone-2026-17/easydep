@@ -10,7 +10,9 @@ narrow source search, then view only the relevant file. The editor's file argume
 explore outside the assigned workspace. Run `run_task_check` after implementing the feature.
 If it fails, read the real compiler or test result, repair the source, and run the same check
 again in this conversation. The check result already contains the representative failure and
-deepest available cause. Do not inspect generated build reports, HTML, XML, or Gradle logs.
+deepest available cause. Do not inspect generated build reports, HTML, or XML. When the task
+prompt names a read-only Testing runtime log, use grep and ranged file views to inspect only
+the relevant portions instead of loading the whole log into the conversation.
 Call `finish` only after the check passes.
 
 Generated BCE and OpenAPI declarations are authoritative. Do not edit them unless a BCE

@@ -42,11 +42,11 @@ class ApplicationLaunchError(Exception):
         message: str,
         *,
         defect_class: str = "SUT_DEFECT",
-        log_excerpt: str = "",
+        application_log: str = "",
     ) -> None:
         super().__init__(message)
         self.defect_class = defect_class
-        self.log_excerpt = _log_excerpt(log_excerpt) if log_excerpt else ""
+        self.application_log = application_log
 
 
 def _docker(
@@ -93,23 +93,45 @@ def _responds(url: str) -> bool:
 
 
 def _container_logs(name: str) -> str:
-    # Spring Boot는 원인 설명 뒤에 긴 stack trace를 출력한다. 마지막 80줄만 읽으면
-    # 정작 첫 예외가 잘릴 수 있으므로 넉넉히 수집하고 아래 helper가 응답 크기만 줄인다.
-    completed = _docker(["logs", "--tail", "240", name], timeout=30)
+    # 원문은 자르지 않는다. 화면과 LLM prompt의 미리보기만 별도로 제한한다.
+    completed = _docker(["logs", name], timeout=30)
     return (completed.stdout or "") + (completed.stderr or "")
 
 
 def _log_excerpt(logs: str, limit: int = 4000) -> str:
-    """긴 로그에서 시작 원인과 마지막 예외를 모두 남긴다."""
+    """긴 로그에서 시작, 마지막 출력과 중간의 근본 예외를 함께 남긴다."""
 
     if len(logs) <= limit:
         return logs
-    half = max(1, (limit - len("\n... omitted ...\n")) // 2)
-    return logs[:half] + "\n... omitted ...\n" + logs[-half:]
+    omitted = "\n... omitted ...\n"
+    anchors = ("\nCaused by:", " with root cause", "Exception:", "\nERROR ")
+    anchor = max(logs.rfind(marker) for marker in anchors)
+    if anchor < 0:
+        half = max(1, (limit - len(omitted)) // 2)
+        return (logs[:half] + omitted + logs[-half:])[:limit]
+
+    available = limit - (2 * len(omitted))
+    if available < 3:
+        return logs[:limit]
+    edge_size = max(1, available // 4)
+    middle_size = available - (2 * edge_size)
+    middle_start = max(edge_size, anchor - (middle_size // 4))
+    middle_end = min(len(logs) - edge_size, middle_start + middle_size)
+    middle_start = max(edge_size, middle_end - middle_size)
+    if middle_start <= edge_size or middle_end >= len(logs) - edge_size:
+        half = max(1, (limit - len(omitted)) // 2)
+        return (logs[:half] + omitted + logs[-half:])[:limit]
+    return (
+        logs[:edge_size]
+        + omitted
+        + logs[middle_start:middle_end]
+        + omitted
+        + logs[-edge_size:]
+    )[:limit]
 
 
-def application_log_excerpt(runtime: Mapping[str, Any], *, limit: int = 6000) -> str:
-    """현재 Testing이 만든 실행 중인 앱의 제한된 로그만 읽는다.
+def application_log(runtime: Mapping[str, Any]) -> str:
+    """현재 Testing이 소유한 실행 중인 앱의 전체 로그를 읽는다.
 
     외부 ``target_url``이나 보고서에서 온 임의 container 이름으로 Docker 로그를
     읽으면 다른 실행의 정보를 유출할 수 있다. 이 프로세스의
@@ -123,7 +145,13 @@ def application_log_excerpt(runtime: Mapping[str, Any], *, limit: int = 6000) ->
         return ""
     if name not in _ACTIVE_TESTING_CONTAINERS:
         return ""
-    return _log_excerpt(_container_logs(name), limit=limit)
+    return _container_logs(name)
+
+
+def application_log_excerpt(runtime: Mapping[str, Any], *, limit: int = 6000) -> str:
+    """전체 원문을 보존한 상태에서 표시용 미리보기만 제한한다."""
+
+    return _log_excerpt(application_log(runtime), limit=limit)
 
 
 def _build_failure_defect_class(output: str) -> str:
@@ -175,17 +203,18 @@ def _wait_until_ready(name: str, url: str, timeout: int) -> None:
                 "생성된 애플리케이션이 요청을 받기 전에 종료됐습니다:\n"
                 f"{excerpt}",
                 defect_class=_build_failure_defect_class(logs),
-                log_excerpt=excerpt,
+                application_log=logs,
             )
         time.sleep(2)
-    excerpt = _log_excerpt(_container_logs(name))
+    logs = _container_logs(name)
+    excerpt = _log_excerpt(logs)
     raise ApplicationLaunchError(
         f"생성된 애플리케이션이 {timeout}초 안에 {url}에 응답하지 않았습니다:\n"
         f"{excerpt}",
         # 준비 시간 초과만으로 source 결함을 확정할 수 없다. 첫 Gradle 실행이나 Windows
         # bind mount가 느린 경우 코드를 고쳐도 달라지지 않으므로 환경 문제로 재실행한다.
         defect_class="ENVIRONMENT_DEFECT",
-        log_excerpt=excerpt,
+        application_log=logs,
     )
 
 
@@ -216,10 +245,12 @@ def running_application(
     _docker(["rm", "-f", name], timeout=60)
     created_network = _docker(["network", "create", network], timeout=60)
     if created_network.returncode != 0:
+        output = created_network.stderr or created_network.stdout or ""
         raise ApplicationLaunchError(
             "Testing용 Docker network를 만들지 못했습니다:\n"
-            + (created_network.stderr or created_network.stdout or "")[-2000:],
+            + _log_excerpt(output, limit=2000),
             defect_class="ENVIRONMENT_DEFECT",
+            application_log=output,
         )
     started = _docker(
         [
@@ -270,10 +301,12 @@ def running_application(
     )
     if started.returncode != 0:
         _docker(["network", "rm", network], timeout=120)
+        output = started.stderr or started.stdout or ""
         raise ApplicationLaunchError(
             "공용 툴체인에서 생성된 애플리케이션을 시작하지 못했습니다:\n"
-            + (started.stderr or started.stdout or "")[-2000:],
+            + _log_excerpt(output, limit=2000),
             defect_class="ENVIRONMENT_DEFECT",
+            application_log=output,
         )
 
     base_url = f"http://localhost:{host_port}"

@@ -10,6 +10,60 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from app.artifact_trace import ArtifactTrace, TraceNode, TraceRef
+from app.validation import stable_digest
+
+_OPENAPI_TRACE_ONLY_FIELDS = frozenset({"x-easydep-scenario-step-refs"})
+
+
+def same_implementation_contracts(
+    source: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> bool:
+    """복제 ID와 Testing 전용 trace 확장을 제외한 구현 계약을 비교한다."""
+
+    if set(source) != set(candidate):
+        return False
+    return all(
+        _same_implementation_contract(source[name], candidate[name], name=name)
+        for name in source
+    )
+
+
+def _same_implementation_contract(source: Any, candidate: Any, *, name: str) -> bool:
+    if isinstance(source, Mapping) and isinstance(candidate, Mapping):
+        source_digest = source.get("digest")
+        candidate_digest = candidate.get("digest")
+        # MySQL JSON can round-trip catalog floats at a slightly different binary
+        # precision. The stored content digest remains the canonical identity.
+        if source_digest and source_digest == candidate_digest:
+            return True
+    return stable_digest(_implementation_contract_value(source, name=name)) == stable_digest(
+        _implementation_contract_value(candidate, name=name)
+    )
+
+
+def _implementation_contract_value(value: Any, *, name: str) -> tuple[str, Any]:
+    if not isinstance(value, Mapping):
+        return "raw", value
+    contract = value
+    if "content" in contract:
+        content = contract.get("content")
+        if name == "openapi":
+            content = _without_openapi_trace_fields(content)
+        return "content", content
+    return "digest", contract.get("digest")
+
+
+def _without_openapi_trace_fields(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            key: _without_openapi_trace_fields(item)
+            for key, item in value.items()
+            if key not in _OPENAPI_TRACE_ONLY_FIELDS
+        }
+    if isinstance(value, list):
+        return [_without_openapi_trace_fields(item) for item in value]
+    return value
 
 
 def projection_state_from_testing_contracts(

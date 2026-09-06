@@ -147,7 +147,38 @@ def prepare_agent_workspace(
         target.parent.mkdir(parents=True, exist_ok=True)
         if os.name == "nt" and len(str(target.resolve())) > 240:
             raise ValueError(f"Agent write path exceeds safe Windows path budget: {target}")
+    _copy_read_sources(run_root, sandbox, task)
     return sandbox
+
+
+def _copy_read_sources(
+    run_root: Path,
+    sandbox: Path,
+    task: dict[str, object],
+) -> None:
+    """Copy explicitly named read-only evidence that lives outside application source."""
+
+    context_file = task.get("context_file")
+    if not isinstance(context_file, str):
+        return
+    context_path = (run_root / context_file).resolve()
+    run_root = run_root.resolve()
+    if run_root not in context_path.parents or not context_path.is_file():
+        return
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    for value in context.get("readSourcePaths") or []:
+        if not isinstance(value, str):
+            continue
+        source = (run_root / value).resolve()
+        target = (sandbox / value).resolve()
+        if (
+            run_root not in source.parents
+            or sandbox.resolve() not in target.parents
+            or not source.is_file()
+        ):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
 
 
 def _refresh_agent_workspace(

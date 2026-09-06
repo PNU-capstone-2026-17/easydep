@@ -19,6 +19,7 @@ from app.artifact_trace import TraceRef
 from app.artifact_trace_projection import (
     project_artifact_trace,
     projection_state_from_testing_contracts,
+    same_implementation_contracts,
 )
 from app.db.models import TYPE_IAC_CODE, TYPE_SOURCE_CODE
 from app.implementation.application.jobs import JobNotFound
@@ -128,9 +129,11 @@ def _trace_hints(
     source_contracts = (
         metadata.get("testing_contracts") if isinstance(metadata, dict) else None
     )
-    # 새 snapshot에는 구현 시점 계약도 저장한다. 둘이 다르면 같은 파일 버전이라도
-    # Testing 결과를 그 구현 trace에 붙일 근거가 없으므로 수리 범위를 제시하지 않는다.
-    if isinstance(source_contracts, dict) and source_contracts != frozen_contracts:
+    # 체크포인트 복제 ID와 Testing 전용 OpenAPI trace 확장은 실행 의미를 바꾸지 않는다.
+    # 그 외 계약 내용이 다르면 구현 trace에 붙일 근거가 없으므로 범위를 제시하지 않는다.
+    if isinstance(source_contracts, dict) and not same_implementation_contracts(
+        source_contracts, frozen_contracts
+    ):
         return [], []
 
     trace = project_artifact_trace(
@@ -150,18 +153,37 @@ def _trace_hints(
         related.update(
             item.format()
             for item in trace.upstream(ref)
-            if item.kind in {"requirement", "use_case", "class", "operation", "api", "task"}
+            if item.kind in {"requirement", "use_case", "class", "operation", "api"}
         )
         # UC처럼 넓은 중간 노드를 경유하면 sibling API와 모든 테스트까지 퍼질 수 있다.
-        # 따라서 실패 API를 ``sourceRefs``로 직접 든 task와 그 파일만 수리 힌트로 쓴다.
+        # 따라서 실패 API를 ``sourceRefs``로 직접 든 task와 그 운영 파일만 수리 힌트로
+        # 쓴다. 이 HTTP gate는 backend를 직접 호출하므로 frontend와 테스트 자체는 실패한
+        # 제품 구현의 수정 후보가 아니다.
         for task in trace.consumers(ref):
             if task.kind != "task":
                 continue
+            task_files = {
+                item.id
+                for item in trace.consumers(task)
+                if item.kind == "file" and _is_dynamic_runtime_source(item.id)
+            }
+            if not task_files:
+                continue
             related.add(task.format())
-            files.update(
-                item.id for item in trace.consumers(task) if item.kind == "file"
-            )
+            files.update(task_files)
     return sorted(files), sorted(related)
+
+
+def _is_dynamic_runtime_source(value: str) -> bool:
+    """backend HTTP 실행에 실제로 들어가는 운영 파일만 남긴다."""
+
+    path = value.replace("\\", "/").strip("/")
+    return (
+        path.startswith("application/")
+        and not path.startswith("application/frontend/")
+        and not path.startswith("application/deployment/")
+        and "/src/test/" not in f"/{path}"
+    )
 
 
 def _text_issues(report: dict[str, Any]) -> list[str]:
@@ -774,17 +796,24 @@ def run_testing(
                 previous_contracts = fixed_previous_input.contract_artifacts.model_dump(
                     mode="json", exclude_none=True
                 )
+                current_contracts = testing_input.contract_artifacts.model_dump(
+                    mode="json", exclude_none=True
+                )
                 if (
                     not same_implementation
                     and previous_contracts
-                    and fixed_previous_input.contract_artifacts != testing_input.contract_artifacts
+                    and not same_implementation_contracts(
+                        previous_contracts, current_contracts
+                    )
                 ):
                     raise ValueError(
                         "An implementation repair must preserve requirements and design contracts."
                     )
                 if (
                     preserve_test
-                    and fixed_previous_input.contract_artifacts != testing_input.contract_artifacts
+                    and not same_implementation_contracts(
+                        previous_contracts, current_contracts
+                    )
                 ):
                     raise ValueError(
                         "Preserved tests require the same requirements and design contracts."

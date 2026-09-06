@@ -692,6 +692,21 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     )
                 }
             try:
+                if task_type.startswith("testing-") and not changed:
+                    raise WorkspaceVerificationError(
+                        {
+                            "command": ["testing-repair-source-change"],
+                            "exitCode": 1,
+                            "durationMs": 0,
+                            "stdout": "",
+                            "stderr": (
+                                "Testing repair made no source change. Inspect the preserved "
+                                "failure evidence, edit at least one allowed implementation "
+                                "file, and then run the focused check."
+                            ),
+                            "testResults": "",
+                        }
+                    )
                 # EasyDep은 source를 정규식으로 고치지 않는다. OpenHands가 현재 파일과
                 # compiler/test 결과를 보고 수정하며, 공개 계약은 최종 conformance 검사에서
                 # 별도로 보호한다. 실제 HTTP 흐름 검사는 wiring 작업의 FlowTest에 포함된다.
