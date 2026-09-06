@@ -23,6 +23,7 @@ from contextvars import ContextVar, copy_context
 from datetime import UTC, datetime
 from functools import lru_cache, wraps
 from time import perf_counter
+from types import SimpleNamespace
 from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -376,18 +377,44 @@ def stream_structured_response(
         fallback_temperature=settings.temperature,
         fallback_max_tokens=settings.llm_max_completion_tokens or 16384,
     )
+    use_stream = not (
+        connection.provider == "cloudflare"
+        and settings.cloudflare_structured_transport != "stream"
+    )
+    use_response_format = not (
+        connection.provider == "cloudflare"
+        and settings.cloudflare_structured_transport != "stream"
+    )
+    request_messages = messages
+    if not use_response_format:
+        # Cloudflare documents JSON Mode as non-streaming and its GPT-OSS route
+        # can reject a strict response_format outright. Keep the exact schema
+        # contract by placing it in the prompt and validate the completed
+        # response locally below.
+        schema_text = json.dumps(strict_json_schema(schema), ensure_ascii=False)
+        request_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Return exactly one JSON object and no Markdown. It must conform "
+                    "to this JSON Schema:\n" + schema_text
+                ),
+            },
+            *messages,
+        ]
     request: dict[str, Any] = {
         "model": connection.model,
-        "messages": messages,
+        "messages": request_messages,
         "temperature": profile.temperature,
         "seed": settings.seed,
-        "stream": True,
-        # OpenAI 호환 stream의 마지막 chunk에서 provider가 보고한 사용량을 받는다.
-        # 이 값은 로컬 추정치가 아닌 정확한
-        # LangSmith token/cost totals rather than a local estimate.
-        "stream_options": {"include_usage": True},
-        "response_format": _response_format(schema),
+        "stream": use_stream,
     }
+    if use_response_format:
+        request["response_format"] = _response_format(schema)
+    if use_stream:
+        # OpenAI 호환 stream의 마지막 chunk에서 provider가 보고한 사용량을 받는다.
+        # 이 값은 로컬 추정치가 아닌 정확한 token/cost total이다.
+        request["stream_options"] = {"include_usage": True}
     requested_completion_limit = (
         max_completion_tokens
         if max_completion_tokens is not None
@@ -412,11 +439,33 @@ def stream_structured_response(
         reasoningBudget=profile.reported_reasoning_budget(connection.provider),
         maxCompletionTokens=completion_limit,
     )
-    stream = client.chat.completions.create(
-        **request,
+    response_or_stream = client.chat.completions.create(**request)
+    observation["transport"] = (
+        "structuredStream" if use_stream else "structuredNonStream"
     )
-    observation["transport"] = "structuredStream"
     observation["responseEstablishedSeconds"] = round(perf_counter() - started, 6)
+    if use_stream:
+        stream = response_or_stream
+    else:
+        # Keep the parsing and telemetry path identical by adapting a completed
+        # Chat Completion to one synthetic chunk. This is required for
+        # Cloudflare JSON Mode, which does not support streaming.
+        response = response_or_stream
+        choices = []
+        for response_choice in getattr(response, "choices", []) or []:
+            message = getattr(response_choice, "message", None)
+            choices.append(
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=getattr(message, "content", "") or "",
+                        reasoning_content=(
+                            getattr(message, "reasoning_content", "") or ""
+                        ),
+                    ),
+                    finish_reason=getattr(response_choice, "finish_reason", None),
+                )
+            )
+        stream = [SimpleNamespace(choices=choices, usage=getattr(response, "usage", None))]
     for chunk in stream:
         _observe_stream_usage(observation, getattr(chunk, "usage", None))
         now = perf_counter()

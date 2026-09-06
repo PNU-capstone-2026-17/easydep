@@ -338,6 +338,50 @@ def test_streaming_structured_output_records_progress_and_validates_schema(monke
     assert observation["reasoningContent"] == "thinking"
 
 
+def test_cloudflare_structured_json_uses_complete_response_transport(monkeypatch):
+    class Result(BaseModel):
+        answer: str
+
+    captured: dict[str, Any] = {}
+
+    class Completions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content='{"answer":"ok"}', reasoning_content=""
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2, total_tokens=5),
+            )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    monkeypatch.setattr(
+        structured,
+        "build_llm_connection",
+        lambda: SimpleNamespace(provider="cloudflare", model="openai/gpt-oss-120b"),
+    )
+    observation: dict[str, Any] = {}
+
+    parsed = stream_structured_response(
+        client, [{"role": "user", "content": "x"}], Result, observation
+    )
+
+    assert parsed.answer == "ok"
+    assert captured["stream"] is False
+    assert "stream_options" not in captured
+    assert "response_format" not in captured
+    assert "JSON Schema" in captured["messages"][0]["content"]
+    assert observation["transport"] == "structuredNonStream"
+    assert observation["finishReasons"] == ["stop"]
+    assert observation["inputTokens"] == 3
+    assert observation["outputTokens"] == 2
+
+
 def test_streaming_whitespace_abort_uses_existing_schema_repair(monkeypatch):
     class Result(BaseModel):
         answer: str
