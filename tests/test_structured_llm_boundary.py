@@ -189,6 +189,93 @@ def test_non_validation_failure_is_not_retried(monkeypatch):
     assert calls == 1
 
 
+def test_incomplete_stream_retries_the_original_request_without_schema_repair():
+    class Result(BaseModel):
+        answer: str
+
+    requests: list[list[dict[str, str]]] = []
+
+    class Completions:
+        def create(self, **kwargs):
+            requests.append(kwargs["messages"])
+            if len(requests) < 3:
+                return [SimpleNamespace(choices=[], usage=None)]
+            return [
+                SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(
+                                content='{"answer":"ok"}', reasoning_content=""
+                            ),
+                            finish_reason="stop",
+                        )
+                    ],
+                    usage=None,
+                )
+            ]
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+    messages = [{"role": "user", "content": "generate"}]
+
+    with capture_llm_timings() as events:
+        parsed = parse_with_schema_repair(
+            client,
+            messages,
+            Result,
+            operation="InteractionCombinedUnit",
+        )
+
+    assert parsed.answer == "ok"
+    assert requests == [messages, messages, messages]
+    assert [event["operation"] for event in events] == [
+        "InteractionCombinedUnit",
+        "InteractionCombinedUnit:stream-retry-1",
+        "InteractionCombinedUnit:stream-retry-2",
+    ]
+    assert [event["failureCategory"] for event in events[:2]] == [
+        "incomplete_stream",
+        "incomplete_stream",
+    ]
+    assert all(
+        event["streamIncompleteReason"] == "missingFinishReason"
+        for event in events[:2]
+    )
+    assert events[2]["physicalRequestIndex"] == 3
+    assert events[2]["handoff"] == "incomplete-stream-retry"
+
+
+def test_incomplete_stream_exhaustion_does_not_send_schema_repair():
+    class Result(BaseModel):
+        answer: str
+
+    calls = 0
+
+    class Completions:
+        def create(self, **_kwargs):
+            nonlocal calls
+            calls += 1
+            return [SimpleNamespace(choices=[], usage=None)]
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+
+    with pytest.raises(
+        StructuredLlmError,
+        match="InteractionCombinedUnit:stream-retry-2: Structured stream ended",
+    ):
+        parse_with_schema_repair(
+            client,
+            [{"role": "user", "content": "generate"}],
+            Result,
+            operation="InteractionCombinedUnit",
+        )
+
+    assert calls == 3
+
+
 def test_structured_llm_error_names_the_output_schema():
     def fail():
         raise TimeoutError("Request timed out.")

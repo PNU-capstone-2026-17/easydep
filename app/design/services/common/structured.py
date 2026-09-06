@@ -48,6 +48,10 @@ class _SchemaValidationFailure(Exception):
         self.parsed_input = parsed_input
 
 
+class _IncompleteStructuredStream(Exception):
+    """The provider closed a structured stream without a completion signal."""
+
+
 def _failure_category(error: BaseException) -> str:
     """Classify transport failures without mistaking sandbox/network causes for 429s."""
 
@@ -59,6 +63,8 @@ def _failure_category(error: BaseException) -> str:
         return "timeout"
     if "connection" in name or "connection" in text or "dns" in text:
         return "connection"
+    if isinstance(error, _IncompleteStructuredStream):
+        return "incomplete_stream"
     if isinstance(error, (ValidationError, _SchemaValidationFailure)):
         return "schema_validation"
     return "provider_or_runtime"
@@ -298,6 +304,7 @@ def _reasoning_effort(reasoning_effort: str | None) -> str | None:
 
 
 STRUCTURED_STREAM_WHITESPACE_LIMIT = 16_384
+INCOMPLETE_STRUCTURED_STREAM_RETRIES = 2
 
 
 def _json_whitespace_cutoff(
@@ -516,6 +523,12 @@ def stream_structured_response(
             responseContent=content_text,
             reasoningContent=reasoning_text,
         )
+    if not finish_reasons and not whitespace_limit_reached:
+        observation["streamIncompleteReason"] = "missingFinishReason"
+        _record_failure_content(observation, content_text)
+        raise _IncompleteStructuredStream(
+            "Structured stream ended without a finish reason."
+        )
     try:
         parsed_input = json.loads(content_text)
     except json.JSONDecodeError:
@@ -674,10 +687,10 @@ def parse_with_schema_repair(
     operation: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> BaseModel:
-    """선언된 추론 강도를 유지하며 로컬 스키마 검증을 한 번만 재시도한다.
+    """Retry incomplete streams, then repair one locally invalid response.
 
-    repair는 원 호출의 추론 강도를 상속한다. 호출자가 명시적으로 다른 repair 강도를
-    지정할 수 있지만 암묵적으로 상향하지 않는다.
+    Transport retries repeat the original request. Schema repair inherits the original
+    reasoning effort unless the caller explicitly supplies a different repair effort.
     """
     operation_name = operation or schema.__name__
     semantic_repair = operation_name.casefold().endswith("repair")
@@ -717,27 +730,67 @@ def parse_with_schema_repair(
             operation=operation_name,
             observation=observation,
         )
-    except StructuredLlmError as error:
-        cause = error.__cause__
-        parsed_input: Any | None = None
-        if isinstance(cause, _SchemaValidationFailure):
-            validation_error = cause.error
-            parsed_input = cause.parsed_input
-        elif isinstance(cause, ValidationError):
-            validation_error = cause
-        else:
-            raise
-        validation_errors = [
-            dict(item)
-            for item in validation_error.errors(
-                include_url=False,
-                include_input=False,
-                # Pydantic keeps the original exception object in ``ctx.error``
-                # for value errors. Repair prompts are JSON, so retaining that
-                # object masks the validation failure with a serialization error.
-                include_context=False,
+    except StructuredLlmError as first_error:
+        error = first_error
+
+    physical_request_index = 1
+    for retry_attempt in range(1, INCOMPLETE_STRUCTURED_STREAM_RETRIES + 1):
+        if not isinstance(error.__cause__, _IncompleteStructuredStream):
+            break
+        physical_request_index += 1
+        retry_observation: dict[str, Any] = {
+            "schemaRepairAttempt": 0,
+            "taskKind": operation_name,
+            "logicalRequest": operation_name,
+            "logicalRequestDigest": logical_request_digest,
+            "physicalRequest": True,
+            "physicalRequestIndex": physical_request_index,
+            "repairKind": "transport",
+            "handoff": "incomplete-stream-retry",
+            "streamRetryAttempt": retry_attempt,
+            **dict(metadata or {}),
+            **_request_digests(messages, schema),
+        }
+        try:
+            return run_with_wall_timeout(
+                lambda: stream_structured_response(
+                    client,
+                    messages,
+                    schema,
+                    retry_observation,
+                    reasoning_effort=reasoning_effort,
+                    **(
+                        {"max_completion_tokens": max_completion_tokens}
+                        if max_completion_tokens is not None
+                        else {}
+                    ),
+                ),
+                operation=f"{operation_name}:stream-retry-{retry_attempt}",
+                observation=retry_observation,
             )
-        ]
+        except StructuredLlmError as retry_error:
+            error = retry_error
+
+    cause = error.__cause__
+    parsed_input: Any | None = None
+    if isinstance(cause, _SchemaValidationFailure):
+        validation_error = cause.error
+        parsed_input = cause.parsed_input
+    elif isinstance(cause, ValidationError):
+        validation_error = cause
+    else:
+        raise error
+    validation_errors = [
+        dict(item)
+        for item in validation_error.errors(
+            include_url=False,
+            include_input=False,
+            # Pydantic keeps the original exception object in ``ctx.error``
+            # for value errors. Repair prompts are JSON, so retaining that
+            # object masks the validation failure with a serialization error.
+            include_context=False,
+        )
+    ]
 
     repair_payload = schema_repair_payload(validation_errors, parsed_input)
     repair_messages = [
@@ -758,7 +811,7 @@ def parse_with_schema_repair(
         "logicalRequest": operation_name,
         "logicalRequestDigest": logical_request_digest,
         "physicalRequest": True,
-        "physicalRequestIndex": 2,
+        "physicalRequestIndex": physical_request_index + 1,
         "repairKind": "schema",
         "handoff": "schema-repair",
         **dict(metadata or {}),
