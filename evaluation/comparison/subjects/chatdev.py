@@ -28,11 +28,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="실제 ChatDev 비교 arm 실행")
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--prompt-file", type=Path, required=True)
+    parser.add_argument("--incremental-source", type=Path)
+    parser.add_argument("--requirements-file", type=Path)
     args = parser.parse_args(argv)
     run_dir = args.run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = args.prompt_file.resolve()
-    baseline_home = Path(os.environ.get("EASYDEP_CHATDEV_HOME", "")).resolve()
+    configured_home = os.environ.get("EASYDEP_CHATDEV_HOME")
+    baseline_home = Path(
+        configured_home
+        or (Path(os.environ.get("LOCALAPPDATA", "")) / "EasyDep" / "comparison" / "chatdev")
+    ).resolve()
     python = baseline_home / "Scripts" / "python.exe"
     source = baseline_home / "source"
     run_script = source / "run.py"
@@ -70,8 +76,15 @@ def main(argv: list[str] | None = None) -> int:
         "--org",
         organization,
         "--config",
-        "Default",
+        "Incremental" if args.incremental_source else "Default",
     ]
+    if args.incremental_source:
+        incremental_source = args.incremental_source.resolve()
+        if not incremental_source.is_dir():
+            raise FileNotFoundError(f"증분 수정 원본이 없습니다: {incremental_source}")
+        command.extend(["--path", str(incremental_source)])
+    else:
+        incremental_source = None
     process = subprocess.run(
         command,
         cwd=source,
@@ -93,20 +106,28 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(generated)
     else:
         workspace.mkdir(parents=True, exist_ok=True)
+    usage_text = combined
     if generated is not None:
+        native_logs = []
         for framework_log in workspace.rglob("*.log"):
             try:
                 if framework_log.stat().st_size <= 10 * 1024 * 1024:
-                    combined += "\n" + framework_log.read_text(
-                        encoding="utf-8", errors="replace"
-                    )
+                    native_logs.append(framework_log)
             except OSError:
                 continue
+        if native_logs:
+            newest_native_log = max(native_logs, key=lambda path: path.stat().st_mtime_ns)
+            usage_text = newest_native_log.read_text(encoding="utf-8", errors="replace")
+            combined += "\n" + usage_text
         (run_dir / "framework.log").write_text(combined, encoding="utf-8")
     artifact_path, requirement_path, _ = write_evidence_files(
-        workspace, run_dir, requirement_ids(prompt_file)
+        workspace,
+        run_dir,
+        requirement_ids(
+            args.requirements_file.resolve() if args.requirements_file else prompt_file
+        ),
     )
-    usage = parse_chatdev_usage(combined)
+    usage = parse_chatdev_usage(usage_text)
     write_subject_result(
         run_dir / "subject-result.json",
         framework="ChatDev",
@@ -124,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
         metadata={
             "projectName": project_name,
             "promptSha256": prompt_sha256(prompt_file),
+            "revisionMode": "incremental" if incremental_source else "initial",
+            "incrementalSource": str(incremental_source) if incremental_source else None,
             "model": model,
             "llmBaseUrl": base_url,
         },

@@ -110,6 +110,28 @@ TERMINAL_JOB_STATUSES = {
 # Workspace event에서도 같은 실행의 원문을 확인할 수 있다.
 _PRIVATE_DESIGN_TIMING_FIELDS = frozenset({"failureContentPrefix", "failureContentSuffix"})
 _REPEATED_REPAIR_OUTCOME = "repeated_candidate"
+_NUMBERED_REQUIREMENT_LINE = re.compile(
+    r"^\s*[-*]\s*\[REQ[-_ ]?\d+\]\s*(?P<text>.+?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _initial_requirement_lines(text: str) -> list[str]:
+    """Extract explicitly numbered requirements from a structured task brief.
+
+    A pasted benchmark brief often has an introduction, section headings, and a
+    separate cloud-constraint section alongside ``[REQ-01]`` items. Only the
+    numbered requirement items belong in the requirements-modeling input; the
+    cloud text is supplied through ``resource_constraints_text``. For ordinary
+    free-form input, retain the existing non-empty-line behavior.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    numbered = [
+        match.group("text").strip()
+        for line in lines
+        if (match := _NUMBERED_REQUIREMENT_LINE.match(line))
+    ]
+    return numbered or lines
 
 
 def _public_design_timing_event(event: Mapping[str, Any]) -> dict[str, Any]:
@@ -1866,7 +1888,7 @@ class WorkspaceService:
             else:
                 provider = cast(CloudProvider, str(payload.get("provider") or ""))
                 region = str(payload.get("region") or "")
-                lines = [line.strip() for line in text.splitlines() if line.strip()]
+                lines = _initial_requirement_lines(text)
                 cloud_constraints = (
                     InitialCloudConstraints(
                         provider=provider,

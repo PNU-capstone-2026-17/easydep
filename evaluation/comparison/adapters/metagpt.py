@@ -12,6 +12,68 @@ from .common import load_artifact_evidence, load_evidence, write_subject_result
 
 PROMPT = re.compile(r"\bprompt_tokens\s*[:=]\s*(\d+)", re.IGNORECASE)
 COMPLETION = re.compile(r"\bcompletion_tokens\s*[:=]\s*(\d+)", re.IGNORECASE)
+USAGE_EVENT_SCHEMA = "easydep-metagpt-provider-usage-event/v1"
+
+
+def parse_metagpt_usage_events(text: str) -> dict[str, int | str | None]:
+    """Aggregate the structured events written before MetaGPT price lookup."""
+
+    events: dict[str, tuple[int, int]] = {}
+    invalid_rows = 0
+    duplicate_rows = 0
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+            if not isinstance(item, dict) or item.get("schemaVersion") != USAGE_EVENT_SCHEMA:
+                raise ValueError("unexpected schema")
+            event_id = item.get("eventId")
+            prompt = item.get("promptTokens")
+            completion = item.get("completionTokens")
+            if (
+                not isinstance(event_id, str)
+                or not event_id
+                or not isinstance(prompt, int)
+                or isinstance(prompt, bool)
+                or prompt < 0
+                or not isinstance(completion, int)
+                or isinstance(completion, bool)
+                or completion < 0
+            ):
+                raise ValueError("invalid usage event")
+        except (json.JSONDecodeError, ValueError, TypeError):
+            invalid_rows += 1
+            continue
+        if event_id in events:
+            duplicate_rows += 1
+            continue
+        events[event_id] = (prompt, completion)
+
+    if not events:
+        return {
+            "inputTokens": None,
+            "outputTokens": None,
+            "totalTokens": None,
+            "llmCalls": None,
+            "missingUsageCalls": invalid_rows,
+            "invalidUsageRows": invalid_rows,
+            "duplicateUsageRows": duplicate_rows,
+            "source": "not-reported",
+        }
+    input_tokens = sum(item[0] for item in events.values())
+    output_tokens = sum(item[1] for item in events.values())
+    return {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": input_tokens + output_tokens,
+        "llmCalls": len(events),
+        "missingUsageCalls": invalid_rows,
+        "invalidUsageRows": invalid_rows,
+        "duplicateUsageRows": duplicate_rows,
+        "source": "metagpt-structured-provider-usage",
+    }
 
 
 def parse_metagpt_log(text: str) -> dict[str, int | str | None]:

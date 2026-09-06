@@ -10,10 +10,17 @@
 .\scripts\run-comparison.ps1
 ```
 
-LLM 비밀키는 설치 폴더에 저장하지 않습니다. 실행 전에 저장소 `.env`의 `API_KEY`,
-`BASE_URL`, `MODEL`을 채우거나 `COMPARISON_API_KEY`, `COMPARISON_BASE_URL`,
-`COMPARISON_MODEL` 환경변수를 설정합니다. 최초 실행에는 Python 설치, PyPI 패키지 설치,
+LLM 비밀키는 설치 폴더에 저장하지 않습니다. 저장소 루트 `.env`에
+`API_KEY`, `BASE_URL`, `MODEL`을 채우거나
+`COMPARISON_API_KEY`, `COMPARISON_BASE_URL`, `COMPARISON_MODEL` 환경변수를 설정합니다.
+프로세스 환경변수가 `.env`보다 우선합니다. 최초 실행에는 Python 설치, PyPI 패키지 설치,
 ChatDev 소스 clone 때문에 네트워크가 필요하며 Docker Desktop도 실행 중이어야 합니다.
+
+`.env`에 `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
+`CLOUDFLARE_AI_GATEWAY_ID`가 모두 있고 별도 `COMPARISON_API_KEY`가 없으면 비교 실행은
+공통 `BASE_URL`보다 Cloudflare AI Gateway 경로를 우선합니다. 기본 비교 모델은
+`workers-ai/@cf/openai/gpt-oss-120b`이며 필요할 때만
+`CLOUDFLARE_COMPARISON_MODEL`로 명시적으로 바꿉니다.
 
 환경만 먼저 준비하려면 `-SetupOnly`, 이미 설치된 환경을 재사용하려면 `-SkipSetup`,
 특정 사례만 실행하려면 `-Case iot-monitoring-aws`를 사용합니다. 기본 suite는
@@ -414,7 +421,7 @@ ChatDev 실행 로그 변환:
   --output C:/temp/run/subject-result.json
 ```
 
-MetaGPT는 실행 종료 시 저장한 CostManager JSON을 우선 사용합니다.
+독립 어댑터에 실행 종료 시 저장한 CostManager JSON이 제공되면 이를 우선 사용합니다.
 
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 -m evaluation.comparison.adapters.metagpt `
@@ -428,6 +435,21 @@ MetaGPT는 실행 종료 시 저장한 CostManager JSON을 우선 사용합니�
 CostManager JSON을 저장할 수 없는 실행은 `--log`로 대체할 수 있습니다. 어댑터는
 `prompt_tokens`와 `completion_tokens`를 합산합니다. 프레임워크 내부의 오래된 가격표로
 계산한 비용은 수집하지 않습니다.
+
+`evaluation.comparison.subjects.metagpt` CLI 실행 래퍼는 자식 프로세스 시작 시 사용량
+계측 hook을 주입합니다. 이 hook은 MetaGPT의 단가표 조회 전에 각 사용량 객체의 입력·출력
+토큰과 모델 식별자를 `metagpt-provider-usage.jsonl`에 기록합니다. 프롬프트, 응답 본문,
+API 키는 기록하지 않습니다. 실행 결과의 `metadata.usageInstrumentation`에서 설치 상태,
+유효·비정상·중복 행 수와 구조화 수집 완결성을 확인할 수 있습니다. 과거 실행처럼 계측 이전
+사용량은 경고 수나 실행 시간으로 추정하지 않습니다.
+
+이 경로의 `llmCalls`는 ChatDev 로그 집계와 동일하게 **사용량 객체가 포함된 고유 제공자
+응답 수**를 뜻합니다. 사용량 객체를 받기 전에 실패한 네트워크 시도나 SDK 내부 재시도까지
+포함하는 전체 HTTP 요청 수는 아닙니다.
+
+MetaGPT 생성은 끝났더라도 hook 설치 상태, 유효 이벤트 존재, 비정상 행 0개, 중복 행 0개를
+모두 만족하지 않으면 실행 결과를 `completed`로 채택하지 않고 비교 실행을 실패 처리합니다.
+따라서 사용량 누락이 다시 발생해도 정상 완료로 조용히 통과하지 않습니다.
 
 EasyDep 공개 제품 실행 결과 변환:
 

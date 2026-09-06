@@ -844,6 +844,48 @@ def test_initial_workspace_request_can_start_before_cloud_selection(
     assert request.requirements == ["Students can register for a course."]
 
 
+def test_initial_workspace_request_extracts_numbered_items_from_structured_brief(
+    monkeypatch,
+) -> None:
+    captured = {}
+
+    def analyze(request):
+        captured["request"] = request
+        return {"status": "completed", "saved_stages": []}
+
+    monkeypatch.setattr(workspace_module, "analyze_requirements", analyze)
+    service = WorkspaceService()
+    try:
+        service._stage_message(
+            {
+                "command_id": "initial",
+                "app_id": "app-1",
+                "stage": "requirements",
+                "payload": {
+                    "text": (
+                        "Develop a course-registration application.\n\n"
+                        "Requirements:\n"
+                        "- [REQ-01] Students shall register for an offering.\n"
+                        "- [REQ-02] Students shall view their schedule.\n\n"
+                        "Cloud and deployment constraints:\n"
+                        "- [CLOUD-SOURCE] Use a fixed regional pilot environment."
+                    ),
+                    "resource_constraints_text": "Use a fixed regional pilot environment.",
+                },
+            },
+            advance=False,
+        )
+    finally:
+        service.shutdown()
+
+    request = captured["request"]
+    assert request.requirements == [
+        "Students shall register for an offering.",
+        "Students shall view their schedule.",
+    ]
+    assert request.resource_constraints_text == "Use a fixed regional pilot environment."
+
+
 def test_structured_deployment_preferences_resume_the_waiting_requirements_gate(
     monkeypatch,
 ) -> None:

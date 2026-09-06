@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -9,7 +11,11 @@ from threading import Thread
 import pytest
 
 from evaluation.comparison.adapters.chatdev import parse_chatdev_usage
-from evaluation.comparison.adapters.metagpt import parse_cost_manager, parse_metagpt_log
+from evaluation.comparison.adapters.metagpt import (
+    parse_cost_manager,
+    parse_metagpt_log,
+    parse_metagpt_usage_events,
+)
 from evaluation.comparison.collect import collect_artifacts
 from evaluation.comparison.evaluate import evaluate_run
 from evaluation.comparison.gates import (
@@ -30,6 +36,7 @@ from evaluation.comparison.subjects.artifacts import (
     collect_artifact_evidence,
     collect_requirement_evidence,
 )
+from evaluation.comparison.subjects.common import llm_settings
 from evaluation.comparison.suite import load_suite, materialize_manifests
 
 
@@ -94,6 +101,71 @@ def _subject_data(workspace: Path) -> dict[str, object]:
         },
         "metadata": {},
     }
+
+
+def test_llm_settings_loads_dotenv_without_overriding_process_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        "API_KEY=file-secret\n"
+        "BASE_URL=https://gateway.example.test/v1/account/gateway/compat\n"
+        "MODEL=workers-ai/@cf/openai/gpt-oss-120b\n",
+        encoding="utf-8",
+    )
+    for name in (
+        "COMPARISON_API_KEY",
+        "OPENAI_API_KEY",
+        "API_KEY",
+        "COMPARISON_BASE_URL",
+        "OPENAI_BASE_URL",
+        "BASE_URL",
+        "COMPARISON_MODEL",
+        "OPENAI_MODEL",
+        "MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert llm_settings(dotenv_path) == (
+        "file-secret",
+        "https://gateway.example.test/v1/account/gateway/compat",
+        "workers-ai/@cf/openai/gpt-oss-120b",
+    )
+
+    monkeypatch.setenv("COMPARISON_API_KEY", "process-secret")
+    monkeypatch.setenv("COMPARISON_MODEL", "process-model")
+    assert llm_settings(dotenv_path) == (
+        "process-secret",
+        "https://gateway.example.test/v1/account/gateway/compat",
+        "process-model",
+    )
+
+
+def test_llm_settings_prefers_complete_cloudflare_comparison_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        "API_KEY=nvidia-secret\n"
+        "BASE_URL=https://integrate.api.nvidia.com/v1\n"
+        "MODEL=openai/gpt-oss-120b\n"
+        "CLOUDFLARE_API_TOKEN=cloudflare-secret\n"
+        "CLOUDFLARE_ACCOUNT_ID=account-id\n"
+        "CLOUDFLARE_AI_GATEWAY_ID=gateway-id\n",
+        encoding="utf-8",
+    )
+    for name in (
+        "COMPARISON_API_KEY",
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_AI_GATEWAY_ID",
+        "CLOUDFLARE_COMPARISON_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert llm_settings(dotenv_path) == (
+        "cloudflare-secret",
+        "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/compat",
+        "workers-ai/@cf/openai/gpt-oss-120b",
+    )
 
 
 def test_evaluation_uses_explicit_numerator_and_denominator(tmp_path: Path) -> None:
@@ -213,6 +285,112 @@ def test_usage_parsers_keep_provider_token_counts() -> None:
     missing = parse_chatdev_usage("no provider usage in this log")
     assert missing["totalTokens"] is None
     assert missing["llmCalls"] is None
+
+
+def test_metagpt_structured_usage_is_price_table_independent_and_deduplicated() -> None:
+    usage = parse_metagpt_usage_events(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-metagpt-provider-usage-event/v1",
+                        "eventId": "42-1",
+                        "model": "workers-ai/@cf/openai/gpt-oss-120b",
+                        "promptTokens": 120,
+                        "completionTokens": 30,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-metagpt-provider-usage-event/v1",
+                        "eventId": "42-2",
+                        "model": "workers-ai/@cf/openai/gpt-oss-120b",
+                        "promptTokens": 80,
+                        "completionTokens": 20,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-metagpt-provider-usage-event/v1",
+                        "eventId": "42-2",
+                        "model": "workers-ai/@cf/openai/gpt-oss-120b",
+                        "promptTokens": 80,
+                        "completionTokens": 20,
+                    }
+                ),
+            ]
+        )
+    )
+    assert usage["inputTokens"] == 200
+    assert usage["outputTokens"] == 50
+    assert usage["totalTokens"] == 250
+    assert usage["llmCalls"] == 2
+    assert usage["duplicateUsageRows"] == 1
+    assert usage["source"] == "metagpt-structured-provider-usage"
+
+
+def test_metagpt_structured_usage_exposes_invalid_rows() -> None:
+    usage = parse_metagpt_usage_events(
+        '{"schemaVersion":"easydep-metagpt-provider-usage-event/v1",'
+        '"eventId":"1","promptTokens":10,"completionTokens":2}\nnot-json'
+    )
+    assert usage["totalTokens"] == 12
+    assert usage["llmCalls"] == 1
+    assert usage["missingUsageCalls"] == 1
+    assert usage["invalidUsageRows"] == 1
+
+
+def test_metagpt_startup_hook_records_usage_for_unknown_model(tmp_path: Path) -> None:
+    fake_packages = tmp_path / "fake-packages"
+    cost_manager = fake_packages / "metagpt" / "utils" / "cost_manager.py"
+    cost_manager.parent.mkdir(parents=True)
+    (fake_packages / "metagpt" / "__init__.py").write_text("", encoding="utf-8")
+    (fake_packages / "metagpt" / "utils" / "__init__.py").write_text(
+        "", encoding="utf-8"
+    )
+    cost_manager.write_text(
+        "class CostManager:\n"
+        "    def update_cost(self, prompt_tokens, completion_tokens, model):\n"
+        "        return None\n",
+        encoding="utf-8",
+    )
+    usage_path = tmp_path / "usage.jsonl"
+    status_path = tmp_path / "status.json"
+    hook_directory = (
+        Path(__file__).resolve().parents[1]
+        / "evaluation"
+        / "baselines"
+        / "metagpt_usage_hook"
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join([str(hook_directory), str(fake_packages)])
+    env["EASYDEP_METAGPT_USAGE_LOG"] = str(usage_path)
+    env["EASYDEP_METAGPT_USAGE_STATUS"] = str(status_path)
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "from metagpt.utils.cost_manager import CostManager; "
+            "CostManager().update_cost(321, 54, 'workers-ai/@cf/openai/gpt-oss-120b')",
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["status"] == "installed"
+    usage = parse_metagpt_usage_events(usage_path.read_text(encoding="utf-8"))
+    assert usage["inputTokens"] == 321
+    assert usage["outputTokens"] == 54
+    assert usage["totalTokens"] == 375
+    assert usage["llmCalls"] == 1
 
 
 class _OracleHandler(BaseHTTPRequestHandler):
