@@ -634,7 +634,9 @@ def normalize_operation_fragment(
         {
             **item,
             "fields": [
-                fields.normalize_java_field(f"{field['name']} : {field['type']}")
+                fields.normalize_java_field_candidate(
+                    f"{field['name']} : {field['type']}"
+                )
                 for field in item.get("fields") or []
             ],
         }
@@ -736,7 +738,9 @@ def _propose_fragment(
         {
             **item,
             "fields": [
-                fields.normalize_java_field(f"{field['name']} : {field['type']}")
+                fields.normalize_java_field_candidate(
+                    f"{field['name']} : {field['type']}"
+                )
                 for field in item.get("fields") or []
             ],
         }

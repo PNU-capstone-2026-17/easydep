@@ -8,6 +8,8 @@ from app.config import settings
 from app.design.services.class_diagram import collaboration, inventory, operations
 from app.design.services.class_diagram.proposals import InventoryProposal
 from app.design.services.class_diagram.scenario import build_scenario_index
+from app.design.services.class_diagram.validation.inventory import validate_inventory
+from app.design.services.erd.projection import project_logical_model
 from app.llm_schema import strict_json_schema
 from tests.class_design_fixtures import (
     call_plan,
@@ -204,4 +206,129 @@ def test_inventory_repair_continues_past_one_replacement(monkeypatch):
     assert {item["className"] for item in accepted.classes} == {
         "RequestBoundary",
         "RequestControl",
+    }
+
+
+def _entity_inventory_proposal(field_type: str) -> dict:
+    proposal = inventory_proposal()
+    proposal["items"].append({
+        "name": "RequestRecord",
+        "kind": "Entity",
+        "description": "Persistent request state",
+        "fields": [
+            {"name": "id", "type": "UUID"},
+            {"name": "value", "type": field_type},
+        ],
+        "identifier": ["id"],
+        "values": [],
+        "useCaseIds": ["UC1"],
+    })
+    return proposal
+
+
+def test_malformed_inventory_type_reaches_semantic_repair(monkeypatch):
+    malformed = _entity_inventory_proposal("array")
+    repaired = _entity_inventory_proposal("List<Operation>")
+    repaired["items"].append({
+        "name": "Operation",
+        "kind": "enumeration",
+        "description": "Supported operation",
+        "fields": [],
+        "identifier": [],
+        "values": ["ADD"],
+        "useCaseIds": [],
+    })
+    candidates = iter([malformed, repaired])
+    calls: list[list[dict[str, str]]] = []
+
+    def fake_parse(messages, schema, **_kwargs):
+        assert schema is InventoryProposal
+        calls.append(messages)
+        return next(candidates)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    accepted = inventory.inventory_proposal(
+        build_scenario_index(single_use_case())
+    )
+
+    assert len(calls) == 2
+    assert "unresolved field declaration" in calls[1][-1]["content"]
+    entity = next(item for item in accepted.classes if item["className"] == "RequestRecord")
+    assert entity["fields"] == ["id : UUID", "value : List<Operation>"]
+
+
+@pytest.mark.parametrize(
+    "field_type",
+    [
+        "Object",
+        "Optional<Object>",
+        "List<Object>",
+        "List<List<String>>",
+        "Optional<List<String>>",
+        "List<Optional<String>>",
+    ],
+)
+def test_inventory_rejects_entity_types_without_an_erd_projection(field_type):
+    proposal = InventoryProposal.model_validate(_entity_inventory_proposal(field_type))
+    candidate = inventory._normalize_inventory(proposal)
+
+    report = validate_inventory(
+        candidate,
+        build_scenario_index(single_use_case()),
+    )
+
+    assert any(
+        "cannot be projected to the relational model" in finding.message
+        for finding in report.findings
+    )
+
+
+def test_inventory_accepted_entity_types_close_over_erd_projection():
+    proposal = _entity_inventory_proposal("Optional<String>")
+    entity = proposal["items"][-1]
+    entity["fields"].extend([
+        {"name": "payload", "type": "byte[]"},
+        {"name": "tags", "type": "List<String>"},
+        {"name": "status", "type": "RequestStatus"},
+        {"name": "details", "type": "RequestDetails"},
+        {"name": "history", "type": "List<RequestStatus>"},
+    ])
+    proposal["items"].extend([
+        {
+            "name": "RequestStatus",
+            "kind": "enumeration",
+            "description": "Request state",
+            "fields": [],
+            "identifier": [],
+            "values": ["OPEN"],
+            "useCaseIds": [],
+        },
+        {
+            "name": "RequestDetails",
+            "kind": "valueObject",
+            "description": "Request details",
+            "fields": [{"name": "label", "type": "String"}],
+            "identifier": [],
+            "values": [],
+            "useCaseIds": [],
+        },
+    ])
+    candidate = inventory._normalize_inventory(
+        InventoryProposal.model_validate(proposal)
+    )
+    report = validate_inventory(candidate, build_scenario_index(single_use_case()))
+
+    assert not report.errors
+    assert not report.findings
+    model = inventory.inventory_model(
+        inventory.normalize_inventory(InventoryProposal.model_validate(proposal))
+    )
+    logical = project_logical_model(model)
+    root = next(table for table in logical["Tables"] if table["name"] == "RequestRecord")
+    columns = {column["name"]: column["type"] for column in root["columns"]}
+    assert columns["payload"] == "BLOB"
+    assert columns["status"] == "VARCHAR(255)"
+    assert columns["details"] == "JSON"
+    assert "RequestRecordPayload" not in {
+        table["name"] for table in logical["Tables"]
     }

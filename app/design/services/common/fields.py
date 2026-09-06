@@ -31,6 +31,7 @@ from app.design.contracts.type_system import (
     DesignTypeError,
     canonical_design_type,
     parse_type_expression,
+    render_design_type,
     sql_type_for_design,
 )
 
@@ -121,6 +122,21 @@ def normalize_java_field(raw: str) -> str:
     return f"{name} : {canonical_java_type(raw_type)}"
 
 
+def normalize_java_field_candidate(raw: str) -> str:
+    """Normalize a proposed field without bypassing semantic validation.
+
+    LLM proposal schemas intentionally keep the type as a string. A malformed type
+    must therefore remain visible to the deterministic checks, which can return a
+    finding to the existing repair loop. Accepted models continue to use the strict
+    ``normalize_java_field`` function.
+    """
+
+    try:
+        return normalize_java_field(raw)
+    except DesignTypeError:
+        return sanitize_text(raw)
+
+
 def normalize_java_method(raw: str) -> str:
     """Normalize declared parameter and return types in a BCE method signature.
 
@@ -189,6 +205,15 @@ def sql_type(
 
 def inner_type(raw_type: str) -> str | None:
     """`List<String>`·`String[]`에서 원소 타입을 꺼낸다. 못 읽으면 `None`."""
+    try:
+        expression = parse_type_expression(raw_type)
+        if expression.kind == "container" and expression.name != "optional":
+            return render_design_type(expression.arguments[0])
+        return None
+    except DesignTypeError:
+        # Compatibility facade callers can still pass the older concrete Java
+        # collection names that are outside the persisted design-type contract.
+        pass
     match = re.search(r"<(.*?)>", raw_type)
     if match:
         return match.group(1).strip() or None
@@ -231,10 +256,59 @@ def is_collection(raw_type: str | None) -> bool:
     text = (raw_type or "").strip()
     if not text:
         return False
+    try:
+        expression = parse_type_expression(text)
+        if expression.kind == "scalar":
+            # ``byte[]`` is the canonical binary scalar, not a multivalued field.
+            return False
+        if expression.kind == "container":
+            return expression.name != "optional"
+    except DesignTypeError:
+        # Preserve the loose dict projection facade. Persisted BCE models never
+        # reach this fallback because their type contract is strict.
+        pass
     if "[" in text:  # `String[]` · `int[5]`
         return True
     head = text.split("<", 1)[0].strip()  # `List<String>` → `List`
     return head.rsplit(".", 1)[-1].lower() in _COLLECTION_TYPES  # `java.util.List` → `List`
+
+
+def entity_field_is_erd_projectable(
+    raw_type: str | None,
+    *,
+    entity_names: Iterable[str],
+    named_types: dict[str, str] | None = None,
+) -> bool:
+    """Return whether one accepted Entity field has a deterministic ERD mapping.
+
+    Entity references are represented by relationships, enum/valueObject fields use
+    their existing VARCHAR/JSON rules, and one collection layer becomes a 1NF child
+    table. Nested containers and ambiguous ``Object`` values require a storage
+    decision that the current design contract does not contain, so they are rejected
+    before the BCE inventory is accepted.
+    """
+
+    try:
+        expression = parse_type_expression(raw_type or "")
+        if expression.kind == "container":
+            inner = expression.arguments[0]
+            if expression.name == "optional":
+                if inner.kind == "container":
+                    return False
+                candidate = render_design_type(expression)
+            else:
+                if inner.kind == "container":
+                    return False
+                candidate = render_design_type(inner)
+                if names_an_entity(candidate, entity_names):
+                    return True
+        else:
+            candidate = render_design_type(expression)
+            if names_an_entity(candidate, entity_names):
+                return True
+        return sql_type(candidate, named_types) is not None
+    except DesignTypeError:
+        return False
 
 
 def names_an_entity(raw_type: str | None, entity_names: Iterable[str]) -> bool:

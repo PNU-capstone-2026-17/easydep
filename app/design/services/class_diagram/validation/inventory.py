@@ -11,6 +11,7 @@ from app.design.services.class_diagram.type_system import (
     type_is_resolved,
 )
 from app.design.services.class_diagram.validation.model import class_name
+from app.design.services.common import fields
 from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 
 
@@ -50,6 +51,13 @@ def _inventory_types(
         if isinstance(item, dict)
     }
     declared = set(classes) | set(data_types)
+    entities = {
+        name for name, item in classes.items()
+        if text(item.get("stereotype")) == "Entity"
+    }
+    named_types = {
+        name: text(item.get("kind")) for name, item in data_types.items()
+    }
     findings: list[Finding] = []
     for name, item in classes.items():
         stereotype = text(item.get("stereotype"))
@@ -68,11 +76,22 @@ def _inventory_types(
             ))
         field_names = {field_name(value) for value in raw_fields}
         for value in raw_fields:
-            if not field_name(value) or not type_is_resolved(
+            resolved = bool(field_name(value)) and type_is_resolved(
                 field_type(value), declared, allow_void=False,
-            ):
+            )
+            if not resolved:
                 findings.append(Finding(
                     "class.inventory.types", f"unresolved field declaration: {value}", name,
+                ))
+            elif stereotype == "Entity" and not fields.entity_field_is_erd_projectable(
+                field_type(value),
+                entity_names=entities,
+                named_types=named_types,
+            ):
+                findings.append(Finding(
+                    "class.inventory.types",
+                    f"Entity field type cannot be projected to the relational model: {value}",
+                    name,
                 ))
         if not set(identifiers) <= field_names:
             findings.append(Finding(

@@ -82,6 +82,14 @@ case. Candidate scope does not force the later operation task to select it.
 """.strip()
     + "\n\n"
     + structure_type_contract()
+    + "\n\n"
+    + (
+        "Every generic container must include exactly one item type. Persistent Entity "
+        "fields may use relational scalars, declared enumerations or valueObjects, direct "
+        "Entity references, and at most one collection layer. Do not use Object or nest "
+        "containers in an Entity field because no deterministic relational storage "
+        "decision is present in this model."
+    )
 )
 
 
@@ -132,7 +140,9 @@ def _normalize_inventory(proposal: InventoryProposal) -> dict[str, Any]:
     data_types: list[dict[str, Any]] = []
     for item in raw["items"]:
         typed_fields = [
-            fields.normalize_java_field(f"{field['name']} : {field['type']}")
+            fields.normalize_java_field_candidate(
+                f"{field['name']} : {field['type']}"
+            )
             for field in item["fields"]
         ]
         if item["kind"] in {"Boundary", "Control", "Entity"}:
