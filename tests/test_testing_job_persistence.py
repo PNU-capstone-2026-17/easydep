@@ -200,30 +200,31 @@ def test_completed_verification_checkpoint_restores_failed_case_boundary(
     monkeypatch.setattr(testing_service, "run_verification_graph", verify)
     monkeypatch.setattr(testing_service, "_trace_hints", lambda *_args: ([], []))
     plan = {
-        "cases": [
+        "arazzo": "1.1.0",
+        "info": {"title": "Testing workflows", "version": "1.0.0"},
+        "sourceDescriptions": [
+            {"name": "application", "url": "openapi.json", "type": "openapi"}
+        ],
+        "workflows": [
             {
-                "case_id": "UC-1",
-                "requirement_ids": ["FR-1"],
-                "use_case_id": "UC-1",
-                "steps": [{"step_id": "one", "operation_id": "runOne"}],
+                "workflowId": "workflow-UC-1",
+                "steps": [{"stepId": "one", "operationId": "runOne"}],
             },
             {
-                "case_id": "UC-2",
-                "requirement_ids": ["FR-2"],
-                "use_case_id": "UC-2",
-                "steps": [{"step_id": "two", "operation_id": "runTwo"}],
+                "workflowId": "workflow-UC-2",
+                "steps": [{"stepId": "two", "operationId": "runTwo"}],
             },
-        ]
+        ],
     }
-    cases = [
+    workflows = [
         {
-            "caseId": "UC-1",
-            "plan": plan["cases"][0],
+            "workflowId": "workflow-UC-1",
+            "workflow": plan["workflows"][0],
             "result": {"status": "passed", "gateStatus": "PASS"},
         },
         {
-            "caseId": "UC-2",
-            "plan": plan["cases"][1],
+            "workflowId": "workflow-UC-2",
+            "workflow": plan["workflows"][1],
             "result": {"status": "failed", "gateStatus": "FAIL"},
         },
     ]
@@ -236,14 +237,20 @@ def test_completed_verification_checkpoint_restores_failed_case_boundary(
                 "reports": {
                     "dynamicFunctional": {
                         "candidatePlan": plan,
-                        "caseId": "UC-2",
-                        "cases": cases,
+                        "failedWorkflowId": "workflow-UC-2",
+                        "failedStepId": "two",
+                        "workflowInputs": {"workflow-UC-2": {"id": "42"}},
+                        "inputValues": {},
+                        "workflows": workflows,
                     }
                 }
             }
         },
     )
 
-    assert captured["fixed_test_plan"] == plan
-    assert [item["caseId"] for item in captured["preserved_case_results"]] == ["UC-1"]
-    assert captured["priority_case_id"] == "UC-2"
+    assert captured["fixed_arazzo_document"] == plan
+    assert [item["workflowId"] for item in captured["preserved_workflow_results"]] == [
+        "workflow-UC-1"
+    ]
+    assert captured["priority_workflow_id"] == "workflow-UC-2"
+    assert captured["fixed_workflow_inputs"] == {"workflow-UC-2": {"id": "42"}}

@@ -751,23 +751,31 @@ def test_testing_result_preserves_dynamic_runtime_evidence_for_implementation_re
         artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
     )
     candidate_plan = {
-        "cases": [
+        "arazzo": "1.1.0",
+        "info": {"title": "Order flow", "version": "1.0.0"},
+        "sourceDescriptions": [
+            {"name": "application", "url": "openapi.json", "type": "openapi"}
+        ],
+        "workflows": [
             {
-                "case_id": "case-order",
-                "requirement_ids": ["FR-1"],
-                "use_case_id": "UC-1",
-                "steps": [{"step_id": "update", "operation_id": "updateOrder"}],
+                "workflowId": "workflow-order",
+                "steps": [{"stepId": "update", "operationId": "updateOrder"}],
+                "x-easydep-trace": {
+                    "requirementIds": ["FR-1"],
+                    "useCaseIds": ["UC-1"],
+                    "evidenceRefs": ["requirement:FR-1", "use_case:UC-1"],
+                },
             }
         ],
-        "inputValues": {
-            "case-order": [
-                {
-                    "operation_id": "updateOrder",
-                    "location": "body.description",
-                    "value": "same repair input",
-                }
-            ]
-        },
+    }
+    input_values = {
+        "workflow-order": [
+            {
+                "operationId": "updateOrder",
+                "location": "body.description",
+                "value": "same repair input",
+            }
+        ]
     }
     finding_evidence = {
         "stepId": "update",
@@ -811,11 +819,14 @@ def test_testing_result_preserves_dynamic_runtime_evidence_for_implementation_re
                     "route": "implementation",
                     "preserveTests": True,
                 },
-                "caseId": "case-order",
+                "failedWorkflowId": "workflow-order",
+                "failedStepId": "update",
                 "candidateDigest": "candidate-digest-1",
                 "planDigest": "plan-digest-1",
                 "failedRequestDigest": "request-digest-1",
                 "candidatePlan": candidate_plan,
+                "workflowInputs": {},
+                "inputValues": input_values,
                 "finding": finding_evidence,
                 "reason": "POST /orders/{orderId} returned HTTP 500.",
                 "steps": [
@@ -857,6 +868,10 @@ def test_testing_result_preserves_dynamic_runtime_evidence_for_implementation_re
     assert blocking["plan_digest"] == "plan-digest-1"
     assert blocking["request_digest"] == "request-digest-1"
     assert blocking["candidate_plan"] == candidate_plan
+    assert blocking["workflow_inputs"] == {}
+    assert blocking["input_values"] == input_values
+    assert blocking["failed_workflow_id"] == "workflow-order"
+    assert blocking["failed_step_id"] == "update"
     assert blocking["evidence"]["finding"] == finding_evidence
     assert blocking["evidence"]["planDigest"] == "plan-digest-1"
     assert blocking["evidence"]["requestDigest"] == "request-digest-1"

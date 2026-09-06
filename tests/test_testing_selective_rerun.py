@@ -78,28 +78,30 @@ def test_static_iac_repair_does_not_launch_application(tmp_path, monkeypatch) ->
             "status": "passed",
             "gateStatus": "PASS",
             "candidatePlan": {
-                "cases": [],
-                "inputValues": {
-                    "case-order": [
-                        {
-                            "operation_id": "createOrder",
-                            "location": "body.description",
-                            "value": "frozen repair input",
-                        }
-                    ]
-                },
+                "arazzo": "1.1.0",
+                "info": {"title": "Order flow", "version": "1.0.0"},
+                "sourceDescriptions": [{"name": "sut", "url": "./openapi.json", "type": "openapi"}],
+                "workflows": [
+                    {
+                        "workflowId": "workflow-order",
+                        "steps": [{"stepId": "create", "operationId": "createOrder"}],
+                    }
+                ],
+            },
+            "inputValues": {
+                "workflow-order": [
+                    {
+                        "operationId": "createOrder",
+                        "location": "body.description",
+                        "value": "frozen repair input",
+                    }
+                ]
             },
         },
     }
-    digests = verification._gate_input_digests(
-        str(application), testing_input=None
-    )
-    previous_reports["static"]["deploymentPackage"]["inputDigest"] = digests[
-        "package"
-    ]
-    previous_reports["dynamicFunctional"]["inputDigest"] = digests[
-        "dynamicFunctional"
-    ]
+    digests = verification._gate_input_digests(str(application), testing_input=None)
+    previous_reports["static"]["deploymentPackage"]["inputDigest"] = digests["package"]
+    previous_reports["dynamicFunctional"]["inputDigest"] = digests["dynamicFunctional"]
 
     result = verification.run_verification_graph(
         run_id="testing-2",
@@ -116,10 +118,10 @@ def test_static_iac_repair_does_not_launch_application(tmp_path, monkeypatch) ->
     assert result["reports"]["static"]["deploymentPackage"]["reused"] is True
     assert result["reports"]["dynamicFunctional"]["reused"] is True
     assert result["reports"]["dynamicFunctional"]["reusedFromJobId"] == "testing-1"
-    assert result["reports"]["dynamicFunctional"]["candidatePlan"]["inputValues"] == {
-        "case-order": [
+    assert result["reports"]["dynamicFunctional"]["inputValues"] == {
+        "workflow-order": [
             {
-                "operation_id": "createOrder",
+                "operationId": "createOrder",
                 "location": "body.description",
                 "value": "frozen repair input",
             }

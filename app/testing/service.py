@@ -82,15 +82,15 @@ def _application_content_digest(application: Path) -> str:
 
 
 def _dynamic_target_ids(report: dict[str, Any]) -> list[str]:
-    """첫 차단 실패의 case와 operation만 저장된 ID로 가리킨다."""
+    """Point to the exact failed Arazzo workflow and API operation."""
     finding = report.get("finding")
     finding = finding if isinstance(finding, dict) else {}
     operation_id = str(finding.get("operationId") or "").strip()
     digest = str(report.get("candidateDigest") or "").strip()
-    case_id = str(report.get("caseId") or "").strip()
+    workflow_id = str(report.get("failedWorkflowId") or "").strip()
     return [
         *([f"api:{operation_id}"] if operation_id else []),
-        *([f"test:{digest}:{case_id}"] if digest and case_id else []),
+        *([f"test:{digest}:{workflow_id}"] if digest and workflow_id else []),
     ]
 
 
@@ -381,7 +381,8 @@ def _evidence_for_gate(
         if http_commands:
             evidence["commands"] = http_commands
         evidence["targets"] = target_ids
-        evidence["caseId"] = child.get("caseId")
+        evidence["failedWorkflowId"] = child.get("failedWorkflowId")
+        evidence["failedStepId"] = child.get("failedStepId")
         evidence["planDigest"] = child.get("planDigest")
         evidence["requestDigest"] = child.get("failedRequestDigest")
     return evidence
@@ -452,6 +453,12 @@ def _blocking_findings(
                 "plan_digest": dynamic.get("planDigest") if is_dynamic else None,
                 "request_digest": dynamic.get("failedRequestDigest") if is_dynamic else None,
                 "candidate_plan": dynamic.get("candidatePlan") if is_dynamic else None,
+                "workflow_inputs": dynamic.get("workflowInputs") if is_dynamic else None,
+                "input_values": dynamic.get("inputValues") if is_dynamic else None,
+                "failed_workflow_id": (
+                    dynamic.get("failedWorkflowId") if is_dynamic else None
+                ),
+                "failed_step_id": dynamic.get("failedStepId") if is_dynamic else None,
                 "file_hints": file_hints,
                 "trace_refs": related_refs if is_dynamic else [],
                 "evidence": evidence,
@@ -528,21 +535,35 @@ def _run_test(
     raw_preserved_plan = partial_result.get("preservedCandidatePlan") or nested_dynamic.get(
         "candidatePlan"
     )
-    preserved_test_plan = dict(raw_preserved_plan) if isinstance(raw_preserved_plan, dict) else None
-    raw_case_results = partial_result.get("preservedCaseResults") or nested_dynamic.get("cases")
-    preserved_case_results = (
+    preserved_arazzo_document = (
+        dict(raw_preserved_plan) if isinstance(raw_preserved_plan, dict) else None
+    )
+    raw_workflow_results = partial_result.get(
+        "preservedWorkflowResults"
+    ) or nested_dynamic.get("workflows")
+    preserved_workflow_results = (
         [
             dict(item)
-            for item in raw_case_results
+            for item in raw_workflow_results
             if isinstance(item, dict)
             and str((item.get("result") or {}).get("gateStatus") or "").upper() == "PASS"
         ]
-        if isinstance(raw_case_results, list)
+        if isinstance(raw_workflow_results, list)
         else []
     )
-    priority_case_id = str(
-        partial_result.get("failedCaseId") or nested_dynamic.get("caseId") or ""
+    priority_workflow_id = str(
+        partial_result.get("failedWorkflowId")
+        or nested_dynamic.get("failedWorkflowId")
+        or ""
     ).strip()
+    raw_workflow_inputs = partial_result.get("workflowInputs") or nested_dynamic.get(
+        "workflowInputs"
+    )
+    fixed_workflow_inputs = (
+        dict(raw_workflow_inputs) if isinstance(raw_workflow_inputs, dict) else {}
+    )
+    raw_input_values = partial_result.get("inputValues") or nested_dynamic.get("inputValues")
+    fixed_input_values = dict(raw_input_values) if isinstance(raw_input_values, dict) else {}
 
     def execute_snapshot() -> tuple[dict[str, Any], dict[str, Any]]:
         """복원한 한 snapshot 안에서 모든 검사를 끝낸다."""
@@ -564,11 +585,13 @@ def _run_test(
                         "current_node": "verification",
                         "result": (
                             {
-                                "preservedCandidatePlan": preserved_test_plan,
-                                "preservedCaseResults": preserved_case_results,
-                                "failedCaseId": priority_case_id,
+                                "preservedCandidatePlan": preserved_arazzo_document,
+                                "preservedWorkflowResults": preserved_workflow_results,
+                                "failedWorkflowId": priority_workflow_id,
+                                "workflowInputs": fixed_workflow_inputs,
+                                "inputValues": fixed_input_values,
                             }
-                            if preserved_test_plan
+                            if preserved_arazzo_document
                             else {}
                         ),
                     }
@@ -585,9 +608,11 @@ def _run_test(
                 # DEPLOYMENT_FILE에는 Dockerfile도 들어간다. 실제 package 필요 여부는
                 # static node가 고정된 ResourcePlan과 복원 디렉터리를 보고 판단한다.
                 deployment_package_expected=None,
-                fixed_test_plan=preserved_test_plan,
-                preserved_case_results=preserved_case_results,
-                priority_case_id=priority_case_id,
+                fixed_arazzo_document=preserved_arazzo_document,
+                fixed_workflow_inputs=fixed_workflow_inputs,
+                fixed_input_values=fixed_input_values,
+                preserved_workflow_results=preserved_workflow_results,
+                priority_workflow_id=priority_workflow_id,
                 gate_scope=gate_scope,
                 previous_reports=previous_reports,
                 previous_job_id=previous_job_id,
@@ -619,9 +644,9 @@ def _run_test(
                 "application": application_digest,
                 "gates": {
                     "iacExpected": TYPE_IAC_CODE in testing_input.artifact_version_ids,
-                    "preservedCases": [
-                        str(item.get("caseId") or item.get("case_id") or "")
-                        for item in preserved_case_results
+                    "preservedWorkflows": [
+                        str(item.get("workflowId") or "")
+                        for item in preserved_workflow_results
                     ],
                 },
             }
@@ -826,20 +851,26 @@ def run_testing(
                 if not isinstance(preserved_plan, dict) or not preserved_plan:
                     raise ValueError("The previous Testing result has no executable test plan.")
                 partial_result["preservedCandidatePlan"] = dict(preserved_plan)
-                partial_result["failedCaseId"] = str(dynamic.get("caseId") or "")
-                cases = dynamic.get("cases")
-                # 일반 재검사는 새 구현에서 모든 case를 다시 본다. 다만 실패한 HTTP
-                # operation만 고치는 선택 수리는 같은 계획의 통과 case를 보존하고 실패
-                # case만 다시 실행한다.
-                partial_result["preservedCaseResults"] = (
+                partial_result["failedWorkflowId"] = str(
+                    dynamic.get("failedWorkflowId") or ""
+                )
+                partial_result["failedStepId"] = str(dynamic.get("failedStepId") or "")
+                partial_result["workflowInputs"] = dict(
+                    dynamic.get("workflowInputs") or {}
+                )
+                partial_result["inputValues"] = dict(dynamic.get("inputValues") or {})
+                workflows = dynamic.get("workflows")
+                # A selective repair reuses only PASS workflows from the same implementation.
+                # A new implementation still reruns every workflow against the changed files.
+                partial_result["preservedWorkflowResults"] = (
                     [
                         dict(item)
-                        for item in cases
+                        for item in workflows
                         if isinstance(item, dict)
                         and str((item.get("result") or {}).get("gateStatus") or "").upper()
                         == "PASS"
                     ]
-                    if same_implementation and isinstance(cases, list)
+                    if same_implementation and isinstance(workflows, list)
                     else []
                 )
 

@@ -24,8 +24,7 @@ from app.design.services.class_diagram.type_system import (
     types_compatible,
 )
 from app.design.services.erd.projection import project_logical_model
-from app.testing.schemas.functional_plan import FunctionalTestCase
-from app.testing.utils.functional_executor import execute_functional_plan
+from app.testing.utils.arazzo_executor import execute_arazzo_workflow
 
 
 @pytest.mark.parametrize(
@@ -231,6 +230,24 @@ def _calculator_bce() -> BCEModel:
     )
 
 
+def _calculation_workflow() -> dict[str, object]:
+    return {
+        "arazzo": "1.1.0",
+        "info": {"title": "Calculation flow", "version": "1.0.0"},
+        "sourceDescriptions": [
+            {"name": "application", "url": "openapi.json", "type": "openapi"}
+        ],
+        "workflows": [
+            {
+                "workflowId": "calculator",
+                "steps": [
+                    {"stepId": "calculate", "operationId": "performCalculation"}
+                ],
+            }
+        ],
+    }
+
+
 def test_decimal_request_stays_numeric_through_testing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -270,23 +287,15 @@ def test_decimal_request_stays_numeric_through_testing(
 
     monkeypatch.setattr(httpx, "request", request)
     proposed = iter([1.5, 2.5])
-    result = execute_functional_plan(
-        FunctionalTestCase.model_validate(
-            {
-                "case_id": "calculator",
-                "requirement_ids": ["FR1"],
-                "use_case_id": "UC1",
-                "steps": [
-                    {"step_id": "calculate", "operation_id": "performCalculation"}
-                ],
-            }
-        ),
+    result = execute_arazzo_workflow(
+        _calculation_workflow(),
+        "calculator",
         openapi=openapi,
         target_url="http://app.test",
         propose_input=lambda _request: next(proposed),
     )
 
-    assert result["gateStatus"] == "PASS"
+    assert result["gateStatus"] == "PASS", result
     assert sent == [{"firstOperand": 1.5, "secondOperand": 2.5}]
     assert all(value != {} for value in sent[0].values())
 
@@ -343,21 +352,13 @@ def test_optional_response_fields_accept_explicit_json_null(
         ),
     )
     proposed = iter([6, 14])
-    result = execute_functional_plan(
-        FunctionalTestCase.model_validate(
-            {
-                "case_id": "calculator-nullable-response",
-                "requirement_ids": ["FR1"],
-                "use_case_id": "UC1",
-                "steps": [
-                    {"step_id": "calculate", "operation_id": "performCalculation"}
-                ],
-            }
-        ),
+    result = execute_arazzo_workflow(
+        _calculation_workflow(),
+        "calculator",
         openapi=openapi,
         target_url="http://app.test",
         propose_input=lambda _request: next(proposed),
     )
 
-    assert result["gateStatus"] == "PASS"
+    assert result["gateStatus"] == "PASS", result
     assert "absent in any outcome as Optional<T>" in operation_prompt()

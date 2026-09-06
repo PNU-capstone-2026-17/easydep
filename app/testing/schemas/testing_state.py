@@ -22,19 +22,11 @@ class TestingState(TypedDict):
     # 사용자가 선택한 이전 수리 이력. 동적 테스트 생성기는 같은 실패와 후보를
     # 반복하지 않도록 이 값을 프롬프트 문맥으로만 사용한다.
     repair_history: dict[str, Any]
-    # 구현 수리 뒤에는 이전 실패를 발견한 작은 테스트 계획을 그대로 실행한다. 값이 없을
-    # 때만 동적 테스트 노드가 NIM으로 새 계획을 만든다.
-    fixed_test_plan: dict[str, Any] | None
-    # 같은 계획에서 이미 통과한 case 결과다. 구현 수리 뒤 실패 case만 다시 실행하도록
-    # 보존하며, 계획 header가 달라지면 동적 노드가 재사용하지 않는다.
-    preserved_case_results: list[dict[str, Any]]
-    # 구현 수리 직후에는 이전 실행에서 실제로 실패한 case를 먼저 재검사한다. 후보 계획의
-    # 배열 순서는 바꾸지 않아 digest를 보존하고, 실행 순서에만 이 힌트를 적용한다.
-    priority_case_id: str
-    # Canonical Arazzo resume data. These remain outside candidatePlan so the
+    # Canonical Arazzo resume data. Inputs remain outside candidatePlan so the
     # stored plan is a valid, portable Arazzo document.
+    fixed_arazzo_document: dict[str, Any] | None
     fixed_workflow_inputs: dict[str, dict[str, Any]]
-    fixed_input_values: dict[str, dict[str, Any]]
+    fixed_input_values: dict[str, list[dict[str, Any]]]
     preserved_workflow_results: list[dict[str, Any]]
     priority_workflow_id: str
     iac_expected: bool | None

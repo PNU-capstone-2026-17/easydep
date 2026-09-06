@@ -31,20 +31,21 @@ def _completed_implementation(implementation_job_id: str) -> dict[str, Any]:
 
 def _functional_plan() -> dict[str, Any]:
     return {
-        "cases": [
+        "arazzo": "1.1.0",
+        "info": {"title": "Functional tests", "version": "1.0.0"},
+        "sourceDescriptions": [
+            {"name": "application", "url": "openapi.json", "type": "openapi"}
+        ],
+        "workflows": [
             {
-                "case_id": "UC-1",
-                "requirement_ids": ["FR-1"],
-                "use_case_id": "UC-1",
-                "steps": [{"step_id": "run", "operation_id": "runFirst"}],
+                "workflowId": "workflow-UC-1",
+                "steps": [{"stepId": "run", "operationId": "runFirst"}],
             },
             {
-                "case_id": "UC-2",
-                "requirement_ids": ["FR-2"],
-                "use_case_id": "UC-2",
-                "steps": [{"step_id": "run", "operation_id": "runSecond"}],
+                "workflowId": "workflow-UC-2",
+                "steps": [{"stepId": "run", "operationId": "runSecond"}],
             },
-        ]
+        ],
     }
 
 
@@ -137,15 +138,19 @@ def test_implementation_repair_preserves_plan_but_reruns_passed_cases(monkeypatc
                         "gateStatus": "FAIL",
                         "reason": "UC-2 failed",
                         "candidatePlan": _functional_plan(),
-                        "cases": [
+                        "failedWorkflowId": "workflow-UC-2",
+                        "failedStepId": "run",
+                        "workflowInputs": {},
+                        "inputValues": {},
+                        "workflows": [
                             {
-                                "caseId": "UC-1",
-                                "plan": _functional_plan()["cases"][0],
+                                "workflowId": "workflow-UC-1",
+                                "workflow": _functional_plan()["workflows"][0],
                                 "result": {"gateStatus": "PASS"},
                             },
                             {
-                                "caseId": "UC-2",
-                                "plan": _functional_plan()["cases"][1],
+                                "workflowId": "workflow-UC-2",
+                                "workflow": _functional_plan()["workflows"][1],
                                 "result": {"gateStatus": "FAIL"},
                             },
                         ],
@@ -168,8 +173,9 @@ def test_implementation_repair_preserves_plan_but_reruns_passed_cases(monkeypatc
     def run(_run_id, _testing_input, **kwargs):
         partial = kwargs["partial_result"]
         assert partial["preservedCandidatePlan"] == _functional_plan()
-        # 구현 job ID가 바뀌었으므로 이전 통과도 회귀 검증을 위해 다시 실행한다.
-        assert partial["preservedCaseResults"] == []
+        # A changed implementation reruns every workflow for regression coverage.
+        assert partial["preservedWorkflowResults"] == []
+        assert partial["failedWorkflowId"] == "workflow-UC-2"
         return {"passed": True}, {"status": "COMPLETED"}
 
     monkeypatch.setattr(testing_service, "_run_test", run)

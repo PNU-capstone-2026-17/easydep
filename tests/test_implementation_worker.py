@@ -886,7 +886,8 @@ def test_testing_runtime_log_is_read_only_agent_context(tmp_path: Path) -> None:
         "application/src/main/java/com/example/OrderService.java"
     ]
     prompt = (output / task["prompt_file"]).read_text(encoding="utf-8")
-    assert "The outer Testing stage will rerun the preserved HTTP case" in prompt
+    assert "Use run_task_check to rerun the preserved Arazzo workflow" in prompt
+    assert "The outer Testing stage will then resume the complete gate sequence" in prompt
     assert "They are investigation hints, not a write boundary" in prompt
     assert "Reproduce the assigned Testing gate" not in prompt
     assert (output / "reports/testing-runtime.log").read_text(encoding="utf-8") == (

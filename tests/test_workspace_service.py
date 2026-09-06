@@ -1996,20 +1996,31 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
                         },
                     },
                     "candidate_plan": {
-                        "cases": [
+                        "arazzo": "1.1.0",
+                        "info": {"title": "Registration", "version": "1.0.0"},
+                        "sourceDescriptions": [
                             {
-                                "case_id": "UC1",
-                                "requirement_ids": ["FR1"],
-                                "use_case_id": "UC1",
+                                "name": "application",
+                                "url": "openapi.json",
+                                "type": "openapi",
+                            }
+                        ],
+                        "workflows": [
+                            {
+                                "workflowId": "workflow-UC1",
                                 "steps": [
                                     {
-                                        "step_id": "submit",
-                                        "operation_id": "submitRegistration",
+                                        "stepId": "submit",
+                                        "operationId": "submitRegistration",
                                     }
                                 ],
                             }
-                        ]
+                        ],
                     },
+                    "workflow_inputs": {"workflow-UC1": {}},
+                    "input_values": {"workflow-UC1": []},
+                    "failed_workflow_id": "workflow-UC1",
+                    "failed_step_id": "submit",
                 }
             ],
             "repair_state": {"attempt_count": 1},
@@ -2178,6 +2189,10 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     assert observed["verification_profile"]["application_log_ref"] == (
         ".easydep/testing-evidence/" + ("a" * 64) + ".log"
     )
+    assert observed["verification_profile"]["failed_workflow_id"] == "workflow-UC1"
+    assert observed["verification_profile"]["failed_step_id"] == "submit"
+    assert observed["verification_profile"]["workflow_inputs"] == {"workflow-UC1": {}}
+    assert observed["verification_profile"]["input_values"] == {"workflow-UC1": []}
     assert observed["confirmed_target_refs"] == [
         "file:application/src/RegistrationService.java",
         "task:implement-registration",
@@ -2525,7 +2540,27 @@ def test_retry_testing_repair_resumes_the_same_plan(monkeypatch, repair_status) 
         "result": {
             "job": previous_job,
             "blocking_findings": [
-                {"candidate_plan": {"cases": [{"case_id": "UC1"}]}}
+                {
+                    "candidate_plan": {
+                        "arazzo": "1.1.0",
+                        "info": {"title": "Workflow", "version": "1.0.0"},
+                        "sourceDescriptions": [
+                            {
+                                "name": "application",
+                                "url": "openapi.json",
+                                "type": "openapi",
+                            }
+                        ],
+                        "workflows": [
+                            {
+                                "workflowId": "workflow-UC1",
+                                "steps": [
+                                    {"stepId": "submit", "operationId": "submitRegistration"}
+                                ],
+                            }
+                        ],
+                    }
+                }
             ],
         },
     }

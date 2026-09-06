@@ -411,8 +411,8 @@ class PrototypeOrchestrator:
                 "- Start with the RTM trace hints. They are investigation hints, not a write "
                 "boundary; follow evidence into related production code or configuration.\n"
                 "- Do not modify tests or test acceptance conditions.\n"
-                "- Use run_task_check to compile-check the changed source. The outer Testing "
-                "stage will rerun the preserved HTTP case.\n"
+                "- Use run_task_check to rerun the preserved Arazzo workflow after editing. "
+                "The outer Testing stage will then resume the complete gate sequence.\n"
             )
         elif task_type.startswith("testing-"):
             testing_gate_rules = (

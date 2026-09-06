@@ -221,39 +221,39 @@ def test_feature_check_rejects_a_whole_application_test_before_gradle(
     run.assert_not_called()
 
 
-def test_dynamic_testing_repair_compile_checks_without_starting_docker(
+def test_dynamic_testing_repair_reruns_preserved_arazzo_workflow(
     tmp_path: Path,
 ) -> None:
-    """동적 HTTP 재실행은 바깥 Testing에 맡기고 구현 sandbox에서는 compile만 한다."""
+    """A dynamic repair must pass the exact preserved workflow before completion."""
 
-    completed = SimpleNamespace(returncode=0, stdout="compiled", stderr="")
     source_path = "application/src/main/java/com/example/OrderService.java"
     (tmp_path / "application").mkdir()
-    with (
-        patch(
-            "app.implementation.agents.verification.build.gradle_command",
-            return_value=["gradlew"],
-        ),
-        patch(
-            "app.implementation.agents.verification.build.subprocess.run",
-            return_value=completed,
-        ) as run,
-        patch(
-            "app.testing.repair_check.verify_testing_repair_gate",
-            side_effect=AssertionError("dynamic repair must not start Docker"),
-        ) as dynamic_gate,
-    ):
+    evidence = {
+        "command": ["testing-dynamicFunctional"],
+        "exitCode": 0,
+        "gateStatus": "PASS",
+    }
+    with patch(
+        "app.testing.repair_check.verify_testing_repair_gate",
+        return_value=evidence,
+    ) as dynamic_gate:
+        profile = {
+            "candidate_plan": {"arazzo": "1.1.0"},
+            "failed_workflow_id": "workflow-UC-1",
+        }
         result = verify_agent_workspace(
             tmp_path,
             "testing-dynamic-functional",
             [source_path],
-            {"candidate_plan": {"cases": []}},
+            profile,
         )
 
-    assert result["exitCode"] == 0
-    assert result["command"] == ["gradlew", "compileJava", "--build-cache"]
-    assert run.call_args.args[0] == ["gradlew", "compileJava", "--build-cache"]
-    dynamic_gate.assert_not_called()
+    assert result == evidence
+    dynamic_gate.assert_called_once_with(
+        tmp_path,
+        "testing-dynamic-functional",
+        profile,
+    )
 
 
 def test_agent_task_check_returns_real_focused_verification_result(

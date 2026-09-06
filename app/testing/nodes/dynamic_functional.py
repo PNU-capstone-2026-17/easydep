@@ -260,7 +260,7 @@ def _propose_input(client: OpenAI, request: InputValueRequest) -> Any:
         "response_format": {
             "type": "json_schema",
             "json_schema": {
-                "name": "FunctionalInputValue",
+                "name": "ArazzoInputValue",
                 "strict": False,
                 "schema": response_schema,
             },
@@ -294,6 +294,37 @@ def _fixed_mapping(value: Any, expected: set[str], *, name: str) -> dict[str, di
     return result
 
 
+def _fixed_input_values(value: Any, expected: set[str]) -> dict[str, dict[str, Any]]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or any(key not in expected for key in value):
+        raise ValueError("Preserved input values do not match the Arazzo workflows.")
+    result: dict[str, dict[str, Any]] = {}
+    for workflow_id, items in value.items():
+        if not isinstance(items, list):
+            raise TypeError(f"Preserved input values for {workflow_id} must be an array.")
+        values: dict[str, Any] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                raise TypeError(f"Preserved input value for {workflow_id} must be an object.")
+            operation_id = item.get("operationId")
+            location = item.get("location")
+            if (
+                not isinstance(operation_id, str)
+                or not isinstance(location, str)
+                or "value" not in item
+            ):
+                raise TypeError(
+                    f"Preserved input value for {workflow_id} requires operationId and location."
+                )
+            key = f"{operation_id}|{location}"
+            if key in values:
+                raise ValueError(f"Preserved input value is duplicated for {workflow_id}: {key}")
+            values[key] = deepcopy(item.get("value"))
+        result[str(workflow_id)] = values
+    return result
+
+
 def _input_records(values: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {}
     for workflow_id, items in values.items():
@@ -314,6 +345,8 @@ def _workflow_record(
     workflow: dict[str, Any],
     result: dict[str, Any],
     input_values: list[dict[str, Any]],
+    workflow_inputs_by_id: dict[str, dict[str, Any]],
+    input_values_by_id: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     trace = workflow.get("x-easydep-trace")
     return {
@@ -322,6 +355,8 @@ def _workflow_record(
         "useCaseIds": list((trace or {}).get("useCaseIds") or []),
         "workflow": deepcopy(workflow),
         "inputValues": deepcopy(input_values),
+        "workflowInputsById": deepcopy(workflow_inputs_by_id),
+        "inputValuesById": deepcopy(input_values_by_id),
         "result": result,
     }
 
@@ -409,10 +444,13 @@ def _failed_step(result: dict[str, Any]) -> dict[str, Any]:
 
 def _failure_finding(workflow_id: str, result: dict[str, Any]) -> dict[str, Any]:
     step = _failed_step(result)
+    failed_workflow_id = str(
+        result.get("failedWorkflowId") or step.get("workflowId") or workflow_id
+    )
     finding = dict(result.get("finding") or {})
     finding.update(
         {
-            "workflowId": workflow_id,
+            "workflowId": failed_workflow_id,
             "stepId": step.get("stepId"),
             "operationId": step.get("operationId"),
             "request": step.get("request"),
@@ -490,8 +528,8 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                     "reason": "The frozen contracts contain no executable functional use cases.",
                 },
             }
-        if state.get("fixed_test_plan") is not None:
-            document = _preserved(state["fixed_test_plan"], candidates, frozen["openapi"])
+        if state.get("fixed_arazzo_document") is not None:
+            document = _preserved(state["fixed_arazzo_document"], candidates, frozen["openapi"])
             client: OpenAI | None = None
         else:
             client = _client()
@@ -529,9 +567,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         workflow_inputs = _fixed_mapping(
             state.get("fixed_workflow_inputs"), workflow_ids, name="workflow inputs"
         )
-        input_values = _fixed_mapping(
-            state.get("fixed_input_values"), workflow_ids, name="input values"
-        )
+        input_values = _fixed_input_values(state.get("fixed_input_values"), workflow_ids)
     except (TypeError, ValueError) as error:
         report = _report("FAILED", "FAIL", str(error), "TEST_DEFECT")
         return {
@@ -560,8 +596,13 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
 
     def propose(request: InputValueRequest) -> Any:
         nonlocal client
+        input_workflow_id = (
+            request.operation_context
+            if request.operation_context in workflow_ids
+            else current_workflow_id
+        )
         key = f"{request.operation_id}|{request.location}"
-        values = input_values.setdefault(current_workflow_id, {})
+        values = input_values.setdefault(input_workflow_id, {})
         if key in values:
             return deepcopy(values[key])
         if client is None:
@@ -574,25 +615,57 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         workflow_id = str(workflow["workflowId"])
         current_workflow_id = workflow_id
         previous = previous_results.get(workflow_id)
-        if previous is not None and previous.get("workflow") == workflow:
+        previous_result = previous.get("result") if isinstance(previous, dict) else None
+        saved_workflow_input_map = (
+            previous.get("workflowInputsById") if isinstance(previous, dict) else None
+        )
+        saved_input_value_map = (
+            previous.get("inputValuesById") if isinstance(previous, dict) else None
+        )
+        saved_ids = (
+            set(saved_workflow_input_map)
+            if isinstance(saved_workflow_input_map, dict)
+            else set()
+        )
+        saved_workflow_inputs = (
+            _fixed_mapping(
+                saved_workflow_input_map,
+                saved_ids,
+                name="workflow inputs",
+            )
+            if saved_ids
+            else {}
+        )
+        saved_input_values = (
+            _fixed_input_values(saved_input_value_map, saved_ids)
+            if saved_ids and isinstance(saved_input_value_map, dict)
+            else {}
+        )
+        current_workflow_inputs = {
+            saved_id: workflow_inputs.get(saved_id, {}) for saved_id in saved_ids
+        }
+        current_input_values = {
+            saved_id: input_values.get(saved_id, {}) for saved_id in saved_ids
+        }
+        reusable = (
+            previous is not None
+            and previous.get("workflow") == workflow
+            and bool(saved_ids)
+            and current_workflow_inputs == saved_workflow_inputs
+            and current_input_values == saved_input_values
+        )
+        if reusable:
+            assert isinstance(previous, dict)
             reused = deepcopy(previous)
             reused_result = reused.get("result")
             if isinstance(reused_result, dict):
                 reused_result["reused"] = True
                 if previous_job_id := str(state.get("previous_job_id") or ""):
                     reused_result["reusedFromJobId"] = previous_job_id
-                saved_inputs = reused_result.get("workflowInputs")
-                if isinstance(saved_inputs, dict):
-                    workflow_inputs[workflow_id] = deepcopy(saved_inputs)
-            saved_values = reused.get("inputValues")
-            if isinstance(saved_values, list):
-                input_values[workflow_id] = {
-                    f"{item['operationId']}|{item['location']}": deepcopy(item.get("value"))
-                    for item in saved_values
-                    if isinstance(item, dict)
-                    and isinstance(item.get("operationId"), str)
-                    and isinstance(item.get("location"), str)
-                }
+            for saved_id, saved_workflow_values in saved_workflow_inputs.items():
+                workflow_inputs[saved_id] = deepcopy(saved_workflow_values)
+            for saved_id, saved_values in saved_input_values.items():
+                input_values[saved_id] = deepcopy(saved_values)
             results.append(reused)
             reused_workflow_ids.append(workflow_id)
             continue
@@ -603,6 +676,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 openapi=frozen["openapi"],
                 target_url=target_url,
                 workflow_inputs=workflow_inputs.get(workflow_id),
+                workflow_inputs_by_id=workflow_inputs,
                 propose_input=propose,
             )
         except Exception as error:
@@ -615,12 +689,37 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         saved_inputs = result.get("workflowInputs")
         if isinstance(saved_inputs, dict):
             workflow_inputs[workflow_id] = deepcopy(saved_inputs)
-        records = _input_records({workflow_id: input_values.get(workflow_id, {})}).get(
-            workflow_id, []
+        resolved_inputs = result.get("workflowInputsById")
+        if isinstance(resolved_inputs, dict):
+            for resolved_workflow_id, resolved_values in resolved_inputs.items():
+                if resolved_workflow_id in workflow_ids and isinstance(resolved_values, dict):
+                    workflow_inputs[resolved_workflow_id] = deepcopy(resolved_values)
+        used_workflow_ids = (
+            set(resolved_inputs).intersection(workflow_ids)
+            if isinstance(resolved_inputs, dict)
+            else {workflow_id}
         )
-        results.append(_workflow_record(workflow, result, records))
+        used_workflow_inputs = {
+            used_id: deepcopy(workflow_inputs.get(used_id, {}))
+            for used_id in used_workflow_ids
+        }
+        used_input_values = _input_records(
+            {used_id: input_values.get(used_id, {}) for used_id in used_workflow_ids}
+        )
+        results.append(
+            _workflow_record(
+                workflow,
+                result,
+                used_input_values.get(workflow_id, []),
+                used_workflow_inputs,
+                used_input_values,
+            )
+        )
         if first_failure is None and str(result.get("gateStatus") or "").upper() != "PASS":
-            first_failure = (workflow_id, result)
+            first_failure = (
+                str(result.get("failedWorkflowId") or workflow_id),
+                result,
+            )
             pending_workflow_ids = [
                 str(item["workflowId"])
                 for item in execution_workflows[index + 1 :]

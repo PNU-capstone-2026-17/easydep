@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from app.testing.utils.arazzo_executor import execute_arazzo_workflow
+from app.testing.utils.functional_executor import InputValueRequest
 
 TARGET_URL = "http://127.0.0.1:8765"
 
@@ -587,6 +588,74 @@ def test_on_failure_goto_runs_cleanup_workflow(monkeypatch: pytest.MonkeyPatch) 
     assert "PASS" in str(cleanup)
 
 
+def test_transport_failure_still_runs_unconditional_cleanup_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _HttpRecorder(
+        [
+            httpx.ConnectError("connection dropped", request=httpx.Request("POST", TARGET_URL)),
+            _response(204),
+        ]
+    )
+    document = _document(
+        [
+            _workflow(
+                "main",
+                {
+                    "stepId": "work",
+                    "operationId": "unstable",
+                    "onFailure": [{"name": "cleanup", "type": "goto", "workflowId": "cleanup"}],
+                },
+            ),
+            _workflow(
+                "cleanup",
+                {
+                    "stepId": "delete",
+                    "operationId": "deleteItem",
+                    "parameters": [{"name": "id", "in": "path", "value": "item-1"}],
+                },
+            ),
+        ]
+    )
+
+    result = _run(monkeypatch, document, recorder)
+
+    _assert_result(result, gate="INCONCLUSIVE", defect="ENVIRONMENT_DEFECT")
+    assert [call["method"] for call in recorder.calls] == ["GET", "DELETE"]
+    assert "PASS" in str(result.get("cleanupEvidence"))
+
+
+def test_failure_goto_step_runs_cleanup_without_masking_primary_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _HttpRecorder(
+        [
+            _response(200, {"id": "item-1", "name": "book"}),
+            _response(200, {"ok": True}),
+        ]
+    )
+    document = _document(
+        [
+            _workflow(
+                "main",
+                {
+                    "stepId": "work",
+                    "operationId": "unstable",
+                    "successCriteria": [{"condition": "$statusCode == 201"}],
+                    "onFailure": [{"name": "cleanup", "type": "goto", "stepId": "cleanup"}],
+                },
+                {"stepId": "cleanup", "operationId": "health"},
+            )
+        ]
+    )
+
+    result = _run(monkeypatch, document, recorder)
+
+    _assert_result(result, gate="FAIL", defect="SUT_DEFECT")
+    assert result["finding"]["code"] == "SUCCESS_CRITERIA_FAILED"
+    assert "PASS" in str(result.get("cleanupEvidence"))
+
+
 def test_cleanup_failure_is_retained_as_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
     recorder = _HttpRecorder(
         [_response(500, {"error": "broken"}), _response(500, {"error": "cleanup-broken"})]
@@ -803,6 +872,43 @@ def test_local_workflow_call_executes_child_workflow(monkeypatch: pytest.MonkeyP
 
     _assert_result(result, gate="PASS")
     assert recorder.calls[0]["url"] == f"{TARGET_URL}/health"
+
+
+def test_local_workflow_call_reuses_child_inputs_and_scopes_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _HttpRecorder([_response(200, {"id": "child-item", "name": "book"})])
+    proposed: list[InputValueRequest] = []
+    document = _document(
+        [
+            _workflow("main", {"stepId": "child-call", "workflowId": "child"}),
+            _workflow(
+                "child",
+                {"stepId": "get-child", "operationId": "getItem"},
+                inputs={
+                    "type": "object",
+                    "required": ["mode"],
+                    "properties": {"mode": {"type": "string"}},
+                },
+            ),
+        ]
+    )
+
+    result = _run(
+        monkeypatch,
+        document,
+        recorder,
+        workflow_inputs_by_id={"child": {"mode": "preserved"}},
+        propose_input=lambda request: proposed.append(request) or "child-item",
+    )
+
+    _assert_result(result, gate="PASS")
+    assert [(item.operation_context, item.operation_id, item.location) for item in proposed] == [
+        ("child", "getItem", "path.id")
+    ]
+    assert result["workflowInputsById"]["child"] == {"mode": "preserved"}
+    assert result["steps"][0]["workflowId"] == "child"
+    assert result["steps"][1]["calledWorkflowId"] == "child"
 
 
 def test_workflow_inputs_are_fixed_and_reused_without_proposing_values(

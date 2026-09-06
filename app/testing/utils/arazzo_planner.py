@@ -108,7 +108,12 @@ def _traceability_links(use_cases: Any) -> dict[str, set[str]]:
     for requirement_id, detail in requirements.items():
         if isinstance(requirement_id, str) and isinstance(detail, Mapping):
             result[requirement_id] = _record_links(
-                detail, "use_cases", "useCaseIds", "use_case_ids"
+                detail,
+                "use_cases",
+                "useCaseIds",
+                "use_case_ids",
+                "realized_by_use_cases",
+                "constrains_use_cases",
             )
     return result
 

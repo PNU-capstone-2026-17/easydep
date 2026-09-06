@@ -124,7 +124,7 @@ def _state(count: int = 1, **extra: Any) -> dict[str, Any]:
                 "openapi": {"content": _openapi()},
             }
         },
-        "fixed_test_plan": _document(count),
+        "fixed_arazzo_document": _document(count),
         "fixed_workflow_inputs": {},
         "fixed_input_values": {},
         "preserved_workflow_results": [],
@@ -242,7 +242,13 @@ def test_fixed_leaf_input_is_reused_without_an_llm_call(
     monkeypatch.setattr(dynamic, "_propose_input", propose)
     state = _state(
         fixed_input_values={
-            "workflow-UC-1": {"health|query.sample": "fixed"},
+            "workflow-UC-1": [
+                {
+                    "operationId": "health",
+                    "location": "query.sample",
+                    "value": "fixed",
+                }
+            ],
         }
     )
 
@@ -298,6 +304,29 @@ def test_failure_reports_exact_workflow_step_and_pending_workflows(
     assert report["failedRequestDigest"]
 
 
+def test_failed_workflow_is_reexecuted_first_without_reordering_the_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def execute(_document: dict[str, Any], workflow_id: str, **_kwargs: Any) -> dict[str, Any]:
+        calls.append(workflow_id)
+        return _pass(workflow_id)
+
+    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
+    document = _document(2)
+    state = _state(
+        2,
+        fixed_arazzo_document=document,
+        priority_workflow_id="workflow-UC-2",
+    )
+
+    report = dynamic.dynamic_functional_node(state)["dynamic_functional_report"]
+
+    assert calls == ["workflow-UC-2", "workflow-UC-1"]
+    assert report["candidatePlan"] == document
+
+
 def test_passed_workflow_is_reused_and_only_remaining_workflow_executes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -309,6 +338,8 @@ def test_passed_workflow_is_reused_and_only_remaining_workflow_executes(
         "useCaseIds": ["UC-1"],
         "workflow": deepcopy(first_workflow),
         "inputValues": [],
+        "workflowInputsById": {"workflow-UC-1": {}},
+        "inputValuesById": {"workflow-UC-1": []},
         "result": _pass("workflow-UC-1"),
     }
     calls: list[str] = []
@@ -320,7 +351,7 @@ def test_passed_workflow_is_reused_and_only_remaining_workflow_executes(
     monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
     state = _state(
         2,
-        fixed_test_plan=document,
+        fixed_arazzo_document=document,
         preserved_workflow_results=[preserved],
         previous_job_id="job-previous",
     )
@@ -331,6 +362,84 @@ def test_passed_workflow_is_reused_and_only_remaining_workflow_executes(
     assert report["reusedWorkflowIds"] == ["workflow-UC-1"]
     assert report["workflows"][0]["result"]["reused"] is True
     assert report["workflows"][0]["result"]["reusedFromJobId"] == "job-previous"
+
+
+def test_passed_workflow_is_rerun_when_preserved_inputs_do_not_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _document()
+    preserved_result = _pass("workflow-UC-1")
+    preserved_result["workflowInputs"] = {"seed": "old"}
+    preserved = {
+        "workflowId": "workflow-UC-1",
+        "requirementIds": ["FR-1"],
+        "useCaseIds": ["UC-1"],
+        "workflow": deepcopy(document["workflows"][0]),
+        "inputValues": [],
+        "workflowInputsById": {"workflow-UC-1": {"seed": "old"}},
+        "inputValuesById": {"workflow-UC-1": []},
+        "result": preserved_result,
+    }
+    calls: list[str] = []
+
+    def execute(_document: dict[str, Any], workflow_id: str, **_kwargs: Any) -> dict[str, Any]:
+        calls.append(workflow_id)
+        return _pass(workflow_id)
+
+    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
+    state = _state(
+        fixed_arazzo_document=document,
+        fixed_workflow_inputs={"workflow-UC-1": {"seed": "new"}},
+        preserved_workflow_results=[preserved],
+    )
+
+    report = dynamic.dynamic_functional_node(state)["dynamic_functional_report"]
+
+    assert report["gateStatus"] == "PASS"
+    assert calls == ["workflow-UC-1"]
+    assert report["reusedWorkflowIds"] == []
+
+
+def test_nested_input_proposals_are_saved_under_the_executor_workflow_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def execute(
+        _document: dict[str, Any], workflow_id: str, *, propose_input, **_kwargs: Any
+    ) -> dict[str, Any]:
+        if workflow_id == "workflow-UC-1":
+            assert (
+                propose_input(
+                    InputValueRequest(
+                        operation_id="health",
+                        location="query.child",
+                        schema={"type": "string"},
+                        operation_context="workflow-UC-2",
+                    )
+                )
+                == "child-value"
+            )
+        return {
+            **_pass(workflow_id),
+            "workflowInputsById": {workflow_id: {}},
+        }
+
+    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
+    monkeypatch.setattr(
+        dynamic,
+        "_propose_input",
+        lambda _client, _request: "child-value",
+    )
+
+    report = dynamic.dynamic_functional_node(_state(2))["dynamic_functional_report"]
+
+    assert "workflow-UC-1" not in report["inputValues"]
+    assert report["inputValues"]["workflow-UC-2"] == [
+        {
+            "operationId": "health",
+            "location": "query.child",
+            "value": "child-value",
+        }
+    ]
 
 
 def test_semantic_coverage_requires_direct_success_guarantee() -> None:
@@ -353,7 +462,7 @@ def test_semantic_coverage_requires_direct_success_guarantee() -> None:
 
 
 def test_legacy_custom_candidate_plan_is_rejected() -> None:
-    state = _state(fixed_test_plan={"cases": []})
+    state = _state(fixed_arazzo_document={"cases": []})
 
     report = dynamic.dynamic_functional_node(state)["dynamic_functional_report"]
 

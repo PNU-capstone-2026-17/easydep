@@ -147,10 +147,10 @@ def verify_agent_workspace(
     같은 sandbox에서 수리할 때도 Gradle의 증분 결과와 build cache를 재사용한다. 바뀐
     source는 Gradle이 다시 compile하므로 ``--rerun-tasks``로 모든 task를 강제할 필요가 없다.
     """
-    if task_type.startswith("testing-") and task_type != "testing-dynamic-functional":
-        # 정적·package·IaC 수리는 최초에 실패한 동일 gate를 이 작업 공간에서 다시
-        # 확인한다. 동적 HTTP 실행은 Docker를 소유한 바깥 Testing 단계가 보존한 case로
-        # 다시 확인하고, 구현 에이전트는 여기서 변경 source의 compile만 확인한다.
+    if task_type.startswith("testing-"):
+        # Every Testing repair reruns the exact failed gate with its preserved inputs.
+        # Dynamic repairs therefore use the same Arazzo workflow executor here and again
+        # when the outer Testing stage resumes the complete gate sequence.
         from app.testing.repair_check import verify_testing_repair_gate
 
         evidence = verify_testing_repair_gate(

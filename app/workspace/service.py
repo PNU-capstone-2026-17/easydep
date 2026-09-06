@@ -3395,6 +3395,18 @@ class WorkspaceService:
             candidate_plan = primary.get("candidate_plan")
             if isinstance(candidate_plan, dict):
                 profile["candidate_plan"] = candidate_plan
+            workflow_inputs = primary.get("workflow_inputs")
+            if isinstance(workflow_inputs, dict):
+                profile["workflow_inputs"] = workflow_inputs
+            input_values = primary.get("input_values")
+            if isinstance(input_values, dict):
+                profile["input_values"] = input_values
+            failed_workflow_id = str(primary.get("failed_workflow_id") or "").strip()
+            failed_step_id = str(primary.get("failed_step_id") or "").strip()
+            if failed_workflow_id:
+                profile["failed_workflow_id"] = failed_workflow_id
+            if failed_step_id:
+                profile["failed_step_id"] = failed_step_id
             evidence = primary.get("evidence")
             evidence = evidence if isinstance(evidence, dict) else {}
             finding = evidence.get("finding")
@@ -3405,18 +3417,14 @@ class WorkspaceService:
                 and isinstance(log_reference.get("ref"), str)
             ):
                 profile["application_log_ref"] = log_reference["ref"]
-            case_id = str(evidence.get("caseId") or evidence.get("case_id") or "")
-            if not case_id:
-                case_id = next(
-                    (
-                        str(target).rsplit(":", 1)[-1]
-                        for target in primary.get("target_ids") or []
-                        if isinstance(target, str) and target.startswith("test:")
-                    ),
-                    "",
-                )
-            if case_id:
-                profile["case_id"] = case_id
+            if "failed_workflow_id" not in profile:
+                failed_workflow_id = str(evidence.get("failedWorkflowId") or "").strip()
+                if failed_workflow_id:
+                    profile["failed_workflow_id"] = failed_workflow_id
+            if "failed_step_id" not in profile:
+                failed_step_id = str(evidence.get("failedStepId") or "").strip()
+                if failed_step_id:
+                    profile["failed_step_id"] = failed_step_id
         return selected, task_type, file_hints, profile
 
     @staticmethod
