@@ -31,6 +31,12 @@ class TestingState(TypedDict):
     # 구현 수리 직후에는 이전 실행에서 실제로 실패한 case를 먼저 재검사한다. 후보 계획의
     # 배열 순서는 바꾸지 않아 digest를 보존하고, 실행 순서에만 이 힌트를 적용한다.
     priority_case_id: str
+    # Canonical Arazzo resume data. These remain outside candidatePlan so the
+    # stored plan is a valid, portable Arazzo document.
+    fixed_workflow_inputs: dict[str, dict[str, Any]]
+    fixed_input_values: dict[str, dict[str, Any]]
+    preserved_workflow_results: list[dict[str, Any]]
+    priority_workflow_id: str
     iac_expected: bool | None
     deployment_package_expected: bool | None
     # ``None``은 최초 실행처럼 모든 gate를 검사한다. 수리 실행은 실패 원인과

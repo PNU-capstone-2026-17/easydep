@@ -24,8 +24,7 @@ def same_implementation_contracts(
     if set(source) != set(candidate):
         return False
     return all(
-        _same_implementation_contract(source[name], candidate[name], name=name)
-        for name in source
+        _same_implementation_contract(source[name], candidate[name], name=name) for name in source
     )
 
 
@@ -280,7 +279,11 @@ def _bce(
                         *use_cases,
                         *_source_refs(call),
                         *(
-                            [operations_by_legacy.get(receiver_id, TraceRef("operation", receiver_id))]
+                            [
+                                operations_by_legacy.get(
+                                    receiver_id, TraceRef("operation", receiver_id)
+                                )
+                            ]
                             if receiver_id
                             else []
                         ),
@@ -536,36 +539,38 @@ def _implementation_evidence(nodes: list[TraceNode], value: Any) -> None:
 
 
 def _testing(nodes: list[TraceNode], result: Mapping[str, Any]) -> None:
-    """작은 테스트 계획을 requirement/use case/API와 실행 evidence에 잇는다."""
+    """Connect Arazzo workflows to requirements, use cases, APIs, and findings."""
 
     report = _map(result.get("dynamic_functional_report"))
     if not report:
-        report = _map(_map(result.get("verification")).get("reports")).get("dynamicFunctional")
+        verification_reports = _map(_map(result.get("verification")).get("reports"))
+        report = _map(verification_reports.get("dynamicFunctional"))
     report = _map(report) if report else result
     digest = _id(report, "candidateDigest") or "unversioned"
-    for case in _records(_map(report.get("candidatePlan")).get("cases")):
-        case_id = _id(case, "case_id")
-        if not case_id:
+    for workflow in _records(_map(report.get("candidatePlan")).get("workflows")):
+        workflow_id = _id(workflow, "workflowId")
+        if not workflow_id:
             continue
+        trace = _map(workflow.get("x-easydep-trace"))
         sources = [
-            *_refs(case, "requirement", "requirement_ids"),
-            *_refs(case, "use_case", "use_case_id"),
+            *_refs(trace, "requirement", "requirementIds"),
+            *_refs(trace, "use_case", "useCaseIds"),
         ]
         sources.extend(
             TraceRef("api", operation_id)
-            for step in _records(case.get("steps"))
-            if (operation_id := _id(step, "operation_id"))
+            for step in _records(workflow.get("steps"))
+            if (operation_id := _id(step, "operationId"))
         )
-        test_ref = TraceRef("test", f"{digest}:{case_id}")
+        test_ref = TraceRef("test", f"{digest}:{workflow_id}")
         _add(nodes, test_ref, sources)
 
-    for case_result in _records(report.get("cases")):
-        case_id = _id(case_result, "caseId")
-        finding = _map(_map(case_result.get("result")).get("finding"))
+    for workflow_result in _records(report.get("workflows")):
+        workflow_id = _id(workflow_result, "workflowId")
+        finding = _map(_map(workflow_result.get("result")).get("finding"))
         finding_id = _id(finding, "code")
-        if case_id and finding_id:
-            source = TraceRef("test", f"{digest}:{case_id}")
-            _add(nodes, TraceRef("finding", f"{case_id}:{finding_id}"), [source])
+        if workflow_id and finding_id:
+            source = TraceRef("test", f"{digest}:{workflow_id}")
+            _add(nodes, TraceRef("finding", f"{workflow_id}:{finding_id}"), [source])
 
     for item in _records(result.get("blocking_findings")):
         finding_id = _id(item, "code") or _id(item, "id")

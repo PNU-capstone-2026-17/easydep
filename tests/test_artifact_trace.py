@@ -289,15 +289,17 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
             "dynamic_functional_report": {
                 "candidateDigest": "digest-1",
                 "candidatePlan": {
-                    "cases": [
+                    "workflows": [
                         {
-                            "case_id": "UC-1",
-                            "requirement_ids": ["REQ-1"],
-                            "use_case_id": "UC-1",
+                            "workflowId": "UC-1",
+                            "x-easydep-trace": {
+                                "requirementIds": ["REQ-1"],
+                                "useCaseIds": ["UC-1"],
+                            },
                             "steps": [
                                 {
-                                    "step_id": "run",
-                                    "operation_id": "createOrder",
+                                    "stepId": "run",
+                                    "operationId": "createOrder",
                                 }
                             ],
                         }
@@ -320,9 +322,7 @@ def test_projection_connects_requirement_source_refs_to_deployment_implementatio
         ],
     )
 
-    implementation_evidence = TraceRef(
-        "evidence", "implementation:implementation-1:verification"
-    )
+    implementation_evidence = TraceRef("evidence", "implementation:implementation-1:verification")
 
     assert set(trace.downstream(requirement)) == {
         workload,
@@ -384,18 +384,20 @@ def test_trace_endpoint_keeps_source_rtm_but_excludes_unversioned_testing_result
                 "dynamicFunctional": {
                     "candidateDigest": "plan-digest",
                     "candidatePlan": {
-                        "cases": [
+                        "workflows": [
                             {
-                                "case_id": "UC-1",
-                                "requirement_ids": ["REQ-1"],
-                                "use_case_id": "UC-1",
-                                "steps": [{"step_id": "create", "operation_id": "createOrder"}],
+                                "workflowId": "UC-1",
+                                "x-easydep-trace": {
+                                    "requirementIds": ["REQ-1"],
+                                    "useCaseIds": ["UC-1"],
+                                },
+                                "steps": [{"stepId": "create", "operationId": "createOrder"}],
                             }
                         ]
                     },
-                    "cases": [
+                    "workflows": [
                         {
-                            "caseId": "UC-1",
+                            "workflowId": "UC-1",
                             "result": {"finding": {"code": "HTTP_STATUS_NOT_SUCCESS"}},
                         }
                     ],
@@ -413,14 +415,16 @@ def test_trace_endpoint_keeps_source_rtm_but_excludes_unversioned_testing_result
     )
     monkeypatch.setattr(
         "app.artifact_trace_service.workspace_repository.latest_command",
-        lambda received_app_id, *, stage: {
-            "command_id": "testing-command",
-            "stage": "testing",
-            "status": "COMPLETED",
-            "result": {"job": {"result": testing_result}},
-        }
-        if received_app_id == app_id and stage == "testing"
-        else None,
+        lambda received_app_id, *, stage: (
+            {
+                "command_id": "testing-command",
+                "stage": "testing",
+                "status": "COMPLETED",
+                "result": {"job": {"result": testing_result}},
+            }
+            if received_app_id == app_id and stage == "testing"
+            else None
+        ),
     )
 
     response = trace_client.get(f"/api/apps/{app_id}/trace?ref=api:createOrder")
@@ -455,10 +459,21 @@ def test_trace_uses_frozen_testing_input_and_excludes_mismatched_evidence(
         artifact_version_ids={TYPE_SOURCE_CODE: 101, TYPE_DEPLOYMENT_FILE: 102},
         contract_artifacts={
             "requirements": {"content": {"requirements": [{"id": "REQ-FROZEN"}]}},
-            "use_cases": {"content": {"use_cases": [{"id": "UC-FROZEN", "requirement_ids": ["REQ-FROZEN"]}]}},
-            "openapi": {"content": {"paths": {"/frozen": {"post": {
-                "operationId": "createFrozen", "x-easydep-use-case-ids": ["UC-FROZEN"]
-            }}}}},
+            "use_cases": {
+                "content": {"use_cases": [{"id": "UC-FROZEN", "requirement_ids": ["REQ-FROZEN"]}]}
+            },
+            "openapi": {
+                "content": {
+                    "paths": {
+                        "/frozen": {
+                            "post": {
+                                "operationId": "createFrozen",
+                                "x-easydep-use-case-ids": ["UC-FROZEN"],
+                            }
+                        }
+                    }
+                }
+            },
         },
     )
     frozen_contracts = testing_input.contract_artifacts.model_dump(mode="json", exclude_none=True)
@@ -470,9 +485,9 @@ def test_trace_uses_frozen_testing_input_and_excludes_mismatched_evidence(
         "metadata": {
             "implementation_job_id": "implementation-1",
             "trace_artifact_versions": {TYPE_CLASS: 301},
-            "testing_contracts": frozen_contracts if contracts_match else {
-                "requirements": {"content": {"requirements": [{"id": "REQ-OTHER"}]}}
-            },
+            "testing_contracts": frozen_contracts
+            if contracts_match
+            else {"requirements": {"content": {"requirements": [{"id": "REQ-OTHER"}]}}},
         },
     }
     calls: list[tuple[str, int | None]] = []
@@ -481,13 +496,13 @@ def test_trace_uses_frozen_testing_input_and_excludes_mismatched_evidence(
         calls.append((kind, selectors.get("version_id")))
         return snapshot
 
-    monkeypatch.setattr("app.artifact_trace_service.artifact_repository.load_file_snapshot", load_snapshot)
+    monkeypatch.setattr(
+        "app.artifact_trace_service.artifact_repository.load_file_snapshot", load_snapshot
+    )
     monkeypatch.setattr(
         "app.artifact_trace_service.artifact_repository.load_state",
         lambda _app: {
-            "artifact_versions": {
-                TYPE_CLASS: {"version_id": 301 if contracts_match else 999}
-            },
+            "artifact_versions": {TYPE_CLASS: {"version_id": 301 if contracts_match else 999}},
             "refined_requirements": {"requirements": [{"id": "REQ-LATEST"}]},
             "extracted_bce_classes": {"Classes": [{"className": "FrozenControl"}]},
         },
@@ -495,15 +510,35 @@ def test_trace_uses_frozen_testing_input_and_excludes_mismatched_evidence(
     monkeypatch.setattr(
         "app.artifact_trace_service.workspace_repository.latest_command",
         lambda _app, *, stage: {
-            "command_id": "testing-command", "stage": stage, "status": "COMPLETED",
-            "result": {"job": {"testing_input": testing_input.model_dump(mode="json"), "result": {
-                "passed": True, "gateStatus": "PASS", "dynamic_functional_report": {
-                    "candidateDigest": "plan-frozen", "candidatePlan": {"cases": [{
-                        "case_id": "UC-FROZEN", "requirement_ids": ["REQ-FROZEN"],
-                        "use_case_id": "UC-FROZEN", "steps": [{"step_id": "create", "operation_id": "createFrozen"}]
-                    }]}
+            "command_id": "testing-command",
+            "stage": stage,
+            "status": "COMPLETED",
+            "result": {
+                "job": {
+                    "testing_input": testing_input.model_dump(mode="json"),
+                    "result": {
+                        "passed": True,
+                        "gateStatus": "PASS",
+                        "dynamic_functional_report": {
+                            "candidateDigest": "plan-frozen",
+                            "candidatePlan": {
+                                "workflows": [
+                                    {
+                                        "workflowId": "UC-FROZEN",
+                                        "x-easydep-trace": {
+                                            "requirementIds": ["REQ-FROZEN"],
+                                            "useCaseIds": ["UC-FROZEN"],
+                                        },
+                                        "steps": [
+                                            {"stepId": "create", "operationId": "createFrozen"}
+                                        ],
+                                    }
+                                ]
+                            },
+                        },
+                    },
                 }
-            }}}
+            },
         },
     )
 
