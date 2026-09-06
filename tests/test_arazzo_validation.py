@@ -49,9 +49,7 @@ def _document() -> dict:
     return {
         "arazzo": "1.1.0",
         "info": {"title": "Inventory smoke tests", "version": "1.0.0"},
-        "sourceDescriptions": [
-            {"name": "application", "url": "openapi.json", "type": "openapi"}
-        ],
+        "sourceDescriptions": [{"name": "application", "url": "openapi.json", "type": "openapi"}],
         "workflows": [
             {
                 "workflowId": "smoke",
@@ -99,9 +97,7 @@ def test_local_goto_and_cleanup_workflow_are_valid() -> None:
                     "parameters": [
                         {"name": "id", "in": "path", "value": "$steps.create.outputs.itemId"}
                     ],
-                    "onFailure": [
-                        {"name": "cleanup", "type": "goto", "workflowId": "cleanup"}
-                    ],
+                    "onFailure": [{"name": "cleanup", "type": "goto", "workflowId": "cleanup"}],
                 },
             ],
         },
@@ -127,9 +123,7 @@ def test_prior_step_outputs_and_criteria_are_resolvable() -> None:
             "stepId": "read",
             "operationId": "getItem",
             "dependsOn": ["create"],
-            "parameters": [
-                {"name": "id", "in": "path", "value": "$steps.create.outputs.itemId"}
-            ],
+            "parameters": [{"name": "id", "in": "path", "value": "$steps.create.outputs.itemId"}],
             "successCriteria": [
                 {"condition": "$statusCode == 200"},
                 {"condition": "$response.body#/id == $steps.create.outputs.itemId"},
@@ -197,9 +191,7 @@ def test_unknown_operation_id_is_rejected() -> None:
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda document: document["workflows"][0].__setitem__(
-            "dependsOn", ["missing-workflow"]
-        ),
+        lambda document: document["workflows"][0].__setitem__("dependsOn", ["missing-workflow"]),
         lambda document: document["workflows"][0]["steps"][0].__setitem__(
             "onSuccess", [{"name": "jump", "type": "goto", "workflowId": "missing-workflow"}]
         ),
@@ -235,9 +227,7 @@ def test_retry_limit_must_be_bounded_to_three_attempts(retry_action: dict) -> No
 
 def test_retry_without_limit_uses_the_spec_default() -> None:
     document = _document()
-    document["workflows"][0]["steps"][0]["onFailure"] = [
-        {"name": "retry-once", "type": "retry"}
-    ]
+    document["workflows"][0]["steps"][0]["onFailure"] = [{"name": "retry-once", "type": "retry"}]
 
     _validate(document)
 
@@ -322,9 +312,7 @@ def test_workflow_call_to_unknown_workflow_is_rejected() -> None:
 )
 def test_malformed_or_unsupported_runtime_expression_is_rejected(expression: str) -> None:
     document = _document()
-    document["workflows"][0]["steps"][0]["parameters"] = [
-        {"name": "item-id", "value": expression}
-    ]
+    document["workflows"][0]["steps"][0]["parameters"] = [{"name": "item-id", "value": expression}]
 
     with pytest.raises(ArazzoValidationError):
         _validate(document)
@@ -411,9 +399,134 @@ def test_unsupported_criterion_types_are_rejected(criterion_type: str) -> None:
 
 def test_recursive_local_workflow_call_is_rejected() -> None:
     document = _document()
-    document["workflows"][0]["steps"] = [
-        {"stepId": "recursive", "workflowId": "smoke"}
-    ]
+    document["workflows"][0]["steps"] = [{"stepId": "recursive", "workflowId": "smoke"}]
 
     with pytest.raises(ArazzoValidationError, match="recursion cycle"):
+        _validate(document)
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    [
+        {"name": "q", "value": "books"},
+        {"name": "missing", "in": "query", "value": "books"},
+        {"name": "session", "in": "cookie", "value": "token"},
+    ],
+)
+def test_openapi_step_parameters_are_explicit_supported_and_declared(parameter: dict) -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0]["parameters"] = [parameter]
+    openapi = _openapi()
+    openapi["paths"]["/items"]["get"]["parameters"] = [
+        {"name": "q", "in": "query", "required": False, "schema": {"type": "string"}},
+        {"name": "session", "in": "cookie", "required": False, "schema": {"type": "string"}},
+    ]
+
+    with pytest.raises(ArazzoValidationError):
+        validate_arazzo_document(document, openapi=openapi)
+
+
+@pytest.mark.parametrize("location", ["cookie", "querystring"])
+def test_required_unsupported_openapi_parameter_is_rejected(location: str) -> None:
+    document = _document()
+    openapi = _openapi()
+    openapi["paths"]["/items"]["get"]["parameters"] = [
+        {"name": "session", "in": location, "required": True, "schema": {"type": "string"}}
+    ]
+
+    with pytest.raises(ArazzoValidationError, match="unsupported required"):
+        validate_arazzo_document(document, openapi=openapi)
+
+
+@pytest.mark.parametrize(
+    "request_body",
+    [
+        {"contentType": "text/plain", "payload": "not-json"},
+        {
+            "contentType": "application/json",
+            "payload": {"name": "book"},
+            "replacements": [
+                {"target": "$.name", "targetSelectorType": "jsonpath", "value": "new"}
+            ],
+        },
+    ],
+)
+def test_request_bodies_are_json_and_replacements_are_json_pointers(request_body: dict) -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0] = {
+        "stepId": "create",
+        "operationId": "createItem",
+        "requestBody": request_body,
+    }
+    openapi = _openapi()
+    openapi["paths"]["/items"]["post"]["requestBody"] = {
+        "content": {"application/json": {"schema": {"type": "object"}}}
+    }
+
+    with pytest.raises(ArazzoValidationError):
+        validate_arazzo_document(document, openapi=openapi)
+
+
+def test_non_json_openapi_request_body_is_rejected_before_execution() -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0] = {
+        "stepId": "create",
+        "operationId": "createItem",
+    }
+    openapi = _openapi()
+    openapi["paths"]["/items"]["post"]["requestBody"] = {
+        "content": {"text/plain": {"schema": {"type": "string"}}}
+    }
+
+    with pytest.raises(ArazzoValidationError, match="non-JSON"):
+        validate_arazzo_document(document, openapi=openapi)
+
+
+@pytest.mark.parametrize(
+    "retry",
+    [
+        {"name": "retry", "type": "retry", "stepId": "list"},
+        {"name": "retry", "type": "retry", "workflowId": "smoke"},
+        {"name": "retry", "type": "retry", "retryAfter": 1},
+    ],
+)
+def test_retry_cannot_target_or_delay_another_execution(retry: dict) -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0]["onFailure"] = [retry]
+
+    with pytest.raises(ArazzoValidationError, match="only retries its current step"):
+        _validate(document)
+
+
+def test_workflow_level_parameters_are_rejected_in_the_initial_profile() -> None:
+    document = _document()
+    document["workflows"][0]["parameters"] = [{"name": "q", "in": "query", "value": "books"}]
+
+    with pytest.raises(ArazzoValidationError, match="declare parameters on each operation step"):
+        _validate(document)
+
+
+def test_step_timeout_is_rejected_instead_of_being_silently_ignored() -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0]["timeout"] = 500
+
+    with pytest.raises(ArazzoValidationError, match="configured request timeout"):
+        _validate(document)
+
+
+def test_local_workflow_call_control_fields_are_rejected() -> None:
+    document = _document()
+    document["workflows"].append(
+        {
+            "workflowId": "child",
+            "steps": [{"stepId": "child-list", "operationId": "listItems"}],
+        }
+    )
+    document["workflows"][0]["steps"][0] = {
+        "stepId": "call-child",
+        "workflowId": "child",
+        "onFailure": [{"name": "end", "type": "end"}],
+    }
+
+    with pytest.raises(ArazzoValidationError, match="unsupported control fields"):
         _validate(document)

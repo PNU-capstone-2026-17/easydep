@@ -97,9 +97,7 @@ def _inline_refs(document: dict[str, Any], value: Any, seen: frozenset[str] = fr
         target: Any = document
         for part in pointer[2:].split("/"):
             if not isinstance(target, dict) or part not in target:
-                raise UpstreamAmbiguity(
-                    f"The OpenAPI schema reference does not exist: {pointer}"
-                )
+                raise UpstreamAmbiguity(f"The OpenAPI schema reference does not exist: {pointer}")
             target = target[part]
         merged = {
             **target,
@@ -117,13 +115,10 @@ def _type(document: dict[str, Any], schema: Any) -> str:
     alternatives = value.get("anyOf")
     if isinstance(alternatives, list):
         concrete = [
-            item
-            for item in alternatives
-            if isinstance(item, dict) and item.get("type") != "null"
+            item for item in alternatives if isinstance(item, dict) and item.get("type") != "null"
         ]
         has_null = any(
-            isinstance(item, dict) and item.get("type") == "null"
-            for item in alternatives
+            isinstance(item, dict) and item.get("type") == "null" for item in alternatives
         )
         if has_null and len(concrete) == 1:
             return _type(document, concrete[0])
@@ -155,7 +150,7 @@ def _fields(document: dict[str, Any], schema: Any) -> list[tuple[str, dict[str, 
     ]
 
 
-def _schema_errors(document: dict[str, Any], schema: dict[str, Any], value: Any) -> list[str]:
+def schema_errors(document: dict[str, Any], schema: dict[str, Any], value: Any) -> list[str]:
     """제안값을 실제 OpenAPI leaf schema로 다시 검사한다."""
 
     expanded = _inline_refs(document, schema)
@@ -167,6 +162,11 @@ def _schema_errors(document: dict[str, Any], schema: dict[str, Any], value: Any)
         return [error.message for error in sorted(validator.iter_errors(value), key=str)]
     except jsonschema.SchemaError as error:
         raise UpstreamAmbiguity(f"The OpenAPI input schema is invalid: {error}") from error
+
+
+def _schema_errors(document: dict[str, Any], schema: dict[str, Any], value: Any) -> list[str]:
+    """Backward-compatible private alias for the reusable schema primitive."""
+    return schema_errors(document, schema, value)
 
 
 def _bounded_number(schema: dict[str, Any], kind: str) -> int | float | None:
@@ -338,9 +338,7 @@ def _sample(
         # minItems가 없다면 임의로 []를 보내지 않고 이 배열 값 하나만 제안받는다.
         # 특정 도메인의 원소 개수나 의미를 코드에 넣지 않아도 성공 입력을 만들 수 있다.
         sources[location] = (
-            "preserved-suggestion"
-            if (operation_id, location) in preserved
-            else "llm-suggestion"
+            "preserved-suggestion" if (operation_id, location) in preserved else "llm-suggestion"
         )
         return _suggest_value(
             document,
@@ -379,7 +377,9 @@ def _sample(
         sources[location] = "openapi-type"
         return None
 
-    sources[location] = "preserved-suggestion" if (operation_id, location) in preserved else "llm-suggestion"
+    sources[location] = (
+        "preserved-suggestion" if (operation_id, location) in preserved else "llm-suggestion"
+    )
     return _suggest_value(
         document,
         value,
@@ -412,22 +412,33 @@ def _index(document: dict[str, Any]) -> dict[str, list[Operation]]:
     return result
 
 
-def operation_for_id(document: dict[str, Any], operation_id: str, *, use_case_id: str) -> Operation:
-    """부분 이름 비교 없이 operationId 하나를 OpenAPI 호출 하나로 확정한다."""
+def operation_for_id(
+    document: dict[str, Any],
+    operation_id: str,
+    *,
+    use_case_id: str | None = None,
+    require_trace: bool = True,
+) -> Operation:
+    """Resolve one frozen OpenAPI operation, optionally enforcing legacy use-case traceability."""
     matches = _index(document).get(operation_id, [])
     if len(matches) != 1:
         detail = "was not found" if not matches else "is duplicated"
         raise UpstreamAmbiguity(f"OpenAPI operationId {operation_id} {detail}.")
     operation = matches[0]
-    trace = operation.value.get("x-easydep-use-case-ids")
-    if not isinstance(trace, list) or not all(
-        isinstance(item, str) and item.strip() for item in trace
-    ):
-        raise UpstreamAmbiguity(f"OpenAPI operation trace is empty: {operation_id}")
-    if use_case_id not in trace:
-        raise UpstreamAmbiguity(
-            f"OpenAPI operation trace does not match the use case: {operation_id} -> {use_case_id}"
-        )
+    if require_trace:
+        if not use_case_id:
+            raise UpstreamAmbiguity(
+                f"A use case is required to validate operation trace: {operation_id}"
+            )
+        trace = operation.value.get("x-easydep-use-case-ids")
+        if not isinstance(trace, list) or not all(
+            isinstance(item, str) and item.strip() for item in trace
+        ):
+            raise UpstreamAmbiguity(f"OpenAPI operation trace is empty: {operation_id}")
+        if use_case_id not in trace:
+            raise UpstreamAmbiguity(
+                f"OpenAPI operation trace does not match the use case: {operation_id} -> {use_case_id}"
+            )
     return operation
 
 
@@ -456,9 +467,7 @@ def _response_schema(
             or responses.get("default")
         )
     if not isinstance(response, dict):
-        raise UpstreamAmbiguity(
-            f"OpenAPI success response is missing: {operation.operation_id}"
-        )
+        raise UpstreamAmbiguity(f"OpenAPI success response is missing: {operation.operation_id}")
     content = response.get("content")
     # 204처럼 본문이 없는 성공 응답은 schema가 없는 것이 정상이다. ``content``를
     # 선언했는데 JSON schema만 빠진 경우와 구분하여, 후자는 계속 명세 오류로 다룬다.
@@ -467,9 +476,7 @@ def _response_schema(
     json_content = content.get("application/json") if isinstance(content, dict) else None
     schema = json_content.get("schema") if isinstance(json_content, dict) else None
     if not isinstance(schema, dict):
-        raise UpstreamAmbiguity(
-            f"OpenAPI response schema is missing: {operation.operation_id}"
-        )
+        raise UpstreamAmbiguity(f"OpenAPI response schema is missing: {operation.operation_id}")
     _type(document, schema)
     return schema
 
@@ -515,8 +522,7 @@ def _inputs(
     headers: dict[str, str] = {}
     sources: dict[str, str] = {}
     context_parts = [
-        str(operation.value.get(key) or "").strip()
-        for key in ("summary", "description")
+        str(operation.value.get(key) or "").strip() for key in ("summary", "description")
     ]
     # 업무 의미를 추론할 최소 근거만 보낸다. 유스케이스나 request body 전체는 leaf마다
     # 반복하지 않으며, 지나치게 긴 설명이 테스트 생성의 중심이 되지 않게 제한한다.
@@ -534,9 +540,7 @@ def _inputs(
             if source in {"llm-suggestion", "preserved-suggestion"}
         )
         error_type = TestInputError if suggested else UpstreamAmbiguity
-        raise error_type(
-            f"Input {location} is invalid for {operation.operation_id}: {errors[0]}"
-        )
+        raise error_type(f"Input {location} is invalid for {operation.operation_id}: {errors[0]}")
 
     def transferred(name: str, schema: dict[str, Any], location: str) -> Any:
         values = previous.get((name, _type(document, schema)), [])
@@ -612,16 +616,14 @@ def _basic_auth() -> tuple[str, str]:
     )
 
 
-def _url(
+def operation_url(
     target_url: str, operation: Operation, values: dict[str, Any], query: dict[str, Any]
 ) -> str:
     path = operation.path
     for name, value in values.items():
         path = path.replace("{" + name + "}", quote(str(value), safe=""))
     if "{" in path or "}" in path:
-        raise UpstreamAmbiguity(
-            f"A required path parameter cannot be populated: {operation.path}"
-        )
+        raise UpstreamAmbiguity(f"A required path parameter cannot be populated: {operation.path}")
     return urljoin(target_url.rstrip("/") + "/", path.lstrip("/")) + (
         ("?" + urlencode(query, doseq=True)) if query else ""
     )
@@ -685,13 +687,18 @@ def _bounded_summary(value: Any) -> Any:
     }
 
 
-def _response_summary(body: str) -> str:
+def response_summary(body: str) -> str:
     """오류 응답도 요청 evidence와 같은 크기 제한을 적용한다."""
 
     try:
         return json.dumps(_bounded_summary(json.loads(body)), ensure_ascii=False)
     except (TypeError, ValueError):
         return body[:2000] + ("…" if len(body) > 2000 else "")
+
+
+def _response_summary(body: str) -> str:
+    """Backward-compatible private alias for the reusable response primitive."""
+    return response_summary(body)
 
 
 def _request_summary(
@@ -717,6 +724,56 @@ def _request_summary(
     if not sent:
         result["sent"] = False
     return result
+
+
+def send_operation_request(
+    operation: Operation,
+    *,
+    target_url: str,
+    paths: dict[str, Any],
+    query: dict[str, Any],
+    headers: dict[str, Any],
+    body: Any,
+    timeout_seconds: float,
+) -> tuple[httpx.Response, dict[str, Any]]:
+    """Send one prepared OpenAPI operation and retain the bounded request evidence."""
+    request = _request_summary(operation, paths, query, headers, body)
+    response = httpx.request(
+        operation.method,
+        operation_url(target_url, operation, paths, query),
+        headers={"Accept": "application/json", **headers},
+        json=body,
+        auth=_basic_auth(),
+        timeout=timeout_seconds,
+        follow_redirects=False,
+    )
+    return response, request
+
+
+def _url(
+    target_url: str, operation: Operation, values: dict[str, Any], query: dict[str, Any]
+) -> str:
+    """Backward-compatible private alias for :func:`operation_url`."""
+    return operation_url(target_url, operation, values, query)
+
+
+def validate_operation_response(
+    document: dict[str, Any], operation: Operation, response: httpx.Response
+) -> Any:
+    """Validate a declared response body and return its decoded JSON value, if any."""
+    schema = _response_schema(document, operation, response.status_code)
+    if schema is None:
+        if response.content:
+            raise ValueError("The response contains a body that is absent from OpenAPI.")
+        return None
+    payload = response.json()
+    errors = sorted(
+        jsonschema.Draft202012Validator(_inline_refs(document, schema)).iter_errors(payload),
+        key=str,
+    )
+    if errors:
+        raise ValueError(str(errors[0]))
+    return payload
 
 
 def execute_functional_plan(
@@ -765,14 +822,14 @@ def execute_functional_plan(
                 preserved=preserved,
                 suggestions=suggestions,
             )
-            response = httpx.request(
-                operation.method,
-                _url(target_url, operation, paths, query),
-                headers={"Accept": "application/json", **headers},
-                json=body,
-                auth=_basic_auth(),
-                timeout=timeout_seconds,
-                follow_redirects=False,
+            response, request = send_operation_request(
+                operation,
+                target_url=target_url,
+                paths=paths,
+                query=query,
+                headers=headers,
+                body=body,
+                timeout_seconds=timeout_seconds,
             )
         except TestInputError as error:
             request = _request_summary(operation, {}, {}, {}, None, sent=False)
@@ -824,7 +881,6 @@ def execute_functional_plan(
                     request=request,
                 ),
             }
-        request = _request_summary(operation, paths, query, headers, body)
         report = {
             "stepId": step.step_id,
             "operationId": step.operation_id,
@@ -844,9 +900,7 @@ def execute_functional_plan(
                 location for location in generated_inputs if location.startswith("path.")
             ]
             needs_fixture = (
-                response.status_code == 404
-                and operation.method == "GET"
-                and bool(generated_path)
+                response.status_code == 404 and operation.method == "GET" and bool(generated_path)
             )
             message = (
                 f"{operation.method} {operation.path} could not reach its success path with "
@@ -858,9 +912,7 @@ def execute_functional_plan(
             finding = _finding(
                 step.step_id,
                 step.operation_id,
-                "TEST_PROFILE_DATA_UNAVAILABLE"
-                if needs_fixture
-                else "HTTP_STATUS_NOT_SUCCESS",
+                "TEST_PROFILE_DATA_UNAVAILABLE" if needs_fixture else "HTTP_STATUS_NOT_SUCCESS",
                 message,
                 status=response.status_code,
                 body=response.text,
@@ -880,19 +932,10 @@ def execute_functional_plan(
                 "finding": finding,
             }
         try:
-            schema = _response_schema(openapi, operation, response.status_code)
-            if schema is None:
-                if response.content:
-                    raise ValueError(
-                        "The response contains a success body that is absent from OpenAPI."
-                    )
+            payload = validate_operation_response(openapi, operation, response)
+            if payload is None:
                 reports.append(report)
                 continue
-            payload = response.json()
-            errors = sorted(
-                jsonschema.Draft202012Validator(_inline_refs(openapi, schema)).iter_errors(payload),
-                key=str,
-            )
         except UpstreamAmbiguity as error:
             return _ambiguity(
                 str(error),
@@ -907,13 +950,11 @@ def execute_functional_plan(
                 ),
             )
         except (json.JSONDecodeError, ValueError, jsonschema.SchemaError) as error:
-            errors = [error]
-        if errors:
             finding = _finding(
                 step.step_id,
                 step.operation_id,
                 "RESPONSE_SCHEMA_MISMATCH",
-                str(errors[0]),
+                str(error),
                 status=response.status_code,
                 body=response.text,
                 request=request,
@@ -927,6 +968,9 @@ def execute_functional_plan(
                 "inputValues": [item.model_dump(mode="json") for item in suggestions],
                 "finding": finding,
             }
+        schema = _response_schema(openapi, operation, response.status_code)
+        if schema is None:  # ``validate_operation_response`` already covered this branch.
+            raise AssertionError("A response schema disappeared during validation.")
         for name, kind, value, _path in _leaves(openapi, schema, payload):
             # 빈 배열이나 빠진 선택 필드는 다음 호출에 전달할 실제 값이 아니다. None을
             # 하나뿐인 응답 값으로 취급하면 올바른 예시값보다 먼저 선택된다.
@@ -949,4 +993,9 @@ __all__ = [
     "UpstreamAmbiguity",
     "execute_functional_plan",
     "operation_for_id",
+    "operation_url",
+    "response_summary",
+    "schema_errors",
+    "send_operation_request",
+    "validate_operation_response",
 ]

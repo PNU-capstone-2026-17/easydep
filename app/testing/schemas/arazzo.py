@@ -75,7 +75,9 @@ def _official_schema() -> dict[str, Any]:
         _error(f"Vendored Arazzo schema is unreadable: {exc}")
     if not isinstance(value, dict):
         _error("Vendored Arazzo schema must be an object.")
-    canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    canonical = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     if hashlib.sha256(canonical).hexdigest() != _SCHEMA_SHA256:
         _error("Vendored Arazzo schema checksum does not match the pinned source.")
     return value
@@ -106,7 +108,12 @@ def _validate_jsonschema(document: dict[str, Any]) -> None:
     try:
         validator = jsonschema.Draft202012Validator(schema)
         error = next(
-            iter(sorted(validator.iter_errors(document), key=lambda item: tuple(map(str, item.absolute_path)))),
+            iter(
+                sorted(
+                    validator.iter_errors(document),
+                    key=lambda item: tuple(map(str, item.absolute_path)),
+                )
+            ),
             None,
         )
     except jsonschema.SchemaError as exc:
@@ -151,7 +158,9 @@ def parse_arazzo_runtime_expression(expression: str) -> tuple[str, tuple[str, ..
     match = re.fullmatch(r"\$(request|response)\.(header|query|path)\.(.+)", expression)
     if match:
         source, location, name = match.groups()
-        valid_name = _HEADER_TOKEN.fullmatch(name) if location == "header" else _IDENTIFIER.fullmatch(name)
+        valid_name = (
+            _HEADER_TOKEN.fullmatch(name) if location == "header" else _IDENTIFIER.fullmatch(name)
+        )
         if valid_name is None:
             _error(f"Unsupported request or response reference: {expression}")
         return source, (location, name), None
@@ -272,7 +281,9 @@ def _walk_safety(value: Any, document: dict[str, Any], path: str = "document") -
             _error(f"{child} is not allowed in an execution profile.")
         if key == "operationPath":
             _error(f"{child} is not allowed; use a resolved operationId.")
-        if key_lower in {"async", "asyncapi"} or (key == "type" and isinstance(item, str) and item.lower() == "asyncapi"):
+        if key_lower in {"async", "asyncapi"} or (
+            key == "type" and isinstance(item, str) and item.lower() == "asyncapi"
+        ):
             _error(f"{child} describes asynchronous execution, which is not supported.")
         if key == "$ref":
             if not isinstance(item, str):
@@ -307,7 +318,11 @@ def _criterion_type(value: Any, path: str) -> str:
         return "simple"
     if value == "jsonpath":
         return "jsonpath"
-    if isinstance(value, dict) and value.get("type") == "jsonpath" and value.get("version") == "rfc9535":
+    if (
+        isinstance(value, dict)
+        and value.get("type") == "jsonpath"
+        and value.get("version") == "rfc9535"
+    ):
         return "jsonpath"
     _error(f"{path} is outside the EasyDep criterion profile; use simple or RFC 9535 JSONPath.")
 
@@ -347,7 +362,11 @@ def _validate_runtime_reference(
         target_workflow, field, name = parts
         if target_workflow not in workflow_steps:
             _error(f"{path} references an unknown workflow: {expression}")
-        names = workflow_inputs[target_workflow] if field == "inputs" else workflow_outputs[target_workflow]
+        names = (
+            workflow_inputs[target_workflow]
+            if field == "inputs"
+            else workflow_outputs[target_workflow]
+        )
         if name not in names:
             _error(f"{path} references an unknown workflow {field[:-1]}: {expression}")
         return None
@@ -538,6 +557,93 @@ def _openapi_operation_ids(openapi: dict[str, Any]) -> set[str]:
     return set(counts)
 
 
+def _resolved_operation(
+    openapi: dict[str, Any], operation_id: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return the unique frozen operation and its Path Item for profile checks."""
+    matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    paths = openapi.get("paths")
+    if not isinstance(paths, dict):
+        _error("Frozen OpenAPI document must contain a paths object.")
+    for path_item in paths.values():
+        if not isinstance(path_item, dict):
+            continue
+        for method, operation in path_item.items():
+            if (
+                str(method).lower() in _HTTP_METHODS
+                and isinstance(operation, dict)
+                and operation.get("operationId") == operation_id
+            ):
+                matches.append((operation, path_item))
+    if len(matches) != 1:
+        _error(f"Frozen OpenAPI operationId does not resolve uniquely: {operation_id}")
+    return matches[0]
+
+
+def _validate_openapi_step_profile(
+    step: dict[str, Any],
+    path: str,
+    operation: dict[str, Any],
+    path_item: dict[str, Any],
+) -> None:
+    """Reject request shapes the deterministic HTTP primitive cannot execute."""
+    declared: set[tuple[str, str]] = set()
+    for owner in (path_item, operation):
+        for parameter in owner.get("parameters") or []:
+            if not isinstance(parameter, dict):
+                continue
+            name, location = parameter.get("name"), parameter.get("in")
+            if bool(parameter.get("required")) and location not in {"path", "query", "header"}:
+                _error(f"{path} uses unsupported required OpenAPI parameter location: {location}")
+            if isinstance(name, str) and isinstance(location, str):
+                declared.add((location, name))
+    for index, parameter in enumerate(step.get("parameters") or []):
+        parameter_path = f"{path}.parameters[{index}]"
+        if not isinstance(parameter, dict) or "reference" in parameter:
+            _error(f"{parameter_path} must be an inline OpenAPI parameter.")
+        location = parameter.get("in")
+        if not isinstance(location, str):
+            _error(f"{parameter_path}.in is required for an OpenAPI step.")
+        if location not in {"path", "query", "header"}:
+            _error(f"{parameter_path}.in must be path, query, or header.")
+        name = _nonempty_string(parameter.get("name"), f"{parameter_path}.name")
+        if (location, name) not in declared:
+            _error(f"{parameter_path} is absent from the resolved OpenAPI operation.")
+    request_contract = operation.get("requestBody")
+    content = request_contract.get("content") if isinstance(request_contract, dict) else None
+    if (
+        isinstance(request_contract, dict)
+        and content is not None
+        and (not isinstance(content, dict) or "application/json" not in content)
+    ):
+        _error(f"{path} uses a non-JSON OpenAPI request body, which is outside the profile.")
+    request_body = step.get("requestBody")
+    if request_body is None:
+        return
+    if not isinstance(request_body, dict):
+        _error(f"{path}.requestBody must be an object.")
+    content_type = request_body.get("contentType")
+    if content_type is not None and content_type != "application/json":
+        _error(f"{path}.requestBody.contentType must be application/json.")
+    if not isinstance(content, dict) or "application/json" not in content:
+        _error(f"{path}.requestBody requires an application/json OpenAPI request body.")
+    replacements = request_body.get("replacements") or []
+    if not isinstance(replacements, list):
+        _error(f"{path}.requestBody.replacements must be a list.")
+    for index, replacement in enumerate(replacements):
+        replacement_path = f"{path}.requestBody.replacements[{index}]"
+        if not isinstance(replacement, dict):
+            _error(f"{replacement_path} must be an object.")
+        selector_type = replacement.get("targetSelectorType", "jsonpointer")
+        if isinstance(selector_type, dict):
+            selector_type = selector_type.get("type")
+        if selector_type != "jsonpointer":
+            _error(f"{replacement_path}.targetSelectorType must be jsonpointer.")
+        target = _nonempty_string(replacement.get("target"), f"{replacement_path}.target")
+        if _POINTER.fullmatch(target.removeprefix("#")) is None:
+            _error(f"{replacement_path}.target must be a JSON Pointer.")
+
+
 def _actions(value: Any, path: str) -> list[tuple[dict[str, Any], str]]:
     if value is None:
         return []
@@ -568,14 +674,12 @@ def _validate_action(
             or not 0 <= retry_limit <= _MAX_RETRY_LIMIT
         ):
             _error(f"{path}.retryLimit must be an integer from 0 to {_MAX_RETRY_LIMIT}.")
-        has_workflow = "workflowId" in action
-        has_step = "stepId" in action
-        if has_workflow and has_step:
-            _error(f"{path} retry may reference at most one workflowId or stepId.")
-        if has_step:
-            step_id = _nonempty_string(action.get("stepId"), f"{path}.stepId")
-            if step_id not in workflow_steps[workflow_id]:
-                _error(f"{path}.stepId does not resolve in workflow {workflow_id}.")
+        unsupported = {"workflowId", "stepId", "parameters", "retryAfter"}.intersection(action)
+        if unsupported:
+            _error(
+                f"{path} retry only retries its current step; unsupported fields: "
+                f"{', '.join(sorted(unsupported))}."
+            )
         return
     if action_type == "goto":
         has_workflow = "workflowId" in action
@@ -594,7 +698,9 @@ def _validate_action(
         return
     if action_type != "end":
         _error(f"{path}.type {action_type!r} is not supported by the synchronous profile.")
-    irrelevant = {"workflowId", "stepId", "parameters", "retryAfter", "retryLimit"}.intersection(action)
+    irrelevant = {"workflowId", "stepId", "parameters", "retryAfter", "retryLimit"}.intersection(
+        action
+    )
     if irrelevant:
         _error(f"{path} end action has irrelevant fields: {', '.join(sorted(irrelevant))}.")
 
@@ -736,13 +842,20 @@ def validate_arazzo_document(
     edges: dict[tuple[str, str], set[tuple[str, str]]] = {}
     workflow_calls: dict[str, set[str]] = {workflow_id: set() for workflow_id in workflow_steps}
     for workflow_id, workflow, path in workflow_values:
+        if workflow.get("parameters"):
+            _error(
+                f"{path}.parameters is outside the initial EasyDep profile; "
+                "declare parameters on each operation step."
+            )
         trace = workflow.get("x-easydep-trace")
         if isinstance(trace, dict) and trace_catalog is not None:
             for key, values in trace.items():
                 allowed = set(trace_catalog.get(key, ()))
                 unknown = sorted(set(values) - allowed)
                 if unknown:
-                    _error(f"{path}.x-easydep-trace.{key} contains unknown IDs: {', '.join(unknown)}")
+                    _error(
+                        f"{path}.x-easydep-trace.{key} contains unknown IDs: {', '.join(unknown)}"
+                    )
         depends_on = workflow.get("dependsOn", [])
         if not isinstance(depends_on, list):
             _error(f"{path}.dependsOn must be a list of workflowIds.")
@@ -767,18 +880,36 @@ def validate_arazzo_document(
         )
         for step_index, step in enumerate(steps):
             step_path = f"{path}.steps[{step_index}]"
+            if "timeout" in step:
+                _error(
+                    f"{step_path}.timeout is outside the initial EasyDep profile; "
+                    "the runner uses its configured request timeout."
+                )
             if "operationId" in step:
                 operation_id = _nonempty_string(step.get("operationId"), f"{step_path}.operationId")
                 if operation_id not in operation_ids:
                     _error(
                         f"{step_path}.operationId does not resolve uniquely in frozen OpenAPI: {operation_id}"
                     )
+                operation, path_item = _resolved_operation(openapi, operation_id)
+                _validate_openapi_step_profile(step, step_path, operation, path_item)
             elif "workflowId" in step:
-                target_workflow = _nonempty_string(step.get("workflowId"), f"{step_path}.workflowId")
+                target_workflow = _nonempty_string(
+                    step.get("workflowId"), f"{step_path}.workflowId"
+                )
                 if target_workflow not in workflow_steps:
                     _error(f"{step_path}.workflowId does not resolve to a local workflow.")
+                unsupported = {"successCriteria", "onSuccess", "onFailure"}.intersection(step)
+                if unsupported or workflow.get("successActions") or workflow.get("failureActions"):
+                    fields = ", ".join(sorted(unsupported)) or "workflow default actions"
+                    _error(
+                        f"{step_path} applies unsupported control fields to a local workflow "
+                        f"call: {fields}."
+                    )
                 if "requestBody" in step:
-                    _error(f"{step_path}.requestBody is not valid for a workflow step in this profile.")
+                    _error(
+                        f"{step_path}.requestBody is not valid for a workflow step in this profile."
+                    )
                 workflow_calls[workflow_id].add(target_workflow)
                 for parameter_index, parameter in enumerate(step.get("parameters") or []):
                     if not isinstance(parameter, dict) or "reference" in parameter:
@@ -786,7 +917,9 @@ def validate_arazzo_document(
                             f"{step_path}.parameters[{parameter_index}] must be an inline workflow parameter."
                         )
                     if "in" in parameter:
-                        _error(f"{step_path}.parameters[{parameter_index}].in is not valid for a workflow step.")
+                        _error(
+                            f"{step_path}.parameters[{parameter_index}].in is not valid for a workflow step."
+                        )
                     name = _nonempty_string(
                         parameter.get("name"), f"{step_path}.parameters[{parameter_index}].name"
                     )
@@ -839,7 +972,9 @@ def validate_arazzo_document(
             )
             for key in ("onSuccess", "onFailure"):
                 for action, action_path in _actions(step.get(key), f"{step_path}.{key}"):
-                    _validate_action(action, action_path, workflow_id, workflow_steps, workflow_order, edges)
+                    _validate_action(
+                        action, action_path, workflow_id, workflow_steps, workflow_order, edges
+                    )
                     _validate_execution_value(
                         action.get("parameters") or [],
                         path=f"{action_path}.parameters",
@@ -869,7 +1004,9 @@ def validate_arazzo_document(
                         edges[source_node].add(target)
         for key in ("successActions", "failureActions"):
             for action, action_path in _actions(workflow.get(key), f"{path}.{key}"):
-                _validate_action(action, action_path, workflow_id, workflow_steps, workflow_order, edges)
+                _validate_action(
+                    action, action_path, workflow_id, workflow_steps, workflow_order, edges
+                )
                 final_index = len(steps) - 1
                 _validate_execution_value(
                     action.get("parameters") or [],
