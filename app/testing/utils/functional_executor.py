@@ -112,6 +112,19 @@ def _type(document: dict[str, Any], schema: Any) -> str:
     kind = value.get("type")
     if isinstance(kind, str) and kind:
         return kind
+    alternatives = value.get("anyOf")
+    if isinstance(alternatives, list):
+        concrete = [
+            item
+            for item in alternatives
+            if isinstance(item, dict) and item.get("type") != "null"
+        ]
+        has_null = any(
+            isinstance(item, dict) and item.get("type") == "null"
+            for item in alternatives
+        )
+        if has_null and len(concrete) == 1:
+            return _type(document, concrete[0])
     if isinstance(value.get("properties"), dict):
         return "object"
     if "items" in value:

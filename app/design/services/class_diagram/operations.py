@@ -100,7 +100,9 @@ same class must not overload one method name with a different signature.
 Reuse fixed and reserved DataTypes by name. A new DataType must have resolved
 fields or enum values and must be referenced by an operation signature. Use
 kind=valueObject with non-empty fields and no values, or kind=enumeration with
-non-empty values and no fields.
+non-empty values and no fields. When a valueObject represents more than one
+valid outcome, declare every field that is absent in any outcome as Optional<T>;
+never represent that absence by returning null for a non-Optional field.
 """.strip()
     + "\n\n"
     + structure_type_contract()

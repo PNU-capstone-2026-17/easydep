@@ -18,6 +18,7 @@ from app.design.services.api_spec.normalization import (
     normalize_api_spec_model,
 )
 from app.design.services.api_spec.projection import build_openapi_from_model
+from app.design.services.class_diagram.operations import operation_prompt
 from app.design.services.class_diagram.type_system import (
     type_is_resolved,
     types_compatible,
@@ -288,3 +289,75 @@ def test_decimal_request_stays_numeric_through_testing(
     assert result["gateStatus"] == "PASS"
     assert sent == [{"firstOperand": 1.5, "secondOperand": 2.5}]
     assert all(value != {} for value in sent[0].values())
+
+
+def test_optional_response_fields_accept_explicit_json_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _calculator_bce().model_dump(by_alias=True)
+    for accepted_class in payload["Classes"]:
+        accepted_class["operations"][0]["returnType"] = "CalculationResponse"
+    payload["DataTypes"] = [
+        {
+            "name": "CalculationResponse",
+            "kind": "valueObject",
+            "fields": [
+                "success : boolean",
+                "result : Optional<double>",
+                "errorMessage : Optional<String>",
+            ],
+            "values": [],
+        }
+    ]
+    bce = BCEModel.model_validate(payload)
+    interaction = interaction_contracts(bce)[0].interaction_id
+    api_model = normalize_api_spec_model(
+        ApiSpecProposal.model_validate(
+            {
+                "Endpoints": [
+                    {
+                        "interaction_id": interaction,
+                        "path": "/calculations",
+                        "method": "post",
+                        "summary": "Perform a calculation.",
+                        "responses": [{"status": 200, "description": "Result"}],
+                    }
+                ]
+            }
+        ),
+        bce,
+    )
+    openapi = build_openapi_from_model(api_model)
+    response_schema = openapi["components"]["schemas"]["CalculationResponse"]
+    assert response_schema["required"] == ["success"]
+    assert response_schema["properties"]["errorMessage"] == {
+        "anyOf": [{"type": "string"}, {"type": "null"}]
+    }
+
+    monkeypatch.setattr(
+        httpx,
+        "request",
+        lambda *_args, **_kwargs: httpx.Response(
+            200,
+            json={"success": True, "result": 84.0, "errorMessage": None},
+        ),
+    )
+    proposed = iter([6, 14])
+    result = execute_functional_plan(
+        FunctionalTestCase.model_validate(
+            {
+                "case_id": "calculator-nullable-response",
+                "requirement_ids": ["FR1"],
+                "use_case_id": "UC1",
+                "steps": [
+                    {"step_id": "calculate", "operation_id": "performCalculation"}
+                ],
+            }
+        ),
+        openapi=openapi,
+        target_url="http://app.test",
+        propose_input=lambda _request: next(proposed),
+    )
+
+    assert result["gateStatus"] == "PASS"
+    assert "absent in any outcome as Optional<T>" in operation_prompt()

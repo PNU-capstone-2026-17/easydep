@@ -31,7 +31,12 @@ def _field_schema(field: dict[str, Any], known: set[str]) -> dict[str, Any]:
     raw = str(field.get("type", "string")).strip()
     schema = openapi_schema_for_type(raw, declared_types=known)
     description = str(field.get("description", "")).strip()
-    if description and "$ref" not in schema:
+    if not field.get("required"):
+        # OpenAPI 3.1 separates property presence from the value domain.  Java
+        # serializers commonly emit an absent Optional field as explicit JSON
+        # null, so a non-required property must also describe that value.
+        schema = {"anyOf": [schema, {"type": "null"}]}
+    if description:
         schema["description"] = description
     return schema
 

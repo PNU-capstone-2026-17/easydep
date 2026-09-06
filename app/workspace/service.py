@@ -1496,13 +1496,14 @@ class WorkspaceService:
                         previous_repair_results=previous_repair_results,
                         older_repair_summaries=older_repair_summaries,
                     )
-                    confirmed_target_refs = list(dict.fromkeys(
-                        str(target)
-                        for blocker in selected_blockers
-                        if isinstance(blocker, dict)
-                        for target in blocker.get("target_ids") or []
-                        if isinstance(target, str) and target
-                    ))
+                    (
+                        confirmed_target_refs,
+                        repair_file_hints,
+                    ) = self._testing_implementation_repair_targets(
+                        str(command["app_id"]),
+                        selected_blockers,
+                        repair_file_hints,
+                    )
                     repair_job = implementation_worker.create_feedback_job(
                         str(command["app_id"]),
                         cast(
@@ -3396,6 +3397,57 @@ class WorkspaceService:
             if case_id:
                 profile["case_id"] = case_id
         return selected, task_type, file_hints, profile
+
+    @staticmethod
+    def _testing_implementation_repair_targets(
+        app_id: str,
+        blockers: list[dict[str, Any]],
+        file_hints: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Map testing evidence back to current implementation-owned RTM targets."""
+
+        trace_refs = list(
+            dict.fromkeys(
+                str(ref)
+                for blocker in blockers
+                for ref in blocker.get("trace_refs") or []
+                if isinstance(ref, str) and ref
+            )
+        )
+        evidence = {
+            "repair_owner": (
+                "implementation"
+                if blockers
+                and all(
+                    blocker.get("repair_owner") == "implementation"
+                    or blocker.get("defect_class") == "SUT_DEFECT"
+                    for blocker in blockers
+                )
+                else "testing"
+            ),
+            "trace_refs": trace_refs,
+            "file_hints": file_hints,
+        }
+        candidate_refs = list(
+            dict.fromkeys(
+                [*trace_refs, *(f"file:{path}" for path in file_hints)]
+            )
+        )
+        tools = ProjectTools(app_id)
+        validation = tools.validate_targets(candidate_refs)
+        implementation_refs = list(
+            dict.fromkeys(
+                str(item.get("canonical_ref") or "")
+                for item in validation.get("targets") or []
+                if isinstance(item, dict)
+                and item.get("valid")
+                and item.get("owner") == "implementation"
+                and str(item.get("canonical_ref") or "")
+            )
+        )
+        targets = tools.normalize_revision_targets(implementation_refs)
+        payload = repair_payload_from_testing_evidence(evidence, targets)
+        return list(payload.confirmed_target_refs), list(payload.repair_file_hints)
 
     @staticmethod
     def _testing_implementation_feedback(

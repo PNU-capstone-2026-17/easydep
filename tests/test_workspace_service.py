@@ -16,6 +16,7 @@ from app.repositories import artifact_repository
 from app.workspace import api as workspace_api
 from app.workspace import repository
 from app.workspace import service as workspace_module
+from app.workspace.conversation.contracts import RevisionTarget
 from app.workspace.live_preview import LivePreviewStore, live_previews
 from app.workspace.service import WorkspaceService
 
@@ -1937,6 +1938,39 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
         lambda _app_id: {"class_diagram_puml": "A", "api_spec": {"paths": {}}},
     )
 
+    class FakeProjectTools:
+        def __init__(self, app_id: str) -> None:
+            assert app_id == "app-1"
+
+        def validate_targets(self, refs):
+            observed["repair_evidence_refs"] = list(refs)
+            return {
+                "targets": [
+                    {
+                        "canonical_ref": ref,
+                        "valid": True,
+                        "owner": "implementation",
+                    }
+                    for ref in refs
+                ]
+            }
+
+        def normalize_revision_targets(self, refs):
+            return [
+                RevisionTarget(
+                    ref=ref,
+                    kind=ref.partition(":")[0],
+                    element_id=ref.partition(":")[2],
+                    owner="implementation",
+                    artifact_type="SOURCE_CODE",
+                    artifact_version_id=10,
+                    display_label=ref,
+                )
+                for ref in sorted(refs)
+            ]
+
+    monkeypatch.setattr(workspace_module, "ProjectTools", FakeProjectTools)
+
     def create_feedback(*args, **kwargs):
         observed["feedback"] = args[2]
         observed["confirmed_target_refs"] = kwargs.get("confirmed_target_refs")
@@ -2043,9 +2077,13 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     )
     assert "Older implementation repair outcomes" in str(observed["feedback"])
     assert '"repetitions": 3' in str(observed["feedback"])
+    assert observed["repair_evidence_refs"] == [
+        "task:implement-registration",
+        "file:application/src/RegistrationService.java",
+    ]
     assert observed["confirmed_target_refs"] == [
-        "api:submitRegistration",
-        "test:plan-digest:UC1",
+        "file:application/src/RegistrationService.java",
+        "task:implement-registration",
     ]
     assert observed["payload"]["job_id"] == "implementation-2"
     assert observed["implementation_job_id"] == "implementation-2"
