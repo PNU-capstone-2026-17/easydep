@@ -12,6 +12,7 @@ from app.config import settings
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import profile_for
 from app.llm_schema import remove_non_ascii_descriptions
+from app.testing.progress import emit_testing_progress
 from app.testing.schemas.arazzo import ArazzoValidationError, validate_arazzo_document
 from app.testing.schemas.testing_state import TestingState
 from app.testing.utils.arazzo_executor import execute_arazzo_workflow
@@ -467,6 +468,12 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     """Plan once, execute Arazzo workflows, and preserve exact inputs for repair."""
     scope = state.get("gate_scope")
     if scope is not None and "dynamicFunctional" not in scope:
+        emit_testing_progress(
+            phase="dynamic",
+            scope="phase",
+            status="REUSED",
+            label="Reusing dynamic functional verification",
+        )
         previous = (state.get("previous_reports") or {}).get("dynamicFunctional")
         report = deepcopy(previous) if isinstance(previous, dict) else {}
         if not report:
@@ -484,6 +491,13 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
 
     target_url = str(state.get("target_url") or "").strip()
     if not target_url:
+        emit_testing_progress(
+            phase="dynamic",
+            scope="phase",
+            status="SKIPPED",
+            label="Skipping dynamic functional verification",
+            detail="No running application was available.",
+        )
         return {
             "current_node": "dynamic_functional",
             "dynamic_functional_report": {
@@ -493,6 +507,13 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             },
         }
     if not state.get("app_id"):
+        emit_testing_progress(
+            phase="dynamic",
+            scope="phase",
+            status="FAIL",
+            label="Dynamic functional verification failed",
+            detail="The application ID is missing.",
+        )
         return {
             "current_node": "dynamic_functional",
             "errors": [f"Missing app_id in state for run {state.get('run_id')}"],
@@ -507,6 +528,13 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     missing = [name for name in ("requirements", "use_cases", "openapi") if name not in frozen]
     if missing:
         reason = "Frozen TestingInput contracts are unavailable: " + ", ".join(missing)
+        emit_testing_progress(
+            phase="dynamic",
+            scope="phase",
+            status="INCONCLUSIVE",
+            label="Dynamic functional verification is unavailable",
+            detail="Frozen contracts are unavailable.",
+        )
         return {
             "current_node": "dynamic_functional",
             "errors": [reason],
@@ -515,11 +543,23 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             ),
         }
 
+    emit_testing_progress(
+        phase="dynamic",
+        scope="phase",
+        status="RUNNING",
+        label="Preparing Arazzo functional workflows",
+    )
     try:
         candidates = build_workflow_candidates(
             frozen["requirements"], frozen["use_cases"], frozen["openapi"]
         )
         if not candidates:
+            emit_testing_progress(
+                phase="dynamic",
+                scope="phase",
+                status="SKIPPED",
+                label="No functional workflows are required",
+            )
             return {
                 "current_node": "dynamic_functional",
                 "dynamic_functional_report": {
@@ -531,10 +571,18 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         if state.get("fixed_arazzo_document") is not None:
             document = _preserved(state["fixed_arazzo_document"], candidates, frozen["openapi"])
             client: OpenAI | None = None
+            plan_source = "preserved"
         else:
             client = _client()
             document = _generate_document(client, candidates, frozen["openapi"])
+            plan_source = "generated"
     except (ArazzoPlanningError, UpstreamAmbiguity) as error:
+        emit_testing_progress(
+            phase="dynamic",
+            scope="phase",
+            status="INCONCLUSIVE",
+            label="Arazzo workflow planning is unavailable",
+        )
         return {
             "current_node": "dynamic_functional",
             "errors": [str(error)],
@@ -543,6 +591,12 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             ),
         }
     except (ArazzoValidationError, TypeError, ValueError, json.JSONDecodeError) as error:
+        emit_testing_progress(
+            phase="dynamic",
+            scope="phase",
+            status="FAIL",
+            label="Arazzo workflow planning failed",
+        )
         return {
             "current_node": "dynamic_functional",
             "errors": [str(error)],
@@ -551,6 +605,12 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             ),
         }
     except Exception as error:
+        emit_testing_progress(
+            phase="dynamic",
+            scope="phase",
+            status="INCONCLUSIVE",
+            label="Arazzo workflow planning is unavailable",
+        )
         return {
             "current_node": "dynamic_functional",
             "errors": [str(error)],
@@ -563,12 +623,26 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         }
 
     workflow_ids = {str(workflow["workflowId"]) for workflow in document["workflows"]}
+    emit_testing_progress(
+        phase="dynamic",
+        scope="phase",
+        status="PASS",
+        label="Arazzo workflows are ready",
+        detail=f"Using {plan_source} workflow plan.",
+        total_workflows=len(workflow_ids),
+    )
     try:
         workflow_inputs = _fixed_mapping(
             state.get("fixed_workflow_inputs"), workflow_ids, name="workflow inputs"
         )
         input_values = _fixed_input_values(state.get("fixed_input_values"), workflow_ids)
     except (TypeError, ValueError) as error:
+        emit_testing_progress(
+            phase="dynamic",
+            scope="phase",
+            status="FAIL",
+            label="Arazzo workflow inputs are invalid",
+        )
         report = _report("FAILED", "FAIL", str(error), "TEST_DEFECT")
         return {
             "current_node": "dynamic_functional",
@@ -615,7 +689,6 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         workflow_id = str(workflow["workflowId"])
         current_workflow_id = workflow_id
         previous = previous_results.get(workflow_id)
-        previous_result = previous.get("result") if isinstance(previous, dict) else None
         saved_workflow_input_map = (
             previous.get("workflowInputsById") if isinstance(previous, dict) else None
         )
@@ -623,9 +696,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             previous.get("inputValuesById") if isinstance(previous, dict) else None
         )
         saved_ids = (
-            set(saved_workflow_input_map)
-            if isinstance(saved_workflow_input_map, dict)
-            else set()
+            set(saved_workflow_input_map) if isinstance(saved_workflow_input_map, dict) else set()
         )
         saved_workflow_inputs = (
             _fixed_mapping(
@@ -644,9 +715,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         current_workflow_inputs = {
             saved_id: workflow_inputs.get(saved_id, {}) for saved_id in saved_ids
         }
-        current_input_values = {
-            saved_id: input_values.get(saved_id, {}) for saved_id in saved_ids
-        }
+        current_input_values = {saved_id: input_values.get(saved_id, {}) for saved_id in saved_ids}
         reusable = (
             previous is not None
             and previous.get("workflow") == workflow
@@ -668,6 +737,15 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 input_values[saved_id] = deepcopy(saved_values)
             results.append(reused)
             reused_workflow_ids.append(workflow_id)
+            emit_testing_progress(
+                phase="dynamic",
+                scope="workflow",
+                status="REUSED",
+                label=f"Reusing workflow {workflow_id}",
+                workflow_id=workflow_id,
+                total_workflows=len(workflow_ids),
+                total_steps=len(workflow.get("steps") or []),
+            )
             continue
         try:
             result = execute_arazzo_workflow(
@@ -700,8 +778,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             else {workflow_id}
         )
         used_workflow_inputs = {
-            used_id: deepcopy(workflow_inputs.get(used_id, {}))
-            for used_id in used_workflow_ids
+            used_id: deepcopy(workflow_inputs.get(used_id, {})) for used_id in used_workflow_ids
         }
         used_input_values = _input_records(
             {used_id: input_values.get(used_id, {}) for used_id in used_workflow_ids}

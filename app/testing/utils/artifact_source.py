@@ -33,7 +33,7 @@ def capture_testing_input(
     """구현 작업 기록의 파일 묶음 ID를 Testing 입력으로 고정한다."""
     if artifact_version_ids is None:
         raise ArtifactSourceUnavailable(
-            "구현 작업에 저장된 산출물 ID 목록이 없습니다."
+            "The implementation job has no saved artifact IDs."
         )
     try:
         return TestingInput(
@@ -63,11 +63,11 @@ def _load_snapshot(testing_input: TestingInput, artifact_type: str) -> Mapping[s
         )
     except AppNotFound as error:
         raise ArtifactSourceUnavailable(
-            f"알 수 없는 앱 ID입니다: {testing_input.app_id}"
+            f"Unknown application ID: {testing_input.app_id}"
         ) from error
     if not snapshot or not snapshot.get("files"):
         raise ArtifactSourceUnavailable(
-            f"구현 산출물을 찾을 수 없습니다: type={artifact_type}, id={version_id}"
+            f"Implementation artifact not found: type={artifact_type}, id={version_id}"
         )
     # Testing의 고정 출처는 Job 기록에 저장된 ``artifact_version_ids``다.
     # 수리 Job이 이전과 동일한 파일 묶음을 내면 새 버전을 만들지 않고
@@ -95,7 +95,7 @@ def materialized_testing_application(testing_input: TestingInput) -> Iterator[Pa
                 previous_type = occupied_paths.get(restored)
                 if previous_type is not None:
                     raise ArtifactSnapshotMismatch(
-                        "서로 다른 산출물이 같은 복원 경로를 사용합니다: "
+                        "Multiple artifacts use the same restored path: "
                         f"path={restored}, first={previous_type}, second={artifact_type}"
                     )
 
@@ -105,7 +105,7 @@ def materialized_testing_application(testing_input: TestingInput) -> Iterator[Pa
                 actual_digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 if not expected_digest or expected_digest != actual_digest:
                     raise ArtifactSnapshotMismatch(
-                        f"{artifact_type} 파일 digest가 다릅니다: path={raw_path}"
+                        f"{artifact_type} file digest does not match: path={raw_path}"
                     )
 
                 target = application / Path(*application_path.parts)

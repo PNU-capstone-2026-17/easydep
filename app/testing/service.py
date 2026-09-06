@@ -26,6 +26,11 @@ from app.implementation.application.jobs import JobNotFound
 from app.implementation.application.jobs import worker as implementation_worker
 from app.metrics import langsmith as langsmith_metrics
 from app.repositories.artifact_repository import load_file_snapshot
+from app.testing.progress import (
+    emit_testing_progress,
+    reduce_testing_progress,
+    testing_progress_scope,
+)
 from app.testing.runtime.verification import run_verification_graph
 from app.testing.schemas.testing_input import TestingInput
 from app.testing.utils.artifact_source import (
@@ -568,6 +573,12 @@ def _run_test(
     def execute_snapshot() -> tuple[dict[str, Any], dict[str, Any]]:
         """복원한 한 snapshot 안에서 모든 검사를 끝낸다."""
 
+        emit_testing_progress(
+            phase="prepare",
+            scope="phase",
+            status="RUNNING",
+            label="Preparing fixed application snapshot",
+        )
         # 구현 작업이 고정한 파일 묶음을 새 임시 폴더에 한 번만 복원한다. 정적·IaC·동적
         # 검사는 아래 context가 끝날 때까지 이 폴더를 함께 사용한다.
         with (
@@ -579,6 +590,12 @@ def _run_test(
                 }
             ),
         ):
+            emit_testing_progress(
+                phase="prepare",
+                scope="phase",
+                status="PASS",
+                label="Fixed application snapshot ready",
+            )
             if progress is not None:
                 progress(
                     {
@@ -616,6 +633,12 @@ def _run_test(
                 gate_scope=gate_scope,
                 previous_reports=previous_reports,
                 previous_job_id=previous_job_id,
+            )
+            emit_testing_progress(
+                phase="summary",
+                scope="phase",
+                status="RUNNING",
+                label="Summarizing test evidence",
             )
             aggregate = aggregate_gate_report({"verification": verification})
             report = {
@@ -705,6 +728,17 @@ def _run_test(
             ledger.stall_reason = ""
         report["blocking_findings"] = _blocking_findings(testing_input, verification)
         report["repair_state"] = _repair_state(ledger, passed=bool(report["passed"]))
+        emit_testing_progress(
+            phase="summary",
+            scope="phase",
+            status="PASS" if report["passed"] else "FAIL",
+            label="Testing report ready",
+            detail=(
+                "All required gates passed."
+                if report["passed"]
+                else f"{len(report['blocking_findings'])} blocking finding(s) remain."
+            ),
+        )
         completed_history = ledger.model_dump(mode="json")
         if progress is not None:
             # Workspace 결과가 저장되기 직전 서버가 종료되어도 방금 사용한 후보와 finding을
@@ -748,6 +782,7 @@ def run_testing(
     gate_scope = _gate_scope_for_repair(repair_task_type)
     previous_reports: dict[str, Any] = {}
     previous_job_id = ""
+    testing_progress: dict[str, Any] = {}
 
     if checkpoint is not None:
         # 재시작 뒤 최신 DB 값을 다시 조합하지 않는다. command가 시작할 때 저장한 입력이
@@ -768,6 +803,7 @@ def run_testing(
         )
         previous_reports = dict(checkpoint.get("previous_reports") or {})
         previous_job_id = str(checkpoint.get("previous_job_id") or "")
+        testing_progress = dict(checkpoint.get("testing_progress") or {})
     else:
         try:
             implementation = implementation_worker.get_testing_input(implementation_job_id)
@@ -890,23 +926,58 @@ def run_testing(
                 "gate_scope": sorted(gate_scope) if gate_scope is not None else None,
                 "previous_reports": previous_reports,
                 "previous_job_id": previous_job_id,
+                "testing_progress": testing_progress,
+            }
+        )
+
+    def observe_testing_progress(event: dict[str, Any]) -> None:
+        nonlocal testing_progress
+        testing_progress = reduce_testing_progress(testing_progress, event)
+        save_progress(
+            {
+                "current_node": "verification",
+                "result": partial_result,
             }
         )
 
     # 파일 복원이나 도구 실행 전에 고정 입력을 저장한다. 서버가 여기서 중단되어도 다음
     # 실행은 같은 산출물 ID와 계약 digest를 사용한다.
     save_progress({"current_node": "queued", "result": partial_result})
-    report, completed_history = _run_test(
-        run_id,
-        testing_input,
-        repair_history=repair_history,
-        previous_findings=previous_findings,
-        partial_result=partial_result,
-        gate_scope=gate_scope,
-        previous_reports=previous_reports,
-        previous_job_id=previous_job_id,
-        progress=save_progress,
-    )
+    with testing_progress_scope(observe_testing_progress):
+        if preserve_test:
+            emit_testing_progress(
+                phase="repair",
+                scope="phase",
+                status="PASS",
+                label="Implementation repair candidate ready",
+                detail="The preserved test plan will now verify the new candidate.",
+            )
+        if previous_job is not None or preserve_test or repair_task_type:
+            emit_testing_progress(
+                phase="rerun",
+                scope="phase",
+                status="RUNNING",
+                label="Re-running affected test coverage",
+                detail="Previous evidence and fixed test inputs are being reused where valid.",
+            )
+        report, completed_history = _run_test(
+            run_id,
+            testing_input,
+            repair_history=repair_history,
+            previous_findings=previous_findings,
+            partial_result=partial_result,
+            gate_scope=gate_scope,
+            previous_reports=previous_reports,
+            previous_job_id=previous_job_id,
+            progress=save_progress,
+        )
+        if previous_job is not None or preserve_test or repair_task_type:
+            emit_testing_progress(
+                phase="rerun",
+                scope="phase",
+                status="PASS" if report["passed"] else "FAIL",
+                label="Affected test coverage re-run complete",
+            )
     return {
         "job_id": run_id,
         "app_id": app_id,
@@ -917,4 +988,5 @@ def run_testing(
         "result": report,
         "repair_history": completed_history,
         "previous_findings": list(_finding_keys(report)),
+        "testing_progress": testing_progress,
     }

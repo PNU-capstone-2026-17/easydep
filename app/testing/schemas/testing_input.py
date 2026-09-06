@@ -66,16 +66,16 @@ class TestingInput(BaseModel):
         unknown = sorted(set(self.artifact_version_ids) - TESTING_ARTIFACT_TYPES)
         if unknown:
             raise ValueError(
-                "테스트에서 지원하지 않는 산출물 종류가 포함되었습니다: " + ", ".join(unknown)
+                "Testing input contains unsupported artifact types: " + ", ".join(unknown)
             )
         missing = sorted(REQUIRED_TESTING_ARTIFACT_TYPES - set(self.artifact_version_ids))
         if missing:
-            raise ValueError("테스트 실행에 필요한 산출물 ID가 없습니다: " + ", ".join(missing))
+            raise ValueError("Testing input is missing required artifact IDs: " + ", ".join(missing))
         invalid = sorted(
             artifact_type
             for artifact_type, version_id in self.artifact_version_ids.items()
             if not isinstance(version_id, int) or isinstance(version_id, bool) or version_id < 1
         )
         if invalid:
-            raise ValueError("산출물 ID는 1 이상의 정수여야 합니다: " + ", ".join(invalid))
+            raise ValueError("Artifact IDs must be positive integers: " + ", ".join(invalid))
         return self

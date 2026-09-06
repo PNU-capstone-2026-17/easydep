@@ -48,7 +48,7 @@ def run_trivy_scan(target_dir: str) -> list[str]:
         result = execution.completed
         toolchain = execution.toolchain
         if not result.stdout.strip():
-            message = f"Trivy가 결과를 반환하지 않았습니다: {result.stderr[-2000:]}"
+            message = f"Trivy returned no result: {result.stderr[-2000:]}"
             environment_error = execution.environment_error or result.returncode == 0
             return TrivyIssues(
                 [message],
@@ -68,7 +68,7 @@ def run_trivy_scan(target_dir: str) -> list[str]:
         try:
             parsed = json.loads(result.stdout)
         except json.JSONDecodeError:
-            message = f"Trivy JSON 결과를 읽을 수 없습니다: {result.stdout[:500]}"
+            message = f"The Trivy JSON result could not be parsed: {result.stdout[:500]}"
             environment_error = execution.environment_error or result.returncode == 0
             return TrivyIssues(
                 [message],
@@ -131,7 +131,7 @@ def run_trivy_scan(target_dir: str) -> list[str]:
         )
 
     except (OSError, subprocess.SubprocessError) as error:
-        message = f"Trivy 실행 실패: {error}"
+        message = f"Trivy execution failed: {error}"
         return TrivyIssues(
             [message],
             evidence={

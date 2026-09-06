@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.testing.nodes.dynamic_functional import dynamic_functional_node
 from app.testing.nodes.static_verification import static_verification_node
+from app.testing.progress import emit_testing_progress
 from app.testing.schemas.testing_state import TestingState
 from app.testing.utils.gates import gate_status
 
@@ -28,6 +29,15 @@ def _defer_static_verification(_state: TestingState) -> dict[str, Any]:
     package = _deferred_report("package", reason)
     dynamic = dict(_state.get("dynamic_functional_report") or {})
     dynamic["deferredGates"] = ["static", "package", "iac"]
+    for gate in dynamic["deferredGates"]:
+        emit_testing_progress(
+            phase="static",
+            scope="gate",
+            status="DEFERRED",
+            label=f"Deferred {gate} verification",
+            detail=reason,
+            gate=gate,
+        )
     return {
         "current_node": "static_verification_deferred",
         "dynamic_functional_report": dynamic,
@@ -55,7 +65,21 @@ def _after_dynamic(state: TestingState) -> str:
     if "dynamicFunctional" not in selected:
         return "static_verification"
     dynamic = state.get("dynamic_functional_report") or {}
-    if gate_status(dynamic) in {"FAIL", "INCONCLUSIVE"}:
+    dynamic_status = gate_status(dynamic)
+    emit_testing_progress(
+        phase="dynamic",
+        scope="gate",
+        status=(
+            "REUSED"
+            if dynamic.get("reused") is True
+            else dynamic_status
+            if dynamic_status in {"PASS", "FAIL", "INCONCLUSIVE"}
+            else "SKIPPED"
+        ),
+        label="Completed dynamic API verification",
+        gate="dynamicFunctional",
+    )
+    if dynamic_status in {"FAIL", "INCONCLUSIVE"}:
         return "defer_static_verification"
     return "static_verification"
 

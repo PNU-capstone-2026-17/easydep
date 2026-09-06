@@ -1275,7 +1275,16 @@ class WorkspaceService:
                 kind=str(result.get("kind") or "action_required"),
                 actor="assistant",
                 text=str(result.get("message") or "Testing found a repairable failure."),
-                metadata={"status": "REPAIR_ITERATION_FAILED", **visible_result},
+                metadata={
+                    "status": "REPAIR_ITERATION_FAILED",
+                    "progress_event": "testingProgressUpdated",
+                    "phase": "repair",
+                    "scope": "phase",
+                    "progress_status": "fail",
+                    "progress_card_label": "Testing progress",
+                    "progress_step_label": "Repair iteration needs another candidate",
+                    **visible_result,
+                },
             )
 
             # 이전 Testing checkpoint를 남겨 두면 dispatch가 구현 수리 대신 같은 검사를
@@ -1286,6 +1295,36 @@ class WorkspaceService:
                 for key, value in dict(command.get("payload") or {}).items()
                 if key not in {"testing_checkpoint", "job_id"}
             }
+            if "initial_testing_failure" not in payload:
+                initial_report = (
+                    (visible_result.get("job") or {}).get("result")
+                    if isinstance(visible_result.get("job"), dict)
+                    else {}
+                )
+                initial_report = initial_report if isinstance(initial_report, dict) else {}
+                dynamic_report = (
+                    (((initial_report.get("verification") or {}).get("reports") or {}).get(
+                        "dynamicFunctional"
+                    ))
+                    if isinstance(initial_report.get("verification"), dict)
+                    else {}
+                )
+                dynamic_report = dynamic_report if isinstance(dynamic_report, dict) else {}
+                payload["initial_testing_failure"] = {
+                    "gateStatus": initial_report.get("gateStatus"),
+                    "gateCounts": initial_report.get("gateCounts"),
+                    "blockingReason": (
+                        (initial_report.get("verification") or {}).get("blockingReason")
+                        if isinstance(initial_report.get("verification"), dict)
+                        else None
+                    ),
+                    "blocking_findings": list(
+                        initial_report.get("blocking_findings") or []
+                    ),
+                    "failedWorkflowId": dynamic_report.get("failedWorkflowId"),
+                    "failedStepId": dynamic_report.get("failedStepId"),
+                    "candidateDigest": dynamic_report.get("candidateDigest"),
+                }
             payload.setdefault("repair_episode_started_by", command.get("action"))
             payload["action_id"] = command_id
             command["action"] = "delegate_repair"
@@ -1305,7 +1344,19 @@ class WorkspaceService:
                 kind="status",
                 actor="system",
                 text="Continuing automatic repair with the accumulated history.",
-                metadata={"status": "AUTO_REPAIR_RUNNING"},
+                metadata={
+                    "status": "AUTO_REPAIR_RUNNING",
+                    "progress_event": "testingProgressUpdated",
+                    "phase": "repair",
+                    "scope": "phase",
+                    "progress_status": "running",
+                    "progress_card_label": "Testing progress",
+                    "progress_step_label": "Repairing the failed implementation",
+                    "progress_detail": (
+                        "The next implementation candidate will be checked against "
+                        "the preserved test evidence."
+                    ),
+                },
             )
             result = self._dispatch(command)
         return result
@@ -3738,8 +3789,10 @@ class WorkspaceService:
         """Testing을 실행하고 재시작 checkpoint를 현재 Workspace command에 저장한다."""
 
         command_id = str(command["command_id"])
+        last_progress_fingerprint = ""
 
         def save_checkpoint(checkpoint: dict[str, Any]) -> None:
+            nonlocal last_progress_fingerprint
             # Testing command와 checkpoint의 수명주기가 같으므로 기존 payload에 함께 저장한다.
             # 다른 command 입력은 그대로 보존한다.
             latest = repository.get_command(command_id)
@@ -3751,6 +3804,56 @@ class WorkspaceService:
             }
             command["payload"] = payload
             repository.update_command(command_id, payload=payload)
+            progress_snapshot = checkpoint.get("testing_progress")
+            last_event = (
+                progress_snapshot.get("last_event")
+                if isinstance(progress_snapshot, dict)
+                else None
+            )
+            if not isinstance(last_event, dict):
+                return
+            fingerprint = stable_digest(
+                {
+                    key: last_event.get(key)
+                    for key in (
+                        "phase",
+                        "scope",
+                        "status",
+                        "workflow_id",
+                        "step_id",
+                        "gate",
+                        "operation_id",
+                        "method",
+                        "path",
+                        "control",
+                        "attempt",
+                        "progress_step_label",
+                        "progress_detail",
+                        "status_code",
+                        "contract_status",
+                        "semantic_status",
+                    )
+                }
+            )
+            if fingerprint == last_progress_fingerprint:
+                return
+            last_progress_fingerprint = fingerprint
+            try:
+                repository.append_event(
+                    str(command["app_id"]),
+                    command_id=command_id,
+                    stage="testing",
+                    kind="progress",
+                    actor="system",
+                    text=str(
+                        last_event.get("progress_detail")
+                        or last_event.get("progress_step_label")
+                        or "Testing progress updated."
+                    ),
+                    metadata=dict(last_event),
+                )
+            except Exception:  # noqa: BLE001 - the DB checkpoint remains authoritative.
+                _log.warning("Could not publish Testing progress event.", exc_info=True)
 
         checkpoint = command.get("payload", {}).get("testing_checkpoint")
         job = run_testing(

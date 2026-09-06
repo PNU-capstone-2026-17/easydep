@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Braces, Check, CheckCircle2, Clock3, Copy, FileText, Image, Layers3, LoaderCircle, Maximize2, ShieldCheck, X } from '@lucide/svelte';
   import { Dialog } from 'bits-ui';
-  import type { ArtifactDocument, ArtifactTraceResponse, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, SequenceDiagramSummary, WorkspaceEvent } from '$lib/types';
+  import type { ArtifactDocument, ArtifactTraceResponse, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, SequenceDiagramSummary, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
   import { getArtifactFile, getArtifactTrace, getFileArtifactVersions, getLiveImplementationFile, getSequenceDiagrams, getVersions } from '$lib/api';
   import { errorMessage } from '$lib/utils';
   import ArtifactVisualization from '$lib/components/ArtifactVisualization.svelte';
@@ -10,8 +10,10 @@
   import DeploymentSizingPanel from '$lib/components/DeploymentSizingPanel.svelte';
   import ReadOnlySourceViewer from '$lib/components/ReadOnlySourceViewer.svelte';
   import SourceFileExplorer from '$lib/components/SourceFileExplorer.svelte';
+  import TestingResultsPanel from '$lib/components/TestingResultsPanel.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { artifactLabels, artifactPresent, diagramArtifactTypes, requirementsArtifactTypes } from '$lib/artifacts';
+  import { projectTestingRun } from '$lib/testing-results';
 
   let {
     appId,
@@ -20,6 +22,7 @@
     liveSources = null,
     preferredFile = '',
     events,
+    command = null,
     classPreview,
     classGenerating = false,
     selected,
@@ -38,6 +41,7 @@
     liveSources?: LiveSourceSnapshot | null;
     preferredFile?: string;
     events: WorkspaceEvent[];
+    command?: WorkspaceCommand | null;
     classPreview?: LiveDiagramPreview | null;
     classGenerating?: boolean;
     selected: string;
@@ -83,6 +87,7 @@
   let traceRequestVersion = 0;
   let previouslySelected = '';
   let content = $derived(document?.artifacts?.[selected]);
+  let testingRun = $derived(projectTestingRun({ command, events }));
   let liveClassPreview = $derived(
     selected === 'class_diagram' ? classPreview ?? null : null
   );
@@ -125,7 +130,17 @@
   ]);
   let relatedEvents = $derived(
     events
-      .filter((event) => event.stage === (fileArtifact ? 'implementation' : requirementsArtifactTypes.has(selected) ? 'requirements' : 'design'))
+      .filter(
+        (event) =>
+          event.stage ===
+          (selected === 'TESTING_RESULTS'
+            ? 'testing'
+            : fileArtifact
+              ? 'implementation'
+              : requirementsArtifactTypes.has(selected)
+                ? 'requirements'
+                : 'design')
+      )
       .slice()
       .reverse()
   );
@@ -136,6 +151,7 @@
       .concat(Object.keys(fileArtifacts))
       .concat(liveSources ? ['LIVE_SOURCE'] : [])
       .concat(classPreview || classGenerating ? ['class_diagram'] : [])
+      .concat(testingRun ? ['TESTING_RESULTS'] : [])
       .filter((stage, index, stages) => stages.indexOf(stage) === index)
   );
 
@@ -211,7 +227,7 @@
     if (!appId || !selected) return;
     versions = [];
     versionsError = '';
-    if (liveClassPreview || selected === 'LIVE_SOURCE') return;
+    if (liveClassPreview || selected === 'LIVE_SOURCE' || selected === 'TESTING_RESULTS') return;
     const loader = fileArtifacts[selected] ? getFileArtifactVersions : getVersions;
     loader(appId, selected)
       .then((result) => (versions = result.versions))
@@ -481,10 +497,11 @@
         <strong class="text-xs">Artifact index</strong>
         <span class="text-[10px] text-[#85877e]">Select an output</span>
       </div>
-      <ArtifactNavigator {document} {fileArtifacts} liveSourceAvailable={Boolean(liveSources)} {classPreview} {classGenerating} {selected} onSelect={selectFromIndex} />
+      <ArtifactNavigator {document} {fileArtifacts} liveSourceAvailable={Boolean(liveSources)} testingResultsAvailable={Boolean(testingRun)} {classPreview} {classGenerating} {selected} onSelect={selectFromIndex} />
     </div>
   {/if}
 
+  {#if selected !== 'TESTING_RESULTS'}
   <div class="flex shrink-0 border-b border-[#e6e6e0] px-2 pt-1" role="tablist">
     {#each [
       ['artifact', 'Artifact'],
@@ -500,10 +517,13 @@
       >{item[1]}</button>
     {/each}
   </div>
+  {/if}
 
   <div class="scrollbar-thin flex-1 overflow-auto bg-[#fbfbf8]">
     <div class="min-h-full w-full">
-    {#if classGenerating && selected === 'class_diagram' && !displayContent}
+    {#if selected === 'TESTING_RESULTS'}
+      <TestingResultsPanel run={testingRun} />
+    {:else if classGenerating && selected === 'class_diagram' && !displayContent}
       <div class="mt-16 text-center text-[#5d7565]" role="status">
         <LoaderCircle class="mx-auto mb-3 animate-spin" size={25} strokeWidth={1.5} />
         <p class="text-xs font-semibold">Generating the class diagram</p>

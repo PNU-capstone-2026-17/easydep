@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from app.testing.progress import emit_testing_progress
 from app.testing.runtime.container_runner import run_toolchain_command
 
 _PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
@@ -22,6 +23,14 @@ _PLACEHOLDER = re.compile(
     r"\$\{[^}]+\}|\{[^}]+\}|<[^>]+>|CHANGE_ME|REPLACE_ME|YOUR_[A-Z0-9_]+",
     re.IGNORECASE,
 )
+
+
+def _gate_progress_status(report: dict[str, Any]) -> str:
+    value = str(report.get("gateStatus") or "INCONCLUSIVE").upper()
+    return {
+        "NOT_APPLICABLE": "SKIPPED",
+        "DEFERRED": "DEFERRED",
+    }.get(value, value if value in {"PASS", "FAIL", "INCONCLUSIVE"} else "INCONCLUSIVE")
 
 
 def _package_root(application: Path) -> Path | None:
@@ -107,7 +116,9 @@ def _secret_findings(root: Path) -> list[str]:
         if _PRIVATE_KEY.search(content):
             findings.append(f"{path.relative_to(root).as_posix()}: private key material is present")
         if _SECRET_ASSIGNMENT.search(content):
-            findings.append(f"{path.relative_to(root).as_posix()}: secret assignment has a concrete value")
+            findings.append(
+                f"{path.relative_to(root).as_posix()}: secret assignment has a concrete value"
+            )
     return findings
 
 
@@ -143,9 +154,7 @@ def _compose_validation_environment(root: Path) -> dict[str, str]:
         name = name.strip()
         if separator and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             result[name] = (
-                "easydep/validation:latest"
-                if name.endswith("_IMAGE")
-                else "validation-placeholder"
+                "easydep/validation:latest" if name.endswith("_IMAGE") else "validation-placeholder"
             )
     return result
 
@@ -171,25 +180,55 @@ def check_deployment_package(
         raise ValueError(f"Unknown deployment gate scope: {sorted(unknown)}")
     check_package = "package" in selected
     check_iac = "iac" in selected
+    for gate, enabled, label in (
+        ("package", check_package, "Checking deployment package"),
+        ("iac", check_iac, "Validating infrastructure code"),
+    ):
+        if enabled:
+            emit_testing_progress(
+                phase="static",
+                scope="gate",
+                status="RUNNING",
+                label=label,
+                gate=gate,
+            )
     application = Path(application_dir)
     root = _package_root(application)
     if root is None:
         if expected is False or expected is None:
-            return {
+            unavailable_result: dict[str, Any] = {
                 "status": "SKIPPED",
                 "gateStatus": "NOT_APPLICABLE",
                 "issues": [],
                 "message": "No deployment package is required for this application.",
                 "source": {"source": "none", "directory": str(application)},
             }
+            for gate in selected:
+                emit_testing_progress(
+                    phase="static",
+                    scope="gate",
+                    status="SKIPPED",
+                    label="No deployment package is required",
+                    gate=gate,
+                )
+            return unavailable_result
         message = "A deployment package was expected but no package directory exists."
-        return {
+        unavailable_result = {
             "status": "UNAVAILABLE",
             "gateStatus": "INCONCLUSIVE",
             "issues": [message],
             "message": message,
             "source": {"source": "none", "directory": str(application)},
         }
+        for gate in selected:
+            emit_testing_progress(
+                phase="static",
+                scope="gate",
+                status="INCONCLUSIVE",
+                label="Deployment package is unavailable",
+                gate=gate,
+            )
+        return unavailable_result
 
     if check_package:
         _required, missing = _required_paths(root)
@@ -240,12 +279,14 @@ def check_deployment_package(
                     ]
                 )
             for command in tofu_checks:
-                tofu_commands.append(
-                    _command_result(command, validation_tofu, timeout_seconds)
-                )
+                tofu_commands.append(_command_result(command, validation_tofu, timeout_seconds))
     commands.extend(tofu_commands)
     cloud_init = next(
-        (path for path in (tofu / "cloud-init.yaml", tofu / "cloud-init.yaml.tftpl") if path.is_file()),
+        (
+            path
+            for path in (tofu / "cloud-init.yaml", tofu / "cloud-init.yaml.tftpl")
+            if path.is_file()
+        ),
         None,
     )
     if check_package and cloud_init:
@@ -279,9 +320,7 @@ def check_deployment_package(
             )
         )
     for script in (
-        [root / "easydep.ps1"]
-        if check_package and (root / "easydep.ps1").is_file()
-        else []
+        [root / "easydep.ps1"] if check_package and (root / "easydep.ps1").is_file() else []
     ):
         # ParseFile은 스크립트를 실행하지 않고 구문 오류만 찾는다. 컨테이너
         # 안에서도 읽을 수 있도록 host 절대 경로 대신 상대 경로를 넘긴다.
@@ -316,11 +355,9 @@ def check_deployment_package(
         for item in tofu_commands
         if item.get("status") == "FAIL"
     ]
-    tofu_inconclusive = any(
-        item.get("status") == "INCONCLUSIVE" for item in tofu_commands
-    )
+    tofu_inconclusive = any(item.get("status") == "INCONCLUSIVE" for item in tofu_commands)
     tofu_failed = any(item.get("status") == "FAIL" for item in tofu_commands)
-    return {
+    result: dict[str, Any] = {
         "status": status,
         "gateStatus": gate,
         "issues": all_issues,
@@ -355,3 +392,20 @@ def check_deployment_package(
             else f"Deployment package checks produced {len(all_issues)} finding(s)."
         ),
     }
+    if check_package:
+        emit_testing_progress(
+            phase="static",
+            scope="gate",
+            status=_gate_progress_status(result),
+            label="Completed deployment package check",
+            gate="package",
+        )
+    if check_iac:
+        emit_testing_progress(
+            phase="static",
+            scope="gate",
+            status=_gate_progress_status(result["openTofu"]),
+            label="Completed infrastructure validation",
+            gate="iac",
+        )
+    return result

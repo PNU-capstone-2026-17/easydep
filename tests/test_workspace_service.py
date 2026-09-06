@@ -49,6 +49,27 @@ def test_testing_failure_starts_only_repairable_work_automatically(
         "requires_revision": True,
         "can_delegate_repair": repairable,
         "job_id": "testing-command",
+        "job": {
+            "result": {
+                "gateStatus": "FAIL",
+                "gateCounts": {"passed": 0, "failed": 1, "inconclusive": 0},
+                "blocking_findings": [
+                    {
+                        "code": "testing.dynamic-functional",
+                        "message": "runtime check failed",
+                    }
+                ],
+                "verification": {
+                    "blockingReason": "runtime check failed",
+                    "reports": {
+                        "dynamicFunctional": {
+                            "failedWorkflowId": "workflow-1",
+                            "failedStepId": "step-1",
+                        }
+                    },
+                },
+            }
+        },
         "blocking_findings": [
             {
                 "message": "runtime check failed",
@@ -87,6 +108,21 @@ def test_testing_failure_starts_only_repairable_work_automatically(
     assert submissions == []
     if repairable:
         assert any(update.get("action") == "delegate_repair" for update in updates)
+        repair_update = next(update for update in updates if update.get("action") == "delegate_repair")
+        assert repair_update["payload"]["initial_testing_failure"] == {
+            "gateStatus": "FAIL",
+            "gateCounts": {"passed": 0, "failed": 1, "inconclusive": 0},
+            "blockingReason": "runtime check failed",
+            "blocking_findings": [
+                {
+                    "code": "testing.dynamic-functional",
+                    "message": "runtime check failed",
+                }
+            ],
+            "failedWorkflowId": "workflow-1",
+            "failedStepId": "step-1",
+            "candidateDigest": None,
+        }
 
 
 def test_testing_repair_without_progress_waits_instead_of_submitting_again(
@@ -1873,6 +1909,7 @@ def test_failed_testing_is_an_actionable_repair_gate(monkeypatch) -> None:
 def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
     """Testing 입력을 실행 전에 현재 Workspace command에 저장한다."""
     updates: list[dict] = []
+    events: list[dict] = []
     command = {
         "command_id": "command-1",
         "app_id": "app-1",
@@ -1886,15 +1923,34 @@ def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
         "update_command",
         lambda _command_id, **changes: updates.append(changes) or changes,
     )
+    monkeypatch.setattr(
+        repository,
+        "append_event",
+        lambda _app_id, **values: events.append(values) or values,
+    )
 
     def run_testing(_app_id, implementation_job_id, **kwargs):
-        kwargs["progress"](
-            {
-                "implementation_job_id": implementation_job_id,
-                "testing_input": {"app_id": "app-1"},
-                "current_node": "queued",
-            }
+        checkpoint = {
+            "implementation_job_id": implementation_job_id,
+            "testing_input": {"app_id": "app-1"},
+            "current_node": "queued",
+            "testing_progress": {
+                "last_event": {
+                    "progress_event": "testingProgressUpdated",
+                    "phase": "prepare",
+                    "scope": "phase",
+                    "status": "RUNNING",
+                    "progress_status": "running",
+                    "progress_step_label": "Preparing fixed application snapshot",
+                    "updated_at": "2026-09-07T01:00:00Z",
+                }
+            },
+        }
+        kwargs["progress"](checkpoint)
+        checkpoint["testing_progress"]["last_event"]["updated_at"] = (
+            "2026-09-07T01:00:01Z"
         )
+        kwargs["progress"](checkpoint)
         return {
             "job_id": kwargs["run_id"],
             "implementation_job_id": implementation_job_id,
@@ -1911,6 +1967,9 @@ def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
         service.shutdown()
 
     assert updates[0]["payload"]["testing_checkpoint"]["current_node"] == "queued"
+    assert len(events) == 1
+    assert events[0]["kind"] == "progress"
+    assert events[0]["metadata"]["progress_event"] == "testingProgressUpdated"
     assert result["job"]["job_id"] == "command-1"
 
 

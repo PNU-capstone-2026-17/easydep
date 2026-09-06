@@ -13,6 +13,7 @@ from typing import Any
 
 from app.metrics import langsmith as langsmith_metrics
 from app.testing.graphs.testing_graph import create_testing_graph, initial_state
+from app.testing.progress import emit_testing_progress
 from app.testing.runtime.app_container import (
     ApplicationLaunchError,
     _log_excerpt,
@@ -48,14 +49,10 @@ def _gate_input_digests(
     """gate별 관련 파일을 나눠 무관한 수정 때문에 전체 검사가 반복되지 않게 한다."""
 
     application = (
-        Path(application_dir)
-        if application_dir
-        else Path("__easydep_missing_application__")
+        Path(application_dir) if application_dir else Path("__easydep_missing_application__")
     )
     all_files = (
-        [path for path in application.rglob("*") if path.is_file()]
-        if application.is_dir()
-        else []
+        [path for path in application.rglob("*") if path.is_file()] if application.is_dir() else []
     )
     deployment = application / "deployment"
     tofu = deployment / "tofu"
@@ -67,9 +64,7 @@ def _gate_input_digests(
     ]
     tofu_files = [path for path in tofu.rglob("*") if path.is_file()] if tofu.is_dir() else []
     package_files = [
-        path
-        for path in all_files
-        if deployment in path.parents and tofu not in path.parents
+        path for path in all_files if deployment in path.parents and tofu not in path.parents
     ]
     # package 구조 검사는 tofu 파일 내용이 아니라 필수 파일의 존재 여부도 확인한다.
     tofu_layout = sorted(path.relative_to(tofu).as_posix() for path in tofu_files)
@@ -81,9 +76,7 @@ def _gate_input_digests(
         and path.name != "Dockerfile"
     ]
     frozen_input = testing_input or {}
-    contracts = frozen_input.get("contract_artifacts") or frozen_input.get(
-        "contractArtifacts"
-    )
+    contracts = frozen_input.get("contract_artifacts") or frozen_input.get("contractArtifacts")
     contracts = contracts if isinstance(contracts, dict) else {}
     deployment_contract = contracts.get("deployment") or {}
     dynamic_contracts = {
@@ -100,9 +93,7 @@ def _gate_input_digests(
             package_files,
             extra={"tofuLayout": tofu_layout, "deployment": deployment_contract},
         ),
-        "iac": _files_digest(
-            application, tofu_files, extra={"deployment": deployment_contract}
-        ),
+        "iac": _files_digest(application, tofu_files, extra={"deployment": deployment_contract}),
         "dynamicFunctional": _files_digest(
             application,
             dynamic_files,
@@ -247,7 +238,7 @@ def _launch(
     if target_url:
         return nullcontext((target_url, {"source": "caller"}))
     if not application_dir:
-        raise ApplicationLaunchError("실행할 애플리케이션 폴더가 없습니다.")
+        raise ApplicationLaunchError("No generated application directory is available to run.")
     return running_application(
         app_id,
         application_dir,
@@ -364,16 +355,35 @@ def _run_verification_graph(
     dynamic_selected = selected is None or "dynamicFunctional" in selected
     try:
         if not dynamic_selected:
+            emit_testing_progress(
+                phase="prepare",
+                scope="phase",
+                status="SKIPPED",
+                label="Application runtime is not required",
+                detail="The selected repair scope has no dynamic functional gate.",
+            )
             # 정적 수리에서는 Spring/Gradle을 띄우지 않는다. graph의 dynamic node는
             # 아래 고정 이전 보고서를 복사하므로 결과 shape와 전체 gate 판정은 유지된다.
             result = invoke()
         else:
+            emit_testing_progress(
+                phase="prepare",
+                scope="phase",
+                status="RUNNING",
+                label="Starting the application runtime",
+            )
             with _launch(
                 app_id,
                 target_url,
                 launch_id=run_id,
                 application_dir=application_dir,
             ) as (url, application):
+                emit_testing_progress(
+                    phase="prepare",
+                    scope="phase",
+                    status="PASS",
+                    label="Application runtime is ready",
+                )
                 result = invoke(url)
                 _attach_dynamic_failure_evidence(
                     result,
@@ -381,9 +391,21 @@ def _run_verification_graph(
                     app_id=app_id,
                     run_id=run_id,
                 )
+            emit_testing_progress(
+                phase="prepare",
+                scope="phase",
+                status="PASS",
+                label="Application runtime stopped",
+            )
     except ApplicationLaunchError as error:
         launch_error = str(error)
         launch_defect_class = error.defect_class
+        emit_testing_progress(
+            phase="prepare",
+            scope="phase",
+            status=("INCONCLUSIVE" if launch_defect_class == "ENVIRONMENT_DEFECT" else "FAIL"),
+            label="Application runtime could not start",
+        )
         deferred_static, deferred_iac = _deferred_static_reports(
             "Deferred because the Testing application could not start."
         )
@@ -448,14 +470,14 @@ def _run_verification_graph(
     }
     aggregate = aggregate_gate_report(reports, required=required)
     blocking = (
-        f"애플리케이션을 실행하지 못해 동적 테스트를 수행할 수 없습니다: {launch_error}"
+        f"Dynamic testing could not run because the application did not start: {launch_error}"
         if launch_error
         else blocking_reason(reports)
     )
     if blocking is None and aggregate["status"] == "INCONCLUSIVE":
-        blocking = "필수 Testing 검사를 실행하지 못해 결과를 확정할 수 없습니다."
+        blocking = "A required Testing gate could not run, so the result is inconclusive."
     if blocking is None and aggregate["status"] == "FAIL":
-        blocking = "필수 Testing 검사에서 실패가 확인되었습니다."
+        blocking = "A required Testing gate failed."
     diagnostics = misconfiguration_diagnostics(reports)
     if launch_error:
         diagnostics.insert(
@@ -476,9 +498,7 @@ def _run_verification_graph(
         "gateStatus": aggregate["status"],
         "gates": aggregate["gates"],
         "gateCounts": aggregate["counts"],
-        "deferredGates": list(
-            (reports.get("dynamicFunctional") or {}).get("deferredGates") or []
-        ),
+        "deferredGates": list((reports.get("dynamicFunctional") or {}).get("deferredGates") or []),
         "blockingReason": blocking,
         "diagnostics": diagnostics,
     }
@@ -486,17 +506,17 @@ def _run_verification_graph(
 
 def blocking_reason(reports: dict[str, Any]) -> str | None:
     """정적 또는 동적 필수 검사가 실패한 첫 번째 이유를 반환한다."""
-    for label, key in (("배포 설정", "static"), ("IaC", "iac")):
+    for label, key in (("Deployment configuration", "static"), ("IaC", "iac")):
         report = reports.get(key) or {}
         if gate_status(report) == "FAIL":
             issues = report.get("issues") or []
             detail = str(issues[0]) if issues else str(report.get("message") or "")
-            return f"{label} 정적 검사에 실패했습니다: {detail}".rstrip()
+            return f"{label} verification failed: {detail}".rstrip()
 
     report = reports.get("dynamicFunctional") or {}
     if gate_status(report) == "FAIL":
         return str(
-            report.get("reason") or report.get("stderr") or "동적 기능 테스트에 실패했습니다."
+            report.get("reason") or report.get("stderr") or "Dynamic functional testing failed."
         )[-2000:]
     return None
 
@@ -519,7 +539,7 @@ def misconfiguration_diagnostics(reports: dict[str, Any]) -> list[dict[str, str]
             diagnostics.append(
                 {
                     "code": f"{subject}_MISCONFIGURATION",
-                    "message": f"정적 검사에서 {len(issues)}개 문제를 찾았습니다: "
+                    "message": f"Static verification found {len(issues)} issue(s): "
                     + "; ".join(issues[:5]),
                 }
             )

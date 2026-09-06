@@ -19,6 +19,7 @@ from app.db.models import (
 )
 from app.testing import service as testing_service
 from app.testing.graphs.testing_graph import create_testing_graph
+from app.testing.progress import testing_progress_scope as _testing_progress_scope
 from app.testing.schemas.testing_input import TestingInput as FrozenTestingInput
 
 
@@ -158,6 +159,7 @@ def test_dynamic_blocking_failure_defers_static_and_iac_gates(monkeypatch):
             },
         }
 
+    progress_events = []
     with (
         patch("app.testing.graphs.testing_graph.dynamic_functional_node", failed_dynamic),
         patch(
@@ -166,6 +168,7 @@ def test_dynamic_blocking_failure_defers_static_and_iac_gates(monkeypatch):
                 "static checks must be deferred after a blocking dynamic failure"
             ),
         ),
+        _testing_progress_scope(progress_events.append),
     ):
         result = create_testing_graph().invoke(
             _initial_state(target_url="http://localhost:8080")
@@ -177,6 +180,11 @@ def test_dynamic_blocking_failure_defers_static_and_iac_gates(monkeypatch):
     assert result["static_report"]["trivyScan"]["deferred"] is True
     assert result["static_report"]["deploymentPackage"]["deferred"] is True
     assert result["iac_report"]["deferred"] is True
+    assert {
+        event.get("gate")
+        for event in progress_events
+        if event.get("status") == "DEFERRED"
+    } == {"static", "package", "iac"}
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +654,7 @@ def test_static_failure_blocks_the_testing_result():
         }
     )
 
-    assert reason == "배포 설정 정적 검사에 실패했습니다: Dockerfile runs as root"
+    assert reason == "Deployment configuration verification failed: Dockerfile runs as root"
 
 
 def test_testing_result_preserves_static_failure_evidence_for_repair(
@@ -1042,7 +1050,7 @@ def test_verification_defers_static_gates_when_the_app_cannot_be_launched(tmp_pa
     assert result["reports"]["dynamicFunctional"]["defectClass"] == "SUT_DEFECT"
     # 실행할 애플리케이션이 없으면 기능을 검증하지 못했으므로 성공일 수 없다.
     assert result["passed"] is False
-    assert "동적 테스트" in result["blockingReason"]
+    assert "Dynamic testing" in result["blockingReason"]
     assert [item["code"] for item in result["diagnostics"]] == [
         "APPLICATION_LAUNCH_FAILED",
     ]

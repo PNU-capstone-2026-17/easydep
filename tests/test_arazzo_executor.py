@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 
+from app.testing.progress import testing_progress_scope as _testing_progress_scope
 from app.testing.utils.arazzo_executor import execute_arazzo_workflow
 from app.testing.utils.functional_executor import InputValueRequest
 
@@ -235,6 +236,31 @@ def test_single_request_uses_target_url_and_ignores_openapi_servers(
     _assert_result(result, gate="PASS")
     assert [call["method"] for call in recorder.calls] == ["GET"]
     assert [call["url"] for call in recorder.calls] == [f"{TARGET_URL}/health"]
+
+
+def test_executor_emits_workflow_and_step_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _HttpRecorder([_response(200, {"ok": True})])
+    events: list[dict[str, Any]] = []
+
+    with _testing_progress_scope(events.append):
+        result = _run(
+            monkeypatch,
+            _document([_workflow("main", {"stepId": "health", "operationId": "health"})]),
+            recorder,
+        )
+
+    _assert_result(result, gate="PASS")
+    assert [(event["scope"], event["status"]) for event in events] == [
+        ("workflow", "RUNNING"),
+        ("step", "RUNNING"),
+        ("step", "PASS"),
+        ("workflow", "PASS"),
+    ]
+    assert events[1]["operation_id"] == "health"
+    assert events[2]["status_code"] == 200
+    assert events[2]["contract_status"] == "PASS"
 
 
 def test_post_output_is_reused_by_repeated_get_path_binding(
@@ -753,10 +779,18 @@ def test_bounded_retry_repeats_then_passes(monkeypatch: pytest.MonkeyPatch) -> N
         "operationId": "unstable",
         "onFailure": [{"name": "retry", "type": "retry", "retryLimit": 1}],
     }
-    result = _run(monkeypatch, _document([_workflow("main", step)]), recorder)
+    events: list[dict[str, Any]] = []
+    with _testing_progress_scope(events.append):
+        result = _run(monkeypatch, _document([_workflow("main", step)]), recorder)
 
     _assert_result(result, gate="PASS")
     assert len(recorder.calls) == 2
+    assert any(
+        event["scope"] == "step"
+        and event["status"] == "RUNNING"
+        and event.get("attempt") == 2
+        for event in events
+    )
 
 
 def test_retry_without_limit_uses_the_spec_default_of_one(
@@ -868,10 +902,18 @@ def test_local_workflow_call_executes_child_workflow(monkeypatch: pytest.MonkeyP
             ),
         ]
     )
-    result = _run(monkeypatch, document, recorder)
+    events: list[dict[str, Any]] = []
+    with _testing_progress_scope(events.append):
+        result = _run(monkeypatch, document, recorder)
 
     _assert_result(result, gate="PASS")
     assert recorder.calls[0]["url"] == f"{TARGET_URL}/health"
+    assert [(event["status"], event["workflow_id"]) for event in events if event["scope"] == "workflow"] == [
+        ("RUNNING", "main"),
+        ("RUNNING", "child"),
+        ("PASS", "child"),
+        ("PASS", "main"),
+    ]
 
 
 def test_local_workflow_call_reuses_child_inputs_and_scopes_proposals(

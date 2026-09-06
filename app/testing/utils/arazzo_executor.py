@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import time
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -12,6 +13,7 @@ from typing import Any
 import httpx
 import jsonschema
 
+from app.testing.progress import emit_testing_progress
 from app.testing.schemas.arazzo import ArazzoValidationError, validate_arazzo_document
 from app.testing.utils.arazzo_expression import (
     ArazzoExpressionError,
@@ -588,42 +590,78 @@ def execute_arazzo_workflow(
     timeout_seconds: float = 30.0,
 ) -> dict[str, Any]:
     """Execute one validated local Arazzo workflow without dynamic code evaluation."""
+    workflow_started = time.perf_counter()
+    emit_testing_progress(
+        phase="dynamic",
+        scope="workflow",
+        status="RUNNING",
+        label=f"Running workflow {workflow_id}",
+        workflow_id=workflow_id,
+    )
+
+    def finish(result: dict[str, Any]) -> dict[str, Any]:
+        gate_status = str(result.get("gateStatus") or "INCONCLUSIVE").upper()
+        emit_testing_progress(
+            phase="dynamic",
+            scope="workflow",
+            status=gate_status
+            if gate_status in {"PASS", "FAIL", "INCONCLUSIVE"}
+            else "INCONCLUSIVE",
+            label=(
+                f"Completed workflow {workflow_id}"
+                if gate_status == "PASS"
+                else f"Workflow {workflow_id} did not complete"
+            ),
+            workflow_id=workflow_id,
+            total_steps=len(result.get("steps") or []),
+            elapsed_ms=int((time.perf_counter() - workflow_started) * 1000),
+        )
+        return result
+
     try:
         frozen = validate_arazzo_document(document, openapi=openapi)
     except (ArazzoValidationError, TypeError, ValueError) as exc:
-        return _report_failure(
-            workflow_id,
-            [],
-            dict(workflow_inputs or {}),
-            code="ARAZZO_DOCUMENT_INVALID",
-            message=str(exc),
+        return finish(
+            _report_failure(
+                workflow_id,
+                [],
+                dict(workflow_inputs or {}),
+                code="ARAZZO_DOCUMENT_INVALID",
+                message=str(exc),
+            )
         )
     workflows = {item["workflowId"]: item for item in frozen["workflows"] if isinstance(item, dict)}
     if workflow_id not in workflows:
-        return _report_failure(
-            workflow_id,
-            [],
-            dict(workflow_inputs or {}),
-            code="WORKFLOW_NOT_FOUND",
-            message=f"Workflow does not exist: {workflow_id}",
+        return finish(
+            _report_failure(
+                workflow_id,
+                [],
+                dict(workflow_inputs or {}),
+                code="WORKFLOW_NOT_FOUND",
+                message=f"Workflow does not exist: {workflow_id}",
+            )
         )
     if workflow_inputs_by_id is not None and not isinstance(workflow_inputs_by_id, Mapping):
-        return _report_failure(
-            workflow_id,
-            [],
-            dict(workflow_inputs or {}),
-            code="WORKFLOW_INPUT_INVALID",
-            message="workflow_inputs_by_id must map workflow IDs to input objects.",
-        )
-    preserved_inputs_by_id: dict[str, dict[str, Any]] = {}
-    for preserved_workflow_id, values in (workflow_inputs_by_id or {}).items():
-        if not isinstance(preserved_workflow_id, str) or not isinstance(values, Mapping):
-            return _report_failure(
+        return finish(
+            _report_failure(
                 workflow_id,
                 [],
                 dict(workflow_inputs or {}),
                 code="WORKFLOW_INPUT_INVALID",
                 message="workflow_inputs_by_id must map workflow IDs to input objects.",
+            )
+        )
+    preserved_inputs_by_id: dict[str, dict[str, Any]] = {}
+    for preserved_workflow_id, values in (workflow_inputs_by_id or {}).items():
+        if not isinstance(preserved_workflow_id, str) or not isinstance(values, Mapping):
+            return finish(
+                _report_failure(
+                    workflow_id,
+                    [],
+                    dict(workflow_inputs or {}),
+                    code="WORKFLOW_INPUT_INVALID",
+                    message="workflow_inputs_by_id must map workflow IDs to input objects.",
+                )
             )
         preserved_inputs_by_id[preserved_workflow_id] = dict(values)
     reports: list[dict[str, Any]] = []
@@ -632,6 +670,82 @@ def execute_arazzo_workflow(
     resolved_inputs_by_id: dict[str, dict[str, Any]] = {}
     cleanup_evidence: list[dict[str, Any]] = []
     last_error: _ExecutionError | None = None
+    step_started: dict[tuple[str, str], float] = {}
+
+    def append_step_report(report: dict[str, Any]) -> None:
+        reports.append(report)
+        workflow = str(report.get("workflowId") or workflow_id)
+        step = str(report.get("stepId") or "")
+        elapsed = step_started.pop((workflow, step), workflow_started)
+        failed = (
+            report.get("finding") is not None
+            or str(report.get("status") or "").lower() == "failed"
+            or str(report.get("semanticStatus") or "").upper() == "FAIL"
+            or str(report.get("contractStatus") or "").upper() == "FAIL"
+        )
+        emit_testing_progress(
+            phase="dynamic",
+            scope="step",
+            status="FAIL" if failed else "PASS",
+            label=(f"Completed step {step}" if not failed else f"Step {step} failed"),
+            workflow_id=workflow,
+            step_id=step,
+            operation_id=str(report.get("operationId") or report.get("calledWorkflowId") or ""),
+            method=str(report.get("method") or ""),
+            path=str(report.get("path") or ""),
+            status_code=(
+                int(report["statusCode"])
+                if isinstance(report.get("statusCode"), int)
+                else None
+            ),
+            contract_status=str(report.get("contractStatus") or ""),
+            semantic_status=str(report.get("semanticStatus") or ""),
+            control=str(report.get("control") or ""),
+            attempt=(
+                int(report["attempt"])
+                if isinstance(report.get("attempt"), int)
+                else None
+            ),
+            elapsed_ms=int((time.perf_counter() - elapsed) * 1000),
+        )
+
+    def run_nested(
+        child_workflow_id: str,
+        supplied: Mapping[str, Any] | None,
+        depth: int,
+    ) -> tuple[bool, dict[str, Any], dict[str, Any]]:
+        child_started = time.perf_counter()
+        child = workflows.get(child_workflow_id) or {}
+        emit_testing_progress(
+            phase="dynamic",
+            scope="workflow",
+            status="RUNNING",
+            label=f"Running child workflow {child_workflow_id}",
+            workflow_id=child_workflow_id,
+            total_steps=len(child.get("steps") or []),
+        )
+        try:
+            outcome = run(child_workflow_id, supplied, depth)
+        except Exception:
+            emit_testing_progress(
+                phase="dynamic",
+                scope="workflow",
+                status="FAIL",
+                label=f"Child workflow {child_workflow_id} failed",
+                workflow_id=child_workflow_id,
+                elapsed_ms=int((time.perf_counter() - child_started) * 1000),
+            )
+            raise
+        emit_testing_progress(
+            phase="dynamic",
+            scope="workflow",
+            status="PASS" if outcome[0] else "FAIL",
+            label=f"Completed child workflow {child_workflow_id}",
+            workflow_id=child_workflow_id,
+            total_steps=len(child.get("steps") or []),
+            elapsed_ms=int((time.perf_counter() - child_started) * 1000),
+        )
+        return outcome
 
     def run(
         current_id: str, supplied: Mapping[str, Any] | None, depth: int
@@ -684,6 +798,18 @@ def execute_arazzo_workflow(
         while index < len(steps):
             step = steps[index]
             step_id = step["stepId"]
+            step_started[(current_id, step_id)] = time.perf_counter()
+            emit_testing_progress(
+                phase="dynamic",
+                scope="step",
+                status="RUNNING",
+                label=f"Running step {step_id}",
+                workflow_id=current_id,
+                step_id=step_id,
+                operation_id=str(step.get("operationId") or step.get("workflowId") or ""),
+                total_steps=len(steps),
+                attempt=1,
+            )
             dependencies = step.get("dependsOn") or []
             for dependency in dependencies:
                 if not isinstance(dependency, str):
@@ -724,7 +850,9 @@ def execute_arazzo_workflow(
                     for item in step.get("parameters") or []
                     if isinstance(item, dict) and isinstance(item.get("name"), str)
                 }
-                ok, child_outputs, _child_inputs = run(step["workflowId"], child_inputs, depth + 1)
+                ok, child_outputs, _child_inputs = run_nested(
+                    step["workflowId"], child_inputs, depth + 1
+                )
                 report = {
                     "stepId": step_id,
                     "workflowId": current_id,
@@ -733,7 +861,7 @@ def execute_arazzo_workflow(
                     "control": "workflow-call",
                     "outputs": child_outputs,
                 }
-                reports.append(report)
+                append_step_report(report)
                 step_values[step_id] = {"outputs": child_outputs}
                 completed_steps[(current_id, step_id)] = step_values[step_id]
                 if not ok:
@@ -785,6 +913,19 @@ def execute_arazzo_workflow(
                             and attempts < int(transport_action.get("retryLimit", 1))
                         ):
                             attempts += 1
+                            emit_testing_progress(
+                                phase="dynamic",
+                                scope="step",
+                                status="RUNNING",
+                                label=f"Retrying step {step_id}",
+                                detail="The previous request could not reach the application.",
+                                workflow_id=current_id,
+                                step_id=step_id,
+                                operation_id=operation.operation_id,
+                                method=operation.method,
+                                path=operation.path,
+                                attempt=attempts + 1,
+                            )
                             continue
                         raise transport_error from exc
                     contract_status = "PASS"
@@ -826,6 +967,19 @@ def execute_arazzo_workflow(
                         and attempts < int(action.get("retryLimit", 1))
                     ):
                         attempts += 1
+                        emit_testing_progress(
+                            phase="dynamic",
+                            scope="step",
+                            status="RUNNING",
+                            label=f"Retrying step {step_id}",
+                            detail="The previous response did not satisfy the step.",
+                            workflow_id=current_id,
+                            step_id=step_id,
+                            operation_id=operation.operation_id,
+                            method=operation.method,
+                            path=operation.path,
+                            attempt=attempts + 1,
+                        )
                         continue
                     break
                 outputs = (
@@ -855,8 +1009,9 @@ def execute_arazzo_workflow(
                         if success
                         else "FAIL"
                     ),
+                    "attempt": attempts + 1,
                 }
-                reports.append(report)
+                append_step_report(report)
                 step_values[step_id] = {"outputs": outputs, "response": context["response"]}
                 completed_steps[(current_id, step_id)] = step_values[step_id]
                 if success:
@@ -874,7 +1029,7 @@ def execute_arazzo_workflow(
                         and isinstance(action.get("workflowId"), str)
                     ):
                         report["control"] = "goto-workflow"
-                        ok, _out, _in = run(
+                        ok, _out, _in = run_nested(
                             action["workflowId"], _action_inputs(action, context), depth + 1
                         )
                         if not ok:
@@ -916,7 +1071,7 @@ def execute_arazzo_workflow(
                     report["control"] = "cleanup-workflow"
                     primary_error = last_error
                     cleanup_start = len(reports)
-                    cleanup_ok, _cleanup_outputs, _cleanup_inputs = run(
+                    cleanup_ok, _cleanup_outputs, _cleanup_inputs = run_nested(
                         action["workflowId"], _action_inputs(action, context), depth + 1
                     )
                     cleanup_evidence.append(
@@ -939,7 +1094,7 @@ def execute_arazzo_workflow(
                 return False, local_outputs, inputs
             except _ExecutionError as exc:
                 last_error = exc
-                reports.append(
+                append_step_report(
                     {
                         "workflowId": current_id,
                         "stepId": step_id,
@@ -978,7 +1133,7 @@ def execute_arazzo_workflow(
                 ):
                     reports[-1]["control"] = "cleanup-workflow"
                     cleanup_begin = len(reports)
-                    cleanup_ok, _cleanup_outputs, _cleanup_inputs = run(
+                    cleanup_ok, _cleanup_outputs, _cleanup_inputs = run_nested(
                         action["workflowId"], _action_inputs(action, context), depth + 1
                     )
                     cleanup_evidence.append(
@@ -1023,13 +1178,27 @@ def execute_arazzo_workflow(
     try:
         ok, outputs, root_inputs = run(workflow_id, workflow_inputs, 0)
     except _ExecutionError as exc:
-        return _report_failure(
-            workflow_id,
-            reports,
-            dict(workflow_inputs or {}),
-            code=exc.code,
-            message=str(exc),
-            defect_class=exc.defect_class,
+        for (active_workflow, active_step), started in list(step_started.items()):
+            emit_testing_progress(
+                phase="dynamic",
+                scope="step",
+                status="FAIL",
+                label=f"Step {active_step} failed",
+                detail=str(exc),
+                workflow_id=active_workflow,
+                step_id=active_step,
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+            )
+            step_started.pop((active_workflow, active_step), None)
+        return finish(
+            _report_failure(
+                workflow_id,
+                reports,
+                dict(workflow_inputs or {}),
+                code=exc.code,
+                message=str(exc),
+                defect_class=exc.defect_class,
+            )
         )
     if not ok:
         error = last_error or _ExecutionError(
@@ -1054,11 +1223,7 @@ def execute_arazzo_workflow(
         )
         result["workflowInputsById"] = resolved_inputs_by_id
         failed_report = next(
-            (
-                report
-                for report in reports
-                if isinstance(report, dict) and report.get("finding")
-            ),
+            (report for report in reports if isinstance(report, dict) and report.get("finding")),
             {},
         )
         failed_workflow_id = str(failed_report.get("workflowId") or workflow_id)
@@ -1066,29 +1231,29 @@ def execute_arazzo_workflow(
         result["failedWorkflowId"] = failed_workflow_id
         result["failedStepId"] = failed_step_id
         if isinstance(result.get("finding"), dict):
-            result["finding"].update(
-                {"workflowId": failed_workflow_id, "stepId": failed_step_id}
-            )
+            result["finding"].update({"workflowId": failed_workflow_id, "stepId": failed_step_id})
         if cleanup_evidence:
             result["cleanupEvidence"] = cleanup_evidence
-        return result
+        return finish(result)
     semantic = (
         "PASS"
         if any(report.get("semanticStatus") == "PASS" for report in reports)
         else "UNVERIFIED"
     )
-    return {
-        "workflowId": workflow_id,
-        "status": "passed",
-        "gateStatus": "PASS",
-        "defectClass": None,
-        "steps": reports,
-        "workflowInputs": root_inputs,
-        "workflowInputsById": resolved_inputs_by_id,
-        "outputs": outputs,
-        "contractStatus": "PASS",
-        "semanticStatus": semantic,
-    }
+    return finish(
+        {
+            "workflowId": workflow_id,
+            "status": "passed",
+            "gateStatus": "PASS",
+            "defectClass": None,
+            "steps": reports,
+            "workflowInputs": root_inputs,
+            "workflowInputsById": resolved_inputs_by_id,
+            "outputs": outputs,
+            "contractStatus": "PASS",
+            "semanticStatus": semantic,
+        }
+    )
 
 
 __all__ = ["execute_arazzo_workflow"]

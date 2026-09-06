@@ -11,6 +11,7 @@
     type FileArtifactSnapshot,
     type RevisionPlanTarget,
     type RevisionExecution,
+    type WorkspaceCommand,
     type WorkspaceEvent
   } from '$lib/types';
   import { formatTime } from '$lib/utils';
@@ -20,10 +21,13 @@
   import DeploymentPreferencesCard from '$lib/components/DeploymentPreferencesCard.svelte';
   import ImplementationErrorPanel from '$lib/components/ImplementationErrorPanel.svelte';
   import LlmTimingHistory from '$lib/components/LlmTimingHistory.svelte';
+  import TestingRunCard from '$lib/components/TestingRunCard.svelte';
+  import { projectTestingRun } from '$lib/testing-results';
 
   let {
     appId,
     events,
+    command = null,
     document,
     fileArtifacts,
     implementationErrors = [],
@@ -36,6 +40,7 @@
   }: {
     appId: string;
     events: WorkspaceEvent[];
+    command?: WorkspaceCommand | null;
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
     implementationErrors?: string[];
@@ -46,7 +51,16 @@
     onDeploymentPreferencesSave: (preferences: DeploymentPreferences) => Promise<void>;
     onArtifactSelect: (stage: string) => void;
   } = $props();
-  let latestProgress = $derived([...events].reverse().find((event) => event.kind === 'progress'));
+  let testingRun = $derived(projectTestingRun({ command, events }));
+  let latestProgress = $derived(
+    [...events]
+      .reverse()
+      .find(
+        (event) =>
+          event.kind === 'progress' &&
+          event.metadata?.progress_event !== 'testingProgressUpdated'
+      )
+  );
   let latestImplementationError = $derived(
     [...events].reverse().find(
       (event) => event.stage === 'implementation' && event.kind === 'error'
@@ -143,6 +157,7 @@
           implementationTimelineResetId > 0 &&
           event.event_id < implementationTimelineResetId
         ) &&
+        event.metadata?.progress_event !== 'testingProgressUpdated' &&
         !(
           event.stage === 'implementation' &&
           event.kind === 'progress' &&
@@ -250,7 +265,7 @@
 </script>
 
 <div class="mx-auto w-full max-w-3xl px-5 pb-8 pt-6">
-  {#if events.length === 0}
+  {#if events.length === 0 && !testingRun}
     <div class="mt-20 text-center text-[#74766e]">
       <Bot class="mx-auto mb-4" size={30} strokeWidth={1.5} />
       <p class="text-sm">Waiting for the first command.</p>
@@ -506,6 +521,11 @@
     </article>
     {/if}
   {/each}
+  {#if testingRun}
+    <div class="mb-5 ml-11" data-kind="testing-run">
+      <TestingRunCard run={testingRun} onOpen={() => onArtifactSelect('TESTING_RESULTS')} />
+    </div>
+  {/if}
   {#if showDeploymentPreferences && Object.values(regions).some((items) => items.length)}
     {#key appId}
       <DeploymentPreferencesCard

@@ -4,12 +4,23 @@ from copy import deepcopy
 from pathlib import Path
 
 from app.implementation.delivery.verification import check_deployment_package
+from app.testing.progress import emit_testing_progress
 from app.testing.schemas.testing_state import TestingState
 from app.testing.utils.static_analysis import scan_stage
 
 _ISSUE_PATH = re.compile(
     r"(?:^|\[|:\s)(?P<path>(?:deployment/)?(?:tofu|runtime|scripts)/[^\]\s:]+)"
 )
+
+
+def _progress_status(report: dict) -> str:
+    if report.get("reused") is True:
+        return "REUSED"
+    value = str(report.get("gateStatus") or "INCONCLUSIVE").upper()
+    return {
+        "NOT_APPLICABLE": "SKIPPED",
+        "DEFERRED": "DEFERRED",
+    }.get(value, value if value in {"PASS", "FAIL", "INCONCLUSIVE"} else "INCONCLUSIVE")
 
 
 def _review_trivy_findings(
@@ -28,11 +39,7 @@ def _review_trivy_findings(
     """
 
     nodes = [item for item in resource_plan.get("nodes") or [] if isinstance(item, dict)]
-    terraform_types = {
-        str(kind)
-        for node in nodes
-        for kind in node.get("terraformTypes") or []
-    }
+    terraform_types = {str(kind) for node in nodes for kind in node.get("terraformTypes") or []}
     has_compute = bool(terraform_types & {"aws_instance", "aws_launch_template"})
     has_registry = "aws_ecr_repository" in terraform_types
     has_external_route = any(
@@ -45,8 +52,7 @@ def _review_trivy_findings(
     # 하나라도 있으면 AWS-0104를 허용하지 않는다.
     main_tf = (
         (application / "deployment" / "tofu" / "main.tf").read_text(encoding="utf-8")
-        if application is not None
-        and (application / "deployment" / "tofu" / "main.tf").is_file()
+        if application is not None and (application / "deployment" / "tofu" / "main.tf").is_file()
         else ""
     )
     external_egress = [
@@ -69,6 +75,7 @@ def _review_trivy_findings(
         and has_external_route
         and egress_is_limited
     )
+
     def address(node: dict, kind: str) -> str:
         """ResourcePlan node ID를 renderer와 같은 Terraform 주소로 바꾼다."""
 
@@ -331,6 +338,13 @@ def static_verification_node(state: TestingState) -> dict:
     selected = _selected_gates(state)
     previous_trivy, previous_package, previous_iac = _previous_static_parts(state)
     if "static" in selected:
+        emit_testing_progress(
+            phase="static",
+            scope="gate",
+            status="RUNNING",
+            label="Scanning deployment configuration",
+            gate="static",
+        )
         scanned = scan_stage(
             node="static_verification",
             directory=state.get("application_dir", ""),
@@ -340,6 +354,13 @@ def static_verification_node(state: TestingState) -> dict:
         report = scanned["static_report"]
     else:
         report = _reused_report(previous_trivy, state)
+        emit_testing_progress(
+            phase="static",
+            scope="gate",
+            status="REUSED",
+            label="Reusing deployment configuration scan",
+            gate="static",
+        )
         scanned = {
             "current_node": "static_verification",
             "errors": [],
@@ -351,9 +372,7 @@ def static_verification_node(state: TestingState) -> dict:
             resource_plan,
             [str(item) for item in report.get("issues") or []],
             findings=[
-                dict(item)
-                for item in report.get("findings") or []
-                if isinstance(item, dict)
+                dict(item) for item in report.get("findings") or [] if isinstance(item, dict)
             ],
             application=Path(state.get("application_dir", "")),
         )
@@ -363,9 +382,7 @@ def static_verification_node(state: TestingState) -> dict:
             if not blocking_issues and report.get("gateStatus") == "FAIL":
                 report["status"] = "PASSED"
                 report["gateStatus"] = "PASS"
-                report["message"] = (
-                    "Trivy config scan passed after reviewed topology exceptions."
-                )
+                report["message"] = "Trivy config scan passed after reviewed topology exceptions."
     # Trivy 결과를 배포 package 검사와 합치기 전에 별도로 보존한다. 합친 summary만
     # 전달하면 수리 에이전트가 규칙 ID와 대상 파일을 잃고 다른 파일을 추측하게 된다.
     report["trivyScan"] = {
@@ -401,11 +418,7 @@ def static_verification_node(state: TestingState) -> dict:
         )
     else:
         checked_package = {}
-    package = (
-        checked_package
-        if "package" in selected
-        else _reused_report(previous_package, state)
-    )
+    package = checked_package if "package" in selected else _reused_report(previous_package, state)
     # A package is part of the deployment gate only when it exists/was expected;
     # absent packages are represented as NOT_APPLICABLE by the package checker.
     report["deploymentPackage"] = package
@@ -446,5 +459,30 @@ def static_verification_node(state: TestingState) -> dict:
         scanned["iac_report"]["targets"] = sorted(
             f"application/{path.relative_to(application).as_posix()}"
             for path in (application / "deployment" / "tofu").glob("*.tf")
+        )
+    emit_testing_progress(
+        phase="static",
+        scope="gate",
+        status=_progress_status(
+            report["trivyScan"] if isinstance(report.get("trivyScan"), dict) else report
+        ),
+        label="Completed deployment configuration scan",
+        gate="static",
+    )
+    if "package" not in selected:
+        emit_testing_progress(
+            phase="static",
+            scope="gate",
+            status=_progress_status(package),
+            label="Reusing deployment package check",
+            gate="package",
+        )
+    if "iac" not in selected:
+        emit_testing_progress(
+            phase="static",
+            scope="gate",
+            status=_progress_status(scanned["iac_report"]),
+            label="Reusing infrastructure validation",
+            gate="iac",
         )
     return scanned

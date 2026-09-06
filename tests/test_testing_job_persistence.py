@@ -39,6 +39,27 @@ def _checkpoint() -> dict:
             "attempts": [{"strategy_key": "initial_generation"}],
         },
         "previous_findings": ["testing.dynamicFunctional:HTTP 500"],
+        "testing_progress": {
+            "phase": "dynamic",
+            "status": "RUNNING",
+            "active_workflow_id": "workflow-UC-1",
+            "active_step_id": "get-health",
+            "completed_workflows": 0,
+            "total_workflows": 1,
+            "total_steps": 1,
+            "workflows": {
+                "workflow-UC-1": {
+                    "status": "RUNNING",
+                    "steps": {
+                        "get-health": {
+                            "status": "RUNNING",
+                            "method": "GET",
+                            "path": "/health",
+                        }
+                    },
+                }
+            },
+        },
     }
 
 
@@ -89,6 +110,9 @@ def test_testing_checkpoint_survives_restart_without_a_new_table(monkeypatch, tm
         recoverable = repository.interrupted_testing_commands()
         assert [item["command_id"] for item in recoverable] == [command_id]
         assert recoverable[0]["payload"]["testing_checkpoint"] == _checkpoint()
+        assert recoverable[0]["payload"]["testing_checkpoint"]["testing_progress"] == (
+            _checkpoint()["testing_progress"]
+        )
     finally:
         engine.dispose()
 

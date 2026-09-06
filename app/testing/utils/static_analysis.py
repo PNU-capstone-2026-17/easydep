@@ -12,7 +12,7 @@ def _scan(directory: Path, subject: str) -> dict[str, Any]:
     try:
         issues = run_trivy_scan(str(directory.resolve()))
     except Exception as error:
-        message = f"Trivy 실행을 시작하지 못했습니다: {error}"
+        message = f"Trivy could not start: {error}"
         return {
             "status": "UNAVAILABLE",
             "gateStatus": "INCONCLUSIVE",
@@ -21,7 +21,7 @@ def _scan(directory: Path, subject: str) -> dict[str, Any]:
             "message": message,
         }
     if issues is None:
-        message = "Trivy가 결과를 반환하지 않았습니다."
+        message = "Trivy returned no result."
         return {
             "status": "UNAVAILABLE",
             "gateStatus": "INCONCLUSIVE",
@@ -34,7 +34,7 @@ def _scan(directory: Path, subject: str) -> dict[str, Any]:
     # The legacy helper returns strings. A tool-startup failure is not an application
     # misconfiguration and must not become a FAIL or a pass.
     unavailable = bool(execution.get("environmentError")) or any(
-        any(token in str(issue).lower() for token in ("실행 실패", "not found", "no such file", "timed out"))
+        any(token in str(issue).lower() for token in ("could not", "not found", "no such file", "timed out"))
         for issue in issues
     )
     targets = [
@@ -75,7 +75,7 @@ def scan_stage(
     """복원된 폴더가 있으면 검사하고, 없으면 미실행 사실을 보고한다."""
     target = Path(directory) if directory else None
     if target is None or not target.exists():
-        message = f"검사할 {subject} 폴더가 없습니다: {directory or '(empty)'}"
+        message = f"The {subject} directory is unavailable for scanning: {directory or '(empty)'}"
         return {
             "current_node": node,
             "errors": [message],

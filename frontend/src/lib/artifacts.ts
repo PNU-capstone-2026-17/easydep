@@ -1,4 +1,4 @@
-import type { WorkspaceCommand } from '$lib/types';
+import type { Stage, WorkspaceCommand } from '$lib/types';
 
 export const artifactLabels: Record<string, string> = {
   refined_requirements: 'Refined requirements',
@@ -14,7 +14,8 @@ export const artifactLabels: Record<string, string> = {
   TEST_CODE: 'Test code',
   DEPLOYMENT_FILE: 'Docker and deployment files',
   IAC_CODE: 'Terraform IaC',
-  LIVE_SOURCE: 'Live implementation source'
+  LIVE_SOURCE: 'Live implementation source',
+  TESTING_RESULTS: 'Testing results'
 };
 
 export const diagramArtifactTypes = new Set([
@@ -42,12 +43,22 @@ export const fileArtifactTypes = [
 export const internalArtifactTypes = new Set([
   'capability_contract',
   'resource_intake',
-  'resource_spec'
+  'resource_spec',
+  'TESTING_RESULTS'
 ]);
 
 export function artifactPresent(value: unknown): boolean {
   if (typeof value === 'string') return value.length > 0;
   return value != null && typeof value === 'object' && Object.keys(value).length > 0;
+}
+
+export function artifactDevelopmentStage(artifactType: string): Stage {
+  if (artifactType === 'TESTING_RESULTS') return 'testing';
+  if (artifactType === 'LIVE_SOURCE' || fileArtifactTypes.includes(artifactType)) {
+    return 'implementation';
+  }
+  if (requirementsArtifactTypes.has(artifactType)) return 'requirements';
+  return 'design';
 }
 
 export function shouldLoadFileArtifactsInitially(

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  artifactDevelopmentStage,
   implementationCompletionArtifactLoadKey,
   shouldLoadFileArtifactsInitially
 } from '../src/lib/artifacts.ts';
@@ -53,4 +54,10 @@ test('implementation completion requests artifacts once per command', () => {
     ),
     null
   );
+});
+
+test('the virtual Testing result keeps Testing conversation context', () => {
+  assert.equal(artifactDevelopmentStage('TESTING_RESULTS'), 'testing');
+  assert.equal(artifactDevelopmentStage('SOURCE_CODE'), 'implementation');
+  assert.equal(artifactDevelopmentStage('class_diagram'), 'design');
 });

@@ -69,7 +69,7 @@ def exposed_port(context: Path) -> int:
     dockerfile = context / "Dockerfile"
     if not dockerfile.is_file():
         raise ApplicationLaunchError(
-            f"복원된 애플리케이션에 Dockerfile이 없습니다: {context}"
+            f"The restored application has no Dockerfile: {context}"
         )
     match = _EXPOSE.search(dockerfile.read_text(encoding="utf-8"))
     return int(match.group("port")) if match else _FALLBACK_CONTAINER_PORT
@@ -200,7 +200,7 @@ def _wait_until_ready(name: str, url: str, timeout: int) -> None:
             logs = _container_logs(name)
             excerpt = _log_excerpt(logs)
             raise ApplicationLaunchError(
-                "생성된 애플리케이션이 요청을 받기 전에 종료됐습니다:\n"
+                "The generated application exited before accepting requests:\n"
                 f"{excerpt}",
                 defect_class=_build_failure_defect_class(logs),
                 application_log=logs,
@@ -209,7 +209,7 @@ def _wait_until_ready(name: str, url: str, timeout: int) -> None:
     logs = _container_logs(name)
     excerpt = _log_excerpt(logs)
     raise ApplicationLaunchError(
-        f"생성된 애플리케이션이 {timeout}초 안에 {url}에 응답하지 않았습니다:\n"
+        f"The generated application did not respond at {url} within {timeout} seconds:\n"
         f"{excerpt}",
         # 준비 시간 초과만으로 source 결함을 확정할 수 없다. 첫 Gradle 실행이나 Windows
         # bind mount가 느린 경우 코드를 고쳐도 달라지지 않으므로 환경 문제로 재실행한다.
@@ -247,7 +247,7 @@ def running_application(
     if created_network.returncode != 0:
         output = created_network.stderr or created_network.stdout or ""
         raise ApplicationLaunchError(
-            "Testing용 Docker network를 만들지 못했습니다:\n"
+            "The Docker network for Testing could not be created:\n"
             + _log_excerpt(output, limit=2000),
             defect_class="ENVIRONMENT_DEFECT",
             application_log=output,
@@ -303,7 +303,7 @@ def running_application(
         _docker(["network", "rm", network], timeout=120)
         output = started.stderr or started.stdout or ""
         raise ApplicationLaunchError(
-            "공용 툴체인에서 생성된 애플리케이션을 시작하지 못했습니다:\n"
+            "The generated application could not start in the shared toolchain:\n"
             + _log_excerpt(output, limit=2000),
             defect_class="ENVIRONMENT_DEFECT",
             application_log=output,

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 
 from app.implementation.delivery import verification
 from app.testing import repair_check
 from app.testing.nodes import static_verification
+from app.testing.progress import testing_progress_scope as _testing_progress_scope
 from app.testing.runtime import container_runner
 from app.testing.runtime.container_runner import ToolchainExecution
 from app.testing.utils import docker_trivy
@@ -62,6 +64,27 @@ def test_toolchain_command_runs_directly_inside_fixed_runner(monkeypatch, tmp_pa
     assert observed == ["tofu", "validate", "-no-color"]
     assert result.toolchain == "fixed-linux-runner"
     assert result.environment_error is False
+
+
+def test_toolchain_heartbeat_runs_until_the_command_finishes(monkeypatch, tmp_path):
+    def fake_run(command, **_kwargs):
+        time.sleep(0.1)
+        return _completed(command)
+
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    monkeypatch.setattr(container_runner, "run_process_tree", fake_run)
+    monkeypatch.setattr(container_runner, "_HEARTBEAT_INTERVAL_SECONDS", 0.001)
+    events: list[dict[str, object]] = []
+
+    with _testing_progress_scope(events.append):
+        result = container_runner.run_toolchain_command(
+            ["tofu", "validate", "-no-color"], cwd=tmp_path, timeout=30
+        )
+
+    assert result.environment_error is False
+    assert len(events) >= 2
+    assert [event["attempt"] for event in events] == list(range(1, len(events) + 1))
+    assert all(event["gate"] == "iac" for event in events)
 
 
 def test_trivy_uses_shared_toolchain_and_keeps_exact_findings(monkeypatch, tmp_path):

@@ -8,6 +8,7 @@ import pytest
 
 from app.db.models import TYPE_DEPLOYMENT_FILE, TYPE_SOURCE_CODE
 from app.testing import service as testing_service
+from app.testing.progress import emit_testing_progress
 from app.testing.schemas.testing_input import TestingInput as FrozenTestingInput
 
 
@@ -65,6 +66,14 @@ def test_run_testing_freezes_input_before_running(monkeypatch) -> None:
 
     def run(_run_id, received_input, **kwargs):
         assert received_input == fixed_input
+        emit_testing_progress(
+            phase="dynamic",
+            scope="workflow",
+            status="RUNNING",
+            label="Running workflow UC-1",
+            workflow_id="workflow-UC-1",
+            total_workflows=2,
+        )
         kwargs["progress"](
             {
                 "current_node": "verification",
@@ -86,6 +95,8 @@ def test_run_testing_freezes_input_before_running(monkeypatch) -> None:
     assert job["testing_input"] == fixed_input.model_dump(mode="json")
     assert checkpoints[0]["current_node"] == "queued"
     assert checkpoints[-1]["current_node"] == "verification"
+    assert checkpoints[-1]["testing_progress"]["active_workflow_id"] == "workflow-UC-1"
+    assert job["testing_progress"]["workflow_counts"]["total"] == 2
 
 
 def test_checkpoint_reuses_saved_input_without_reloading_implementation(monkeypatch) -> None:

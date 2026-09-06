@@ -15,12 +15,14 @@
   import { Button } from '$lib/components/ui/button';
   import {
     artifactPresent,
+    artifactDevelopmentStage,
     fileArtifactTypes,
     implementationCompletionArtifactLoadKey,
     internalArtifactTypes,
     shouldLoadFileArtifactsInitially
   } from '$lib/artifacts';
   import { nextAutoAction } from '$lib/auto-mode';
+  import { projectTestingRun } from '$lib/testing-results';
 
   const AUTO_MODE_STORAGE_KEY = 'easydep:auto-mode';
 
@@ -59,6 +61,7 @@
   let checkpointMode = $state<'branch' | 'rerun'>('branch');
   let checkpointStage = $state<Stage>('requirements');
   let openedCheckpointCommand = '';
+  let testingOpenedForCommand = '';
 
   let implementationErrors = $derived.by(() => {
     const messages = events
@@ -81,6 +84,7 @@
     ) ?? null
   );
   let canApproveSequenceMethodProposals = $derived(Boolean(sequenceMethodApprovalOffer));
+  let testingRun = $derived(projectTestingRun({ command, events }));
 
   let busy = $derived(actionBusy || ['QUEUED', 'RUNNING'].includes(command?.status ?? ''));
   let classGenerating = $derived(
@@ -130,13 +134,7 @@
       ? (knownProvider as CloudProvider)
       : undefined;
   });
-  let selectedStage = $derived(
-    selectedArtifact === 'LIVE_SOURCE' || fileArtifactTypes.includes(selectedArtifact)
-      ? 'implementation'
-      : ['refined_requirements', 'usecase_spec', 'usecase_diagram'].includes(selectedArtifact)
-      ? 'requirements'
-      : 'design'
-  );
+  let selectedStage = $derived(artifactDevelopmentStage(selectedArtifact));
 
   onMount(() => {
     initialized = true;
@@ -186,6 +184,16 @@
         timelineScroller.scrollTop = timelineScroller.scrollHeight;
       }
     });
+  });
+
+  $effect(() => {
+    const run = testingRun;
+    const commandId = run?.commandId ?? '';
+    if (!initialized || loading || !commandId || testingOpenedForCommand === commandId) return;
+    if (window.innerWidth < 900) return;
+    testingOpenedForCommand = commandId;
+    selectedArtifact = 'TESTING_RESULTS';
+    artifactOpen = true;
   });
 
   $effect(() => {
@@ -267,7 +275,9 @@
           void refreshClassPreview(id, event.command_id, true);
         }
         if (event.kind !== 'progress') void refreshState(id);
-        else if (event.stage === 'implementation') scheduleStateRefresh(id);
+        else if (event.stage === 'implementation' || event.stage === 'testing') {
+          scheduleStateRefresh(id);
+        }
       },
       () => (connected = false)
     );
@@ -488,7 +498,11 @@
 
   async function send(text: string, extra: Record<string, unknown> = {}) {
     await act('message', {
-      context: { stage: selectedStage, artifact_stage: selectedArtifact },
+      context: {
+        stage: selectedStage,
+        artifact_stage:
+          selectedArtifact === 'TESTING_RESULTS' ? undefined : selectedArtifact
+      },
       ...extra,
       text,
     });
@@ -613,6 +627,7 @@
               <ChatTimeline
                 {appId}
                 {events}
+                {command}
                 document={artifacts}
                 {fileArtifacts}
                 implementationErrors={implementationErrors}
@@ -631,7 +646,11 @@
             {command}
             {busy}
             {autoMode}
-            context={{ stage: selectedStage, artifact_stage: selectedArtifact }}
+            context={{
+              stage: selectedStage,
+              artifact_stage:
+                selectedArtifact === 'TESTING_RESULTS' ? undefined : selectedArtifact
+            }}
             targetRequired={selectedArtifact === 'sequence_diagram'}
             onSend={send}
             onAction={act}
@@ -641,6 +660,7 @@
         {#snippet sidebar()}
           <ArtifactPane
             {appId}
+            {command}
             document={artifacts}
             {fileArtifacts}
             {liveSources}
