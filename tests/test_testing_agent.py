@@ -144,6 +144,41 @@ def test_static_stage_reports_a_missing_iac_folder(tmp_path):
     assert result["iac_report"]["source"]["source"] == "none"
 
 
+def test_dynamic_blocking_failure_defers_static_and_iac_gates(monkeypatch):
+    """최초 dynamic 차단 뒤 아직 실행하지 않은 정적 gate를 deferred로 남긴다."""
+
+    def failed_dynamic(_state):
+        return {
+            "current_node": "dynamic_functional",
+            "dynamic_functional_report": {
+                "status": "failed",
+                "gateStatus": "FAIL",
+                "defectClass": "SUT_DEFECT",
+                "reason": "HTTP 500",
+            },
+        }
+
+    with (
+        patch("app.testing.graphs.testing_graph.dynamic_functional_node", failed_dynamic),
+        patch(
+            "app.testing.graphs.testing_graph.static_verification_node",
+            side_effect=lambda *_args, **_kwargs: pytest.fail(
+                "static checks must be deferred after a blocking dynamic failure"
+            ),
+        ),
+    ):
+        result = create_testing_graph().invoke(
+            _initial_state(target_url="http://localhost:8080")
+        )
+
+    assert result["current_node"] == "static_verification_deferred"
+    assert result["static_report"]["deferred"] is True
+    assert result["static_report"]["deferredGate"] == "static"
+    assert result["static_report"]["trivyScan"]["deferred"] is True
+    assert result["static_report"]["deploymentPackage"]["deferred"] is True
+    assert result["iac_report"]["deferred"] is True
+
+
 # ---------------------------------------------------------------------------
 # Bringing the generated application up for the dynamic stages
 # ---------------------------------------------------------------------------
@@ -202,6 +237,32 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
     assert any(command[:2] == ["rm", "-f"] for command in commands)
 
 
+def test_application_log_excerpt_is_bounded(tmp_path, monkeypatch):
+    """소유 중인 application runtime 로그만 제한 크기로 공개한다."""
+    from app.testing.runtime import app_container
+
+    (tmp_path / "Dockerfile").write_text("FROM scratch\nEXPOSE 8000\n", encoding="utf-8")
+    log_text = (
+        "Caused by: database migration failure\n" + ("stack frame\n" * 5_000)
+    )
+
+    def docker(arguments, **_kwargs):
+        if arguments and arguments[0] == "logs":
+            return type("Completed", (), {"returncode": 0, "stdout": log_text, "stderr": ""})()
+        return type("Completed", (), {"returncode": 0, "stdout": "id\n", "stderr": ""})()
+
+    monkeypatch.setattr(app_container, "_docker", docker)
+    monkeypatch.setattr(app_container, "_wait_until_ready", lambda *_args: None)
+    monkeypatch.setattr(app_container, "configured_runner_image", lambda: "toolchain:test")
+
+    with app_container.running_application("app-1", tmp_path, launch_id="log-bound") as (_, runtime):
+        excerpt = app_container.application_log_excerpt(runtime)
+
+    assert len(excerpt) <= 6000
+    assert "... omitted ..." in excerpt
+    assert "database migration failure" in excerpt
+
+
 def test_running_application_does_not_rebuild_frontend_for_api_checks(
     tmp_path, monkeypatch
 ):
@@ -238,6 +299,26 @@ def test_application_start_timeout_does_not_trigger_source_repair(monkeypatch):
         app_container._wait_until_ready("app", "http://localhost/healthz", 1)
 
     assert raised.value.defect_class == "ENVIRONMENT_DEFECT"
+
+
+def test_docker_inspect_timeout_is_an_environment_defect(monkeypatch):
+    """A stalled Docker daemon must not escape as a raw subprocess error."""
+    from app.testing.runtime import app_container
+    from app.testing.runtime.app_container import ApplicationLaunchError
+
+    monkeypatch.setattr(app_container, "_responds", lambda _url: False)
+
+    def timed_out(_arguments, **_kwargs):
+        raise app_container.subprocess.TimeoutExpired(["docker", "inspect"], 30)
+
+    monkeypatch.setattr(app_container, "_docker", timed_out)
+
+    with pytest.raises(ApplicationLaunchError) as raised:
+        app_container._wait_until_ready("app", "http://localhost/healthz", 360)
+
+    assert raised.value.defect_class == "ENVIRONMENT_DEFECT"
+    assert "Docker timed out" in str(raised.value)
+    assert isinstance(raised.value.__cause__, app_container.subprocess.TimeoutExpired)
 
 
 def test_static_failure_blocks_the_testing_result():
@@ -345,6 +426,162 @@ def test_testing_result_preserves_static_failure_evidence_for_repair(
     assert finding["evidence"]["tool"] == "trivy"
 
 
+def test_testing_result_preserves_dynamic_runtime_evidence_for_implementation_repair(
+    tmp_path, monkeypatch
+):
+    """dynamic 실패의 요청·응답·runtime 증거가 blocking finding까지 그대로 간다."""
+
+    fixed_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+    )
+    candidate_plan = {
+        "cases": [
+            {
+                "case_id": "case-order",
+                "requirement_ids": ["FR-1"],
+                "use_case_id": "UC-1",
+                "steps": [{"step_id": "update", "operation_id": "updateOrder"}],
+            }
+        ],
+        "inputValues": {
+            "case-order": [
+                {
+                    "operation_id": "updateOrder",
+                    "location": "body.description",
+                    "value": "same repair input",
+                }
+            ]
+        },
+    }
+    finding_evidence = {
+        "stepId": "update",
+        "operationId": "updateOrder",
+        "code": "HTTP_STATUS_NOT_SUCCESS",
+        "statusCode": 500,
+        "request": {
+            "method": "POST",
+            "path": "/orders/order-42",
+            "query": {"trace": "trace-7"},
+            "body": {
+                "description": "same repair input",
+                "priority": "HIGH",
+            },
+        },
+        "responseBody": '{"message":"database unavailable"}',
+        "runtime": {
+            "source": "application",
+            "profile": "test",
+            "database": "h2-mysql-mode",
+        },
+        "applicationLogExcerpt": "Caused by: org.h2.jdbc.JdbcSQLSyntaxErrorException",
+    }
+    verification = {
+        "passed": False,
+        "status": "FAIL",
+        "gateStatus": "FAIL",
+        "gateCounts": {"passed": 2, "failed": 1, "inconclusive": 0},
+        "blockingReason": "POST /orders/{orderId} returned HTTP 500.",
+        "diagnostics": [],
+        "reports": {
+            "static": {"status": "PASSED", "gateStatus": "PASS", "issues": []},
+            "iac": {"status": "SKIPPED", "gateStatus": "NOT_APPLICABLE", "issues": []},
+            "dynamicFunctional": {
+                "status": "failed",
+                "gateStatus": "FAIL",
+                "defectClass": "SUT_DEFECT",
+                "defect": {
+                    "class": "SUT_DEFECT",
+                    "defectClass": "SUT_DEFECT",
+                    "route": "implementation",
+                    "preserveTests": True,
+                },
+                "caseId": "case-order",
+                "candidateDigest": "candidate-digest-1",
+                "planDigest": "plan-digest-1",
+                "failedRequestDigest": "request-digest-1",
+                "candidatePlan": candidate_plan,
+                "finding": finding_evidence,
+                "reason": "POST /orders/{orderId} returned HTTP 500.",
+                "steps": [
+                    {
+                        "stepId": "update",
+                        "operationId": "updateOrder",
+                        "method": "POST",
+                        "path": "/orders/{orderId}",
+                        "statusCode": 500,
+                    }
+                ],
+            },
+        },
+    }
+
+    @contextmanager
+    def restored_application(_testing_input):
+        yield tmp_path
+
+    monkeypatch.setattr(testing_service, "materialized_testing_application", restored_application)
+    monkeypatch.setattr(testing_service, "run_verification_graph", lambda **_kwargs: verification)
+    monkeypatch.setattr(testing_service, "load_file_snapshot", lambda *_args, **_kwargs: None)
+
+    result = testing_service.run_testing(
+        "app-1",
+        "implementation-1",
+        run_id="testing-dynamic-evidence",
+        checkpoint={
+            "implementation_job_id": "implementation-1",
+            "testing_input": fixed_input.model_dump(mode="json"),
+        },
+    )["result"]
+
+    assert len(result["blocking_findings"]) == 1
+    blocking = result["blocking_findings"][0]
+    assert blocking["defect_class"] == "SUT_DEFECT"
+    assert blocking["repair_owner"] == "implementation"
+    assert blocking["candidate_digest"] == "candidate-digest-1"
+    assert blocking["plan_digest"] == "plan-digest-1"
+    assert blocking["request_digest"] == "request-digest-1"
+    assert blocking["candidate_plan"] == candidate_plan
+    assert blocking["evidence"]["finding"] == finding_evidence
+    assert blocking["evidence"]["planDigest"] == "plan-digest-1"
+    assert blocking["evidence"]["requestDigest"] == "request-digest-1"
+
+
+def test_upstream_ambiguity_is_not_reclassified_as_environment(monkeypatch) -> None:
+    """An unprovable plan order must route to design, never runtime retry."""
+
+    fixed_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+    )
+    monkeypatch.setattr(testing_service, "load_file_snapshot", lambda *_args, **_kwargs: None)
+    findings = testing_service._blocking_findings(
+        fixed_input,
+        {
+            "reports": {
+                "static": {"status": "DEFERRED", "gateStatus": "NOT_APPLICABLE"},
+                "iac": {"status": "DEFERRED", "gateStatus": "NOT_APPLICABLE"},
+                "dynamicFunctional": {
+                    "status": "UNAVAILABLE",
+                    "gateStatus": "INCONCLUSIVE",
+                    "defectClass": "UPSTREAM_AMBIGUITY",
+                    "defect": {
+                        "class": "UPSTREAM_AMBIGUITY",
+                        "route": "requirements-or-design",
+                    },
+                    "reason": "The required operation order is not frozen.",
+                },
+            }
+        },
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["defect_class"] == "UPSTREAM_AMBIGUITY"
+    assert findings[0]["repair_owner"] == "requirements-or-design"
+
+
 def test_static_repair_rechecks_static_gate_without_starting_the_application(
     tmp_path, monkeypatch
 ):
@@ -443,8 +680,8 @@ def test_verification_runs_dynamic_tests_against_the_launched_app(tmp_path):
     assert result["reports"]["dynamicFunctional"]["targetUrl"] == "http://localhost:54321"
 
 
-def test_verification_still_scans_when_the_app_cannot_be_launched(tmp_path):
-    """A build failure must not cost the static analysis of the same artifacts."""
+def test_verification_defers_static_gates_when_the_app_cannot_be_launched(tmp_path):
+    """앱 기동 전 실패 뒤에는 실행하지 않은 정적 gate를 deferred로 남긴다."""
     from app.testing.runtime import verification
     from app.testing.runtime.app_container import ApplicationLaunchError
 
@@ -457,7 +694,7 @@ def test_verification_still_scans_when_the_app_cannot_be_launched(tmp_path):
         patch(
             "app.testing.utils.static_analysis.run_trivy_scan",
             return_value=["[k8s/deployment.yaml] No resource limits (HIGH): ..."],
-        ),
+        ) as trivy_scan,
         patch("app.testing.runtime.verification.running_application", failing_launch),
     ):
         result = verification.run_verification_graph(
@@ -465,7 +702,13 @@ def test_verification_still_scans_when_the_app_cannot_be_launched(tmp_path):
         )
 
     assert result["applicationLaunchError"] == "docker build failed"
-    assert result["reports"]["static"]["status"] == "FAILED"
+    trivy_scan.assert_not_called()
+    assert result["reports"]["static"]["status"] == "DEFERRED"
+    assert result["reports"]["static"]["gateStatus"] == "NOT_APPLICABLE"
+    assert result["reports"]["static"]["deferred"] is True
+    assert result["reports"]["static"]["trivyScan"]["deferred"] is True
+    assert result["reports"]["static"]["deploymentPackage"]["deferred"] is True
+    assert result["reports"]["iac"]["deferred"] is True
     assert result["reports"]["dynamicFunctional"]["status"] == "FAILED"
     assert result["reports"]["dynamicFunctional"]["defectClass"] == "SUT_DEFECT"
     # 실행할 애플리케이션이 없으면 기능을 검증하지 못했으므로 성공일 수 없다.
@@ -473,7 +716,6 @@ def test_verification_still_scans_when_the_app_cannot_be_launched(tmp_path):
     assert "동적 테스트" in result["blockingReason"]
     assert [item["code"] for item in result["diagnostics"]] == [
         "APPLICATION_LAUNCH_FAILED",
-        "DEPLOYMENT_MISCONFIGURATION",
     ]
 
 
@@ -490,3 +732,56 @@ def test_verification_reuses_a_caller_supplied_url(stored_artifacts):
 
     launcher.assert_not_called()
     assert result["application"] == {"source": "caller"}
+
+
+def test_external_target_failure_does_not_collect_arbitrary_docker_logs(
+    stored_artifacts, monkeypatch
+):
+    """외부 target_url은 로컬 container identity가 없으므로 Docker log를 읽지 않는다."""
+
+    from app.testing.runtime import app_container, verification
+
+    def failed_dynamic(state):
+        return {
+            "current_node": "dynamic_functional",
+            "dynamic_functional_report": {
+                "status": "failed",
+                "gateStatus": "FAIL",
+                "defectClass": "SUT_DEFECT",
+                "finding": {
+                    "stepId": "step-1",
+                    "operationId": "startCalculation",
+                    "code": "HTTP_STATUS_NOT_SUCCESS",
+                    "statusCode": 500,
+                    "request": {
+                        "method": "POST",
+                        "path": "/calculations",
+                        "query": {},
+                        "body": {"value": 1},
+                    },
+                },
+                "reason": "The external application returned HTTP 500.",
+            },
+        }
+
+    with (
+        patch("app.testing.utils.static_analysis.run_trivy_scan", return_value=[]),
+        patch("app.testing.runtime.verification.running_application") as launcher,
+        patch("app.testing.graphs.testing_graph.dynamic_functional_node", failed_dynamic),
+        patch.object(
+            app_container,
+            "_container_logs",
+            side_effect=AssertionError("external targets must not read Docker logs"),
+        ) as container_logs,
+    ):
+        result = verification.run_verification_graph(
+            run_id="external-500",
+            app_id="app-1",
+            target_url="https://staging.example.test",
+        )
+
+    launcher.assert_not_called()
+    container_logs.assert_not_called()
+    dynamic = result["reports"]["dynamicFunctional"]
+    assert dynamic["finding"]["runtime"]["source"] == "caller"
+    assert not dynamic["finding"].get("applicationLogExcerpt")

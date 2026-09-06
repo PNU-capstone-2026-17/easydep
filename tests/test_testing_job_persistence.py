@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -158,3 +160,90 @@ def test_testing_service_checkpoints_latest_repair_ledger(monkeypatch) -> None:
     assert checkpoints[-1]["previous_findings"] == [
         "testing.dynamicFunctional:HTTP 409"
     ]
+
+
+def test_completed_verification_checkpoint_restores_failed_case_boundary(
+    monkeypatch, tmp_path
+) -> None:
+    """A restart rehydrates the nested public report, not only the queued envelope."""
+
+    fixed_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 11, TYPE_DEPLOYMENT_FILE: 12},
+    )
+    application = tmp_path / "snapshot" / "application"
+    application.mkdir(parents=True)
+    (application / "Source.java").write_text("class Source {}", encoding="utf-8")
+
+    @contextmanager
+    def materialized(_testing_input):
+        yield application.parent
+
+    captured: dict = {}
+
+    def verify(**kwargs):
+        captured.update(kwargs)
+        return {
+            "reports": {
+                "static": {"status": "PASSED", "gateStatus": "PASS"},
+                "iac": {"status": "SKIPPED", "gateStatus": "NOT_APPLICABLE"},
+                "dynamicFunctional": {"status": "passed", "gateStatus": "PASS"},
+            },
+            "passed": True,
+            "status": "PASS",
+            "gateStatus": "PASS",
+            "diagnostics": [],
+        }
+
+    monkeypatch.setattr(testing_service, "materialized_testing_application", materialized)
+    monkeypatch.setattr(testing_service, "run_verification_graph", verify)
+    monkeypatch.setattr(testing_service, "_trace_hints", lambda *_args: ([], []))
+    plan = {
+        "cases": [
+            {
+                "case_id": "UC-1",
+                "requirement_ids": ["FR-1"],
+                "use_case_id": "UC-1",
+                "steps": [{"step_id": "one", "operation_id": "runOne"}],
+            },
+            {
+                "case_id": "UC-2",
+                "requirement_ids": ["FR-2"],
+                "use_case_id": "UC-2",
+                "steps": [{"step_id": "two", "operation_id": "runTwo"}],
+            },
+        ]
+    }
+    cases = [
+        {
+            "caseId": "UC-1",
+            "plan": plan["cases"][0],
+            "result": {"status": "passed", "gateStatus": "PASS"},
+        },
+        {
+            "caseId": "UC-2",
+            "plan": plan["cases"][1],
+            "result": {"status": "failed", "gateStatus": "FAIL"},
+        },
+    ]
+
+    testing_service._run_test(
+        "testing-command-1",
+        fixed_input,
+        partial_result={
+            "verification": {
+                "reports": {
+                    "dynamicFunctional": {
+                        "candidatePlan": plan,
+                        "caseId": "UC-2",
+                        "cases": cases,
+                    }
+                }
+            }
+        },
+    )
+
+    assert captured["fixed_test_plan"] == plan
+    assert [item["caseId"] for item in captured["preserved_case_results"]] == ["UC-1"]
+    assert captured["priority_case_id"] == "UC-2"

@@ -157,6 +157,40 @@ def _operation_ids(openapi: dict[str, Any], use_case_id: str) -> list[str]:
     return result
 
 
+def _operation_step_refs(
+    openapi: dict[str, Any], use_case_id: str, operation_ids: list[str]
+) -> dict[str, list[str]]:
+    """OpenAPI에 투영된 canonical scenario ref를 operation별로 읽는다."""
+
+    selected = set(operation_ids)
+    result: dict[str, list[str]] = {}
+    for path_item in (openapi.get("paths") or {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            operation_id = str(operation.get("operationId") or "").strip()
+            if operation_id not in selected:
+                continue
+            refs = [
+                str(value).strip()
+                for value in operation.get("x-easydep-scenario-step-refs") or []
+                if str(value).strip().startswith(f"{use_case_id}:")
+            ]
+            if refs:
+                result[operation_id] = list(dict.fromkeys(refs))
+    return result
+
+
+def _main_step_number(reference: str, use_case_id: str) -> int | None:
+    prefix = f"{use_case_id}:main:"
+    if not reference.startswith(prefix):
+        return None
+    value = reference[len(prefix) :]
+    return int(value) if value.isdigit() and int(value) > 0 else None
+
+
 def build_functional_cases(requirements: Any, use_cases: Any, openapi: Any) -> list[dict[str, Any]]:
     """canonical requirement/spec/OpenAPI 직접 연결만 LLM 입력으로 만든다."""
     specs = use_cases.get("use_case_specs") if isinstance(use_cases, dict) else None
@@ -208,6 +242,31 @@ def build_functional_cases(requirements: Any, use_cases: Any, openapi: Any) -> l
                 f"Duplicate requirement_ids were found for use case {use_case_id}."
             )
         operation_ids = _operation_ids(openapi, use_case_id)
+        operation_step_refs = _operation_step_refs(openapi, use_case_id, operation_ids)
+        main_ranks = {
+            operation_id: min(numbers)
+            for operation_id in operation_ids
+            if (
+                numbers := [
+                    number
+                    for reference in operation_step_refs.get(operation_id, [])
+                    if (number := _main_step_number(reference, use_case_id)) is not None
+                ]
+            )
+        }
+        traced_scenario = all(operation_id in operation_step_refs for operation_id in operation_ids)
+        if traced_scenario and main_ranks:
+            required_operation_ids = sorted(
+                main_ranks,
+                key=lambda operation_id: (main_ranks[operation_id], operation_ids.index(operation_id)),
+            )
+            sequence_source = "scenario-step-refs"
+        elif len(operation_ids) == 1:
+            required_operation_ids = list(operation_ids)
+            sequence_source = "single-operation"
+        else:
+            required_operation_ids = []
+            sequence_source = "unavailable"
         cases.append(
             {
                 "case_id": use_case_id,
@@ -220,7 +279,11 @@ def build_functional_cases(requirements: Any, use_cases: Any, openapi: Any) -> l
                     for key in ("name", "preconditions", "trigger", "main_scenario")
                     if key in spec
                 },
-                "allowed_operation_ids": operation_ids,
+                "allowed_operation_ids": required_operation_ids or operation_ids,
+                "required_operation_ids": required_operation_ids,
+                "operation_step_refs": operation_step_refs,
+                "operation_main_ranks": main_ranks,
+                "sequence_source": sequence_source,
             }
         )
         covered.update(selected)
@@ -265,27 +328,75 @@ def _validate(case: FunctionalTestCase, candidate: dict[str, Any]) -> None:
         or case.requirement_ids != candidate["requirement_ids"]
     ):
         raise ValueError("Generated plan header does not match the frozen test case.")
+    selected = [step.operation_id for step in case.steps]
     allowed = set(candidate["allowed_operation_ids"])
-    if any(step.operation_id not in allowed for step in case.steps):
+    if any(operation_id not in allowed for operation_id in selected):
         raise ValueError("Generated plan selected an untraced operationId.")
+    if len(selected) != len(set(selected)):
+        raise ValueError("Generated plan repeats an operationId.")
+    if candidate.get("sequence_source") == "unavailable":
+        raise UpstreamAmbiguity(
+            f"Frozen contracts do not identify the required operation order for "
+            f"{case.use_case_id}."
+        )
+    required = list(candidate.get("required_operation_ids") or [])
+    if set(selected) != set(required):
+        raise ValueError("Generated plan omitted or added a required operationId.")
+    ranks = candidate.get("operation_main_ranks") or {}
+    selected_ranks = [ranks[operation_id] for operation_id in selected if operation_id in ranks]
+    if selected_ranks != sorted(selected_ranks):
+        raise ValueError("Generated plan reverses the frozen use-case operation order.")
 
 
-def _without_repeated_operations(case: FunctionalTestCase) -> FunctionalTestCase:
-    """같은 입력으로 같은 endpoint를 되풀이하는 의미 없는 단계를 한 번만 남긴다.
+def _plan_assurance(case: FunctionalTestCase, candidate: dict[str, Any]) -> dict[str, Any]:
+    """계획에서 코드가 실제로 입증할 수 있는 선택·순서 범위만 표시한다.
 
-    현재 계획에는 호출별 입력값이나 다른 의도가 없다. 따라서 같은 operationId를 여러 번
-    적어도 실행은 완전히 같으며 테스트 범위는 늘지 않는다. 입력 구분이 필요해지는 날에는
-    먼저 계획 계약에 그 의미를 명시해야 한다.
+    여러 operation은 OpenAPI로 전달된 canonical scenario ref가 있을 때만 검증된다.
+    그 근거가 없는 LLM 배열은 앞 단계에서 차단하며 단일 operation만 자체로 자명하다.
     """
 
-    seen: set[str] = set()
-    steps = []
-    for step in case.steps:
-        if step.operation_id in seen:
-            continue
-        seen.add(step.operation_id)
-        steps.append(step)
-    return case if len(steps) == len(case.steps) else case.model_copy(update={"steps": steps})
+    required = list(candidate.get("required_operation_ids") or [])
+    selected = [step.operation_id for step in case.steps]
+    missing = [operation_id for operation_id in required if operation_id not in selected]
+    sequence_source = str(candidate.get("sequence_source") or "unavailable")
+    return {
+        "selectionComplete": not missing,
+        "unverifiedOperationIds": missing,
+        "sequenceVerified": sequence_source != "unavailable",
+        "sequenceSource": sequence_source,
+    }
+
+
+def _apply_plan_assurance(
+    result: dict[str, Any], assurance: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, Any]:
+    """근거 없는 다단계 순서나 precondition 때문에 난 4xx를 제품 결함으로 만들지 않는다."""
+
+    value = dict(result)
+    value["planAssurance"] = dict(assurance)
+    finding = value.get("finding")
+    finding = finding if isinstance(finding, dict) else {}
+    status = finding.get("statusCode")
+    uncertain_flow = (
+        not assurance.get("sequenceVerified")
+        or bool((candidate.get("use_case_flow") or {}).get("preconditions"))
+    )
+    if (
+        isinstance(status, int)
+        and 400 <= status < 500
+        and uncertain_flow
+        and finding.get("code") == "HTTP_STATUS_NOT_SUCCESS"
+    ):
+        value["defectClass"] = "UPSTREAM_AMBIGUITY"
+        value["failureClass"] = "UPSTREAM_AMBIGUITY"
+        value["reason"] = (
+            f"{finding.get('message') or 'The functional request was rejected.'} "
+            "The frozen contracts do not prove this multi-step order or its prerequisite data, "
+            "so the product implementation cannot be repaired from this 4xx alone."
+        )
+        value["gateStatus"] = "INCONCLUSIVE"
+        value["status"] = "unavailable"
+    return value
 
 
 def _generate(client: OpenAI, candidate: dict[str, Any]) -> FunctionalTestCase:
@@ -310,10 +421,8 @@ def _generate(client: OpenAI, candidate: dict[str, Any]) -> FunctionalTestCase:
     if extra_body := profile.extra_body(connection.provider):
         request["extra_body"] = extra_body
     response = client.chat.completions.create(**request)
-    case = _without_repeated_operations(
-        FunctionalTestCase.model_validate_json(
-            (response.choices[0].message.content if response.choices else "") or ""
-        )
+    case = FunctionalTestCase.model_validate_json(
+        (response.choices[0].message.content if response.choices else "") or ""
     )
     _validate(case, candidate)
     return case
@@ -398,9 +507,6 @@ def _preserved(
     expected = {candidate["case_id"]: candidate for candidate in candidates}
     if set(expected) != {case.case_id for case in plan.cases}:
         raise ValueError("Preserved plan cases do not match the frozen trace scope.")
-    plan = plan.model_copy(
-        update={"cases": [_without_repeated_operations(case) for case in plan.cases]}
-    )
     for case in plan.cases:
         _validate(case, expected[case.case_id])
     if not isinstance(raw_inputs, dict):
@@ -433,27 +539,52 @@ def _case_result(case: FunctionalTestCase, result: dict[str, Any]) -> dict[str, 
     }
 
 
-def _requirements(results: list[dict[str, Any]], frozen_requirements: Any) -> dict[str, Any]:
-    """통과한 기능 요구사항과 아직 동작 증거가 없는 요구사항을 함께 표시한다."""
+def _requirements(
+    results: list[dict[str, Any]],
+    frozen_requirements: Any,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """HTTP contract 실행 범위와 의미적으로 검증된 요구사항을 구분한다.
 
-    outcomes: dict[str, list[bool]] = {}
+    현재 FunctionalTestCase에는 acceptance oracle이 없다. 따라서 2xx와 response schema를
+    통과한 case는 contract 실행 증거일 뿐 계산 결과나 상태 전이의 의미적 정답을 입증하지
+    않는다. 요구사항 ``ids``는 실제 semantic oracle이 생길 때까지 비워 두고, 실행 범위는
+    별도 ``contractIds``로 보고한다.
+    """
+
+    expected_cases: dict[str, set[str]] = {}
+    for candidate in candidates:
+        for requirement in candidate.get("requirement_ids") or []:
+            expected_cases.setdefault(str(requirement), set()).add(str(candidate["case_id"]))
+    passed_cases: set[str] = set()
     for item in results:
-        passed = str((item["result"]).get("gateStatus") or "").upper() == "PASS"
-        for requirement in item["requirementIds"]:
-            outcomes.setdefault(requirement, []).append(passed)
-    # 같은 요구사항을 여러 유스케이스가 실현하면 그중 하나만 성공했다고 검증된 것으로
-    # 표시하지 않는다. 연결된 실행 결과가 모두 통과해야 이 HTTP 보고서의 증거가 된다.
-    executed = sorted(
-        requirement for requirement, statuses in outcomes.items() if statuses and all(statuses)
+        result = item["result"]
+        assurance = result.get("planAssurance") if isinstance(result, dict) else None
+        passed = (
+            str(result.get("gateStatus") or "").upper() == "PASS"
+            and isinstance(assurance, dict)
+            and assurance.get("selectionComplete") is True
+        )
+        if passed:
+            passed_cases.add(str(item["caseId"]))
+    # 같은 요구사항을 여러 유스케이스가 실현하면 pending case까지 모두 실행·통과해야
+    # contract 범위가 완결된다.
+    contract_ids = sorted(
+        requirement
+        for requirement, case_ids in expected_cases.items()
+        if case_ids and case_ids <= passed_cases
     )
+    functional_ids = _functional_requirement_ids(frozen_requirements)
     return {
         "source": "TestingInput",
         "artifact_type": "REFINE_REQ",
-        "count": len(executed),
-        "ids": executed,
-        # 전역 정책처럼 유스케이스 HTTP 계획에 포함되지 않은 요구사항을 숨기지 않는다.
-        # 이 목록은 실패를 뜻하지 않고, 이 보고서만으로는 동작을 입증하지 않았다는 뜻이다.
-        "unverifiedIds": sorted(_functional_requirement_ids(frozen_requirements) - set(executed)),
+        "count": 0,
+        "ids": [],
+        "semanticStatus": "NOT_EVALUATED",
+        "contractCount": len(contract_ids),
+        "contractIds": contract_ids,
+        # 전역 정책뿐 아니라 contract 실행만 통과한 요구사항도 의미 검증으로 꾸미지 않는다.
+        "unverifiedIds": sorted(functional_ids),
     }
 
 
@@ -523,6 +654,16 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                     "reason": "The frozen requirements contain no functional requirements.",
                 },
             }
+        unresolved = [
+            str(candidate["use_case_id"])
+            for candidate in candidates
+            if candidate.get("sequence_source") == "unavailable"
+        ]
+        if unresolved:
+            raise UpstreamAmbiguity(
+                "Frozen contracts do not identify the required operation order for: "
+                + ", ".join(unresolved)
+            )
         client: OpenAI | None = None
         preserved_inputs: dict[str, list[FunctionalInputValue]] = {}
         if state.get("fixed_test_plan") is not None:
@@ -577,6 +718,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             ),
         }
     plan_value = plan.model_dump(mode="json")
+    candidates_by_id = {str(candidate["case_id"]): candidate for candidate in candidates}
     previous_results = {
         str(item.get("caseId")): item
         for item in state.get("preserved_case_results") or []
@@ -587,7 +729,12 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     reused_case_ids: list[str] = []
     first_failure: dict[str, Any] | None = None
     first_failure_case_id = ""
+    pending_case_ids: list[str] = []
     input_values: dict[str, list[dict[str, Any]]] = {}
+    priority_case_id = str(state.get("priority_case_id") or "").strip()
+    execution_cases = list(plan.cases)
+    if priority_case_id:
+        execution_cases.sort(key=lambda item: item.case_id != priority_case_id)
 
     def propose(request: InputValueRequest) -> Any:
         """처음 필요한 시점에만 client를 만들고 leaf 하나를 제안받는다."""
@@ -608,10 +755,16 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             )
         return _propose_input(client, request)
 
-    for case in plan.cases:
+    for index, case in enumerate(execution_cases):
+        candidate = candidates_by_id[case.case_id]
+        assurance = _plan_assurance(case, candidate)
         previous = previous_results.get(case.case_id)
         if previous is not None and previous.get("plan") == case.model_dump(mode="json"):
-            results.append(dict(previous))
+            reused = deepcopy(previous)
+            reused_result = reused.get("result")
+            if isinstance(reused_result, dict):
+                reused_result["planAssurance"] = assurance
+            results.append(reused)
             reused_case_ids.append(case.case_id)
             reused_inputs = (previous.get("result") or {}).get("inputValues")
             if isinstance(reused_inputs, list) and reused_inputs:
@@ -635,6 +788,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 f"LLM functional input suggestion failed: {error}",
                 "ENVIRONMENT_DEFECT",
             )
+        result = _apply_plan_assurance(result, assurance, candidate)
         proposed = result.get("inputValues")
         if isinstance(proposed, list) and proposed:
             input_values[case.case_id] = [
@@ -644,20 +798,36 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         if first_failure is None and str(result.get("gateStatus") or "").upper() != "PASS":
             first_failure = result
             first_failure_case_id = case.case_id
+            # 한 차단 원인을 고치기 전에 뒤의 case를 계속 실행하면 상태를 더 바꾸고 수리
+            # 시작만 늦어진다. 계획 자체는 그대로 보존하고 실행하지 않은 case만 명시한다.
+            pending_case_ids = [
+                item.case_id
+                for item in execution_cases[index + 1 :]
+                if item.case_id not in previous_results
+            ]
+            break
     candidate_plan = dict(plan_value)
     if input_values:
         # 후보 계획에 값 제안을 함께 보관한다. 다음 수리는 이 값을 그대로 복원하므로
         # 비결정적인 LLM을 다시 호출해 테스트 조건이 바뀌는 일을 막는다.
         candidate_plan["inputValues"] = input_values
     if first_failure is not None:
+        failed_finding = first_failure.get("finding")
+        failed_request = (
+            failed_finding.get("request") if isinstance(failed_finding, dict) else None
+        )
         report = {
             **first_failure,
             "candidatePlan": candidate_plan,
             "candidateDigest": stable_digest(candidate_plan),
+            "planDigest": stable_digest(plan_value),
+            "failedRequestDigest": stable_digest(failed_request) if failed_request else "",
             "caseId": first_failure_case_id,
             "cases": results,
             "reusedCaseIds": reused_case_ids,
-            "requirements": _requirements(results, frozen["requirements"]),
+            "pendingCaseIds": pending_case_ids,
+            "executionOrder": [item["caseId"] for item in results],
+            "requirements": _requirements(results, frozen["requirements"], candidates),
             "targetUrl": target_url,
         }
         report["defect"] = classify_dynamic_failure(report)
@@ -669,9 +839,12 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             "gateStatus": "PASS",
             "candidatePlan": candidate_plan,
             "candidateDigest": stable_digest(candidate_plan),
+            "planDigest": stable_digest(plan_value),
             "cases": results,
             "reusedCaseIds": reused_case_ids,
-            "requirements": _requirements(results, frozen["requirements"]),
+            "pendingCaseIds": [],
+            "executionOrder": [item["caseId"] for item in results],
+            "requirements": _requirements(results, frozen["requirements"], candidates),
             "targetUrl": target_url,
         },
     }

@@ -360,6 +360,8 @@ def _evidence_for_gate(
             evidence["commands"] = http_commands
         evidence["targets"] = target_ids
         evidence["caseId"] = child.get("caseId")
+        evidence["planDigest"] = child.get("planDigest")
+        evidence["requestDigest"] = child.get("failedRequestDigest")
     return evidence
 
 
@@ -392,7 +394,9 @@ def _blocking_findings(
         is_dynamic = name == "dynamicFunctional"
         defect_class = dynamic_class if is_dynamic else "SUT_DEFECT"
         owner = dynamic_owner if is_dynamic else "implementation"
-        if status == "INCONCLUSIVE":
+        if status == "INCONCLUSIVE" and not (
+            is_dynamic and dynamic_class == "UPSTREAM_AMBIGUITY"
+        ):
             defect_class, owner = "ENVIRONMENT_DEFECT", "environment"
         evidence = _evidence_for_gate(
             name,
@@ -423,6 +427,8 @@ def _blocking_findings(
                     else True
                 ),
                 "candidate_digest": dynamic.get("candidateDigest") if is_dynamic else None,
+                "plan_digest": dynamic.get("planDigest") if is_dynamic else None,
+                "request_digest": dynamic.get("failedRequestDigest") if is_dynamic else None,
                 "candidate_plan": dynamic.get("candidatePlan") if is_dynamic else None,
                 "file_hints": file_hints,
                 "trace_refs": related_refs if is_dynamic else [],
@@ -489,14 +495,32 @@ def _run_test(
     """
     ledger = RepairLedger.model_validate(repair_history or {})
     partial_result = dict(partial_result or {})
-    raw_preserved_plan = partial_result.get("preservedCandidatePlan")
+    nested_dynamic = (
+        ((partial_result.get("verification") or {}).get("reports") or {}).get(
+            "dynamicFunctional"
+        )
+        if isinstance(partial_result.get("verification"), dict)
+        else None
+    )
+    nested_dynamic = nested_dynamic if isinstance(nested_dynamic, dict) else {}
+    raw_preserved_plan = partial_result.get("preservedCandidatePlan") or nested_dynamic.get(
+        "candidatePlan"
+    )
     preserved_test_plan = dict(raw_preserved_plan) if isinstance(raw_preserved_plan, dict) else None
-    raw_case_results = partial_result.get("preservedCaseResults")
+    raw_case_results = partial_result.get("preservedCaseResults") or nested_dynamic.get("cases")
     preserved_case_results = (
-        [dict(item) for item in raw_case_results if isinstance(item, dict)]
+        [
+            dict(item)
+            for item in raw_case_results
+            if isinstance(item, dict)
+            and str((item.get("result") or {}).get("gateStatus") or "").upper() == "PASS"
+        ]
         if isinstance(raw_case_results, list)
         else []
     )
+    priority_case_id = str(
+        partial_result.get("failedCaseId") or nested_dynamic.get("caseId") or ""
+    ).strip()
 
     def execute_snapshot() -> tuple[dict[str, Any], dict[str, Any]]:
         """복원한 한 snapshot 안에서 모든 검사를 끝낸다."""
@@ -520,6 +544,7 @@ def _run_test(
                             {
                                 "preservedCandidatePlan": preserved_test_plan,
                                 "preservedCaseResults": preserved_case_results,
+                                "failedCaseId": priority_case_id,
                             }
                             if preserved_test_plan
                             else {}
@@ -540,6 +565,7 @@ def _run_test(
                 deployment_package_expected=None,
                 fixed_test_plan=preserved_test_plan,
                 preserved_case_results=preserved_case_results,
+                priority_case_id=priority_case_id,
                 gate_scope=gate_scope,
                 previous_reports=previous_reports,
                 previous_job_id=previous_job_id,
@@ -557,12 +583,17 @@ def _run_test(
             application_digest = _application_content_digest(run_root / "application")
         findings = _finding_keys(report)
         dynamic = (verification.get("reports") or {}).get("dynamicFunctional") or {}
-        plan_digest = str(dynamic.get("candidateDigest") or stable_digest(report))
+        plan_digest = str(
+            dynamic.get("planDigest")
+            or dynamic.get("candidateDigest")
+            or stable_digest(report)
+        )
         # 새 feedback job ID가 생겨도 파일이 같으면 같은 후보다. 반대로 같은 test plan을
         # 유지하면서 실제 구현이 달라졌다면 새로운 후보로 검사해야 한다.
         execution_digest = stable_digest(
             {
                 "plan": plan_digest,
+                "failedRequest": str(dynamic.get("failedRequestDigest") or ""),
                 "application": application_digest,
                 "gates": {
                     "iacExpected": TYPE_IAC_CODE in testing_input.artifact_version_ids,
@@ -766,6 +797,7 @@ def run_testing(
                 if not isinstance(preserved_plan, dict) or not preserved_plan:
                     raise ValueError("The previous Testing result has no executable test plan.")
                 partial_result["preservedCandidatePlan"] = dict(preserved_plan)
+                partial_result["failedCaseId"] = str(dynamic.get("caseId") or "")
                 cases = dynamic.get("cases")
                 # 일반 재검사는 새 구현에서 모든 case를 다시 본다. 다만 실패한 HTTP
                 # operation만 고치는 선택 수리는 같은 계획의 통과 case를 보존하고 실패
@@ -778,11 +810,7 @@ def run_testing(
                         and str((item.get("result") or {}).get("gateStatus") or "").upper()
                         == "PASS"
                     ]
-                    if (
-                        same_implementation
-                        or gate_scope == {"dynamicFunctional"}
-                    )
-                    and isinstance(cases, list)
+                    if same_implementation and isinstance(cases, list)
                     else []
                 )
 

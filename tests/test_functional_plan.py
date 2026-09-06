@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from contextlib import contextmanager
 
 import httpx
@@ -50,6 +51,73 @@ def _post_input_openapi(schema: dict, *, summary: str = "") -> dict:
     if summary:
         operation["summary"] = summary
     return {"paths": {"/orders": {"post": operation}}}
+
+
+def _runtime_evidence_openapi() -> dict:
+    """실패 증거가 실제 path/query/body를 보존하는지 확인할 작은 계약."""
+
+    return {
+        "paths": {
+            "/orders/{orderId}": {
+                "post": {
+                    "operationId": "updateOrder",
+                    "x-easydep-use-case-ids": ["UC-1"],
+                    "parameters": [
+                        {
+                            "name": "orderId",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "example": "order-42"},
+                        },
+                        {
+                            "name": "trace",
+                            "in": "query",
+                            "required": True,
+                            "schema": {"type": "string", "example": "trace-7"},
+                        },
+                    ],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "description": {
+                                            "type": "string",
+                                            "example": "Updated order",
+                                        },
+                                        "priority": {
+                                            "type": "string",
+                                            "example": "HIGH",
+                                        },
+                                        "metadata": {
+                                            "type": "object",
+                                            "properties": {
+                                                "note": {
+                                                    "type": "string",
+                                                    "example": "keep this context",
+                                                },
+                                            },
+                                            "required": ["note"],
+                                        },
+                                    },
+                                    "required": ["description", "priority", "metadata"],
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "content": {
+                                "application/json": {"schema": {"type": "boolean"}}
+                            }
+                        }
+                    },
+                }
+            }
+        }
+    }
 
 
 def test_functional_plan_schema_rejects_unknown_fields() -> None:
@@ -584,6 +652,10 @@ def test_dynamic_repair_reuses_candidate_input_values_without_llm(
     assert report["gateStatus"] == "PASS"
     assert report["candidatePlan"] == fixed_plan
     assert sent == [{"description": "Preserved order"}]
+    assert report["requirements"]["ids"] == []
+    assert report["requirements"]["contractIds"] == ["FR-1"]
+    assert report["requirements"]["semanticStatus"] == "NOT_EVALUATED"
+    assert report["requirements"]["unverifiedIds"] == ["FR-1"]
 
 
 def test_implementation_repair_check_reuses_the_same_leaf_input(
@@ -710,7 +782,135 @@ def test_generated_request_body_does_not_hide_a_product_400(
     assert result["finding"]["code"] == "HTTP_STATUS_NOT_SUCCESS"
 
 
-def test_all_cases_are_reported_when_one_fails(
+@pytest.mark.parametrize("status_code", [400, 500])
+def test_unexpected_http_status_keeps_actual_request_evidence(
+    monkeypatch: pytest.MonkeyPatch, status_code: int
+) -> None:
+    """4xx와 5xx 모두 추측 가능한 URL이 아니라 실제 호출 요약을 남긴다."""
+
+    document = _runtime_evidence_openapi()
+    requests: list[dict] = []
+
+    def fake_request(_method: str, _url: str, **kwargs: object) -> httpx.Response:
+        requests.append({"method": _method, "url": _url, **kwargs})
+        return httpx.Response(
+            status_code,
+            json={"message": "request rejected", "detail": "validation context"},
+        )
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+    result = execute_functional_plan(
+        FunctionalTestCase.model_validate(_case(operation_id="updateOrder")),
+        openapi=document,
+        target_url="http://app.test",
+    )
+
+    assert result["gateStatus"] == "FAIL"
+    assert result["defectClass"] == "SUT_DEFECT"
+    finding = result["finding"]
+    assert finding["code"] == "HTTP_STATUS_NOT_SUCCESS"
+    assert finding["statusCode"] == status_code
+    assert finding["request"] == {
+        "method": "POST",
+        "path": "/orders/order-42",
+        "query": {"trace": "trace-7"},
+        "body": {
+            "description": "Updated order",
+            "priority": "HIGH",
+            "metadata": {"note": "keep this context"},
+        },
+    }
+    assert requests[0]["url"] == "http://app.test/orders/order-42?trace=trace-7"
+    assert "validation context" in json.dumps(result, ensure_ascii=False)
+
+
+def test_response_schema_mismatch_keeps_request_and_response_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _post_input_openapi(
+        {
+            "type": "object",
+            "properties": {"description": {"type": "string", "example": "valid"}},
+            "required": ["description"],
+        }
+    )
+    monkeypatch.setattr(
+        httpx,
+        "request",
+        lambda *_args, **_kwargs: httpx.Response(201, json={"ok": "not-a-boolean"}),
+    )
+
+    result = execute_functional_plan(
+        FunctionalTestCase.model_validate(_case()),
+        openapi=document,
+        target_url="http://app.test",
+    )
+
+    assert result["gateStatus"] == "FAIL"
+    assert result["defectClass"] == "SUT_DEFECT"
+    assert result["finding"]["code"] == "RESPONSE_SCHEMA_MISMATCH"
+    assert result["finding"]["statusCode"] == 201
+    assert result["finding"]["request"] == {
+        "method": "POST",
+        "path": "/orders",
+        "query": {},
+        "body": {"description": "valid"},
+    }
+    assert "not-a-boolean" in result["finding"]["responseBody"]
+
+
+def test_transport_failure_keeps_request_evidence_and_is_inconclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _runtime_evidence_openapi()
+
+    def fail_request(*_args: object, **_kwargs: object) -> httpx.Response:
+        raise httpx.ConnectTimeout("connection reset")
+
+    monkeypatch.setattr(httpx, "request", fail_request)
+    result = execute_functional_plan(
+        FunctionalTestCase.model_validate(_case(operation_id="updateOrder")),
+        openapi=document,
+        target_url="http://app.test",
+    )
+
+    assert result["gateStatus"] == "INCONCLUSIVE"
+    assert result["defectClass"] == "ENVIRONMENT_DEFECT"
+    assert result["finding"]["code"] == "HTTP_TRANSPORT_ERROR"
+    assert result["finding"]["request"]["path"] == "/orders/order-42"
+    assert result["finding"]["request"]["query"] == {"trace": "trace-7"}
+    assert result["finding"]["request"]["body"]["priority"] == "HIGH"
+
+
+def test_failure_evidence_bounds_large_request_response_and_log_surrogates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _runtime_evidence_openapi()
+    body_schema = document["paths"]["/orders/{orderId}"]["post"]["requestBody"][
+        "content"
+    ]["application/json"]["schema"]
+    body_schema["properties"]["description"]["example"] = "request-" + ("x" * 20_000)
+    monkeypatch.setattr(
+        httpx,
+        "request",
+        lambda *_args, **_kwargs: httpx.Response(
+            500,
+            json={"message": "response-" + ("y" * 20_000)},
+        ),
+    )
+
+    result = execute_functional_plan(
+        FunctionalTestCase.model_validate(_case(operation_id="updateOrder")),
+        openapi=document,
+        target_url="http://app.test",
+    )
+    finding = result["finding"]
+
+    assert len(json.dumps(finding["request"], ensure_ascii=False)) <= 8192
+    assert len(str(finding["responseBody"])) <= 8192
+
+
+def test_first_dynamic_failure_stops_remaining_cases_and_reports_pending_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dynamic_module = importlib.import_module("app.testing.nodes.dynamic_functional")
@@ -748,10 +948,7 @@ def test_all_cases_are_reported_when_one_fails(
                 "case_id": "UC-2",
                 "requirement_ids": ["FR-1"],
                 "use_case_id": "UC-2",
-                "steps": [
-                    {"step_id": "two", "operation_id": "runTwo"},
-                    {"step_id": "two-again", "operation_id": "runTwo"},
-                ],
+                "steps": [{"step_id": "two", "operation_id": "runTwo"}],
             },
         ]
     }
@@ -803,14 +1000,323 @@ def test_all_cases_are_reported_when_one_fails(
     )
 
     report = result["dynamic_functional_report"]
-    assert calls == ["UC-1", "UC-2"]
+    assert calls == ["UC-1"]
     assert report["caseId"] == "UC-1"
-    assert [item["caseId"] for item in report["cases"]] == ["UC-1", "UC-2"]
+    assert [item["caseId"] for item in report["cases"]] == ["UC-1"]
+    assert report["pendingCaseIds"] == ["UC-2"]
+    assert report["executionOrder"] == ["UC-1"]
     assert len(report["candidatePlan"]["cases"][1]["steps"]) == 1
     assert report["gateStatus"] == "FAIL"
     assert report["cases"][0]["result"]["reason"] == "broken app"
     assert report["requirements"]["ids"] == []
+    assert report["requirements"]["contractIds"] == []
     assert report["requirements"]["unverifiedIds"] == ["FR-1", "FR-POLICY"]
+
+
+def test_priority_failed_case_runs_before_other_cases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dynamic_module = importlib.import_module("app.testing.nodes.dynamic_functional")
+    operation_ids = {"UC-1": "runOne", "UC-2": "runTwo", "UC-3": "runThree"}
+    document = {
+        "paths": {
+            f"/{case_id.lower()}": {
+                "get": {
+                    "operationId": operation_id,
+                    "x-easydep-use-case-ids": [case_id],
+                    "responses": {
+                        "200": {
+                            "content": {"application/json": {"schema": {"type": "boolean"}}}
+                        }
+                    },
+                }
+            }
+            for case_id, operation_id in operation_ids.items()
+        }
+    }
+    plan = {
+        "cases": [
+            {
+                "case_id": case_id,
+                "requirement_ids": ["FR-1"],
+                "use_case_id": case_id,
+                "steps": [{"step_id": "run", "operation_id": operation_id}],
+            }
+            for case_id, operation_id in operation_ids.items()
+        ]
+    }
+    calls: list[str] = []
+
+    def fake_execute(case: FunctionalTestCase, **_: object) -> dict[str, str]:
+        calls.append(case.case_id)
+        if case.case_id == "UC-2":
+            return {
+                "status": "failed",
+                "gateStatus": "FAIL",
+                "reason": "same failed case",
+                "defectClass": "SUT_DEFECT",
+            }
+        return {"status": "passed", "gateStatus": "PASS"}
+
+    monkeypatch.setattr(dynamic_module, "execute_functional_plan", fake_execute)
+    result = dynamic_module.dynamic_functional_node(
+        {
+            "run_id": "run-priority",
+            "app_id": "app-1",
+            "target_url": "http://app.test",
+            "priority_case_id": "UC-2",
+            "testing_input": {
+                "contract_artifacts": {
+                    "requirements": {"content": [{"id": "FR-1", "type": "functional"}]},
+                    "use_cases": {
+                        "content": {
+                            "use_case_specs": [
+                                {"use_case_id": case_id, "requirement_ids": ["FR-1"]}
+                                for case_id in operation_ids
+                            ],
+                            "traceability": {"requirements": {}},
+                        }
+                    },
+                    "openapi": {"content": document},
+                }
+            },
+            "fixed_test_plan": plan,
+        }
+    )
+
+    report = result["dynamic_functional_report"]
+    assert calls == ["UC-2"]
+    assert report["caseId"] == "UC-2"
+    assert report["executionOrder"] == ["UC-2"]
+    assert report["pendingCaseIds"] == ["UC-1", "UC-3"]
+
+
+def test_duplicate_operation_in_fixed_plan_is_rejected_before_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dynamic_module = importlib.import_module("app.testing.nodes.dynamic_functional")
+    document = _post_input_openapi(
+        {"type": "object", "properties": {"description": {"type": "string"}}}
+    )
+    plan = {
+        "cases": [
+            {
+                "case_id": "UC-1",
+                "requirement_ids": ["FR-1"],
+                "use_case_id": "UC-1",
+                "steps": [
+                    {"step_id": "first", "operation_id": "createOrder"},
+                    {"step_id": "second", "operation_id": "createOrder"},
+                ],
+            }
+        ]
+    }
+    called = False
+
+    def fail_if_http(*_args: object, **_kwargs: object) -> dict[str, str]:
+        nonlocal called
+        called = True
+        pytest.fail("duplicate operation plans must be rejected before HTTP")
+
+    monkeypatch.setattr(dynamic_module, "execute_functional_plan", fail_if_http)
+    result = dynamic_module.dynamic_functional_node(
+        {
+            "run_id": "run-duplicate",
+            "app_id": "app-1",
+            "target_url": "http://app.test",
+            "testing_input": {
+                "contract_artifacts": {
+                    "requirements": {"content": [{"id": "FR-1", "type": "functional"}]},
+                    "use_cases": {
+                        "content": {
+                            "use_case_specs": [{"use_case_id": "UC-1", "requirement_ids": ["FR-1"]}],
+                            "traceability": {"requirements": {}},
+                        }
+                    },
+                    "openapi": {"content": document},
+                }
+            },
+            "fixed_test_plan": plan,
+        }
+    )
+
+    report = result["dynamic_functional_report"]
+    assert called is False
+    assert report["gateStatus"] == "FAIL"
+    assert report["defectClass"] == "TEST_DEFECT"
+    assert "repeat" in report["reason"].lower()
+
+
+def test_multi_operation_plan_without_scenario_step_evidence_is_upstream_ambiguity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """여러 API의 순서를 설명하는 직접 근거가 없으면 호출 전에 확정하지 않는다."""
+    dynamic_module = importlib.import_module("app.testing.nodes.dynamic_functional")
+    document = {
+        "paths": {
+            "/orders": {
+                "post": {
+                    "operationId": "createOrder",
+                    "x-easydep-use-case-ids": ["UC-1"],
+                    "responses": {
+                        "201": {"content": {"application/json": {"schema": {"type": "boolean"}}}}
+                    },
+                }
+            },
+            "/orders/confirm": {
+                "post": {
+                    "operationId": "confirmOrder",
+                    "x-easydep-use-case-ids": ["UC-1"],
+                    "responses": {
+                        "200": {"content": {"application/json": {"schema": {"type": "boolean"}}}}
+                    },
+                }
+            },
+        }
+    }
+    plan = {
+        "cases": [
+            {
+                "case_id": "UC-1",
+                "requirement_ids": ["FR-1"],
+                "use_case_id": "UC-1",
+                "steps": [
+                    {"step_id": "create", "operation_id": "createOrder"},
+                    {"step_id": "confirm", "operation_id": "confirmOrder"},
+                ],
+            }
+        ]
+    }
+    http_calls = 0
+
+    def fail_if_http(*_args: object, **_kwargs: object) -> dict[str, str]:
+        nonlocal http_calls
+        http_calls += 1
+        pytest.fail("an unverified multi-operation order must not reach HTTP")
+
+    monkeypatch.setattr(dynamic_module, "execute_functional_plan", fail_if_http)
+    result = dynamic_module.dynamic_functional_node(
+        {
+            "run_id": "run-order-ambiguity",
+            "app_id": "app-1",
+            "target_url": "http://app.test",
+            "testing_input": {
+                "contract_artifacts": {
+                    "requirements": {"content": [{"id": "FR-1", "type": "functional"}]},
+                    "use_cases": {
+                        "content": {
+                            "use_case_specs": [
+                                {
+                                    "use_case_id": "UC-1",
+                                    "requirement_ids": ["FR-1"],
+                                    "main_scenario": [
+                                        {"step_number": 1, "sentence": "The order is completed."}
+                                    ],
+                                }
+                            ],
+                            "traceability": {"requirements": {}},
+                        }
+                    },
+                    "openapi": {"content": document},
+                }
+            },
+            "fixed_test_plan": plan,
+        }
+    )
+
+    report = result["dynamic_functional_report"]
+    assert http_calls == 0
+    assert report["gateStatus"] == "INCONCLUSIVE"
+    assert report["defectClass"] == "UPSTREAM_AMBIGUITY"
+
+
+def test_scenario_step_refs_define_order_and_reversed_plan_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dynamic_module = importlib.import_module("app.testing.nodes.dynamic_functional")
+    document = {
+        "paths": {
+            "/orders": {
+                "post": {
+                    "operationId": "createOrder",
+                    "x-easydep-use-case-ids": ["UC-1"],
+                    "x-easydep-scenario-step-refs": ["UC-1:main:1"],
+                    "responses": {
+                        "201": {"content": {"application/json": {"schema": {"type": "boolean"}}}}
+                    },
+                }
+            },
+            "/orders/confirm": {
+                "post": {
+                    "operationId": "confirmOrder",
+                    "x-easydep-use-case-ids": ["UC-1"],
+                    "x-easydep-scenario-step-refs": ["UC-1:main:2"],
+                    "responses": {
+                        "200": {"content": {"application/json": {"schema": {"type": "boolean"}}}}
+                    },
+                }
+            },
+        }
+    }
+    contracts = {
+        "requirements": [{"id": "FR-1", "type": "functional"}],
+        "use_cases": {
+            "use_case_specs": [
+                {
+                    "use_case_id": "UC-1",
+                    "requirement_ids": ["FR-1"],
+                    "main_scenario": [
+                        {"step_number": 1, "sentence": "Create the order."},
+                        {"step_number": 2, "sentence": "Confirm the order."},
+                    ],
+                }
+            ],
+            "traceability": {"requirements": {}},
+        },
+        "openapi": document,
+    }
+    candidate = dynamic_module.build_functional_cases(
+        contracts["requirements"], contracts["use_cases"], contracts["openapi"]
+    )[0]
+    assert candidate["sequence_source"] == "scenario-step-refs"
+    assert candidate["required_operation_ids"] == ["createOrder", "confirmOrder"]
+
+    reversed_plan = {
+        "cases": [
+            {
+                "case_id": "UC-1",
+                "requirement_ids": ["FR-1"],
+                "use_case_id": "UC-1",
+                "steps": [
+                    {"step_id": "confirm", "operation_id": "confirmOrder"},
+                    {"step_id": "create", "operation_id": "createOrder"},
+                ],
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        dynamic_module,
+        "execute_functional_plan",
+        lambda *_args, **_kwargs: pytest.fail("reversed plans must be rejected before HTTP"),
+    )
+    result = dynamic_module.dynamic_functional_node(
+        {
+            "run_id": "run-reversed-order",
+            "app_id": "app-1",
+            "target_url": "http://app.test",
+            "testing_input": {"contract_artifacts": {
+                "requirements": {"content": contracts["requirements"]},
+                "use_cases": {"content": contracts["use_cases"]},
+                "openapi": {"content": contracts["openapi"]},
+            }},
+            "fixed_test_plan": reversed_plan,
+        }
+    )
+
+    report = result["dynamic_functional_report"]
+    assert report["gateStatus"] == "FAIL"
+    assert report["defectClass"] == "TEST_DEFECT"
+    assert "reverses" in report["reason"].lower()
 
 
 def test_missing_or_ambiguous_operation_is_upstream_ambiguity() -> None:

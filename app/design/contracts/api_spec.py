@@ -147,6 +147,9 @@ class ApiEndpoint(ApiSpecRecord):
     responses: list[ApiResponse] = Field(default_factory=list)
     source_classes: list[str] = Field(default_factory=list)
     use_case_ids: list[str] = Field(default_factory=list)
+    # Boundary 진입 interaction이 직접 추적하는 canonical use-case step이다. Testing은
+    # 이 값이 있을 때만 여러 HTTP operation의 필수 집합과 순서를 확정한다.
+    scenario_step_refs: list[str] = Field(default_factory=list)
     control_binding: ApiControlBinding | None = None
 
 

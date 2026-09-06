@@ -31,8 +31,8 @@ class FunctionalInputValue(BaseModel):
 class FunctionalTestStep(BaseModel):
     """한 HTTP 호출을 가리키는 계획의 순서 있는 한 단계다.
 
-    같은 operationId를 여러 번 호출할 수 있다. 그래서 배열 순서만으로 단계를
-    식별하지 않고, 사람이 읽을 수 있는 ``step_id``도 함께 보관한다.
+    배열 순서는 검증된 use-case 순서를 나타내고 ``step_id``는 실행 증거에서 호출을
+    식별한다. 동일 operation의 반복 호출은 입력별 의미를 표현할 계약이 없으므로 허용하지 않는다.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -86,6 +86,9 @@ class FunctionalTestCase(BaseModel):
         step_ids = [step.step_id for step in self.steps]
         if len(set(step_ids)) != len(step_ids):
             raise ValueError("step_id는 계획 안에서 중복될 수 없습니다.")
+        operation_ids = [step.operation_id for step in self.steps]
+        if len(set(operation_ids)) != len(operation_ids):
+            raise ValueError("operation_id cannot be repeated within one functional case.")
         return self
 
 

@@ -15,6 +15,7 @@ from app.metrics import langsmith as langsmith_metrics
 from app.testing.graphs.testing_graph import create_testing_graph, initial_state
 from app.testing.runtime.app_container import (
     ApplicationLaunchError,
+    application_log_excerpt,
     running_application,
 )
 from app.testing.utils.gates import aggregate_gate_report, gate_status
@@ -120,6 +121,10 @@ def _previous_input_digest(reports: dict[str, Any], gate: str) -> str:
         report = (reports.get("static") or {}).get("deploymentPackage") or {}
     else:
         report = reports.get(gate) or {}
+    # 동적 차단 실패 때문에 도구를 실행하지 않은 report는 파일 입력이 같아도 재사용
+    # 근거가 아니다. 다음 동적 수리 성공 뒤에는 해당 gate를 실제로 실행해야 한다.
+    if isinstance(report, dict) and report.get("deferred") is True:
+        return ""
     return str(report.get("inputDigest") or "") if isinstance(report, dict) else ""
 
 
@@ -164,6 +169,66 @@ def _attach_input_digests(result: dict[str, Any], digests: dict[str, str]) -> No
         dynamic["inputDigest"] = digests["dynamicFunctional"]
 
 
+def _runtime_evidence(runtime: dict[str, Any]) -> dict[str, Any]:
+    """수리 담당에 필요한 런타임 특성만 남기고 내부 Docker 식별자는 숨긴다."""
+
+    source = str(runtime.get("source") or "unknown")
+    evidence: dict[str, Any] = {"source": source}
+    for key in ("profile", "database"):
+        value = runtime.get(key)
+        if isinstance(value, (str, int, float, bool)) and value != "":
+            evidence[key] = value
+    return evidence
+
+
+def _attach_dynamic_failure_evidence(
+    result: dict[str, Any], runtime: dict[str, Any]
+) -> None:
+    """컨텍스트 cleanup 전에 dynamic failure finding에 실행 증거를 붙인다."""
+
+    report = result.get("dynamic_functional_report")
+    if not isinstance(report, dict) or gate_status(report) not in {"FAIL", "INCONCLUSIVE"}:
+        return
+    finding = report.get("finding")
+    if not isinstance(finding, dict):
+        finding = {
+            "code": "DYNAMIC_FUNCTIONAL_UNAVAILABLE",
+            "message": str(report.get("reason") or "Dynamic functional verification failed."),
+        }
+        report["finding"] = finding
+    finding["runtime"] = _runtime_evidence(runtime)
+    excerpt = application_log_excerpt(runtime)
+    # 정상 4xx, schema/semantic failure처럼 stack trace가 없을 수 있다. 빈 로그를
+    # 증거인 것처럼 넣지 않고 실제로 읽힌 내용만 보존한다.
+    if excerpt:
+        finding["applicationLogExcerpt"] = excerpt
+
+
+def _deferred_static_reports(reason: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """동적 차단 실패 뒤 실제로 실행하지 않은 정적 gate의 안정적인 결과 형식."""
+
+    def deferred(gate: str) -> dict[str, Any]:
+        return {
+            "status": "DEFERRED",
+            "gateStatus": "NOT_APPLICABLE",
+            "deferred": True,
+            "deferredGate": gate,
+            "reason": reason,
+        }
+
+    trivy = deferred("static")
+    package = deferred("package")
+    return (
+        {
+            **deferred("static"),
+            "issues": [],
+            "trivyScan": trivy,
+            "deploymentPackage": package,
+        },
+        deferred("iac"),
+    )
+
+
 def _launch(
     app_id: str,
     target_url: str,
@@ -192,6 +257,7 @@ def run_verification_graph(
     repair_history: dict[str, Any] | None = None,
     fixed_test_plan: dict[str, Any] | None = None,
     preserved_case_results: list[dict[str, Any]] | None = None,
+    priority_case_id: str = "",
     implementation_job_id: str | None = None,
     testing_input: dict[str, Any] | None = None,
     iac_expected: bool | None = None,
@@ -219,6 +285,7 @@ def run_verification_graph(
             repair_history=repair_history,
             fixed_test_plan=fixed_test_plan,
             preserved_case_results=preserved_case_results,
+            priority_case_id=priority_case_id,
             implementation_job_id=implementation_job_id,
             testing_input=testing_input,
             iac_expected=iac_expected,
@@ -238,6 +305,7 @@ def _run_verification_graph(
     repair_history: dict[str, Any] | None = None,
     fixed_test_plan: dict[str, Any] | None = None,
     preserved_case_results: list[dict[str, Any]] | None = None,
+    priority_case_id: str = "",
     implementation_job_id: str | None = None,
     testing_input: dict[str, Any] | None = None,
     iac_expected: bool | None = None,
@@ -246,12 +314,7 @@ def _run_verification_graph(
     previous_reports: dict[str, Any] | None = None,
     previous_job_id: str = "",
 ) -> dict[str, Any]:
-    """저장된 애플리케이션을 실행한 뒤 testing graph를 호출한다.
-
-    애플리케이션 실행에 실패해도 deployment와 IaC 정적 검사는 실행할 수 있다. 따라서
-    예외를 곧바로 밖으로 던지지 않고 정적 보고서를 만든 뒤, 실행 실패를 전체 작업의
-    차단 원인과 진단 정보에 명확히 기록한다.
-    """
+    """저장된 애플리케이션을 실행한 뒤 dynamic-first testing graph를 호출한다."""
     graph = create_testing_graph()
     previous_reports = dict(previous_reports or {})
     input_digests = _gate_input_digests(
@@ -273,6 +336,7 @@ def _run_verification_graph(
                 repair_history=repair_history,
                 fixed_test_plan=fixed_test_plan,
                 preserved_case_results=preserved_case_results,
+                priority_case_id=priority_case_id,
                 testing_input=testing_input,
                 iac_expected=iac_expected,
                 deployment_package_expected=deployment_package_expected,
@@ -296,20 +360,46 @@ def _run_verification_graph(
                 application_dir=application_dir,
             ) as (url, application):
                 result = invoke(url)
+                _attach_dynamic_failure_evidence(result, application)
     except ApplicationLaunchError as error:
         launch_error = str(error)
         launch_defect_class = error.defect_class
-        result = invoke()
+        deferred_static, deferred_iac = _deferred_static_reports(
+            "Deferred because the Testing application could not start."
+        )
+        # launch 실패는 첫 runtime 차단 원인이다. 이 뒤에 정적 도구를 실행하면 수리
+        # 시작만 늦고 다음 재검사 때 사용할 이전 report도 만들어지므로 명시적 deferred
+        # report만 남긴다.
+        result = {
+            "current_node": "application_launch_failed",
+            "errors": [],
+            "static_report": deferred_static,
+            "iac_report": deferred_iac,
+        }
 
         # 앱을 띄우지 못했는데 동적 검사를 NOT_APPLICABLE로 두면 최종 finding에서
         # 시작 실패가 사라진다. Docker 환경 문제는 재실행 대기, 생성 앱 문제는 구현
         # 수리로 보낼 수 있도록 같은 dynamic gate에 명시적인 실패를 남긴다.
         environment_failure = launch_defect_class == "ENVIRONMENT_DEFECT"
+        launch_runtime = {
+            "source": "application",
+            "profile": "test",
+            "database": "h2-mysql-mode",
+        }
+        launch_finding: dict[str, Any] = {
+            "code": "APPLICATION_LAUNCH_FAILED",
+            "message": launch_error,
+            "runtime": launch_runtime,
+        }
+        if error.log_excerpt:
+            launch_finding["applicationLogExcerpt"] = error.log_excerpt
         result["dynamic_functional_report"] = {
             "status": "UNAVAILABLE" if environment_failure else "FAILED",
             "gateStatus": "INCONCLUSIVE" if environment_failure else "FAIL",
             "reason": launch_error,
             "defectClass": launch_defect_class,
+            "deferredGates": ["static", "package", "iac"],
+            "finding": launch_finding,
             "defect": {
                 "class": launch_defect_class,
                 "defectClass": launch_defect_class,
@@ -361,6 +451,9 @@ def _run_verification_graph(
         "gateStatus": aggregate["status"],
         "gates": aggregate["gates"],
         "gateCounts": aggregate["counts"],
+        "deferredGates": list(
+            (reports.get("dynamicFunctional") or {}).get("deferredGates") or []
+        ),
         "blockingReason": blocking,
         "diagnostics": diagnostics,
     }

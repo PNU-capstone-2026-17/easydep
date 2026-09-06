@@ -28,6 +28,9 @@ class TestingState(TypedDict):
     # 같은 계획에서 이미 통과한 case 결과다. 구현 수리 뒤 실패 case만 다시 실행하도록
     # 보존하며, 계획 header가 달라지면 동적 노드가 재사용하지 않는다.
     preserved_case_results: list[dict[str, Any]]
+    # 구현 수리 직후에는 이전 실행에서 실제로 실패한 case를 먼저 재검사한다. 후보 계획의
+    # 배열 순서는 바꾸지 않아 digest를 보존하고, 실행 순서에만 이 힌트를 적용한다.
+    priority_case_id: str
     iac_expected: bool | None
     deployment_package_expected: bool | None
     # ``None``은 최초 실행처럼 모든 gate를 검사한다. 수리 실행은 실패 원인과

@@ -32,6 +32,7 @@ class InteractionContract:
     parameters: tuple[tuple[str, str], ...]
     return_type: str
     use_case_ids: tuple[str, ...]
+    scenario_step_refs: tuple[str, ...]
 
 
 def interaction_contracts(bce_model: BCEModel) -> tuple[InteractionContract, ...]:
@@ -83,6 +84,15 @@ def interaction_contracts(bce_model: BCEModel) -> tuple[InteractionContract, ...
                         (
                             *(previous.use_case_ids if previous else ()),
                             *collaboration.use_case_ids,
+                        )
+                    )
+                ),
+                scenario_step_refs=tuple(
+                    dict.fromkeys(
+                        (
+                            *(previous.scenario_step_refs if previous else ()),
+                            *boundary_operation.step_refs,
+                            *root.step_refs,
                         )
                     )
                 ),
@@ -274,6 +284,7 @@ def _materialize_endpoint(
             "responses": responses,
             "source_classes": [contract.boundary_class, contract.control_class],
             "use_case_ids": list(contract.use_case_ids),
+            "scenario_step_refs": list(contract.scenario_step_refs),
             "control_binding": {
                 "control": contract.control_class,
                 "method": contract.control_method,

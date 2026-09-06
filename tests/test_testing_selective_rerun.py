@@ -77,7 +77,18 @@ def test_static_iac_repair_does_not_launch_application(tmp_path, monkeypatch) ->
         "dynamicFunctional": {
             "status": "passed",
             "gateStatus": "PASS",
-            "candidatePlan": {"cases": []},
+            "candidatePlan": {
+                "cases": [],
+                "inputValues": {
+                    "case-order": [
+                        {
+                            "operation_id": "createOrder",
+                            "location": "body.description",
+                            "value": "frozen repair input",
+                        }
+                    ]
+                },
+            },
         },
     }
     digests = verification._gate_input_digests(
@@ -105,6 +116,15 @@ def test_static_iac_repair_does_not_launch_application(tmp_path, monkeypatch) ->
     assert result["reports"]["static"]["deploymentPackage"]["reused"] is True
     assert result["reports"]["dynamicFunctional"]["reused"] is True
     assert result["reports"]["dynamicFunctional"]["reusedFromJobId"] == "testing-1"
+    assert result["reports"]["dynamicFunctional"]["candidatePlan"]["inputValues"] == {
+        "case-order": [
+            {
+                "operation_id": "createOrder",
+                "location": "body.description",
+                "value": "frozen repair input",
+            }
+        ]
+    }
 
 
 def test_report_without_input_digest_is_executed_once() -> None:

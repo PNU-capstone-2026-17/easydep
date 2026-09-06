@@ -205,6 +205,7 @@ def test_typed_normalization_uses_exact_bce_contract_without_plantuml() -> None:
     assert endpoint.responses[0].schema_name == "Course"
     assert endpoint.responses[0].is_array is True
     assert endpoint.source_classes == ["CatalogBoundary", "CatalogControl"]
+    assert endpoint.scenario_step_refs == ["UC1:main:1"]
     assert endpoint.operation_id == "browseCatalog"
 
 
@@ -427,6 +428,7 @@ def test_accepted_model_round_trips_existing_json_and_openapi_contract() -> None
         "outcomes": {"200": "ok"},
     }
     assert operation["x-easydep-use-case-ids"] == ["UC1"]
+    assert operation["x-easydep-scenario-step-refs"] == ["UC1:main:1"]
     validate_openapi(openapi)
 
 

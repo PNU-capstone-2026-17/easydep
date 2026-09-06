@@ -210,6 +210,13 @@ def build_openapi_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         ]
         if use_case_ids:
             operation["x-easydep-use-case-ids"] = use_case_ids
+        scenario_step_refs = [
+            str(value).strip()
+            for value in endpoint.get("scenario_step_refs", [])
+            if str(value).strip()
+        ]
+        if scenario_step_refs:
+            operation["x-easydep-scenario-step-refs"] = scenario_step_refs
         control_binding = _control_binding(endpoint)
         if control_binding:
             operation["x-easydep-control"] = control_binding

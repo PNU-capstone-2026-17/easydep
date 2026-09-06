@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
@@ -31,14 +31,22 @@ _ENVIRONMENT_BUILD_FAILURE_MARKERS = (
     "network is unreachable",
     "context deadline exceeded",
 )
+_ACTIVE_TESTING_CONTAINERS: set[str] = set()
 
 
 class ApplicationLaunchError(Exception):
     """생성된 애플리케이션을 실행할 수 없을 때 원인 소유자도 함께 전달한다."""
 
-    def __init__(self, message: str, *, defect_class: str = "SUT_DEFECT") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        defect_class: str = "SUT_DEFECT",
+        log_excerpt: str = "",
+    ) -> None:
         super().__init__(message)
         self.defect_class = defect_class
+        self.log_excerpt = _log_excerpt(log_excerpt) if log_excerpt else ""
 
 
 def _docker(
@@ -100,6 +108,24 @@ def _log_excerpt(logs: str, limit: int = 4000) -> str:
     return logs[:half] + "\n... omitted ...\n" + logs[-half:]
 
 
+def application_log_excerpt(runtime: Mapping[str, Any], *, limit: int = 6000) -> str:
+    """현재 Testing이 만든 실행 중인 앱의 제한된 로그만 읽는다.
+
+    외부 ``target_url``이나 보고서에서 온 임의 container 이름으로 Docker 로그를
+    읽으면 다른 실행의 정보를 유출할 수 있다. 이 프로세스의
+    :func:`running_application`이 아직 소유하고 있는 이름만 허용한다.
+    """
+
+    if not isinstance(runtime, Mapping) or runtime.get("source") != "application":
+        return ""
+    name = runtime.get("container")
+    if not isinstance(name, str):
+        return ""
+    if name not in _ACTIVE_TESTING_CONTAINERS:
+        return ""
+    return _log_excerpt(_container_logs(name), limit=limit)
+
+
 def _build_failure_defect_class(output: str) -> str:
     """외부 환경 때문에 실패했는지, 생성된 애플리케이션 문제인지 구분한다.
 
@@ -133,21 +159,33 @@ def _wait_until_ready(name: str, url: str, timeout: int) -> None:
     while time.monotonic() < deadline:
         if _responds(url):
             return
-        running = _docker(["inspect", "-f", "{{.State.Running}}", name], timeout=30)
+        try:
+            running = _docker(
+                ["inspect", "-f", "{{.State.Running}}", name], timeout=30
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ApplicationLaunchError(
+                "Docker timed out while checking the generated application container.",
+                defect_class="ENVIRONMENT_DEFECT",
+            ) from error
         if running.returncode != 0 or "true" not in (running.stdout or "").lower():
             logs = _container_logs(name)
+            excerpt = _log_excerpt(logs)
             raise ApplicationLaunchError(
                 "생성된 애플리케이션이 요청을 받기 전에 종료됐습니다:\n"
-                f"{_log_excerpt(logs)}",
+                f"{excerpt}",
                 defect_class=_build_failure_defect_class(logs),
+                log_excerpt=excerpt,
             )
         time.sleep(2)
+    excerpt = _log_excerpt(_container_logs(name))
     raise ApplicationLaunchError(
         f"생성된 애플리케이션이 {timeout}초 안에 {url}에 응답하지 않았습니다:\n"
-        f"{_log_excerpt(_container_logs(name))}",
+        f"{excerpt}",
         # 준비 시간 초과만으로 source 결함을 확정할 수 없다. 첫 Gradle 실행이나 Windows
         # bind mount가 느린 경우 코드를 고쳐도 달라지지 않으므로 환경 문제로 재실행한다.
         defect_class="ENVIRONMENT_DEFECT",
+        log_excerpt=excerpt,
     )
 
 
@@ -242,7 +280,7 @@ def running_application(
     try:
         normalized_health = health_path if health_path.startswith("/") else f"/{health_path}"
         _wait_until_ready(name, f"{base_url}{normalized_health}", start_timeout_seconds)
-        yield base_url, {
+        runtime = {
             "source": "application",
             "image": runner_image,
             "container": name,
@@ -250,7 +288,14 @@ def running_application(
             "containerPort": container_port,
             "hostPort": host_port,
             "healthPath": normalized_health,
+            "profile": "test",
+            "database": "h2-mysql-mode",
         }
+        _ACTIVE_TESTING_CONTAINERS.add(name)
+        try:
+            yield base_url, runtime
+        finally:
+            _ACTIVE_TESTING_CONTAINERS.discard(name)
     finally:
         _docker(["rm", "-f", name], timeout=120)
         _docker(["network", "rm", network], timeout=120)

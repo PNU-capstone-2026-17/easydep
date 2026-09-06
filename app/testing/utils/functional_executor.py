@@ -17,6 +17,8 @@ from app.testing.schemas.functional_plan import FunctionalInputValue, Functional
 
 _METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 _GENERATED = "generated-input"
+_SUMMARY_STRING_LIMIT = 512
+_SUMMARY_SIZE_LIMIT = 4000
 
 
 class UpstreamAmbiguity(ValueError):
@@ -633,6 +635,7 @@ def _finding(
     *,
     status: int | None = None,
     body: str = "",
+    request: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "stepId": step_id,
@@ -643,7 +646,76 @@ def _finding(
     if status is not None:
         result["statusCode"] = status
     if body:
-        result["responseBody"] = body[-2000:]
+        result["responseBody"] = _response_summary(body)
+    if request is not None:
+        result["request"] = request
+    return result
+
+
+def _summary_value(value: Any, *, depth: int = 0) -> Any:
+    """수리 evidence에 넣을 테스트 값을 작은 JSON 형태로 만든다."""
+
+    if depth >= 6:
+        return "[TRUNCATED]"
+    if isinstance(value, dict):
+        return {
+            str(name): _summary_value(item, depth=depth + 1)
+            for name, item in list(value.items())[:40]
+        }
+    if isinstance(value, (list, tuple)):
+        values = [_summary_value(item, depth=depth + 1) for item in value[:20]]
+        if len(value) > 20:
+            values.append("[TRUNCATED]")
+        return values
+    if isinstance(value, str):
+        return value[:_SUMMARY_STRING_LIMIT] + ("…" if len(value) > _SUMMARY_STRING_LIMIT else "")
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:_SUMMARY_STRING_LIMIT]
+
+
+def _bounded_summary(value: Any) -> Any:
+    summarized = _summary_value(value)
+    rendered = json.dumps(summarized, ensure_ascii=False, default=str)
+    if len(rendered) <= _SUMMARY_SIZE_LIMIT:
+        return summarized
+    return {
+        "truncated": True,
+        "preview": rendered[: _SUMMARY_SIZE_LIMIT - 64] + "…",
+    }
+
+
+def _response_summary(body: str) -> str:
+    """오류 응답도 요청 evidence와 같은 크기 제한을 적용한다."""
+
+    try:
+        return json.dumps(_bounded_summary(json.loads(body)), ensure_ascii=False)
+    except (TypeError, ValueError):
+        return body[:2000] + ("…" if len(body) > 2000 else "")
+
+
+def _request_summary(
+    operation: Operation,
+    paths: dict[str, Any],
+    query: dict[str, Any],
+    headers: dict[str, Any],
+    body: Any,
+    *,
+    sent: bool = True,
+) -> dict[str, Any]:
+    path = operation.path
+    for name, value in paths.items():
+        path = path.replace("{" + name + "}", quote(str(_summary_value(value)), safe=""))
+    result: dict[str, Any] = {
+        "method": operation.method.upper(),
+        "path": path,
+        "query": _bounded_summary(query),
+        "body": _bounded_summary(body),
+    }
+    if headers:
+        result["headers"] = _bounded_summary(headers)
+    if not sent:
+        result["sent"] = False
     return result
 
 
@@ -703,6 +775,7 @@ def execute_functional_plan(
                 follow_redirects=False,
             )
         except TestInputError as error:
+            request = _request_summary(operation, {}, {}, {}, None, sent=False)
             return {
                 "status": "failed",
                 "gateStatus": "FAIL",
@@ -716,27 +789,42 @@ def execute_functional_plan(
                     step.operation_id,
                     "TEST_INPUT_INVALID",
                     str(error),
+                    request=request,
                 ),
             }
         except UpstreamAmbiguity as error:
+            request = _request_summary(operation, {}, {}, {}, None, sent=False)
             return _ambiguity(
                 str(error),
                 steps=reports,
                 inputValues=[item.model_dump(mode="json") for item in suggestions],
-                finding=_finding(step.step_id, step.operation_id, "UPSTREAM_AMBIGUITY", str(error)),
+                finding=_finding(
+                    step.step_id,
+                    step.operation_id,
+                    "UPSTREAM_AMBIGUITY",
+                    str(error),
+                    request=request,
+                ),
             )
         except httpx.RequestError as error:
             message = f"HTTP request could not reach {operation.method} {operation.path}: {error}"
+            request = _request_summary(operation, paths, query, headers, body)
             return {
                 "status": "unavailable",
                 "gateStatus": "INCONCLUSIVE",
                 "reason": message,
                 "defectClass": "ENVIRONMENT_DEFECT",
                 "steps": reports,
+                "inputValues": [item.model_dump(mode="json") for item in suggestions],
                 "finding": _finding(
-                    step.step_id, step.operation_id, "HTTP_TRANSPORT_ERROR", message
+                    step.step_id,
+                    step.operation_id,
+                    "HTTP_TRANSPORT_ERROR",
+                    message,
+                    request=request,
                 ),
             }
+        request = _request_summary(operation, paths, query, headers, body)
         report = {
             "stepId": step.step_id,
             "operationId": step.operation_id,
@@ -776,6 +864,7 @@ def execute_functional_plan(
                 message,
                 status=response.status_code,
                 body=response.text,
+                request=request,
             )
             if needs_fixture:
                 finding["generatedInputs"] = generated_path
@@ -809,7 +898,13 @@ def execute_functional_plan(
                 str(error),
                 steps=reports + [report],
                 inputValues=[item.model_dump(mode="json") for item in suggestions],
-                finding=_finding(step.step_id, step.operation_id, "UPSTREAM_AMBIGUITY", str(error)),
+                finding=_finding(
+                    step.step_id,
+                    step.operation_id,
+                    "UPSTREAM_AMBIGUITY",
+                    str(error),
+                    request=request,
+                ),
             )
         except (json.JSONDecodeError, ValueError, jsonschema.SchemaError) as error:
             errors = [error]
@@ -821,6 +916,7 @@ def execute_functional_plan(
                 str(errors[0]),
                 status=response.status_code,
                 body=response.text,
+                request=request,
             )
             return {
                 "status": "failed",
