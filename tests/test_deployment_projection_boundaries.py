@@ -329,6 +329,16 @@ def test_compute_choices_reproject_without_private_constraint_kind() -> None:
     )
     assert guidance["computeUnits"]
     assert all(unit["candidates"] for unit in guidance["computeUnits"])
+    assert all(
+        candidate["freeTier"]["status"] in {
+            "eligible",
+            "conditional",
+            "notEligible",
+            "unknown",
+        }
+        for unit in guidance["computeUnits"]
+        for candidate in unit["candidates"]
+    )
     selections = [
         {
             "computeUnitId": unit["computeUnitId"],
@@ -347,6 +357,28 @@ def test_compute_choices_reproject_without_private_constraint_kind() -> None:
         for item in selected["workloadGraph"]["constraints"]
     )
     assert selected["sizing"]["status"] == "completed"
+
+
+def test_free_tier_candidate_is_kept_when_short_list_price_is_unavailable() -> None:
+    bundle = _projection_outputs("gcp")["bundle"]
+    projection = bundle["projections"][0]
+    plan = projection["deploymentPlan"]
+    for compute in plan["computeUnits"]:
+        compute["resourceRequirements"] = {"minVCpu": 1, "minMemoryGiB": 1}
+
+    guidance = compute_sizing_guidance(
+        plan,
+        provider="gcp",
+        region="us-central1",
+        workload_graph=bundle["workloadGraph"],
+        limit=1,
+    )
+
+    candidate = guidance["computeUnits"][0]["candidates"][0]
+    assert candidate["sku"] == "e2-micro"
+    assert candidate["freeTier"]["status"] == "eligible"
+    assert candidate["hourlyComputeUSD"] is None
+    assert candidate["monthlyComputeUSD"] is None
 
 
 def test_target_zones_replace_primary_zone_context_including_empty_target() -> None:

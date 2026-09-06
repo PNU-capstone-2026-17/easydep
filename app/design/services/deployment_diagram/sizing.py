@@ -9,7 +9,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from app.cloudkb.costkb.dataset import filter_specs, load_dataset
+from app.cloudkb.costkb.dataset import filter_specs, find_by_name, load_dataset
+from app.cloudkb.costkb.free_tier import (
+    preferred_vm_free_tier_skus,
+    vm_free_tier_notice,
+    vm_free_tier_status,
+)
 from app.design.services.deployment_diagram.bundle import select_deployment_target
 from app.design.services.deployment_diagram.planner import (
     build_deployment_plan,
@@ -123,7 +128,7 @@ def _catalog_candidates(
 ) -> list[dict[str, Any]]:
     """catalog의 정확한 provider·region 후보만 좁혀 반환한다."""
 
-    rows = filter_specs(
+    priced_rows = filter_specs(
         vcpu_min=max(0, math.ceil(min_vcpu)),
         mem_min_gib=max(0, min_memory_gib),
         provider=provider,
@@ -131,12 +136,37 @@ def _catalog_candidates(
         limit=max(1, limit * 4),
         fold_regions=False,
     )
-    return [
+    priced_rows = [
         dict(row)
-        for row in rows
+        for row in priced_rows
         if str(row.get("provider") or "").lower() == provider
         and str(row.get("region") or "").lower() == region.lower()
-    ][:limit]
+    ]
+    free_tier_rows = [
+        dict(row)
+        for sku in preferred_vm_free_tier_skus(provider=provider, region=region)
+        for row in find_by_name(sku, provider=provider)
+        if str(row.get("region") or "").lower() == region.lower()
+        and float(row.get("vCPU") or 0) >= min_vcpu
+        and float(row.get("memGiB") or 0) >= min_memory_gib
+        and str(row.get("architecture") or "x86_64").lower() == "x86_64"
+    ]
+    free_tier_rows.sort(
+        key=lambda row: (
+            row.get("hourlyUSD") is None,
+            float(row.get("hourlyUSD") or 0),
+            str(row.get("specName") or ""),
+        )
+    )
+    combined: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in [*free_tier_rows, *priced_rows]:
+        name = str(row.get("specName") or "").lower()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        combined.append(row)
+    return combined[:limit]
 
 
 def _catalog_snapshot_at() -> str:
@@ -224,15 +254,25 @@ def compute_sizing_guidance(
         if not rows:
             item["reason"] = "The local cloud catalog has no priced SKU for this provider, region, and minimum capacity."
         for row in rows:
-            hourly = float(row["hourlyUSD"])
+            raw_hourly = row.get("hourlyUSD")
+            hourly = float(raw_hourly) if raw_hourly is not None else None
             item["candidates"].append(
                 {
                     "sku": row["specName"],
                     "vCPU": row["vCPU"],
                     "memoryGiB": row["memGiB"],
                     "hourlyComputeUSD": hourly,
-                    "monthlyComputeUSD": round(hourly * HOURS_PER_MONTH * minimum_replicas, 4),
+                    "monthlyComputeUSD": (
+                        round(hourly * HOURS_PER_MONTH * minimum_replicas, 4)
+                        if hourly is not None
+                        else None
+                    ),
                     "replicaCount": minimum_replicas,
+                    "freeTier": vm_free_tier_status(
+                        provider=provider,
+                        region=region,
+                        sku=str(row["specName"]),
+                    ),
                 }
             )
         guidance.append(item)
@@ -244,6 +284,7 @@ def compute_sizing_guidance(
         "hoursPerMonth": HOURS_PER_MONTH,
         "priceRetrievedAt": _catalog_snapshot_at(),
         "scope": "Compute on-demand list price only; excludes storage, databases, network, load balancers, taxes, support, and discounts.",
+        "freeTierNotice": vm_free_tier_notice(),
         "computeUnits": guidance,
     }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Check, LoaderCircle, Search, Server } from '@lucide/svelte';
   import { applyDeploymentSizing, getDeploymentSizing } from '$lib/api';
-  import type { CapacityOverride, ComputeSizingUnit, DeploymentSizingResponse } from '$lib/types';
+  import type { CapacityOverride, ComputeSizingCandidate, ComputeSizingUnit, DeploymentSizingResponse } from '$lib/types';
   import { errorMessage } from '$lib/utils';
 
   let {
@@ -36,7 +36,9 @@
     const previous = stored.find((item) => item.computeUnitId === unit.computeUnitId);
     return {
       computeUnitId: unit.computeUnitId,
-      sku: previous?.sku ?? unit.candidates[0]?.sku ?? '',
+      sku: previous?.sku ??
+        unit.candidates.find((candidate) => candidate.freeTier.status === 'eligible')?.sku ??
+        unit.candidates[0]?.sku ?? '',
       replicaCount: previous?.replicaCount ?? unit.minimumReplicaCount,
       replicationConfirmed: previous?.replicationConfirmed ?? false
     };
@@ -155,6 +157,33 @@
     }, 0);
   }
 
+  function selectedCandidate(unit: ComputeSizingUnit) {
+    return unit.candidates.find((item) => item.sku === selections[unit.computeUnitId]?.sku);
+  }
+
+  function savedCandidate(computeUnitId: string, sku: string) {
+    return response?.guidance.computeUnits
+      .find((unit) => unit.computeUnitId === computeUnitId)
+      ?.candidates.find((candidate) => candidate.sku === sku);
+  }
+
+  function priceLabel(candidate: ComputeSizingCandidate) {
+    return candidate.monthlyComputeUSD === null
+      ? 'list price unavailable'
+      : `$${candidate.monthlyComputeUSD.toFixed(2)}/mo`;
+  }
+
+  function hasUnpricedSelection(stored = false) {
+    if (stored) {
+      return (response?.selected ?? []).some(
+        (selection) => savedCandidate(selection.computeUnitId, selection.sku)?.hourlyComputeUSD === null
+      );
+    }
+    return (response?.guidance.computeUnits ?? []).some(
+      (unit) => selectedCandidate(unit)?.hourlyComputeUSD === null
+    );
+  }
+
   function savedMonthlyTotal() {
     return (response?.selected ?? []).reduce((total, selection) => {
       const unit = response?.guidance.computeUnits.find(
@@ -221,12 +250,12 @@
             <strong class="block text-[11px] text-[#315641]">Saved deployment configuration</strong>
             <p class="mt-1 text-[10px] text-[#737970]">{response.target.provider.toUpperCase()} · {response.target.region}</p>
           </div>
-          <span class="shrink-0 text-[10px] font-semibold text-[#477058]">${savedMonthlyTotal().toFixed(2)}/month</span>
+          <span class="shrink-0 text-[10px] font-semibold text-[#477058]">{hasUnpricedSelection(true) ? 'List price unavailable' : `$${savedMonthlyTotal().toFixed(2)}/month`}</span>
         </div>
         <div class="mt-2 space-y-1.5">
           {#each response.selected as selection}
             <div class="flex items-center justify-between gap-2 rounded-md bg-[#f6f8f4] px-2 py-1.5 text-[10px] text-[#59645b]">
-              <span class="min-w-0 truncate"><strong>{selection.computeUnitId}</strong> · {selection.sku}</span>
+              <span class="min-w-0 truncate"><strong>{selection.computeUnitId}</strong> · {selection.sku} · {savedCandidate(selection.computeUnitId, selection.sku)?.freeTier.label ?? 'Free Tier status unavailable'}</span>
               <span class="shrink-0">{selection.replicaCount} replica{selection.replicaCount === 1 ? '' : 's'}</span>
             </div>
           {/each}
@@ -289,7 +318,7 @@
                 onchange={(event) => update(unit.computeUnitId, { sku: event.currentTarget.value })}
               >
                 {#each unit.candidates as candidate}
-                  <option value={candidate.sku}>{candidate.sku} · {candidate.vCPU} vCPU · {candidate.memoryGiB} GiB · ${candidate.monthlyComputeUSD.toFixed(2)}/mo</option>
+                  <option value={candidate.sku}>{candidate.sku} · {candidate.vCPU} vCPU · {candidate.memoryGiB} GiB · {priceLabel(candidate)} · {candidate.freeTier.label}</option>
                 {/each}
               </select>
               <input
@@ -301,6 +330,14 @@
                 oninput={(event) => update(unit.computeUnitId, { replicaCount: Number(event.currentTarget.value) })}
               />
             </div>
+            {#if selectedCandidate(unit)}
+              <p class="mt-2 text-[10px] leading-4 text-[#696e67]" title={selectedCandidate(unit)?.freeTier.conditions.join(' ')}>
+                {selectedCandidate(unit)?.freeTier.summary}
+                {#if selectedCandidate(unit)?.freeTier.sourceUrls[0]}
+                  <a class="font-semibold text-[#477058] underline" href={selectedCandidate(unit)?.freeTier.sourceUrls[0]} target="_blank" rel="noreferrer">Official terms</a>
+                {/if}
+              </p>
+            {/if}
             {#if unit.replicationSafety === 'unknown' && (selections[unit.computeUnitId]?.replicaCount ?? 1) > 1}
               <label class="mt-2 flex items-start gap-2 text-[10px] leading-4 text-[#696e67]">
                 <input
@@ -319,7 +356,7 @@
       {/each}
     </div>
     <footer class="mt-3 flex items-center justify-between gap-3 border-t border-[#e1e5df] pt-2.5">
-      <span class="text-[10px] text-[#6f746d]">Estimated compute: ${monthlyTotal().toFixed(2)}/month</span>
+      <span class="text-[10px] text-[#6f746d]">Estimated compute: {hasUnpricedSelection() ? 'list price unavailable for selected SKU' : `$${monthlyTotal().toFixed(2)}/month`}</span>
       <button
         class="focus-ring flex items-center gap-1 rounded-md bg-[#2d6b4d] px-2.5 py-1.5 text-[10px] font-semibold text-white disabled:opacity-50"
         disabled={!canApply() || saving}

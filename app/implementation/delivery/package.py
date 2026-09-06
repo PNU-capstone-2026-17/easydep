@@ -225,6 +225,60 @@ function Invoke-Checked([string]$Program, [string[]]$Arguments) {
   if ($LASTEXITCODE -ne 0) { throw "$Program failed with exit code $LASTEXITCODE." }
 }
 
+$DeploymentActivity = 'EasyDep deployment'
+
+function Show-DeploymentProgress([int]$Percent, [string]$Status) {
+  $bounded = [Math]::Max(0, [Math]::Min(100, $Percent))
+  Write-Progress -Activity $DeploymentActivity -Status $Status -PercentComplete $bounded
+  Write-Host ("[{0}%] {1}" -f $bounded, $Status) -ForegroundColor Cyan
+}
+
+function Complete-DeploymentProgress {
+  Write-Progress -Activity $DeploymentActivity -Completed
+}
+
+function Initialize-ProviderCache {
+  if ($env:TF_PLUGIN_CACHE_DIR) {
+    $cacheRoot = $env:TF_PLUGIN_CACHE_DIR
+  } else {
+    $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    if (-not $localData) { $localData = $env:LOCALAPPDATA }
+    if (-not $localData) { throw 'Cannot determine a persistent OpenTofu provider cache directory.' }
+    $cacheRoot = Join-Path $localData 'EasyDep\opentofu-plugin-cache'
+    $env:TF_PLUGIN_CACHE_DIR = $cacheRoot
+  }
+  New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+  return (Resolve-Path -LiteralPath $cacheRoot).Path
+}
+
+function Invoke-TofuInitWithHeartbeat {
+  $startedAt = Get-Date
+  $lastLogSecond = 0
+  $process = Start-Process -FilePath 'tofu' `
+    -ArgumentList @('init', '-input=false') `
+    -WorkingDirectory $TofuRoot `
+    -NoNewWindow `
+    -PassThru
+  while (-not $process.HasExited) {
+    Start-Sleep -Seconds 1
+    $process.Refresh()
+    $elapsed = [int]((Get-Date) - $startedAt).TotalSeconds
+    $minutes = [int][Math]::Floor($elapsed / 60)
+    $seconds = $elapsed % 60
+    $elapsedText = '{0:D2}:{1:D2}' -f $minutes, $seconds
+    $spinner = @('|', '/', '-', '\')[$elapsed % 4]
+    Write-Progress -Activity $DeploymentActivity `
+      -Status "[15%] OpenTofu initialization is running $spinner  elapsed $elapsedText" `
+      -PercentComplete 15
+    if (($elapsed - $lastLogSecond) -ge 15) {
+      Write-Host "[15%] OpenTofu initialization is still running (elapsed $elapsedText)." -ForegroundColor DarkGray
+      $lastLogSecond = $elapsed
+    }
+  }
+  $process.WaitForExit()
+  if ($process.ExitCode -ne 0) { throw "tofu failed with exit code $($process.ExitCode)." }
+}
+
 function New-AwsDockerConfig([string]$Region, [string]$RegistryHost) {
   # 대화형 Windows PowerShell에서는 긴 ECR token을 `docker login`의 표준입력으로
   # 넘기는 과정이 불안정할 수 있다. Docker가 기본으로 이해하는 임시 config.json을
@@ -370,22 +424,29 @@ function Import-RuntimeValues {
 
 function Initialize-Tofu {
   Set-Location $TofuRoot
+  $providerCache = Initialize-ProviderCache
+  Write-Host "OpenTofu provider cache: $providerCache" -ForegroundColor DarkGray
   Write-Host 'Initializing OpenTofu. The first provider download can take several minutes.' -ForegroundColor Cyan
-  Invoke-Checked 'tofu' @('init', '-input=false')
+  Invoke-TofuInitWithHeartbeat
+  Write-Host 'OpenTofu initialization completed.' -ForegroundColor Green
 }
 
 function Initialize-Images {
   if (Test-Path $DigestPath) {
+    Show-DeploymentProgress 65 'Reusing the prepared application image.'
     Write-Host 'Reusing the recorded application image digest.' -ForegroundColor Green
     return $true
   }
   $answer = Read-Host 'Container registries will now be created and may incur cloud charges. Continue? [y/N]'
   if ($answer -notmatch '^(?i)y(?:es)?$') {
     Write-Host 'Deployment cancelled before creating cloud resources.' -ForegroundColor Yellow
+    Complete-DeploymentProgress
     return $false
   }
 
+  Show-DeploymentProgress 15 'Initializing OpenTofu providers.'
   Initialize-Tofu
+  Show-DeploymentProgress 20 'OpenTofu providers are ready.'
   $placeholder = 'sha256:' + ('0' * 64)
   $targetArgs = @()
   foreach ($target in @($Config.registryTargets)) {
@@ -393,12 +454,17 @@ function Initialize-Images {
     $targetArgs += "-var=image_digest_$($target.workload)=$placeholder"
   }
   if ($targetArgs.Count -gt 0) {
+    Show-DeploymentProgress 25 'Preparing the container registry.'
     Invoke-Checked 'tofu' (@('apply', '-auto-approve') + $targetArgs)
   }
+  Show-DeploymentProgress 30 'Container registry preparation completed.'
 
   $applicationRoot = Resolve-Path (Join-Path $Root '..')
   $digestLines = @()
-  foreach ($target in @($Config.registryTargets)) {
+  $targets = @($Config.registryTargets)
+  $targetCount = [Math]::Max(1, $targets.Count)
+  for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++) {
+    $target = $targets[$targetIndex]
     $registryUrl = (& tofu output -raw $target.output).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Cannot read registry output $($target.output)." }
     $registryHost = $registryUrl.Split('/')[0]
@@ -417,10 +483,19 @@ function Initialize-Images {
     try {
       $tag = 'easydep-' + $target.workload + '-' + (Get-Date -Format 'yyyyMMddHHmmss')
       $imageTag = $registryUrl + ':' + $tag
+      $buildPercent = 35 + [int][Math]::Floor((25.0 * $targetIndex) / $targetCount)
+      $pushPercent = 35 + [int][Math]::Floor((25.0 * ($targetIndex + 0.5)) / $targetCount)
+      Show-DeploymentProgress $buildPercent "Building image for $($target.workload)."
       Invoke-Checked 'docker' @('build', '-t', $imageTag, $applicationRoot)
-      $pushOutput = docker push $imageTag 2>&1 | Out-String
+      Show-DeploymentProgress $pushPercent "Pushing image for $($target.workload)."
+      $pushLines = [Collections.Generic.List[string]]::new()
+      docker push $imageTag 2>&1 | ForEach-Object {
+        $line = $_.ToString()
+        $pushLines.Add($line)
+        Write-Host $line
+      }
       $pushExitCode = $LASTEXITCODE
-      Write-Host $pushOutput
+      $pushOutput = $pushLines -join [Environment]::NewLine
       if ($pushExitCode -ne 0) { throw 'Docker image push failed.' }
       $digest = [regex]::Match($pushOutput, 'digest: (sha256:[0-9a-f]{64})')
       if (-not $digest.Success) { throw 'The registry did not report an immutable image digest.' }
@@ -437,21 +512,28 @@ function Initialize-Images {
     }
   }
   $digestLines | Set-Content -Encoding UTF8 $DigestPath
+  Show-DeploymentProgress 65 'Application images are ready.'
   return $true
 }
 
 function New-AndApplyPlan {
   Set-Location $TofuRoot
   Import-RuntimeValues
+  Show-DeploymentProgress 70 'Validating the OpenTofu configuration.'
   Invoke-Checked 'tofu' @('validate', '-no-color')
+  Show-DeploymentProgress 75 'Creating the deployment plan.'
   Invoke-Checked 'tofu' @('plan', '-input=false', '-out=easydep.tfplan')
+  Show-DeploymentProgress 80 'Review the deployment plan shown below.'
   Invoke-Checked 'tofu' @('show', '-no-color', 'easydep.tfplan')
   $answer = Read-Host 'Apply the plan shown above? [y/N]'
   if ($answer -notmatch '^(?i)y(?:es)?$') {
     Write-Host 'The plan was saved but not applied.' -ForegroundColor Yellow
+    Complete-DeploymentProgress
     return $false
   }
+  Show-DeploymentProgress 85 'Applying the deployment plan.'
   Invoke-Checked 'tofu' @('apply', 'easydep.tfplan')
+  Show-DeploymentProgress 90 'Cloud resources are ready; starting health verification.'
   return $true
 }
 
@@ -463,8 +545,13 @@ function Test-DeployedApplication {
   foreach ($outputName in @($Config.healthOutputs)) {
     $healthUrl = (& tofu output -raw $outputName).Trim()
     $healthy = $false
+    Show-DeploymentProgress 92 "Waiting for application health at $healthUrl"
     Write-Host "Waiting for $healthUrl"
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
+      $healthPercent = 92 + [int][Math]::Floor((7.0 * $attempt) / 60)
+      Write-Progress -Activity $DeploymentActivity `
+        -Status ("Health check attempt {0}/60" -f ($attempt + 1)) `
+        -PercentComplete $healthPercent
       try {
         Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -Uri $healthUrl | Out-Null
         $healthy = $true
@@ -473,11 +560,15 @@ function Test-DeployedApplication {
     }
     if (-not $healthy) { throw "Health check timed out after ten minutes: $healthUrl" }
   }
+  Show-DeploymentProgress 100 'Deployment and health verification completed.'
+  Complete-DeploymentProgress
   Write-Host 'Deployment and health verification completed.' -ForegroundColor Green
 }
 
 function Start-OrContinueDeployment {
+  Show-DeploymentProgress 5 'Checking local tools and cloud login.'
   Test-Prerequisites $true
+  Show-DeploymentProgress 10 'Collecting missing deployment inputs.'
   Initialize-Inputs
   if (-not (Initialize-Images)) { return }
   if (New-AndApplyPlan) { Test-DeployedApplication }
@@ -546,6 +637,7 @@ while ($true) {
       default { Write-Host 'Select 1, 2, or 0.' -ForegroundColor Yellow }
     }
   } catch {
+    Complete-DeploymentProgress
     Write-Host $_.Exception.Message -ForegroundColor Red
     Write-Host 'Fix the reported cause and choose Start or continue deployment again.' -ForegroundColor Yellow
   }
@@ -601,7 +693,7 @@ This package targets **{provider.upper()}** in **{region}**. Keep `Dockerfile`, 
 
 Install PowerShell, OpenTofu 1.8 or newer, Docker with a running daemon, and the {provider.upper()} CLI. {authentication}
 
-Use a short-lived, least-privilege cloud identity. Do not use a cloud account's root or owner identity. The first OpenTofu provider download can take several minutes; wait for it instead of starting another copy.
+Use a short-lived, least-privilege cloud identity. Do not use a cloud account's root or owner identity. The first OpenTofu provider download can take several minutes. Providers are cached under the current user's local application-data directory and reused by other EasyDep deployment packages. Set `TF_PLUGIN_CACHE_DIR` before starting the script to use a different persistent cache.
 
 ## Deploy or resume
 
@@ -611,7 +703,7 @@ Open PowerShell in this `deployment` directory and run:
 .\\easydep.ps1
 ```
 
-Choose **Start or continue deployment**. The script checks the environment and login, asks only for missing deployment values, prepares and uploads the image, displays the OpenTofu plan, asks before applying it, and verifies the public health URL. It detects the local state and image digest when you run it again after a failure.
+Choose **Start or continue deployment**. The script shows coarse 5–100% phase progress while it checks the environment and login, asks only for missing deployment values, prepares and uploads the image, displays the OpenTofu plan, asks before applying it, and verifies the public health URL. During a long `tofu init`, a live elapsed-time heartbeat remains visible because OpenTofu does not expose provider download byte progress. The script detects the local state and image digest when you run it again after a failure.
 
 The script clearly warns before it creates the first billable cloud resource. OpenTofu state, `terraform.tfvars`, and image digests stay in this extracted folder; do not commit or share them. Passwords, API keys, and private keys belong in the selected cloud secret service, not in these files or VM metadata.
 

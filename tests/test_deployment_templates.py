@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import io
+import shutil
+import subprocess
 from pathlib import Path
 
 import hcl2
@@ -726,9 +728,54 @@ def test_user_package_has_one_interactive_deployment_entrypoint(
         assert "2. Destroy deployed resources" in script
         assert "-target=$($target.address)" in script
         assert "docker push" in script
+        assert "$pushLines.Add($line)" in script
         assert "TF_VAR_image_digest_$($target.workload)" in script
         assert "health_url_compute_1_http" in script
+        assert "TF_PLUGIN_CACHE_DIR" in script
+        assert "EasyDep\\opentofu-plugin-cache" in script
+        assert "OpenTofu initialization is still running" in script
+        assert "Show-DeploymentProgress 15 'Initializing OpenTofu providers.'" in script
+        assert "Show-DeploymentProgress 100 'Deployment and health verification completed.'" in script
         assert not (package / "scripts").exists()
+
+
+def test_generated_deployment_entrypoint_has_valid_powershell_syntax(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = shutil.which("pwsh") or shutil.which("powershell")
+    if executable is None:
+        pytest.skip("PowerShell is unavailable")
+    monkeypatch.setattr(
+        "app.implementation.delivery.package._format_open_tofu", lambda _path: None
+    )
+    bundle = build_deployment_diagram_bundle(
+        _graph(STANDALONE_PRIMARY_PUBLIC), _resource_spec("aws")
+    )
+    resource_plan = bundle["projections"][0]["resourcePlan"]
+    application = tmp_path / "application"
+    application.mkdir()
+    script = render_deployment_package(
+        application, resource_plan, render_open_tofu(resource_plan)
+    ) / "easydep.ps1"
+    quoted_path = str(script).replace("'", "''")
+    expression = (
+        "$tokens=$null; $errors=$null; "
+        "[System.Management.Automation.Language.Parser]::ParseFile("
+        f"'{quoted_path}', [ref]$tokens, [ref]$errors) | Out-Null; "
+        "if ($errors.Count -gt 0) { "
+        "$errors | ForEach-Object { Write-Error $_.Message }; exit 1 }"
+    )
+
+    completed = subprocess.run(
+        [executable, "-NoProfile", "-NonInteractive", "-Command", expression],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])

@@ -46,6 +46,9 @@ application requirements
 - `data/*.json.gz`는 검증 후 커밋한 런타임 데이터이며 기본 실행에서 우선한다.
 - `output/`과 `.cache/`는 로컬 재빌드 작업공간이다. 현행 모델의 일부가 아니며 커밋하지 않는다.
 - `depkb/claims.json`은 요구사항 단계가 읽는 Docker-on-VM 의존관계다.
+- `costkb/free_tier.json`은 AWS·Azure·GCP가 공식 문서에 공개한 VM 무료 사용 정책과
+  계정·기간·리전·사용량 한계를 보관한다. 무료 여부는 SKU 가격의 고정 속성이 아니므로
+  가격 미러와 분리하며, 설계 단계가 후보에 현재 정책 판정을 덧붙인다.
 - `provider_primitives.py`는 설계 단계가 ResourcePlan을 만들 때 사용하는 CSP별 리소스 이름과
   연결 규칙이다.
 - `depkb/native/`의 JSON, `depkb/replications/`와 `document/archive/`는 조사 참고 자료로

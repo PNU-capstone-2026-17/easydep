@@ -224,9 +224,17 @@ export interface ComputeSizingCandidate {
   sku: string;
   vCPU: number;
   memoryGiB: number;
-  hourlyComputeUSD: number;
-  monthlyComputeUSD: number;
+  hourlyComputeUSD: number | null;
+  monthlyComputeUSD: number | null;
   replicaCount: number;
+  freeTier: {
+    status: 'eligible' | 'conditional' | 'notEligible' | 'unknown';
+    label: string;
+    summary: string;
+    conditions: string[];
+    sourceUrls: string[];
+    asOf: string;
+  };
 }
 
 export interface ComputeSizingUnit {
@@ -257,6 +265,7 @@ export interface DeploymentSizingResponse {
     hoursPerMonth: number;
     priceRetrievedAt: string;
     scope: string;
+    freeTierNotice: { asOf: string; scope: string; disclaimer: string };
     computeUnits: ComputeSizingUnit[];
   };
   selected: Array<{
