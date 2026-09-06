@@ -1,111 +1,89 @@
 # Testing 에이전트
 
-Testing은 Implementation이 남긴 고정 `TestingInput`으로 앱을 한 번 복원한 뒤, 작은 기능 계획과
-정적 gate를 실행한다. 단위 테스트와 frontend build는 여기서 다시 만들거나 반복하지 않는다.
+Testing은 Implementation이 남긴 고정 `TestingInput`으로 애플리케이션을 한 번 복원하고,
+동적 기능 검사와 배포 정적 검사를 실행한다. 구현 단계에서 끝난 단위 테스트와 frontend build는
+반복하지 않는다.
 
-## 실행 흐름
+## 동적 기능 검사
+
+기능 테스트의 단일 계획 형식은 Arazzo v1.1.0 JSON이다.
 
 ```text
-고정된 TestingInput
-  → 앱과 deployment 산출물을 한 번 복원
-  → requirement → use-case → OpenAPI trace 확인
-  → use-case마다 작은 FunctionalTestCase 계획 생성
-  → operationId를 고정 path/method로 해석해 HTTP 실행
-  → 동적 검사가 통과하면 공용 toolchain에서 deployment·IaC 정적 gate
-  → contract 실행 범위와 의미적으로 검증된 requirement를 분리해 기록
+requirements / use cases / OpenAPI / RTM hints
+  → workflow 후보 투영
+  → LLM이 Arazzo Workflow Object 작성
+  → 공식 Arazzo schema와 EasyDep 실행 profile 검증
+  → frozen OpenAPI와 target URL로 workflow 실행
+  → workflow/step/criterion 결과와 trace evidence 기록
 ```
 
-계획에는 `case_id`, `requirement_ids`, `use_case_id`, 순서 있는 `steps`만 들어간다. 각
-step은 `step_id`와 `operation_id`를 가지며, 경로·HTTP method·인증·요청 예시는 계획에 넣지
-않는다. 계획 schema는 모르는 필드와 중복 step/operation ID를 거부한다. 여러 operation이
-필요한 경우에는 설계의 canonical `stepRefs`가 OpenAPI
-`x-easydep-scenario-step-refs`로 전달됐을 때만 필수 집합과 순서를 확정한다. 직접 근거가 없으면
-LLM이 정한 배열 순서를 사실로 취급하지 않고 실행 전 `UPSTREAM_AMBIGUITY`로 남긴다.
+문서 envelope, source, 버전과 stable workflow ID는 코드가 결정한다. LLM은 존재하는 OpenAPI
+`operationId`만 사용하여 step 순서, Runtime Expression과 근거 있는 `successCriteria`를
+작성한다. RTM과 sequence는 후보 순서와 조사 근거를 제공하지만 실행 operation을 제한하는
+allowlist가 아니다. Arazzo 실행 의미는 표준 필드에만 두며 `x-easydep-trace`는 요구사항,
+유스케이스와 evidence reference만 보존한다.
 
-executor는 고정 OpenAPI의 operationId를 정확히 하나의 path와 method로 바꾼다. 요청 schema로
-필수 입력을 만들고, 타입이 맞는 이전 response field가 하나뿐일 때만 다음 요청에 전달한다.
-나머지는 명세에서 만든 안정적인 예시값으로 채우며 성공 response도 OpenAPI schema로 확인한다.
-OpenAPI가 본문 없는 성공 응답을 선언한 경우에는 `204` 같은 빈 응답도 정상 처리한다.
+공식 schema를 통과한 문서는 다시 EasyDep 실행 profile로 검사한다. 현재 profile은 frozen local
+OpenAPI, 동기 HTTP와 local workflow, workflow input, step output, Runtime Expression,
+`successCriteria`, `dependsOn`, bounded retry와 goto를 지원한다. 원격 source, AsyncAPI,
+임의 코드 실행, 무제한 retry와 순환 control flow는 HTTP 요청 전에 거부한다.
 
-입력값은 OpenAPI의 `const`, `enum`, `example`, `default`, `format`, 숫자 범위와 이전 응답값을
-먼저 사용한다. 이 정보만으로 정상 흐름의 값을 정할 수 없는 leaf만 LLM에 묻는다. LLM은 요청
-본문 전체가 아니라 `operationId`, 입력 위치, 해당 leaf schema와 짧은 operation 설명만 받고 값
-하나만 반환한다. 반환값은 같은 OpenAPI schema로 검사한 뒤 사용한다. 사용한 값은 기능 계획과
-함께 저장하므로 구현 수리 전후에 테스트 입력이 바뀌지 않는다.
+실행기는 기존 OpenAPI 요청 직렬화와 response schema 검증 primitive를 재사용한다. 모든 요청은
+Testing이 실행한 앱의 `target_url`로 고정한다. workflow input과 요청 leaf는 OpenAPI의
+`const`, `enum`, `example`, `default`를 먼저 사용하고, 결정할 수 없는 값만 LLM에 한 번
+묻는다. 실제 사용한 `workflowInputs`와 `inputValues`는 Arazzo 문서 밖에 저장하여 재실행 때
+동일한 값을 쓴다.
 
-각 case는 한 번만 순서대로 실행한다. 첫 blocking case에서 중단하고 아직 실행하지 않은 case를
-`pendingCaseIds`로 남긴다. 정적·IaC gate도 `DEFERRED/NOT_APPLICABLE`로 기록해 현재 동적 실패를
-가리지 않는다. 수리 뒤에는 같은 계획과 입력으로 실패 case를 먼저 실행하고, 통과한 뒤 남은
-case와 정적 gate를 진행한다. 명세가 모호하거나 operationId를 찾을 수 없으면 제품 실패가 아닌
-`UPSTREAM_AMBIGUITY`와 `INCONCLUSIVE`로 기록한다.
+HTTP 도달과 OpenAPI response 검증은 contract 결과다. 요구사항에서 직접 근거를 얻은
+`successCriteria`가 통과한 경우만 semantic coverage로 인정한다. criterion이 없으면 workflow가
+통과해도 관련 요구사항은 `unverifiedIds`에 남긴다.
 
-LLM 또는 OpenAPI가 만든 입력이 포함됐다는 이유만으로 모든 `4xx` 응답을 테스트 문제로
-돌리지는 않는다. 예를 들어 요청 본문을 보낸 `POST`가 `400`을 반환하면 구현 실패로 남긴다.
-선행 생성 단계 없이 임의로 만든 path 식별자로 기존 리소스를 `GET`했고 `404`가 난 경우처럼,
-정상 fixture가 없다는 근거가 분명할 때만 테스트 입력 문제로 분류한다.
+실패 action이 지정한 cleanup은 원래 workflow의 성공·실패와 별도로 기록한다. 응답 schema 오류와
+transport 오류에서도 실행 가능한 cleanup workflow를 시도한다. cleanup 실패는 최초 실패를
+덮어쓰지 않는다.
 
-## 결과와 실패
+## 결과와 재개
 
-`gateStatus`는 `PASS`, `FAIL`, `INCONCLUSIVE`, `NOT_APPLICABLE` 중 하나다. `2xx + response
-schema`는 HTTP contract 실행 성공이며 계산 결과나 상태 변화의 의미적 정답은 아니다. 현재 고정
-산출물에는 실행 가능한 acceptance oracle이 없으므로 `requirements.ids`는 비우고, 실행에 성공한
-연결 범위는 `contractIds`, 의미 검증이 남은 기능 요구사항은 `unverifiedIds`로 기록한다. 204 뒤
-관찰 endpoint가 없는 상태 변화도 의미적으로 PASS 처리하지 않는다.
+`candidatePlan`에는 canonical Arazzo 문서만 저장한다. 실행 데이터는 다음 sibling 필드로
+분리한다.
 
-동적 실패 finding에는 크기를 제한한 실제 테스트 요청과 응답, test profile/database,
-가능한 경우 Testing이 소유한 application log excerpt를 담는다. 외부 `target_url`에는 임의의
-container log를 연결하지 않는다.
+- `workflowInputs`, `inputValues`: 실제 사용한 고정 입력
+- `workflows`: workflow 문서, step 결과와 trace
+- `failedWorkflowId`, `failedStepId`: 첫 차단 지점
+- `pendingWorkflowIds`, `reusedWorkflowIds`: 재개와 재사용 범위
+- `planDigest`, `candidateDigest`: 문서와 입력 식별값
 
-- `TEST_DEFECT`: Testing에서 계획을 다시 만든다.
-- `SUT_DEFECT`: 같은 계획을 Implementation 수리에 전달한다.
-- `ENVIRONMENT_DEFECT`: 환경을 복구한 뒤 같은 검사를 다시 실행한다.
-- `UPSTREAM_AMBIGUITY`: 요구사항 또는 설계 단계에서 명세를 보완한다.
+같은 구현을 선택 수리할 때에는 동일 문서·입력의 PASS workflow를 재사용하고 실패 workflow를
+먼저 실행한다. 구현 파일이 바뀌면 이전 PASS workflow도 회귀 확인을 위해 다시 실행한다. 예전
+자체 `FunctionalTestPlan` checkpoint는 해석하지 않으며 새 Testing 실행에서 Arazzo 계획을
+다시 만든다. 별도 DB table이나 migration은 없다.
 
-앱 실행·Docker·필수 산출물 문제로 판정할 수 없으면 성공으로 표시하지 않는다. Testing은
-`tofu plan -refresh=false`만 사용하며 실제 `apply`는 하지 않는다.
+동적 실패에는 workflow, step, operation, 실패 criterion, 요청·응답과 애플리케이션 로그 위치를
+남긴다. RTM으로 얻은 source file은 구현 수리의 조사 힌트이고 수정 범위 hard limit가 아니다.
 
-## 자동 수리와 선택 재검사
+- `TEST_DEFECT`: Arazzo 문서·expression·입력 문제
+- `SUT_DEFECT`: 검증된 criterion 또는 OpenAPI contract를 실제 응답이 위반
+- `ENVIRONMENT_DEFECT`: container, transport 또는 tool 문제
+- `UPSTREAM_AMBIGUITY`: acceptance, operation 순서나 복구 계약의 근거 부족
 
-최초 실행은 동적 case를 먼저 실행하고 첫 차단 실패에서 수리를 시작한다. 실패에는 요약 문장만
-남기지 않고 rule ID, 대상 파일, 실행 명령, 종료 코드와 HTTP request/response 및 runtime 근거를
-기록한다. 수리 에이전트는 그 파일만 수정하고 처음 실패한 같은 검사를 `run_task_check`로 다시
-실행한다.
+Implementation으로 돌아간 동적 수리는 같은 Arazzo workflow와 입력을 `run_task_check`에서
+재실행한다. 통과하면 바깥 Testing 단계가 동일 checkpoint에서 나머지 workflow와 gate를 이어서
+확인한다. 정적 수리도 처음 실패한 Trivy, package 또는 OpenTofu gate만 같은 방식으로 다시
+검증한다.
 
-수리할 때마다 새 Workspace command를 만들지 않는다. 한 command 안에 실패, 수정, 재검사 event를
-이어 붙인다. 수리 횟수에는 숫자 상한이 없지만 파일 내용과 실패 결과가 모두 같다면 새 LLM 작업을
-시작하지 않고 EasyDep의 검사 도구나 담당 연결 문제로 종료한다. 파일 내용은 달라졌지만 실패가
-줄지 않은 후보는 폐기하고 직전 수용본에서 다른 방법을 시도한다. 이전 작업과 내용이 같아 공유한
-버전은 지우지 않는다.
-
-수리 뒤에는 변경 범위와 연결된 gate만 다시 실행한다.
-
-- Terraform 변경: Trivy와 OpenTofu
-- cloud-init, Compose, 배포 script 변경: 해당 package 검사
-- 같은 구현에서 Testing 계획/입력 수리: 이미 PASS한 case를 보존하고 실패 case부터 재개
-- backend 구현 변경: source가 바뀌었으므로 과거 PASS case도 다시 실행
-- 바뀌지 않은 gate: 입력과 관련 파일 digest가 같을 때 이전 결과 재사용
-
-Trivy, OpenTofu, cloud-init, Compose, Bash와 PowerShell 검사는 host에 우연히 설치된 프로그램이
-아니라 `easydep-toolchain`에서 실행한다. 도구를 시작할 수 없는 오류는 앱 파일 결함과 구분한다.
-공개 Load Balancer나 직접 공개 IP처럼 선택한 ResourcePlan에 꼭 필요한 경고는 rule 전체를 끄지
-않고, Trivy가 지목한 Terraform 리소스가 ResourcePlan의 공개 진입 리소스와 정확히 같은 경우에만
-근거와 함께 허용한다.
-
-산출물 화면의 추적 정보도 같은 `TestingInput`이 가리킨 SOURCE_CODE 버전, 계약과 구현 RTM을
-사용한다. 파일 내용이 같아 이전 version ID를 재사용해도 현재 구현 Job의 RTM은 실행 입력에 따로
-고정한다. 최신 설계나 최신 소스와 섞지 않으며, 전체 표준 출력 대신 명령·종료 코드·실행 시간·
-보고서 경로만 근거로 남긴다.
+동적 검사가 차단되면 static, package와 IaC gate는 `DEFERRED/NOT_APPLICABLE`로 남겨 원인을
+가리지 않는다. 동적 검사가 통과하면 공용 toolchain으로 남은 gate를 실행한다. 입력과 관련 파일
+digest가 같은 미선택 gate만 이전 PASS 결과를 재사용한다.
 
 ## 코드 경계
 
-Implementation은 코드를 만든 직후 compile, 단위 테스트, 작은 통합 테스트와 frontend build를
-실행하고 같은 작업에서 수리한다. Testing은 이를 다시 실행하지 않는다. Testing에 남은 runtime
-코드는 생성 앱 컨테이너 실행, HTTP 기능 검사, 배포 정적 검사와 IaC 검사만 담당한다.
+- `schemas/arazzo.py`: 공식 schema와 EasyDep 실행 profile 검증
+- `utils/arazzo_planner.py`: frozen 산출물을 workflow authoring context로 투영
+- `utils/arazzo_executor.py`: Arazzo orchestration, expression, criterion과 cleanup
+- `utils/functional_executor.py`: 재사용 가능한 OpenAPI/HTTP primitive
+- `nodes/dynamic_functional.py`: 계획 생성, workflow 실행과 report 집계
+- `service.py`: checkpoint, selective rerun, repair evidence와 공개 결과
+- `repair_check.py`: Implementation 수리 공간에서 동일 gate 재검증
 
-## LLM 연결
-
-동적 기능 계획에서 OpenAPI만으로 정할 수 없는 입력값이 있을 때만 LLM을 사용한다. 연결 정보는
-`app.llm_connection`에서 한 번 만든다. 따라서 `LLM_PROVIDER`, `API_KEY`, `BASE_URL`, `MODEL`은
-요구사항·설계·구현과 Testing이 함께 사용하며, Testing 코드가 NVIDIA나 특정 URL을 기본값으로
-추측하지 않는다. OpenHands처럼 LiteLLM adapter가 필요한 경로만 중앙 연결이 계산한 모델 이름을
-사용한다. API key는 요청에만 전달하고 테스트 계획·결과·로그에는 저장하지 않는다.
+LLM 연결은 다른 단계와 동일하게 `app.llm_connection`을 사용한다. API key는 요청에만 전달하고
+Arazzo 문서, 결과와 로그에는 저장하지 않는다.

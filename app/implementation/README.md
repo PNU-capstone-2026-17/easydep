@@ -44,9 +44,9 @@ Testing에서 돌아온 수리는 별도 검사 종류를 가진다. RTM 파일 
 `testing-static`은 Trivy,
 `testing-package`는 cloud-init·Compose·script, `testing-iac`는 OpenTofu,
 `testing-dynamic-functional`은 보존한 전체 runtime log를 읽고 RTM에 연결된 backend 운영
-코드부터 조사한 뒤 compile을 확인한다. 동적 수리 결과의 HTTP case 재실행은 Docker runtime을
-소유한 바깥 Testing 단계가 담당한다. 따라서 구현 sandbox에서 Docker를 중복 실행하지 않으며,
-Terraform 같은 정적 수리는 여전히 원래 실패한 gate를 같은 작업에서 다시 확인한다.
+코드부터 조사한다. 수정 뒤에는 보존된 Arazzo workflow와 입력을 `run_task_check`에서 다시
+실행한다. 통과하면 바깥 Testing 단계가 같은 checkpoint에서 나머지 workflow와 gate를 이어서
+검사한다. Terraform 같은 정적 수리도 원래 실패한 gate를 같은 작업에서 다시 확인한다.
 검사 실패 시 JUnit XML과 Gradle HTML 전체를 에이전트에게 열어 주지 않는다. 검증기가 대표
 실패와 가장 안쪽 원인을 먼저 추출해 ``run_task_check`` 결과로 돌려주며, 원본 보고서는 사람이
 실행 이력을 조사할 때만 사용한다. 이렇게 하면 에이전트가 수십만 자짜리 같은 보고서를 반복해
