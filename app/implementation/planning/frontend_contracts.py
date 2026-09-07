@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -83,6 +84,82 @@ class GeneratedClientContracts:
                 f"{source}\n"
             )
         return chunks
+
+    def render_call_skeleton(self, operation_ids: list[str]) -> tuple[str, list[str]]:
+        """Render wrappers only for exact methods exported by the generated client."""
+
+        calls: list[tuple[str, str, str | None]] = []
+        for operation_id in sorted(set(operation_ids)):
+            matches: list[tuple[str, str | None]] = []
+            for path in self.files:
+                if path.parent.name != "apis" or path.name == "index.ts":
+                    continue
+                source = path.read_text(encoding="utf-8")
+                class_match = re.search(r"\bexport class ([A-Za-z_][A-Za-z0-9_]*)\b", source)
+                signature = re.search(
+                    rf"\basync\s+{re.escape(operation_id)}\(([^\r\n]*)\)"
+                    r"\s*:\s*Promise<[^\r\n]+>\s*\{",
+                    source,
+                )
+                if class_match is None or signature is None:
+                    continue
+                parameters = signature.group(1).strip()
+                request_match = re.match(
+                    r"requestParameters:\s*([A-Za-z_][A-Za-z0-9_]*)",
+                    parameters,
+                )
+                matches.append(
+                    (
+                        class_match.group(1),
+                        request_match.group(1) if request_match else None,
+                    )
+                )
+            if len(matches) == 1:
+                calls.append((operation_id, *matches[0]))
+
+        imports = {"Configuration"}
+        imports.update(class_name for _operation, class_name, _request in calls)
+        imports.update(request for _operation, _class, request in calls if request)
+        relative_source = self.source_root.relative_to(self.generated_root).as_posix()
+        generated_import = (
+            "./generated"
+            if relative_source == "."
+            else f"./generated/{relative_source}"
+        )
+        lines = [
+            "import {",
+            *(f"  {name}," for name in sorted(imports)),
+            f"}} from '{generated_import}';",
+            "import { API_BASE_URL } from './config';",
+            "",
+        ]
+        class_names = sorted({class_name for _operation, class_name, _request in calls})
+        for class_name in class_names:
+            lines.append(
+                f"const {_client_name(class_name)} = new {class_name}("
+                "new Configuration({ basePath: API_BASE_URL }));"
+            )
+        if class_names:
+            lines.append("")
+        unresolved = sorted(set(operation_ids) - {item[0] for item in calls})
+        for operation_id in unresolved:
+            lines.append(
+                "// EASYDEP-IMPLEMENT: generated client has no unique exact export for "
+                f"api:{operation_id}"
+            )
+        if unresolved:
+            lines.append("")
+        lines.append("export const apiCalls = {")
+        for operation_id, class_name, request_type in calls:
+            invocation = f"{_client_name(class_name)}.{operation_id}"
+            if request_type:
+                lines.append(
+                    f"  {operation_id}: (request: {request_type}) => {invocation}(request),"
+                )
+            else:
+                lines.append(f"  {operation_id}: () => {invocation}(),")
+        lines.append("};")
+        return "\n".join(lines) + "\n", [item[0] for item in calls]
 
 
 def _discover_source_root(
@@ -216,3 +293,7 @@ def _is_test_contract(relative: Path) -> bool:
         lowered_parts & {"test", "tests", "__tests__"}
         or relative.name.lower().endswith(("test.ts", "spec.ts"))
     )
+
+
+def _client_name(class_name: str) -> str:
+    return class_name[:1].lower() + class_name[1:]

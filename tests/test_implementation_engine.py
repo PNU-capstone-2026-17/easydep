@@ -1905,10 +1905,10 @@ def test_canonical_editor_has_no_build_directory_heuristic(tmp_path: Path) -> No
     assert "run_task_check" not in str(observation)
 
 
-def test_completion_audit_rejects_an_unfinished_controller_body(
+def test_completion_audit_rejects_unfinished_generated_bodies(
     tmp_path: Path,
 ) -> None:
-    """파일이 있어도 Controller 미완성 본문이 남으면 구현 완료로 보지 않는다."""
+    """파일이 있어도 생성기가 남긴 미완성 표식은 구현 완료로 보지 않는다."""
     run = tmp_path / "run"
     reports = run / "reports"
     controller = run / "application/src/main/java/example/OrdersApiController.java"
@@ -1916,6 +1916,7 @@ def test_completion_audit_rejects_an_unfinished_controller_body(
     controller.parent.mkdir(parents=True)
     context.parent.mkdir(parents=True)
     controller.write_text(
+        '// EASYDEP-IMPLEMENT: complete the generated body\n'
         'throw new UnsupportedOperationException("EASYDEP_CONTROLLER_BODY_REQUIRED:POST:/orders");',
         encoding="utf-8",
     )
@@ -1947,6 +1948,10 @@ def test_completion_audit_rejects_an_unfinished_controller_body(
 
     assert report["status"] == "INCOMPLETE"
     assert "Unimplemented Controller body remains" in report["backlog"][0]["evidence"][0]
+    assert any(
+        "Unresolved implementation marker remains" in item
+        for item in report["backlog"][0]["evidence"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -2347,6 +2352,12 @@ class Order <<Entity>> { - id: UUID }
     )
     assert source_index["hintsOnly"] is True
     assert source_index["startingSourcePaths"]
+    assert source_index["methodContexts"]
+    assert context["methodContextRoot"].endswith("method-context")
+    assert all(
+        (run / item["path"]).is_file()
+        for item in source_index["methodContexts"]
+    )
     assert context["sourceIndexPath"] in context["readSourcePaths"]
     assert all(
         path not in context["readSourcePaths"]
@@ -2354,9 +2365,11 @@ class Order <<Entity>> { - id: UUID }
     )
     assert {"api:placeOrder", "api:cancelOrder"} <= set(backend["source_refs"])
     prompt = (run / backend["prompt_file"]).read_text(encoding="utf-8")
-    assert "The customer can place an order." in prompt
-    assert '"call_id"' in prompt
-    assert '"control_binding"' in prompt
+    assert "The customer can place an order." not in prompt
+    assert '"call_id"' not in prompt
+    assert '"control_binding"' not in prompt
+    assert context["sourceIndexPath"] in prompt
+    assert context["methodContextRoot"] in prompt
     assert "INTERNAL-REPAIR-MARKER" not in prompt
     assert "INTERNAL-USE-CASE-REPAIR" not in prompt
 

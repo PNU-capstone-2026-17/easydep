@@ -9,6 +9,8 @@ from pathlib import Path
 from app.artifact_trace import TraceRef
 from app.artifact_trace_projection import project_artifact_trace
 from app.config import settings
+from app.design.schemas.class_model import BCEModel
+from app.design.services.sequence_diagram.projection import SequenceCollection
 from app.llm_connection import build_llm_connection
 
 from ..domain.implementation_ir import (
@@ -21,6 +23,7 @@ from ..domain.models import JobSpec
 from ..generation.frontend_scaffold import frontend_page_names, operation_ids
 from ..generation.java_scaffold import controller_body_marker
 from .frontend_contracts import GeneratedClientContracts
+from .method_projection import MethodProjectionResult, project_method_calls
 
 
 @dataclass(frozen=True)
@@ -199,10 +202,6 @@ def _build_backend_owner_task(
     ]
     editable = _without_immutable_paths(editable, immutable_paths)
     requirements, use_cases, sources = _all_requirement_artifacts(spec)
-    scenarios = _all_scenarios(spec)
-    implementation_context = _implementation_prompt_context(
-        requirements, use_cases, scenarios
-    )
     # HTTP Controller는 Boundary adapter를 거치지 않고 typed Control을 직접 호출한다.
     # Boundary가 참조하는 다른 기능 DTO까지 closure에 끌어오지 않고 이번 구현에 실제로
     # 쓰는 Control·Entity·Gateway 계약만 전달한다.
@@ -228,15 +227,6 @@ def _build_backend_owner_task(
             if marker in scaffolds
         }
     )
-    endpoint_hints = [
-        {
-            key: endpoint.get(key)
-            for key in ("method", "path", "operation_id", "operationId", "use_case_ids", "control_binding")
-            if endpoint.get(key) is not None
-        }
-        for endpoint in bundle.endpoints
-        if isinstance(endpoint, dict)
-    ]
     design_inputs = _materialize_design_inputs(
         spec,
         run_root,
@@ -251,6 +241,20 @@ def _build_backend_owner_task(
             "requirements",
             "useCaseSpec",
         },
+    )
+    method_projection = project_method_calls(
+        bce_model=BCEModel.model_validate_json(
+            spec.inputs["bceModel"].read_text(encoding="utf-8")
+        ),
+        sequence_model=SequenceCollection.model_validate_json(
+            spec.inputs["sequenceModel"].read_text(encoding="utf-8")
+        ),
+    )
+    method_contexts = _materialize_method_contexts(
+        run_root,
+        output,
+        package_path,
+        method_projection,
     )
     # The application tree is already copied into every agent sandbox. Keep only a small set of
     # starting paths in the index; do not copy or enumerate the whole Java tree as read sources.
@@ -279,6 +283,7 @@ def _build_backend_owner_task(
                 "taskId": task_id,
                 "startingSourcePaths": source_paths,
                 "designInputs": design_inputs,
+                "methodContexts": method_contexts,
                 "hintsOnly": True,
             },
             ensure_ascii=False,
@@ -299,11 +304,17 @@ def _build_backend_owner_task(
         ],
         "controllerBodyMarkers": controller_markers,
         "readSourcePaths": sorted(
-            dict.fromkeys([_relative(run_root, source_index_path), *design_inputs.values()])
+            dict.fromkeys(
+                [
+                    _relative(run_root, source_index_path),
+                    *(str(item["path"]) for item in method_contexts),
+                    *design_inputs.values(),
+                ]
+            )
         ),
         "sourceIndexPath": _relative(run_root, source_index_path),
+        "methodContextRoot": _relative(run_root, output / "method-context"),
         "designInputs": design_inputs,
-        "operationHints": endpoint_hints,
     }
     deployment_context = _deployment_context(spec, component_names)
     if deployment_context:
@@ -313,58 +324,26 @@ def _build_backend_owner_task(
     prompt = (
         f"""# Backend application owner: {spec.name}
 
-Own the complete backend implementation across all supplied use cases. Inspect and modify related
-backend source, configuration, and tests as needed, while preserving the frozen design and public contracts.
+Complete the generated backend implementation and its JUnit scenarios. Start with the existing
+Control service and test shells; their typed calls are already projected from the sequence model.
 
-- Generated BCE and API public declarations are frozen. Entity method bodies may be implemented,
-  but their fields, methods, signatures, and relationships must remain unchanged. Controller routing, Control injection and
-  structural API/BCE conversion are already present; change a Controller body only when the
-  focused scenario leaves one of this task's named body markers below.
-- Persistence entities, repositories, and migrations are deterministic read-only projections of
-  the ERD. Use those repositories for persistent behavior and adapt application services or runtime
-  configuration when needed; do not keep business state in an in-memory collection or invent
-  another persistence port.
-- Inspect the current contracts, then implement all backend behavior and its JUnit scenarios in
-  the order that best fits the existing source. Assert returned values and persisted state
-  changes, including that rejected requests leave state unchanged.
-- Exercise every supplied input that changes the scenario result, and assert every response
-  value named by the requirements. Never ignore a filter or fill a required result with an
-  empty, synthetic, or demo value. If the supplied contracts cannot produce a required value,
-  report that exact contract gap instead of fabricating a passing test.
-- Mark concrete Control services and Gateway adapters with the matching Spring stereotype
-  and use constructor injection. Generated web Controllers are already Spring beans and call
-  the typed Control binding directly; do not create duplicate HTTP or Boundary adapters.
-- All source comments, test descriptions, validation messages, documentation, and user-visible
-  text must be written in English.
-- Leave no TODO, FIXME, or placeholder.
+- Preserve frozen BCE/API declarations, persistence projections, repositories, and migrations.
+- Resolve every `EASYDEP-IMPLEMENT` and named Controller marker with contracted behavior and
+  meaningful assertions. Do not replace them with empty, demo, or always-passing behavior.
+- Use existing repositories for persistent behavior and constructor injection for Spring beans.
+- Generated web Controllers already call their typed Control binding; do not duplicate HTTP or
+  Boundary adapters.
+- Read the smallest method context needed for a marker. Read a frozen design input only when the
+  local context exposes a real contract gap.
+- Source-index, method-context, and RTM references are navigation hints, never read or edit limits.
+- Use English for source comments, tests, validation messages, documentation, and user-visible text.
 
-## Relevant requirements and scenarios
-~~~json
-{_prompt_json(implementation_context)}
-~~~
-
-## Relevant HTTP operation hints
-~~~json
-{_prompt_json(endpoint_hints)}
-~~~
-
-## Read-only design and source index
-The following JSON index is a navigation hint, not an exhaustive read or edit boundary:
-`{_relative(run_root, source_index_path)}`. It lists the starting source paths already known from
-the typed task plan without parsing source code. Read the smallest relevant declarations before
-editing. The frozen design inputs are also available at the paths listed by `designInputs` in the
-index; their contents are the source of truth when a projection is insufficient.
-
-## Traceability hints
-These RTM references identify likely relevant artifacts. They are navigation hints, not a read
-or write boundary:
-{_prompt_json([*_operation_source_refs(spec, set(bundle.use_case_ids)), *_workload_source_refs(deployment_context)])}
-
-## Controller body markers to complete
-{chr(10).join(f"- `{marker}`" for marker in controller_markers) or "- none; the typed Controller is already complete"}
+## On-demand implementation context
+- Source index: `{_relative(run_root, source_index_path)}`
+- Method contexts: `{_relative(run_root, output / "method-context")}`
+- Controller markers: {", ".join(controller_markers) or "none"}
 """
-        + _render_deployment_context(deployment_context)
-        + "\n\n## Backend owner roots\n"
+        "\n## Backend owner roots\n"
         + "\n".join(f"- `{root}`" for root in owner_roots)
         + render_allowed_output_rules(required)
     )
@@ -503,86 +482,6 @@ def _artifact_ids(items: list[dict[str, object]]) -> list[str]:
     return sorted({str(item["id"]) for item in items if item.get("id")})
 
 
-def _implementation_prompt_context(
-    requirements: list[dict[str, object]],
-    use_cases: list[dict[str, object]],
-    scenarios: list[dict[str, object]],
-) -> dict[str, object]:
-    """설계 산출물에서 구현 판단에 필요한 값만 골라 prompt 크기를 줄인다.
-
-    요구사항 단계의 수리 횟수와 내부 상태는 이미 승인된 설계를 코드로 옮기는 데 필요하지
-    않다. 반면 시퀀스 호출 순서, 인자 출처와 반환 연결은 구현의 직접 근거이므로 보존한다.
-    """
-
-    def select(item: dict[str, object], names: tuple[str, ...]) -> dict[str, object]:
-        return {name: item[name] for name in names if name in item}
-
-    requirement_fields = ("id", "text", "type")
-    use_case_fields = (
-        "id",
-        "use_case_id",
-        "name",
-        "primary_actor",
-        "supporting_actors",
-        "level",
-        "goal",
-        "requirement_ids",
-        "nfr_ids",
-        "preconditions",
-        "trigger",
-        "main_scenario",
-        "extensions",
-        "success_guarantee",
-        "minimal_guarantee",
-    )
-    diagrams: list[dict[str, object]] = []
-    for scenario in scenarios:
-        participants = scenario.get("Participants")
-        messages = scenario.get("Messages")
-        diagram = select(scenario, ("use_case_id", "use_case_name"))
-        diagram["Participants"] = [
-            select(item, ("name", "alias", "kind", "source_class"))
-            for item in participants
-            if isinstance(item, dict)
-        ] if isinstance(participants, list) else []
-        diagram["Messages"] = [
-            select(
-                item,
-                (
-                    "source",
-                    "target",
-                    "label",
-                    "type",
-                    "fragments",
-                    "use_case_ids",
-                    "step_ids",
-                    "call_id",
-                    "reply_to",
-                    "arguments",
-                ),
-            )
-            for item in messages
-            if isinstance(item, dict)
-        ] if isinstance(messages, list) else []
-        diagrams.append(diagram)
-    return {
-        "requirements": [select(item, requirement_fields) for item in requirements],
-        "useCases": [select(item, use_case_fields) for item in use_cases],
-        "scenarios": diagrams,
-    }
-
-
-def _all_scenarios(spec: JobSpec) -> list[dict[str, object]]:
-    diagrams = _read_json(spec.inputs.get("sequenceModel")).get("Diagrams", [])
-    return (
-        [item for item in diagrams if isinstance(item, dict)]
-        if isinstance(diagrams, list)
-        else []
-    )
-
-
-
-
 def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     """typed 화면 흐름과 생성된 API client를 한 frontend 구현 작업으로 만든다."""
     frontend = run_root / "application" / "frontend"
@@ -598,34 +497,12 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         else []
     )
     bce_names = {str(item["className"]) for item in classes if item.get("className")}
-    boundary_names = {
-        str(item["className"])
-        for item in classes
-        if item.get("className") and str(item.get("stereotype", "")).casefold() == "boundary"
-    }
-    boundary_projection = [
-        {
-            "className": item.get("className"),
-            "stereotype": item.get("stereotype"),
-            "operations": [
-                {
-                    key: operation.get(key)
-                    for key in ("name", "returnType", "parameters")
-                    if operation.get(key) is not None
-                }
-                for operation in item.get("operations", [])
-                if isinstance(operation, dict)
-            ],
-        }
-        for item in classes
-        if item.get("className") in boundary_names
-    ]
-    sequence_projection = _project_sequence_hints(
-        _read_json(spec.inputs.get("sequenceModel")), boundary_names
-    )
     pages = frontend_page_names(openapi)
     operations = operation_ids(openapi)
     client_contracts = GeneratedClientContracts.discover(generated)
+    call_skeleton, projected_operations = client_contracts.render_call_skeleton(operations)
+    call_skeleton_path = frontend / "src" / "api.ts"
+    call_skeleton_path.write_text(call_skeleton, encoding="utf-8", newline="\n")
 
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
@@ -636,6 +513,7 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     )
     required = [
         "application/frontend/src/App.tsx",
+        "application/frontend/src/api.ts",
         "application/frontend/src/components/AppShell.tsx",
         *[f"application/frontend/src/pages/{name}.tsx" for name in pages],
         "application/frontend/src/styles.css",
@@ -651,6 +529,9 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     )
     task_id = "implement-frontend-application"
     client_index = _frontend_contract_index(run_root, openapi, pages, client_contracts)
+    client_index["callSkeletonPath"] = _relative(run_root, call_skeleton_path)
+    client_index["projectedOperations"] = projected_operations
+    client_index["unresolvedOperations"] = sorted(set(operations) - set(projected_operations))
     client_index_path = output / "frontend-generated-client-index.json"
     client_index_path.write_text(
         json.dumps(client_index, ensure_ascii=False, indent=2),
@@ -664,9 +545,8 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         "dependsOn": ["implement-backend-application"],
         "pages": pages,
         "operationIds": operations,
-        "boundaryProjection": boundary_projection,
-        "sequenceProjection": sequence_projection,
         "generatedImportRoot": client_contracts.import_root,
+        "callSkeletonPath": _relative(run_root, call_skeleton_path),
         "clientIndexPath": _relative(run_root, client_index_path),
         "designInputs": design_inputs,
         "requiredOutputs": required,
@@ -685,62 +565,27 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     context_path = output / "frontend-application.context.json"
     context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     page_list = "\n".join(f"- `{name}`" for name in pages)
-    operation_list = "\n".join(f"- `{name}`" for name in operations)
-    page_import_root = client_contracts.page_import_root
     prompt = f"""# Frontend implementation task: {spec.name}
 
-Implement the React application on top of the immutable TypeScript client produced by
-OpenAPI Generator. The system-design artifacts below are authoritative; do not invent API
-operations or behavior outside those contracts.
+Complete the React application using the exact generated-client calls already wired in
+`application/frontend/src/api.ts`.
 
-Rules:
-- The discovered OpenAPI Generator import root is exactly `{client_contracts.import_root}`. From a page below
-  `src/pages`, import APIs from `{page_import_root}/apis`, models from
-  `{page_import_root}/models`, and `Configuration` from `{page_import_root}/runtime`.
-- Use only exports that exist below `{client_contracts.import_root}`; import generated API classes, models, and
-  `Configuration` instead of hand-writing HTTP calls.
-- Never call `fetch`, axios, XMLHttpRequest, or hard-code an endpoint path in an application file.
-- Use `API_BASE_URL` from `src/config.ts` when constructing generated client configuration.
-- Derive screens and user actions from BCE Boundary responsibilities and the typed sequence flow.
-- Create an accessible responsive UI with explicit loading, empty, success, validation, and
-  API-error states. Mutating operations must announce success with `role="status"` or an
-  `aria-live` region. Every `aria-describedby` token must reference an existing element ID,
-  and data tables must remain usable on narrow screens (for example, an overflow container).
-  Keep domain state inside React components; do not add dependencies.
-- `src/main.tsx` already provides the immutable `HashRouter` required for static hosting.
-  `App.tsx` owns route declarations without creating another router, `AppShell.tsx` owns shared
-  navigation/layout, and every contracted page must be reachable from the application.
-- Preserve all generated client/model files. Project configuration and the lockfile belong to
-  this owner and may be corrected when the build requires it.
-- Create every contracted output and finish immediately. `npm run build` is the acceptance gate.
-- Production source must contain no `TODO`, `FIXME`, or `PLACEHOLDER` markers, including in
-  comments or strings. Do not leave demo-only identities, empty handlers, or speculative
-  fallback branches described as placeholders; implement the contracted behavior or show a
-  real loading, empty, validation, or API-error state instead.
-- All source comments, documentation, validation messages, and user-visible text must be in
-  English.
+- Preserve `{client_contracts.import_root}` and use `apiCalls`; never hand-write HTTP calls or paths.
+- Resolve every `EASYDEP-IMPLEMENT` marker. Use the client index first, then read only the smallest
+  relevant frozen design input if the local projection exposes a contract gap.
+- Source-index and RTM references are navigation hints, never read or edit limits.
+- Keep the existing `HashRouter`, make every contracted page reachable, and cover loading, empty,
+  success, validation, and API-error states with accessible responsive UI.
+- Leave no empty handler, demo fallback, TODO, FIXME, or placeholder, and add no dependency unless
+  the existing build requires it.
+- Use English for source comments, validation messages, documentation, and user-visible text.
 
 ## Contracted pages
 {page_list}
 
-## OpenAPI operations that the UI must expose where meaningful
-{operation_list}
-
-## Typed UI design hints
-```json
-{_prompt_json({"boundaries": boundary_projection, "sequence": sequence_projection})}
-```
-
-## On-demand frozen design and generated-client sources
-The exact frozen design inputs are available at the paths listed below and in the compact
-page → operation → source/import index at `{_relative(run_root, client_index_path)}`.
-Generated TypeScript files remain immutable under `{client_contracts.import_root}`. Read only
-the relevant declarations with the file tools. These paths and indexes are navigation hints,
-not hard read boundaries; the frozen files are authoritative.
-{chr(10).join(f"- `{name}`: `{path}`" for name, path in sorted(design_inputs.items()))}
-Traceability references from the RTM are hints for navigation only:
-{_prompt_json([*(f"api:{operation_id}" for operation_id in operations), *_workload_source_refs(deployment_context)])}
-{_render_deployment_context(deployment_context)}
+## On-demand client context
+- Exact call skeleton: `{_relative(run_root, call_skeleton_path)}`
+- Client index: `{_relative(run_root, client_index_path)}`
 """
     prompt += "\n## Frontend owner root\n- `application/frontend`"
     prompt += render_allowed_output_rules(required)
@@ -792,25 +637,6 @@ def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
     return "\n\n".join(sections) or "// No Java contracts found"
 
 
-def _render_deployment_context(deployment: object) -> str:
-    """배포 정보는 구현 계약을 흐리지 않도록 있을 때만 짧은 JSON으로 붙인다."""
-    return (
-        ""
-        if not deployment
-        else f"""
-## Relevant runtime context
-```json
-{_prompt_json(deployment)}
-```
-"""
-    )
-
-
-def _prompt_json(value: object) -> str:
-    """구조는 그대로 두고 LLM 입력에 불필요한 화면용 들여쓰기만 없앤다."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-
 def llm_config(spec: JobSpec) -> dict[str, object]:
     """모든 구현 작업이 공유하는 OpenHands LLM 설정을 만든다."""
 
@@ -831,57 +657,6 @@ def llm_config(spec: JobSpec) -> dict[str, object]:
 
 def render_allowed_output_rules(allowed: list[str]) -> str:
     return "\n\n## Contracted outputs\n\n" + "\n".join(f"- `{path}`" for path in allowed) + "\n"
-
-
-def _project_sequence_hints(model: dict[str, object], names: set[str]) -> list[dict[str, object]]:
-    """Keep only the typed boundary participants and message routing needed to start UI work."""
-    diagrams = model.get("Diagrams", [model])
-    if not isinstance(diagrams, list):
-        return []
-    selected: list[dict[str, object]] = []
-    for diagram in diagrams:
-        if not isinstance(diagram, dict):
-            continue
-        participants = [item for item in diagram.get("Participants", []) if isinstance(item, dict)]
-        aliases = {
-            str(item.get("alias") or item.get("name") or "")
-            for item in participants
-            if str(item.get("source_class") or item.get("name") or "") in names
-            or str(item.get("alias") or "") in names
-        }
-        messages = [
-            item
-            for item in diagram.get("Messages", [])
-            if isinstance(item, dict)
-            and {str(item.get("source") or ""), str(item.get("target") or "")} & aliases
-        ]
-        if not messages:
-            continue
-        involved = {
-            str(message.get(side) or "") for message in messages for side in ("source", "target")
-        }
-        selected.append({
-            "use_case_id": diagram.get("use_case_id", ""),
-            "use_case_name": diagram.get("use_case_name", ""),
-            "Participants": [
-                {
-                    key: item.get(key)
-                    for key in ("alias", "name", "kind", "source_class")
-                    if item.get(key) is not None
-                }
-                for item in participants
-                if str(item.get("alias") or item.get("name") or "") in involved
-            ],
-            "Messages": [
-                {
-                    key: message.get(key)
-                    for key in ("source", "target", "label", "type", "call_id", "reply_to", "use_case_ids")
-                    if message.get(key) is not None
-                }
-                for message in messages
-            ],
-        })
-    return selected
 
 
 def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
@@ -1072,6 +847,67 @@ def _materialize_design_inputs(
             target.write_bytes(source.read_bytes())
         materialized[requested] = _relative(run_root, target)
     return materialized
+
+
+def _materialize_method_contexts(
+    run_root: Path,
+    output: Path,
+    package_path: str,
+    projection: MethodProjectionResult,
+) -> list[dict[str, object]]:
+    """Write one small, on-demand context file per exact BCE operation."""
+
+    context_root = output / "method-context"
+    context_root.mkdir(parents=True, exist_ok=True)
+    entries: list[dict[str, object]] = []
+    for item in projection.methods:
+        source_paths = {
+            f"application/src/main/java/{package_path}/bce/{item.method.class_name}.java"
+        }
+        if item.method.stereotype == "Control":
+            source_paths.add(
+                "application/src/main/java/"
+                f"{package_path}/application/impl/{item.method.class_name}Service.java"
+            )
+        for method_slice in item.slices:
+            for call in method_slice.outgoing:
+                if call.target is None:
+                    continue
+                source_paths.add(
+                    f"application/src/main/java/{package_path}/bce/{call.target.class_name}.java"
+                )
+                if call.target.stereotype == "Control":
+                    source_paths.add(
+                        "application/src/main/java/"
+                        f"{package_path}/application/impl/{call.target.class_name}Service.java"
+                    )
+        path = context_root / f"{item.method.stable_id}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "implementation-method-context/v1alpha1",
+                    "method": asdict(item.method),
+                    "generation": item.generation,
+                    "reasons": list(item.reasons),
+                    "slices": [asdict(value) for value in item.slices],
+                    "sourcePaths": sorted(
+                        value for value in source_paths if (run_root / value).is_file()
+                    ),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        entries.append(
+            {
+                "operationId": item.method.operation_id,
+                "stableId": item.method.stable_id,
+                "path": _relative(run_root, path),
+                "sourcePaths": sorted(source_paths),
+            }
+        )
+    return entries
 
 
 def _frontend_contract_index(

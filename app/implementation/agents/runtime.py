@@ -30,7 +30,6 @@ from .provider import (
     openhands_connection,
 )
 from .task_check import (
-    TASK_CHECK_TOOL_NAME,
     consume_successful_task_check,
     register_task_check_tool,
 )
@@ -283,8 +282,8 @@ def _owner_workspace_guidance(
         "- Use `file_editor` for source edits and `terminal` for inspection, search, build, and tests.",
         "- Source locations and RTM references are investigation hints, not a required edit list.",
         "- Candidate contract copies may be inspected, but promotion rejects changes to generated contracts.",
-        "- The task message already contains the relevant requirements, scenarios, and HTTP hints; open raw design inputs only for a concrete contract gap.",
-        "- Start from the source index, batch related source reads into as few terminal calls as practical, and use build/test results rather than file counts as completion evidence.",
+        "- Start from generated skeletons and their local context; open raw design inputs only for a concrete contract gap.",
+        "- Batch related source reads into as few terminal calls as practical, and use build/test results rather than file counts as completion evidence.",
         "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail.",
         "- When canonical verification passes, finish immediately. Do not disable tests or alter test reporting to hide a failure.",
         "- Prefer the lowest-cost test level that proves the behavior; avoid restarting a full application context for every assertion.",

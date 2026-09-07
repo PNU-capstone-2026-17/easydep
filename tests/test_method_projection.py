@@ -4,6 +4,10 @@ from copy import deepcopy
 
 from app.design.schemas.class_model import BCEModel
 from app.design.services.sequence_diagram.projection import SequenceCollection
+from app.implementation.generation.method_skeleton import (
+    render_backend_method_skeletons,
+    render_backend_test_shell,
+)
 from app.implementation.planning.method_projection import project_method_calls
 
 
@@ -240,6 +244,50 @@ def test_unresolved_target_and_return_stack_are_structured_diagnostics() -> None
     assert "return_stack_mismatch" in reasons
 
 
+def test_type_mismatch_preserves_the_exact_target_as_a_hint() -> None:
+    diagram = _diagram()
+    lookup = diagram["Messages"][1]
+    lookup["arguments"][0]["type"] = "String"
+
+    result = _project(diagram)
+    root = _method(result, "RootControl")
+    call = root.slices[0].outgoing[0]
+
+    assert call.target is not None
+    assert call.target.class_name == "LookupControl"
+    assert call.generation == "hint"
+    assert "argument_contract_mismatch" in call.reasons
+    assert "argument_contract_mismatch" in {item.reason for item in result.diagnostics}
+
+
+def test_exact_signature_selects_one_overloaded_operation() -> None:
+    bce = _bce().model_copy(deep=True)
+    lookup = next(item for item in bce.Classes if item.class_name == "LookupControl")
+    lookup.operations.append(
+        lookup.operations[0].model_copy(
+            update={
+                "operation_id": "LookupControl.lookup(String)",
+                "stable_id": "lookup-string",
+                "parameters": [
+                    lookup.operations[0].parameters[0].model_copy(
+                        update={"type": "String"}
+                    )
+                ],
+            }
+        )
+    )
+    result = project_method_calls(
+        bce_model=bce,
+        sequence_model=SequenceCollection.model_validate(
+            {"Diagrams": [_diagram()], "MethodProposals": []}
+        ),
+    )
+    root = _method(result, "RootControl")
+
+    assert root.slices[0].outgoing[0].target is not None
+    assert root.slices[0].outgoing[0].target.parameters == (("value", "int"),)
+
+
 def test_recursive_call_is_a_hint() -> None:
     diagram = _diagram()
     root_call = diagram["Messages"][0]
@@ -271,3 +319,27 @@ def test_recursive_call_is_a_hint() -> None:
 
     assert call.generation == "hint"
     assert "cyclic_method_call" in call.reasons
+
+
+def test_renders_compile_safe_service_calls_and_an_explicit_test_shell() -> None:
+    bce = _bce()
+    projection = project_method_calls(
+        bce_model=bce,
+        sequence_model=SequenceCollection.model_validate(
+            {"Diagrams": [_diagram()], "MethodProposals": []}
+        ),
+    )
+    files = render_backend_method_skeletons(bce, projection, "com.example.app")
+    root = files["com/example/app/application/impl/RootControlService.java"]
+
+    assert "private final LookupControl lookupControl;" in root
+    assert "private final SaveControl saveControl;" in root
+    assert root.index("lookupControl.lookup(value)") < root.index(
+        "saveControl.save(lookupResult1)"
+    )
+    assert "EASYDEP-IMPLEMENT" not in root
+    leaf = files["com/example/app/application/impl/LookupControlService.java"]
+    assert "EASYDEP-IMPLEMENT:" in leaf
+    path, test_source = render_backend_test_shell("com.example.app")
+    assert path.endswith("application/impl/BackendApplicationTest.java")
+    assert 'fail("EASYDEP-IMPLEMENT:' in test_source

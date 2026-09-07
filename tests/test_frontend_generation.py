@@ -179,6 +179,35 @@ def test_discovers_flat_generated_client_layout(tmp_path: Path) -> None:
     assert contracts.page_import_root == "../generated"
 
 
+def test_renders_exact_generated_client_request_wrapper(tmp_path: Path) -> None:
+    generated = tmp_path / "src/generated"
+    api = generated / "apis/OrdersApi.ts"
+    api.parent.mkdir(parents=True)
+    api.write_text(
+        "export interface CreateOrderRequest { body: unknown; }\n"
+        "export class OrdersApi {\n"
+        "  async createOrder(requestParameters: CreateOrderRequest, "
+        "initOverrides?: RequestInit): Promise<void> { return Promise.resolve(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (generated / "index.ts").write_text(
+        "export * from './apis/OrdersApi';\n",
+        encoding="utf-8",
+    )
+
+    source, projected = GeneratedClientContracts.discover(
+        generated
+    ).render_call_skeleton(["createOrder"])
+
+    assert projected == ["createOrder"]
+    assert "CreateOrderRequest," in source
+    assert (
+        "createOrder: (request: CreateOrderRequest) => "
+        "ordersApi.createOrder(request)" in source
+    )
+
+
 def test_rejects_generated_contracts_over_budget_without_partial_output(
     tmp_path: Path,
 ) -> None:
@@ -411,7 +440,9 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     generated = generated_root / ("src/apis" if nested else "apis")
     generated.mkdir(parents=True)
     (generated / "DefaultApi.ts").write_text(
-        "export class DefaultApi { getOrder(): Promise<void> { return Promise.resolve(); } }",
+        "export class DefaultApi {\n"
+        "  async getOrder(): Promise<void> { return Promise.resolve(); }\n"
+        "}\n",
         encoding="utf-8",
     )
     (generated_root / "index.ts").write_text(
@@ -476,13 +507,19 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
         for item in index["files"]
     )
     assert "deployment" not in context
-    assert "design-inputs/bceModel.json" in prompt and "getOrder" in prompt
+    assert "design-inputs/bceModel.json" not in prompt
+    assert "boundaryProjection" not in context and "sequenceProjection" not in context
+    api_source = (run / context["callSkeletonPath"]).read_text(encoding="utf-8")
+    assert "getOrder: () => defaultApi.getOrder()" in api_source
+    assert "EASYDEP-IMPLEMENT: generated client has no unique exact export for api:createOrder" in api_source
+    assert index["projectedOperations"] == ["getOrder"]
+    assert index["unresolvedOperations"] == ["createOrder"]
     assert "src/generated" in prompt
     assert context["generatedImportRoot"] == ("src/generated/src" if nested else "src/generated")
     assert "Exact OpenAPI Generator TypeScript contracts" not in prompt
     assert "Typed BCE class model" not in prompt
     assert "OpenAPI contract" not in prompt
-    assert "TODO" in prompt and "PLACEHOLDER" in prompt
+    assert "todo" in prompt.casefold() and "placeholder" in prompt.casefold()
     assert "application/frontend/src/pages/OrdersPage.tsx" in task.allowed_write_paths
     sandbox = prepare_agent_workspace(run, task.to_dict())
     try:

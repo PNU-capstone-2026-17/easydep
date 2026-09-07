@@ -57,6 +57,7 @@ class MethodSlice:
     outgoing: tuple[CallProjection, ...]
     return_type: str | None
     step_refs: tuple[str, ...]
+    reasons: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ class _Frame:
     source_class: str
     method: MethodRef | None
     children: list[_Frame]
+    reasons: list[str]
     return_message: SequenceMessage | None = None
 
 
@@ -122,7 +124,6 @@ def project_method_calls(
                     reasons.append("duplicate_call_id")
                 seen_calls.add(message.call_id)
                 if reasons:
-                    method = None
                     diagnostics.extend(
                         ProjectionDiagnostic(diagram.use_case_id, message.call_id, reason)
                         for reason in reasons
@@ -133,6 +134,7 @@ def project_method_calls(
                     source_class=source.source_class if source is not None else "",
                     method=method,
                     children=[],
+                    reasons=reasons,
                 )
                 if stack:
                     stack[-1].children.append(frame)
@@ -158,8 +160,9 @@ def project_method_calls(
                             "return_type_mismatch",
                         )
                     )
-                    frame.method = None
+                    frame.reasons.append("return_type_mismatch")
         for frame in stack:
+            frame.reasons.append("missing_return")
             diagnostics.append(
                 ProjectionDiagnostic(
                     diagram.use_case_id,
@@ -191,11 +194,13 @@ def project_method_calls(
                 outgoing=tuple(outgoing),
                 return_type=return_type,
                 step_refs=tuple(frame.message.step_ids),
+                reasons=tuple(dict.fromkeys(frame.reasons)),
             )
         )
 
     methods: list[MethodProjection] = []
-    for operation_id, slices in sorted(grouped.items()):
+    for operation_id in sorted(by_id):
+        slices = grouped.get(operation_id, [])
         method = by_id[operation_id]
         unique: dict[str, MethodSlice] = {}
         for item in slices:
@@ -213,9 +218,12 @@ def project_method_calls(
                 )
         projected_slices = tuple(unique[key] for key in sorted(unique))
         reasons: list[str] = []
+        if not projected_slices:
+            reasons.append("no_sequence_slice")
         if len(projected_slices) > 1:
             reasons.append("conflicting_scenario_slices")
         for item in projected_slices:
+            reasons.extend(item.reasons)
             for call in item.outgoing:
                 reasons.extend(call.reasons)
         reasons = list(dict.fromkeys(reasons))
@@ -280,7 +288,7 @@ def _project_child_call(
     cyclic_edges: set[tuple[str, str]],
     position: int,
 ) -> CallProjection:
-    reasons: list[str] = []
+    reasons = list(child.reasons)
     arguments: list[ArgumentProjection] = []
     if child.method is None:
         reasons.append("unresolved_target_operation")
@@ -401,6 +409,7 @@ def _slice_fingerprint(item: MethodSlice) -> str:
             for call in item.outgoing
         ],
         "returnType": item.return_type,
+        "reasons": item.reasons,
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 

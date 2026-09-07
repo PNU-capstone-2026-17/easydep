@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from ..generation.java_scaffold import CONTROLLER_BODY_REQUIRED
+from ..generation.method_skeleton import IMPLEMENTATION_MARKER
 
 
 def audit_run_completion(run_root: Path) -> dict[str, object]:
@@ -46,9 +47,16 @@ def audit_run_completion(run_root: Path) -> dict[str, object]:
             if isinstance(controller_paths, list)
             else []
         )
+        unfinished_markers = [
+            path
+            for path in required
+            if (run_root / path).is_file()
+            and IMPLEMENTATION_MARKER
+            in (run_root / path).read_text(encoding="utf-8")
+        ]
         expected += len(required)
         produced += len(required) - len(missing)
-        if missing or unfinished:
+        if missing or unfinished or unfinished_markers:
             backlog.append(
                 {
                     "task_id": str(task["task_id"]),
@@ -58,6 +66,10 @@ def audit_run_completion(run_root: Path) -> dict[str, object]:
                     "evidence": [
                         *[f"Missing required output: {path}" for path in missing],
                         *[f"Unimplemented Controller body remains: {path}" for path in unfinished],
+                        *[
+                            f"Unresolved implementation marker remains: {path}"
+                            for path in unfinished_markers
+                        ],
                     ],
                 }
             )

@@ -19,6 +19,7 @@ from app.config import settings
 from app.design.contracts.api_spec import ApiSpecModel
 from app.design.contracts.application_runtime import application_security_required
 from app.design.schemas.class_model import BCEModel
+from app.design.services.sequence_diagram.projection import SequenceCollection
 from app.llm_connection import build_llm_connection
 
 from ..agents.runtime import write_execution_plan
@@ -33,6 +34,7 @@ from ..planning.design_context import (
     generate_frontend_tasks,
     llm_config,
 )
+from ..planning.method_projection import project_method_calls
 from ..workflows.conformance import capture_generated_contracts
 from .frontend import generate_frontend_project
 from .frontend_scaffold import installed_openapi_generator
@@ -42,6 +44,10 @@ from .java_scaffold import (
     build_java_scaffold_trace,
     render_java_scaffold,
     render_openapi_controller_scaffold,
+)
+from .method_skeleton import (
+    render_backend_method_skeletons,
+    render_backend_test_shell,
 )
 from .persistence_scaffold import (
     PERSISTENCE_SCAFFOLDER_VERSION,
@@ -54,7 +60,7 @@ OPTIONAL_DESIGN_INPUTS = (
     "deploymentBundle",
     "cloud",
 )
-IMPLEMENTATION_PIPELINE_VERSION = "0.6.0-strict-release"
+IMPLEMENTATION_PIPELINE_VERSION = "0.7.0-sequence-local-skeleton"
 OPENAPI_GENERATOR_IMAGE = "openapitools/openapi-generator-cli:v7.24.0"
 GRADLE_GENERATOR_IMAGE = "gradle:8.14.2-jdk21"
 # A Docker bind mount can keep a directory handle open for a short time after
@@ -613,6 +619,22 @@ class PrototypeOrchestrator:
             target = java_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8", newline="\n")
+        sequence_model = SequenceCollection.model_validate_json(
+            self.spec.inputs["sequenceModel"].read_text(encoding="utf-8")
+        )
+        method_projection = project_method_calls(
+            bce_model=scaffold.bce_model,
+            sequence_model=sequence_model,
+        )
+        method_files = render_backend_method_skeletons(
+            scaffold.bce_model,
+            method_projection,
+            self.spec.base_package,
+        )
+        for relative, content in method_files.items():
+            target = java_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8", newline="\n")
         persistence_files = (
             render_persistence_scaffold(
                 scaffold.erd_bce_model,
@@ -623,6 +645,10 @@ class PrototypeOrchestrator:
             else {}
         )
         application = java_root.parents[2]
+        test_relative, test_source = render_backend_test_shell(self.spec.base_package)
+        test_target = application / test_relative
+        test_target.parent.mkdir(parents=True, exist_ok=True)
+        test_target.write_text(test_source, encoding="utf-8", newline="\n")
         for relative, content in persistence_files.items():
             target = application / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -641,6 +667,10 @@ class PrototypeOrchestrator:
             "version": JAVA_SCAFFOLDER_VERSION,
             "input": "BCEModel",
             "javaVersion": "21",
+        }
+        self._sink().tools["sequence-method-scaffolder"] = {
+            "schema": "implementation-method-projection/v1alpha1",
+            "files": str(len(method_files) + 1),
         }
         if persistence_files:
             self._sink().tools["typed-persistence-scaffolder"] = {
